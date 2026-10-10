@@ -1,0 +1,132 @@
+{
+  "data": [
+    {
+      "id": "msg_01M33Z8PEJSZBDGZXD4JYDA31W",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T07:11:14Z",
+      "updated_at": "2026-09-22T07:11:14Z",
+      "parts": [
+        {
+          "type": "file",
+          "id": "prt_01M33Z8PF0M49VARXWJCSAF6TT",
+          "file": {
+            "id": "fil_01M33Z5FKBW794QFS18PHZ4S8V",
+            "filename": "gaode-acceptance.png",
+            "mime_type": "image/png",
+            "size": 1796,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[REDACTED_SIGNED_URL]",
+            "role": "input"
+          }
+        },
+        {
+          "type": "text",
+          "id": "prt_01M33Z8PF0M49VARXWJCSAF6TV",
+          "text": "这是高德 API 联调验收。请读取附件信息，但不要生成图片、视频、音频，不要联网搜索或调用付费生成工具。请只调用 question 工具提出一张测试确认卡，依次包含三题：单选（A/B，禁止自定义）；多选（甲/乙/丙，禁止自定义）；自由输入（允许 custom）。收到我的回答后请用一句话复述，然后再调用 question 工具给出一张单选确认卡（继续/停止），等待处理。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M33Z8PEJSZBDGZXD4JYDA31X",
+      "role": "assistant",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T07:12:05Z",
+      "updated_at": "2026-09-22T07:13:36Z",
+      "parts": [
+        {
+          "type": "question",
+          "id": "prt_01M33ZB2YN9ZE7SK9RXV9A5YDM",
+          "question_id": "qst_01M33ZB34YGHC42JA73YX78P4D",
+          "status": "answered",
+          "expires_at": null,
+          "questions": [
+            {
+              "header": "单选题",
+              "question": "请在 A 和 B 中选择一项：",
+              "options": [
+                {
+                  "label": "A",
+                  "description": ""
+                },
+                {
+                  "label": "B",
+                  "description": ""
+                }
+              ],
+              "multiple": false,
+              "custom": true
+            },
+            {
+              "header": "多选题",
+              "question": "请在甲、乙、丙中选择（可多选）：",
+              "options": [
+                {
+                  "label": "甲",
+                  "description": ""
+                },
+                {
+                  "label": "乙",
+                  "description": ""
+                },
+                {
+                  "label": "丙",
+                  "description": ""
+                }
+              ],
+              "multiple": true,
+              "custom": true
+            },
+            {
+              "header": "自由输入题",
+              "question": "请输入自定义内容：",
+              "options": [],
+              "multiple": false,
+              "custom": true
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "prt_01M33ZCQ1D81MZ4PRAMPNHKE01",
+          "text": "您本次测试的回答为：第一题单选选择了「A」，第二题多选选择了「甲、丙」，第三题自由输入内容为「Codex 自由输入验收」。"
+        },
+        {
+          "type": "question",
+          "id": "prt_01M33ZCQ6V70A666VDXCFA4SNT",
+          "question_id": "qst_01M33ZCQBYA9AGKJNGGJJ4FE27",
+          "status": "rejected",
+          "expires_at": null,
+          "questions": [
+            {
+              "header": "确认操作",
+              "question": "请选择后续操作：",
+              "options": [
+                {
+                  "label": "继续",
+                  "description": ""
+                },
+                {
+                  "label": "停止",
+                  "description": ""
+                }
+              ],
+              "multiple": false,
+              "custom": true
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "prt_01M33ZD06AXMHD6RS068B2SWHX",
+          "text": "已收到，您取消了该项确认。如有其他需要，请随时告诉我。"
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

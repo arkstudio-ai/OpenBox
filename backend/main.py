@@ -360,6 +360,8 @@ def create_app() -> FastAPI:
     async def sandbox_subscription_required(_request, exc):
         return JSONResponse(exc.payload, status_code=403)
 
+    from api.v1.app import CORSMiddlewareExemptingV1
+
     from assistant.scheduling import TaskSchedulingHeld
 
     @application.exception_handler(TaskSchedulingHeld)
@@ -367,7 +369,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
 
     application.add_middleware(
-        CORSMiddleware,
+        CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
@@ -515,6 +517,10 @@ def create_app() -> FastAPI:
 
     application.include_router(agent_router)
     application.include_router(project_brief_router)
+
+    # ── Public harness API (API-key auth, its own error contract) ──
+    from api.v1.app import create_v1_app
+    application.mount("/v1", create_v1_app())
 
     # ── Deployment environment (public; feeds the UI badge) ──
     @application.get("/api/environment")

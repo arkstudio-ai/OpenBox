@@ -1,0 +1,93 @@
+[
+  {
+    "name": "duplicate-attachments",
+    "status": 400,
+    "request_id": "req_01M347822XPRX2XEYK50XJM1WH",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "attachments: Value error, attachment ids must be unique",
+        "request_id": "req_01M347822XPRX2XEYK50XJM1WH",
+        "details": {
+          "field": "attachments"
+        }
+      }
+    }
+  },
+  {
+    "name": "over-20-attachments",
+    "status": 400,
+    "request_id": "req_01M347826PJJ1VM7K7GXJN6XWA",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "attachments: Value error, at most 20 attachments per message",
+        "request_id": "req_01M347826PJJ1VM7K7GXJN6XWA",
+        "details": {
+          "field": "attachments"
+        }
+      }
+    }
+  },
+  {
+    "name": "replay-settled",
+    "status": 202,
+    "request_id": "req_01M34782AKC092HVNR4PMYS1KA",
+    "body": {
+      "session_id": "ses_7YBWVRZ8954FR1HBFXHPW444BZ",
+      "user_message_id": "msg_01M3470R8RAKN98YRGZ5CG3Z5R",
+      "assistant_message_id": "msg_01M3470R8RAKN98YRGZ5CG3Z5S"
+    }
+  },
+  {
+    "name": "low-reconfirm",
+    "status": 400,
+    "request_id": "req_01M34782EYW1VTJK0Q3985FED5",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "quality 'low' is not available on this integration; use high or medium",
+        "request_id": "req_01M34782EYW1VTJK0Q3985FED5"
+      }
+    }
+  },
+  {
+    "name": "sessions-limit0",
+    "status": 400,
+    "request_id": "req_01M34782JHQ60Z5F9T40T2XHMF",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "limit: Input should be greater than or equal to 1",
+        "request_id": "req_01M34782JHQ60Z5F9T40T2XHMF",
+        "details": {
+          "field": "limit"
+        }
+      }
+    }
+  },
+  {
+    "name": "sessions-limit101",
+    "status": 400,
+    "request_id": "req_01M34782PAW3P4HRW4APNVW5G4",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "limit: Input should be less than or equal to 100",
+        "request_id": "req_01M34782PAW3P4HRW4APNVW5G4",
+        "details": {
+          "field": "limit"
+        }
+      }
+    }
+  },
+  {
+    "name": "idle-abort",
+    "status": 200,
+    "request_id": "req_01M34782TBP953HKRYDM5VPV7T",
+    "body": {
+      "ok": true,
+      "aborted": false
+    }
+  }
+]

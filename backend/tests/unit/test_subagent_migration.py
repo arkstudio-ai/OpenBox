@@ -9,7 +9,7 @@ import pytest
 import sqlalchemy as sa
 
 
-REVISION = "d0a2c4e6f8b1"
+REVISION = "e7c9a1b3d5f0"
 PREVIOUS_REVISION = "a8c1e4f7b9d2"
 
 

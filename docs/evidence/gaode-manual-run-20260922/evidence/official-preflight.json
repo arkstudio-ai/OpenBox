@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stdout": "{\n  \"checks\": {\n    \"key_accepted\": true,\n    \"not_found_shape\": true,\n    \"bad_key_is_401\": true,\n    \"low_quality_accepted\": true\n  }\n}\n",
+  "stderr": "preflight: {'key_accepted': True, 'not_found_shape': True, 'bad_key_is_401': True, 'low_quality_accepted': True}\n"
+}

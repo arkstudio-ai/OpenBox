@@ -2,6 +2,7 @@
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from auth.api_key import authenticate as authenticate_api_key, is_api_key
 from auth.jwt import decode_access_token
 from core.log import create_logger
 
@@ -46,6 +47,15 @@ async def get_optional_current_user(
         return None
 
     token = credentials.credentials
+    if is_api_key(token):
+        # Machine credential for the public API. It carries its own workspace,
+        # so downstream routes see the same dict shape as a JWT user plus the
+        # key's binding; a bad key fails closed exactly like a bad JWT.
+        identity = await authenticate_api_key(token)
+        if identity is None:
+            raise HTTPException(status_code=401, detail="Invalid or revoked API key")
+        return identity
+
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

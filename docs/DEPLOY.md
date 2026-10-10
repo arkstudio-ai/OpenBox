@@ -5,6 +5,15 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 高德机：2026-10-10 20:15 `20261010-gaode-ae892425`（合入 main、对齐 gw2 五档）
+
+- 代码 `ae892425` = `feat/harness-api-v1` 合入 `origin/main b586185f`（语音、记忆、Seedance 2.5、管理计费）+ `/v1` 新增 `quality=ultra` 与可选 `resolution`；alembic 新增合并修订 `pd17c8d9e0f1`（两头 `e7c9a1b3d5f0` + `pc06b7c8d9e0`），高德库从 `e7c9a1b3d5f0` 一次升到合并点。后端镜像 `openbox-backend:20261010-gaode-ae892425`、前端 `openbox-frontend-v2:20261010-gaode-fe-0d908bc2`（nginx 模板仍含 `/v1/` 代理）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load`，后端上下文为 `git archive HEAD backend container` 的仓库根（只打 backend 会在 `COPY container/dev-browser` 失败）；经 `oss://bossip/_deploy-tmp/<tag>/` 签名链接中转，机上 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 配置：`config/openbox.json` 照 gw2 换成 8 条视频模型与五档（ultra=Seedance 2.5 / high=Seedance 2.0 / medium=Wan 3.0 / low=MiniMax H3 / fast=H3-Max-Turbo），`provider` 加 `tokenspace`（tokenhub 直连）与 `runninghub`；`backend.env` 追加 `TOKENSPACE_API_KEY`、`RUNNINGHUB_API_KEY`。此前 high 档指向的 `video-sd-1080p-pro` 上游 09-29 起已失效。备份 `config/openbox.json.pre-gaode-align-*`、`config/backend.env.pre-gaode-align-*`、`backups/pre-gaode-align-*.dump`。
+- 发布：`/tmp/gaode_deploy.sh` 在机上后台执行（云助手单条 600 秒上限）；租约 0 时切换，backend 15 秒 healthy，frontend healthy；`/v1/sessions` 401、`/api/environment` 200、`gaode-console.html` 200（公网同）。容器内 `resolve_quality`：ultra→2.5@1080p、high→2.0@1080p、medium→wan3@1080p、low→H3@768p；路由 2.5/2.0→tokenhub、wan3/H3→自有 new-api、Turbo→RunningHub。用测试 Key 建了 5 条 `align-check*` 会话验证档位落库（未删）。tokenhub/RunningHub 从该机可达。
+- 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
+- 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
+
 ## 当前阿里云：2026-10-10 13:54（Audio 3.1 专家与 Omni 普通切换）
 
 - 代码 `4fda2558`，包含 Audio 3.1 适配 `bca9bceb`。后端镜像 `openbox-backend:20261010-voice-model-4fda2558`、前端镜像 `openbox-frontend-v2:20261010-voice-model-4fda2558`；均由本地干净 Git 归档构建为 linux/amd64，私有 OSS 上传并核验镜像、源码和页面哈希后部署。

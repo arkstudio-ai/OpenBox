@@ -58,6 +58,7 @@ from db.models.subagent import SubagentActivation, SubagentDescriptor, SubagentO
 from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantTask, AssistantCommand, TaskSubmission, TaskResult, AssistantReadCursor, AssistantEventProjection
 from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+from db.models.api_key import ApiKey
 from db.models.resource_control import ResourceControlLease
 from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
 from db.models.voice import VoiceCall, VoiceTurn
@@ -77,7 +78,7 @@ __all__ = [
     "CreditBalance", "CreditLedger", "UsageEvent", "PaymentOrder", "PaymentOrderRequest", "BillingSubscription",
     "FleetAlert", "FleetSnapshot", "PoolPurchase",
     "PlatformAccount", "PublishJob", "Notification", "Announcement", "Topic", "QuestionCheckpoint", "SessionExecution",
-    "HotTrendSnapshot", "HotMediaLink",
+    "HotTrendSnapshot", "HotMediaLink", "ApiKey",
 ]
 
 from db.models.push import MobilePresence, MobileSession, PushDevice, PushMessage, PushDelivery

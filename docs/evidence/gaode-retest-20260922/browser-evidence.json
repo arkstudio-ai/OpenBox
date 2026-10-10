@@ -1,0 +1,38 @@
+{
+  "history": {
+    "session": "ses_7YBWW0R2FK3G33C33HR5E12D01",
+    "all_four_turns_rendered": true,
+    "final_file_count": 1
+  },
+  "edited_input_replay": {
+    "status": 202,
+    "request_id": "req_01M34767HQN7Z55R724FJDBGWQ",
+    "same_ids": true
+  },
+  "draft_loss": {
+    "session": "ses_7YBWVRZ8954FR1HBFXHPW444BZ",
+    "question": "qst_01M3475T0J5HQ4A27FY623G5CA",
+    "input": "草稿保持测试123",
+    "poll_at_input": 14,
+    "poll_at_readback": 23,
+    "readback_value": "",
+    "signed_url_changed_each_poll": true
+  },
+  "filechooser": {
+    "multiple": true,
+    "setFiles": "success after browser reconnected",
+    "upload_statuses": [
+      201,
+      201
+    ],
+    "files": [
+      "fil_01M347GQR0V2V9CPF0YKFNF2KZ",
+      "fil_01M347GQXH03DYTKJGSJE5VA5S"
+    ],
+    "request_ids": [
+      "req_01M347GQQN158TXERV9WBBR5BQ",
+      "req_01M347GQX5GXK5KZTXTRZAKZ1Z"
+    ]
+  },
+  "low_option_present": false
+}

@@ -226,4 +226,45 @@ SSE、OpenAI 壳、设置页 Key 管理、全局事件流不进本期。
 ### 10.4 约束
 - 主工作树被其他会话共用，所有开发在独立 worktree + 分支进行，经 PR 合并，不直接在主工作树提交。
 - 对外字段"只增不删"，与 v1.1 文档冲突的实现以文档为准；确需改文档先改文档再改代码。
-- 待高德答复：`low` 档 768p 是否开放；未答复前 D 的校验按只接受 `high/medium` 实现，`low` 返回 400。
+- ~~待高德答复：`low` 档 768p 是否开放；未答复前 D 的校验按只接受 `high/medium` 实现，`low` 返回 400。~~ 09-22 第二轮实测后拍板开放 `low`（768p 预览档）。
+
+### 10.5 A / B / E 实施记录（2026-09-21，分支 `feat/harness-api-v1`）
+
+代码位置与约定，供 C / D / F 对接：
+
+| 项 | 实现 |
+|---|---|
+| 挂载 | `main.py` 以子应用挂 `/v1`（`api/v1/app.py:create_v1_app`），自带错误体 `{"error":{code,message,request_id}}`、`X-Request-Id`、`X-RateLimit-*`；`/v1/docs` 有独立 OpenAPI |
+| 鉴权 | `auth/api_key.py`；`auth/middleware.py` 对 `obx_sk_` 前缀走 Key 校验，identity 多带 `auth_kind="api_key"`、`api_key_id`、`workspace_id`、`scopes`、`policy`、`rate_limit`；`auth/workspace.py` 对 Key 忽略 `X-Workspace-Id`。JWT 仍可调 `/v1`（带 `X-Workspace-Id`），便于调试 |
+| 表与迁移 | `db/models/api_key.py`（`api_keys`）；`sessions` 新增 `quality` / `metadata` / `api_key_id`；alembic `e7c9a1b3d5f0`（**部署前先跑迁移**，`/health` 就绪检查已包含新表列） |
+| 签发 | `uv run python scripts/issue_api_key.py --user <用户名或id> --name "高德测试" [--workspace ws_x] [--expires-days 90] [--policy '{...}'] [--rate-limit 60/minute]`；`--list` / `--revoke key_x`。明文只打印一次 |
+| policy 默认 | `permission=auto_allow`、`question=auto_reject`、`interaction_timeout_s=600`、`allowed_tools=[]`、`max_concurrent_sessions=5`（`auth/api_key.py:DEFAULT_POLICY`，C 读前三项） |
+| 公开 id | `session_`→`ses_`、`message_`→`msg_`、`part_`→`prt_`、`asset_`→`fil_`、追问裸 ULID→`qst_`（`api/v1/ids.py`）。**assistant 消息 id = 触发它的 user 消息 ULID + 1**：内部每个 LLM step 是一条 assistant 消息，对外按轮折叠成一条，id 因此可在 202 时就给出 |
+| 折叠规则 | `api/v1/public.py:public_messages`：真实 user 消息开启一轮，之后所有 assistant step 并入；纯 synthetic 的 user 消息（plan 进入等）不显示；`finish` 取最新 step（`length`→`stop`），无终态 step 时会话仍活跃→`null`、会话 `error`→`error`、否则 `stop`；part 只出 `text`（非 synthetic）/`question`/`file`（有 `asset_id` 且非 transient；`url` 24h 签名） |
+| 确认卡桥接 | C 未落地前，`question` 部件由 `tool` 部件的 `metadata.question_id` + `question_checkpoints` 行合成（`status`：pending/answered/rejected/expired→timeout，pending 过期也按 timeout）；C 落地原生 `type=question` 部件后自动优先原生、不重复 |
+| 会话状态 | `busy/compacting/retry/queued/waiting_input`→`busy`，`error`→`error`，其余 `idle`；发消息时会话活跃（含等卡）→ `409 SESSION_BUSY`，不抢占 |
+| 发消息 | 走 durable inbox（`accept_inbox_item` + `wake_inbox_session`），`client_message_id` 幂等（内容不同→`409 DUPLICATE_CLIENT_MESSAGE_ID`）；文本 > 20 KB→413；附件 ≤ 20 |
+| 402 预检 | `billing/service.py:precheck_balance`：仅 `BILLING_MODE=enforce` 生效，与 `UsageMeter.start` 同口径（先记本期额度再判 `<= 0`） |
+| 限流 | 每 Key 固定窗口（`config.rate_limit_api` 或 Key 自带 `rate_limit`），超限 `429 RATE_LIMITED` + `Retry-After`；每 Key 同时处理中的会话 ≤ `policy.max_concurrent_sessions`（`429 CONCURRENT_LIMIT_EXCEEDED`），按 `sessions.api_key_id` 计数；用户级并发仍由 driver 配额兜底 |
+| quality | `api/v1/quality.py`：`high/medium` 固定 1080p，`low` 暂 400（§10.4）；`resolve_quality` 读 `model_tiers.video`，D 只改这一个文件即可；会话级 9:16/无字幕/≤30s 注入仍归 D |
+| 文件 | `POST /v1/files` 服务端收字节→OSS（≤ 200 MB；jpg/png/webp/mp4/mov/mp3/wav/m4a，其余 415）；`duration_s/width/height` 为 `null`（§10.2）；`GET /v1/files/{id}/content` 302 到 24h 签名地址 |
+| 测试 | `tests/unit/test_api_key_auth.py`、`test_v1_public.py`、`test_v1_routes.py`、`test_api_key_migration.py`、`test_gaode_flow_script.py` |
+| 联调脚本（F） | `uv run python scripts/gaode_flow_e2e.py --base-url https://<host>/v1 --key obx_sk_… --material road.mp4 --text "…"`：上传→建会话→发需求→每 2.5s 轮询→答卡（`--answers first|interactive|<JSON>`）→取成片→重放同一 `client_message_id`→读 `credits_used`→刷新下载链接，每步做契约断言，stdout 出 JSON 摘要，全过才退出 0；`--preflight-only` 只验 Key 与错误体；`--download-dir` 落盘成片。只走 HTTP，不依赖后端代码 |
+
+**09-22 验收后修正**（报告 docs/evidence/GAODE_ACCEPTANCE_20260922.md）：视频任务超出工具内联等待后模型会结束本轮，任务完成时无人交付——现由 `video/job_recovery.py` 在恢复完成后以系统续接（`vjob:` 保留前缀、synthetic 文本）唤醒会话继续交付；公开层在会话有未完成视频任务或待处理续接时保持 `finish=null`、`status=busy`，续接产生的 assistant step 折叠进同一轮；`result` 角色映射为 `final`，`stop` 结束却无 final 时最后一个视频视为成片。忙碌时同键重放直接按收件箱行答复（不进 accept 事务，那里会与运行中的轮次争锁挂到 504）；API Key 会话的卡片带 `expires_at`（policy 600s）且工具暴露 `custom`；重复答卡 409；无 step 即中止的轮 `aborted`；未知路径 404 统一错误体；预检带 X-Request-Id。冷启动：新镜像重建容器后首轮同步 import 依赖树卡事件循环 1–5 分钟，镜像已预编译字节码并设 `LITELLM_LOCAL_MODEL_COST_MAP=True`。
+
+未做（按 §10.2 / 范围）：`progress` 部件、SSE、账本 `api_key_id`、Key 管理 UI（`GET /v1/sessions` 列表 09-22 已补，供控制台最近会话）。
+
+### 10.6 高德环境（2026-09-21 建，联调后即生产）
+
+| 项 | 值 |
+|---|---|
+| ECS | `openbox-gaode` i-uf6fm76cksm8z1cd7bqs，cn-shanghai-b，e-c1m2.xlarge 4c8g，包月自动续费；公网 47.117.178.93，内网 10.100.1.89；安全组 openbox-gaode-sg（80 仅 lighthouse，2222 桌面隧道，无 22，运维走云助手） |
+| 域名 | `https://gaode.bossipai.com.cn` → 腾讯 lighthouse nginx（`/opt/nginx/conf.d/gaode.conf`，Let's Encrypt 证书 09-22 签发、`bossip-gaode-cert-renew.timer` 自动续）→ ECS:80；DNS 在 DNSPod（09-22 已加） |
+| 栈 | `/opt/openbox` 与 gw2 同构但无 trajectory overlay；镜像 backend `20260922-gaode-d92cd11` / frontend `20260923-gaode-f233fb0`（本分支；前端含 `/v1` nginx 路由与 15 分钟上传超时，后端含 `/v1` 跨域放行）；`BILLING_MODE=enforce`、`WUYING_ENV_TAG=gaode`、`POOL_ENABLED=true POOL_AUTO_PURCHASE=false`、`RATE_LIMIT_API=60/minute` |
+| 桌面 | ecd-d1pzbahxry54o9f9e，eds.enterprise_office.8c16g 包月，已绑定高德 workspace（一订阅一台） |
+| 账号 | 用户 `gaode`（workspace 01M31Q8VPZSFYV95BDFM608D33，手工挂 max 年付套餐 + 5000 测试积分）、管理员 `obx-ops`；密码与 Key 明文在机上 `/opt/openbox/secrets/`（root 600） |
+| Key | key_01M31QPV8Q36CFJHZXJ7V2GT08（60 天，policy 600s / 10 并发，09-23 按高德要求由 5 调到 10，同步 `MAX_CONCURRENT_AGENTS=10`），签发命令 `docker compose exec backend python scripts/issue_api_key.py …` |
+| 联调材料 | [external/OpenBox-Gaode-联调验证步骤.md](./external/OpenBox-Gaode-联调验证步骤.md)（curl 逐步）、[external/gaode-console.html](./external/gaode-console.html)（单文件控制台，托管于 `https://gaode.bossipai.com.cn/gaode-console.html`，也可对方自托管；`/v1` 允许任意来源跨域）、`scripts/gaode_flow_e2e.py` |
+| 验收 | 09-21：preflight 4/4；纯文本轮 14.6s；bash 工具轮在 8c16g 桌面上执行成功（隧道 18100 up）；计费 enforce 生效。09-22：公网 HTTPS 全流程（preflight 4/4 + 纯文本轮 10s）通过 |
+

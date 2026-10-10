@@ -30,8 +30,8 @@ from tool.tool import ToolContext
 
 def test_official_prices_and_exact_single_token():
     assert quote("openai/gpt-5.6-luna", normalize_usage({"input": 1})).credits == Decimal("0.0000002")
-    assert quote("proxy/qwen3.8-flash", normalize_usage({"input": 1_000_000, "output": 1_000_000})).credits == Decimal("3.5")
-    assert quote("openai/gemini-3.8-flash", normalize_usage({"input": 1_000_000})).credits == Decimal("5.084025")
+    assert quote("proxy/qwen3.8-flash", normalize_usage({"input": 1_000_000, "output": 1_000_000})).credits == Decimal("6.0")  # T1 快速档 1.4 + 4.6
+    assert quote("openai/gemini-3.8-flash", normalize_usage({"input": 1_000_000})).credits == Decimal("10.2")  # T1 专业档
     assert quote("openai/claude-opus-5", normalize_usage({"input": 1_000_000})).credits == Decimal("33.8935")
     assert quote("openai/deepseek-chat", {"input": 1, "output": 0}).credits is None
     assert quote("openai/made-up-model", {"input": 1, "output": 0}).credits is None

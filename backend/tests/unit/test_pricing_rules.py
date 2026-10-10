@@ -38,20 +38,20 @@ def test_keys_parse_and_map_usage_rows_back_to_items():
 
 def test_without_rules_the_catalogue_is_the_base_file_itself():
     assert catalogue() is base_catalogue()
-    assert quote("openai/gemini-3.8-flash", normalize_usage({"input": 1_000_000})).credits == Decimal("5.084025")
+    assert quote("openai/gemini-3.8-flash", normalize_usage({"input": 1_000_000})).credits == Decimal("10.2")
 
 
 def test_llm_rule_replaces_the_price_in_cny_and_detaches_the_alias():
-    # gemini-3.8-flash is an alias of 3.7's promotional USD price; pricing it directly ends that.
-    rule = _rule("llm:gemini-3.8-flash", sale={"input": "8", "output": "40", "cache_read": "1"})
+    # gpt-5.6 is an alias of gpt-5.6-sol's USD price; pricing it directly ends that.
+    rule = _rule("llm:gpt-5.6", sale={"input": "8", "output": "40", "cache_read": "1"})
     data = rules.overlay(base_catalogue(), [rule])
-    assert "gemini-3.8-flash" not in data["aliases"]
+    assert "gpt-5.6" not in data["aliases"]
     assert data["version"].startswith(base_catalogue()["version"] + "+db")
-    q = quote("openai/gemini-3.8-flash", normalize_usage({"input": 1_000_000, "output": 1000}), rates=data)
+    q = quote("openai/gpt-5.6", normalize_usage({"input": 1_000_000, "output": 1000}), rates=data)
     assert q.credits == Decimal("8.04") and q.snapshot["rule_id"] == rule.id
-    assert q.snapshot["currency"] == "CNY" and "valid_until" not in data["models"]["gemini-3.8-flash"]
+    assert q.snapshot["currency"] == "CNY" and "long_context_above" not in data["models"]["gpt-5.6"]
     # The base object was not touched.
-    assert "gemini-3.8-flash" in base_catalogue()["aliases"]
+    assert "gpt-5.6" in base_catalogue()["aliases"]
     assert base_catalogue().get("rules_applied") is None
 
 
@@ -60,8 +60,8 @@ def test_llm_quote_reports_the_cost_at_the_recorded_basis():
     # RovinAI basis: 0.5M input @6 + 0.5M cache @0.7 + 0.1M output @30 = 3 + 0.35 + 3 = 6.35
     assert q.cost == Decimal("6.35") and q.snapshot["cost"]["basis"] == "rovinai"
     assert q.snapshot["cost_credits"] == "6.350000000000"
-    # Sale below cost here: the admin table flags it; the quote itself only reports both numbers.
-    assert q.credits < q.cost
+    # T1 sale: 0.5M @10.2 + 0.5M @1.19 + 0.1M @51 = 5.1 + 0.595 + 5.1 = 10.795 — 70% over cost.
+    assert q.credits == Decimal("10.795") and q.credits > q.cost
     none = quote("openai/claude-opus-5", normalize_usage({"input": 1000}))
     assert none.credits is not None and none.cost is None and "cost" not in none.snapshot
 
@@ -71,13 +71,13 @@ def test_video_rule_touches_one_resolution_and_disabling_removes_it():
     data = rules.overlay(base_catalogue(), [priced])
     assert media.quote_generation("MiniMax-H3", "768p", 10, rates=data).credits == Decimal("4.00")
     assert media.quote_generation("MiniMax-H3", "768p", 10, rates=data).snapshot["rule_id"] == "pricing_01A"
-    assert media.quote_generation("MiniMax-H3", "512p", 10, rates=data).credits == Decimal("3.30")  # untouched
+    assert media.quote_generation("MiniMax-H3", "512p", 10, rates=data).credits == Decimal("1.70")  # untouched
     # Cost still comes from the base cost block when the rule carries none.
     assert media.quote_generation("MiniMax-H3", "768p", 10, rates=data).cost == Decimal("0.90")
     off = _rule("video-gen:MiniMax-H3:768p", status="disabled", rid="pricing_01B", revision=2)
     data = rules.overlay(base_catalogue(), [off])
     assert media.quote_generation("MiniMax-H3", "768p", 10, rates=data).credits is None
-    assert media.quote_generation("MiniMax-H3", "512p", 10, rates=data).credits == Decimal("3.30")
+    assert media.quote_generation("MiniMax-H3", "512p", 10, rates=data).credits == Decimal("1.70")
 
 
 def test_a_rule_can_price_an_item_the_base_file_never_had():
@@ -96,7 +96,7 @@ def test_expired_and_future_rules_do_not_apply():
     expired = _rule("video-gen:wan3.0-video:720p", sale={"per_second": "9"}, valid_until=at - timedelta(seconds=1))
     live = _rule("video-gen:wan3.0-video:720p", sale={"per_second": "9"}, valid_until=at + timedelta(days=1))
     assert rules.overlay(base_catalogue(), [expired], at=at) is base_catalogue() or \
-        media.quote_generation("wan3.0-video", "720p", 1, rates=rules.overlay(base_catalogue(), [expired], at=at)).credits == Decimal("0.60")
+        media.quote_generation("wan3.0-video", "720p", 1, rates=rules.overlay(base_catalogue(), [expired], at=at)).credits == Decimal("1.40")
     assert media.quote_generation("wan3.0-video", "720p", 1, rates=rules.overlay(base_catalogue(), [live], at=at)).credits == Decimal("9")
 
 
@@ -127,10 +127,10 @@ def test_fragment_validation_rejects_floats_negatives_and_wrong_shapes():
 
 def test_item_sale_and_cost_read_the_effective_fragment():
     base = base_catalogue()
-    assert rules.item_sale(base, ItemKey.parse("video-gen:wan3.0-video:720p")) == {"per_second": "0.60"}
+    assert rules.item_sale(base, ItemKey.parse("video-gen:wan3.0-video:720p")) == {"per_second": "1.40"}
     assert rules.item_cost(base, ItemKey.parse("video-gen:MiniMax-H3:2k"))["per_second"] == "0.15"
     assert rules.item_sale(base, ItemKey.parse("video-gen:wan3.0-video:2k")) is None
-    assert rules.item_sale(base, ItemKey.parse("llm:gemini-3.8-flash"))["input"] == "0.75"
+    assert rules.item_sale(base, ItemKey.parse("llm:gemini-3.8-flash"))["input"] == "10.2"
     assert rules.item_cost(base, ItemKey.parse("llm:gpt-5.6-luna")) is None
 
 

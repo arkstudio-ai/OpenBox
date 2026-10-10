@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-10.2",
+  "version": "2026-10-10.3",
   "verified_at": "2026-09-05",
   "credits_per_cny": "1",
   "usd_cny": "6.7787",
@@ -181,12 +181,12 @@
       "vendor": "qwen",
       "currency": "CNY",
       "region": "cn-beijing",
-      "input": "12",
-      "output": "36",
-      "cache_read": "1.5",
-      "cache_read_explicit": "1",
-      "cache_write": "15",
-      "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-max",
+      "input": "20.4",
+      "output": "61.2",
+      "cache_read": "2.55",
+      "cache_read_explicit": "1.7",
+      "cache_write": "25.5",
+      "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1 深度档；缓存写与显式缓存按同倍率 ×1.7 推导",
       "cost": {
         "basis": "bailian-list",
         "channel": "自有 new-api ch125 → UEE → 百炼",
@@ -203,12 +203,12 @@
       "vendor": "qwen",
       "currency": "CNY",
       "region": "cn-beijing",
-      "input": "0.8",
-      "output": "2.7",
-      "cache_read": "0.1",
-      "cache_read_explicit": "0.1",
-      "cache_write": "1.25",
-      "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-flash",
+      "input": "1.4",
+      "output": "4.6",
+      "cache_read": "0.17",
+      "cache_read_explicit": "0.17",
+      "cache_write": "2.13",
+      "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1 快速档；缓存写按同倍率 ×1.7 推导",
       "cost": {
         "basis": "bailian-list",
         "channel": "自有 new-api ch125 → UEE → 百炼",
@@ -223,11 +223,29 @@
     },
     "gemini-3.7-flash": {
       "vendor": "google",
-      "currency": "USD",
-      "input": "0.75",
-      "output": "3.75",
-      "cache_read": "0.075",
-      "valid_until": "2026-12-31",
+      "currency": "CNY",
+      "input": "10.2",
+      "output": "51",
+      "cache_read": "1.19",
+      "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1 专业档（视频分析沿用专业档价）",
+      "cost": {
+        "basis": "rovinai",
+        "channel": "自有 new-api ch116 → UEE api.ueejavelin.org → CPA Antigravity 账号（ch19/20）",
+        "currency": "CNY",
+        "input": "6",
+        "output": "30",
+        "cache_read": "0.7",
+        "source": "RovinAI 模型广场充值折算价（页面标 $6/$30/$0.7，充值按 1 元 = 1 显示美元÷6.78）；2026-10-10 拍板以此为 gemini 成本口径",
+        "verified_at": "2026-10-10"
+      }
+    },
+    "gemini-3.8-flash": {
+      "vendor": "google",
+      "currency": "CNY",
+      "input": "10.2",
+      "output": "51",
+      "cache_read": "1.19",
+      "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1 专业档（默认）",
       "cost": {
         "basis": "rovinai",
         "channel": "自有 new-api ch116 → UEE api.ueejavelin.org → CPA Antigravity 账号（ch19/20）",
@@ -243,8 +261,7 @@
   "aliases": {
     "gpt-5.6": "gpt-5.6-sol",
     "qwen3.8-max-0902": "qwen3.8-max",
-    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
-    "gemini-3.8-flash": "gemini-3.7-flash"
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001"
   },
   "unpriced": {
     "deepseek-chat": "Official alias retired on 2026-07-24; configure the gateway's exact model mapping before charging.",
@@ -343,11 +360,11 @@
         "vendor": "aliyun-bailian",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.30",
-          "720p": "0.60",
-          "1080p": "1.20"
+          "480p": "0.70",
+          "720p": "1.40",
+          "1080p": "2.70"
         },
-        "source": "docs/BILLING_PLAN.md §5.1 百炼刊例价",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：标准档 720p 1.40 / 1080p 2.70 为表列值；480p 按 720p 倍率 ×2.333 推导；成本见 cost",
         "cost": {
           "basis": "bailian-list",
           "channel": "自有 new-api ch123 wan3-video-adapter → 百炼（自有 workspace key 直付）",
@@ -365,11 +382,11 @@
         "vendor": "aliyun-bailian",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.45",
-          "720p": "0.90",
-          "1080p": "1.80"
+          "480p": "1.01",
+          "720p": "2.03",
+          "1080p": "4.05"
         },
-        "source": "docs/BILLING_PLAN.md §5.1 官方英文文档 USD 折算",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：表未列；按标准档倍率 ×2.25 推导；成本见 cost",
         "cost": {
           "basis": "bailian-list",
           "channel": "自有 new-api ch123 wan3-video-adapter → 百炼（自有 workspace key 直付）",
@@ -387,11 +404,11 @@
         "vendor": "volcengine",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.45",
-          "720p": "1.00",
-          "1080p": "2.48"
+          "480p": "0.99",
+          "720p": "2.23",
+          "1080p": "5.55"
         },
-        "source": "2026-10-10 抬到成本线：TokenHub = 火山刊例 ¥46/百万 token（1080p ¥51），按 W×H×24/1024 折算 0.442/0.994/2.479 每秒",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：质量档 1080p 5.55 为表列值；480p/720p 按同档倍率 ×2.239 推导；成本见 cost",
         "cost": {
           "basis": "tokenhub",
           "channel": "openbox 后端直连 tokenhub.moligroup.com（TokenSpace 新址，火山刊例无折扣）",
@@ -409,10 +426,10 @@
         "vendor": "volcengine",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.36",
-          "720p": "0.80"
+          "480p": "0.80",
+          "720p": "1.80"
         },
-        "source": "2026-10-10 抬到成本线：TokenHub Fast ¥37/百万 token，折算 0.355/0.799 每秒（此前误按 mini 的 ¥23/M 定为 0.23/0.48）",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：表未列；按视频通用倍率 ×2.25 推导；成本见 cost",
         "cost": {
           "basis": "tokenhub",
           "channel": "openbox 后端直连 tokenhub.moligroup.com",
@@ -429,11 +446,11 @@
         "vendor": "tokenspace",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.67",
-          "720p": "1.51",
-          "1080p": "3.74"
+          "480p": "1.49",
+          "720p": "3.35",
+          "1080p": "8.30"
         },
-        "source": "火山刊例 Seedance 2.5（2026-07-31 公布）：无视频输入 480p/720p ¥70/百万 token、1080p ¥77/百万 token；含视频输入 480p/720p ¥42。按 §5.1 公式 token/s = W×H×24/1024（16:9）折算：480p 9,608 tok/s→0.67，720p 21,600→1.51，1080p 48,600→3.74；官方示例 5s 480p ¥3.36 / 720p ¥7.56 吻合。走 TokenSpace（tokenhub.moligroup.com）分销，刊例价为成本上界，售价由运营定；2026-10-08",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：极致档 1080p 8.30 为表列值；480p/720p 按同档倍率 ×2.218 推导；成本见 cost",
         "cost": {
           "basis": "tokenhub",
           "channel": "openbox 后端直连 tokenhub.moligroup.com",
@@ -475,12 +492,12 @@
         "vendor": "minimax",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.33",
-          "512p": "0.33",
-          "768p": "0.50",
-          "2k": "0.80"
+          "480p": "0.17",
+          "512p": "0.17",
+          "768p": "0.25",
+          "2k": "0.42"
         },
-        "source": "docs/BILLING_PLAN.md §5.1 MiniMax 官方",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：灵活档 768p 0.25 为表列值；其余按同档倍率 ×2.778 推导；成本见 cost",
         "cost": {
           "basis": "metaso",
           "channel": "自有 new-api ch114 → metaso.cn/api/minimax（秘塔分销）",
@@ -505,15 +522,15 @@
         "vendor": "runninghub",
         "currency": "CNY",
         "per_second": {
-          "480p": "0.22",
-          "768p": "0.34"
+          "480p": "0.50",
+          "768p": "0.77"
         },
         "verified_at": "2026-09-24",
         "operations": [
           "text-to-video",
           "image-to-video"
         ],
-        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "source": "bossip 合作与定价方案（公开版 2026-10-10）标准阶梯 T1：表未列（快速档）；按视频通用倍率 ×2.25 推导；成本见 cost",
         "verification": "Official price-preview: both operations at 5/10/15 seconds; 480p=1.10/2.20/3.30 CNY, 768p=1.70/3.40/5.10 CNY. Requested duration is billed, not the encoded MP4 tail.",
         "cost": {
           "basis": "runninghub",

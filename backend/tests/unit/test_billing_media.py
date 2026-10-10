@@ -124,9 +124,10 @@ async def test_precheck_only_bites_in_enforce(monkeypatch):
 # ── video generation ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("model,res,seconds,credits", [
-    ("wan3.0-video", "720p", 5, "3.00"), ("wan3.0-video", "480p", 5, "1.50"), ("wan3.0-video", "1080p", 4.5, "6.00"),
+    # Sale prices are the 2026-10-10 标准阶梯 T1 list.
+    ("wan3.0-video", "720p", 5, "7.00"), ("wan3.0-video", "480p", 5, "3.50"), ("wan3.0-video", "1080p", 4.5, "13.50"),
     # Seedance 2.0 / Fast were raised to the TokenHub cost line on 2026-10-10.
-    ("doubao-seedance-2-0-260128", "720p", 15, "15.00"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "4.00"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
+    ("doubao-seedance-2-0-260128", "720p", 15, "33.45"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "9.00"), ("MiniMax-H3", "768p", 10, "2.50"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
 ])
 def test_generation_quote_is_requested_seconds_times_tier_rate(model, res, seconds, credits):
     q = media.quote_generation(model, res, seconds)
@@ -137,10 +138,10 @@ def test_generation_quote_is_requested_seconds_times_tier_rate(model, res, secon
 def test_generation_quote_carries_the_channel_cost_beside_the_sale_price():
     # MiniMax-H3 via metaso: 0.09/s up to 15 s, doubled beyond; the sale price stays flat.
     short = media.quote_generation("MiniMax-H3", "768p", 10)
-    assert (short.credits, short.cost) == (Decimal("5.00"), Decimal("0.90"))
+    assert (short.credits, short.cost) == (Decimal("2.50"), Decimal("0.90"))
     assert short.snapshot["cost"]["basis"] == "metaso" and short.snapshot["cost_credits"] == "0.900000000000"
     long = media.quote_generation("MiniMax-H3", "768p", 20)
-    assert (long.credits, long.cost) == (Decimal("10.00"), Decimal("3.60"))
+    assert (long.credits, long.cost) == (Decimal("5.00"), Decimal("3.60"))
     assert long.snapshot["cost"]["multiplier"] == "2"
     # A model without a cost block is priced but has no cost (None, never 0).
     legacy = media.quote_generation("video-sd-720p-proⅠ", "720p", 12)
@@ -152,7 +153,7 @@ def test_generation_quote_is_unpriced_for_unknown_model_tier_or_smart_duration()
     assert media.quote_generation("wan3.0-video", "2k", 5).credits is None
     assert media.quote_generation("wan3.0-video", "720p", None).credits is None
     assert media.quote_generation("wan3.0-video", "720p", -1).credits is None
-    assert media.quote_generation("bossip/wan3.0-video", "720p", 5).credits == Decimal("3.00")  # provider prefix stripped
+    assert media.quote_generation("bossip/wan3.0-video", "720p", 5).credits == Decimal("7.00")  # provider prefix stripped
 
 
 async def test_generation_settles_once_in_shadow_and_records_seconds(monkeypatch):
@@ -160,7 +161,7 @@ async def test_generation_settles_once_in_shadow_and_records_seconds(monkeypatch
     job, asset, wid = await _fixtures()
     first = await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
     again = await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
-    assert first == again == Decimal("3.00")
+    assert first == again == Decimal("7.00")
     events, ledger, balance = await _events(wid)
     assert len(events) == 1 and events[0].kind == "video_generate" and events[0].status == "shadow"
     assert events[0].tokens["seconds_billed"] == 5 and events[0].tokens["resolution"] == "720p"
@@ -172,7 +173,7 @@ async def test_generation_enforce_charges_and_unpriced_tier_is_recorded_not_char
     job, asset, wid = await _fixtures(balance=Decimal("10"))
     await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
     events, ledger, balance = await _events(wid)
-    assert events[0].status == "charged" and ledger[0].amount == Decimal("-3.00") and balance == Decimal("7.00")
+    assert events[0].status == "charged" and ledger[0].amount == Decimal("-7.00") and balance == Decimal("3.00")
     job2, asset2, wid2 = await _fixtures(balance=Decimal("10"))
     assert await media.settle_generation(job2, asset2, model_id="doubao-seedance-2-0-unpriced-000000", resolution="720p", duration_sec=5) is None
     events, ledger, balance = await _events(wid2)
@@ -232,13 +233,14 @@ def test_billing_status_lines_only_claim_a_deduction_in_enforce(monkeypatch):
     assert media.billing_status_lines() == ["billing_mode=enforce"]
 
 
-@pytest.mark.parametrize('resolution,seconds,amount', [
-    ('480p', 5, '1.10'), ('480p', 15, '3.30'), ('768p', 5, '1.70'), ('768p', 15, '5.10'),
+@pytest.mark.parametrize('resolution,seconds,amount,cost', [
+    ('480p', 5, '2.50', '1.10'), ('480p', 15, '7.50', '3.30'), ('768p', 5, '3.85', '1.70'), ('768p', 15, '11.55', '5.10'),
 ])
-def test_runninghub_quote_matches_live_official_price_preview(resolution, seconds, amount):
+def test_runninghub_quote_matches_live_official_price_preview(resolution, seconds, amount, cost):
+    # The cost side is RunningHub's own price preview; the sale is the T1 list (×2.25).
     price = media.quote_generation('MiniMax-H3-Max-Turbo', resolution, seconds)
-    assert price.credits == Decimal(amount)
-    assert price.snapshot['verified_at'] == '2026-09-24'
+    assert (price.credits, price.cost) == (Decimal(amount), Decimal(cost))
+    assert price.snapshot['cost']['basis'] == 'runninghub'
 
 
 @pytest.mark.parametrize('mode', ['shadow', 'enforce'])
@@ -254,11 +256,11 @@ async def test_runninghub_saved_quote_survives_rate_changes_and_charges_once(mon
     monkeypatch.setattr(media, 'catalogue', lambda: {'version': 'changed', 'verified_at': 'later', 'media': {}})
     for _ in range(2):
         assert await media.settle_generation(job, asset, model_id='MiniMax-H3-Max-Turbo',
-                                             resolution='768p', duration_sec=5) == Decimal('1.70')
+                                             resolution='768p', duration_sec=5) == Decimal('3.85')
     events, ledger, balance = await _events(wid)
     assert len(events) == 1 and events[0].tokens['seconds_billed'] == 5
     assert len(ledger) == (1 if mode == 'enforce' else 0)
-    assert balance == Decimal('3.30' if mode == 'enforce' else '5')
+    assert balance == Decimal('1.15' if mode == 'enforce' else '5')
 
 
 async def test_invalid_saved_quote_cannot_charge_or_fall_back_to_current_price(monkeypatch):

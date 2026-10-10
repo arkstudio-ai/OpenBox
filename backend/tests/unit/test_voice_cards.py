@@ -100,7 +100,7 @@ async def test_cards_pending_reads_main_cards_with_handles_and_task_questions(mo
                                "impact": "其中2个会话一起删除，目录之后移到回收站。", "options": ["确认", "取消"],
                                "high_risk": True}]
     assert [item["answer_how"] for item in value["task_questions"]] == [
-        "用户说了怎么答，就把原话交给 assistant_ask，由个人助理代答", "要用户自己在屏幕上处理"]
+        "用户明确回答后，用 assistant_ask 结合任务和问题转交选择；保留原话核对，不替用户补选", "要用户自己在屏幕上处理"]
     assert desk.card_id("1") == "q-del" and desk.open() == ["q-del"]
     assert (await cards.pending(scope, {}))["cards"][0]["card"] == "1"  # the same card keeps its handle
 
@@ -338,7 +338,9 @@ async def test_pending_form_is_announced_once_without_a_tool_call_even_when_repo
     bridge.tell_reports = False
     await bridge.waiting_cards([], [FORM])
     note = provider.commands("note")[-1][1]
-    assert "字幕" in note and "片名" in note and "q-video" in note
+    assert "q-video" in note and "50秒" in note
+    assert "字幕" not in note and "片名" not in note  # later choices cannot distract from this decision
+    assert len(bridge.desk.questions[FORM["id"]]["questions"]) == 3  # still available for handover
     assert provider.commands("create")[-1] == ("create", phrases.question_instructions("zh"))
     await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
     await bridge.waiting_cards([], [FORM])
@@ -370,13 +372,17 @@ async def test_second_form_waits_for_answer_and_confirmation_cards_take_priority
     assert len(provider.commands("note")) == 2 and "删除项目" in provider.commands("note")[-1][1]
 
 
-async def test_voice_answer_preserves_form_id_multiple_choices_and_dictation_and_skips_brief_planner(call):
+async def test_voice_answer_is_briefed_with_original_choices_and_still_reaches_the_real_assistant(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
 
-    async def wrong_plan(**kwargs):
-        pytest.fail("card answers must reach requests.answer, not be answered locally by the brief planner")
-    bridge.planner = wrong_plan
+    from voice.handover import Plan
+    planned = []
+    brief = "给视频任务填写：时长50秒，字幕中文和英文，片名为打工人的离谱日常。"
+    async def planner(**kwargs):
+        planned.append(kwargs)
+        return Plan("brief", brief)
+    bridge.planner = planner
     await bridge.waiting_cards([], [FORM])
     note = provider.commands("note")[-1][1]
     await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
@@ -387,9 +393,45 @@ async def test_voice_answer_preserves_form_id_multiple_choices_and_dictation_and
                                                      response_id="answer"), done("answer"))
     [ref] = link.started
     assert ref.transcript == words and ref.context["task_questions"] == [cards.spoken_question(FORM)]
+    assert ref.text == brief and ref.context["handover_source"] == "model"
+    assert planned[0]["questions"] == [cards.spoken_question(FORM)] and planned[0]["words"] == words
     assert not bridge.desk.answers  # task answers cannot bypass the assistant's policy through question.reply
     link.finish("answer-call", speech="已填写")
     await drain()
+
+
+async def test_a_new_task_is_still_briefed_while_an_old_form_is_pending(call):
+    from voice.handover import Plan
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    planned = []
+    async def planner(**kwargs):
+        planned.append(kwargs)
+        return Plan("brief", "在采购项目整理本月供应商报价，按单价升序。")
+    bridge.planner = planner
+    bridge.desk.show_question(FORM, "zh")
+    words = "另外，采购项目的本月报价表按单价排一下。"
+    await said(bridge, words, "new-task")
+    await replay(bridge, started("new-task"), tool_call("new-call", text=words, response_id="new-task"), done("new-task"))
+    [ref] = link.started
+    assert planned and planned[0]["words"] == words
+    assert ref.text == "在采购项目整理本月供应商报价，按单价升序。" and ref.transcript == words
+
+
+async def test_a_card_planner_cannot_claim_the_answer_was_submitted_instead_of_dispatching_it(call):
+    from voice.handover import Plan
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    async def planner(**kwargs):
+        return Plan("answer", "已经全部提交了。")
+    bridge.planner = planner
+    bridge.desk.show_question(FORM, "zh")
+    await said(bridge, "第一个", "choice")
+    await replay(bridge, started("choice"), tool_call("choice-call", text="第一题选第一个",
+                 arguments=json.dumps({"question_id": "q-video"}), response_id="choice"), done("choice"))
+    [ref] = link.started
+    assert ref.text == "第一题选第一个" and ref.transcript == "第一个"
+    assert ref.context["handover_source"] == "fallback" and ref.lane == "assistant"
 
 
 async def test_unknown_or_expired_question_id_cannot_be_redirected_to_another_card(call):

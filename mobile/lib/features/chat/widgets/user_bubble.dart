@@ -6,6 +6,7 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
+import '../utils/voice_request.dart';
 import 'attachment_gallery.dart';
 
 const _attachmentsMarker = '\n\n[attachments]\n';
@@ -19,7 +20,10 @@ const _attachmentsMarker = '\n\n[attachments]\n';
   final paths = text
       .substring(index + _attachmentsMarker.length)
       .split('\n')
-      .map((line) => line.startsWith('- ') ? line.substring(2).trim() : line.trim())
+      .map(
+        (line) =>
+            line.startsWith('- ') ? line.substring(2).trim() : line.trim(),
+      )
       .where((line) => line.isNotEmpty)
       .toList();
   return (body, paths);
@@ -38,6 +42,7 @@ class UserBubble extends ConsumerStatefulWidget {
 
 class _UserBubbleState extends ConsumerState<UserBubble> {
   bool _expanded = false;
+  bool _showTranscript = false;
 
   static const _clampHeight = 128.0;
 
@@ -50,16 +55,18 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
         .where((p) => !p.synthetic)
         .map((p) => p.text)
         .join('\n\n');
-    final (text, legacyFiles) = splitAttachments(rawText);
+    final (original, legacyFiles) = splitAttachments(rawText);
+    final request = voiceRequest(widget.message);
+    final text = request ?? original;
     final fileParts = widget.message.parts.whereType<FilePart>().toList();
     // Media previews come from proper file parts (asset ids); the text
     // trailer is only the fallback for pre-OSS messages (web parity).
     final mediaParts = fileParts.where(isGalleryMedia).toList();
     final chips = fileParts.isNotEmpty
         ? fileParts
-            .where((f) => !isGalleryMedia(f))
-            .map((f) => f.path.split('/').last)
-            .toList()
+              .where((f) => !isGalleryMedia(f))
+              .map((f) => f.path.split('/').last)
+              .toList()
         : legacyFiles.map((p) => p.split('/').last).toList();
 
     final needsClamp = !_expanded && text.length > 360;
@@ -83,6 +90,14 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (request != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        i18n.t('chat:message.voiceRequest'),
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                      ),
+                    ),
                   ConstrainedBox(
                     constraints: needsClamp
                         ? const BoxConstraints(maxHeight: _clampHeight)
@@ -106,14 +121,31 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
                           _expanded
                               ? i18n.t('chat:meta.collapseMessage')
                               : i18n.t('chat:meta.expandMessage'),
-                          style:
-                              TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            color: t.n600,
+                          ),
                         ),
                       ),
                     ),
                 ],
               ),
             ),
+            if (request != null) ...[
+              TextButton(
+                onPressed: () =>
+                    setState(() => _showTranscript = !_showTranscript),
+                child: Text(
+                  i18n.t('chat:message.voiceTranscript'),
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
+              ),
+              if (_showTranscript)
+                Text(
+                  original,
+                  style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                ),
+            ],
             if (mediaParts.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -126,9 +158,7 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
                   alignment: WrapAlignment.end,
                   spacing: 6,
                   runSpacing: 6,
-                  children: [
-                    for (final name in chips) FileChipRow(name: name),
-                  ],
+                  children: [for (final name in chips) FileChipRow(name: name)],
                 ),
               ),
           ],

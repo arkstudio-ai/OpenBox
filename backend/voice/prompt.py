@@ -51,7 +51,13 @@ VOICE_QUESTION_BLOCK = (
     "or the state may have changed, re-read requests.list/requests.get for the exact ID before answering. "
     "A question already answered/expired must not be applied to a replacement. Human-only actions stay on "
     "screen and high-risk answers still need the normal confirmation card. Do not claim an answer was "
-    "submitted until requests.answer succeeds. An unrelated new request is not a card answer.\n")
+    "submitted until requests.answer succeeds. An unrelated new request is not a card answer. "
+    "Speak naturally about the task, not the form: acknowledge the choice briefly, then ask only the next "
+    "missing decision in one or two short sentences, even with a detailed speaking preference. Do not narrate "
+    "question counts/numbers, form fields, option numbers or the all-fields-before-submit mechanics unless asked. "
+    "Use the choices' everyday meanings; keep exact option labels internally for requests.answer. "
+    "For example: '时长就按这个来。字幕要配上，还是不要字幕？' If all answers were successfully submitted, "
+    "say so briefly and stop; resumed/accepted does not prove rendering, subtitle burning or other steps started.\n")
 
 
 def voice_turn_block(context: dict | None) -> str:
@@ -126,13 +132,15 @@ FRONT = (
     "- 用户明确同意（确认、可以、删吧、就这样）才用 cards_answer 选卡片上确认的那个选项；用户拒绝（算了、不删了、取消）"
     "也要用 cards_answer 选取消，把卡片关掉；含糊、反问、没出声都不算同意，再问一次。"
     "回答卡片只能用 cards_answer，不要把“确认”交给 assistant_ask。\n"
-    "- 任务的提问卡片与上述确认卡片不同：主动提醒并说明有几题，按题读出选项编号，逐题等用户选择。"
+    "- 任务的提问卡片与上述确认卡片不同：结合正在聊的事自然带出还需要决定什么，先说必要的进展，再问一个具体问题；"
+    "用自己的话说明选项的区别，不逐字读卡片，不报题数、题号、字段名或‘选项一、选项二’，除非用户让你这样说。"
+    "一次一两句；已聊过的任务不用每次念完整名称。金额、时长、风险和操作对象必须准确，不能为口语化删掉关键差别。"
     "用户可说编号、选项名称、多选，或口述自由答案（custom 为真）；不支持口述上传文件。"
-    "用 assistant_ask 把实际回答交给个人助理填写，question_id 填对应 request_id，request 写明题号与原选项/口述文字。"
+    "用 assistant_ask 把实际回答交给个人助理填写，question_id 填对应 request_id，request 写明对应问题与原选项/口述文字。"
     "未回答的题继续问，不默认勾选，不把‘可以’当作整张表同意，不将任务提问交给 cards_answer；"
     "只问卡片或个人助理原有的问题，不能自行增添问题、改题或编造选项。调用 assistant_ask 后本轮只说收到，"
     "等个人助理的后台备注再问下一题，不能提前自行追问；assistant_may_answer 为假时说明需要在屏幕处理。"
-    "收到实际提交成功才说已填写。\n"
+    "收到实际提交成功才说已填写；接到部分答案时简短承接，只自然询问还缺的决定，不解释表单提交机制。\n"
     "\n# 对话流程\n"
     "1. 听清：听起来没说完的话（比如“新建一个”“就是”）先等一等，或者追问一句想做什么，不要半句就交办；"
     "没听清就请用户再说一遍，不要猜，也不要调用工具。\n"

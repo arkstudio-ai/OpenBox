@@ -1,7 +1,37 @@
 import { expect, test } from "@playwright/test"
-import { assistantApi, sockets } from "./helpers/voice"
+import { assistantApi, MAIN_SESSION, sockets } from "./helpers/voice"
 
 for (const viewport of [{ width: 1440, height: 920 }, { width: 390, height: 844 }]) {
+  test(`inspect a contextual voice handover and its original transcript at ${viewport.width}px`, async ({ page }, info) => {
+    await page.setViewportSize(viewport)
+    await assistantApi(page)
+    await sockets(page)
+    await page.route("**/api/assistant/profile", (route) => route.fulfill({ json: {
+      profile: {}, decided: {}, intro: { status: "done", steps: {}, nudged: false },
+    } }))
+    await page.route("**/api/memories/recalled/**", (route) => route.fulfill({ json: { recalls: {} } }))
+    await page.route(`**/api/agent/session/${MAIN_SESSION}/history**`, (route) => route.fulfill({ json: {
+      has_more: false, messages: [{ id: "voice-request", session_id: MAIN_SESSION, role: "user",
+        created_at: "2026-10-10T04:00:00Z", parts: [{ id: "voice-words", type: "text", origin: "human",
+          text: "做成50miao吧", origin_ref: { entrypoint: "assistant_voice", voice_context: {
+            request: "在电影项目制作约50秒的抽象搞笑短视频，使用刚才确认的猫咪素材，配中英双语字幕，完成后先给我看，不要发布。",
+          } },
+        }],
+      }],
+    } }))
+    const errors: string[] = []
+    page.on("pageerror", (error) => errors.push(error.message))
+    await page.goto("/app/assistant")
+    await expect(page.getByText("语音整理", { exact: true })).toBeVisible()
+    await expect(page.getByText(/在电影项目制作约50秒的抽象搞笑短视频/)).toBeVisible()
+    await expect(page.getByText("做成50miao吧", { exact: true })).not.toBeVisible()
+    await page.getByText("查看语音原话", { exact: true }).click()
+    await expect(page.getByText("做成50miao吧", { exact: true })).toBeVisible()
+    await page.screenshot({ path: info.outputPath("voice-handover.png") })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    expect(errors).toEqual([])
+  })
+
   test(`dismiss reminders and find all seven requests in My tasks at ${viewport.width}px`, async ({ page }, info) => {
     await page.setViewportSize(viewport)
     const api = await assistantApi(page)

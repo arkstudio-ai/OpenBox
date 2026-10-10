@@ -6,6 +6,7 @@ import type { FilePart, MessageWithParts, TextPart } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { isGalleryMedia } from "../lib/media"
 import { isAssistantDelegation } from "../lib/turn-view"
+import { voiceRequest } from "../lib/voice-request"
 import { SentByAssistantBadge } from "./meta/MetaBadges"
 import { UserMeta } from "./meta/UserMeta"
 import { SendReceipt } from "./SendReceipt"
@@ -43,7 +44,9 @@ const Markdown = lazy(() => import("./Markdown"))
 /** Right-aligned user message bubble + attachment chips below (design 5.6). */
 export function UserBubble({ message }: { message: MessageWithParts }) {
   const { t } = useTranslation("chat")
-  const { text, files } = userMessageText(message)
+  const { text: original, files } = userMessageText(message)
+  const request = voiceRequest(message)
+  const text = request ?? original
   // OSS-era messages carry proper file parts (with asset ids for previews);
   // the text trailer is only the fallback for messages sent before that.
   const fileParts = message.parts.filter((p): p is FilePart => p.type === "file")
@@ -71,6 +74,7 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
             showFold && "max-h-32",
           )}
         >
+          {request && <p className="text-n600 mb-1 text-xs leading-5">{t("message.voiceRequest")}</p>}
           <Suspense fallback={<span className="whitespace-pre-wrap">{text}</span>}>
             <Markdown text={text} variant="user" />
           </Suspense>
@@ -86,6 +90,10 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           {expanded ? t("meta.collapseMessage") : t("meta.expandMessage")}
         </button>
       )}
+      {request && <details className="text-n600 max-w-[70%] text-xs max-sm:max-w-[88%]">
+        <summary className="cursor-pointer text-end">{t("message.voiceTranscript")}</summary>
+        <p className="mt-1 whitespace-pre-wrap text-start leading-relaxed [overflow-wrap:anywhere]">{original}</p>
+      </details>}
       <AttachmentGallery className="items-end" parts={fileParts.filter(isGalleryMedia)} />
       {fileParts
         .filter((p) => !isGalleryMedia(p))

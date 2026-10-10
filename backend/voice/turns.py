@@ -186,7 +186,7 @@ class TurnsMixin:
             await self._ask(event)
         else:
             await self._command("send_tool_output", event.call_id, {
-                "status": "need_user_answer", "hint": "用户还没有回答这张任务卡片，先读题和选项，等用户实际说出选择或填写内容"})
+                "status": "need_user_answer", "hint": "用户还没有回答，结合当前任务自然地问清需要决定的事，等用户实际说出选择或填写内容"})
             self.followup_due = True
         await self.fill_idle()
 
@@ -515,13 +515,13 @@ class TurnsMixin:
         the decision model is sure the request is work. Hung up meanwhile, the
         request goes on as it was: its result still reaches the conversation.
         """
-        if (self.planner is None or self.scope is None or self.closing or ref.lane == "remember"
-                or (ref.context or {}).get("task_questions")):
+        if self.planner is None or self.scope is None or self.closing or ref.lane == "remember":
             return None  # a request to remember needs no plan: the assistant gets the user's words as said
         reads = None
+        questions = (ref.context or {}).get("task_questions")
         # Freeze this request's conversation before network reads; the user can speak again meanwhile.
         lines, summary, known = list(self.spoken.lines), self.keeper.summary, self.known
-        if self.judge is not None:
+        if self.judge is not None and not questions:
             recent = [(line.role, line.text) for line in lines if line.role in ("user", "assistant")]
             speculative = self._spawn(self.judge.reads(self.scope, ref.text))
             verdict = await self._unless_closing(self.judge.route(ref.text, recent[-4:]))
@@ -533,9 +533,12 @@ class TurnsMixin:
             return None
         plan = await self._unless_closing(self.planner(
             request=ref.text, words=ref.transcript, lines=lines, summary=summary,
-            known=known, reads=reads, call_id=self.call_id))
+            known=known, reads=reads, call_id=self.call_id, **({"questions": questions} if questions else {})))
         if self.debug and plan is not None:  # QA only: what the assistant (or the user) will get, in full
             log.info("voice plan call=%s kind=%s text=%s", self.call_id, plan.kind, plan.text)
+        if questions and plan is not None and plan.kind == "answer":
+            plan = None  # completion text is never evidence that a form was answered
+        ref.context = {**(ref.context or {}), "handover_source": plan.source if plan is not None else "fallback"}
         if plan is None or plan.kind == "brief":
             ref.text = plan.text if plan is not None else ref.text
             return None
@@ -614,6 +617,8 @@ class TurnsMixin:
             instructions = phrases.ask_instructions(self.lang)
         elif ref.reason == "recall":
             instructions = phrases.recall_instructions(self.lang)
+        elif len(group) == 1 and (ref.context or {}).get("task_questions"):
+            instructions = phrases.question_followup_instructions(self.lang)
         elif len(group) > 1 or (ref.report is not None and not ref.asked):
             instructions = phrases.together_instructions(
                 len(group), any(item.report is not None and not item.asked for item in group),

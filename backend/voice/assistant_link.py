@@ -57,6 +57,8 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
     kept = {"call_truncated": True}
     if context.get("detail"):
         kept["detail"] = context["detail"]
+    if context.get("handover_source"):
+        kept["handover_source"] = context["handover_source"]
     if questions := context.get("task_questions"):
         kept["task_questions"] = [{"request_id": item["request_id"], "session_id": item["session_id"],
                                    "questions_omitted": True} for item in questions]
@@ -174,6 +176,9 @@ class AssistantLink:
             schedule_inbox_wake(self.main_session_id, self.user_id)
         ref.inbox_id, ref.message_id = receipt["inbox_id"], receipt["message_id"]
         await self._add(ref, inbox_id=ref.inbox_id, message_id=ref.message_id)
+        log.info("voice handover accepted call=%s turn=%s source=%s original_chars=%s request_chars=%s changed=%s",
+                 self.call_id, ref.id, context.get("handover_source", "front_desk"), len(text), len(ref.text),
+                 text != ref.text)
 
     async def wait(self, ref: VoiceTurnRef, *, elapsed: float = 0.0, on_message=None) -> dict | None:
         """The turn's function_call_output, ``{"status": ok|failed|timeout, "speech": ...}``; None after hang-up.

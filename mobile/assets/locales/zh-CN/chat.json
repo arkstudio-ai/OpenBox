@@ -297,7 +297,9 @@
     "verification": "最终页面状态"
   },
   "message": {
-    "sentByAssistant": "由{{name}}发送"
+    "sentByAssistant": "由{{name}}发送",
+    "voiceRequest": "语音整理",
+    "voiceTranscript": "查看语音原话"
   },
   "meta": {
     "copyReply": "复制",

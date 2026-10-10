@@ -124,7 +124,8 @@ async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does
         seen = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening"
                           and bool(providers.made[-1].commands("note")))
         notes = providers.made[-1].commands("note")
-        assert len(notes) == 1 and "请填写片名" in notes[0][1] and "需要哪些字幕" in notes[0][1]
+        assert len(notes) == 1 and FORM["questions"][0]["question"] in notes[0][1]
+        assert "请填写片名" not in notes[0][1] and "需要哪些字幕" not in notes[0][1]
         assert "<audio>" in kinds(seen) and len(scopes) >= 2
         assert all(scope.call_id == ready["call_id"] and scope.user_id and scope.workspace_id
                    and scope.main_session_id for scope in scopes)

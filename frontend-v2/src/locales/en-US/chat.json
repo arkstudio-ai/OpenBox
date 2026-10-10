@@ -297,7 +297,9 @@
     "verification": "Final page state"
   },
   "message": {
-    "sentByAssistant": "Sent by {{name}}"
+    "sentByAssistant": "Sent by {{name}}",
+    "voiceRequest": "From your call",
+    "voiceTranscript": "View voice transcript"
   },
   "meta": {
     "copyReply": "Copy",

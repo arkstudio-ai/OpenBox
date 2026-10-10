@@ -116,10 +116,14 @@ costs a whole submit:
 |---|---|---|
 | Seedance 2.0 | 3 ✗ · 4 ✓ · 15 ✓ · 16 ✗ | -1 → 12.05s (model chose) |
 | Wan 3.0 | 2 ✓ · 30 ✓ · 31 ✗ | 20 → 20.04s · 30 → 30.02s |
-| MiniMax H3 | 3 ✗ · 4 ✓ · 7 ✓ · 15 ✓ · 16 ✗ | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s |
+| MiniMax H3 | 4 ✓ · 7 ✓ · 15 ✓ (probed 2026-09-01, when 3 and 16 were refused) | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s |
 
 Delivered length runs a fraction over the request (encoder rounding), never
 under.
+
+MiniMax H3's range widened to 2–30s on 2026-10-10 (vendor parameter; the
+deployment registry now declares it). The new edges have not been probed yet,
+so read the live limit from `action=models` rather than this table.
 
 
 | model | seconds | smart (-1) |
@@ -127,7 +131,7 @@ under.
 | Seedance 2.0 / 2.0 Fast | 4–15 | yes |
 | SD 480p / 720p / 1080p | 4–15 | **no** |
 | Wan 3.0 / Prime | 2–30 | yes |
-| MiniMax H3 | 4–15 | no |
+| MiniMax H3 | 2–30 | no |
 
 ### Use an explicit duration for anything that gets cut together
 

@@ -508,8 +508,9 @@ def test_every_model_declares_a_duration_range_it_was_measured_at(video_gateway_
     通义万相 2.7's public docs say 2-15s, but the endpoint behind this relay
     honoured 30s exactly (requested 30 → 30.024s), and its adaptor refuses 31.
     Seedance's docs say -1 picks a length for you, and both its paths here
-    accept it — an earlier guess had that flag off. MiniMax H3's 4-15s matches
-    its docs and the gateway constants.
+    accept it — an earlier guess had that flag off. MiniMax H3 was 4-15s until
+    2026-10-10, when the vendor parameter widened to 2-30s and the deployment
+    followed it.
     """
     models = video_gateway_config.video_generation.models
     assert models

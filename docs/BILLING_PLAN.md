@@ -266,7 +266,7 @@ new-api 的 logs 表为准；OpenBox 自己在 step_finish 记的数只是「先
 | seedance-2.0-480-fastⅠ | ch113 tokenspace（上游同 seedance-2.0） | 480p，无音频 | ✅ |
 | video-sd-720p-proⅠ | ch113 | 720p | ✅ |
 | video-sd-1080p-pro | ch113 | 1080p；有 484 条上游报错记录 | ✅ |
-| MiniMax-H3 | ch114 → metaso | 480/512/768p/2K，4–15s | ✅ |
+| MiniMax-H3 | ch114 → metaso | 480/512/768p/2K，2–30s（2026-10-10 起，此前 4–15s） | ✅ |
 | doubao-seedance-1-5-pro-251215 | ch106 | — | ❌ 未声明 |
 
 **中转站现在怎么向我们记账**（不是真实成本，只是 bossip 实例的占位价）：

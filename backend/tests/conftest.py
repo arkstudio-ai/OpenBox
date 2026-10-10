@@ -106,7 +106,7 @@ def video_gateway_config(monkeypatch):
         "video_generation": {"provider": "test", "channel_providers": {"sd2": "test", "task": "test"},
             "models": [
                 {"id": "MiniMax-H3", "channel": "sd2", "wire_shape": "size",
-                 "resolutions": ["480p", "512p", "768p", "2k"], "ratios": ["9:16", "16:9"], "duration_range": [4, 15]},
+                 "resolutions": ["480p", "512p", "768p", "2k"], "ratios": ["9:16", "16:9"], "duration_range": [2, 30]},
                 {"id": "wan3.0-video", "channel": "sd2", "wire_shape": "metadata",
                  "resolutions": ["480p", "720p", "1080p"], "duration_range": [2, 30]},
                 {"id": "doubao-seedance-2-0-260128", "channel": "sd2", "wire_shape": "metadata",

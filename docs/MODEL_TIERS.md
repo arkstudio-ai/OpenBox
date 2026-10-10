@@ -62,3 +62,7 @@
 
 DeepSeek 两条不带视觉，不进档位；GPT-5.6 Luna、Seedance 系列、Wan 3.0 Prime 留在目录里给管理员。
 生图（gpt-image-2 的 quality）这次没有做档位。
+
+**2026-10-10**：灵活档 MiniMax H3 的时长参数放宽为 **2–30s**（此前 4–15s）。线上 gw2 `config/openbox.json` 的
+`MiniMax-H3` 条目已改 `duration_range: [2, 30]`、`max_duration_seconds: 30`；代码本身按注册表校验，不用改。
+技能文档与测试夹具同步；2s/30s 两端尚未实测出片长度。

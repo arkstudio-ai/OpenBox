@@ -854,6 +854,12 @@
         "inputCanceled": "Your latest update was canceled before it ran.",
         "earlier": "This is the result from the notification; there has been newer progress since."
       },
+      "effectAck": {
+        "hint": "Checked these results on the desktop? Confirming records the unclear steps as not confirmed done; the task carries on from the current state without redoing them.",
+        "action": "I've checked — continue",
+        "done": "Got it, confirmed.",
+        "pending": "Some outcomes are still being checked; try again shortly."
+      },
       "controlDone": {
         "pause": "Pause requested — wrapping up the current step.",
         "resume": "OK, carrying on.",

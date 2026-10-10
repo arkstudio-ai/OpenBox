@@ -31,6 +31,9 @@ class BoundOperation:
     submitted: bool = True
     observation: dict | None = None
     observation_recorded: bool | None = None
+    #: Requests that passed every local check and so may have left this
+    #: process. Zero proves that each attempted request was refused unsent.
+    dispatched: int = 0
     admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
@@ -131,6 +134,8 @@ async def authorize_request(sandbox, request) -> None:
     await effects.assert_effect_dispatchable(operation.claim)
     if operation.closed or operation.request_failed:
         raise controls.unavailable()
+    # Past every local check: count the request before it may leave.
+    operation.dispatched += 1
     request.headers.update({
         "X-OpenBox-Resource": operation.fence.resource_id,
         "X-OpenBox-Resource-Epoch": str(operation.fence.epoch),
@@ -394,7 +399,24 @@ async def _run_resource_scope(scope, operation):
             metadata = result.metadata if isinstance(result, ToolResult) else {}
             failed = scope.active_clients > 0 or scope.bound.request_failed or bool(metadata.get("error")
                 or metadata.get("observation_error") or metadata.get("outcome_unknown"))
-            if failed:
+            # Admission crossed the durable send boundary, but every request
+            # was then refused before leaving (none passed the final check and
+            # none is in flight): provably nothing ran, so this is not unknown.
+            unsent = failed and scope.bound.dispatched == 0 and scope.active_clients == 0
+            if unsent:
+                try:
+                    await effects.settle_effect(scope.bound.claim, state="failed",
+                        error={"code": "sandbox_request_not_sent"}, evidence={"provider_called": False})
+                except Exception:
+                    unsent = False  # Keep the conservative unknown below.
+            if unsent:
+                if not isinstance(result, ToolResult):
+                    raise effects.EffectNotDispatchableError("Sandbox preparation was not sent")
+                result = result.model_copy(update={
+                    "output": result.output + "\nThe sandbox request was not sent.",
+                    "metadata": {**result.metadata, "error": True, "resource_outcome": "not_dispatched",
+                        "resource_effect_id": scope.bound.claim.effect_id}})
+            elif failed:
                 await effects.record_effect_outcome_unknown(scope.bound.claim,
                     error={"code": "sandbox_result_uncertain"})
                 if not isinstance(result, ToolResult):

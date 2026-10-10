@@ -48,7 +48,10 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
     if captures_files(ctx):
         try:
             from tool.edit import _strip_line_numbers
-            before = _strip_line_numbers(await ctx.sandbox.read_file(args.file_path, offset=0, limit=100000))
+            # A new file has no previous version. Its 404 must not count as a
+            # failed request, or the write below is refused as uncertain.
+            previous = await ctx.sandbox.read_file_if_exists(args.file_path, offset=0, limit=100000)
+            before = _strip_line_numbers(previous) if previous is not None else None
         except Exception:
             # An unobservable previous version stays explicitly unavailable.
             pass

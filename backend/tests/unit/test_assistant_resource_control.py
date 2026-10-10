@@ -126,7 +126,9 @@ async def test_old_resource_epoch_cannot_be_relabelled_as_a_new_operation(resour
 
 
 @pytest.mark.parametrize("state", ["submitting", "accepted", "outcome_unknown", "manual_review", "succeeded", "failed"])
-async def test_only_confirmed_terminal_operations_drain_not_timeouts_or_manual_review(resource, state):
+async def test_only_ledger_terminal_operations_drain_not_timeouts(resource, state):
+    # manual_review is terminal in the ledger: parked, never sent or settled
+    # again. Unknown/in-flight states keep blocking across expired leases.
     prepared = await prepare(resource)
     claim = await effects.claim_effect_for_dispatch(prepared.snapshot.effect_id, resource[1])
     await effects.mark_effect_submitting(claim)
@@ -143,8 +145,9 @@ async def test_only_confirmed_terminal_operations_drain_not_timeouts_or_manual_r
             effect.claim_expires_at = runtime.now() - timedelta(seconds=120)
     await resource[2].release(session_status="idle")
     status = await drain(resource)
-    assert status["tracked_operations_drained"] == (state in {"succeeded", "failed"})
-    assert status["blocking_effect_ids"] == ([] if state in {"succeeded", "failed"} else [prepared.snapshot.effect_id])
+    terminal = state in {"succeeded", "failed", "manual_review"}
+    assert status["tracked_operations_drained"] == terminal
+    assert status["blocking_effect_ids"] == ([] if terminal else [prepared.snapshot.effect_id])
     assert not status["remote_exclusivity_verified"]
 
 

@@ -17,6 +17,7 @@ vi.mock("../api/assistant", () => ({
   useAssistantArchive: api.archive,
 }))
 vi.mock("../api/assistant-watch", () => ({ useAssistantWatch: api.watch }))
+vi.mock("../api/assistant-effects", () => ({ useAcknowledgeTaskEffects: () => ({ isPending: false, mutateAsync: vi.fn() }) }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }) }))
 vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))
 vi.mock("@/shared/ui/Toast", () => ({ toast: vi.fn() }))

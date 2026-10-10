@@ -22,6 +22,8 @@ import {
 } from "../api/assistant"
 import { useAssistantWatch, type AssistantWatchItem } from "../api/assistant-watch"
 import { pendingSendIdentity } from "../lib/pending-send"
+import { requestEffectAcknowledge } from "../stores/effect-acknowledge"
+import { AssistantEffectAcknowledge } from "./AssistantEffectAcknowledge"
 import { taskReceipt } from "../lib/task-receipt"
 import { TASK_STATUS_DOT, TASK_STATUS_TONE, plainSummary, sinceLabel, taskStatus, type TaskStatus } from "../lib/task-status"
 
@@ -80,6 +82,8 @@ function useTaskControl(value: AssistantTaskView) {
         toast("info", t(`assistant.card.controlDone.${action}`))
       } catch (error) {
         if (error instanceof ApiError && error.status < 500) identity.confirmed()
+        // Offer "我已核对，继续" on this card (AssistantEffectAcknowledge).
+        if (error instanceof ApiError && error.code === "ASSISTANT_EFFECT_UNRESOLVED") requestEffectAcknowledge(task.id)
         if (error instanceof ApiError && error.code === "ASSISTANT_EFFECT_UNRESOLVED") toast("info", t("assistant.card.checkEffects"))
         else if (error instanceof ApiError && error.status === 409) toast("info", t("assistant.card.changed"))
         else toast("error", errorMessage(error))
@@ -218,6 +222,7 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
         </div>
         <TaskMenu value={value} result={result} showResult={showResult} onToggleResult={() => setShowResult(!showResult)} />
       </div>
+      <AssistantEffectAcknowledge value={value} />
       <div className="mt-3 flex items-center gap-2 ps-5">
         <Link to={paths.chat(task.execution_session_id)}
           className="border-hair text-n800 hover:bg-hairsoft inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm">

@@ -178,11 +178,14 @@ async def close_admission_locked(db, fence, *, user_id):
 
 
 async def drain_status_locked(db, row):
-    # Failed pre-send operations never dispatched. All other ambiguous states
+    # Failed pre-send operations never dispatched. In-flight and unknown states
     # survive expired worker leases, stopped Drivers and process restarts.
+    # Terminal rows, manual_review included, are parked by the ledger: nothing
+    # sends, reconciles or settles them again, so they cannot hold the desktop.
+    from agent.effect_ledger import TERMINAL_STATES
     effects = list((await db.scalars(select(ExternalEffect).where(
         ExternalEffect.resource_id == row.id, ExternalEffect.submitting_at.is_not(None),
-        ExternalEffect.state.not_in(("succeeded", "failed"))).order_by(ExternalEffect.created_at))).all())
+        ExternalEffect.state.not_in(tuple(TERMINAL_STATES))).order_by(ExternalEffect.created_at))).all())
     return {"resource_id": row.id, "epoch": row.epoch, "admission_state": row.admission_state,
         "tracked_operations_drained": not effects,
         "blocking_effect_ids": [effect.id for effect in effects],

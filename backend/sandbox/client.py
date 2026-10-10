@@ -188,6 +188,21 @@ def _safe_json(response) -> dict | str | None:
         return (getattr(response, "text", "") or "")[:200] or None
 
 
+_REFUSED_BEFORE_SEND = "_openbox_refused_before_send"
+
+
+def refused_before_send(exc: BaseException) -> str | None:
+    """``"METHOD /path"`` when this process refused that request before sending it.
+
+    Only the client's own request hook sets this. It runs every authorization,
+    admission and precondition check before httpx writes a byte, so a request
+    refused there never left the process: its caller can report "not sent"
+    instead of an unknown outcome. Any later failure has no such mark.
+    """
+    refused = getattr(exc, _REFUSED_BEFORE_SEND, None)
+    return refused if isinstance(refused, str) else None
+
+
 @dataclass
 class ExecuteResult:
     """Result of a command execution."""
@@ -476,6 +491,17 @@ class SandboxClient:
         from sandbox.resource_operation import authorize_request
         await authorize_request(self, request)
 
+    async def _request_hook(self, request: httpx.Request) -> None:
+        """The installed hook: run admission, marking a refusal as unsent."""
+        try:
+            await self._authorize_request(request)
+        except BaseException as exc:
+            try:
+                setattr(exc, _REFUSED_BEFORE_SEND, f"{request.method} {request.url.path}")
+            except Exception:  # pragma: no cover - exceptions without a __dict__
+                pass
+            raise
+
     async def _observe_resource_response(self, response: httpx.Response) -> None:
         from sandbox.resource_operation import observe_response
         await observe_response(self, response)
@@ -547,7 +573,7 @@ print(json.dumps(out))
                 timeout=timeout,
                 trust_env=False,
                 transport=transport,
-                event_hooks={"request": [self._authorize_request], "response": [self._observe_resource_response]},
+                event_hooks={"request": [self._request_hook], "response": [self._observe_resource_response]},
             ) as client:
                 try:
                     yield client
@@ -677,6 +703,31 @@ print(json.dumps(out))
             resp.raise_for_status()
             data = resp.json()
             return data["content"]
+
+    async def read_file_if_exists(
+        self,
+        path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str | None:
+        """Like :meth:`read_file`, but ``None`` when the path does not exist.
+
+        The Action Server answers a missing path with 404. For a caller that
+        only records the previous version (a write that may create the file),
+        that is a received, expected answer: it is handled here, before any
+        error can latch the call's resource operation as uncertain. Every other
+        failure still raises inside the client and keeps that latch.
+        """
+        async with self._client() as client:
+            resp = await client.post("/read_file", json={
+                "path": path,
+                "offset": offset,
+                "limit": limit,
+            })
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()["content"]
 
     async def write_file(self, path: str, content: str) -> None:
         """Write content to a file in the sandbox."""

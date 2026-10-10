@@ -64,6 +64,9 @@ EffectState = Literal[
     "manual_review",
 ]
 _TERMINAL_STATES = frozenset({"succeeded", "failed", "manual_review"})
+#: Public name for readers outside the ledger: a terminal row never sends,
+#: reconciles or settles again (``manual_review`` is parked, not in flight).
+TERMINAL_STATES = _TERMINAL_STATES
 _RECONCILE_STATES = frozenset({"submitting", "accepted", "outcome_unknown"})
 
 _SENSITIVE_FIELD_PARTS = (
@@ -1353,6 +1356,72 @@ async def record_effect_outcome_unknown(
             claim_generation=claim.generation,
         )
         return _snapshot(row)
+
+
+#: Desktop adapters with no provider to query: recovery can only park their
+#: unknown outcomes in ``manual_review``, and only the owner, after looking at
+#: the desktop, can release them. Adapters with a reconciler (image_gen) keep
+#: their own query path and are never released here.
+OWNER_ACKNOWLEDGEABLE_ADAPTERS = frozenset({
+    "sandbox_tool", "sandbox_preparation", "sandbox_runtime", "computer",
+})
+
+
+async def acknowledge_parked_effects_locked(
+    db,
+    *,
+    tenant_id: str,
+    session_ids,
+    actor_user_id: str,
+    command_id: str,
+    limit: int = 256,
+) -> list[str]:
+    """Owner-confirmed release of parked desktop outcomes: manual_review -> failed.
+
+    Runs in the caller's command transaction. The row becomes ``failed`` with
+    ``acknowledged_unverified``: OpenBox never claims it happened, never sends
+    it again (only a ``prepared`` row is dispatchable) and its evidence names
+    the actor and command. Unknown, accepted or submitting rows are untouched:
+    those are still in flight or awaiting recovery.
+    """
+    session_ids = tuple(session_ids)
+    if not session_ids:
+        return []
+    query = (
+        select(ExternalEffect)
+        .where(
+            ExternalEffect.tenant_id == tenant_id,
+            ExternalEffect.session_id.in_(session_ids),
+            ExternalEffect.state == "manual_review",
+            ExternalEffect.adapter.in_(tuple(sorted(OWNER_ACKNOWLEDGEABLE_ADAPTERS))),
+        )
+        .order_by(ExternalEffect.created_at, ExternalEffect.id)
+        .limit(max(1, int(limit)))
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update()
+    rows = list((await db.execute(query)).scalars())
+    now = await _read_database_now(db)
+    for row in rows:
+        previous = dict(row.last_error or {})
+        row.state = "failed"
+        row.last_error = {"code": "acknowledged_unverified"}
+        row.reconcile_after = None
+        row.updated_at = now
+        await _append_evidence(
+            db,
+            row,
+            phase="acknowledged",
+            evidence={
+                "previous_state": "manual_review",
+                "previous_error": previous,
+                "actor_user_id": actor_user_id,
+                "command_id": command_id,
+                "outcome_verified": False,
+            },
+            now=now,
+        )
+    return [row.id for row in rows]
 
 
 async def _origin_run_is_live(db, row: ExternalEffect) -> bool:

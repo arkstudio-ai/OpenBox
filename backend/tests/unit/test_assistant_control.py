@@ -253,6 +253,109 @@ async def test_unknown_tool_outcome_blocks_resume_without_new_command(monkeypatc
     assert (await view(args))['task']['desired_state'] == 'paused'
 
 
+async def paused_with_parked_outcome(monkeypatch, adapter):
+    """A lost desktop response, a pause, then recovery parks it in manual_review."""
+    from agent import effect_ledger as effects, loop, processor
+    from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
+    args, _, lease, _ = await running()
+    run = effects.EffectRunFence(lease.session_id, lease.user_id, lease.run_id, lease.generation)
+    prepared = await effects.prepare_effect(run, adapter=adapter, provider='wuying', operation='tool_execute',
+        logical_key='lost-response', request_payload={'command': 'fixture'})
+    claim = await effects.claim_effect_for_dispatch(prepared.snapshot.effect_id, run)
+    await effects.mark_effect_submitting(claim)
+    await effects.record_effect_outcome_unknown(claim, error={'code': 'sandbox_result_uncertain'})
+    _patch_real_loop_runtime(monkeypatch, config=_loop_config(), process_step=processor.process_step)
+    async def no_suggestions(*args, **kwargs):
+        return None
+    monkeypatch.setattr('agent.suggestions.generate_suggestions', no_suggestions)
+    await accept_control_command(**control(args))
+    await loop.run_loop(lease.session_id, lease.user_id, lease=lease)
+    # No adapter can query what a desktop operation did: recovery parks it.
+    assert await effects.recover_effect_once(prepared.snapshot.effect_id) == 'manual_review'
+    await recover_controls(task_id=args['task_id'], launch=False)
+    state = await view(args)
+    assert state['task']['observed_state'] == 'effect_unknown'
+    return args, lease, prepared.snapshot.effect_id, state
+
+
+@pytest.mark.parametrize('adapter', ['sandbox_tool', 'provider_fixture'])
+async def test_owner_acknowledgment_releases_parked_desktop_outcomes_for_resume(monkeypatch, adapter):
+    from core.identifier import generate_id
+    from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
+    from db.models.part import Part
+    from tests.unit.test_assistant_api import client_for
+    args, lease, effect_id, state = await paused_with_parked_outcome(monkeypatch, adapter)
+    async with get_db_session() as db:
+        # A transcript-level unknown outcome (stream lost, process restart).
+        db.add(Part(id=generate_id(), session_id=lease.session_id, user_id=lease.user_id,
+            message_id=state['latest_result']['result_message_id'], type='tool',
+            data={'type': 'tool', 'status': 'error', 'metadata': {'outcome_unknown': True}},
+            created_at=datetime.now(timezone.utc)))
+    revision = state['task']['control_revision']
+    with pytest.raises(AssistantError) as blocked:
+        await accept_control_command(**control(args, 'resume', expected_revision=revision, expected_run=None))
+    assert blocked.value.code == 'ASSISTANT_EFFECT_UNRESOLVED'
+    assert f"/api/assistant/tasks/{args['task_id']}/effects/acknowledge" in str(blocked.value)
+    path = f"/api/assistant/tasks/{args['task_id']}/effects/acknowledge"
+    body = {'idempotency_key': 'checked-desktop', 'expected_revision': revision}
+    async with client_for(args['user_id'], args['workspace_id'], monkeypatch) as client:
+        assert (await client.post(path, json={**body, 'extra': True})).status_code == 422
+        response = await client.post(path, json=body)
+        assert response.status_code == 200, response.text
+        receipt = response.json()
+        assert (await client.post(path, json=body)).json() == receipt
+        conflict = await client.post(path, json={**body, 'expected_revision': revision + 1})
+        assert conflict.status_code == 409 and conflict.json()['detail']['code'] == 'ASSISTANT_COMMAND_CONFLICT'
+    assert receipt['acknowledged_tool_outcomes'] == 1
+    async with get_db_session() as db:
+        row = await db.get(ExternalEffect, effect_id)
+        command = await db.get(AssistantCommand, receipt['command_id'])
+        evidence = list((await db.scalars(select(ExternalEffectEvidence).where(
+            ExternalEffectEvidence.effect_id == effect_id).order_by(ExternalEffectEvidence.sequence))).all())
+    assert command.action == 'task_acknowledge_effects' and command.state == 'applied'
+    if adapter == 'provider_fixture':
+        # Only desktop adapters without a provider query are released here; a
+        # reconcilable provider (image_gen) keeps its own path and still blocks.
+        assert receipt['acknowledged_effects'] == 0 and receipt['remaining_unresolved'] is True
+        assert receipt['observed_state'] == 'effect_unknown' and row.state == 'manual_review'
+        with pytest.raises(AssistantError) as still:
+            await accept_control_command(**control(args, 'resume', expected_revision=receipt['task_revision'],
+                expected_run=None, idempotency_key='resume-after-ack'))
+        assert still.value.code == 'ASSISTANT_EFFECT_UNRESOLVED'
+        return
+    assert receipt['acknowledged_effects'] == 1 and receipt['remaining_unresolved'] is False
+    assert receipt['observed_state'] == 'paused' and receipt['task_revision'] > revision
+    assert row.state == 'failed' and row.last_error == {'code': 'acknowledged_unverified'}
+    assert evidence[-1].phase == 'acknowledged'
+    assert evidence[-1].evidence['actor_user_id'] == args['user_id']
+    assert evidence[-1].evidence['command_id'] == receipt['command_id']
+    assert evidence[-1].evidence['previous_error']['code'] == 'reconciler_unavailable'
+    resumed = await accept_control_command(**control(args, 'resume', expected_revision=receipt['task_revision'],
+        expected_run=None, idempotency_key='resume-after-ack'))
+    assert resumed['observed_state'] == 'resuming'
+    async with get_db_session() as db:
+        # The synthetic Part above has no Event; the acknowledgment's own
+        # audit Event must leave the canonical log projectable.
+        await db.delete(await db.get(Part, command.source_ref['acknowledged_part_ids'][0]))
+    assert (await verify_agent_event_parity(lease.session_id, user_id=lease.user_id)).ok
+
+
+async def test_acknowledgment_waits_for_live_runs_and_is_owner_scoped(monkeypatch):
+    from assistant.control import acknowledge_effects
+    args, _, lease, _ = await running()
+    request = {key: args[key] for key in ('user_id', 'workspace_id', 'main_id', 'task_id')}
+    try:
+        with pytest.raises(AssistantError) as live:
+            await acknowledge_effects(**request, idempotency_key='too-early', expected_revision=args['expected_revision'])
+        assert live.value.code == 'ASSISTANT_STILL_STOPPING'
+        with pytest.raises(AssistantError) as other:
+            await acknowledge_effects(**{**request, 'task_id': 'someone-elses-task'},
+                idempotency_key='foreign', expected_revision=1)
+        assert other.value.status == 404
+    finally:
+        await lease.release()
+
+
 async def test_pause_and_abort_request_roll_back_together(monkeypatch):
     import assistant.control as service
     args, _, lease, _ = await running()

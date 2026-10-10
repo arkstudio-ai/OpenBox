@@ -121,6 +121,7 @@ class UsageMeter:
                 event.tokens = normalized
                 event.total_tokens = normalized["total"]
                 event.credits = price.credits
+                event.cost_credits = price.cost
                 event.pricing = price.snapshot
                 event.status = "unpriced" if price.credits is None else "charged" if self.mode == "enforce" else "shadow"
                 if event.status == "charged":

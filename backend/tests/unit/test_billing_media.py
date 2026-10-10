@@ -112,12 +112,26 @@ async def test_precheck_only_bites_in_enforce(monkeypatch):
 
 @pytest.mark.parametrize("model,res,seconds,credits", [
     ("wan3.0-video", "720p", 5, "3.00"), ("wan3.0-video", "480p", 5, "1.50"), ("wan3.0-video", "1080p", 4.5, "6.00"),
-    ("doubao-seedance-2-0-260128", "720p", 15, "14.25"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "2.40"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
+    # Seedance 2.0 / Fast were raised to the TokenHub cost line on 2026-10-10.
+    ("doubao-seedance-2-0-260128", "720p", 15, "15.00"), ("doubao-seedance-2-0-fast-260128", "720p", 5, "4.00"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
 ])
 def test_generation_quote_is_requested_seconds_times_tier_rate(model, res, seconds, credits):
     q = media.quote_generation(model, res, seconds)
     assert q.credits == Decimal(credits) and q.model_id == f"video-gen:{model}:{res}"
     assert q.minutes_billed == __import__("math").ceil(seconds)
+
+
+def test_generation_quote_carries_the_channel_cost_beside_the_sale_price():
+    # MiniMax-H3 via metaso: 0.09/s up to 15 s, doubled beyond; the sale price stays flat.
+    short = media.quote_generation("MiniMax-H3", "768p", 10)
+    assert (short.credits, short.cost) == (Decimal("5.00"), Decimal("0.90"))
+    assert short.snapshot["cost"]["basis"] == "metaso" and short.snapshot["cost_credits"] == "0.900000000000"
+    long = media.quote_generation("MiniMax-H3", "768p", 20)
+    assert (long.credits, long.cost) == (Decimal("10.00"), Decimal("3.60"))
+    assert long.snapshot["cost"]["multiplier"] == "2"
+    # A model without a cost block is priced but has no cost (None, never 0).
+    legacy = media.quote_generation("video-sd-720p-proⅠ", "720p", 12)
+    assert legacy.credits == Decimal("6.00") and legacy.cost is None and "cost" not in legacy.snapshot
 
 
 def test_generation_quote_is_unpriced_for_unknown_model_tier_or_smart_duration():

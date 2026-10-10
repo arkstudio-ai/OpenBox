@@ -404,7 +404,7 @@ async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: V
 
             lines.append(f"credits={credits}")
             lines += billing_status_lines()
-        lines.append("handoff_instruction=deliver with the attached final-video card or the exact download_url")
+        lines.append("handoff_instruction=deliver with the attached final-video card; to show it again later call video_generate action=attach with asset_id; never write a link")
     lines.extend(extra or [])
     version = vp._job_snapshot_version(job)
     still_running = job.status not in _TERMINAL

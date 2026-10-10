@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云后端：2026-10-09 10:38 `20261009-desktop-control-28dd6369`（云电脑操控）
+## 当前阿里云：2026-10-10 12:26 `20261010-video-delivery-0551f86a`（视频成片重发卡片、App 下载反馈）
+
+- 源码 `main@0551f86a`（PR [#65](https://github.com/arkstudio-ai/OpenBox/pull/65) 合并提交，基于队友已发的 `65a8ddfd`）。起因是用户 `01M3P3BZPN7V5PZ3AKW5M2A5CK` 在一个会话生成 40 条 Wan 3.0 视频后"下载不了"：App 下载键其实被按过 20 多次且接口全 200，但无进度、无提示、不进相册；用户转而让助手"发给我"，助手贴出工具输出里的 24 小时 token 链接（App 打不开、第 1–14 集贴出时已过期），再调 `share_file` 被沙箱付费门槛挡回后编了假 OSS 直链。
+- 改动：`video_generate`/`video_compose` 完成输出去掉 `download_url` 改为 `delivery_instruction`；新增 `video_generate action="attach"` 按 asset_id/job_id 重新挂卡片（无沙箱、无 token）；`share_file` 增加 `asset_id` 并改 `sandbox_required=False`；Web Markdown 旧资产链接点击改走 `/api/assets/<id>/url?download=true`。App 侧改动随 iOS 1.0.32 (43) 发 TestFlight（见 [MOBILE_RELEASE_1_0_32_20261010.md](MOBILE_RELEASE_1_0_32_20261010.md)）。`video_generate` 描述已精简以保持媒体工具 schema 预算（`test_llm_schema.py` 上限 10,000 字符几乎贴满）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `origin/main` 的干净 detached worktree 构建 backend（上下文仓库根）与 frontend-v2（`VITE_BUILD_ID` 为 tag，`NGINX_IMAGE=nginx:1.31.5-alpine`），本地核对镜像内 `attach` 动作、`share_file.sandbox_required=False`、源码无 `download_url=`、`index.html` app-build、3 个 assets 含 `download=true`、`nginx -t`。backend image `sha256:b739d945…5aa5fda8b`、压缩包 `864e3695…c1107692`（186,885,259 B）；frontend image `sha256:3bafe651…0614f479`、压缩包 `b7e2570a…e1431546`（29,638,518 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，image ID 与本机一致；中转对象已删。
+- 切换脚本 `releases/20261010-video-delivery-0551f86a/deploy_gw2_v7.sh`：备份配置与两库 dump（业务 116 表、轨迹 36 表）→ 租约守门（当时 0 活跃租约、0 进行中视频任务）→ 只换 backend（21 s healthy）与 frontend（15 s healthy），**trajectory-worker 保持 `20261009-assistant-media-cb9b3fb3`**。无迁移（业务库仍 `pbf5a6b7c8d9`），`openbox.json`/`backend.env` 未动。12:25:19–12:26:04（北京时间）完成，六服务 healthy。
+- 验证：容器内 `attach` 动作与 `share_file` 配置回读正确；本机与公网 `/api/environment` 200、`index.html` app-build 为新 tag。后端 `tests/unit` 全量 6348 passed（1 个子代理用例因本机缺 Anthropic provider 失败，与改动无关），App `flutter analyze` 无问题、chat 332 条通过，Web tsc/vitest/eslint/`check:i18n` 通过。
+- 回滚：恢复 `/opt/openbox/backups/20261010-video-delivery-0551f86a/activation-20261010T042*Z/docker-compose.override.yml`，再 `docker compose up -d --no-deps backend` / `frontend`；无需回退数据库。AWS 未发布。
+- 待办：在该用户会话里让助手 `video_generate action=attach asset_id=…` 补发视频；运营测试组装 iOS 43 后验收相册/进度。
+
+## 历史阿里云后端：2026-10-09 10:38 `20261009-desktop-control-28dd6369`（云电脑操控）
 
 - `andrewwang` 的续费和云电脑状态正常。10:01 两次 `desktop_publish` 在发出请求前被判为控制权不匹配：平台桌面服务创建了新 `SandboxClient`，与 Agent 工具调用冻结的客户端不同。现在复用当前调用的原客户端，并核验桌面、工作空间、用户范围、通道路由和密钥；控制代际与持久化执行边界继续生效。
 - 旧 `/tmp/obx-screen.png` 属于 root，普通执行用户 UID 997 无法覆盖。`obx-shot-v3` 保留旧文件，使用执行用户拥有的路径；截图元数据返回实际路径，附件上传同一张新图。旧脚本与截图备份位于云电脑 `/opt/openbox/backups/cloud-control-20261009T023007Z-e4ee69ce/`。

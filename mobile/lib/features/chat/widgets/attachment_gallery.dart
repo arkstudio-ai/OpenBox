@@ -2,16 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../shared/api/providers.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
-import '../../../shared/download/native_download.dart';
+import '../../../shared/download/asset_download.dart';
 import '../../../shared/i18n/i18n.dart';
-import '../../../shared/models/json.dart';
 import '../../../shared/models/message_part.dart';
-import '../../../shared/utils/error_text.dart';
 import '../../../shared/utils/format.dart';
-import '../../../shared/widgets/toast.dart';
 import '../api/assets_api.dart';
 import '../utils/content_origin.dart';
 import 'ai_disclosure.dart';
@@ -303,18 +299,50 @@ class _VideoTile extends ConsumerWidget {
 
 /// Full-screen viewer (web Lightbox): dark scrim, mono filename + size +
 /// download + close header; pinch-zoom for images, playback for videos.
-class _MediaViewer extends ConsumerWidget {
+class _MediaViewer extends ConsumerStatefulWidget {
   const _MediaViewer({required this.part, this.artifactKind});
 
   final FilePart part;
   final String? artifactKind;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MediaViewer> createState() => _MediaViewerState();
+}
+
+class _MediaViewerState extends ConsumerState<_MediaViewer> {
+  /// Fraction received while a download runs, null when idle. Shown as a bar
+  /// under the header so a 20 MB video on mobile data visibly makes progress.
+  double? _progress;
+
+  FilePart get part => widget.part;
+
+  Future<void> _save(AssetSaveTarget target) async {
+    if (_progress != null) return;
+    setState(() => _progress = 0);
+    try {
+      await saveAssetToDevice(
+        ref.read,
+        assetId: part.assetId!,
+        name: _baseName(part.path),
+        mimeType: part.mimeType,
+        target: target,
+        onProgress: (double fraction) {
+          if (mounted) setState(() => _progress = fraction);
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _progress = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
     final isVideo = (part.mimeType ?? '').startsWith('video/');
     final asset = ref.watch(assetUrlProvider(part.assetId!));
     final name = _baseName(part.path);
+    final artifactKind = widget.artifactKind;
+    final busy = _progress != null;
 
     return Scaffold(
       backgroundColor: Colors.black.withValues(alpha: 0.88),
@@ -356,12 +384,30 @@ class _MediaViewer extends ConsumerWidget {
                     ),
                   IconButton(
                     icon: const Icon(
-                      Icons.file_download_outlined,
+                      Icons.photo_library_outlined,
                       color: Colors.white,
                       size: 20,
                     ),
+                    tooltip: i18n.t('chat:download.saveToAlbum'),
+                    onPressed: busy ? null : () => _save(AssetSaveTarget.album),
+                  ),
+                  IconButton(
+                    icon: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white70,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.file_download_outlined,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                     tooltip: i18n.t('chat:gallery.download'),
-                    onPressed: () => _download(ref),
+                    onPressed: busy ? null : () => _save(AssetSaveTarget.files),
                   ),
                   IconButton(
                     icon: const Icon(
@@ -375,6 +421,36 @@ class _MediaViewer extends ConsumerWidget {
                 ],
               ),
             ),
+            if (busy)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    LinearProgressIndicator(
+                      value: _progress == 0 ? null : _progress,
+                      minHeight: 3,
+                      backgroundColor: Colors.white24,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      i18n.t(
+                        'chat:download.downloading',
+                        vars: {
+                          'percent': ((_progress ?? 0) * 100)
+                              .round()
+                              .toString(),
+                        },
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: FontSizes.xs2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: GestureDetector(
                 onTap: isVideo ? null : () => Navigator.of(context).pop(),
@@ -431,31 +507,6 @@ class _MediaViewer extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _download(WidgetRef ref) async {
-    try {
-      final resp = await ref
-          .read(apiDioProvider)
-          .get<Map<String, dynamic>>(
-            '/api/assets/${part.assetId}/url',
-            queryParameters: {'download': true},
-          );
-      final url = asString(resp.data?['url']);
-      if (url != null) {
-        await ref
-            .read(nativeDownloadProvider)
-            .saveUrl(
-              url: url,
-              suggestedName: _baseName(part.path),
-              mimeType: part.mimeType ?? 'application/octet-stream',
-            );
-      }
-    } catch (error) {
-      ref
-          .read(toastProvider.notifier)
-          .error(errorText(ref.read(i18nProvider), error));
-    }
   }
 }
 
@@ -563,24 +614,7 @@ class _FileChipRowState extends ConsumerState<FileChipRow> {
     if (assetId == null || _downloading) return;
     setState(() => _downloading = true);
     try {
-      final resp = await ref
-          .read(apiDioProvider)
-          .get<Map<String, dynamic>>(
-            '/api/assets/$assetId/url',
-            queryParameters: {'download': true},
-          );
-      final url = asString(resp.data?['url']);
-      if (url != null) {
-        await ref
-            .read(nativeDownloadProvider)
-            .saveUrl(url: url, suggestedName: widget.name);
-      }
-    } catch (error) {
-      if (mounted) {
-        ref
-            .read(toastProvider.notifier)
-            .error(errorText(ref.read(i18nProvider), error));
-      }
+      await saveAssetToDevice(ref.read, assetId: assetId, name: widget.name);
     } finally {
       if (mounted) setState(() => _downloading = false);
     }

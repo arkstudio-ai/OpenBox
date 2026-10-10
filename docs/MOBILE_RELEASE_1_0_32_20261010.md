@@ -24,3 +24,11 @@
 - 任一已生成视频 → 点开全屏 → 右上角"相册"图标：首次弹相册权限，允许后提示"已保存到相册"，相册里能看到视频；"下载"图标：看到进度条，弹系统保存框，保存后提示"已保存到「文件」"。
 - 旧对话里助手贴的"点击下载/播放第 N 集"链接：点击直接走下载，不再跳浏览器。
 - 后端上线后，在该用户会话里说"把第 15 集再发给我"，应收到视频卡片而不是链接。
+
+## Android / 正式签名包（2026-10-10 12:36）
+
+- 本机首次用正式发布证书 `bossip-release` 出包：用户提供的签名包已放到 `credentials/android-publishing/bossip-release.jks` 与 `mobile/android/key.properties`（均被 .gitignore 忽略），`push-vendors.gradle` 读到 `key.properties` 后把 release 构建切到该证书；小米推送 ID 来自已入库的 `push-vendors.client.properties`。
+- 构建源码与 iOS 43 相同（`0551f86a`，PR #65 合并提交），干净 detached worktree，`flutter build apk --release`，`API_BASE` / `WEB_BASE` 显式指向 `https://ai.bossipai.com.cn`，Gradle 约 3 分钟。
+- 校验：v2 签名、单一 signer，证书 SHA-256 `16:16:50:A5:68:32:23:01:0B:68:AC:CB:FA:08:94:F2:14:98:74:6D:55:59:A7:E2:E1:BA:EB:BF:FF:01:61:96`（与 `bossip-release` 钥匙库一致，有效期至 2095-02-28）；`com.bossip.bipmobile` versionName 1.0.32 / versionCode 43，targetSdk 36，非 debuggable，16 KiB zipalign 通过；三个 ABI（arm64-v8a、armeabi-v7a、x86_64）均含生产地址；清单含小米推送元数据。
+- 产物：`mobile/build/releases/BossIP-Android-1.0.32-43-20261010/BossIP-Android-1.0.32-43-20261010.apk`（89,957,080 字节，SHA-256 `5f364db29959dbc0e16dd4613911665e9f54e4d552553cdb45bf873ee6e9434b`），桌面压缩包 `BossIP-Android-1.0.32-43-20261010.7z`（28,108,897 字节，7z 完整性通过）。
+- 这是正式签名包，可直接覆盖安装商店版；装过本机 Debug 测试包的手机要先卸载。未做 Android 真机验收；Android 9 及以下机型"保存到相册"可能因无存储权限回退到系统保存框。

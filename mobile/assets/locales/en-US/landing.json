@@ -1,6 +1,7 @@
 {
   "nav": { "capabilities": "Capabilities", "workflow": "How it works", "useCases": "Use cases", "faq": "FAQ" },
   "signIn": "Sign in",
+  "register": "Create account",
   "start": "Start now",
   "hero": {
     "eyebrow": "Cloud AI workspace for owners and growing teams",

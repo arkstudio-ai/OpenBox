@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../shared/api/auth_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -12,18 +11,11 @@ import '../../shared/widgets/brand_mark.dart';
 import '../auth/widgets/lang_pill.dart';
 
 /// Landing page (web `LandingRoute`), mobile-condensed: topbar + hero +
-/// feature list. CTAs run web `useStart`: authed → /app, else → /login.
+/// feature list. Its two CTAs are the two auth screens (web `useStart`):
+/// 登录 → /login, 注册新账号 → /register. A signed-in account never lands
+/// here — the router sends it straight to /app.
 class LandingPage extends ConsumerWidget {
   const LandingPage({super.key});
-
-  void _start(BuildContext context, WidgetRef ref, {bool register = false}) {
-    final authed = ref.read(authProvider).isAuthenticated;
-    if (authed) {
-      context.go(Paths.app);
-      return;
-    }
-    context.go(register ? Paths.register : Paths.login);
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -48,7 +40,8 @@ class LandingPage extends ConsumerWidget {
                     const LangPill(),
                     const SizedBox(width: 10),
                     TextButton(
-                      onPressed: () => _start(context, ref),
+                      key: const Key('landing-sign-in'),
+                      onPressed: () => context.go(Paths.login),
                       child: Text(
                         i18n.t('landing:signIn'),
                         style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
@@ -98,7 +91,8 @@ class LandingPage extends ConsumerWidget {
             SizedBox(
               height: 46,
               child: FilledButton(
-                onPressed: () => _start(context, ref, register: true),
+                key: const Key('landing-register'),
+                onPressed: () => context.go(Paths.register),
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
                   foregroundColor: t.bg,
@@ -107,7 +101,7 @@ class LandingPage extends ConsumerWidget {
                   ),
                 ),
                 child: Text(
-                  i18n.t('landing:hero.primary'),
+                  i18n.t('landing:register'),
                   style: const TextStyle(
                     fontSize: FontSizes.base,
                     fontWeight: FontWeight.w500,

@@ -48,6 +48,7 @@ Dio _logoutDio(void Function() onLogout) {
 ProviderContainer _container({
   required LogtoSession logto,
   required void Function() onLogout,
+  Future<LogtoSso?> Function()? fetchConfig,
 }) {
   const config = LogtoSso(
     endpoint: 'https://auth.bossipai.com.cn',
@@ -56,7 +57,9 @@ ProviderContainer _container({
   return ProviderContainer(
     overrides: [
       apiDioProvider.overrideWithValue(_logoutDio(onLogout)),
-      logtoSsoProvider.overrideWith((ref) async => config),
+      logtoSsoProvider.overrideWith(
+        (ref) async => fetchConfig == null ? config : await fetchConfig(),
+      ),
       logtoSessionProvider.overrideWithValue(logto),
       cookieJarProvider.overrideWithValue(CookieJar()),
     ],
@@ -105,5 +108,39 @@ void main() {
     expect(logto.signOutCalls, 1);
     expect(container.read(authProvider).isAuthenticated, isFalse);
     expect(container.read(authSessionProvider).accessToken, isNull);
+  });
+
+  test('an unreachable SSO config still clears Logto on this device', () async {
+    var fetches = 0;
+    final logto = _FakeLogtoSession();
+    final container = _container(
+      logto: logto,
+      onLogout: () {},
+      fetchConfig: () async {
+        fetches += 1;
+        throw DioException.connectionError(
+          requestOptions: RequestOptions(path: '/api/auth/logto/config'),
+          reason: 'offline',
+        );
+      },
+    );
+    addTearDown(container.dispose);
+    // The sign-in screen met the failure first; it stays cached as an error.
+    await expectLater(
+      container.read(logtoSsoProvider.future),
+      throwsA(isA<DioException>()),
+    );
+    final controller = container.read(authProvider.notifier);
+    controller.setAuth(
+      'access-token',
+      const AuthUser(id: 'user-1', username: 'alice'),
+    );
+
+    await controller.signOut();
+
+    expect(fetches, 2, reason: 'sign-out asks for the config again');
+    expect(logto.signOutCalls, 1);
+    expect(logto.receivedConfig, isNull);
+    expect(container.read(authProvider).isAuthenticated, isFalse);
   });
 }

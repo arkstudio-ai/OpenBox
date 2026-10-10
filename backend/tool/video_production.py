@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from auth.jwt import create_asset_download_token
 from agent.driver import LeaseLostError
 from question.runtime import RunRevoked
 from core.log import create_logger
@@ -114,7 +113,7 @@ class VideoInputRef(BaseModel):
 
 
 class VideoGenerateArgs(BaseModel):
-    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch"]
+    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch", "attach"]
     job_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     # ── describe the shot directly ──
@@ -169,6 +168,7 @@ class VideoGenerateArgs(BaseModel):
     #: Pay twice for a second take of a request already in flight.
     allow_duplicate: bool = False
     #: For action="fetch": the owned asset to deliver to the workspace.
+    #: For action="attach": the owned asset to show again on this reply.
     asset_id: str | None = Field(default=None, max_length=512)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
@@ -181,9 +181,9 @@ class VideoGenerateArgs(BaseModel):
     def _required_by_action(self):
         if self.action == "models":
             return self
-        if self.action == "fetch":
+        if self.action in ("fetch", "attach"):
             if not (self.asset_id or self.job_id):
-                raise ValueError("fetch requires asset_id or job_id")
+                raise ValueError(f"{self.action} requires asset_id or job_id")
             return self
         if self.action == "estimate":
             if not self.prompt:
@@ -1385,11 +1385,6 @@ async def _finalize_segment(
     return await _owned_job(job.id, ctx, "segment")
 
 
-def _asset_download_url(asset) -> str:
-    token = create_asset_download_token(str(asset.user_id), str(asset.id))
-    return f"/api/assets/{asset.id}/download?token={quote(token, safe='')}"
-
-
 def _job_lines(
     job,
     asset=None,
@@ -1416,13 +1411,18 @@ def _job_lines(
     if retry_after is not None and job.status not in _SEGMENT_TERMINAL | _RENDER_TERMINAL:
         lines.append(f"retry_after_seconds={retry_after}")
     if asset and asset.status == "ready":
-        download_url = _asset_download_url(asset)
         lines.extend(
             [
                 f"asset_id={asset.id}",
                 f"name={asset.name}",
-                f"download_url={download_url}",
                 f"bytes={asset.size}",
+                (
+                    "delivery_instruction=this video is attached to the reply as a playable "
+                    "card with its own download button; to hand it to the user again in a "
+                    "later reply call video_generate action=attach with this asset_id. "
+                    "Never write a markdown link or URL for it: asset links are not "
+                    "clickable in the app and expire."
+                ),
                 (
                     "workspace_instruction=for bash/share_file use only workspace_path; "
                     "if absent, call video_generate action=fetch with this asset_id "
@@ -1432,8 +1432,8 @@ def _job_lines(
         )
         if getattr(job, "kind", None) == "render":
             lines.append(
-                "handoff_instruction=use the attached final-video card or the exact "
-                "download_url; never construct a markdown URL from path or asset_id"
+                "handoff_instruction=use the attached final-video card or "
+                "action=attach; never construct a markdown URL from path or asset_id"
             )
     credits = (job.result_data or {}).get("credits") if isinstance(getattr(job, "result_data", None), dict) else None
     if credits is not None and job.status == "completed":
@@ -2092,6 +2092,48 @@ async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResul
     )
 
 
+async def _execute_attach(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Show an owned, finished video to the user again as a card on this reply.
+
+    No sandbox, no download token: the card carries the asset id and the
+    client fetches a fresh signed URL when the user presses download.
+    """
+    from tool.asset_delivery import attach_owned_asset, find_owned_ready_asset
+
+    asset = None
+    job = None
+    if args.asset_id:
+        asset = await find_owned_ready_asset(args.asset_id, ctx)
+    if asset is None and args.job_id:
+        job = await _owned_job_any_kind(args.job_id, ctx)
+        asset = await _job_asset(job) if job else None
+    if not asset or asset.status != "ready":
+        return ToolResult(
+            title="Asset not available",
+            output="No ready asset owned by this user matches that id.",
+            metadata={"error": True},
+        )
+    return await attach_owned_asset(
+        asset,
+        ctx,
+        kind="video_final" if (asset.mime or "").startswith("video/") else "shared_file",
+        role="final" if (asset.mime or "").startswith("video/") else "result",
+        metadata={"job_id": job.id if job else None},
+    )
+
+
+async def _owned_job_any_kind(job_id: str, ctx: ToolContext):
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        return (
+            await db.execute(
+                select(VideoJob).where(VideoJob.id == job_id, VideoJob.user_id == ctx.user_id)
+            )
+        ).scalar_one_or_none()
+
+
 async def _try_materialize(job, ctx: ToolContext) -> str | None:
     """Best-effort delivery of a finished video into the workspace.
 
@@ -2184,6 +2226,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         return await _execute_estimate(args, ctx)
     if args.action == "fetch":
         return await _execute_fetch(args, ctx)
+    if args.action == "attach":
+        return await _execute_attach(args, ctx)
     if args.action == "submit":
         accepted_task_id = ""
         try:
@@ -3079,29 +3123,27 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 
 
 VIDEO_GENERATE_DESCRIPTION = """\
-Generate video. This is the only way to create one, and it works on its own: \
-describe the shot in `prompt`, optionally naming model, resolution, ratio, \
+Generate video (the only way to create one): describe the shot in `prompt`, optionally naming model, resolution, ratio, \
 duration, audio, seed and reference assets, and pass an idempotency_key. \
-Use action="models" to read what each model accepts (the registry is the only \
-description of that). A returned `person_selected_model` and the person's \
+Use action="models" to read what each model accepts. A returned `person_selected_model` and the person's \
 composer resolution are authoritative: omit those fields or repeat them \
 exactly, and never silently choose another model or tier. Resolve image intent \
 from the request and relevant conversation before building input_assets: an \
 image to animate is a first_frame; an explicitly described ending is a \
 last_frame; several subject/product/style references are reference_image, \
 not automatically first/last frames. Use actual asset IDs, never upload \
-count/order as evidence of purpose. If asked to animate each image separately, \
-create separate shots, each with its own first_frame, and estimate the total \
-cost. If the intended selection or use is ambiguous, ask one focused question \
+count/order as evidence of purpose. To animate each image separately, create one shot per \
+first_frame and estimate the total cost. If the intended selection or use is ambiguous, ask one focused question \
 before any paid call. RunningHub Turbo only supports explicit frames, not \
 generic/multiple reference images; explain this and request a compatible \
 composer model or an explicit change of intent. Never omit requested images \
-or relabel them as endpoints merely to make the request pass validation. \
+or relabel them as endpoints to pass validation. \
 Use action="estimate" \
 to validate a request for free \
 before paying. A finished video lands in OSS and, when a sandbox is present, \
 in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
-video asset there. \
+video asset there. action="attach" re-sends an owned asset to the user as a card (no sandbox); \
+never write a link to it. \
 Distinct jobs may run together; never parallelize two mutations of one job. \
 A paid submit is never replaced after an ambiguous result — reconcile the \
 same job or key."""

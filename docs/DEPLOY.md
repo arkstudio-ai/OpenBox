@@ -5,7 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-10 12:26 `20261010-video-delivery-0551f86a`（视频成片重发卡片、App 下载反馈）
+## 当前阿里云：2026-10-10 12:53（语音自然提问与上下文交办）
+
+- 代码修复 `845abf6b`、`cc1ff813`，已合并主分支的视频交付修复。后端镜像 `openbox-backend:20261010-voice-natural-cc1ff813`；前端镜像 `openbox-frontend-v2:20261010-voice-natural-28f9bd4d`。两者均由本机干净 Git 归档构建为 linux/amd64，经私有 OSS 中转，服务器核对镜像、源码及页面哈希后加载。
+- 原因：任务提问提示词要求逐题读编号/选项，详细回复偏好又放大了表单说明；只要通话带有待答卡片，交办代码便跳过专门的上下文整理模型。原先聊天气泡仅展示 ASR 原话，已有的前台整理内容也不可见。
+- 修复：卡片提醒结合任务直接自然提问，一次只给模型当前待确认的问题，完整表单仍保存在通话上下文供后续回答；不推断已完成进度。卡片回答和同时发起的新任务均可经整理模型补齐项目、素材、时长和限制；保留人类原话、真实卡片 ID 与审批边界，不补选默认项，只有真实答题工具成功后才报告提交。
+- Web 显示「语音整理」并可展开原话；Flutter 源码同步了相同展示，界面随包含 `845abf6b` 的后续客户端安装包生效。现有 App 的语音处理直接使用更新后的服务端。
+- 验证：语音后端 317 项、主分支合并相关 35 项、最后播报修补相关 74 项通过；Web 15 项、Flutter 18 项、浏览器桌面/手机宽度 4 项通过。实际模型交办 12/12（服务器中位 1026 ms；同义禁止表达人工复核并修正校验规则）、真实语音桥接两轮答题、服务器自然播报 3/3、JEV 8/8 均通过。最终后端 healthy、0 重启，检查窗口内 ERROR/Traceback、语音路由失败、整理模型不可用和卡片监听失败均为 0，公网首页及 `/api/environment` 返回 200。
+- 无数据库迁移：业务库 `pbf5a6b7c8d9`，轨迹库 `t0005_recorded_audiences`。业务库和轨迹库均在切换前执行完整备份并验证恢复目录；最后一次备份 `/opt/openbox/backups/20261010-voice-natural-cc1ff813/activation-20261010T045206Z`。切换时活跃通话、任务租约、视频任务均为 0。回滚可恢复该目录的 `docker-compose.override.yml` 后执行 `docker compose up -d --no-deps backend frontend`。
+
+## 历史阿里云：2026-10-10 12:26 `20261010-video-delivery-0551f86a`（视频成片重发卡片、App 下载反馈）
 
 - 源码 `main@0551f86a`（PR [#65](https://github.com/arkstudio-ai/OpenBox/pull/65) 合并提交，基于队友已发的 `65a8ddfd`）。起因是用户 `01M3P3BZPN7V5PZ3AKW5M2A5CK` 在一个会话生成 40 条 Wan 3.0 视频后"下载不了"：App 下载键其实被按过 20 多次且接口全 200，但无进度、无提示、不进相册；用户转而让助手"发给我"，助手贴出工具输出里的 24 小时 token 链接（App 打不开、第 1–14 集贴出时已过期），再调 `share_file` 被沙箱付费门槛挡回后编了假 OSS 直链。
 - 改动：`video_generate`/`video_compose` 完成输出去掉 `download_url` 改为 `delivery_instruction`；新增 `video_generate action="attach"` 按 asset_id/job_id 重新挂卡片（无沙箱、无 token）；`share_file` 增加 `asset_id` 并改 `sandbox_required=False`；Web Markdown 旧资产链接点击改走 `/api/assets/<id>/url?download=true`。App 侧改动随 iOS 1.0.32 (43) 发 TestFlight（见 [MOBILE_RELEASE_1_0_32_20261010.md](MOBILE_RELEASE_1_0_32_20261010.md)）。`video_generate` 描述已精简以保持媒体工具 schema 预算（`test_llm_schema.py` 上限 10,000 字符几乎贴满）。

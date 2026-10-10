@@ -174,6 +174,42 @@ def _validate_size(model: str, size: str) -> str | None:
     return None
 
 
+def _align_size(model: str, size: str) -> tuple[str, str | None]:
+    """Snap WIDTHxHEIGHT onto gpt-image-2's 16px grid, keeping the aspect ratio.
+
+    Familiar sizes such as 1920x1080 are refused only because 1080 is not a
+    multiple of 16. Returns ``(size, note)``; ``note`` is set when the size
+    changed so the caller can say so. Other limits are left to _validate_size.
+    """
+    match = re.fullmatch(r"(\d+)x(\d+)", size)
+    if model.lower() != "gpt-image-2" or not match:
+        return size, None
+    width, height = int(match.group(1)), int(match.group(2))
+    if width < 16 or height < 16 or (width % 16 == 0 and height % 16 == 0):
+        return size, None
+    ratio = width / height
+    # Fix one side on the grid and derive the other from the ratio, so every
+    # candidate keeps the requested shape to within half a grid step.
+    candidates = set()
+    for side in (width // 16 * 16, width // 16 * 16 + 16):
+        candidates.add((side, max(16, round(side / ratio / 16) * 16)))
+    for side in (height // 16 * 16, height // 16 * 16 + 16):
+        candidates.add((max(16, round(side * ratio / 16) * 16), side))
+
+    def distance(candidate: tuple[int, int]):
+        w, h = candidate
+        change = max(abs(w - width) / width, abs(h - height) / height)
+        return (change, abs(w / h - ratio) / ratio, w * h, w)
+
+    valid = [c for c in candidates if _validate_size(model, f"{c[0]}x{c[1]}") is None]
+    w, h = min(valid or candidates, key=distance)
+    aligned = f"{w}x{h}"
+    return aligned, (
+        f"size {size} was adjusted to {aligned} because {model} needs width and "
+        "height in multiples of 16 (aspect ratio kept as closely as that allows)"
+    )
+
+
 async def _find_owned_asset(ref: str, ctx: ToolContext):
     """Resolve an asset id or the logical /workspace path shown to the agent."""
     from sqlalchemy import select
@@ -311,7 +347,14 @@ async def _response_images(response) -> list[bytes]:
             raise RuntimeError("generated image exceeds the 50 MB output limit")
         outputs.append(payload)
     if not outputs:
-        raise RuntimeError("image provider returned no images")
+        # Some gateways answer 200 with an error body instead of a 4xx. That
+        # is still a received response, so it stays an unknown outcome, but
+        # its message is the only clue to what went wrong.
+        error = getattr(response, "error", None)
+        if isinstance(error, dict):
+            error = error.get("message") or error.get("code") or error
+        suffix = f"; provider error: {_redact_provider_text(str(error))}" if error else ""
+        raise RuntimeError("image provider returned no images" + suffix)
     return outputs
 
 
@@ -356,41 +399,50 @@ async def _call_provider(
         # idempotency for image billing, so unknown responses remain terminal.
         common["extra_headers"] = {"X-Client-Request-Id": operation_key}
 
-    # A revoked run starts no paid image request (the request-start fence).
-    await assert_current("request")
-    # Binary inputs are recorded as references to their owned assets. The
-    # provider request contains only public parameters and those references,
-    # never SDK objects, credentials, or expiring signed URLs.
-    context = await context_for_tool(ctx) if ctx is not None else None
-    retained = {}
-    if context is not None:
-        from trajectory.artifacts import capture_asset_reference
-        for item in [*images, *([mask] if mask else [])]:
-            retained[item.asset_id] = await capture_asset_reference(
-                context, asset_id=item.asset_id, oss_key=item.oss_key, media_type=item.mime,
-                size_bytes=len(item.data), name=item.name)
+    try:
+        # A revoked run starts no paid image request (the request-start fence).
+        await assert_current("request")
+        # Binary inputs are recorded as references to their owned assets. The
+        # provider request contains only public parameters and those references,
+        # never SDK objects, credentials, or expiring signed URLs.
+        context = await context_for_tool(ctx) if ctx is not None else None
+        retained = {}
+        if context is not None:
+            from trajectory.artifacts import capture_asset_reference
+            for item in [*images, *([mask] if mask else [])]:
+                retained[item.asset_id] = await capture_asset_reference(
+                    context, asset_id=item.asset_id, oss_key=item.oss_key, media_type=item.mime,
+                    size_bytes=len(item.data), name=item.name)
 
-    def input_reference(item):
-        return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
-                "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
-                "availability": (retained.get(item.asset_id) or {}).get("availability", "not_recorded")}
+        def input_reference(item):
+            return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
+                    "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
+                    "availability": (retained.get(item.asset_id) or {}).get("availability", "not_recorded")}
 
-    snapshot = {**common, "input": {
-        "operation": "edit" if images else "generate",
-        "images": [input_reference(item) for item in images],
-        "mask": input_reference(mask) if mask else None,
-    }}
-    capture = await RequestCapture.start(
-        ctx, purpose="image_generation", model_id=f"{target.provider}/{target.model}",
-        payload=snapshot, capture_level="adapter_input",
-    )
+        snapshot = {**common, "input": {
+            "operation": "edit" if images else "generate",
+            "images": [input_reference(item) for item in images],
+            "mask": input_reference(mask) if mask else None,
+        }}
+        capture = await RequestCapture.start(
+            ctx, purpose="image_generation", model_id=f"{target.provider}/{target.model}",
+            payload=snapshot, capture_level="adapter_input",
+        )
+    except Exception as exc:
+        # Everything above precedes the provider SDK, so nothing was sent.
+        _mark_not_sent(exc)
+        raise
     if ctx is not None:
         ctx._trajectory_image_request_id = capture.context.request_id if capture.context else None
         ctx._trajectory_image_capture = capture
 
     client = None
     try:
-        client = AsyncOpenAI(**client_kwargs)
+        try:
+            client = AsyncOpenAI(**client_kwargs)
+        except Exception as exc:
+            _mark_not_sent(exc)
+            raise
         if images:
             files = [(image.name, image.data, image.mime) for image in images]
             edit_kwargs = dict(common)
@@ -1080,6 +1132,196 @@ def _public_error(exc: Exception) -> str:
     return (prefix + message).strip()[:800]
 
 
+#: Set on an exception raised before the provider SDK sent anything.
+_NOT_SENT = "_openbox_image_request_not_sent"
+#: 4xx answers that may still describe an accepted request (a timed-out or
+#: duplicate in-flight one), so they keep the unknown-outcome protection.
+_AMBIGUOUS_4XX = frozenset({408, 409, 499})
+_QUOTA_HINTS = ("quota", "balance", "billing", "credit", "余额", "额度", "欠费", "充值")
+_CONTENT_HINTS = ("moderation", "content_policy", "content policy", "safety", "sensitive",
+                  "违规", "敏感", "审核")
+_REDACTIONS = (
+    (re.compile(r"</?[A-Za-z][^<>]*>"), " "),
+    (re.compile(r"https?://\S+"), "[url]"),
+    (re.compile(r"(?i)\bbearer\s+\S+"), "Bearer [redacted]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "[redacted]"),
+    (re.compile(r"(?i)\b(api[_-]?key|access[_-]?key[A-Za-z_-]*|secret|token|password|signature|sig)"
+                r"(\s*[=:]\s*)[^\s,;&\"']+"), r"\1\2[redacted]"),
+    (re.compile(r"[A-Za-z0-9+/=_-]{40,}"), "[redacted]"),
+)
+#: kind -> (user-facing reason, what the agent should do next)
+_REJECTIONS = {
+    "invalid_request": ("参数不支持", "Correct the parameters named in the provider message "
+                        "and call image_gen again; a corrected retry is safe."),
+    "content_policy": ("内容审核未通过", "Revise the prompt or input images, then call image_gen again."),
+    "permission": ("权限或额度问题", "Do not retry unchanged; tell the person the image service "
+                   "refused this account or model and an administrator must check it."),
+    "quota": ("权限或额度问题（额度不足）", "Do not retry; tell the person the image service "
+              "account is out of quota or balance."),
+    "not_found": ("模型或接口不可用", "Do not retry unchanged; tell the person the configured "
+                  "image model or endpoint is unavailable."),
+    "rate_limit": ("频率限制，稍后再试", "Wait about 30 seconds before at most one retry; if it "
+                   "repeats, tell the person to try again later."),
+    "not_sent": ("请求未发出", "The request never reached the provider; one retry is safe."),
+    "rejected": ("服务商拒绝了请求", "Do not retry unchanged; report the reason to the person."),
+}
+
+
+@dataclass(frozen=True)
+class _ProviderFailure:
+    """One provider-call failure, split by whether the request was accepted."""
+
+    definite: bool  # provably not accepted: no image produced, nothing charged
+    kind: str
+    status: int | None
+    detail: str  # redacted, truncated provider text; "" when there is none
+    reason: str  # short cause for logs and the unknown-outcome message
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind in {"invalid_request", "content_policy", "rate_limit", "not_sent"}
+
+
+def _mark_not_sent(exc: BaseException) -> None:
+    try:
+        setattr(exc, _NOT_SENT, True)
+    except Exception:  # pragma: no cover - an exception type without __dict__
+        pass
+
+
+def _redact_provider_text(text: str, limit: int = 300) -> str:
+    """Provider text minus markup, URLs and anything shaped like a credential."""
+    value = str(text)
+    for pattern, replacement in _REDACTIONS:
+        value = pattern.sub(replacement, value)
+    value = " ".join(value.split())
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _provider_error_text(exc: BaseException) -> str:
+    body = getattr(exc, "body", None)
+    message = None
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("msg") or body.get("detail") or body.get("error")
+    elif isinstance(body, str):
+        message = body
+    return _redact_provider_text(str(message or getattr(exc, "message", None) or exc))
+
+
+def _rejection_kind(status: int, exc: BaseException, detail: str) -> str:
+    code = str(getattr(exc, "code", None) or "").lower()
+    text = f"{code} {detail}".lower()
+    if status == 402 or (status in (401, 403, 429) and any(h in text for h in _QUOTA_HINTS)):
+        return "quota"
+    if status in (401, 403):
+        return "permission"
+    if status == 429:
+        return "rate_limit"
+    if status == 404:
+        return "not_found"
+    if any(hint in text for hint in _CONTENT_HINTS):
+        return "content_policy"
+    return "invalid_request" if status in (400, 413, 415, 422) else "rejected"
+
+
+def _classify_provider_failure(exc: BaseException) -> _ProviderFailure:
+    """Split failures into proven refusals and possibly-accepted requests.
+
+    Proven refusals are an HTTP 4xx answer (other than 408/409/499) and a
+    request that never left this process. Everything after a request may have
+    reached the provider (timeouts, 5xx, dropped connections, unusable 200
+    responses, undownloadable image URLs) keeps the no-resubmit protection.
+    """
+    import httpx
+    import openai
+
+    if getattr(exc, _NOT_SENT, False):
+        return _ProviderFailure(True, "not_sent", None, "",
+                                f"{type(exc).__name__} before the request was sent")
+    if isinstance(exc, openai.APIStatusError):
+        status, detail = exc.status_code, _provider_error_text(exc)
+        if 400 <= status < 500 and status not in _AMBIGUOUS_4XX:
+            return _ProviderFailure(True, _rejection_kind(status, exc, detail), status, detail,
+                                    f"HTTP {status}")
+        return _ProviderFailure(False, "unknown", status, detail,
+                                f"HTTP {status} after the request was sent")
+    if isinstance(exc, openai.APIConnectionError):
+        cause = exc.__cause__
+        if isinstance(cause, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+                              httpx.ProxyError, httpx.UnsupportedProtocol)):
+            return _ProviderFailure(True, "not_sent", None, "",
+                                    f"{type(cause).__name__}: no connection was established")
+        if isinstance(exc, openai.APITimeoutError):
+            return _ProviderFailure(False, "unknown", None, "",
+                                    "no answer within the timeout after the request was sent")
+        return _ProviderFailure(False, "unknown", None, "",
+                                "the connection dropped after the request was sent")
+    return _ProviderFailure(False, "unknown", None, _redact_provider_text(str(exc)),
+                            f"{type(exc).__name__} while reading the provider response")
+
+
+async def _record_image_rejection(effect_claim, reservations: list[Any],
+                                  failure: _ProviderFailure) -> None:
+    """Persist a proven refusal: the asset projection first, then the ledger.
+
+    The projection is written without the run fence, so even a worker that
+    lost its fence leaves evidence the reconciler can settle as failed.
+    """
+    error = {"code": "image_provider_rejected", "kind": failure.kind,
+             "http_status": failure.status}
+    await _set_reserved_image_status(reservations, "rejected", ctx=None, expected={"generating"})
+    if effect_claim is None:
+        return
+    from agent.effect_ledger import (
+        EffectLeaseLostError,
+        record_effect_outcome_unknown,
+        settle_effect,
+    )
+
+    try:
+        await settle_effect(effect_claim, state="failed", error=error,
+                            evidence={"provider_accepted": False})
+        return
+    except Exception:
+        log.warning("image rejection could not settle its effect directly", exc_info=True)
+    try:
+        # Close the claim; reconciliation reads the rejected projection.
+        await record_effect_outcome_unknown(effect_claim, error=error)
+    except EffectLeaseLostError:
+        pass
+
+
+def _rejected_result(mode: str, failure: _ProviderFailure, *, operation_key: str,
+                     asset_ids: list[str], notes: list[str]) -> ToolResult:
+    label, next_step = _REJECTIONS[failure.kind]
+    answer = f"HTTP {failure.status}" if failure.status else "no provider response"
+    lines = [
+        f"The image provider refused this {mode} request: 未受理，不扣费 "
+        "(not accepted, nothing charged).",
+        f"reason={label} ({answer})",
+        *([f"provider_message={failure.detail}"] if failure.detail else []),
+        f"next_step={next_step}",
+        *notes,
+    ]
+    return ToolResult(
+        title=f"Image {mode} rejected: {label}",
+        output="\n".join(lines),
+        metadata={
+            "error": True,
+            "failure_code": "image_provider_rejected",
+            "rejection_kind": failure.kind,
+            "provider_status": failure.status,
+            "operation_key": operation_key,
+            "asset_ids": asset_ids,
+            "provider_accepted": False,
+            "charged": False,
+            "retryable": failure.retryable,
+            "outcome_unknown": False,
+            "manual_review": False,
+        },
+    )
+
+
 async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
@@ -1091,11 +1333,15 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     except Exception as exc:
         return ToolResult(title="image_gen is not configured", output=_public_error(exc))
 
-    size = args.size or settings.default_size
+    requested_size = args.size or settings.default_size
+    size, size_note = _align_size(target.model, requested_size)
+    notes = [f"Note: {size_note}."] if size_note else []
     quality = args.quality or settings.default_quality
     output_format = args.output_format or settings.output_format
     error = _validate_size(target.model, size)
     if error:
+        if size_note:
+            error = f"{error} (requested {requested_size}, aligned to {size})"
         return ToolResult(title="Invalid image size", output=error)
     if quality not in _GPT_IMAGE_2_QUALITIES:
         return ToolResult(title="Invalid image quality", output="quality must be low, medium, high, or auto")
@@ -1158,12 +1404,13 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     verb = "Edited" if mode == "edit" else "Generated"
                     return ToolResult(
                         title=f"{verb} 1 image (reused identical result)",
-                        output=(
-                            f"An identical earlier {mode} result was reused without a new provider call.\n"
+                        output="\n".join([
+                            f"An identical earlier {mode} result was reused without a new provider call.",
                             f"- asset_id={reused.asset_id}; name={reused.name}; path={reused.path}; "
-                            f"{reused.mime}; {reused.size} bytes\n"
-                            "Use the asset_id (preferred) or displayed path as input_images for a follow-up edit."
-                        ),
+                            f"{reused.mime}; {reused.size} bytes",
+                            *notes,
+                            "Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.",
+                        ]),
                         metadata={
                             "mode": mode,
                             "model": target.model,
@@ -1171,6 +1418,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             "asset_ids": [reused.asset_id],
                             "names": [reused.name],
                             "size": size,
+                            "requested_size": requested_size,
                             "quality": quality,
                             "reused": True,
                         },
@@ -1252,6 +1500,27 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 # guard. No provider call occurred, so the stable reservation
                 # is safe for exactly one caller to claim below.
                 should_generate = True
+            elif all(row.status == "rejected" for row in reservations):
+                # A replay of a call the provider provably refused: nothing
+                # was accepted or charged, so this is not an unknown outcome.
+                return ToolResult(
+                    title=f"Image {mode} was already rejected",
+                    output=(
+                        "The provider already refused this exact image request: 未受理，不扣费 "
+                        "(not accepted, nothing charged). Adjust the request before calling "
+                        "image_gen again."
+                    ),
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_provider_rejected",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "provider_accepted": False,
+                        "charged": False,
+                        "outcome_unknown": False,
+                        "manual_review": False,
+                    },
+                )
             else:
                 states = sorted({str(row.status) for row in reservations})
                 return ToolResult(
@@ -1350,7 +1619,29 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 await _assert_image_current(ctx)
             except Exception as exc:
                 from agent.driver import LeaseLostError
+                from question.runtime import RunRevoked
 
+                failure = (
+                    _classify_provider_failure(exc)
+                    if provider_called
+                    else _ProviderFailure(False, "unknown", None, "",
+                                          f"{type(exc).__name__} at the send boundary")
+                )
+                if failure.definite:
+                    # The provider refused, or the request never left: nothing
+                    # was accepted or charged, so a corrected retry is safe.
+                    await _record_image_rejection(effect_claim, reservations, failure)
+                    log.warning(
+                        "image provider refused %s: kind=%s status=%s type=%s message=%s",
+                        mode, failure.kind, failure.status, type(exc).__name__,
+                        failure.detail or "-",
+                    )
+                    if isinstance(exc, (LeaseLostError, RunRevoked)):
+                        raise
+                    return _rejected_result(
+                        mode, failure, operation_key=operation_key,
+                        asset_ids=[row.id for row in reservations], notes=notes,
+                    )
                 if effect_claim is not None and provider_called:
                     from agent.effect_ledger import (
                         EffectLeaseLostError,
@@ -1363,6 +1654,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             error={
                                 "code": "image_provider_response_unknown",
                                 "error_type": type(exc).__name__,
+                                "http_status": failure.status,
                             },
                         )
                     except EffectLeaseLostError:
@@ -1392,7 +1684,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 # ambiguous and paid resubmission remains disabled.
                 next_status = (
                     "pending"
-                    if isinstance(exc, LeaseLostError) and not provider_called
+                    if isinstance(exc, (LeaseLostError, RunRevoked)) and not provider_called
                     else "outcome_unknown"
                 )
                 await _set_reserved_image_status(
@@ -1401,20 +1693,30 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     ctx=None,
                     expected={"generating"},
                 )
-                if isinstance(exc, LeaseLostError):
+                if isinstance(exc, (LeaseLostError, RunRevoked)):
                     raise
-                log.warning("image provider outcome unknown: %s", type(exc).__name__)
+                log.warning(
+                    "image provider outcome unknown: mode=%s status=%s type=%s reason=%s message=%s",
+                    mode, failure.status, type(exc).__name__, failure.reason,
+                    failure.detail or "-",
+                )
                 return ToolResult(
                     title=f"Image {mode} outcome unknown",
-                    output=(
+                    output="\n".join([
                         "The image provider request may have been accepted, but no durable provider "
-                        "receipt is available. Automatic paid resubmission is disabled."
-                    ),
+                        "receipt is available. Automatic paid resubmission is disabled.",
+                        f"reason={failure.reason}",
+                        *([f"provider_message={failure.detail}"] if failure.detail else []),
+                        "next_step=Tell the person the outcome is uncertain; do not resubmit this "
+                        "request unless they explicitly ask.",
+                        *notes,
+                    ]),
                     metadata={
                         "error": True,
                         "failure_code": "image_provider_outcome_unknown",
                         "operation_key": operation_key,
                         "asset_ids": [row.id for row in reservations],
+                        "provider_status": failure.status,
                         "outcome_unknown": True,
                         "manual_review": True,
                         "do_not_retry": True,
@@ -1625,6 +1927,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
         lines.append(f"credits={format(credits.normalize(), 'f')}")
         lines += billing_status_lines()
+    lines += notes
     lines.append("Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.")
     return ToolResult(
         title=f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''}",
@@ -1636,6 +1939,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             "asset_ids": [item.asset_id for item in stored],
             "names": [item.name for item in stored],
             "size": size,
+            "requested_size": requested_size,
             "quality": quality,
             "credits": format(credits.normalize(), "f") if credits is not None else None,
         },
@@ -1652,8 +1956,11 @@ class _ImageEffectReconciler:
     """Reconcile only the deterministic FileAsset/OSS projection.
 
     The synchronous image endpoint exposes no queryable provider handle.  A
-    complete set of ready deterministic asset rows proves local projection;
-    every other state remains manual review and never causes a paid replay.
+    complete set of ready deterministic asset rows proves local projection,
+    and a complete set of ``rejected`` rows records a refusal the dispatching
+    worker observed (HTTP 4xx, or a request that never left) but could not
+    settle itself; every other state remains manual review and never causes a
+    paid replay.
     """
 
     can_reconcile_without_handle = True
@@ -1694,6 +2001,14 @@ class _ImageEffectReconciler:
                 receipt=effect.provider_receipt,
                 projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
                 evidence={"projection": "file_assets_ready"},
+            )
+        if len(by_id) == len(asset_ids) and all(
+            by_id[asset_id].status == "rejected" for asset_id in asset_ids
+        ):
+            return ReconcileDecision(
+                state="failed",
+                receipt=effect.provider_receipt,
+                evidence={"code": "image_provider_rejected", "projection": "file_assets_rejected"},
             )
         return ReconcileDecision(
             state="manual_review",

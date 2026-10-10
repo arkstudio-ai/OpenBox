@@ -40,8 +40,10 @@ creative premise, not a default that may be improved or replaced silently.
   person changes the selection; never silently change model or tier.
 - A mid-session selection change invalidates splitting, prompts affected by
   capabilities, and the estimate. Read the menu again and show a new shot card.
-- With no `person_selected_model`, use the registry default and label that fact
-  on the card.
+- With no `person_selected_model`, ask once before paying: the registry default
+  or one alternative, each with estimated credits (skip if the person already
+  chose or said 随便/你定). Label the result on the card. After a provider
+  refusal, never switch models without asking.
 
 Reference material has its own compatibility constraints. The 720p SD tier
 drops video references upstream; propose 1080p or different material rather

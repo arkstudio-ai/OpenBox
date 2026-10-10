@@ -64,24 +64,98 @@ class VideoRequestError(RuntimeError):
     public_message = True
 
 
+#: Refusals that say the model cannot be used right now rather than what is
+#: wrong with the request: status -> (unavailable kind, code, our own reason).
+_UNAVAILABLE_STATUS = {
+    401: ("permission", "video_provider_auth_rejected", "鉴权失败（密钥或账户权限问题）"),
+    402: ("balance", "video_provider_insufficient_balance", "账户余额不足"),
+    403: ("permission", "video_provider_permission_denied", "模型权限或账户状态问题"),
+    429: ("rate_limit", "video_provider_rate_limited", "请求频率受限"),
+}
+#: Read, never published: a 403/429 body naming these is a balance problem.
+_BALANCE_HINTS = ("insufficient_quota", "insufficient_user_quota", "insufficient balance",
+                  "insufficient_balance", "quota_not_enough", "overdue", "arrear",
+                  "余额", "欠费", "额度不足")
+_REQUEST_ID = re.compile(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}")
+#: One automatic retry after a clean 429; a longer wait is the person's call.
+RATE_LIMIT_RETRY_SECONDS = 3.0
+RATE_LIMIT_MAX_WAIT_SECONDS = 10.0
+
+
+def _bounded_json(response: Any) -> Any:
+    try:
+        # Bound parsing even when a gateway accidentally replies with a page.
+        return response.json() if len(response.content) <= 16_384 else None
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _names_a_task(raw: Any) -> bool:
+    """Whether a reply carries a provider task identity, i.e. accepted work."""
+    if not isinstance(raw, dict):
+        return False
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    for value in (raw.get(key) or data.get(key) for key in ("id", "task_id", "taskId")):
+        if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip() not in ("", "0", "-1"):
+            return True
+    return False
+
+
+def _unavailable_rejection(response: Any) -> dict[str, Any] | None:
+    raw = _bounded_json(response)
+    if _names_a_task(raw):
+        # A refusal that names a task contradicts itself: keep it ambiguous.
+        return None
+    status = response.status_code
+    kind, code, reason = _UNAVAILABLE_STATUS[status]
+    try:
+        text = response.text[:16_384].lower() if len(response.content) <= 65_536 else ""
+    except (UnicodeError, ValueError):
+        text = ""
+    if status in (403, 429) and any(hint in text for hint in _BALANCE_HINTS):
+        kind, code, reason = "balance", "video_provider_insufficient_balance", "账户余额或额度不足"
+    detail: dict[str, Any] = {
+        "code": code,
+        "http_status": status,
+        "submission_outcome": "rejected",
+        "unavailable": kind,
+        "retryable": kind == "rate_limit",
+        "message": f"HTTP {status}: 视频服务商未受理本次提交（未受理，不扣费）：{reason}。",
+    }
+    request_id = raw.get("request_id") if isinstance(raw, dict) else None
+    if isinstance(request_id, str) and _REQUEST_ID.fullmatch(request_id):
+        detail["provider_request_id"] = request_id
+    return detail
+
+
 def submission_rejection(exc: Exception) -> dict[str, Any] | None:
     """Classify definite submit refusals without publishing arbitrary bodies.
 
     Only reviewed messages are translated into our own diagnostic. Unknown
     bodies may echo secrets, prompts or instructions and remain private.
-    Timeouts, rate limits and 5xx retain the existing ambiguous-submit path.
+    400/422 refuse the request; 401/403 (permission), 402 or RunningHub 605
+    (balance) and 429 (rate limit) refuse the model for now — no task was
+    created, so nothing was charged. Timeouts, 5xx and any refusal that names
+    a task retain the existing ambiguous-submit path.
     """
     import httpx
     from tool.video_runninghub import SubmissionRejected
 
     if isinstance(exc, SubmissionRejected):
-        return {"http_status": 200, "code": "runninghub_" + exc.code,
-                "message": str(exc), "provider": "runninghub",
-                "submission_outcome": "rejected", "retryable": False}
+        detail = {"http_status": 200, "code": "runninghub_" + exc.code,
+                  "message": str(exc), "provider": "runninghub",
+                  "submission_outcome": "rejected", "retryable": False}
+        if exc.code == "605":
+            detail["unavailable"] = "balance"
+        return detail
 
-    if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code not in (400, 422):
+    if not isinstance(exc, httpx.HTTPStatusError):
         return None
     status = exc.response.status_code
+    if status in _UNAVAILABLE_STATUS:
+        return _unavailable_rejection(exc.response)
+    if status not in (400, 422):
+        return None
     detail: dict[str, Any] = {
         "code": "video_provider_request_rejected",
         "http_status": status,
@@ -89,11 +163,7 @@ def submission_rejection(exc: Exception) -> dict[str, Any] | None:
         "retryable": False,
         "message": f"HTTP {status}: video provider rejected the request parameters. Check the model's gateway configuration before retrying.",
     }
-    try:
-        # Bound parsing even when a gateway accidentally replies with a page.
-        raw = exc.response.json() if len(exc.response.content) <= 16_384 else None
-    except (ValueError, UnicodeError):
-        raw = None
+    raw = _bounded_json(exc.response)
     if isinstance(raw, dict):
         error = raw.get("error")
         message = error.get("message") if isinstance(error, dict) else None
@@ -103,9 +173,28 @@ def submission_rejection(exc: Exception) -> dict[str, Any] | None:
                 message=f"HTTP {status}: 文生视频 ratio 不能为空或 adaptive。请检查视频模型的 wire_shape / size 参数适配配置。",
             )
         request_id = raw.get("request_id")
-        if isinstance(request_id, str) and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", request_id):
+        if isinstance(request_id, str) and _REQUEST_ID.fullmatch(request_id):
             detail["provider_request_id"] = request_id
     return detail
+
+
+def rate_limit_retry_delay(exc: Exception) -> float | None:
+    """Seconds before the one automatic retry a clean 429 allows, else None.
+
+    Only a 429 whose body names no task guarantees nothing was accepted. A
+    Retry-After beyond a short wait is left to the person.
+    """
+    detail = submission_rejection(exc)
+    if not detail or detail.get("unavailable") != "rate_limit":
+        return None
+    header = exc.response.headers.get("retry-after")
+    if header is None:
+        return RATE_LIMIT_RETRY_SECONDS
+    try:
+        delay = float(header)
+    except ValueError:
+        return None
+    return max(1.0, delay) if delay <= RATE_LIMIT_MAX_WAIT_SECONDS else None
 
 
 def _wire_shape(route: Any, declared: Any | None) -> str | None:
@@ -981,7 +1070,13 @@ async def submit(route: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=getattr(route, "channel", "ark") != "runninghub") as client:
             response = await client.post(f"{route.base_url}{path}",
                 headers={"Authorization": auth_header(route), "Content-Type": "application/json"}, json=body)
-        data = await capture_http_response(capture, response)
+        try:
+            data = await capture_http_response(capture, response)
+        except ValueError:
+            # A refusal page (HTML, plain text) still classifies by its status.
+            if response.status_code not in (200, 201, 202):
+                response.raise_for_status()
+            raise
         if response.status_code not in (200, 201, 202):
             response.raise_for_status()
         if getattr(route, "channel", "ark") == "runninghub":

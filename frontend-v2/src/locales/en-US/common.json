@@ -48,7 +48,8 @@
   "pageLoad": {
     "title": "Page resources could not load",
     "body": "The page may have been updated or the network interrupted. Check your connection and reload to get the latest resources. Reloading does not resubmit tasks.",
-    "genericBody": "Try reloading the page. If the problem continues, return to the workspace."
+    "genericBody": "Try reloading the page. If the problem continues, return to the workspace.",
+    "sessionGone": "This conversation was deleted or belongs to another workspace, so you are back on the home page."
   },
   "unit": {
     "tokens": "tokens",

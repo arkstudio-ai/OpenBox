@@ -66,6 +66,22 @@ export interface AssistantTaskView {
   } | null
   pending_requests_location: "execution_session"
   latest_control?: { command_id: string; action: string; state: string; error_code?: string; receipt: Record<string, unknown> }
+  /** The card its conversation waits on; input given meanwhile runs after the user handles it there. */
+  blocked_by?: AssistantBlockingCard | null
+}
+
+/** A card a task's conversation waits on (servers that report it). */
+export interface AssistantBlockingCard {
+  request_id: string
+  /** desktop_takeover (a cloud desktop verification), question, … */
+  kind: string
+  host: string
+  title: string
+  link: string
+  question?: string
+  /** local: the page is on the cloud desktop; extension: in the user's own browser. */
+  browser?: string
+  done_option?: string
 }
 
 export interface AssistantAnswerPosition {

@@ -4,7 +4,10 @@ docs/PERSONAL_ASSISTANT_DESIGN_V2.md 10: a question an agent asks in one of
 the user's own conversations may be answered by their personal assistant; the
 conversation shows "由个人助理代答". Decisions stay with the user, who gets a
 link instead: permission approvals, plan reviews, memory confirmations,
-desktop takeovers and requests for the user's own action.
+desktop takeovers and requests for the user's own action. One narrow
+exception: a desktop takeover's own completion option (「我已完成，继续」) may be
+chosen for the user, only when their own cited message says they finished
+(我登好了、验证完了); the resumed tool then re-checks the page itself.
 
 docs/ASSISTANT_VOICE_FIX_PLAN.md 3.1: a file choice is answerable too, with an
 option that needs no file or with the user's own files as attachments. Such an
@@ -41,6 +44,26 @@ HIGH_RISK = re.compile("|".join((
 )), re.IGNORECASE)
 
 
+#: A desktop takeover (tool.desktop_takeover) is the user's own action on the page. The assistant
+#: may only press the card's own completion option for them, and only when the user's own cited
+#: message says they finished (我登好了、已经登录、验证完了、弄好了); the resumed tool re-checks the page.
+TAKEOVER_DONE = re.compile("|".join((
+    "(?:登|登录|登陆)(?:好|上|进去|完|成功)", "(?:登录|登陆|验证)了", "已经?(?:登录|登陆|登上|验证|处理好|弄好|搞好|搞定|完成)",
+    "验证(?:完|好|过|通过|成功)", "(?:通过|完成|做完|弄完)了?(?:验证|登录)", "(?:弄|搞|处理|做|整|操作)(?:好|完)",
+    "搞定", "完成了", r"\b(?:done|finished|logged ?in|signed ?in|verified|completed?)\b",
+)), re.IGNORECASE)
+#: Doubt, a question or a plan rather than a fact ("还没登好", "登好了吗", "等我登好了再说", "我去登录了").
+TAKEOVER_NOT_DONE = re.compile(
+    r"没|未|还不|不了|不上|不进|不行|不能|不会|失败|卡住|怎么|如何|[?？]|吗|么"
+    r"|等|待会|一会|马上|稍后|先别|还要|再说|准备|正在|去登|去验证|要登|要验证"
+    r"|\b(?:not|no|yet|failed|how|will|going|later|soon)\b|n't|can'?t", re.IGNORECASE)
+TAKEOVER_REASON = ("It is a desktop takeover: only the user can do the verification on that page (on the "
+                   "cloud desktop opened from that conversation, or in their own browser when browser is "
+                   "extension). Tell them where, with the link, and to press 「{done}」 when finished. Only after "
+                   "the user's own message says they finished may you answer it, citing that message, and only "
+                   "with 「{done}」.")
+
+
 def link(session_id: str) -> str:
     return f"/app/s/{session_id}"
 
@@ -50,16 +73,39 @@ def human_only(session_id: str, reason: str) -> AssistantError:
         f"{reason} Only the user can answer it: tell them and give the link {link(session_id)}")
 
 
+def is_takeover(row: QuestionCheckpoint, tool: str | None) -> bool:
+    return tool == "desktop_takeover" and any(
+        (question.get("detail") or {}).get("kind") == "desktop_takeover" for question in row.questions or [])
+
+
+def says_finished(text: str) -> bool:
+    """The user's own words say they finished the verification, with no doubt or question in them."""
+    words = " ".join(str(text or "").split())
+    return bool(TAKEOVER_DONE.search(words)) and not TAKEOVER_NOT_DONE.search(words)
+
+
+async def _tool(db, row: QuestionCheckpoint, session: Session) -> str | None:
+    if not row.part_id:
+        return None
+    part = await db.get(Part, row.part_id)
+    if part is None or part.session_id != session.id:
+        return None
+    return part.canonical_tool_id or (part.data or {}).get("tool")
+
+
 async def answerable(db, row: QuestionCheckpoint, session: Session, answers=None) -> tuple[str | None, bool]:
     """Why the user must answer this question themselves (or None), and whether
     an answer by the assistant is high-risk: the user confirms it on a card."""
     if (row.continuation or {}).get("kind") != "question":
         return "It is an approval or a confirmation, not an ordinary question.", False
-    tool = None
-    if row.part_id:
-        part = await db.get(Part, row.part_id)
-        if part is not None and part.session_id == session.id:
-            tool = part.canonical_tool_id or (part.data or {}).get("tool")
+    tool = await _tool(db, row, session)
+    if is_takeover(row, tool):
+        from tool.desktop_takeover import ANSWER_DONE
+        # Listing (no answer yet) shows it as the user's; the completion option alone is answerable,
+        # and answer_question then requires the user's cited words that they finished.
+        if answers != [[ANSWER_DONE]]:
+            return TAKEOVER_REASON.format(done=ANSWER_DONE), False
+        return None, False
     if tool not in ANSWERABLE_TOOLS:
         return "It asks the user for a decision or an action.", False
     texts, high_risk = [session.title or ""], False
@@ -126,6 +172,16 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
         # before any file row) and kept with the answer.
         sources = (await _tool_source_locked(db, main, ToolSource(ctx.part_id, ctx.run_id, ctx.run_generation,
             tuple(source_message_ids)), "request_answer"))["source_refs"] if source_message_ids else []
+        if is_takeover(row, await _tool(db, row, session)):
+            # Pressing 「我已完成，继续」 for the user needs their own words that they finished.
+            texts = [str((part.data or {}).get("text") or "") for part in (await db.scalars(select(Part).where(
+                Part.id.in_([ref["part_id"] for ref in sources]), Part.session_id == main.id,
+                Part.user_id == ctx.user_id))).all()] if sources else []
+            if not any(says_finished(text) for text in texts):
+                from tool.desktop_takeover import ANSWER_DONE
+                raise human_only(session.id, ("The user has not said they finished the verification. "
+                    if sources else "Cite the user's own message saying they finished. ")
+                    + TAKEOVER_REASON.format(done=ANSWER_DONE))
         items = [questions.Question(**item) for item in row.questions]
         try:
             files = questions.normalize_attachments(items, attachments)
@@ -183,13 +239,19 @@ async def list_waiting(*, user_id: str, workspace_id: str, main_id: str, limit: 
             Session.kind != "assistant", Session.id != main_id)
             .order_by(QuestionCheckpoint.created_at.desc(), QuestionCheckpoint.id.desc()).limit(limit))).all()
         items = []
+        from assistant.blocking import view as card_view
         for row, session, project_name in rows:
             reason, high_risk = await answerable(db, row, session)
+            card = card_view(row, session)
             items.append({
                 "kind": "question", "id": row.id, "session_id": session.id,
                 "session_title": session.title or "", "project_id": session.project_id,
                 "project_name": project_name, "visibility": session.visibility,
                 "asked_at": _iso(row.created_at), "link": link(session.id),
+                # What kind of card and where to act: a desktop_takeover is done on the cloud desktop
+                # (browser "local") or in the user's own browser ("extension"), at host.
+                "card_kind": card["kind"],
+                **{key: card[key] for key in ("host", "browser", "done_option") if card.get(key)},
                 "questions": [{"header": item.get("header", ""), "question": str(item.get("question", ""))[:600],
                                "options": [option.get("label") for option in item.get("options") or []],
                                "multiple": bool(item.get("multiple")), "custom": item.get("custom", True),

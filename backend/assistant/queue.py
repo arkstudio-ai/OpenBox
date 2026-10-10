@@ -27,6 +27,14 @@ async def select_main_turn_locked(db, main, *, include_next_turn):
     if await db.scalar(select(AgentInboxItem.id).where(AgentInboxItem.session_id == main.id,
             AgentInboxItem.user_id == main.user_id, AgentInboxItem.state == "claimed").limit(1)):
         return []
+    from question.runtime import admission_blocked_locked
+    if await admission_blocked_locked(db, main.id):
+        # A confirmation card owns the next main turn. Only the user's own
+        # message supersedes it; reports and platform input wait in order
+        # (a claimed report would be refused by start_run and block the queue).
+        from agent.inbox import first_superseding_input_locked
+        human = await first_superseding_input_locked(db, session_id=main.id, user_id=main.user_id)
+        return [] if human is None else [human]
     heads = {}
     for mode in MAX_CONSECUTIVE:
         query = select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,

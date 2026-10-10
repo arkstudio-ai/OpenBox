@@ -430,13 +430,24 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         db.add(TaskSubmission(id=submission_id, task_id=task.id, command_id=command.id,
             inbox_id=accepted.id, origin=origin, source_message_id=None, delivery=delivery,
             accepted_at=now, disposition="accepted"))
+        blocked_by = None
+        if task_id and origin != "human":
+            # Delegated input never supersedes a pending card (only the user's
+            # own message does): it waits queued, unclaimed, until the card is
+            # handled. Say which card, so nobody reports the task as working.
+            from assistant.blocking import blocked_by_locked
+            blocked_by = await blocked_by_locked(db, execution)
+        if blocked_by is not None:
+            task.observed_state = "waiting_input"
         # Busy is still busy until the Driver takes this queued input.
-        if execution.status not in {"busy", "compacting"}:
+        elif execution.status not in {"busy", "compacting"}:
             task.observed_state = "queued"
         receipt = {"command_id": command.id, "task_id": task.id,
                    "execution_session_id": execution.id, "submission_id": submission_id,
                    "inbox_id": accepted.id, "task_revision": task.control_revision,
                    "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery}
+        if blocked_by is not None:
+            receipt["blocked_by"] = blocked_by
         if expected_run is not None:
             receipt["expected_run"] = expected_run
         command.receipt = receipt
@@ -486,6 +497,35 @@ async def record_submission_canceled_locked(db, execution, inbox, *, now) -> Non
         AgentInboxItem.state.in_(("accepted", "claimed"))).limit(1))
     if task.desired_state == "running" and task.observed_state == "queued" and not pending:
         task.observed_state = "waiting_input" if execution.status == "waiting_input" else "idle"
+
+
+async def record_submission_not_applied_locked(db, execution, inbox, *, now) -> None:
+    """Claimed input that never reached the model: a pending card owned the turn.
+
+    Same transaction as its not_run settlement. A task still waiting on that
+    card shows waiting_input (never running); one that moved on keeps its state.
+    """
+    submission = await db.scalar(select(TaskSubmission).where(TaskSubmission.inbox_id == inbox.id))
+    if submission is None or submission.disposition == "not_applied":
+        return
+    task = await db.scalar(select(AssistantTask).where(
+        AssistantTask.id == submission.task_id,
+        AssistantTask.execution_session_id == execution.id,
+    ).with_for_update())
+    if task is None:
+        return
+    submission.disposition = "not_applied"
+    # A scheduled run whose input never ran ends as skipped.
+    from assistant.schedule_runs import submission_canceled_locked
+    await submission_canceled_locked(db, submission, now)
+    task.control_revision += 1
+    task.updated_at = now
+    if task.desired_state == "running":
+        from db.models.question import SessionExecution
+        from question.runtime import pending_question_locked
+        state = await db.get(SessionExecution, execution.id)
+        if state is not None and await pending_question_locked(db, state) is not None:
+            task.observed_state = "waiting_input"
 
 
 async def record_submission_applied_locked(db, execution, inbox, *, now) -> None:

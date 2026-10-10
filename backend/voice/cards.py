@@ -226,12 +226,31 @@ def spoken_question(item: dict, lang: str = "zh") -> dict:
                             "allow_attachments": bool(question.get("allow_attachments"))}
                            for index, question in enumerate(item.get("questions") or [], start=1)],
              "assistant_may_answer": bool(item.get("assistant_may_answer")),
-             "high_risk": bool(item.get("high_risk"))}
-    if item.get("assistant_may_answer"):
+             "high_risk": bool(item.get("high_risk")),
+             # What kind of card and where the user acts on it (assistant/request_answers.py list_waiting).
+             "kind": item.get("card_kind") or "question", "link": item.get("link") or "",
+             **({"host": item["host"]} if item.get("host") else {})}
+    if value["kind"] == "desktop_takeover":
+        value["answer_how"] = takeover_how(item)
+    elif item.get("assistant_may_answer"):
         value["answer_how"] = "用户明确回答后，用 assistant_ask 结合任务和问题转交选择；保留原话核对，不替用户补选"
     else:
         value["answer_how"] = "要用户自己在屏幕上处理"
     return value
+
+
+def takeover_how(item: dict) -> str:
+    """Where the user finishes a desktop takeover, said so they can do it: the conversation, the
+    cloud desktop (or their own browser) and the button to press after."""
+    title = item.get("session_title") or "那个对话"
+    done = item.get("done_option") or "我已完成，继续"
+    site = f"（{item['host']}）" if item.get("host") else ""
+    if item.get("browser") == "extension":
+        where = f"在你自己的浏览器里完成验证{site}，再回到『{title}』点『{done}』"
+    else:
+        where = f"在『{title}』里打开云桌面完成验证{site}，再点『{done}』"
+    return (f"这是网页上的人机验证，只能用户自己做：告诉用户{where}。用户说已经弄好了（我登好了、验证完了），"
+            f"用 assistant_ask 把这句原话转交，个人助理会替他选『{done}』；没说完成就不要转交")
 
 
 async def waiting(scope, *, limit: int = WATCH_LIMIT) -> tuple[list[dict], list[dict]]:

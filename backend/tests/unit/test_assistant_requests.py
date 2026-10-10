@@ -10,6 +10,7 @@ from assistant.requests import list_requests
 from assistant.retry import read_command
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
+from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantCommand, AssistantTask
 from db.models.part import Part
 from db.models.question import QuestionCheckpoint, SessionExecution
@@ -161,7 +162,11 @@ async def test_stale_cards_never_save_an_answer(change):
         row = await db.get(QuestionCheckpoint, request.id)
         if change == "options": row.questions = [{**row.questions[0], "question": "A different question"}]
         if change == "expiry": row.expires_at = runtime.now() - timedelta(seconds=1)
-        if change == "driver": (await db.get(AgentDriverState, request.session_id)).generation += 1
+        if change == "driver":
+            # A later generation that consumed input moved the conversation on.
+            (await db.get(AgentDriverState, request.session_id)).generation += 1
+            consumed = await db.get(AgentInboxItem, created["inbox_id"])
+            consumed.generation = request.assistant["generation"] + 1
         if change == "turn": (await db.get(SessionExecution, request.session_id)).generation += 1
         if change == "canceled": (await db.get(AssistantTask, created["task_id"])).desired_state = "canceled"
     if change == "hash": binding["options_hash"] = "0" * 64

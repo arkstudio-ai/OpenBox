@@ -55,6 +55,16 @@ async def _switch_plan_agent(db, session, row, agent, content, reply_ref):
         {"type": "session.updated", "data": {"userId": row.user_id, "sessionId": row.session_id, "agent": agent}}]
 
 
+async def _takeover_detail(db, row: QuestionCheckpoint) -> dict | None:
+    """The takeover card's detail when this question was filed by desktop_takeover itself."""
+    detail = next(((question.get("detail") or {}) for question in row.questions or []
+                   if (question.get("detail") or {}).get("kind") == "desktop_takeover"), None)
+    part = await db.get(Part, row.part_id) if detail is not None and row.part_id else None
+    if part is None or (part.canonical_tool_id or (part.data or {}).get("tool")) != "desktop_takeover":
+        return None
+    return dict(detail)
+
+
 async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple[dict, list[dict]]:
     questions = [q["question"] for q in row.questions]
     answers = row.answers or [[] for _ in questions]
@@ -126,7 +136,21 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
                                "in one line that it was not done. If they ask for it again, call the tool again: it "
                                "shows a new card, which they can confirm on screen or by voice."),
                     "metadata": metadata}, events
-        if ((row.continuation or {}).get("answered_by") or {}).get("kind") == "assistant":
+        by_assistant = ((row.continuation or {}).get("answered_by") or {}).get("kind") == "assistant"
+        takeover = await _takeover_detail(db, row)
+        if takeover is not None:
+            # The suspended desktop_takeover resumes with its own instruction:
+            # a person changed the page, so the model re-checks it first.
+            from tool.desktop_takeover import resume_result
+            title, output = resume_result(answers[0][0] if answers and answers[0] else "",
+                                          str(takeover.get("page") or ""))
+            metadata["takeover"] = takeover
+            if by_assistant:
+                metadata["answered_by"] = "assistant"
+                return {"title": "由个人助理代答", "output": "The user's personal assistant answered for the "
+                        "user, on the user's own word that they finished. " + output, "metadata": metadata}, events
+            return {"title": title, "output": output, "metadata": metadata}, events
+        if by_assistant:
             # V2 D6: shown in the conversation as "由个人助理代答".
             metadata["answered_by"] = "assistant"
             # The tool row's title is what the conversation shows without opening it.

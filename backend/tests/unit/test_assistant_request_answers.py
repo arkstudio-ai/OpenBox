@@ -248,6 +248,16 @@ async def test_high_risk_words_ask_first_and_requests_for_the_users_own_action_s
     assert (await card(action)).status == "pending"
 
 
+@pytest.mark.parametrize("text,finished", [
+    ("我登好了", True), ("已经登录了", True), ("验证完了，继续吧", True), ("弄好了", True), ("我登录了", True),
+    ("搞定了", True), ("I'm done, logged in", True),
+    ("还没登好", False), ("登好了吗？", False), ("登不上", False), ("等我登好了再说", False), ("我去登录了", False),
+    ("好了", False), ("帮我点一下继续吧", False), ("I will log in later", False), ("not done yet", False)])
+def test_only_the_users_own_words_that_they_finished_answer_a_takeover(text, finished):
+    from assistant.request_answers import says_finished
+    assert says_finished(text) is finished
+
+
 @pytest.mark.parametrize("text,risky", [
     ("确认支付 39 元", True), ("要删除旧的草稿吗？", True), ("授权读取你的相册", True), ("Publish now?", True),
     ("Pay $5 to continue", True), ("清空购物车", True), ("预算 2000 块钱够吗", True), ("Total: ¥ 99", True),

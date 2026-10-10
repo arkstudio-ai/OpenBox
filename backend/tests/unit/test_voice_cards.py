@@ -311,6 +311,24 @@ FORM = {"id": "q-video", "session_id": "video-session", "session_title": "50秒�
                       {"header": "片名", "question": "请填写片名", "options": [], "custom": True}]}
 
 
+def test_a_desktop_takeover_says_where_the_user_finishes_it():
+    """The user said three times they could not see the card: the call says where to act and what to press."""
+    takeover = {"id": "q-login", "session_id": "orders", "session_title": "抓取订单", "project_name": "店铺",
+                "card_kind": "desktop_takeover", "host": "login.example.com", "browser": "local",
+                "done_option": "我已完成，继续", "link": "/app/s/orders", "assistant_may_answer": False,
+                "questions": [{"header": "需要你接管", "question": "页面要求登录，且登录过程带有人机验证，需要你亲自完成。",
+                               "options": ["我已完成，继续", "跳过这一步", "放弃任务"]}]}
+    spoken = cards.spoken_question(takeover)
+    assert spoken["kind"] == "desktop_takeover" and spoken["link"] == "/app/s/orders"
+    assert spoken["host"] == "login.example.com"
+    assert "在『抓取订单』里打开云桌面完成验证（login.example.com），再点『我已完成，继续』" in spoken["answer_how"]
+    assert "assistant_ask" in spoken["answer_how"]  # only on the user's own word that they finished
+    extension = cards.spoken_question({**takeover, "browser": "extension"})
+    assert "在你自己的浏览器里完成验证" in extension["answer_how"] and "云桌面" not in extension["answer_how"]
+    plain = cards.spoken_question(FORM)
+    assert plain["kind"] == "question" and plain["answer_how"].startswith("用户明确回答后")
+
+
 def test_task_form_keeps_every_field_and_exact_labels():
     spoken = cards.spoken_question(FORM)
     assert spoken["request_id"] == "q-video" and spoken["session_id"] == "video-session"

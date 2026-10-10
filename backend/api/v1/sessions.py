@@ -33,6 +33,9 @@ _METADATA_VALUE_MAX = 512
 class CreateSessionBody(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     quality: str | None = None
+    #: Optional output resolution inside the tier (the contract offers 720p
+    #: on ``medium``). Omitted = the tier's pinned default.
+    resolution: str | None = Field(default=None, max_length=8)
     metadata: dict[str, str] | None = None
 
     @field_validator("metadata")
@@ -81,7 +84,7 @@ async def create_session(
     body = body or CreateSessionBody()
     config = get_config()
     quality = validate_quality(body.quality)
-    video_model, video_resolution = resolve_quality(quality, config)
+    video_model, video_resolution = resolve_quality(quality, config, body.resolution)
     await check_session_quota(identity["user_id"], config)
     model, _ = resolve_model("", config, context="v1 session")
     session = await session_mod.create_session(

@@ -77,6 +77,7 @@ def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False
         "title": row.title or "",
         "status": session_status(row.status, busy=busy),
         "quality": getattr(row, "quality", None),
+        "resolution": getattr(row, "video_resolution", None),
         "metadata": dict(getattr(row, "metadata_", None) or {}),
         "credits_used": credits_text(credits_used),
         "created_at": iso_z(row.created_at),

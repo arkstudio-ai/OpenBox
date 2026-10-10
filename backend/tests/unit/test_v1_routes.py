@@ -72,8 +72,10 @@ def default_config(monkeypatch):
         "video_generation": {"provider": "test", "models": [
             {"id": "wan3.0-video", "channel": "sd2", "resolutions": ["720p", "1080p"]},
             {"id": "MiniMax-H3", "channel": "sd2", "resolutions": ["768p"]},
+            {"id": "doubao-seedance-2-5-260628", "channel": "sd2", "resolutions": ["480p", "720p", "1080p"]},
         ]},
         "model_tiers": {"video": [
+            {"tier": "ultra", "model": "doubao-seedance-2-5-260628", "resolutions": ["720p", "1080p"], "resolution": "1080p"},
             {"tier": "high", "model": "wan3.0-video", "resolutions": ["1080p"]},
             {"tier": "medium", "model": "wan3.0-video"},
             {"tier": "low", "model": "MiniMax-H3"},
@@ -131,7 +133,20 @@ async def test_session_validation_errors_use_the_contract(default_config):
             from api.v1.ids import internal_id
             row = await db.get(SessionRow, internal_id(low.json()["id"], "session"))
         assert (row.video_model, row.video_resolution) == ("MiniMax-H3", "768p")
-        bogus = await http.post("/sessions", json={"quality": "ultra"})
+        ultra = await http.post("/sessions", json={"quality": "ultra"})
+        assert ultra.status_code == 201 and ultra.json()["quality"] == "ultra"
+        assert ultra.json()["resolution"] == "1080p"
+        async with get_db_session() as db:
+            row = await db.get(SessionRow, internal_id(ultra.json()["id"], "session"))
+        assert (row.video_model, row.video_resolution) == ("doubao-seedance-2-5-260628", "1080p")
+        seven20 = await http.post("/sessions", json={"quality": "medium", "resolution": "720p"})
+        assert seven20.status_code == 201 and seven20.json()["resolution"] == "720p"
+        async with get_db_session() as db:
+            row = await db.get(SessionRow, internal_id(seven20.json()["id"], "session"))
+        assert (row.video_model, row.video_resolution) == ("wan3.0-video", "720p")
+        not_offered = await http.post("/sessions", json={"quality": "high", "resolution": "480p"})
+        assert not_offered.status_code == 400 and "480p" in not_offered.json()["error"]["message"]
+        bogus = await http.post("/sessions", json={"quality": "extreme"})
         assert bogus.status_code == 400
         too_many = await http.post("/sessions", json={"metadata": {f"k{i}": "v" for i in range(17)}})
         assert too_many.status_code == 400

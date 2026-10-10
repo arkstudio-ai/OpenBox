@@ -167,10 +167,11 @@ def test_native_question_part_wins_over_the_tool_part():
 def test_session_view_and_status_mapping():
     now = datetime(2026, 9, 21, 8, 0, tzinfo=timezone.utc)
     row = SimpleNamespace(id="session_1", title=None, status="waiting_input", quality="high",
-                          metadata_={"task_id": "t_1"}, created_at=now, updated_at=now)
+                          video_resolution="1080p", metadata_={"task_id": "t_1"}, created_at=now, updated_at=now)
     view = public.session_view(row, Decimal("12.500000"))
     assert view == {
-        "id": "ses_1", "title": "", "status": "busy", "quality": "high", "metadata": {"task_id": "t_1"},
+        "id": "ses_1", "title": "", "status": "busy", "quality": "high", "resolution": "1080p",
+        "metadata": {"task_id": "t_1"},
         "credits_used": "12.5", "created_at": "2026-09-21T08:00:00Z", "updated_at": "2026-09-21T08:00:00Z",
     }
     assert public.session_status("idle") == "idle"

@@ -103,6 +103,37 @@ def kinds(items):
     return [item["type"] if isinstance(item, dict) else "<audio>" for item in items]
 
 
+async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does_not_end_the_call(
+        http, providers, app, monkeypatch):
+    from voice import cards
+    from tests.unit.test_voice_cards import FORM
+    scopes = []
+
+    async def waiting(scope):
+        scopes.append(scope)
+        if len(scopes) == 1:
+            raise TimeoutError("temporary database delay")
+        return [], [FORM]
+
+    monkeypatch.setattr(cards, "waiting", waiting)
+    monkeypatch.setattr(cards, "POLL_SECONDS", 0.05)
+    headers = await account(http)
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        assert ready["type"] == "ready"
+        seen = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening"
+                          and bool(providers.made[-1].commands("note")))
+        notes = providers.made[-1].commands("note")
+        assert len(notes) == 1 and "请填写片名" in notes[0][1] and "需要哪些字幕" in notes[0][1]
+        assert "<audio>" in kinds(seen) and len(scopes) >= 2
+        assert all(scope.call_id == ready["call_id"] and scope.user_id and scope.workspace_id
+                   and scope.main_session_id for scope in scopes)
+        socket.send_json({"type": "ping"})
+        assert read_until(socket, lambda item: item["type"] == "heartbeat")[-1]["type"] == "heartbeat"
+        socket.send_json({"type": "stop"})
+        assert "ended" in kinds(read_until(socket, lambda item: False))
+
+
 async def test_refusals_carry_the_contract_close_codes(http, providers, app, monkeypatch):
     client = TestClient(app)
     headers = await account(http)

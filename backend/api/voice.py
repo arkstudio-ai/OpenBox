@@ -21,7 +21,7 @@ from billing.service import BillingError
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
-from voice import calls, events, handover, phrases, prompt, summary, tools, voices
+from voice import calls, cards, events, handover, phrases, prompt, summary, tools, voices
 from voice import router as turn_router
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
@@ -276,6 +276,26 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         await flag.wait()
         raise ending
 
+    async def pending_cards():
+        # Independent of the heartbeat/credit timer: a slow question read must not stall a call.
+        failures = 0
+        while True:
+            reading = asyncio.create_task(asyncio.wait_for(cards.waiting(bridge.scope), cards.POLL_TIMEOUT_SECONDS))
+            try:
+                snapshot = await asyncio.shield(reading)
+                await bridge.waiting_cards(*snapshot)
+                failures = 0
+            except asyncio.CancelledError:
+                # Finish the bounded read before call settlement. Cancelling an in-flight SQLite read
+                # can leave its transaction holding a lock while hang-up tries to write the bill.
+                await asyncio.gather(reading, return_exceptions=True)
+                raise
+            except Exception as exc:
+                failures += 1
+                if failures == 1 or failures % 30 == 0:
+                    log.warning("voice cards watch failed call=%s error=%s", call_id, type(exc).__name__)
+            await asyncio.sleep(cards.POLL_SECONDS)
+
     tasks, ending, answered = [], CallEnded("network", close=None), False
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id)
     try:
@@ -297,7 +317,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             answered = True
             bridge.answered()
             tasks += [asyncio.create_task(coroutine) for coroutine in (
-                bridge_to_client(), timers(),
+                bridge_to_client(), timers(), pending_cards(),
                 raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         stopped = stopped or time.monotonic()

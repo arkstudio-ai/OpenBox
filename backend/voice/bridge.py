@@ -353,7 +353,13 @@ class Bridge(TurnsMixin):
 
     def _next_delivery(self):
         """What the user asked comes first; task reports nobody asked for ride along after it."""
-        queued = [ref for ref in self.deliveries if ref.delivery == "queued"]
+        waiting_answer = self._asked is not None
+        confirmations = set(self.desk.fresh())
+        queued = [ref for ref in self.deliveries if ref.delivery == "queued"
+                  and not (ref.questions and (waiting_answer or self.pending_calls or confirmations))
+                  and not (ref.reason == "card_notice" and confirmations - {c["card_id"] for c in ref.cards})]
+        if confirmation := next((ref for ref in queued if ref.cards), None):
+            return confirmation
         return next((ref for ref in queued if ref.report is None), queued[0] if queued else None)
 
     async def _tidy(self) -> None:

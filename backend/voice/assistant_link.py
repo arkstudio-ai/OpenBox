@@ -24,6 +24,7 @@ result. Measured 2026-10-08: "帮我联网查一下……" twice ended with "已
 and made one up, a minute before the real one arrived.
 """
 import asyncio
+import json
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -40,6 +41,41 @@ RESUME_ENTRYPOINT = "question_answer"  # the Inbox item an answered main-session
 # Commands that give a task work it reports back on by itself, and the task states that mean it is still at it.
 WORK_ACTIONS = ("task_create", "task_input", "task_resume", "task_finish_continuation")
 WORKING = ("queued", "running", "resuming")
+
+
+def bounded_context(context: dict, budget: int = 6200) -> dict:
+    """Fit the ASCII-encoded provenance budget without replacing a human message with generated text.
+
+    Reserve room for Inbox identity and pending-card provenance. Prefer the complete task brief and
+    exact card targets, then the call summary and human requirements, then the front desk's replies.
+    A smaller retry budget accommodates other server-authored provenance on the input.
+    """
+    def fits(value):
+        return len(json.dumps(value, ensure_ascii=True)) <= budget
+    if fits(context):
+        return context
+    kept = {"call_truncated": True}
+    if context.get("detail"):
+        kept["detail"] = context["detail"]
+    if questions := context.get("task_questions"):
+        kept["task_questions"] = [{"request_id": item["request_id"], "session_id": item["session_id"],
+                                   "questions_omitted": True} for item in questions]
+    for key in ("request", "summary"):
+        if context.get(key) and fits({**kept, key: context[key]}):
+            kept[key] = context[key]
+    if questions and fits({**kept, "task_questions": questions}):
+        kept["task_questions"] = questions
+    lines = list(enumerate(context.get("call") or []))
+    selected = {}
+    for i, line in sorted(lines, key=lambda item: (str(item[1]).startswith("用户："), item[0]), reverse=True):
+        candidate = {**selected, i: line}
+        call = [candidate[index] for index in sorted(candidate)]
+        if fits({**kept, "call": call}):
+            selected = candidate
+            kept["call"] = call
+    if context.get("heard") and fits({**kept, "heard": context["heard"]}):
+        kept["heard"] = context["heard"]
+    return kept
 
 
 @dataclass(eq=False)
@@ -66,6 +102,7 @@ class VoiceTurnRef:
     note_seq: int = 0             # ...and how many provider events had arrived by then
     covered_by: str | None = None  # a reply that saw the note before ours could start
     cards: list | None = None     # main-session cards waiting when the result came (voice/cards.py)
+    questions: list | None = None  # task questions waiting for the user's spoken choices
     report: str | None = None     # a task report nobody asked for in this call: the task's title ("" unknown)
     asked: str = ""               # a report answering a request of this call that was passed on: the user's words
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
@@ -121,18 +158,15 @@ class AssistantLink:
                 extra_ref={"voice_call_id": self.call_id, **({"voice_context": context} if context else {})})
         try:
             try:
-                receipt = await accept(context or None)
+                receipt = await accept(bounded_context(context) if context else None)
             except ValueError:
                 if not context:
                     raise
-                # The input's origin reference has a size bound shared with other context: the restatement
-                # alone, then (should even that not fit) the restatement as the message, as before.
-                log.info("voice turn context dropped turn=%s call=%s", ref.id, self.call_id)
+                log.info("voice turn context compacted turn=%s call=%s", ref.id, self.call_id)
                 try:
-                    receipt = await accept({"request": context["request"]} if "request" in context else None)
+                    receipt = await accept(bounded_context(context, 3000))
                 except ValueError:
-                    text = ref.text or text
-                    receipt = await accept(None)
+                    receipt = await accept(bounded_context(context, 1000))
         except Exception:
             await self._add(ref, outcome="failed")
             raise

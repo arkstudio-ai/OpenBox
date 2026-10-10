@@ -110,14 +110,16 @@ async def test_the_request_goes_with_the_users_words_and_the_call_and_alone_if_t
     assert item.prompt == "你使用工具查一下呀。"
     assert item.origin_ref["voice_context"] == {**ref.context, "request": "帮我查一下云杉项目的负责人是谁。"}
     assert (await turn_row(ref)).transcript == "你使用工具查一下呀。"  # the user's own words stay on the record
-    # The origin reference has a size bound shared with other context: the request still goes, alone.
+    # A long call is compacted without discarding all context or rewriting the human message.
     big = new_ref(text="帮我总结一下贪吃蛇项目这周的进展")
     big.transcript = "总结一下"
     big.context = {"heard": "长" * 200, "call": ["用户：" + "长" * 2000]}
     await link.start(big)
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, big.inbox_id)
-    assert item.prompt == "总结一下" and item.origin_ref["voice_context"] == {"request": "帮我总结一下贪吃蛇项目这周的进展"}
+    assert item.prompt == "总结一下"
+    assert item.origin_ref["voice_context"]["request"] == "帮我总结一下贪吃蛇项目这周的进展"
+    assert item.origin_ref["voice_context"]["call_truncated"] is True
     # A card's answer or a report has no words of the user's: the request is the message.
     plain = new_ref(text="帮我总结一下")
     plain.transcript = ""
@@ -125,6 +127,48 @@ async def test_the_request_goes_with_the_users_words_and_the_call_and_alone_if_t
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, plain.inbox_id)
     assert item.prompt == "帮我总结一下" and "voice_context" not in item.origin_ref
+
+
+async def test_large_voice_card_context_never_drops_its_target_or_replaces_the_human_answer():
+    owner, main, link = await setup()
+    ref = new_ref(text="模型冗长的重述" * 2000)
+    ref.transcript = "第一题选第一个，字幕中英双语，标题叫离谱日常"
+    ref.context = {"heard": ref.transcript, "task_questions": [{"request_id": "q-video",
+        "session_id": "video-session", "questions": [{"question": "长问题" * 2000}]}]}
+    await link.start(ref)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, ref.inbox_id)
+    assert item.prompt == ref.transcript
+    assert item.origin_ref["voice_context"]["task_questions"] == [{"request_id": "q-video",
+        "session_id": "video-session", "questions_omitted": True}]
+
+
+async def test_long_handover_retains_human_constraints_and_never_promotes_generated_text_to_human():
+    import json
+    owner, main, link = await setup()
+    ref = new_ref(text="制作约50秒的抽象搞笑视频，保留原片声音，使用猫咪素材，中英字幕，不要真人。")
+    ref.transcript = "就按前面说的做吧"
+    ref.context = {"summary": "电影项目；只交付成片，不要发布。", "call": [
+        "用户：使用猫咪素材，不要真人。", "用户：保留原片声音。",
+        *["前台：" + "冗长重复话" * 100 for _ in range(20)], "用户：中英字幕。"]}
+    await link.start(ref)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, ref.inbox_id)
+    context = item.origin_ref["voice_context"]
+    assert item.prompt == ref.transcript and context["request"] == ref.text
+    assert "不要发布" in context["summary"]
+    assert [line for line in context["call"] if line.startswith("用户：")] == [
+        "用户：使用猫咪素材，不要真人。", "用户：保留原片声音。", "用户：中英字幕。"]
+    assert len(json.dumps(item.origin_ref, ensure_ascii=True)) <= 8192
+    huge = new_ref(text="模型生成的内容" * 2000)
+    huge.transcript = "按刚才的猫咪素材做，别发布"
+    huge.context = {"call": ["用户：50秒抽象搞笑短视频，中英字幕。"]}
+    await link.start(huge)
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, huge.inbox_id)
+    assert item.prompt == huge.transcript
+    assert item.origin_ref["voice_context"]["call"] == huge.context["call"]
+    assert item.origin_ref["voice_context"]["call_truncated"] is True
 
 
 async def test_voice_turns_use_the_configured_model_and_variant_else_the_main_sessions():

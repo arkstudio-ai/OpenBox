@@ -34,6 +34,7 @@ that the note does not back, such as "查好了" and a made-up result while the
 note said the search was still running (2026-10-08), is corrected at once.
 """
 import asyncio
+import json
 import re
 from dataclasses import dataclass, replace
 
@@ -60,7 +61,7 @@ DELIVERY_ATTEMPTS = 3
 TOLD_TOGETHER = 3  # results told in one reply at most
 ACCEPTED = {"zh": "结果稍后以后台备注送到", "en": "the result arrives later as a background note"}
 # The call as the assistant gets it with a request (assistant_link.start): it never heard the call.
-CONTEXT_LINES, LINE_CHARS, HEARD_CHARS = 6, 60, 120
+CONTEXT_LINES, HEARD_CHARS = 20, 480
 # A reply ends before its utterance's transcript now and then: wait this long for the words and the verdict.
 HEARD_WAIT_SECONDS = 2.5
 HEARD_KEPT = 8
@@ -105,6 +106,7 @@ class TurnsMixin:
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._result_told: tuple[int, str] | None = None     # the latest result told: (utterances by then, speech)
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
+        self._notified_questions: set[str] = set()
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
@@ -123,7 +125,28 @@ class TurnsMixin:
         words = self.utterance or event.text
         if await self._card_reply(event, words):
             return
-        if tools.is_fragment(words) and (self.planner is None or tools.is_filler(words)):
+        try:
+            identity = str((json.loads(event.arguments or "{}") or {}).get("question_id") or "")
+        except (ValueError, AttributeError, TypeError):
+            identity = ""
+        if identity and identity not in self.desk.questions:
+            await self._command("send_tool_output", event.call_id, {
+                "status": "unknown_question", "hint": "这张任务卡片未读过、已处理或已过期，先用 cards_pending 核对，不要换一张代答"})
+            self.followup_due = True
+            return
+        context = self._call_context(words, question_id=identity)
+        if context.get("task_questions"):
+            identities = [q["request_id"] for q in context["task_questions"]]
+            spoken = self.desk.question_words(identities)
+            if spoken is None:
+                # The transcript can follow the function call. Wait outside the provider pump so it can
+                # still read that transcript, rather than blocking the very event we are waiting for.
+                self._spawn(self._wait_question_answer(event, identities))
+                return
+            words = spoken  # ASR may have arrived after the function call; keep the human's words.
+            context = self._call_context(words, question_id=identity)
+        if (not context.get("task_questions") and tools.is_fragment(words)
+                and (self.planner is None or tools.is_filler(words))):
             # Half a sentence ("嗯", "就是", "帮我"): ask what the user wants instead of handing it over.
             log.info("voice fragment call=%s chars=%s", self.call_id, len(words))
             if await self._command("send_tool_output", event.call_id, dict(tools.NEED_MORE)):
@@ -137,17 +160,35 @@ class TurnsMixin:
                                 {"status": "accepted", "note": ACCEPTED.get(self.lang, ACCEPTED["zh"])})
             return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=event.call_id, text=event.text or words,
-                           transcript=words, requested=self.clock(), context=self._call_context(words))
+                           transcript=words, requested=self.clock(), context=context)
         self.utterance, self._asked = "", None
+        note = ("已交给个人助理核对本题回答。本轮只说收到，等后台备注再说结果或问下一题；"
+                "不要自行编题，不要提前说已填写或已提交。" if context.get("task_questions")
+                else ACCEPTED.get(self.lang, ACCEPTED["zh"]))
         await self._command("send_tool_output", event.call_id,
-                            {"status": "accepted", "note": ACCEPTED.get(self.lang, ACCEPTED["zh"])})
-        self._acks.add(event.response_id or self.active_response or "")
+                            {"status": "accepted", "note": note})
+        if event.response_id and event.response_id != self.active_response:
+            self.followup_due = True  # ASR arrived after the tool-calling response had already ended
+        else:
+            self._acks.add(event.response_id or self.active_response or "")
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()  # a step from an earlier run is not this request's
         self.pending_calls[event.call_id] = ref
         self.refs.append(ref)
         self._spawn(self._run_turn(ref))
         self._update_phase()
+
+    async def _wait_question_answer(self, event, identities: list[str]) -> None:
+        words = await self.desk.question_words_after(identities)
+        if self.closing:
+            return
+        if words is not None:
+            await self._ask(event)
+        else:
+            await self._command("send_tool_output", event.call_id, {
+                "status": "need_user_answer", "hint": "用户还没有回答这张任务卡片，先读题和选项，等用户实际说出选择或填写内容"})
+            self.followup_due = True
+        await self.fill_idle()
 
     async def _card_reply(self, event, words: str) -> bool:
         """A bare yes or no while a card read in this call still waits: it answers the card.
@@ -363,7 +404,8 @@ class TurnsMixin:
     def _may_hand_over(self, words: str) -> bool:
         """Words the assistant can act on: with a planner (it sees the call) anything but filler, else no
         fragment; never a bare answer to a card in this call, nor words already being handled."""
-        unusable = tools.is_filler(words) if self.planner is not None else tools.is_fragment(words)
+        unusable = (tools.is_filler(words) if self.planner is not None else tools.is_fragment(words)) \
+            and not self.desk.question_context()
         return bool(words and not unusable and not (self.desk.fresh() and cards.answers_card(words))
                     and all(tools.plain(ref.transcript) != tools.plain(words) for ref in self.pending_calls.values()))
 
@@ -398,13 +440,20 @@ class TurnsMixin:
         self._update_phase()
         await self.fill_idle()
 
-    def _call_context(self, words: str) -> dict:
+    def _call_context(self, words: str, *, question_id: str = "") -> dict:
         """What the assistant gets besides the request: the user's own words and the call's last lines."""
-        lines = [line for line in self.spoken.lines if line.role in ("user", "assistant")][-CONTEXT_LINES:]
+        lines = [line for line in self.spoken.lines if line.role in ("user", "assistant")]
         context = {"heard": _bounded(words, HEARD_CHARS),
-                   "call": [f"{ROLES[line.role]}：{_bounded(line.text, LINE_CHARS)}" for line in lines]}
+                   "call": [f"{ROLES[line.role]}：{line.text}" for line in lines[-CONTEXT_LINES:]]}
+        # AssistantLink bounds the whole provenance object, keeping complete lines where they fit.
+        if len(lines) > CONTEXT_LINES:
+            context["call_truncated"] = True
+        if self.keeper.summary:
+            context["summary"] = self.keeper.summary
         if self.detail == "detailed":
             context["detail"] = "detailed"  # the user wants fuller answers on the phone (voice/prompt.py)
+        if questions := self.desk.question_context(question_id):
+            context["task_questions"] = questions
         return context
 
     def _heard_card_reply(self, words: str) -> None:
@@ -466,11 +515,14 @@ class TurnsMixin:
         the decision model is sure the request is work. Hung up meanwhile, the
         request goes on as it was: its result still reaches the conversation.
         """
-        if self.planner is None or self.scope is None or self.closing or ref.lane == "remember":
+        if (self.planner is None or self.scope is None or self.closing or ref.lane == "remember"
+                or (ref.context or {}).get("task_questions")):
             return None  # a request to remember needs no plan: the assistant gets the user's words as said
         reads = None
+        # Freeze this request's conversation before network reads; the user can speak again meanwhile.
+        lines, summary, known = list(self.spoken.lines), self.keeper.summary, self.known
         if self.judge is not None:
-            recent = [(line.role, line.text) for line in self.spoken.lines if line.role in ("user", "assistant")]
+            recent = [(line.role, line.text) for line in lines if line.role in ("user", "assistant")]
             speculative = self._spawn(self.judge.reads(self.scope, ref.text))
             verdict = await self._unless_closing(self.judge.route(ref.text, recent[-4:]))
             if verdict is not None and verdict.choice == "assistant" and verdict.confidence >= router.WORK_CONFIDENCE:
@@ -480,8 +532,8 @@ class TurnsMixin:
         if self.closing:
             return None
         plan = await self._unless_closing(self.planner(
-            request=ref.text, words=ref.transcript, lines=list(self.spoken.lines), summary=self.keeper.summary,
-            known=self.known, reads=reads, call_id=self.call_id))
+            request=ref.text, words=ref.transcript, lines=lines, summary=summary,
+            known=known, reads=reads, call_id=self.call_id))
         if self.debug and plan is not None:  # QA only: what the assistant (or the user) will get, in full
             log.info("voice plan call=%s kind=%s text=%s", self.call_id, plan.kind, plan.text)
         if plan is None or plan.kind == "brief":
@@ -540,6 +592,9 @@ class TurnsMixin:
             if ref.cards:  # handles are issued as the card's content goes to the model
                 shown = [cards.spoken_card(card, self.desk.show(card["card_id"]), self.lang) for card in ref.cards]
                 ref.note = phrases.card_note(ref.transcript or ref.text, ref.speech, shown, self.lang)
+            elif ref.questions:
+                shown = [self.desk.show_question(question, self.lang) for question in ref.questions]
+                ref.note = phrases.question_note(shown, self.lang)
             else:
                 ref.note = phrases.joined_note([self._note_body(item) for item in (ref, *ref.riders)], self.lang)
             ref.note_pending, ref.note_at = True, None
@@ -551,6 +606,8 @@ class TurnsMixin:
         group = [ref, *(ref.riders or [])]
         if ref.cards:
             instructions = phrases.card_instructions(self.lang)
+        elif ref.questions:
+            instructions = phrases.question_instructions(self.lang)
         elif ref.status != "ok" or ref.reason == "running":  # nothing found yet, whatever the reply's wording
             instructions = phrases.notice_instructions(self.lang)
         elif ref.reason == "ask":
@@ -568,11 +625,11 @@ class TurnsMixin:
     def _riders(self, ref: VoiceTurnRef) -> list:
         """Plain results queued with this one, told in the same breath; never a card, a failure, a question
         back or a record added to a reply (each has its own words)."""
-        if ref.cards or ref.status != "ok" or ref.reason in ("ask", "recall", "running"):
+        if ref.cards or ref.questions or ref.status != "ok" or ref.reason in ("ask", "recall", "running"):
             return []
         return [other for other in self.deliveries
                 if other is not ref and other.delivery == "queued" and other.note_item is None
-                and not other.note_pending and not other.cards and other.status == "ok"
+                and not other.note_pending and not other.cards and not other.questions and other.status == "ok"
                 and other.reason not in ("ask", "recall", "running")][:TOLD_TOGETHER - 1]
 
     def _drop_stale_recalls(self) -> None:
@@ -585,9 +642,16 @@ class TurnsMixin:
             log.info("voice recall dropped call=%s", self.call_id)
 
     def _note_body(self, ref: VoiceTurnRef) -> str:
-        return phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
+        body = phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
                                  report_title=ref.report, asked=ref.asked,
                                  running=[task["title"] for task in ref.running or []])
+        if questions := (ref.context or {}).get("task_questions"):
+            # Every follow-up retains the same form ID and original fields. The model otherwise invented
+            # 'q-subtitle' for the second field in a live call, or asked about style instead of the title.
+            body += "\n" + json.dumps({"answer_context": questions,
+                "note": "同一张多题卡片的所有题共用同一个 request_id，不能按题另编编号。只问个人助理回复中还缺的原题；"
+                        "如果回复说已提交，就不再问。这是本次回答的上下文，不是新出现的卡片。"}, ensure_ascii=False)
+        return body
 
     async def report(self, title: str, text: str, key: str, task_id: str = "") -> None:
         """A task's result the assistant reported while the call is on (voice/reports.py): told unasked, or,
@@ -605,6 +669,51 @@ class TurnsMixin:
         ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "ok", self.clock()
         ref.delivery = "queued"
         self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
+
+    async def waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
+        """Proactively read pending input, even if unsolicited task-result reports are disabled.
+
+        Polling gives a fresh authorized snapshot. Queue each question once, withdraw unanswered
+        announcements resolved on another client, and let the usual idle/greeting/barge-in rules speak it.
+        """
+        if self.closing:
+            return
+        self.desk.reconcile(main_cards, questions)
+        main_ids, question_ids = {c["card_id"] for c in main_cards}, {q["id"] for q in questions}
+        for notice in list(self.deliveries):
+            stale = ((notice.questions and not any(q["id"] in question_ids for q in notice.questions))
+                     or (notice.reason == "card_notice" and not any(c["card_id"] in main_ids for c in notice.cards)))
+            if stale and notice.delivery == "queued":
+                self.deliveries.remove(notice)
+                self._notified_questions.difference_update(q["id"] for q in notice.questions or [])
+                if notice.note_item:
+                    await self._delete(notice.note_item)
+        if self._asked:
+            asked = self._asked[1]
+            asked_ids = {q["id"] for q in asked.questions or []} | {
+                q["request_id"] for q in (asked.context or {}).get("task_questions") or []}
+            if asked_ids and not asked_ids & question_ids:
+                self._asked = None
+        queued_cards = {c["card_id"] for ref in self.deliveries for c in ref.cards or []}
+        for card in main_cards:
+            # A pending voice turn returns its own confirmation through _settle. Let that path carry
+            # both the card and its receipt, rather than racing it with a second announcement.
+            if self.pending_calls or self.desk.handle(card["card_id"]) is not None or card["card_id"] in queued_cards:
+                continue
+            notice = VoiceTurnRef(id=generate_id(), provider_call_id=f"card:{card['card_id']}"[:64], text="",
+                                  transcript="", requested=self.clock(), report="", cards=[card],
+                                  status="ok", reason="card_notice", delivery="queued")
+            self.deliveries.append(notice)
+        for question in questions:
+            if question["id"] in self._notified_questions or question["id"] in self.desk.questions:
+                continue
+            self._notified_questions.add(question["id"])
+            notice = VoiceTurnRef(id=generate_id(), provider_call_id=f"question:{question['id']}"[:64], text="",
+                                  transcript="", requested=self.clock(), report="", questions=[question],
+                                  status="ok", reason="question_notice", delivery="queued")
+            self.deliveries.append(notice)
         self._update_phase()
         await self.fill_idle()
 
@@ -674,8 +783,9 @@ class TurnsMixin:
         ref.delivery, ref.finished = "done", self.clock()
         if heard and ref.recall is None and ref.status == "ok" and not ref.cards:
             self._result_told = (self.heard_count, ref.speech)  # what "算了，不要了" right after refers to
-            if QUESTION.search(ref.speech):
+            if (any(q.get("assistant_may_answer") for q in ref.questions or []) or QUESTION.search(ref.speech)):
                 self._asked = (self.heard_count, ref)  # the user's answer belongs to the assistant (_check_reply)
+                self.desk.asked_again(ref.context)
         if not ref.recorded:  # a report or an added record: no voice turn of this call to record
             log.info("voice %s told call=%s heard=%s", "report" if ref.report is not None else "recall",
                      self.call_id, heard)

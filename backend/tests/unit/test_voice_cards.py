@@ -88,9 +88,9 @@ async def test_cards_pending_reads_main_cards_with_handles_and_task_questions(mo
     answering(monkeypatch)
 
     async def list_waiting(**identity):
-        return [{"session_title": "视频生成", "project_name": "短视频", "assistant_may_answer": True,
+        return [{"id": "q-video", "session_id": "video", "session_title": "视频生成", "project_name": "短视频", "assistant_may_answer": True,
                  "questions": [{"question": "需要上传参考图吗？", "options": ["不需要", "上传"]}]},
-                {"session_title": "发布", "project_name": "抖音", "assistant_may_answer": False,
+                {"id": "q-publish", "session_id": "publish", "session_title": "发布", "project_name": "抖音", "assistant_may_answer": False,
                  "questions": [{"question": "允许访问你的账号吗？", "options": ["允许", "拒绝"]}]}]
     monkeypatch.setattr("assistant.request_answers.list_waiting", list_waiting)
     desk, scope = scoped(Heard())
@@ -301,3 +301,173 @@ async def test_a_yes_long_after_the_card_was_read_needs_it_read_again(call, monk
                                                    response_id="r10"), done("r10"))
     await answered(bridge)
     assert provider.commands("output")[-1][2]["status"] == "read_again" and replies == []
+
+
+FORM = {"id": "q-video", "session_id": "video-session", "session_title": "50秒搞笑视频", "project_name": "电影",
+        "assistant_may_answer": True, "high_risk": False,
+        "questions": [{"header": "时长", "question": "视频时长是否合适？", "options": ["保留50秒", "缩短到30秒"],
+                       "custom": False},
+                      {"header": "字幕", "question": "需要哪些字幕？", "options": ["中文", "英文"], "multiple": True},
+                      {"header": "片名", "question": "请填写片名", "options": [], "custom": True}]}
+
+
+def test_task_form_keeps_every_field_and_exact_labels():
+    spoken = cards.spoken_question(FORM)
+    assert spoken["request_id"] == "q-video" and spoken["session_id"] == "video-session"
+    assert [q["number"] for q in spoken["questions"]] == [1, 2, 3]
+    assert spoken["questions"][0]["options"] == ["保留50秒", "缩短到30秒"]
+    assert not spoken["questions"][0]["custom"]
+    assert spoken["questions"][1]["multiple"] and spoken["questions"][2]["custom"]
+
+
+async def test_watch_reads_the_same_user_workspace_and_main_as_the_card_tool(monkeypatch):
+    answering(monkeypatch)
+    identities = []
+
+    async def list_waiting(**identity):
+        identities.append(identity)
+        return [FORM]
+    monkeypatch.setattr("assistant.request_answers.list_waiting", list_waiting)
+    assert await cards.waiting(SCOPE) == ([CARD], [FORM])
+    assert identities == [{"user_id": "u1", "workspace_id": "w1", "main_id": "main-1", "limit": cards.WATCH_LIMIT}]
+
+
+async def test_pending_form_is_announced_once_without_a_tool_call_even_when_reports_are_off(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    bridge.tell_reports = False
+    await bridge.waiting_cards([], [FORM])
+    note = provider.commands("note")[-1][1]
+    assert "字幕" in note and "片名" in note and "q-video" in note
+    assert provider.commands("create")[-1] == ("create", phrases.question_instructions("zh"))
+    await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
+    await bridge.waiting_cards([], [FORM])
+    assert len(provider.commands("note")) == 1
+    assert not link.started and not link.records  # a reminder creates no user input or billed voice turn
+    assert bridge._asked[1].questions == [FORM]
+
+
+async def test_card_appearing_while_user_speaks_waits_and_is_withdrawn_if_answered_on_screen(call):
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_started"))
+    await bridge.waiting_cards([], [FORM])
+    assert not provider.commands("note") and len(bridge.deliveries) == 1
+    await bridge.waiting_cards([], [])
+    assert not bridge.deliveries and not bridge.desk.questions
+
+
+async def test_second_form_waits_for_answer_and_confirmation_cards_take_priority(call):
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    other = {**FORM, "id": "q-other", "session_id": "another-task"}
+    await bridge.waiting_cards([], [FORM, other])
+    note = provider.commands("note")[-1][1]
+    await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
+    await bridge.fill_idle()
+    assert len(provider.commands("note")) == 1  # do not switch cards before the user has answered
+    await bridge.waiting_cards([CARD], [FORM, other])
+    assert len(provider.commands("note")) == 2 and "删除项目" in provider.commands("note")[-1][1]
+
+
+async def test_voice_answer_preserves_form_id_multiple_choices_and_dictation_and_skips_brief_planner(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+
+    async def wrong_plan(**kwargs):
+        pytest.fail("card answers must reach requests.answer, not be answered locally by the brief planner")
+    bridge.planner = wrong_plan
+    await bridge.waiting_cards([], [FORM])
+    note = provider.commands("note")[-1][1]
+    await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
+    words = "第一题选第一个，字幕中文英文都要，片名叫打工人的离谱日常。"
+    await said(bridge, words, "answer-1")
+    args = json.dumps({"request": words, "question_id": "q-video"}, ensure_ascii=False)
+    await replay(bridge, started("answer"), tool_call("answer-call", text=words, arguments=args,
+                                                     response_id="answer"), done("answer"))
+    [ref] = link.started
+    assert ref.transcript == words and ref.context["task_questions"] == [cards.spoken_question(FORM)]
+    assert not bridge.desk.answers  # task answers cannot bypass the assistant's policy through question.reply
+    link.finish("answer-call", speech="已填写")
+    await drain()
+
+
+async def test_unknown_or_expired_question_id_cannot_be_redirected_to_another_card(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    bridge.desk.show_question(FORM, "zh")
+    await bridge.waiting_cards([], [])
+    await said(bridge, "选第二个", "answer-1")
+    args = json.dumps({"request": "选第二个", "question_id": "q-video"})
+    await replay(bridge, started("answer"), tool_call("answer-call", arguments=args, response_id="answer"), done("answer"))
+    assert provider.commands("output")[-1][2]["status"] == "unknown_question" and not link.started
+
+
+def test_large_form_context_keeps_target_ids_and_followup_questions_refresh_the_answer_window():
+    heard = Heard()
+    desk = cards.CardDesk(heard)
+    huge = {**FORM, "questions": [{"question": "很长的说明" * 3000, "options": ["一", "二"]}]}
+    desk.show_question(huge, "zh")
+    compact = desk.question_context()
+    assert compact == [{"request_id": "q-video", "session_id": "video-session", "questions_omitted": True}]
+    for _ in range(4):
+        heard.say("继续回答")
+    assert desk.question_context() == []
+    desk.asked_again({"task_questions": compact})
+    assert desk.question_context() == compact
+    desk.reconcile([], [])
+    desk.asked_again({"task_questions": compact})
+    assert desk.question_context("q-video") == []
+
+
+async def test_task_form_cannot_be_answered_by_the_model_before_the_user_speaks(call, monkeypatch):
+    bridge, provider, link, _ = call
+    monkeypatch.setattr(cards, "WORDS_WAIT_SECONDS", 0.01)
+    await greeted(bridge, provider)
+    bridge.desk.show_question(FORM, "zh")
+    arguments = json.dumps({"request": "全部选默认", "question_id": "q-video"})
+    await replay(bridge, started("guess"), tool_call("guess", text="全部选默认", arguments=arguments,
+                                                   response_id="guess"), done("guess"))
+    await asyncio.sleep(.1)
+    assert provider.commands("output")[-1][2]["status"] == "need_user_answer"
+    assert not link.started
+
+
+async def test_rereading_a_form_after_the_spoken_answer_does_not_discard_that_answer():
+    heard = Heard()
+    desk = cards.CardDesk(heard)
+    desk.show_question(FORM, "zh")
+    heard.say("中文和英文都要")
+    desk.show_question(FORM, "zh")  # the model checks the ID again, using cards_pending
+    assert await desk.question_words_after([FORM["id"]]) == "中文和英文都要"
+
+
+async def test_a_task_answer_waits_for_late_asr_without_blocking_the_provider_pump(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    bridge.desk.show_question(FORM, "zh")
+    arguments = json.dumps({"request": "第一题选第一个", "question_id": "q-video"})
+    await replay(bridge, started("answer"), tool_call("late-asr", text="第一题选第一个", arguments=arguments,
+                                                   response_id="answer"), done("answer"))
+    assert not link.started and not provider.commands("output")
+    await replay(bridge, transcript("第一题选第一个，保留五十秒", "late-transcript"))
+    await asyncio.sleep(.2)
+    await drain()
+    assert len(link.started) == 1 and link.started[0].transcript == "第一题选第一个，保留五十秒"
+    link.finish("late-asr", speech="第二题字幕选哪些？")
+    await drain()
+
+
+async def test_main_confirmation_watch_and_turn_result_do_not_read_the_card_twice(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    await said(bridge, "把测试项目删了", "u-1")
+    await replay(bridge, started("ack"), audio("ack"), tool_call("request", response_id="ack"), done("ack"))
+    await bridge.waiting_cards([CARD], [])
+    assert not provider.commands("note")  # the in-flight turn carries its own confirmation and receipt
+    link.finish("request", speech="", cards=[CARD])
+    await drain()
+    note = provider.commands("note")[-1][1]
+    await replay(bridge, item("note-main", text=note), started("read"), audio("read"), done("read"))
+    await bridge.waiting_cards([CARD], [])
+    assert sum("卡片1" in note for _, note in provider.commands("note")) == 1

@@ -32,10 +32,12 @@ from core.log import create_logger
 
 log = create_logger("voice.handover")
 
-TIMEOUT_SECONDS = 4.0
-MAX_TOKENS = 400
-LINES, LINE_CHARS, NOTE_CHARS = 12, 120, 160
-BRIEF_CHARS, ANSWER_CHARS, ASK_CHARS = 400, 300, 120
+TIMEOUT_SECONDS = 6.0
+MAX_TOKENS = 1000
+# Cover a full interval between call summaries, even when tool notes are noisy.
+LINES, LINE_CHARS, NOTE_CHARS = 40, 600, 160
+CALL_CHARS = 12000
+BRIEF_CHARS, ANSWER_CHARS, ASK_CHARS = 800, 300, 120
 READ_TASKS, READ_MEMORIES = 8, 5
 
 SYSTEM = (
@@ -44,10 +46,17 @@ SYSTEM = (
     '{"brief": "..."}：交给个人助理。brief 是发给它的一条消息，像用户直接对个人助理说话（“帮我……”“我想……”），'
     "不要写成“我让助理……”“请助理……”；开门见山说要办什么；"
     "把“它”“那个”“刚才那个”“查一下”换成电话里说到的具体任务、项目、人、文件或平台；写上用户提的要求、限制、时间和数量；"
+    "先找出本次任务，再合并它在多轮对话里已经确认的要求：目标、所属项目/已有任务、素材、风格、时长、"
+    "数量、语言、交付形式、必须保留和禁止的内容；有多少写多少，不能只转交用户最后一句。"
+    "用户后来明确修改的要求覆盖旧要求，没修改的继续保留；新话题不能混入旧任务的要求。"
     "电话里已经确定、对办事有用的情况（刚告诉用户的结果、用户否定的做法）简要带上；"
     "不加用户没说的要求、步骤、限制和理由（用户说“先做A”就只写先做A），不替用户做决定；"
     "语音识别会把名字识别成同音字，按通话记录和“已知的关于用户的事”里的名字纠正，"
-    "拿不准就保留原话；不写称呼、客套和解释，不用列表，一般一到三句话，不超过200字。\n"
+    "拿不准就保留原话；可纠正明确的单位识别如‘50miao’为‘50秒’，不能擅改数字。"
+    "这是给执行者的完整任务提示词，不是要朗读的短回执：简单任务一句话，复杂任务可按目标、要求、"
+    "交付整理，最多600字，不能为了简短丢掉要求。未确定的创作细节不冒充用户要求；前台提出的选项"
+    "只有用户选定后才算确认。比如用户先说抽象、搞笑，再说‘做成一个50miao短视频’，应合并为"
+    "‘制作约50秒的抽象风格搞笑短视频，交付成片’，不能只写‘做成50秒’，也不能自选短剧、横竖屏或平台。\n"
     '{"answer": "..."}：只有给了“查到的资料”、用户只是问一件事（不是要办事、改东西、安排或调查），'
     "而且资料清楚地回答了它，才直接回答：像打电话那样的口语，一到三句短句，只用资料里的事实，不念链接和编号。"
     "资料不够、拿不准，或者要翻对话、看文件、分析，就用 brief；问正在做的事做到哪一步、具体内容或原因，"
@@ -67,11 +76,20 @@ class Plan:
 def _lines(lines) -> str:
     from voice.transcript import ROLES
     rendered = []
-    for line in lines[-LINES:]:
+    # Notes must not evict earlier human constraints before the next summary.
+    dialogue = [i for i, line in enumerate(lines) if line.role in ("user", "assistant")][-LINES:]
+    notes = [i for i, line in enumerate(lines) if line.role == "note"][-3:]
+    remaining = CALL_CHARS
+    for i in reversed(sorted(dialogue + notes)):
+        line = lines[i]
         limit = NOTE_CHARS if line.role == "note" else LINE_CHARS
-        text = line.text if len(line.text) <= limit else line.text[:limit - 1] + "…"
-        rendered.append(f"{ROLES.get(line.role, line.role)}：{text}")
-    return "\n".join(rendered)
+        text = line.text if len(line.text) <= limit else line.text[:limit // 2] + "…[中间省略]…" + line.text[-limit // 2:]
+        entry = f"{ROLES.get(line.role, line.role)}：{text}"
+        if len(entry) > remaining:
+            break
+        rendered.append(entry)
+        remaining -= len(entry) + 1
+    return "\n".join(reversed(rendered))
 
 
 def _reads(reads: dict) -> str:
@@ -159,5 +177,7 @@ def parse(raw: str, *, answer_allowed: bool) -> Plan | None:
         if not text or (kind == "answer" and not answer_allowed):
             continue
         limit = _LIMITS[kind]
+        if kind == "brief" and len(text) > limit:
+            return None  # never silently cut off a trailing constraint; use the source context instead
         return Plan(kind, text if len(text) <= limit else text[:limit - 1] + "…")
     return None

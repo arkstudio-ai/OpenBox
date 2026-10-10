@@ -10,6 +10,10 @@ the user's task conversations are listed too, read only: an answer is the
 user's words handed to the assistant (``assistant_ask`` → requests.answer,
 which shows a confirmation card itself when the answer is high-risk).
 
+Both sources are also polled while the call is connected (api/voice.py), so
+waiting for user input is announced without first asking for cards_pending.
+Task forms keep all fields and one stable ID in the assistant's voice context.
+
 Whatever the model does, a card is only answered when
 - its handle ("1", "2", …) was issued in this call together with the card's
   content (a cards_pending output or a result note): the model had the words;
@@ -25,6 +29,7 @@ front desk tends to just say "不删了", and a card left open would wait on
 screen for an answer the user already gave.
 """
 import asyncio
+import json
 import re
 import time
 
@@ -36,8 +41,10 @@ log = create_logger("voice.cards")
 DECLINE = frozenset({"取消", "不用记"})
 WORDS_WAIT_SECONDS, WORDS_STEP_SECONDS = 2.5, 0.1  # the user's words may land just after the model's call
 MAX_QUESTIONS = 5
+WATCH_LIMIT = 30
+POLL_SECONDS, POLL_TIMEOUT_SECONDS = 2, 4
 FRESH_UTTERANCES = 2  # a yes counts within this many user utterances after the card was last read
-WHAT_CHARS, IMPACT_CHARS, QUESTION_CHARS = 300, 200, 160
+WHAT_CHARS, IMPACT_CHARS = 300, 200
 KINDS = {"assistant_confirm": "确认", "assistant_send": "确认发送", "memory_proposal": "记忆"}
 
 _YES = re.compile(r"确认|确定|同意|没问题|就这样|可以|好的|行吧|删吧|删掉吧|删了吧|停掉吧|停了吧|执行吧|去做吧|发吧|发送吧"
@@ -87,6 +94,9 @@ class CardDesk:
         self._read: dict[str, int] = {}      # card id → utterances heard when it was last given to the model
         self.answered: dict[str, str] = {}   # card id → choice
         self.answers: list[dict] = []        # answered in this call, waiting for the bridge to follow
+        self.questions: dict[str, dict] = {}  # task questions actually offered in this call
+        self._question_shown: dict[str, int] = {}
+        self._question_read: dict[str, int] = {}
 
     def show(self, card_id: str) -> str:
         handle = self.handle(card_id)
@@ -128,6 +138,62 @@ class CardDesk:
                 return None
             await asyncio.sleep(WORDS_STEP_SECONDS)
 
+    def show_question(self, item: dict, lang: str) -> dict:
+        value = spoken_question(item, lang)
+        if identity := value.get("request_id"):
+            self.questions[identity] = value
+            self._question_shown.setdefault(identity, self.heard()[0])
+            self._question_read[identity] = self.heard()[0]
+        return value
+
+    def reconcile(self, main_cards: list[dict], questions: list[dict]) -> None:
+        """A choice made on another client or an expired generation is no longer answerable here."""
+        current = {card["card_id"] for card in main_cards}
+        for identity in self.open():
+            if identity not in current:
+                self.answered.setdefault(identity, "")
+        current = {item["id"] for item in questions}
+        self.questions = {key: value for key, value in self.questions.items() if key in current}
+        self._question_shown = {key: count for key, count in self._question_shown.items() if key in current}
+        self._question_read = {key: count for key, count in self._question_read.items() if key in current}
+
+    def question_context(self, identity: str = "") -> list[dict]:
+        """Stable targets survive a short answer like '第二个'. Long forms are re-read by ID.
+
+        The inbox origin reference is limited to 8192 ASCII JSON characters;
+        leave room for the user's words, the brief and the last spoken lines.
+        """
+        candidates = [value for key, value in self.questions.items()
+                      if key == identity or (not identity and self.heard()[0] - self._question_read[key]
+                                             <= FRESH_UTTERANCES)]
+        candidates = candidates[-MAX_QUESTIONS:]
+        if len(json.dumps(candidates, ensure_ascii=True)) <= 3500:
+            return candidates
+        return [{"request_id": value["request_id"], "session_id": value["session_id"],
+                 "questions_omitted": True} for value in candidates]
+
+    def asked_again(self, context: dict | None) -> None:
+        """The assistant asks for the next field: keep the same form attached to that answer."""
+        for item in (context or {}).get("task_questions") or []:
+            if item["request_id"] in self.questions:
+                self._question_read[item["request_id"]] = self.heard()[0]
+
+    def question_words(self, identities: list[str]) -> str | None:
+        count, words = self.heard()
+        if words.strip() and any(key in self.questions and count > self._question_shown[key] for key in identities):
+            return words
+        return None
+
+    async def question_words_after(self, identities: list[str]) -> str | None:
+        """Only an actual new transcript can authorize a task answer, never a model-written request."""
+        deadline = self.clock() + WORDS_WAIT_SECONDS
+        while True:
+            if words := self.question_words(identities):
+                return words
+            if self.clock() >= deadline:
+                return None
+            await asyncio.sleep(WORDS_STEP_SECONDS)
+
 
 def _bounded(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
@@ -149,10 +215,18 @@ def spoken_card(card: dict, handle: str, lang: str = "zh") -> dict:
 
 
 def spoken_question(item: dict, lang: str = "zh") -> dict:
-    first = (item.get("questions") or [{}])[0]
-    value = {"conversation": item.get("session_title") or "", "project": item.get("project_name") or "",
-             "question": _spoken(first.get("question", ""), lang, QUESTION_CHARS),
-             "options": [_bounded(label, 40) for label in first.get("options") or [] if label]}
+    # Keep every question and exact option label. Truncating a label can change its meaning or make
+    # the assistant unable to submit it; these are data, the front desk supplies the spoken summary.
+    value = {"request_id": item.get("id") or "", "session_id": item.get("session_id") or "",
+             "conversation": item.get("session_title") or "", "project": item.get("project_name") or "",
+             "questions": [{"number": index, "header": question.get("header") or "",
+                            "question": question.get("question") or "",
+                            "options": list(question.get("options") or []),
+                            "multiple": bool(question.get("multiple")), "custom": question.get("custom", True),
+                            "allow_attachments": bool(question.get("allow_attachments"))}
+                           for index, question in enumerate(item.get("questions") or [], start=1)],
+             "assistant_may_answer": bool(item.get("assistant_may_answer")),
+             "high_risk": bool(item.get("high_risk"))}
     if item.get("assistant_may_answer"):
         value["answer_how"] = "用户说了怎么答，就把原话交给 assistant_ask，由个人助理代答"
     else:
@@ -160,19 +234,29 @@ def spoken_question(item: dict, lang: str = "zh") -> dict:
     return value
 
 
-async def pending(scope, arguments: dict) -> dict:
-    """cards_pending: the main session's cards (answerable here) and questions waiting in task conversations."""
+async def waiting(scope, *, limit: int = WATCH_LIMIT) -> tuple[list[dict], list[dict]]:
+    """Same owner/workspace/main-session checks as the assistant; also used by the call's watcher."""
     from assistant.confirmations import pending_cards
     from assistant.request_answers import list_waiting
-    cards, questions = await asyncio.gather(
-        pending_cards(scope.user_id, scope.workspace_id, scope.main_session_id),
-        list_waiting(user_id=scope.user_id, workspace_id=scope.workspace_id, main_id=scope.main_session_id,
-                     limit=MAX_QUESTIONS))
+    # A call can hang up during either read. TaskGroup waits for BOTH sessions to close on cancellation;
+    # gather can return the first CancelledError while its sibling still holds a DB transaction open.
+    async with asyncio.TaskGroup() as group:
+        main_cards = group.create_task(pending_cards(scope.user_id, scope.workspace_id, scope.main_session_id))
+        questions = group.create_task(list_waiting(user_id=scope.user_id, workspace_id=scope.workspace_id,
+                                                  main_id=scope.main_session_id, limit=limit))
+    return main_cards.result(), questions.result()
+
+
+async def pending(scope, arguments: dict) -> dict:
+    """cards_pending: the main session's cards (answerable here) and questions waiting in task conversations."""
+    cards, questions = await waiting(scope)
+    scope.desk.reconcile(cards, questions)
     shown = [spoken_card(card, scope.desk.show(card["card_id"]), scope.lang) for card in cards]
-    waiting = [spoken_question(item, scope.lang) for item in questions]
-    if not shown and not waiting:
+    task_questions = [scope.desk.show_question(item, scope.lang) for item in questions[:MAX_QUESTIONS]]
+    if not shown and not task_questions:
         return {"status": "none"}
-    return {"status": "ok", "cards": shown, "task_questions": waiting,
+    return {"status": "ok", "cards": shown, "task_questions": task_questions,
+            "waiting_count": len(questions),
             **({"how": "先念清楚要做什么和影响，再问确认吗；用户明确表态后用 cards_answer 选卡片上的选项"} if shown else {})}
 
 

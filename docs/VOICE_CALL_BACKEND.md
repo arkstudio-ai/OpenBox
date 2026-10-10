@@ -353,6 +353,9 @@ def delivery_instructions(speech, lang) -> str:
 | --- | --- |
 | 卡片随结果回来 | `AssistantLink.wait` 结算成功后读 `assistant.confirmations.pending_cards()`；有卡片时备注用 `phrases.card_note`（编号、要做什么、影响、选项原文），交付用 `phrases.card_instructions`（念清楚、问确认、这一句不调用工具）。 |
 | `cards_pending` / `cards_answer` | `voice/cards.py`，注册在 `tools.DIRECT`。`CardDesk` 给卡片发本通电话内的短编号；`answer` 校验编号、仍待答、选项原文、卡片念出后用户开过口（等转写 ≤2.5 s）、非拒绝选项须明确同意且在（重新）念出后两句话以内；作答调 `question.question.reply`。 |
+| 待答卡片主动提醒（2026-10-10） | 通话接通后独立轮询主会话确认卡和本用户、本工作区的任务问题（每次读完间隔 2 s，查询超时 4 s）。接通前已存在的待答卡也会提醒；按卡片去重，空闲时朗读，其他端已回答或过期则撤回未播提醒。确认卡优先，正在回答一张多题卡时不插播另一张。关闭主动任务结果汇报不关闭必要的待答提醒。挂断先等有界查询关闭数据库会话，再结算。 |
+| 任务提问语音代答（2026-10-10） | 保留每道题、原选项、单选/多选和自由填写标记。先报项目、任务和题数，再读首题和编号选项；实际语音回答经 `assistant_ask(question_id=原 request_id)` → `requests.answer` 填写，所有题共用同一 request_id。未答题由个人助理继续询问，前台等待原题，不自行改题、补题或选默认；涉及高风险仍走确认卡，需要用户亲自操作的仍提示在屏幕处理。 |
+| 作答上下文（2026-10-10） | `voice_context.task_questions` 把卡片及题目带到文字助理，跳过可能把选择当闲聊的交办摘要规划；后续备注也保留同一编号。超出 Inbox 上下文预算时保留卡片/会话 ID，要求重新读取，绝不丢目标再猜。模型调用早于 ASR 时在后台等真实转写，不阻塞语音事件流、不把模型编写的 request 当作用户同意。 |
 | 续跑 | 作答前记下主会话最新 Inbox id，`AssistantLink.follow` 找 `origin=system_recovery`、`entrypoint=question_answer` 的新条目，按普通轮次等结果并转述；拒绝不跟。续跑沿用语音轮次模型（`question/continuation.py::_voice_turn`，Inbox 条目带 `voice: true`）。 |
 | 服务端拒绝 | 卡片念出后用户第一句是明确拒绝（`cards.refuses`）→ `cards.decline` 选“取消/不用记”。 |
 | 短答拦截 | 有新念的卡片时 `assistant_ask` 收到“确认/好的/算了”这类短答 → 回 `{"status":"answer_card","card":…}`，不进主会话。 |
@@ -363,6 +366,8 @@ def delivery_instructions(speech, lang) -> str:
 | 文字助理上下文 | `assistant/projection.py::_recent_call`：24 小时内最近一次通话摘要作为背景块（不授予操作权限，压缩时不带）。 |
 
 测试：`tests/unit/test_voice_cards.py`、`test_voice_voices.py`，`tests/integration/test_voice_ws.py`（选择音色后下一通电话用它、试听只给列表内的声音），`test_assistant_sessions_v2.py`（续跑模型），`test_assistant_projection_voice.py`（摘要块、模型不粘），`test_assistant_project_tools.py`（项目名须出自原话）。端到端脚本 `.local-dev/voice-qa/voice_confirm_e2e.py`（建临时项目 → 语音删除，先拒绝一次再确认；只在卡片名字与临时项目完全一致时才说确认）。
+
+2026-10-10 待答卡验证：WebSocket 集成覆盖主动提醒、查询失败后恢复和正常挂断；代答服务覆盖同一卡片的单选、多选、自由文本及缺题拒绝。`.local-dev/voice-card-qa-20261010/live_probe.py` 使用真实实时语音模型、合成语音与隔离的助理替身，验证主动读三题 → 保留 50 秒 → 中英双语字幕 → 口述片名，三次转交都保持原卡片编号。该探针不回答真实用户的卡片；实际入库、权限和高风险确认由数据库测试覆盖。
 
 
 ## 18. 接通即开口、回铃音、积分计费（2026-10-08）
@@ -411,13 +416,15 @@ def delivery_instructions(speech, lang) -> str:
 
 **交给助理前先整理（`voice/handover.py`）**
 
-- `assistant_ask` 的参数改为 `request`：给没听到电话的助理看的一句完整的话（补上“它/那个/查一下”指的对象、要求和限制，不加用户没说的）。
-- 转交前用百炼 `qwen-flash`（`voice.handover_model`，语音同一把 key，关思考，约 0.5 s；经网关的 qwen3.8-flash 实测 2–17 s）读整段通话、核心记忆和前台的转述，三选一：`brief` 用户口吻的完整指令（同音错字按通话和记忆纠正，如“云山”→“云杉”）；`answer` 只是问一件事且快速读（召回 + 任务列表）足以回答时直接答，不开助理轮次（JEV 有把握是要办的事 ≥0.8 时连资料都不读）；`ask` 看不出要办什么时先问用户。超时（4 s）或失败就用前台的 `request`。
-- 文字助理那一轮除了整理后的指令，还拿到用户原话（语音识别）和通话最后 6 句（`origin_ref.voice_context` → `assistant/projection.py` 的 voice-turn 块；说明“与原话有实质出入以原话为准，不授予额外权限”）。来源引用超长时只发指令本身。
+- `assistant_ask.request` 是给没听到电话的文字助理看的完整任务提示词：解析“它/那个”等指代，合并同一任务已确认的目标、项目、素材、风格、时长、交付和禁止事项。用户明确改口只替换对应要求，不把前台建议或无关任务当作要求；复杂任务不能只复制最后一句。语音回复简短不限制交办提示词的细节。
+- 转交前用百炼 `qwen3.8-flash`（`voice.handover_model`，语音同一把 key，关思考）读取通话摘要、最近最多 40 条对话（每条 600 字、总计 12000 字，另取最多 3 条后台备注）、核心记忆和前台转述。在异步查询前冻结对话，避免混入之后的新任务。三选一：`brief` 用户口吻的完整指令，复杂任务最多 600 字（解析上限 800 字，不截断尾部约束）；`answer` 只是问事且快速读资料足以回答时直接答；`ask` 缺少执行必需信息时追问，不替用户选择。6 s 超时、失败或超长输出回退前台请求，仍携带通话上下文；JEV 判定为明确工作 ≥0.8 时不走快速资料回答。
+- `origin_ref.voice_context` 经 `assistant/projection.py` 进入文字助理的模型输入；可带最近 20 条对话、当前通话摘要及完整交办提示词。超过 ASCII JSON 预算时优先保留完整指令、卡片目标、摘要和用户原话，缩减前台回复并标记截断；上下文失败也不把模型生成文字冒充用户原话。文字助理结合这些依据为 `tasks.submit/tasks.followup` 整理独立可执行的指令；关键信息仍不明确时追问。界面的用户消息继续保留真实 ASR 原文，便于核对来源，不代表模型只收到最后一句。
 
 **实测（QA，2026-10-08，`.local-dev/voice-qa/voice_routing_e2e.py`）**：“云杉/青麦项目负责人”当场答对；“星灯计划演示在哪”经检索答对；前台把云杉负责人说成“李总”时 1 s 内补正“是小李，不是李总”；“想吃海鲜大餐”提醒过敏且不转交；“你让助理查青麦发布说明用什么语言”整理为“帮我查一下青麦项目的发布说明使用什么语言”，10 s 出结果（以前 15–40 s）；“让助理查它为什么卡住了”整理后带上任务名和已知卡点。
 
 测试：`tests/unit/test_voice_routing.py`（转交、核对、整理三条路径）、`test_voice_router.py`（JEV 请求与校验、灰度、失败即无判断、核心记忆）、`test_voice_tools.py`（同一套召回、跨项目、无权限）、`test_voice_assistant_link.py`、`test_assistant_projection_voice.py`（通话上下文进助理轮次）。
+
+2026-10-10 验证：语音、卡片代答、文字助理投影和 WebSocket 回归共 314 项通过。真实 `qwen3.8-flash` 的 8 组隔离测试全部通过，交办规划耗时中位数 885 ms：50 秒原场景、早期约束与后台备注干扰、只修改时长、复合交付、缺少对象时追问、切换话题、未确认建议和长通话摘要。保留素材、时长、字幕及禁止发布等约束；测试只调用改写模型，不创建真实用户任务。小样本结果用于回归验证，不代表所有语音任务的准确率。
 
 ## 21. 不说谎、不空许诺、用户的答复一定送到（2026-10-08 下午）
 

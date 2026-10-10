@@ -328,7 +328,7 @@ def test_the_plan_is_one_json_object_and_an_answer_only_when_allowed():
     assert handover.parse('{"ask": "你说的是哪件事？"}', answer_allowed=False) == Plan("ask", "你说的是哪件事？")
     assert handover.parse("没有JSON", answer_allowed=True) is None
     assert handover.parse('{"brief": "  "}', answer_allowed=True) is None
-    assert len(handover.parse('{"brief": "' + "长" * 900 + '"}', answer_allowed=False).text) == handover.BRIEF_CHARS
+    assert handover.parse('{"brief": "' + "长" * 900 + '"}', answer_allowed=False) is None
 
 
 async def test_the_planner_sees_the_call_and_falls_back_to_the_request():
@@ -357,6 +357,69 @@ async def test_the_planner_sees_the_call_and_falls_back_to_the_request():
     async def broken(*args):
         raise RuntimeError("provider_not_configured")
     assert await handover.plan(request="查一下", words="", lines=[], completer=broken) == Plan("brief", "查一下")
+
+
+async def test_video_handover_keeps_earlier_constraints_despite_noisy_tool_notes():
+    from voice.transcript import CallTranscript
+    call = CallTranscript()
+    call.add("user", "在电影项目做个抽象搞笑视频，用昨天上传的猫咪素材，不要真人出镜。")
+    for _ in range(14):
+        call.add("note", "后台任务仍在运行。")
+    call.add("assistant", "想做成短剧还是脱口秀？")  # a suggestion, not a selected format
+    call.add("user", "做成一个50miao短视频吧，要中英字幕。")
+    seen = []
+
+    async def failed(system, text, timeout):
+        seen.append(text)
+        raise TimeoutError()
+    result = await handover.plan(request="做成50秒短视频", words=call.lines[-1].text,
+                                 lines=call.lines, completer=failed)
+    assert result == Plan("brief", "做成50秒短视频")
+    assert "电影项目" in seen[0] and "不要真人出镜" in seen[0] and "50miao" in seen[0]
+    assert "中英字幕" in seen[0] and seen[0].count("后台任务仍在运行") == 3
+
+
+async def test_planning_does_not_mix_in_a_new_request_arriving_during_routing():
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class SlowJudge(FakeJudge):
+        async def route(self, *args, **kwargs):
+            entered.set()
+            await release.wait()
+            return None
+    planner = Planner(Plan("brief", "制作50秒抽象搞笑短视频。"))
+    bridge, provider, link = make(SlowJudge(), planner)
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_transcript", text="做一个50秒抽象搞笑短视频。"),
+                 tool_call("video", text="做视频"))
+    await asyncio.wait_for(entered.wait(), 1)
+    bridge.spoken.add("user", "另外，给采购项目整理一份报价表。")
+    bridge.keeper.summary = "新话题：采购报价。"
+    release.set()
+    await drain(80)
+    assert len(link.started) == 1
+    assert all("采购" not in line.text for line in planner.calls[0]["lines"])
+    assert planner.calls[0]["summary"] == ""
+
+
+async def test_handover_failure_still_forwards_early_requirements_and_call_summary():
+    async def failed(**kwargs):
+        return await handover.plan(**kwargs, completer=unavailable)
+
+    async def unavailable(*args):
+        raise TimeoutError()
+    bridge, provider, link = make(planner=failed)
+    await greeted(bridge, provider)
+    bridge.keeper.summary = "电影项目里继续昨天的素材，暂不发布。"
+    bridge.spoken.add("user", "抽象搞笑，用猫咪素材，配中英字幕，不要真人。")
+    for i in range(7):
+        bridge.spoken.add("assistant" if i % 2 else "user", "还在讨论制作细节。")
+    await replay(bridge, event("user_transcript", text="做成一个50miao短视频吧。"),
+                 tool_call("video", text="做成50秒短视频"))
+    [ref] = link.started
+    assert "猫咪素材" in ref.context["call"][0]
+    assert ref.context["summary"].endswith("暂不发布。")
+    assert ref.transcript == "做成一个50miao短视频吧。"
 
 
 # -- 2026-10-08 13:00: a confirmed request never reached the assistant, then "建好了" twice --

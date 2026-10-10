@@ -22,8 +22,10 @@ from voice.prompt import VOICE_TURN_BLOCK, voice_turn_block
 VOICE = "assistant:voice-turn"
 
 
-async def claimed(owner, workspace, main, *, client_id, text, voice):
+async def claimed(owner, workspace, main, *, client_id, text, voice, context=None):
     extra = {"entrypoint": "assistant_voice", "extra_ref": {"voice_call_id": "call-1"}} if voice else {}
+    if voice and context:
+        extra["extra_ref"]["voice_context"] = context
     await accept_turn(user_id=owner, workspace_id=workspace, main_id=main.id, client_id=client_id, text=text, **extra)
     lease = await reserve_run(main.id, owner)
     batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
@@ -105,6 +107,59 @@ async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines()
         length="two or three short sentences")
     # The user asked for fuller answers on the phone (Settings → 语音通话).
     assert "four or five sentences" in voice_turn_block({"detail": "detailed"})
+
+
+async def test_a_spoken_card_answer_reaches_the_model_with_its_exact_form_and_no_default_answers():
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    from voice.assistant_link import AssistantLink, VoiceTurnRef
+    from voice import calls
+    from voice.cards import spoken_question
+    from tests.unit.test_voice_cards import FORM
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    call_id = await calls.create_call(user_id=owner, workspace_id=workspace, main_session_id=main.id,
+                                     client="mobile", model="test/voice", voice="Serena")
+    link = AssistantLink(call_id=call_id, user_id=owner, workspace_id=workspace, main_session_id=main.id,
+                         lang="zh", turn_timeout=10)
+    from core.identifier import generate_id
+    ref = VoiceTurnRef(id=generate_id(), provider_call_id="choice", text="第一个", transcript="第一个", requested=0,
+                       context={"task_questions": [spoken_question(FORM)]})
+    await link.start(ref)
+    lease = await reserve_run(main.id, owner)
+    try:
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
+            agent="assistant", user_id=owner, run_fence=(main.id, lease.run_id, lease.generation))
+        ctx = ToolContext(user_id=owner, workspace_id=workspace, session_id=main.id, project_id=main.project_id,
+            agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation, message_id=message.id)
+        [block] = [message for message in await projected(ctx) if message.id == VOICE]
+        text = block.parts[0]["text"]
+        assert "q-video" in text and "video-session" in text and "请填写片名" in text and "需要哪些字幕" in text
+        assert "requests.answer" in text and "ask only the missing" in text and "Never fill unanswered" in text
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_detailed_task_prompt_and_summary_reach_the_text_model_without_changing_the_human_transcript():
+    from tests.unit.test_assistant_foundation import accounts
+    from assistant.service import ensure_main_session
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    context = {"request": "在电影项目制作约50秒的抽象搞笑视频，用猫咪素材，中英字幕，交付成片，不要真人、不要发布。",
+               "summary": "继续昨天电影项目的素材。", "call": ["用户：猫咪素材，不要真人。",
+                   *["前台：继续讨论视频。"] * 12, "用户：做成一个50miao短视频吧，先别发布。"]}
+    ctx, lease, answer, user_message = await claimed(owner, workspace, main, client_id="voice:video:1",
+        text="做成一个50miao短视频吧，先别发布。", voice=True, context=context)
+    try:
+        assert user_message.parts[0].text == "做成一个50miao短视频吧，先别发布。"
+        [block] = [message for message in await projected(ctx) if message.id == VOICE]
+        text = block.parts[0]["text"]
+        assert context["request"] in text and context["summary"] in text and context["call"][-1] in text
+        assert "tasks.submit" in text and "self-contained execution prompt" in text
+        assert "Spoken brevity applies only to your reply" in text
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def test_voice_marker_keeps_retries_idempotent_and_typed_turns_unchanged():

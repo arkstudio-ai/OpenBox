@@ -39,7 +39,7 @@ def quiet(monkeypatch):
     MAIN_MESSAGES.clear()
 
 
-async def ask(session, owner, question="人物画面怎么准备？", options=PORTRAIT, **fields):
+async def ask(session, owner, question="人物画面怎么准备？", options=PORTRAIT, questions=None, **fields):
     """An agent in `session` asks the user one question through the question tool and waits."""
     await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup", prompt="做个口播视频",
                                   origin="human", origin_ref={"actor_user_id": owner})
@@ -54,7 +54,7 @@ async def ask(session, owner, question="人物画面怎么准备？", options=PO
         part = ToolPartData(session_id=session.id, message_id=message.id, tool="question", status="running")
         await save_part(part, is_new=True, user_id=owner, run_fence=fence)
         with pytest.raises(q.QuestionSuspended) as suspended:
-            await q.ask(session.id, [q.Question(question=question, options=options, **{"custom": False, **fields})],
+            await q.ask(session.id, questions or [q.Question(question=question, options=options, **{"custom": False, **fields})],
                         {"messageID": message.id, "callID": part.id}, owner)
         message.finish = "waiting_input"
         await update_message_info(message, user_id=owner, run_fence=fence)
@@ -72,6 +72,30 @@ async def asset(owner, workspace, main, name="主播.png", user=None):
             project_id=main.project_id, name=name, oss_key=f"test/{asset_id}", mime="image/png", size=10,
             status="ready", created_at=datetime.now(timezone.utc)))
     return asset_id
+
+
+async def test_multifield_spoken_choices_and_dictation_fill_the_exact_form_with_human_attribution():
+    from tests.unit.test_voice_cards import FORM
+    owner, _, workspace, main = await assistant()
+    session = await conversation(owner, workspace, main, "50秒搞笑视频", visibility="private")
+    questions = [q.Question(**{**field, "options": [{"label": label} for label in field["options"]]})
+                 for field in FORM["questions"]]
+    request_id = await ask(session, owner, questions=questions)
+    ctx, lease, human = await main_turn(owner, workspace, main,
+        "第一题选第一个，保留50秒。字幕中文和英文都要。片名叫打工人的离谱日常。")
+    try:
+        partial, _ = await tool_call(ctx, "requests.answer", {"request_id": request_id,
+            "answers": [["保留50秒"]], "source_message_ids": [human]})
+        assert partial["error"] == "ASSISTANT_ANSWER_INVALID" and (await card(request_id)).status == "pending"
+        answers = [["保留50秒"], ["中文", "英文"], ["打工人的离谱日常"]]
+        value, _ = await tool_call(ctx, "requests.answer", {"request_id": request_id,
+            "answers": answers, "source_message_ids": [human]})
+        assert value["state"] == "answered" and value["request_id"] == request_id and value["answers"] == answers
+        saved = await card(request_id)
+        assert saved.answers == answers and saved.status == "answered"
+        assert [ref["message_id"] for ref in saved.continuation["answered_by"]["source_refs"]] == [human]
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def test_a_file_choice_without_files_is_answered_after_the_users_card():

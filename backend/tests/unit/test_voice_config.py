@@ -29,6 +29,17 @@ def test_voice_turns_keep_the_main_sessions_model_unless_configured():
     assert voice.summary_model == "openai/qwen3.8-flash"
 
 
+def test_audio_config_overrides_and_history_limits(monkeypatch):
+    monkeypatch.setenv("VOICE_MODEL", "qwen-audio-3.1-realtime-plus")
+    monkeypatch.setenv("VOICE_MAX_HISTORY_TURNS", "40")
+    monkeypatch.setenv("VOICE_ENABLE_SPEECH_EMOTION", "false")
+    config = OpenBoxConfig(**_apply_env_overrides({})).voice
+    assert config.model == "qwen-audio-3.1-realtime-plus"
+    assert config.max_history_turns == 40 and not config.enable_speech_emotion
+    with pytest.raises(ValueError):
+        VoiceConfig(max_history_turns=51)
+
+
 def test_enabled_needs_a_key_and_falls_back_to_dashscope(monkeypatch):
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     assert not voice_settings.enabled(VoiceConfig(enabled=True))

@@ -25,7 +25,8 @@ class VoiceCall(Base):
     main_session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id"), nullable=False)
     client: Mapped[str] = mapped_column(String(16), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
-    voice: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Enrolled voice IDs contain the model name, a prefix and a generated suffix.
+    voice: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     # The client's ended.reason vocabulary.
     end_reason: Mapped[str | None] = mapped_column(String(24), nullable=True)

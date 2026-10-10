@@ -1,6 +1,7 @@
 """The voices offered in Settings → 语音通话 (voice/voices.py)."""
 from core.config import VoiceConfig
 from voice import voices
+from voice.models import AUDIO_MODEL, OMNI_MODEL
 
 
 def test_the_catalog_is_well_formed_and_offers_the_default():
@@ -24,3 +25,23 @@ def test_every_offered_voice_has_a_preview():
         path = voices.sample_path(voice.id)
         assert path is not None and 5_000 < path.stat().st_size < 60_000, voice.id
     assert voices.sample_path("Cherry") is None and voices.sample_path("../voices") is None
+
+
+def test_model_switch_resolves_old_preferences_and_defaults_without_mixing_catalogues():
+    audio_ids = {row["id"] for row in voices.catalog(AUDIO_MODEL)}
+    assert len(audio_ids) == 13 and "longanqian_v3.1" in audio_ids
+    assert not audio_ids & set(voices.BY_ID)
+    assert voices.resolve("Tina", "Serena", AUDIO_MODEL) == "longanqian_v3.1"
+    assert voices.resolve("longanhuan_v3.1", "Tina", AUDIO_MODEL) == "longanhuan_v3.1"
+    assert voices.resolve("longanhuan_v3.1", "longanqian_v3.1", OMNI_MODEL) == "Tina"
+    clone = AUDIO_MODEL + "-custom-123"
+    assert voices.resolve(None, clone, AUDIO_MODEL) == clone
+    assert voices.resolve(clone, "Tina", OMNI_MODEL) == "Tina"
+    assert voices.sample_path("Tina", AUDIO_MODEL) is None
+    assert voices.sample_path("../config.py", AUDIO_MODEL) is None
+
+
+def test_audio_voices_have_their_own_preview_recordings():
+    for voice in voices.AUDIO_VOICES:
+        path = voices.sample_path(voice.id, AUDIO_MODEL)
+        assert path is not None and 3_000 < path.stat().st_size < 100_000, voice.id

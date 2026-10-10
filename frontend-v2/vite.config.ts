@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
 import { readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import type { Plugin } from "vite"
 
 // One id per build, stamped into the bundle (`__APP_BUILD__`) and into
@@ -17,6 +18,12 @@ const buildId =
 
 const BACKEND_PROXY_TARGET = process.env.VITE_BACKEND_PROXY_TARGET || "http://localhost:8080"
 const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
+// A LAN microphone needs a secure origin. Reuse a local certificate without putting keys in the repo.
+const httpsCert = process.env.DEV_HTTPS_CERT
+const httpsKey = process.env.DEV_HTTPS_KEY
+if (Boolean(httpsCert) !== Boolean(httpsKey)) {
+  throw new Error("Set both DEV_HTTPS_CERT and DEV_HTTPS_KEY to enable LAN HTTPS")
+}
 
 function publicLegalPages(): Plugin {
   return {
@@ -69,6 +76,7 @@ export default defineConfig({
     // Port 3000 matches the redirect URI registered in Logto
     // (http://localhost:3000/callback) — changing it means re-registering there.
     host: "0.0.0.0",
+    https: httpsCert && httpsKey ? { cert: readFileSync(httpsCert), key: readFileSync(httpsKey) } : undefined,
     // Fixed at 3000 (Logto redirect URI), but overridable via PORT so a
     // second checkout can run its dev server alongside the main one.
     port: Number(process.env.PORT) || 3000,

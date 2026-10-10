@@ -1,6 +1,7 @@
-"""Manual live check: the real Bailian realtime model through the production bridge (costs a few fen).
+"""Manual live check: the real Bailian realtime model through the production bridge (incurs API costs).
 
     cd backend && .venv/bin/python tests/manual/voice_live_check.py
+    # For Audio 3.1: add --model qwen-audio-3.1-realtime-plus
 
 Not collected by pytest (no test_ prefix). The personal assistant is a canned
 stand-in: it publishes two real progress steps on the bus (tasks.list, then
@@ -18,6 +19,7 @@ handed over) → a forced move to a fresh provider session (the memo comes
 from the configured small model) → "what did we just talk about" (continuity).
 """
 import asyncio
+import argparse
 import os
 import subprocess
 import sys
@@ -38,10 +40,12 @@ from voice.bridge import Bridge  # noqa: E402
 from voice.progress import Progress  # noqa: E402
 from voice.prompt import FrontFacts, front_instructions, local_now  # noqa: E402
 from voice.provider import RealtimeProvider  # noqa: E402
+from voice.models import AUDIO_MODEL, OMNI_MODEL  # noqa: E402
+from voice.meter import call_prices  # noqa: E402
 
 UTTERANCES = [("ask", "帮我让贪吃蛇项目再优化一下界面的配色"), ("read", "我现在有哪些任务在进行"),
               ("fragment", "嗯，就是"), ("recall", "我们刚才都聊了些什么？")]
-REPLY = ("已经在「贪吃蛇」里安排了配色优化，任务正在跑；它想先确认一下方案：选「暗色」还是「亮色」？"
+REPLY = ("已经在「贪吃蛇」里安排了配色优化，任务正在跑；方案是「暗色」，暂时不用「亮色」。"
          "另外上次的收尾自检一切正常。")
 TASKS = {"status": "ok", "more": False, "tasks": [
     {"title": "贪吃蛇收尾自检", "project": "贪吃蛇", "state": "已完成", "latest": "收尾自检做完了，一切正常。"},
@@ -99,7 +103,7 @@ class TimedProvider(RealtimeProvider):
     async def create_response(self, instructions=None):
         kind = ("greeting" if instructions and "电话刚接通" in instructions else
                 "delivery" if instructions and "个人助理的结果到了" in instructions else
-                "progress" if instructions and "说说现在在干什么" in instructions else
+                "progress" if instructions and "还在等它做什么" in instructions else
                 "followup" if instructions is None else "other")
         self.pending_kind = kind
         mark(f"{kind}_request")
@@ -164,18 +168,24 @@ def synthesize(text: str) -> bytes:
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", choices=[OMNI_MODEL, AUDIO_MODEL], default=OMNI_MODEL)
+    parser.add_argument("--voice", default="Tina")
+    args = parser.parse_args()
     env = dotenv_values(BACKEND / ".env", interpolate=False)
     key = env.get("DASHSCOPE_API_KEY") or ""
     if not key:
         raise SystemExit("DASHSCOPE_API_KEY is not set in backend/.env")
-    for name in ("OPENBOX_API_KEY", "OPENBOX_BASE_URL"):  # the summary model's provider, as main.py loads it
+    for name in ("OPENBOX_API_KEY", "OPENBOX_BASE_URL", "OPENBOX_CONFIG"):  # summary model, as main.py loads it
         os.environ.setdefault(name, env.get(name) or "")
 
     async def canned_overview(scope, arguments):
         return TASKS
     tools.DIRECT["tasks_overview"] = tools.DirectTool(tools.DIRECT["tasks_overview"].description, canned_overview)
     speech = {label: synthesize(text) for label, text in UTTERANCES}
-    provider = TimedProvider(VoiceConfig(enabled=True, api_key=key))
+    config = VoiceConfig(enabled=True, api_key=key, model=args.model, voice=args.voice)
+    prices = call_prices(config.model)
+    provider = TimedProvider(config)
     started = time.monotonic()
     await provider.open()
     opened = time.monotonic()
@@ -186,13 +196,13 @@ async def main() -> None:
     progress = Progress(user_id="live-user", main_session_id="live-main")
     progress.start()
     async def opener(text):
-        fresh = TimedProvider(VoiceConfig(enabled=True, api_key=key))
+        fresh = TimedProvider(config)
         await fresh.open()
         await fresh.configure(text)
         show("fresh provider session configured")
         return fresh
     bridge = Bridge(provider, CannedLink(), lang="zh", late_after=LATE_AFTER, scope=SCOPE, progress=progress,
-                    instructions=instructions, opener=opener)
+                    instructions=instructions, opener=opener, rates=prices.rates, price_date=prices.date)
     queue: asyncio.Queue = asyncio.Queue()
 
     async def client():
@@ -307,7 +317,7 @@ def report(connect_seconds: float, cost: dict) -> None:
     print(f"  progress replies: {len(texts['progress'])}; mention the real step: "
           f"{any(word in ' '.join(texts['progress']) for word in ('任务', '记录', '对话'))}")
     print(f"  delivery opens with 我这边查到了: {delivery.startswith('我这边查到了')}; keeps the facts "
-          f"(贪吃蛇/配色/暗色/亮色): {all(word in delivery for word in ('贪吃蛇', '暗色', '亮色'))}; "
+          f"(贪吃蛇/配色/暗色): {all(word in delivery for word in ('贪吃蛇', '配色', '暗色'))}; "
           f"deliveries: {len(texts['delivery'])}")
     print(f"  tool calls: {[name for _, name, _ in asks]}; direct read used: "
           f"{any(name == 'tasks_overview' for _, name, _ in asks)}; assistant_ask after the fragment: {len(fragment_asks)}")

@@ -99,16 +99,17 @@ class VoiceChoice(BaseModel):
 @router.get("/api/assistant/voice/voices")
 async def list_voices(current_user: dict = Depends(get_current_user)):
     """The voices a user may pick for calls (Settings → 语音通话) and the one in use."""
-    default = voice_settings.voice_config().voice
-    return {"voices": voices.catalog(), "default": default,
-            "selected": voices.resolve(await voices.chosen_voice(current_user["user_id"]), default)}
+    config = voice_settings.voice_config()
+    default = voices.resolve(None, config.voice, config.model)
+    return {"voices": voices.catalog(config.model), "default": default,
+            "selected": voices.resolve(await voices.chosen_voice(current_user["user_id"]), default, config.model)}
 
 
 @router.get("/api/assistant/voice/samples/{voice_id}")
 async def voice_sample(voice_id: str):
     """A short preview of a listed voice. Public like any static asset: no user data in it."""
     from fastapi.responses import FileResponse
-    path = voices.sample_path(voice_id)
+    path = voices.sample_path(voice_id, voice_settings.voice_config().model)
     if path is None:
         raise HTTPException(404, "No sample for this voice")
     return FileResponse(path, media_type="audio/mp4", headers={"Cache-Control": "public, max-age=86400"})
@@ -118,7 +119,7 @@ async def voice_sample(voice_id: str):
 async def choose_voice(body: VoiceChoice, current_user: dict = Depends(get_current_user)):
     """Saved in the user's preferences; the next call speaks with it."""
     try:
-        await voices.save_voice(current_user["user_id"], body.voice)
+        await voices.save_voice(current_user["user_id"], body.voice, voice_settings.voice_config().model)
     except ValueError:
         raise HTTPException(422, {"code": "VOICE_UNKNOWN", "message": "Pick one of the listed voices"})
     return {"selected": body.voice}
@@ -128,7 +129,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     """One call. ``room``: the credits it may spend (enforce billing), None for no cap."""
     user_id, lang = access.user_id, await phrases.user_language(access.user_id)
     # The user's own voice (Settings → 语音通话), if it is still one we offer.
-    voice = voices.resolve(await voices.chosen_voice(user_id), config.voice)
+    voice = voices.resolve(await voices.chosen_voice(user_id), config.voice, config.model)
     if voice != config.voice:
         config = config.model_copy(update={"voice": voice})
     max_seconds = config.max_call_seconds
@@ -150,7 +151,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         with anyio.CancelScope(shield=True):
             await provider.close()
             await calls.finish_call(call_id, status="failed", end_reason="error", duration_seconds=0, turns=0,
-                                    snapshot=CallMeter().snapshot())
+                                    snapshot=CallMeter(prices.rates, price_date=prices.date).snapshot())
             await _send(websocket, events.error("provider_unavailable", lang))
             await _close(websocket, 1011)
         if not isinstance(exc, Exception):
@@ -175,7 +176,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
-                    rates=prices.rates, judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
+                    rates=prices.rates, price_date=prices.date,
+                    judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
                     planner=handover_planner, known=facts.profile, recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail)
 

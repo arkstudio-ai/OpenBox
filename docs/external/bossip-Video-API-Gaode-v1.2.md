@@ -250,11 +250,11 @@
 
 | 代号 | 名称 | 默认分辨率 | 可选分辨率（倍率） | 单镜最长 | 说明 |
 |---|---|---|---|---|---|
-| `ultra` | 极致 | 1080p（×1） | 720p ×0.4、480p ×0.2 | 30 秒 | 长叙事与全模态参考（首尾帧、参考音频），单价最高 |
-| `high` | 质量 | 1080p（×1） | 720p ×0.4、480p ×0.2 | 15 秒 | 画质优先，适合正式成片 |
+| `ultra` | 极致 | 1080p（×1） | 720p ×0.4、480p ×0.19 | 30 秒 | 长叙事与全模态参考（首尾帧、参考音频），单价最高 |
+| `high` | 质量 | 1080p（×1） | 720p ×0.4、480p ×0.19 | 15 秒 | 画质优先，适合正式成片 |
 | `medium` | 标准 | 720p（×1） | 1080p ×2、480p ×0.5 | 30 秒 | 日常短视频的均衡选择，**默认** |
-| `fast` | 快速 | 768p（×1） | 480p ×0.7 | 15 秒 | 快速生成，支持文字与首尾帧 |
-| `low` | 灵活 | 768p（×1） | 512p ×0.7、2K ×1.7 | 15 秒 | 成本最低，适合预览效果 |
+| `fast` | 快速 | 768p（×1） | 480p ×0.66 | 15 秒 | 快速生成，支持文字与首尾帧 |
+| `low` | 灵活 | 768p（×1） | 512p ×0.7、2K ×1.6 | 15 秒 | 成本最低，适合预览效果 |
 
 成片时长 30 秒以内由多镜拼接完成，档位只影响单镜生成，不限制成片总长。
 高德要求 1080p 成片时，`ultra` / `high` 直接使用默认分辨率，`medium` 需传 `resolution: "1080p"`（×2）；`fast` / `low` 最高 768p，仅适合预览。
@@ -395,11 +395,11 @@
   "unit": "credits_per_output_second",
   "billing_month": "2026-10",
   "tiers": [
-    { "quality": "ultra",  "name": "极致", "default_resolution": "1080p", "max_shot_seconds": 30, "base_price": "8.30", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.2" }, "ladder": 1 },
-    { "quality": "high",   "name": "质量", "default_resolution": "1080p", "max_shot_seconds": 15, "base_price": "5.55", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.2" }, "ladder": 1 },
+    { "quality": "ultra",  "name": "极致", "default_resolution": "1080p", "max_shot_seconds": 30, "base_price": "8.30", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" }, "ladder": 1 },
+    { "quality": "high",   "name": "质量", "default_resolution": "1080p", "max_shot_seconds": 15, "base_price": "5.55", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" }, "ladder": 1 },
     { "quality": "medium", "name": "标准", "default_resolution": "720p",  "max_shot_seconds": 30, "base_price": "1.40", "multipliers": { "720p": "1", "1080p": "2", "480p": "0.5" }, "ladder": 1 },
-    { "quality": "fast",   "name": "快速", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.80", "multipliers": { "768p": "1", "480p": "0.7" }, "ladder": 1 },
-    { "quality": "low",    "name": "灵活", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.25", "multipliers": { "768p": "1", "512p": "0.7", "2k": "1.7" }, "ladder": 1 }
+    { "quality": "fast",   "name": "快速", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.80", "multipliers": { "768p": "1", "480p": "0.66" }, "ladder": 1 },
+    { "quality": "low",    "name": "灵活", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.25", "multipliers": { "768p": "1", "512p": "0.7", "2k": "1.6" }, "ladder": 1 }
   ]
 }
 ```

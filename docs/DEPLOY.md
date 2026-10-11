@@ -5,6 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 高德机：2026-10-11 `20261011-gaode-e1840135`（合作方资费与阶梯计费、/v1 四个账户接口）
+
+- 代码 `feat/harness-api-v1`：`billing/partner.py` 合作方资费（默认 `partner_tariff.default.json` = 高德价表；`partner_tariffs` 表按工作区覆盖）；`/v1` 会话（带 `api_key_id`）的 LLM 计量、视频报价/结算、合成报价/结算全部改走资费（档位默认分辨率基价 × 倍率，文本按档位每百万 token，合成按秒整分钟取整），成本仍取平台价目表。运行时按第一阶梯扣费，`month_summary` 按阶梯重算，`settle_rebate` 月末一次性以 `rebate` 流水返还差额。
+- 新接口：`GET /v1/models`、`/v1/me`、`/v1/usage`、`/v1/usage/summary`；管理端 `/api/admin/partners`（列表、资费 get/put/delete 带 revision 校验、月用量、返利结算，均记审计）。迁移 `pf39b0c1d2e3`（partner_tariffs / partner_rebates）。
+- 验证：高德机 backend 10 秒 healthy，`alembic current` = pf39；用测试 Key 调四个接口均 200，`/v1/models` 五档与倍率同价目表，`/v1/me` 余额与限额正确，`/v1/usage` 能按 task_id 关联；无告警。单测：合作方 8 项 + 相关 200 项 + 视频/合成/autopilot 78 项通过。
+- 未做：返利结算目前由管理员手动调用（无定时任务）；历史（资费上线前）事件不带资费快照，汇总里按原价计入 `total_credits`，不参与阶梯重算。
+- 回滚：override 改回 `20261011-gaode-6258a020`，旧镜像不认识 pf39：启动前 `alembic stamp --purge e7c9a1b3d5f0 pd17c8d9e0f1`（即 pe28 的两个父）后再起，两张新表保留。
+
 ## 高德机：2026-10-11 `20261011-gaode-6258a020`（快速档、对标 gw2 定价控制页）
 
 - 代码 `6258a020` = `feat/harness-api-v1`（含 10-10 的 main 合并）再合入 `origin/main 3dc9b643`（PR #67 定价控制页、剪辑按秒）+ `/v1` 新增 `quality=fast`、分辨率倍率口径。后端镜像 `openbox-backend:20261011-gaode-6258a020`、前端 `openbox-frontend-v2:20261011-gaode-fe-6258a020`。

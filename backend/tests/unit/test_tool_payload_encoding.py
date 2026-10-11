@@ -3,9 +3,13 @@ from agent import tool_payload
 
 
 def test_encoding_is_skipped_without_a_populated_cache(monkeypatch, tmp_path):
+    import tempfile
+
     tool_payload._proxy_encoding.cache_clear()
     monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
     monkeypatch.delenv("DATA_GYM_CACHE_DIR", raising=False)
+    # tiktoken's own default cache lives under the temp dir; point it somewhere empty.
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / "empty-tmp"))
     assert tool_payload._proxy_encoding() is None
     tool_payload._proxy_encoding.cache_clear()
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path))

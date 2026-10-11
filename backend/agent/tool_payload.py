@@ -65,14 +65,21 @@ def _encoding_cached_locally() -> bool:
     ``TIKTOKEN_CACHE_DIR``; with nothing cached, the estimate below is used.
     """
     import os
+    import tempfile
 
-    cache_dir = os.environ.get("TIKTOKEN_CACHE_DIR") or os.environ.get("DATA_GYM_CACHE_DIR")
-    if not cache_dir:
-        return False
-    try:
-        return any(os.scandir(cache_dir))
-    except OSError:
-        return False
+    # The same lookup order tiktoken itself uses, ending with its default
+    # cache under the temp dir (which a developer machine fills on first use).
+    candidates = [os.environ.get("TIKTOKEN_CACHE_DIR"), os.environ.get("DATA_GYM_CACHE_DIR"),
+                  os.path.join(tempfile.gettempdir(), "data-gym-cache")]
+    for cache_dir in candidates:
+        if not cache_dir:
+            continue
+        try:
+            if any(os.scandir(cache_dir)):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 @lru_cache(maxsize=1)

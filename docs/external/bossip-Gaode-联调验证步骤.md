@@ -1,9 +1,9 @@
-# OpenBox 视频接口 · 联调验证步骤
+# bossip 视频接口 · 联调验证步骤
 
 | 项 | 内容 |
 |---|---|
 | 适用方 | 高德 |
-| 接口版本 | `/v1`，对应《OpenBox 视频创作开放接口文档 v1.1》 |
+| 接口版本 | `/v1`，对应《bossip 视频创作开放接口文档 v1.2》 |
 | 测试环境 | `https://gaode.bossipai.com.cn/v1` |
 | 日期 | 2026-09-22 |
 
@@ -13,7 +13,7 @@
 
 ```bash
 export BASE=https://gaode.bossipai.com.cn/v1
-export KEY=obx_sk_...        # OpenBox 签发的测试 Key，只放在服务端
+export KEY=obx_sk_...        # bossip 签发的测试 Key，只放在服务端
 ```
 
 - 所有请求带 `Authorization: Bearer $KEY`，每个响应都有 `X-Request-Id`，联调时报问题请附上。
@@ -61,6 +61,20 @@ curl -sS -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" $BA
 
 - `quality` 缺省 `medium`；`low` 为 768p 预览档，已开放。
 - `metadata` 最多 16 个键，值必须是字符串，超出 → `400 INVALID_REQUEST`。
+
+## 3a. 档位与分辨率（v1.2）
+
+```bash
+# 五档：ultra / high / medium / fast / low；按默认分辨率定价，resolution 可选
+curl -s -X POST $BASE/v1/sessions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"quality":"ultra","title":"档位验证"}'                      # → resolution 1080p
+curl -s -X POST $BASE/v1/sessions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"quality":"medium","resolution":"1080p"}'                   # → 标准档 1080p（单价 ×2）
+curl -s -X POST $BASE/v1/sessions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"quality":"fast","resolution":"1080p"}'                     # → 400 INVALID_REQUEST，提示可选 480p / 768p
+```
+
+预期：响应里 `quality` 与 `resolution` 与请求一致；不被档位提供的分辨率返回 400 且 `message` 列出可选值。
 
 ## 4. 发送需求
 
@@ -135,7 +149,24 @@ curl -sS -H "Authorization: Bearer $KEY" $BASE/sessions/$SES
 curl -sS -H "Authorization: Bearer $KEY" "$BASE/sessions?limit=20"
 ```
 
-返回该 Key 名下的会话，最新在前：`{"data":[…会话结构同 6.2…],"next_cursor":"…","has_more":true}`，用 `cursor=<next_cursor>` 翻页。接口文档 v1.1 未列此端点，属于额外提供，用于后台查看与控制台"最近会话"。
+返回该 Key 名下的会话，最新在前：`{"data":[…会话结构同 6.2…],"next_cursor":"…","has_more":true}`，用 `cursor=<next_cursor>` 翻页。接口文档 v1.2 未列此端点，属于额外提供，用于后台查看与控制台"最近会话"。
+
+## 8b. 账户与用量接口（v1.2）
+
+```bash
+curl -s $BASE/v1/models        -H "Authorization: Bearer $KEY" | jq '.tiers[] | {quality, default_resolution, base_price, multipliers, ladder}'
+curl -s $BASE/v1/me            -H "Authorization: Bearer $KEY" | jq '{balance, billing_month, month_usage, limits}'
+curl -s "$BASE/v1/usage?limit=5"                        -H "Authorization: Bearer $KEY" | jq '.items[] | {kind, quality, resolution, quantity, unit_price, credits, status, task_id}'
+curl -s "$BASE/v1/usage?task_id=t_456"                  -H "Authorization: Bearer $KEY" | jq '.items | length'
+curl -s "$BASE/v1/usage/summary?group_by=quality"       -H "Authorization: Bearer $KEY" | jq '{rows, total_credits, ladder_credits, ladder_rebate}'
+curl -s "$BASE/v1/usage/summary?group_by=day"           -H "Authorization: Bearer $KEY" | jq '.rows[-3:]'
+```
+
+预期：
+- `/v1/models` 五档都有 `base_price`（第一阶梯）、`multipliers`、`ladder`（本月所处阶梯）与 `month_output_seconds`。
+- `/v1/me` 的 `balance` 为可用积分；`month_usage.output_seconds` 按档位累计，每月 1 日归零。
+- `/v1/usage` 按时间倒序，`task_id` 来自创建会话时的 `metadata.task_id`；视频记录带 `base_price × multiplier = unit_price`，云端合成的 `billed_seconds` 为整分钟取整后的秒数。
+- `/v1/usage/summary` 的 `ladder_credits` 为按阶梯重算的应付，`ladder_rebate.status` 在月末对账前为 `pending`。
 
 ## 9. 重新获取下载地址
 

@@ -266,7 +266,15 @@ async def lifespan(app: FastAPI):
     inbox_janitor.start()
 
     log.info("OpenBox starting...")
+    # Operator pricing rules: load once so the first quote already sees them,
+    # then keep the process-local cache within REFRESH_SECONDS of the database.
+    from billing import rules as pricing_rules
+    try:
+        await pricing_rules.start()
+    except Exception as e:
+        log.warning(f"Pricing rules unavailable at startup (base rates.json applies): {e}")
     yield
+    await pricing_rules.stop()
     log.info("OpenBox shutting down, cleaning up...")
     await stop_fold_warmup()
     from memory.providers.common import close_shared_clients
@@ -437,6 +445,7 @@ def create_app() -> FastAPI:
     from api.workspaces import router as workspaces_router
     from api.admin import router as admin_router
     from api.admin_billing import router as admin_billing_router
+    from api.admin_pricing import router as admin_pricing_router
     from api.admin_fleet import router as admin_fleet_router
     from api.admin_skills import router as admin_skills_router
     application.include_router(workspaces_router)
@@ -444,6 +453,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_fleet_router)
     application.include_router(admin_skills_router)
     application.include_router(admin_billing_router)
+    application.include_router(admin_pricing_router)
     application.state.trajectory_worker_mode = _trajectory_worker_mode(config)
     if application.state.trajectory_worker_mode == "embedded":
         # Otherwise the trajectory worker serves the admin trajectory API and

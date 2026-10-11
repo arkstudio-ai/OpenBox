@@ -355,11 +355,12 @@ async def test_validate_quotes_credits_and_completion_records_a_shadow_usage_eve
     ctx, aid = await _user_with_asset()
     quoted = await execute_compose(VideoComposeArgs(action="validate", timeline=_timeline(aid)), ctx)
     kv = _kv(quoted)
-    assert kv["estimated_credits"] == "0.03" and kv["minutes_billed"] == "1" and kv["tier"] == "720p"
+    # 720p is 0.00075 credits/s billed in whole minutes: a short cut is one minute, 0.045.
+    assert kv["estimated_credits"] == "0.045" and kv["seconds_billed"] == "60" and kv["tier"] == "720p"
     job_id = (await execute_compose(VideoComposeArgs(action="submit", idempotency_key="key-1", timeline=_timeline(aid)), ctx)).metadata["job_id"]
     ims.finish("ims-1")
     done = await execute_compose(VideoComposeArgs(action="wait", job_id=job_id, wait_seconds=1), ctx)
-    assert _kv(done)["credits"] == "0.03"
+    assert _kv(done)["credits"] == "0.045"
     from sqlalchemy import select
     from db.base import get_db_session
     from db.models.billing import UsageEvent

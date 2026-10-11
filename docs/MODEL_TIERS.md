@@ -62,3 +62,8 @@
 
 DeepSeek 两条不带视觉，不进档位；GPT-5.6 Luna、Seedance 系列、Wan 3.0 Prime 留在目录里给管理员。
 生图（gpt-image-2 的 quality）这次没有做档位。
+
+**2026-10-10**：灵活档 MiniMax H3 的时长上限放宽为 **4–30s**（此前 4–15s；metaso 网关控制台/API 均放行 30s，
+直连实测 30 → 30.675s；MiniMax 官方 H3 仍写 4~15）。放宽要两层一起改：自有 new-api fork 的 `minimaxv2/constants.go`
+`MaxDuration` 15→30 并重建镜像（gw-1 `/opt/bossip/newapi-src`），以及 gw2 `config/openbox.json` 的 `MiniMax-H3`
+`duration_range: [4, 30]`、`max_duration_seconds: 30`；openbox 代码按注册表校验，不用改。

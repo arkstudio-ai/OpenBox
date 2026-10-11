@@ -140,8 +140,14 @@ def runninghub(monkeypatch):
 
     gateway = Gateway()
     client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient",
-                        lambda **kw: client(transport=httpx.MockTransport(gateway), **kw))
+
+    class MockClient(client):
+        def __init__(self, **kw):
+            super().__init__(**{**kw, "transport": httpx.MockTransport(gateway)})
+
+    # Lazy imports on provider error paths may subclass AsyncClient (e.g. SDK
+    # adapters). Keep it a class while routing every request to the mock.
+    monkeypatch.setattr(httpx, "AsyncClient", MockClient)
     target = ProviderTarget("runninghub", "seedream-v5-pro", KEY, BASE, 30, channel="runninghub")
     settings = SimpleNamespace(default_size="auto", default_quality="medium", output_format="png", dedupe=False)
     monkeypatch.setattr(image_mod, "_configured_target", lambda: (target, settings))

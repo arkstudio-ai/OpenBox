@@ -5,7 +5,7 @@ when asked to; task results nobody asked about stay in the conversation when tur
 answers travel with each request; and a lasting fact or wish said in passing is quietly handed to
 the assistant to remember, quoting the user.
 """
-from tests.support.voice_fakes import FakeJudge, audio, done, drain, event, item, started
+from tests.support.voice_fakes import tool_call, transcript, audio, done, drain, event, item, started
 from tests.unit.test_voice_routing import greeted, make, replay, said, utterance
 from voice import phrases
 from voice.prompt import with_sections
@@ -28,8 +28,8 @@ async def test_the_greeting_leaves_the_past_alone_when_the_user_asked():
     bridge.recap = False
     await bridge.start()
     [(_, instructions)] = [command for command in provider.sent if command[0] == "create"][:1]
-    assert instructions == phrases.greeting_instructions("zh", recap=False)
-    assert "不希望开场提上次通话" in instructions and "上次通话聊的事" in phrases.greeting_instructions("zh")
+    assert instructions == bridge._instructions() + "\n\n" + phrases.greeting_instructions("zh", recap=False)
+    assert "不希望开场回顾以前" in instructions and "上次通话" in phrases.greeting_instructions("zh")
 
 
 async def test_results_nobody_asked_about_stay_in_the_conversation_when_turned_off():
@@ -43,7 +43,7 @@ async def test_results_nobody_asked_about_stay_in_the_conversation_when_turned_o
     await bridge.report("查询OpenAI最新模型", "查好了。", "inbox-10", "task-7")
     await drain()
     [(_, note)] = provider.commands("note")
-    assert "关于用户说的“帮我查一下OpenAI的新模型”" in note
+    assert "帮我查一下OpenAI的新模型" in note
 
 
 async def test_fuller_answers_travel_with_each_request():
@@ -55,30 +55,18 @@ async def test_fuller_answers_travel_with_each_request():
     assert "detail" not in bridge._call_context("帮我看看贪吃蛇进展")
 
 
-async def test_a_lasting_fact_said_in_passing_is_handed_over_quietly_to_be_remembered():
+async def test_a_native_remember_call_keeps_the_fact_quietly():
+    import json
     words = "我对花生过敏，以后点外卖别给我推花生的"
-    judge = FakeJudge(routes={words: ("chat", 0.93)}, lasting={words: ("lasting", 0.95)})
-    bridge, provider, link = make(judge)
+    bridge, provider, link = make()
     await greeted(bridge, provider)
-    await utterance(bridge, words, "好的，记住了，以后不给你推花生。")
-    await drain(40)
+    await replay(bridge, transcript(words, "u1"), started("r1"),
+                 tool_call("mem-1", arguments=json.dumps({"request": "记住用户对花生过敏", "mode": "remember"}),
+                           response_id="r1"), audio("r1"), done("r1"))
     [ref] = link.started
-    assert (ref.lane, ref.transcript, ref.text) == ("remember", words, phrases.remember_request("zh"))
-    assert ref.provider_call_id.startswith("remember:") and judge.lasting_checks == [words]
-    assert not provider.commands("create")  # quiet: nothing said about it now
-    link.finish(ref.provider_call_id, speech="记下了：您对花生过敏，以后点外卖不推花生。")
+    assert ref.lane == "remember" and ref.transcript == words
+    link.finish(ref.provider_call_id, speech="记下了")
     await drain(40)
-    assert not provider.commands("note") and not provider.commands("create")  # nor when it is done (2026-10-10)
+    assert not provider.commands("note")
     assert (ref.id, {"outcome": "delivered", "delivered": False}) in link.records
-
-
-async def test_what_passes_is_not_remembered():
-    words = "今天天气真不错啊，心情挺好"
-    judge = FakeJudge(routes={words: ("chat", 0.95), "嗯嗯好的": ("chat", 0.99)},
-                      lasting={words: ("lasting", 0.62)})
-    bridge, provider, link = make(judge)
-    await greeted(bridge, provider)
-    await utterance(bridge, words, "是啊，适合出去走走。")
-    await utterance(bridge, "嗯嗯好的", "好嘞。", response_id="r2", user_item="u-2")
-    await drain(40)
-    assert link.started == [] and judge.lasting_checks == [words]  # below the bar; too short to ask about
+    await bridge.close()

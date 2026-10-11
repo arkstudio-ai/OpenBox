@@ -67,7 +67,7 @@ async def test_retained_human_authority_coordinates_two_original_task_runs(monke
             yield call("tasks.submit", {"project_id": main.project_id, "title": "Two arithmetic steps",
                 "instructions": "First calculate 7 + 8; in the following execution multiply that result by 3. "
                                 "Pure text only; no external effects. " + authority,
-                "source_message_ids": [original_message_id],
+                "source_message_ids": [original_message_id], "destination_confirmed": True,
                 "continuation": {"authorization_quote": authority, "max_followups": 1}})
             yield {"type": "finish", "reason": "tool_calls", "usage": {}}
             return
@@ -106,7 +106,7 @@ async def test_retained_human_authority_coordinates_two_original_task_runs(monke
         finally:
             await lease.release(session_status="idle")
 
-    for prompt in ("UNRELATED_COORDINATION_HISTORY", authority + " Pure text only; first 7 + 8, then multiply by 3."):
+    for prompt in ("UNRELATED_COORDINATION_HISTORY", authority + " Use a new conversation in the default project. Pure text only; first 7 + 8, then multiply by 3."):
         await accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup", prompt=prompt,
             agent="assistant", origin="human", origin_ref={"actor_user_id": owner})
         await run(main.id)

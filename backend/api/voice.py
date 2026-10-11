@@ -21,8 +21,7 @@ from billing.service import BillingError
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
-from voice import calls, cards, events, handover, phrases, prompt, summary, tools, upkeep, voices
-from voice import router as turn_router
+from voice import calls, cards, events, phrases, prompt, summary, tools, upkeep, voices
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import REPLY_GAP_SECONDS, Bridge
@@ -35,7 +34,6 @@ log = create_logger("api.voice")
 router = APIRouter()
 
 provider_factory = RealtimeProvider  # tests replace it with a scripted provider
-handover_planner = handover.plan     # a request handed over is briefed first; tests replace it
 
 MAX_FRAME_BYTES = 12800        # 400 ms of 16 kHz PCM16; clients send 3,200-byte frames
 CLIENT_SILENCE_SECONDS, HEARTBEAT_SECONDS, LOCK_RENEW_SECONDS = 30, 10, 20
@@ -181,8 +179,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
-                    judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
-                    planner=handover_planner, known=facts.profile, recap=facts.recap, tell_reports=facts.reports,
+                    recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
                     reply_gap=REPLY_GAP_SECONDS)  # ours start once the client has played the last reply

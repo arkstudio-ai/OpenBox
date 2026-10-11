@@ -120,12 +120,12 @@ async def revoke(source_id):
         (await db.get(MemorySource, source_id)).status = "REVOKED"
 
 
-async def start(identity):
+async def start(identity, *, prompt=None):
     async with get_db_session() as db:
         main = await db.get(Session, identity["main_id"])
     ctx = ToolContext(user_id=main.user_id, workspace_id=main.workspace_id, session_id=main.id,
                       project_id=main.project_id, agent_id="assistant")
-    return await next_turn(ctx, "Consult my confirmed memories and original evidence. Only answer with text.")
+    return await next_turn(ctx, prompt or "Consult my confirmed memories and original evidence. Only answer with text.")
 
 
 async def test_hybrid_semantic_recall_explicit_owned_scope_and_ordinary_default_remain(monkeypatch, external_io):
@@ -544,7 +544,7 @@ async def test_memory_derived_task_records_no_derivation_and_forgetting_is_not_r
     from session.session import create_session
     identity, _, _, _ = await seed(monkeypatch)
     value = await note(identity)
-    ctx, lease, answer = await start(identity)
+    ctx, lease, answer = await start(identity, prompt="Read the source, then create the derived draft in a new conversation in this project.")
     try:
         result, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
         assert not result.metadata.get("error"), result.output
@@ -552,7 +552,7 @@ async def test_memory_derived_task_records_no_derivation_and_forgetting_is_not_r
         result, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref})
         assert not result.metadata.get("error"), result.output
         await consume_context(ctx)
-        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id,
+        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id, "destination_confirmed": True,
             "title": "Memory-derived draft", "instructions": "Draft text from my verified memory. Do not publish.",
             "source_message_ids": [answer.parent_id]})
         assert not result.metadata.get("error"), result.output

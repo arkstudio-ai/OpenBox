@@ -57,7 +57,7 @@ async def test_create_records_the_users_words_and_a_repeat_returns_the_same_proj
         again, _ = await tool_call(ctx, "projects.create", {"name": "手机视频宣传", "source_message_ids": [human]})
         assert again["state"] == "existing" and again["project_id"] == created["project_id"]
         # And the created project is immediately usable for work in the same turn.
-        submitted, _ = await tool_call(ctx, "tasks.submit", {"project_id": created["project_id"],
+        submitted, _ = await tool_call(ctx, "tasks.submit", {"project_id": created["project_id"], "destination_confirmed": True,
             "title": "iPhone 18 口播视频", "instructions": "做一个 iPhone 18 口播视频。", "source_message_ids": [human]})
         assert submitted["state"] == "accepted"
     finally:

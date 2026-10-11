@@ -1,22 +1,13 @@
-"""The personal assistant answers questions for the user (V2 D6).
+"""Scoped task answers and semantic completion reports.
 
-docs/PERSONAL_ASSISTANT_DESIGN_V2.md 10: a question an agent asks in one of
-the user's own conversations may be answered by their personal assistant; the
-conversation shows "由个人助理代答". Decisions stay with the user, who gets a
-link instead: permission approvals, plan reviews, memory confirmations,
-desktop takeovers and requests for the user's own action. One narrow
-exception: a desktop takeover's own completion option (「我已完成，继续」) may be
-chosen for the user, only when their own cited message says they finished
-(我登好了、验证完了); the resumed tool then re-checks the page itself.
-
-docs/ASSISTANT_VOICE_FIX_PLAN.md 3.1: a file choice is answerable too, with an
-option that needs no file or with the user's own files as attachments. Such an
-answer, an answer about money, payment, publishing, authorization or deletion,
-and any answer in a workspace-visible conversation (D4) is shown to the user on
-a confirmation card first.
+The model interprets the cited human messages; this module validates provenance,
+question identity, ownership, version, option labels and declared consequences.
+Human-only steps stay human-only. Reporting completion of a desktop takeover
+requires its exact completion option, a semantic completion flag and verified
+human source; the resumed tool re-checks the page. Confirmation derives from
+question metadata, attachments and workspace visibility, never incidental words
+in a task title. Legacy questions with no consequence metadata remain gated.
 """
-import re
-
 from sqlalchemy import select
 
 from assistant.commands import ToolSource, _authority, _tool_source_locked, command_digest
@@ -32,31 +23,6 @@ from session.internal_parts import begin_session_write
 #: or an action only the user can give.
 ANSWERABLE_TOOLS = frozenset({"question"})
 ANSWERED_BY = "assistant"
-#: Words that make an answer high-risk wherever they appear: the question, its
-#: options, the answer or the conversation's title (a publishing conversation).
-#: A false positive only asks the user on a card.
-HIGH_RISK = re.compile("|".join((
-    "付款", "支付", "付费", "扣费", "扣款", "收费", "金额", "价格", "费用", "购买", "下单", "充值", "转账",
-    "退款", "订阅", "发布", "上线", "发表", "公开", "授权", "登录", "删除", "清空", "移除", "销毁", "注销",
-    "覆盖", "重置", r"\bpay(?:s|ing|ment|ments)?\b", "purchase", r"\bbuy\b", r"\bprices?\b", "refund",
-    "subscri", "publish", "authori", r"\blog ?in\b", r"\bsign ?in\b", "delete", "remove", r"\bwipe",
-    "erase", "overwrite", r"[$¥￥]\s*\d", r"\d\s*(?:元|块钱|美元|usd|rmb|cny)",
-)), re.IGNORECASE)
-
-
-#: A desktop takeover (tool.desktop_takeover) is the user's own action on the page. The assistant
-#: may only press the card's own completion option for them, and only when the user's own cited
-#: message says they finished (我登好了、已经登录、验证完了、弄好了); the resumed tool re-checks the page.
-TAKEOVER_DONE = re.compile("|".join((
-    "(?:登|登录|登陆)(?:好|上|进去|完|成功)", "(?:登录|登陆|验证)了", "已经?(?:登录|登陆|登上|验证|处理好|弄好|搞好|搞定|完成)",
-    "验证(?:完|好|过|通过|成功)", "(?:通过|完成|做完|弄完)了?(?:验证|登录)", "(?:弄|搞|处理|做|整|操作)(?:好|完)",
-    "搞定", "完成了", r"\b(?:done|finished|logged ?in|signed ?in|verified|completed?)\b",
-)), re.IGNORECASE)
-#: Doubt, a question or a plan rather than a fact ("还没登好", "登好了吗", "等我登好了再说", "我去登录了").
-TAKEOVER_NOT_DONE = re.compile(
-    r"没|未|还不|不了|不上|不进|不行|不能|不会|失败|卡住|怎么|如何|[?？]|吗|么"
-    r"|等|待会|一会|马上|稍后|先别|还要|再说|准备|正在|去登|去验证|要登|要验证"
-    r"|\b(?:not|no|yet|failed|how|will|going|later|soon)\b|n't|can'?t", re.IGNORECASE)
 TAKEOVER_REASON = ("It is a desktop takeover: only the user can do the verification on that page (on the "
                    "cloud desktop opened from that conversation, or in their own browser when browser is "
                    "extension). Tell them where, with the link, and to press 「{done}」 when finished. Only after "
@@ -76,12 +42,6 @@ def human_only(session_id: str, reason: str) -> AssistantError:
 def is_takeover(row: QuestionCheckpoint, tool: str | None) -> bool:
     return tool == "desktop_takeover" and any(
         (question.get("detail") or {}).get("kind") == "desktop_takeover" for question in row.questions or [])
-
-
-def says_finished(text: str) -> bool:
-    """The user's own words say they finished the verification, with no doubt or question in them."""
-    words = " ".join(str(text or "").split())
-    return bool(TAKEOVER_DONE.search(words)) and not TAKEOVER_NOT_DONE.search(words)
 
 
 async def _tool(db, row: QuestionCheckpoint, session: Session) -> str | None:
@@ -108,16 +68,17 @@ async def answerable(db, row: QuestionCheckpoint, session: Session, answers=None
         return None, False
     if tool not in ANSWERABLE_TOOLS:
         return "It asks the user for a decision or an action.", False
-    texts, high_risk = [session.title or ""], False
+    high_risk = False
     for question in row.questions or []:
         if (question.get("detail") or {}).get("kind"):
             return "It is a request for the user's own action.", False
         # Choosing files (or choosing none) decides what the work is built from.
         high_risk = high_risk or bool(question.get("allow_attachments"))
-        texts += [str(question.get("question", "")), str(question.get("header", ""))]
-        texts += [f"{option.get('label', '')} {option.get('description', '')}" for option in question.get("options") or []]
-    texts += [value for values in answers or [] if isinstance(values, list) for value in values if isinstance(value, str)]
-    return None, high_risk or any(HIGH_RISK.search(text) for text in texts)
+        # New cards declare the effect of answering them. Legacy cards without
+        # this metadata require confirmation; their prose cannot safely classify risk.
+        high_risk = high_risk or question.get("requires_confirmation", True)
+    return None, high_risk
+
 
 
 async def _target(db, ctx, request_id: str):
@@ -151,15 +112,13 @@ def _impact(title, visibility, questions, files, texts) -> str:
         parts.append(f"会把 {sum(map(len, files))} 个文件交给它使用")
     elif any(question.get("allow_attachments") for question in questions):
         parts.append("不提供文件，它会按所选方式直接做")
-    words = sorted({match.group(0) for text in texts for match in HIGH_RISK.finditer(text)})
-    if words:
-        parts.append("这个问题涉及" + "、".join(f"「{word}」" for word in words[:4]))
     return "；".join(parts) + "。"
 
 
 async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
                           attachments: list[list[str]] | None = None,
-                          source_message_ids: list[str] | None = None) -> dict:
+                          source_message_ids: list[str] | None = None,
+                          completion_reported: bool = False, requires_confirmation: bool = False) -> dict:
     from question import question as questions
     async with get_db_session() as db:
         await begin_session_write(db)
@@ -174,10 +133,9 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
             tuple(source_message_ids)), "request_answer"))["source_refs"] if source_message_ids else []
         if is_takeover(row, await _tool(db, row, session)):
             # Pressing 「我已完成，继续」 for the user needs their own words that they finished.
-            texts = [str((part.data or {}).get("text") or "") for part in (await db.scalars(select(Part).where(
-                Part.id.in_([ref["part_id"] for ref in sources]), Part.session_id == main.id,
-                Part.user_id == ctx.user_id))).all()] if sources else []
-            if not any(says_finished(text) for text in texts):
+            # The assistant interprets the cited human message in context. Only
+            # provenance, the exact takeover and its completion option are server gates.
+            if not sources or not completion_reported:
                 from tool.desktop_takeover import ANSWER_DONE
                 raise human_only(session.id, ("The user has not said they finished the verification. "
                     if sources else "Cite the user's own message saying they finished. ")
@@ -192,7 +150,7 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
         title, visibility, saved = session.title or "", session.visibility, list(row.questions)
         names = [[assets[asset_id].name for asset_id in ids] for ids in files]
     confirmation = None
-    if high_risk or visibility == "workspace":
+    if high_risk or requires_confirmation or visibility == "workspace":
         from assistant.confirmations import CONFIRM_KIND, require_card
         texts = [title, *(str(item.get("question", "")) for item in saved),
                  *(str(option.get("label", "")) for item in saved for option in item.get("options") or []),

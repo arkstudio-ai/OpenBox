@@ -86,14 +86,14 @@ async def next_turn(ctx, prompt="Restate the previous answer without reading ano
     return replace(ctx, message_id=message.id, part_id="", run_id=lease.run_id, run_generation=lease.generation), lease, message
 
 
-async def start(monkeypatch, *, title="PRIVATE_KNOWLEDGE_TITLE", project=False):
+async def start(monkeypatch, *, title="PRIVATE_KNOWLEDGE_TITLE", project=False, prompt=None):
     from tests.unit.test_assistant_knowledge import page_for, seed
     identity, _, projects, _ = await seed(monkeypatch)
     async with get_db_session() as db:
         main = await db.get(Session, identity["main_id"])
     ctx = ToolContext(user_id=main.user_id, workspace_id=main.workspace_id, session_id=main.id,
                       project_id=main.project_id, agent_id="assistant")
-    ctx, lease, message = await next_turn(ctx, "Consult my knowledge titles for a text-only task. Do not publish.")
+    ctx, lease, message = await next_turn(ctx, prompt or "Consult my knowledge titles for a text-only task. Do not publish.")
     page = (await page_for(identity, projects[0] if project else None, title))[0] if title else None
     return ctx, lease, message, identity, projects, page
 
@@ -312,21 +312,21 @@ async def repeated_result():
     """Four chained task results; each task is submitted from a later human turn."""
     from tests.unit.assistant_source_fixtures import consume_context
     from tests.unit.test_assistant_reads import call_tool, read_turn
-    ctx, lease, answer, accepted, report = await read_turn()
+    ctx, lease, answer, accepted, report = await read_turn(prompt="Read the report, then create a new text task in this project.")
     try:
         for index in range(4):
             output, _, _ = await call_tool(ctx, "history.read", {
                 "session_id": accepted["execution_session_id"], "message_ids": [report.id]})
             assert not output.metadata.get("error"), output.output
             await consume_context(ctx)
-            output, _, _ = await call_tool(ctx, "tasks.submit", arguments(ctx, answer))
+            output, _, _ = await call_tool(ctx, "tasks.submit", {**arguments(ctx, answer), "destination_confirmed": True})
             assert not output.metadata.get("error"), output.output
             accepted = json.loads(output.output)
             await finish(ctx, lease, answer, f"Accepted derived text task {index}.")
             result = await settle_execution(ctx, accepted)
             report = SimpleNamespace(id=result.result_message_id)
             if index < 3:
-                ctx, lease, answer = await next_turn(ctx, "Read that result and create another text-only task.")
+                ctx, lease, answer = await next_turn(ctx, "Read that result and create another text-only task in this project.")
         return dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id), result.id
     finally:
         await lease.release(session_status="idle")

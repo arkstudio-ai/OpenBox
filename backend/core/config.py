@@ -364,6 +364,8 @@ class VoiceConfig(BaseModel):
     """
 
     enabled: bool = False
+    # Provider/session default; user calls use voice.voices.selection's product
+    # default or an explicit per-user model choice made after its rollout.
     model: str = "qwen-audio-3.1-realtime-plus"
     # Alibaba's default for Audio 3.1; Omni resolves to its own default, Tina.
     voice: str = Field(default="longanqian_v3.1", max_length=255)
@@ -397,18 +399,6 @@ class VoiceConfig(BaseModel):
     summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
-    # Each utterance's route (chat / read / assistant / unclear) by the JEV decision model (memory.jev_*),
-    # judged while the front desk replies (voice/router.py), for users memory.route_jev covers. Off, or
-    # without a JEV key, the front desk's own tool calls decide alone.
-    router: bool = True
-    # A verdict is used once the reply is done (1.5-4 s after the transcript); a cold connection takes 1-2 s.
-    router_timeout_seconds: float = Field(default=3.0, gt=0, le=5)
-    # Plans a request handed over in a call (voice/handover.py) on Bailian's OpenAI-compatible endpoint with
-    # the voice key. Measured 2026-10-08 on six typical requests: qwen3.8-flash got all six (asks when a change
-    # is unspecified) at p50 1.3 s, max 1.6 s; qwen-flash (0.5 s) wrote a change the user never said. Through
-    # the OpenBox gateway the same model took 2-17 s.
-    handover_model: str = "qwen3.8-flash"
-    handover_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 
 class DesktopPublishConfig(BaseModel):

@@ -113,7 +113,7 @@ def scrub(message: str, key: str) -> str:
 def translate(event: dict, key: str = "") -> ProviderEvent | None:
     kind = event.get("type")
     if kind == "input_audio_buffer.speech_started":
-        return ProviderEvent("user_started")
+        return ProviderEvent("user_started", item_id=str(event.get("item_id") or ""))
     if kind == "input_audio_buffer.speech_stopped":
         return ProviderEvent("user_stopped", invalid=event.get("reason") == "turn_invalid")
     if kind == "conversation.item.input_audio_transcription.completed":

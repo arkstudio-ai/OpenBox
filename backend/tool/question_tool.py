@@ -26,6 +26,10 @@ class QuestionOption(BaseModel):
 
 
 class QuestionItem(BaseModel):
+    requires_confirmation: bool = Field(default=False, description=(
+        "True when answering authorizes a consequential action such as payment, publication, account access or deletion. "
+        "An assistant answering on the user's behalf must then obtain confirmation of the exact answer. "
+        "Classify the consequence, not keywords in the question."))
     question: str
     header: str = ""
     options: list[QuestionOption] = []
@@ -50,6 +54,7 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
             multiple=q.multiple,
             custom=q.custom,
             allow_attachments=q.allow_attachments,
+            requires_confirmation=q.requires_confirmation,
         )
         for q in args.questions
     ]

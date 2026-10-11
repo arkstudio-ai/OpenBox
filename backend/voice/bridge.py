@@ -59,14 +59,10 @@ UNSENT_AUDIO_BYTES = events.INPUT_SAMPLE_RATE * 2 * 2  # the microphone's last t
 class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
-                 opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None, judge=None, planner=None,
-                 known: str = "", recap: bool = True, tell_reports: bool = True, detail: str = "brief",
+                 opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None,
+                  recap: bool = True, tell_reports: bool = True, detail: str = "brief",
                  keepalive_after: float | None = None, reply_gap: float | None = None):
         self.provider, self.link, self.lang = provider, link, lang
-        # judge: the decision model and recall replies are checked against (voice/router.py Judge), None = off;
-        # planner: briefs a handed-over request (voice/handover.py plan), None = the request as it is;
-        # known: the core memories the session prompt carries, for the planner to spell names by.
-        self.judge, self.planner, self.known = judge, planner, known
         # The user's call settings (assistant/profile.py): whether the greeting recaps, whether task results
         # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
@@ -111,7 +107,7 @@ class Bridge(TurnsMixin):
         self._wake: asyncio.TimerHandle | None = None  # a look again once it has, for a reply held back
         self.seq = self.started_seq = 0         # provider events so far; at the active reply's start
         self.quiet_since, self.last_progress = clock(), None
-        self.utterance = ""                     # the latest user utterance: VoiceTurn.transcript, fragment guard
+        self.utterance = ""                     # latest human transcript; never parsed as business instructions
         self.refs = []                          # every assistant_ask of the call
         self.spoken = CallTranscript(now=wall_clock)
         self.keeper = ContextKeeper(self.spoken, clock=clock, summarizer=summarizer, protected=self._protected_items,
@@ -222,11 +218,12 @@ class Bridge(TurnsMixin):
         if handler := getattr(self, "_on_" + event.kind, None):
             await handler(event)
 
-    async def _on_user_started(self, _event) -> None:
+    async def _on_user_started(self, event) -> None:
         self.state, self.interrupted, self.awaiting_since = "user_speaking", True, None
         if self.greeting:
             self._greeting_over()
         self.utterance = ""  # a new utterance: never pair a call with the previous words
+        self._last_user_item = event.item_id or ""
         self.quiet_since = self.clock()
         self.meter.pending_input = True
         self.emit(events.playback_clear())
@@ -246,11 +243,9 @@ class Bridge(TurnsMixin):
         self.utterance = event.text  # becomes VoiceTurn.transcript
         if self._said("user", event.text, event.item_id):
             self.heard_count += 1
+            if event.item_id:
+                self._user_utterances[event.item_id] = self.heard_count
             self.keeper.user_turn()
-            self._hush(event.text)
-            self._heard_card_reply(event.text)
-            self._drop_stale_recalls()
-            self._route_utterance(event.item_id, event.text)
 
     async def _on_assistant_transcript(self, event) -> None:
         if (event.response_id or self.active_response) in self._keepalives:
@@ -297,8 +292,6 @@ class Bridge(TurnsMixin):
         if ref := self._delivery(kind):
             ref.delivery = "delivering"
         if kind in ("model", "followup") and event.response_id:
-            # Checked once done (voice/turns.py), the reply to a direct read too: "我这就让助理去查" after
-            # tasks_overview was a promise nobody kept (2026-10-08).
             self._answering[event.response_id] = self._last_user_item
             self._ack_at = None  # the model speaks anyway, with every tool output in view
         if kind == "model" and not self._direct:
@@ -360,14 +353,8 @@ class Bridge(TurnsMixin):
             if not heard and event.status == "completed":
                 # It called assistant_ask without a word: acknowledged unless the result comes first.
                 self._ack_at = self.clock() + ACK_WAIT_SECONDS
-        if kind in ("model", "followup") and (event.status == "completed" or heard):
-            # Cut short by the user talking on (2026-10-08: "我这就去让助理把白榆……" then the next request):
-            # what was heard of it still promised something.
-            await self._after_reply(event.response_id, heard)
-        else:
-            self._replies.pop(event.response_id or "", None)
-            self._called.discard(event.response_id or "")
-            self._answering.pop(event.response_id or "", None)
+        self._replies.pop(event.response_id or "", None)
+        self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
 
@@ -422,7 +409,6 @@ class Bridge(TurnsMixin):
             self.awaiting_since = None
             self._update_phase()
         async with self._idle:
-            self._drop_stale_recalls()
             if (self.requested is not None and self._requested_at is not None
                     and self.clock() - self._requested_at >= REQUEST_TIMEOUT_SECONDS):
                 await self._unanswered()
@@ -456,8 +442,6 @@ class Bridge(TurnsMixin):
         """The reply of ours that is due, answers before reassurance: something to await, or None."""
         if self.next_phrase:
             return self._say_next_phrase
-        if self.next_aside:
-            return self._say_aside
         if self.followup_due and not self._direct:
             return self._say_followup
         if (ref := self._next_delivery()) is not None:
@@ -472,23 +456,18 @@ class Bridge(TurnsMixin):
         key, self.next_phrase = self.next_phrase, None
         await self.say_phrase(key)
 
-    async def _say_aside(self) -> None:
-        instructions, self.next_aside = self.next_aside, None
-        self.requested = "aside"
-        await self._create(instructions)
-
     async def _say_followup(self) -> None:
         self.followup_due, self.requested = False, "followup"
-        await self._create(None)  # the model answers the tool outputs it was given
+        await self._create(phrases.tool_result_instructions(self.lang))
 
     def _ack_due(self) -> bool:
         """A request handed over without a word whose result has not come within ``ACK_WAIT_SECONDS``."""
         return (self._ack_at is not None and self.clock() >= self._ack_at and self._request_pending()
-                and not self.hushed)
+                )
 
     async def _acknowledge(self) -> None:
         self._ack_at, self.requested = None, "followup"
-        await self._create(None)  # the model answers assistant_ask's "accepted" in its own words
+        await self._create(phrases.tool_result_instructions(self.lang))
 
     def _played_out(self) -> bool:
         """The client has played our last reply and ``reply_gap`` has passed since (always, without pacing)."""
@@ -516,12 +495,11 @@ class Bridge(TurnsMixin):
         """What the user asked comes first. A task report nobody asked for waits while a request of the user's
         is being done and rides along with its answer ("另外…"); nothing unasked while they asked for quiet."""
         waiting_answer = self._asked is not None
-        confirmations = set(self.desk.fresh())
+        confirmations = set(self.desk.open())
         busy = self._request_pending()
         queued = [ref for ref in self.deliveries if ref.delivery == "queued"
                   and not (ref.questions and (waiting_answer or self.pending_calls or confirmations))
                   and not (ref.reason == "card_notice" and confirmations - {c["card_id"] for c in ref.cards})
-                  and not (self.hushed and self._unasked(ref))
                   and not (busy and ref.report is not None and not ref.asked and not ref.cards and not ref.questions)]
         if confirmation := next((ref for ref in queued if ref.cards), None):
             return confirmation
@@ -620,7 +598,7 @@ class Bridge(TurnsMixin):
         after that long and not yet given its one line, the last line a minute ago at least; none while the user
         asked for quiet, none for a quiet "remember this"."""
         now = self.clock()
-        if (self.hushed or now - self.quiet_since < self.late_after
+        if (now - self.quiet_since < self.late_after
                 or (self.last_progress is not None and now - self.last_progress < PROGRESS_GAP_SECONDS)):
             return []
         return [ref for ref in self.pending_calls.values() if ref.lane != "remember"
@@ -684,7 +662,7 @@ class Bridge(TurnsMixin):
 
     def _quiet_for_swap(self) -> bool:
         return (self.state == "idle" and self.active_response is None and self.requested is None
-                and not self.followup_due and not self._direct and self.next_aside is None and self._ack_at is None
+                and not self.followup_due and not self._direct and self._ack_at is None
                 and all(ref.delivery == "queued" for ref in self.deliveries))
 
     async def recover(self, lost) -> bool:
@@ -763,7 +741,6 @@ class Bridge(TurnsMixin):
         self.active_response = self.response_kind = self._claimed = self.requested = None
         self.state, self.interrupted, self.awaiting_since, self.followup_due = "idle", False, None, False
         self._ack_at = None  # its handover went with the session's conversation; the result is told as usual
-        self._called.discard(response_id or "")
         self._answering.pop(response_id or "", None)
         self._acks.discard(response_id or "")
         for ref in self.deliveries:  # the notes went with the session
@@ -858,6 +835,10 @@ class Bridge(TurnsMixin):
             return False
 
     async def _create(self, instructions: str | None) -> None:
+        # A response-specific prompt must carry the durable role and tool contract too.
+        # Providers can treat it as an override, rather than an addition to session.instructions.
+        if instructions and self.base_instructions:
+            instructions = self._instructions() + "\n\n" + instructions
         self._requested_at = self.clock()
         if not await self._command("create_response", instructions):
             self.requested = None

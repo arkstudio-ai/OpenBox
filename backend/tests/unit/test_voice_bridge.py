@@ -37,7 +37,7 @@ async def greeted(bridge, provider):
 async def asked(bridge, call_id="call-1", response_id="ack"):
     """The front desk says its acknowledgement and calls assistant_ask in the same reply."""
     await replay(bridge, event("user_started"), event("user_stopped"), started(response_id), audio(response_id),
-                 tool_call(call_id), done(response_id))
+                 event("user_transcript", text="帮我看看贪吃蛇进展"), tool_call(call_id), done(response_id))
 
 
 def phase_values(items):
@@ -49,7 +49,7 @@ async def test_the_greeting_is_free_words_from_facts_and_its_audio_reaches_the_c
     await bridge.start()
     [(_, instructions)] = provider.commands("create")
     assert instructions == phrases.greeting_instructions("zh")
-    assert "上次通话" in instructions and "不要编造" in instructions  # a goal, never a sentence to repeat
+    assert "上次通话" in instructions and "不推测" in instructions  # a goal, never a sentence to repeat
     assert "嗨，我在" not in instructions and "只说这一句" not in instructions
     await replay(bridge, started("greet"), audio("greet", 4800), done("greet"))
     items = outbox(bridge)
@@ -60,10 +60,14 @@ async def test_the_greeting_is_free_words_from_facts_and_its_audio_reaches_the_c
     assert of_type(items, "cost")[-1]["settled_rounds"] == 1
 
 
+
+
+
+
 async def test_no_reply_is_requested_while_responding_or_while_the_user_talks(call):
     bridge, provider, link, clock = call
     await greeted(bridge, provider)
-    await replay(bridge, started("ack"), tool_call("call-1"))  # the acknowledgement reply is still active
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), tool_call("call-1"))  # the acknowledgement reply is still active
     link.finish("call-1")
     await drain()
     assert not provider.commands("create") and not provider.commands("note")
@@ -88,7 +92,7 @@ async def test_the_vad_reply_to_a_finished_utterance_is_not_preempted(call):
     await replay(bridge, started("deliver-1"), audio("deliver-1"), done("deliver-1"))
     provider.sent.clear()
     # When the VAD does not answer, the result is told once the grace period has passed.
-    await replay(bridge, started("ack-2"), audio("ack-2"), tool_call("call-2"), done("ack-2"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack-2"), audio("ack-2"), tool_call("call-2"), done("ack-2"))
     await replay(bridge, event("user_started"), event("user_stopped"))
     link.finish("call-2")
     await drain()
@@ -190,8 +194,8 @@ async def test_a_turn_keeps_the_words_of_its_own_utterance(call):
     await greeted(bridge, provider)
     await replay(bridge, event("user_started"), event("user_stopped"),
                  event("user_transcript", text="今天几号"), started("chat"), done("chat"))
-    await replay(bridge, event("user_started"), event("user_stopped"), started("ack"), tool_call("call-1"))
-    assert link.started[0].transcript == "帮我看看贪吃蛇进展"  # its transcription had not arrived yet
+    await replay(bridge, event("user_started"), event("user_stopped"), event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), tool_call("call-1"))
+    assert link.started[0].transcript == "帮我看看贪吃蛇进展"  # the actual transcript, never generated tool text
     await replay(bridge, done("ack"), event("user_started"), event("user_stopped"),
                  event("user_transcript", text="我有什么待办"), started("ack-2"), tool_call("call-2", text="我有什么待办？"))
     assert link.started[1].transcript == "我有什么待办"
@@ -419,7 +423,7 @@ async def test_a_reply_of_ours_waits_until_the_client_has_played_the_last_one(ca
     bridge, provider, link, clock = call
     bridge.reply_gap = REPLY_GAP_SECONDS
     await greeted(bridge, provider)
-    await replay(bridge, event("user_started"), event("user_stopped"), started("ack"), audio("ack", 48000),
+    await replay(bridge, event("user_started"), event("user_stopped"), event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack", 48000),
                  audio("ack", 48000), tool_call("call-1"), done("ack"))  # two seconds, sent faster than played
     link.finish("call-1")
     await drain()
@@ -465,7 +469,7 @@ async def test_without_pacing_a_result_goes_in_as_soon_as_the_reply_is_done(call
     bridge, provider, link, clock = call
     assert bridge.reply_gap is None  # what the other unit tests run with; api/voice.py paces every call
     await greeted(bridge, provider)
-    await replay(bridge, started("ack"), audio("ack", 96000), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack", 96000), tool_call("call-1"), done("ack"))
     link.finish("call-1")
     await drain()
     assert [command[0] for command in provider.sent if command[0] in ("note", "create")] == ["note", "create"]

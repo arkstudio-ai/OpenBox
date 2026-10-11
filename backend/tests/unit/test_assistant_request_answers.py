@@ -15,11 +15,12 @@ from sqlalchemy import select
 from agent import inbox
 from agent.driver import reserve_run
 from assistant.confirmations import CONFIRM_KIND, pending_cards
-from assistant.request_answers import HIGH_RISK, list_waiting
+from assistant.request_answers import list_waiting
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
 from db.models.part import Part
+from db.models.question import QuestionCheckpoint
 from models.message import ToolPartData
 from question import question as q, runtime
 from question.continuation import apply_answers
@@ -213,14 +214,14 @@ async def test_a_watched_tasks_file_choice_goes_through_the_versioned_command_wi
     assert row.applied and row.continuation["answer_attachments"] == [[mine]]
 
 
-async def test_high_risk_words_ask_first_and_requests_for_the_users_own_action_stay_refused():
+async def test_declared_consequences_require_confirmation_and_human_actions_stay_refused():
     owner, _, workspace, main = await assistant()
     plain = await conversation(owner, workspace, main, "配色讨论", visibility="private")
     colors = await ask(plain, owner, question="页面用哪种配色？", options=[{"label": "深色"}, {"label": "浅色"}])
     publish = await conversation(owner, workspace, main, "抖音视频", visibility="private")
-    release = await ask(publish, owner, question="现在发布到抖音吗？", options=[{"label": "发布"}, {"label": "先不发"}])
+    release = await ask(publish, owner, question="现在发布到抖音吗？", options=[{"label": "发布"}, {"label": "先不发"}], requires_confirmation=True)
     channel = await conversation(owner, workspace, main, "发布抖音视频", visibility="private")
-    cover = await ask(channel, owner, question="封面用哪张？", options=[{"label": "第一张"}, {"label": "第二张"}])
+    cover = await ask(channel, owner, question="封面用哪张？", options=[{"label": "第一张"}, {"label": "第二张"}], requires_confirmation=True)
     login = await conversation(owner, workspace, main, "绑定账号", visibility="private")
     action = await ask(login, owner, question="请在手机上扫码", options=[{"label": "已完成"}],
                        detail={"kind": "user_action", "hint": "扫码登录"})
@@ -236,7 +237,7 @@ async def test_high_risk_words_ask_first_and_requests_for_the_users_own_action_s
             asked, _ = await tool_call(ctx, "requests.answer", {"request_id": request_id, "answers": [[choice]],
                                                                 "source_message_ids": [human]})
             confirmation = await card(asked["suspended"])
-            assert "这个问题涉及「发布」" in confirmation.questions[0]["question"]
+            assert choice in confirmation.questions[0]["question"]
             assert (await card(request_id)).status == "pending"
         refused, _ = await tool_call(ctx, "requests.answer", {"request_id": action, "answers": [["已完成"]]})
         assert refused["error"] == "ASSISTANT_ANSWER_HUMAN_ONLY"
@@ -248,20 +249,45 @@ async def test_high_risk_words_ask_first_and_requests_for_the_users_own_action_s
     assert (await card(action)).status == "pending"
 
 
-@pytest.mark.parametrize("text,finished", [
-    ("我登好了", True), ("已经登录了", True), ("验证完了，继续吧", True), ("弄好了", True), ("我登录了", True),
-    ("搞定了", True), ("I'm done, logged in", True),
-    ("还没登好", False), ("登好了吗？", False), ("登不上", False), ("等我登好了再说", False), ("我去登录了", False),
-    ("好了", False), ("帮我点一下继续吧", False), ("I will log in later", False), ("not done yet", False)])
-def test_only_the_users_own_words_that_they_finished_answer_a_takeover(text, finished):
-    from assistant.request_answers import says_finished
-    assert says_finished(text) is finished
 
 
-@pytest.mark.parametrize("text,risky", [
-    ("确认支付 39 元", True), ("要删除旧的草稿吗？", True), ("授权读取你的相册", True), ("Publish now?", True),
-    ("Pay $5 to continue", True), ("清空购物车", True), ("预算 2000 块钱够吗", True), ("Total: ¥ 99", True),
-    ("页面用深色还是浅色？", False), ("要不要加个标题？", False), ("Use the blue palette?", False),
-    ("Which payload format, JSON or $FORMAT?", False)])
-def test_high_risk_words(text, risky):
-    assert bool(HIGH_RISK.search(text)) is risky
+
+
+
+
+async def test_risk_is_card_metadata_not_incidental_words_in_a_title():
+    owner, _, workspace, main = await assistant()
+    target = await conversation(owner, workspace, main, "支付说明和删除按钮的配色讨论", visibility="private")
+    request_id = await ask(target, owner, question="删除按钮是什么颜色？", options=[{"label": "红色"}], requires_confirmation=False)
+    listed = {item["id"]: item for item in await list_waiting(user_id=owner, workspace_id=workspace, main_id=main.id)}
+    assert listed[request_id]["high_risk"] is False
+    async with get_db_session() as db:
+        row = await db.get(QuestionCheckpoint, request_id)
+        row.questions = [{k: v for k, v in row.questions[0].items() if k != "requires_confirmation"}]
+    listed = {item["id"]: item for item in await list_waiting(user_id=owner, workspace_id=workspace, main_id=main.id)}
+    assert listed[request_id]["high_risk"] is True  # legacy cards have no declared consequence
+
+
+async def test_takeover_completion_uses_semantic_decision_and_verified_human_provenance():
+    from db.models.part import Part
+    from tool.desktop_takeover import ANSWER_DONE
+    owner, _, workspace, main = await assistant()
+    target = await conversation(owner, workspace, main, "测试登录", visibility="private")
+    request_id = await ask(target, owner, question="请在页面完成操作", options=[{"label": ANSWER_DONE}],
+                           detail={"kind": "desktop_takeover"})
+    async with get_db_session() as db:
+        row = await db.get(QuestionCheckpoint, request_id)
+        part = await db.get(Part, row.part_id)
+        part.canonical_tool_id = "desktop_takeover"
+    ctx, lease, human = await main_turn(owner, workspace, main, "我这边已经处理妥当，可以接着做后面的事了。")
+    try:
+        args = {"request_id": request_id, "answers": [[ANSWER_DONE]], "source_message_ids": [human]}
+        refused, _ = await tool_call(ctx, "requests.answer", args)
+        assert refused["error"] == "ASSISTANT_ANSWER_HUMAN_ONLY"
+        no_source, _ = await tool_call(ctx, "requests.answer", {**args, "source_message_ids": [], "completion_reported": True})
+        assert no_source["error"] == "ASSISTANT_ANSWER_HUMAN_ONLY"
+        result, _ = await tool_call(ctx, "requests.answer", {**args, "completion_reported": True})
+        assert result["state"] == "answered"
+        assert (await card(request_id)).answers == [[ANSWER_DONE]]
+    finally:
+        await lease.release(session_status="idle")

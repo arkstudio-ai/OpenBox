@@ -55,6 +55,44 @@ def test_expert_is_the_default_and_invalid_preferences_cannot_mix_models():
     assert chosen["models"][0] == {"id": AUDIO_MODEL, "name": "Audio 3.1", "tier": "expert"}
     assert voices.selection({voices.MODEL_KEY: "unknown", voices.PREFERENCE_KEY: "Tina"}, cfg) == chosen
     assert voices.selection({voices.MODEL_KEY: [], voices.PREFERENCE_KEY: {}}, cfg) == chosen
-    standard = voices.selection({voices.MODEL_KEY: OMNI_MODEL, "assistant_voice_omni": "Andre"}, cfg)
+    standard = voices.selection({voices.MODEL_KEY: OMNI_MODEL, "assistant_voice_omni": "Andre",
+        voices.MODEL_ROLLOUT_KEY: voices.MODEL_ROLLOUT}, cfg)
     assert standard["selected"] == "Andre" and standard["default"] == "Tina"
     assert all(row["id"] in voices.BY_ID for row in standard["voices"])
+
+
+def test_existing_users_and_old_deployment_overrides_get_audio_without_losing_voices():
+    cfg = VoiceConfig(model=OMNI_MODEL, voice="Tina")
+    for extra in ({}, {voices.MODEL_KEY: OMNI_MODEL, voices.PREFERENCE_KEY: "Serena"},
+                  {voices.MODEL_KEY: OMNI_MODEL, voices.MODEL_ROLLOUT_KEY: "older-rollout"},
+                  {voices.MODEL_KEY: OMNI_MODEL, "assistant_voice_audio": "longanhuan_v3.1"}):
+        before = dict(extra)
+        selected = voices.selection(extra, cfg)
+        assert selected["model"] == selected["default_model"] == AUDIO_MODEL
+        assert selected["selected"] == extra.get("assistant_voice_audio", "longanqian_v3.1")
+        assert extra == before
+
+
+async def test_existing_model_choice_resets_once_and_later_explicit_choice_persists():
+    from db.repository.preference_repo import PgPreferenceRepo
+    cfg = VoiceConfig(model=OMNI_MODEL, voice="Tina")
+    repo = PgPreferenceRepo()
+    user = "voice-rollout-existing"
+    await repo.upsert(user, extra={voices.MODEL_KEY: OMNI_MODEL, voices.PREFERENCE_KEY: "Serena",
+        "assistant_voice_audio": "longanhuan_v3.1", "locale": "zh-CN", "onboarding": {"welcome": True}})
+    initial = await voices.user_selection(user, cfg)
+    assert initial["model"] == AUDIO_MODEL and initial["selected"] == "longanhuan_v3.1"
+    # A legacy client's voice-only save cannot silently restore the old Omni model.
+    changed_voice = await voices.save_choice(user, cfg, model=None, voice="longanqian_v3.1")
+    assert changed_voice["model"] == AUDIO_MODEL
+    assert voices.MODEL_ROLLOUT_KEY not in (await repo.get(user))["extra"]
+    # Choosing Omni explicitly remains supported and recovers its own previous voice.
+    standard = await voices.save_choice(user, cfg, model=OMNI_MODEL, voice=None)
+    assert standard["model"] == OMNI_MODEL and standard["selected"] == "Serena"
+    assert standard["default_model"] == AUDIO_MODEL
+    assert await voices.user_selection(user, VoiceConfig()) == standard
+    saved = (await repo.get(user))["extra"]
+    assert saved[voices.MODEL_ROLLOUT_KEY] == voices.MODEL_ROLLOUT
+    assert saved["locale"] == "zh-CN" and saved["onboarding"] == {"welcome": True}
+    restored = await voices.save_choice(user, cfg, model=AUDIO_MODEL, voice=None)
+    assert restored["selected"] == "longanqian_v3.1"

@@ -290,7 +290,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               client_message_id: str | None = None, video_model: str | None = None,
                               video_resolution: str | None = None, delivery: str = "followup",
                               expected_run: dict | None = None, command_action: str | None = None,
-                              continuation: dict | None = None) -> dict:
+                              continuation: dict | None = None, placement_id: str | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -308,6 +308,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             raise ValueError("Only direct human input can carry a client message identity")
         idempotency_key = (inbox_key("assistant-coordinate-command", source.coordination_inbox_id)
             if source.coordination_inbox_id else tool_command_key(main_id, source.part_id))
+    if placement_id:
+        if source is None or task_id or source.coordination_inbox_id:
+            raise ValueError("Placement belongs only to an assistant's new task")
+        idempotency_key = inbox_key("assistant-placement", placement_id)
     if continuation is not None:
         from assistant.continuation_types import ContinuationRequest
         continuation = ContinuationRequest.model_validate(continuation).model_dump(mode="json")
@@ -332,7 +336,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
         "source": ({"coordination_inbox_id": source.coordination_inbox_id} if source and source.coordination_inbox_id
-            else {"part_id": source.part_id, "source_message_ids": list(source.source_message_ids)} if source else {"origin": "human"})})
+            else {"part_id": placement_id or source.part_id, "source_message_ids": list(source.source_message_ids)}
+            if source else {"origin": "human"})})
     if continuation is not None:
         digest = command_digest({"base": digest, "continuation": continuation})
     if expected_run is not None:
@@ -376,6 +381,15 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         await db.flush()  # The unique command is claimed before any creation.
         source_ref = (await _tool_source_locked(db, main, source, action) if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        placement_row = None
+        if placement_id:
+            from assistant.placement import apply_locked, task_input
+            project_id, placement_row, cancelled = await apply_locked(db, main, placement_id,
+                task_input(project_id=project_id, title=title, prompt=prompt, attachments=attachments,
+                    model=model, continuation=continuation, source=source), source_ref)
+            if cancelled:
+                await db.delete(command)  # admission has made no task or project
+                return cancelled
         if client_message_id is not None:
             source_ref["client_message_id"] = client_message_id
         command.source_ref = source_ref
@@ -446,6 +460,11 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                    "execution_session_id": execution.id, "submission_id": submission_id,
                    "inbox_id": accepted.id, "task_revision": task.control_revision,
                    "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery}
+        if placement_row is not None:
+            project = await _project(db, task.project_id, user_id, workspace_id)
+            receipt["placement"] = {"question_id": placement_row.id,
+                "project_id": project.id, "project_name": project.name,
+                "choice": placement_row.answers[0][0]}
         if blocked_by is not None:
             receipt["blocked_by"] = blocked_by
         if expected_run is not None:
@@ -461,6 +480,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             if continuation is not None:
                 receipt["continuation"] = public_policy(task)
                 command.receipt = dict(receipt)
+        if placement_row is not None:
+            from assistant.placement import save_receipt
+            save_receipt(placement_row, receipt)
         await append_agent_event_locked(db, execution, kind="assistant.submission.accepted",
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:

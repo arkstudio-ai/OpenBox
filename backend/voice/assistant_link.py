@@ -111,15 +111,14 @@ class VoiceTurnRef:
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
-    lane: str = "assistant"       # assistant / remember: a main-session turn; local / ask: settled by the handover plan
-    recall: int | None = None     # what the user's records add to a reply: the utterance's number, else None
+    lane: str = "assistant"       # assistant / remember: a main-session turn
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
 
     @property
     def recorded(self) -> bool:
-        """A request of this call (a VoiceTurn row), unlike a report or a recall nobody handed over."""
-        return self.report is None and self.recall is None
+        """A request of this call (a VoiceTurn row), unlike an unsolicited task report."""
+        return self.report is None
 
 
 def turn_outcome(ref: VoiceTurnRef, *, heard: bool = False, pending: bool = False) -> str:
@@ -258,10 +257,6 @@ class AssistantLink:
         except Exception as exc:  # told as the assistant put it; the delivery check still applies (voice/turns.py)
             log.warning("voice running tasks unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []
-
-    async def answered(self, ref: VoiceTurnRef) -> None:
-        """A request the handover plan settled itself (an answer, or a question back): recorded, no main turn."""
-        await self._add(ref)
 
     async def done(self, ref: VoiceTurnRef, outcome: str, *, delivered: bool = False) -> None:
         """A turn's last word in this call: its outcome and one log line (times, never words)."""

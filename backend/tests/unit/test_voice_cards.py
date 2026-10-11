@@ -25,23 +25,8 @@ CARD = {"card_id": "q-del", "kind": "assistant_confirm", "action": "project_dele
         "created_at": "2026-10-07T12:00:00+00:00", "expires_at": "2026-10-07T12:10:00+00:00", "high_risk": True}
 
 
-@pytest.mark.parametrize("words, expected", [
-    ("确认。", True), ("好的，删吧", True), ("可以", True), ("嗯，确认", True), ("就这样", True), ("是的", True),
-    ("好", True), ("嗯嗯", True), ("OK", True), ("yes, go ahead", True), ("停掉吧", True), ("记住吧", True),
-    ("确认吗？", False), ("等一下", False), ("不要删", False), ("算了", False), ("这是什么意思", False),
-    ("我不确定", False), ("嗯……让我想想", False), ("", False), ("帮我看看别的", False), ("no", False),
-    ("好像不太对", False), ("删吧，不过先等等", False),
-])
-def test_consent_is_a_clear_yes_only(words, expected):
-    assert cards.consents(words) is expected
 
 
-@pytest.mark.parametrize("words, expected", [
-    ("确认", True), ("好的", True), ("算了", True), ("不用了", True), ("取消吧", True),
-    ("帮我把测试项目删了", False), ("我有哪些任务在进行", False), ("", False),
-])
-def test_short_yes_or_no_answers_a_card(words, expected):
-    assert cards.answers_card(words) is expected
 
 
 class Heard:
@@ -96,9 +81,10 @@ async def test_cards_pending_reads_main_cards_with_handles_and_task_questions(mo
     desk, scope = scoped(Heard())
     value = await cards.pending(scope, {})
     assert value["status"] == "ok"
-    assert value["cards"] == [{"card": "1", "kind": "确认", "title": "删除项目", "what": "删除项目「测试A」。",
-                               "impact": "其中2个会话一起删除，目录之后移到回收站。", "options": ["确认", "取消"],
-                               "high_risk": True}]
+    shown = value["cards"][0]
+    assert shown["card"] == "1" and shown["high_risk"]
+    assert shown["version"] and shown["what"] == "删除项目「测试A」。"
+    assert shown["options"] == [{"id": "option_1", "label": "确认"}, {"id": "option_2", "label": "取消"}]
     assert [item["answer_how"] for item in value["task_questions"]] == [
         "用户明确回答后，用 assistant_ask 结合任务和问题转交选择；保留原话核对，不替用户补选", "要用户自己在屏幕上处理"]
     assert desk.card_id("1") == "q-del" and desk.open() == ["q-del"]
@@ -114,51 +100,12 @@ async def test_nothing_waiting(monkeypatch):
     assert await cards.pending(scoped(Heard())[1], {}) == {"status": "none"}
 
 
-async def test_a_card_is_answered_only_after_the_user_said_yes(monkeypatch):
-    replies = answering(monkeypatch)
-    heard = Heard()
-    heard.say("把测试项目删了")  # the request itself is no consent to the card that follows
-    desk, scope = scoped(heard)
-    assert (await cards.answer(scope, {"card": "1", "choice": "确认"}))["status"] == "unknown_card"
-    desk.show("q-del")
-    assert (await cards.answer(scope, {"card": "1", "choice": "确认"}))["status"] == "need_user_answer"
-    heard.say("嗯……这个项目里有什么？")
-    value = await cards.answer(scope, {"card": "1", "choice": "确认"})
-    assert value["status"] == "not_confirmed" and "再问一次" in value["hint"]
-    heard.say("确认，删吧")
-    assert (await cards.answer(scope, {"card": "1", "choice": "删除"}))["status"] == "invalid_choice"
-    value = await cards.answer(scope, {"card": "1", "choice": "确认"})
-    assert value == {"status": "answered", "choice": "确认", "next": "个人助理接着办，办完会以后台备注送来"}
-    assert replies == [("q-del", [["确认"]], "u1", {})]
-    assert desk.answered == {"q-del": "确认"} and desk.open() == []
-    [answer] = desk.answers
-    assert (answer["card_id"], answer["what"], answer["after"], answer["words"]) == (
-        "q-del", "删除项目「测试A」。", "inbox_0001", "确认，删吧")
 
 
-async def test_declining_needs_no_yes(monkeypatch):
-    replies = answering(monkeypatch)
-    heard = Heard()
-    desk, scope = scoped(heard)
-    desk.show("q-del")
-    heard.say("算了，先不删")
-    assert (await cards.answer(scope, {"card": "1", "choice": "取消"}))["next"] == "已取消，不会执行"
-    assert replies == [("q-del", [["取消"]], "u1", {})]
 
 
-async def test_an_answered_or_expired_card_is_gone(monkeypatch):
-    from question.question import QuestionConflict, QuestionGone
-    heard = Heard()
-    desk, scope = scoped(heard)
-    desk.show("q-del")
-    heard.say("确认")
-    answering(monkeypatch, waiting=())
-    assert (await cards.answer(scope, {"card": "1", "choice": "确认"}))["status"] == "gone"
-    answering(monkeypatch, reply=QuestionGone("expired"))
-    assert (await cards.answer(scope, {"card": "1", "choice": "确认"}))["status"] == "gone"
-    answering(monkeypatch, reply=QuestionConflict("An answer has already been accepted"))
-    assert (await cards.answer(scope, {"card": "1", "choice": "确认"}))["status"] == "already_answered"
-    assert desk.answers == []
+
+
 
 
 # -- inside a call --
@@ -193,6 +140,8 @@ async def said(bridge, words, item_id):
     await replay(bridge, event("user_started"), event("user_stopped"), transcript(words, item_id))
 
 
+
+
 async def test_a_turn_stopped_at_a_card_is_read_out_then_answered_by_voice(call, monkeypatch):
     bridge, provider, link, _ = call
     replies = answering(monkeypatch)
@@ -203,27 +152,19 @@ async def test_a_turn_stopped_at_a_card_is_read_out_then_answered_by_voice(call,
     link.finish("call-1", speech="", cards=[CARD])  # the run stopped at the card
     await drain()
     [(_, note)] = provider.commands("note")
-    assert "卡片1「删除项目」：删除项目「测试A」。影响：其中2个会话一起删除，目录之后移到回收站。" in note
-    assert "选项：「确认」、「取消」" in note and "办好了" not in note
-    assert provider.commands("create")[-1] == ("create", phrases.card_instructions("zh"))
+    assert "删除项目" in note and "option_1" in note and "version" in note and "办好了" not in note
+    assert provider.response_purposes()[-1] == ("create", phrases.card_instructions("zh"))
     await replay(bridge, item("note-1", text=note), started("read"), audio("read"), done("read"))
-    # "确认" handed to assistant_ask would void the card: it is redirected to cards_answer.
-    link.waiting_cards = [CARD]
-    await said(bridge, "确认", "u-2")
-    await replay(bridge, started("r2"), tool_call("call-2", text="确认", response_id="r2"), done("r2"))
-    assert provider.commands("output")[-1] == ("output", "call-2", {
-        "status": "answer_card", "card": "1", "options": ["确认", "取消"],
-        "hint": "用户是在回答这张卡片：明确同意就用 cards_answer 选确认的选项，拒绝就选取消；不要交给 assistant_ask"})
-    assert [ref.provider_call_id for ref in link.started] == ["call-1"]
-    arguments = json.dumps({"card": "1", "choice": "确认"}, ensure_ascii=False)
+    await said(bridge, "就按你刚才那个方案办", "u-2")
+    arguments = json.dumps({"card": "1", "version": cards.version(CARD), "option_id": "option_1"}, ensure_ascii=False)
     await replay(bridge, started("r3"), tool_call("call-3", name="cards_answer", arguments=arguments,
                                                   response_id="r3"), done("r3"))
     await answered(bridge)
     assert replies == [("q-del", [["确认"]], "u1", {})]
-    assert provider.commands("output")[-1][2]["status"] == "answered"
+    assert provider.commands("output")[-1][2]["status"] == "decision_recorded"
     # The resumed turn is followed like any other; its result is told once.
     [(ref, after)] = link.followed
-    assert (after, ref.text, ref.transcript) == ("inbox_0001", "删除项目「测试A」。", "确认")
+    assert (after, ref.text, ref.transcript) == ("inbox_0001", "删除项目「测试A」。", "就按你刚才那个方案办")
     assert ref.provider_call_id in bridge.pending_calls
     await replay(bridge, started("r4"), audio("r4"), done("r4"))  # it answers the tool output: "好，删了"
     link.finish(ref.provider_call_id, speech="测试项目A已经删除了，两个会话也一起删了。")
@@ -239,11 +180,11 @@ async def test_a_yes_spoken_before_the_card_was_read_is_no_consent(call, monkeyp
     await replay(bridge, started("ack"), tool_call("call-1", text="确认删除测试项目A", response_id="ack"), done("ack"))
     link.finish("call-1", speech="", cards=[CARD])
     await drain()
-    arguments = json.dumps({"card": "1", "choice": "确认"}, ensure_ascii=False)
+    arguments = json.dumps({"card": "1", "version": cards.version(CARD), "option_id": "option_1"}, ensure_ascii=False)
     await replay(bridge, started("r2"), tool_call("call-2", name="cards_answer", arguments=arguments,
                                                   response_id="r2"), done("r2"))
     await answered(bridge)
-    assert provider.commands("output")[-1][2]["status"] == "need_user_answer"
+    assert provider.commands("output")[-1][2]["status"] in ("need_user_answer", "not_user_request", "need_user_input")
     assert replies == [] and link.followed == []
 
 
@@ -251,15 +192,9 @@ def test_cards_tools_are_registered_for_the_front_desk():
     names = [schema["function"]["name"] for schema in tools.schemas()]
     assert names[0] == "assistant_ask" and {"cards_pending", "cards_answer"} <= set(names)
     answer = tools.DIRECT["cards_answer"]
-    assert answer.parameters["required"] == ["card", "choice"] and answer.timeout > cards.WORDS_WAIT_SECONDS
+    assert answer.parameters["required"] == ["card", "version", "option_id"] and answer.timeout > cards.WORDS_WAIT_SECONDS
 
 
-@pytest.mark.parametrize("words, expected", [
-    ("算了，先不删了", True), ("取消吧", True), ("不用了，谢谢", True), ("先不删", True), ("never mind", True),
-    ("确认", False), ("等等，我想想", False), ("好的，删吧", False), ("不不，确认删吧", False), ("这个项目里有什么", False),
-])
-def test_a_clear_no(words, expected):
-    assert cards.refuses(words) is expected
 
 
 async def read_out(bridge, provider, link):
@@ -274,33 +209,8 @@ async def read_out(bridge, provider, link):
     await replay(bridge, item("note-1", text=note), started("read"), audio("read"), done("read"))
 
 
-async def test_a_clear_no_right_after_the_card_declines_it_on_the_server(call, monkeypatch):
-    bridge, provider, link, _ = call
-    replies = answering(monkeypatch)
-    await read_out(bridge, provider, link)
-    await said(bridge, "算了，先不删了", "u-2")  # the front desk only says "好，不删了"
-    await drain(30)
-    assert replies == [("q-del", [["取消"]], "u1", {})]
-    assert bridge.desk.answered == {"q-del": "取消"} and link.followed == []
 
 
-async def test_a_yes_long_after_the_card_was_read_needs_it_read_again(call, monkeypatch):
-    bridge, provider, link, _ = call
-    replies = answering(monkeypatch)
-    await read_out(bridge, provider, link)
-    link.waiting_cards = [CARD]
-    for index, words in enumerate(("等等，我想想", "这个项目里都有什么", "那贪吃蛇呢"), start=2):
-        await said(bridge, words, f"u-{index}")
-    await said(bridge, "好的", "u-9")
-    # A bare "好的" now is about something else: handed over, not redirected to the old card.
-    await replay(bridge, started("r9"), tool_call("call-9", text="好的", response_id="r9"), done("r9"))
-    assert provider.commands("output")[-1][2]["status"] != "answer_card"
-    await said(bridge, "确认", "u-10")
-    arguments = json.dumps({"card": "1", "choice": "确认"}, ensure_ascii=False)
-    await replay(bridge, started("r10"), tool_call("call-10", name="cards_answer", arguments=arguments,
-                                                   response_id="r10"), done("r10"))
-    await answered(bridge)
-    assert provider.commands("output")[-1][2]["status"] == "read_again" and replies == []
 
 
 FORM = {"id": "q-video", "session_id": "video-session", "session_title": "50秒搞笑视频", "project_name": "电影",
@@ -357,9 +267,9 @@ async def test_pending_form_is_announced_once_without_a_tool_call_even_when_repo
     await bridge.waiting_cards([], [FORM])
     note = provider.commands("note")[-1][1]
     assert "q-video" in note and "50秒" in note
-    assert "字幕" not in note and "片名" not in note  # later choices cannot distract from this decision
+    assert "字幕" in note and "片名" in note  # all source questions remain available
     assert len(bridge.desk.questions[FORM["id"]]["questions"]) == 3  # still available for handover
-    assert provider.commands("create")[-1] == ("create", phrases.question_instructions("zh"))
+    assert provider.response_purposes()[-1] == ("create", phrases.question_instructions("zh"))
     await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
     await bridge.waiting_cards([], [FORM])
     assert len(provider.commands("note")) == 1
@@ -390,66 +300,35 @@ async def test_second_form_waits_for_answer_and_confirmation_cards_take_priority
     assert len(provider.commands("note")) == 2 and "删除项目" in provider.commands("note")[-1][1]
 
 
-async def test_voice_answer_is_briefed_with_original_choices_and_still_reaches_the_real_assistant(call):
+async def test_native_request_retains_complete_form_and_human_words(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
-
-    from voice.handover import Plan
-    planned = []
-    brief = "给视频任务填写：时长50秒，字幕中文和英文，片名为打工人的离谱日常。"
-    async def planner(**kwargs):
-        planned.append(kwargs)
-        return Plan("brief", brief)
-    bridge.planner = planner
-    await bridge.waiting_cards([], [FORM])
-    note = provider.commands("note")[-1][1]
-    await replay(bridge, item("note-question", text=note), started("read"), audio("read"), done("read"))
+    bridge.desk.show_question(FORM, "zh")
     words = "第一题选第一个，字幕中文英文都要，片名叫打工人的离谱日常。"
-    await said(bridge, words, "answer-1")
-    args = json.dumps({"request": words, "question_id": "q-video"}, ensure_ascii=False)
-    await replay(bridge, started("answer"), tool_call("answer-call", text=words, arguments=args,
-                                                     response_id="answer"), done("answer"))
+    await said(bridge, words, "u1")
+    brief = "提交视频表单：时长50秒，双语字幕，片名打工人的离谱日常"
+    await replay(bridge, started("r1"), tool_call("a1", text=brief, response_id="r1",
+        arguments=json.dumps({"request": brief, "question_id": "q-video"})), done("r1"))
     [ref] = link.started
-    assert ref.transcript == words and ref.context["task_questions"] == [cards.spoken_question(FORM)]
-    assert ref.text == brief and ref.context["handover_source"] == "model"
-    assert planned[0]["questions"] == [cards.spoken_question(FORM)] and planned[0]["words"] == words
-    assert not bridge.desk.answers  # task answers cannot bypass the assistant's policy through question.reply
-    link.finish("answer-call", speech="已填写")
-    await drain()
+    assert ref.transcript == words and ref.text == brief
+    assert ref.context["task_questions"] == [cards.spoken_question(FORM)]
+    assert not bridge.desk.answers
+    await bridge.close()
 
 
-async def test_a_new_task_is_still_briefed_while_an_old_form_is_pending(call):
-    from voice.handover import Plan
+
+async def test_new_request_does_not_inherit_an_unrelated_pending_form(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
-    planned = []
-    async def planner(**kwargs):
-        planned.append(kwargs)
-        return Plan("brief", "在采购项目整理本月供应商报价，按单价升序。")
-    bridge.planner = planner
     bridge.desk.show_question(FORM, "zh")
-    words = "另外，采购项目的本月报价表按单价排一下。"
-    await said(bridge, words, "new-task")
-    await replay(bridge, started("new-task"), tool_call("new-call", text=words, response_id="new-task"), done("new-task"))
+    await said(bridge, "帮我查看今天的销售报表", "u1")
+    await replay(bridge, started("r1"), tool_call("a1", text="查询今天的销售报表", response_id="r1"), done("r1"))
     [ref] = link.started
-    assert planned and planned[0]["words"] == words
-    assert ref.text == "在采购项目整理本月供应商报价，按单价升序。" and ref.transcript == words
+    assert "task_questions" not in ref.context
+    await bridge.close()
 
 
-async def test_a_card_planner_cannot_claim_the_answer_was_submitted_instead_of_dispatching_it(call):
-    from voice.handover import Plan
-    bridge, provider, link, _ = call
-    await greeted(bridge, provider)
-    async def planner(**kwargs):
-        return Plan("answer", "已经全部提交了。")
-    bridge.planner = planner
-    bridge.desk.show_question(FORM, "zh")
-    await said(bridge, "第一个", "choice")
-    await replay(bridge, started("choice"), tool_call("choice-call", text="第一题选第一个",
-                 arguments=json.dumps({"question_id": "q-video"}), response_id="choice"), done("choice"))
-    [ref] = link.started
-    assert ref.text == "第一题选第一个" and ref.transcript == "第一个"
-    assert ref.context["handover_source"] == "fallback" and ref.lane == "assistant"
+
 
 
 async def test_unknown_or_expired_question_id_cannot_be_redirected_to_another_card(call):
@@ -463,43 +342,43 @@ async def test_unknown_or_expired_question_id_cannot_be_redirected_to_another_ca
     assert provider.commands("output")[-1][2]["status"] == "unknown_question" and not link.started
 
 
-def test_large_form_context_keeps_target_ids_and_followup_questions_refresh_the_answer_window():
+def test_explicit_form_target_survives_intervening_conversation_but_not_invalidation():
     heard = Heard()
     desk = cards.CardDesk(heard)
-    huge = {**FORM, "questions": [{"question": "很长的说明" * 3000, "options": ["一", "二"]}]}
-    desk.show_question(huge, "zh")
-    compact = desk.question_context()
-    assert compact == [{"request_id": "q-video", "session_id": "video-session", "questions_omitted": True}]
-    for _ in range(4):
-        heard.say("继续回答")
+    desk.show_question({**FORM, "questions": [{"question": "长说明" * 3000}]}, "zh")
+    compact = [{"request_id": "q-video", "session_id": "video-session", "questions_omitted": True}]
+    for _ in range(5):
+        heard.say("继续")
+    assert desk.question_context("q-video") == compact
     assert desk.question_context() == []
-    desk.asked_again({"task_questions": compact})
-    assert desk.question_context() == compact
     desk.reconcile([], [])
-    desk.asked_again({"task_questions": compact})
     assert desk.question_context("q-video") == []
+
 
 
 async def test_task_form_cannot_be_answered_by_the_model_before_the_user_speaks(call, monkeypatch):
     bridge, provider, link, _ = call
     monkeypatch.setattr(cards, "WORDS_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr("voice.turns.TRANSCRIPT_WAIT_SECONDS", 0.01)
     await greeted(bridge, provider)
     bridge.desk.show_question(FORM, "zh")
     arguments = json.dumps({"request": "全部选默认", "question_id": "q-video"})
     await replay(bridge, started("guess"), tool_call("guess", text="全部选默认", arguments=arguments,
                                                    response_id="guess"), done("guess"))
     await asyncio.sleep(.1)
-    assert provider.commands("output")[-1][2]["status"] == "need_user_answer"
+    assert provider.commands("output")[-1][2]["status"] in ("need_user_answer", "not_user_request", "need_user_input")
     assert not link.started
 
 
-async def test_rereading_a_form_after_the_spoken_answer_does_not_discard_that_answer():
-    heard = Heard()
-    desk = cards.CardDesk(heard)
-    desk.show_question(FORM, "zh")
-    heard.say("中文和英文都要")
-    desk.show_question(FORM, "zh")  # the model checks the ID again, using cards_pending
-    assert await desk.question_words_after([FORM["id"]]) == "中文和英文都要"
+async def test_rereading_a_form_after_the_spoken_answer_does_not_discard_that_answer(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    bridge.desk.show_question(FORM, "zh")
+    await said(bridge, "中文和英文都要", "answer-both")
+    bridge.desk.show_question(FORM, "zh")
+    args = json.dumps({"request": "中文和英文都要", "question_id": "q-video"})
+    await replay(bridge, started("answer"), tool_call("reread", arguments=args, response_id="answer"), done("answer"))
+    assert [ref.transcript for ref in link.started] == ["中文和英文都要"]
 
 
 async def test_a_task_answer_waits_for_late_asr_without_blocking_the_provider_pump(call):
@@ -530,4 +409,116 @@ async def test_main_confirmation_watch_and_turn_result_do_not_read_the_card_twic
     note = provider.commands("note")[-1][1]
     await replay(bridge, item("note-main", text=note), started("read"), audio("read"), done("read"))
     await bridge.waiting_cards([CARD], [])
-    assert sum("卡片1" in note for _, note in provider.commands("note")) == 1
+    assert sum('"card": "1"' in note for _, note in provider.commands("note")) == 1
+
+
+def selection(card=CARD, option=0, **fields):
+    return {"card": "1", "version": cards.version(card), "option_id": cards.option_id(option), **fields}
+
+
+@pytest.mark.parametrize("words", ["就按你刚才那个方案办", "不用解释，消息就按原样发", "嗯", "Proceed with the approach we discussed"])
+async def test_model_decision_is_not_reclassified_by_a_wordlist(monkeypatch, words):
+    replies = answering(monkeypatch)
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(CARD)
+    for _ in range(4):
+        heard.say("谈谈别的")
+    heard.say(words)
+    value = await cards.answer(scope, selection())
+    assert value["status"] == "decision_recorded" and value["this_call_applied"] and not value["execution_confirmed"]
+    assert replies == [("q-del", [["确认"]], "u1", {})]
+    again = await cards.answer(scope, selection())
+    assert again["status"] == "already_answered" and not again["this_call_applied"] and len(replies) == 1
+
+
+async def test_no_post_card_human_input_cannot_authorize_an_answer(monkeypatch):
+    replies = answering(monkeypatch)
+    heard = Heard()
+    heard.say("确认")
+    desk, scope = scoped(heard)
+    desk.show(CARD)
+    result = await cards.answer(scope, selection())
+    assert result["status"] == "need_user_answer" and replies == []
+
+
+@pytest.mark.parametrize("changes,status", [
+    ({"card": "nonexistent"}, "unknown_card"), ({"version": "old"}, "conflict"),
+    ({"option_id": "确认"}, "invalid_choice"), ({"project_name": "春雨"}, "invalid_arguments"),
+])
+async def test_identity_version_and_option_contract_precede_mutation(monkeypatch, changes, status):
+    replies = answering(monkeypatch)
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(CARD)
+    heard.say("按这个来")
+    value = await cards.answer(scope, {**selection(), **changes})
+    assert value["status"] == status and not value["this_call_applied"] and not replies
+
+
+async def test_changed_card_content_cannot_use_a_stale_version(monkeypatch):
+    replies = answering(monkeypatch, waiting=({**CARD, "impact": "变更了范围"},))
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(CARD)
+    heard.say("按这个来")
+    assert (await cards.answer(scope, selection()))["status"] == "conflict" and not replies
+
+
+@pytest.mark.parametrize("status", ["expired", "already_answered", "superseded", "unavailable"])
+async def test_missing_cards_do_not_claim_their_operations_succeeded(monkeypatch, status):
+    answering(monkeypatch, waiting=())
+    async def missing(*args):
+        assert args == ("u1", "w1", "main-1", "q-del")
+        return status
+    monkeypatch.setattr("assistant.confirmations.card_status", missing)
+    desk, scope = scoped(Heard())
+    desk.show(CARD)
+    desk.reconcile([], [])
+    assert not desk.open() and not desk.answered
+    value = await cards.answer(scope, selection())
+    assert value["status"] == status and not value["this_call_applied"] and not value["execution_confirmed"]
+
+
+async def test_simultaneous_conflicting_choices_apply_once(monkeypatch):
+    replies = answering(monkeypatch)
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(CARD)
+    heard.say("按这个来")
+    values = await asyncio.gather(cards.answer(scope, selection()), cards.answer(scope, selection(option=1)))
+    assert len(replies) == 1 and sum(v["this_call_applied"] for v in values) == 1
+
+
+async def test_new_project_choice_carries_user_supplied_name(monkeypatch):
+    placement = {**CARD, "kind": "assistant_placement", "options": ["在默认空间新建对话", "新建项目", "取消"]}
+    replies = answering(monkeypatch, waiting=(placement,))
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(placement)
+    heard.say("不要第一个，第二个就行，项目叫春季上新")
+    result = await cards.answer(scope, selection(placement, 1, project_name="春季上新"))
+    assert result["status"] == "decision_recorded"
+    assert replies == [("q-del", [["新建项目"]], "u1", {"placement_project_name": "春季上新"})]
+
+
+async def test_unrelated_negative_words_never_decline_any_of_several_cards(call, monkeypatch):
+    bridge, provider, _, _ = call
+    replies = answering(monkeypatch)
+    await greeted(bridge, provider)
+    bridge.desk.show(CARD)
+    bridge.desk.show({**CARD, "card_id": "q-other"})
+    await said(bridge, "不用给我解释原理了", "u1")
+    assert not replies and len(bridge.desk.open()) == 2
+
+
+async def test_card_choice_records_its_original_utterance_even_when_later_speech_arrives(call, monkeypatch):
+    bridge, provider, _, _ = call
+    replies = answering(monkeypatch)
+    await greeted(bridge, provider)
+    bridge.desk.show(CARD)
+    await replay(bridge, item("first"), event("user_transcript", item_id="first", text="按原方案办"), started("first-response"))
+    await replay(bridge, item("second"), event("user_transcript", item_id="second", text="另外问个问题"))
+    await replay(bridge, tool_call("choice", name="cards_answer", arguments=json.dumps(selection()), response_id="first-response"))
+    assert replies
+    assert bridge.refs[-1].transcript == "按原方案办"

@@ -11,6 +11,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
+from voice import phrases
+from voice.models import AUDIO_MODEL, OMNI_MODEL
 from tests.support.voice_fakes import ASK_MARKER, CUT_MARKER, DROP_MARKER, ScriptedProvider, wait_until
 
 os.environ["JWT_SECRET"] = "test-voice-secret-32bytes-long!!"
@@ -46,7 +48,8 @@ def providers(app, monkeypatch):
     from api import voice as voice_socket
     from core.config import VoiceConfig, get_config
     _cache._store.clear()
-    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only", model="qwen3.8-omni-flash-realtime", voice="Tina"))
+    # An old deployment must not override the product's Audio default for users.
+    monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only", model=OMNI_MODEL, voice="Tina"))
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
     monkeypatch.setattr("voice.bridge.GREETING_MARGIN_SECONDS", 0.0)
     made = []
@@ -55,7 +58,6 @@ def providers(app, monkeypatch):
         made.append(ScriptedProvider(config, debug=debug, auto_reply=True, fail_open=getattr(factory, "fail", False)))
         return made[-1]
     monkeypatch.setattr(voice_socket, "provider_factory", factory)
-    monkeypatch.setattr(voice_socket, "handover_planner", None)  # no model call: requests go on as they are
     factory.made = made
     return factory
 
@@ -145,7 +147,7 @@ async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does
                           and bool(providers.made[-1].commands("note")))
         notes = providers.made[-1].commands("note")
         assert len(notes) == 1 and FORM["questions"][0]["question"] in notes[0][1]
-        assert "请填写片名" not in notes[0][1] and "需要哪些字幕" not in notes[0][1]
+        assert "请填写片名" in notes[0][1] and "需要哪些字幕" in notes[0][1]
         assert "<audio>" in kinds(seen) and len(scopes) >= 2
         assert all(scope.call_id == ready["call_id"] and scope.user_id and scope.workspace_id
                    and scope.main_session_id for scope in scopes)
@@ -181,15 +183,15 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
     headers = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         ready = socket.receive_json()
-        assert ready["type"] == "ready" and ready["model"] == "qwen3.8-omni-flash-realtime"
+        assert ready["type"] == "ready" and ready["model"] == AUDIO_MODEL
         assert (ready["input_sample_rate"], ready["output_sample_rate"], ready["max_seconds"]) == (16000, 24000, 1800)
-        assert ready["price_date"] == "2026-10-07"
+        assert ready["price_date"] == "2026-10-10"
         greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
         assert greeting[0]["value"] == "greeting" and greeting[1] == {"type": "phrase", "key": "greeting"}
         from voice.phrases import greeting_instructions
-        assert providers.made[0].commands("create")[0][1] == greeting_instructions("zh")  # free words, no fixed text
-        assert "你是用户私人助理的电话前台" in providers.made[0].instructions
+        assert providers.made[0].response_purposes()[0][1] == greeting_instructions("zh")  # free words, no fixed text
+        assert "你是用户的语音助理" in providers.made[0].instructions
         assert "现在是 " in providers.made[0].instructions
         socket.send_bytes(FRAME)
         socket.send_json({"type": "ping"})
@@ -234,13 +236,6 @@ async def test_a_request_reaches_the_assistant_planned_with_the_users_words_and_
     from api import voice as voice_socket
     from db.base import get_db_session
     from db.models.agent_inbox import AgentInboxItem
-    from voice.handover import Plan
-    planned = []
-
-    async def planner(**kwargs):
-        planned.append(kwargs)
-        return Plan("brief", "帮我看看「贪吃蛇」项目现在的进展。")
-    monkeypatch.setattr(voice_socket, "handover_planner", planner)
     client = TestClient(app)
     headers = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
@@ -253,11 +248,8 @@ async def test_a_request_reaches_the_assistant_planned_with_the_users_words_and_
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, accepted["inbox_id"])
     assert item.prompt == "帮我看看贪吃蛇进展"  # the user's own words; the planned brief is the request
-    assert item.origin_ref["voice_context"]["request"] == "帮我看看「贪吃蛇」项目现在的进展。"
     assert item.origin_ref["voice_context"]["heard"] == "帮我看看贪吃蛇进展"
     assert item.origin_ref["voice_context"]["call"][-1] == "用户：帮我看看贪吃蛇进展"
-    [asked] = planned
-    assert (asked["request"], asked["words"], asked["reads"]) == ("帮我看看贪吃蛇进展", "帮我看看贪吃蛇进展", None)
 
 
 async def test_one_call_per_user_bad_frames_credits_and_provider_failure(http, providers, app, monkeypatch):
@@ -339,8 +331,9 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         provider = providers.made[0]
         assert accepted["state"] == "accepted"
         # The front desk's call is answered before the assistant has done anything.
-        assert provider.commands("output") == [("output", "call-2", {"status": "accepted",
-                                                                     "note": "结果稍后以后台备注送到"})]
+        [(_, tool_id, output)] = provider.commands("output")
+        assert tool_id == "call-2" and output["status"] == "accepted"
+        assert output["operation_state"] == "queued" and not output["execution_confirmed"]
         await settle_turn(accepted["inbox_id"], "[贪吃蛇](/app/s/x) 的收尾自检做完了，一切正常。")
         told = read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "delivered")
         assert told[-1]["turn_id"] == accepted["turn_id"] and "<audio>" in kinds(told)
@@ -348,8 +341,8 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         ended = read_until(socket, lambda item: item["type"] == "ended")[-1]
     assert ended["pending_turns"] == 0
     [(_, note)] = provider.commands("note")
-    assert note == "（后台备注，不是用户说的话）关于用户说的“帮我看看贪吃蛇进展”：个人助理回来了：贪吃蛇的收尾自检做完了，一切正常。"
-    deliveries = [text for _, text in provider.commands("create") if text and text.startswith("个人助理的结果到了")]
+    assert json.loads(note.removeprefix(phrases.NOTE_PREFIX["zh"]))["results"][0]["facts"] == "贪吃蛇的收尾自检做完了，一切正常。"
+    deliveries = [text for _, text in provider.response_purposes() if text and text == phrases.delivery_instructions("", "zh")]
     assert deliveries == [phrases.delivery_instructions("贪吃蛇的收尾自检做完了，一切正常。", "zh")]
     assert len(provider.commands("output")) == 1  # one output per call; the result never reused it
     async with get_db_session() as db:
@@ -358,7 +351,7 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
     # After hang-up the call's own transcript is summarized for the next greeting (in the background).
     [(call_id, transcript, previous)] = saved
     assert call_id == turn.call_id and previous == ""
-    assert "用户：帮我看看贪吃蛇进展" in transcript and "后台备注：（后台备注" in transcript
+    assert "用户：帮我看看贪吃蛇进展" in transcript and "后台备注：（后台事件" in transcript
 
 
 async def test_a_provider_session_dropped_mid_call_is_recovered_on_the_same_socket(http, providers, app):
@@ -408,7 +401,7 @@ async def test_a_user_cut_off_by_a_dropped_session_is_asked_to_say_it_again(http
         assert seen[-1] == {"type": "phrase", "key": "reconnected"}
         assert "<audio>" in kinds(read_until(socket, lambda item: item["type"] == "phase"
                                              and item["value"] == "listening"))
-        assert providers.made[1].commands("create") == [
+        assert providers.made[1].response_purposes() == [
             ("create", phrases.phrase_instructions("reconnected", "zh"))]
         socket.send_json({"type": "stop"})
         assert read_until(socket, lambda item: item["type"] == "ended")[-1]["reason"] == "hangup"
@@ -443,30 +436,31 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
     headers = await account(http)
     listed = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
     ids = [voice["id"] for voice in listed["voices"]]
-    assert listed["default"] == listed["selected"] == "Tina" and {"Tina", "Serena", "Andre", "Jennifer"} <= set(ids)
+    assert listed["model"] == listed["default_model"] == AUDIO_MODEL
+    assert listed["default"] == listed["selected"] == "longanqian_v3.1" and "longanhuan_v3.1" in ids
     assert all(voice["lang"] in ("zh", "en") and voice["gender"] in ("female", "male") for voice in listed["voices"])
     for refused in ("Cherry", "serena", "<script>"):
         assert (await http.put("/api/assistant/voice/voice", json={"voice": refused}, headers=headers)).status_code == 422
-    chosen = await http.put("/api/assistant/voice/voice", json={"voice": "Liora Mira"}, headers=headers)
-    assert chosen.json()["selected"] == "Liora Mira"
-    assert (await http.get("/api/assistant/voice/voices", headers=headers)).json()["selected"] == "Liora Mira"
+    chosen = await http.put("/api/assistant/voice/voice", json={"voice": "longanhuan_v3.1"}, headers=headers)
+    assert chosen.json()["selected"] == "longanhuan_v3.1"
+    assert (await http.get("/api/assistant/voice/voices", headers=headers)).json()["selected"] == "longanhuan_v3.1"
     prefs = (await http.get("/api/auth/me/preferences", headers=headers)).json()
-    assert prefs["extra"]["assistant_voice"] == "Liora Mira"
+    assert prefs["extra"]["assistant_voice"] == "longanhuan_v3.1"
     client = TestClient(app)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         call_id = socket.receive_json()["call_id"]
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: False)
-    assert providers.made[-1].config.voice == "Liora Mira"
+    assert providers.made[-1].config.voice == "longanhuan_v3.1"
     async with get_db_session() as db:
-        assert (await db.get(VoiceCall, call_id)).voice == "Liora Mira"
+        assert (await db.get(VoiceCall, call_id)).voice == "longanhuan_v3.1"
     # Another account keeps the default.
     other = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, other)}") as socket:
         socket.receive_json()
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: False)
-    assert providers.made[-1].config.voice == "Tina"
+    assert providers.made[-1].config.voice == "longanqian_v3.1"
 
 
 async def test_previews_are_served_for_listed_voices_only(http, providers):
@@ -480,7 +474,9 @@ async def test_audio_model_switch_keeps_catalogue_preferences_and_call_in_sync(h
     from core.config import get_config
     from voice.models import AUDIO_MODEL
     headers = await account(http)
-    assert (await http.put("/api/assistant/voice/voice", json={"voice": "Tina"}, headers=headers)).status_code == 200
+    # Existing preferences, written before this rollout, start on Audio too.
+    assert (await http.put("/api/auth/me/preferences", json={"extra": {
+        "assistant_voice_model": OMNI_MODEL, "assistant_voice": "Tina"}}, headers=headers)).status_code == 200
     monkeypatch.setattr(get_config().voice, "model", AUDIO_MODEL)
     listed = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
     assert listed["default"] == listed["selected"] == "longanqian_v3.1"
@@ -533,7 +529,7 @@ async def test_the_call_is_answered_with_the_greeting_made_and_its_echo_never_cu
         ready = socket.receive_json()
         provider = providers.made[-1]
         # Made before the answer: the greeting was requested and finished before `ready` went out.
-        assert ready["type"] == "ready" and provider.commands("create")
+        assert ready["type"] == "ready" and provider.response_purposes()
         greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
         socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])  # its own echo, at once
@@ -566,7 +562,7 @@ async def test_a_call_ends_with_a_goodbye_when_its_credits_are_spent_and_is_bill
     limit = next(item for item in heard if isinstance(item, dict) and item["type"] == "limit")
     assert limit["reason"] == "credits"
     assert heard[-1]["reason"] == "quota"
-    goodbye = providers.made[-1].commands("create")[-1][1]
+    goodbye = providers.made[-1].response_purposes()[-1][1]
     assert "积分用完了" in goodbye
     async with get_db_session() as db:
         [event] = (await db.scalars(select(UsageEvent).where(UsageEvent.idempotency_key == f"voice:{call_id}"))).all()
@@ -614,8 +610,10 @@ async def test_a_task_report_finished_during_the_call_is_told_unasked(http, prov
         told = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening"
                           and not item["working"])
         notes = [text for _, text in providers.made[-1].commands("note")]
-        assert notes == ["（后台备注，不是用户说的话）个人助理主动汇报，任务「制作iPhone 18口播视频」有新结果："
-                         "尝试打开抖音创作者中心受阻，因为云桌面自动化未就绪。"]
+        assert len(notes) == 1
+        result = json.loads(notes[0].removeprefix(phrases.NOTE_PREFIX["zh"]))["results"][0]
+        assert result["task"] == "制作iPhone 18口播视频"
+        assert result["facts"] == "尝试打开抖音创作者中心受阻，因为云桌面自动化未就绪。"
         assert "<audio>" in kinds(told)  # said, unasked
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: item["type"] == "ended")
@@ -631,7 +629,8 @@ async def test_user_switches_models_restores_voices_and_keeps_a_live_call_unchan
     other = await account(http)
     endpoint = "/api/assistant/voice/voice"
     # An existing Omni voice is recovered after upgrading the deployment default.
-    await http.put("/api/auth/me/preferences", json={"extra": {"assistant_voice": "Serena", "locale": "zh-CN"}}, headers=headers)
+    await http.put("/api/auth/me/preferences", json={"extra": {
+        "assistant_voice_model": OMNI_MODEL, "assistant_voice": "Serena", "locale": "zh-CN"}}, headers=headers)
     default = (await http.get("/api/assistant/voice/voices", headers=headers)).json()
     assert default["model"] == AUDIO_MODEL and default["selected"] == "longanqian_v3.1"
     audio = (await http.put(endpoint, json={"model": AUDIO_MODEL, "voice": "longanhuan_v3.1"}, headers=headers)).json()

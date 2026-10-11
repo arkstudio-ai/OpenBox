@@ -170,11 +170,13 @@ async def test_a_result_arriving_while_the_new_session_opens_is_told_there(call)
         fresh.append(ScriptedProvider())
         return fresh[-1]
     bridge.opener, bridge.late_after = opener, 600  # a progress reply would come first otherwise
-    await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
     bridge.keeper.session_started -= upkeep.ROTATE_SECONDS
     clock.advance(30)
     await bridge.fill_idle()
     assert bridge.rotating
+    await drain()
+    assert bridge.swapping  # wait for the summary before checking the new-session window
     link.finish("call-1")
     await drain()
     assert not provider.commands("note")  # nothing new goes into the old session
@@ -196,7 +198,7 @@ async def test_results_are_still_told_while_the_memo_for_a_rotation_is_made():
     bridge = Bridge(provider, link, clock=clock, instructions="BASE", summarizer=summaries, opener=opener,
                     wall_clock=lambda: WALL)
     bridge.late_after = 600
-    await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
     await exchange(bridge, 1, tokens=130_000)
     await drain()
     assert bridge.rotating and not bridge.swapping  # waiting for the memo, the call goes on
@@ -301,7 +303,7 @@ async def test_any_reply_restarts_the_clock_and_none_is_sent_while_something_is_
 async def test_a_task_still_running_does_not_hold_the_silent_reply_back():
     """2026-10-09: users waited silently for a delegated task; Audio closed the call after 180 s."""
     bridge, provider, link, clock = kept_call(AUDIO_MODEL)
-    await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
     for number in range(3):  # the one progress line a request gets, then other replies
         clock.advance(30)
         await bridge.fill_idle()

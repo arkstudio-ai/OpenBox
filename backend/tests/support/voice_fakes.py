@@ -174,6 +174,11 @@ class ScriptedProvider:
     def commands(self, kind):
         return [item for item in self.sent if item[0] == kind]
 
+    def response_purposes(self):
+        """Transport tests compare the per-response purpose; role preservation is tested separately."""
+        return [(kind, text.rsplit("\n\n", 1)[-1] if text else text)
+                for kind, text in self.commands("create")]
+
 
 class FakeLink:
     """Accepts every turn; each result is released by the test with ``finish``."""
@@ -219,55 +224,6 @@ class FakeLink:
         await self.record(ref, outcome=outcome, delivered=delivered)
 
 
-class FakeJudge:
-    """The decision model and recall, scripted: verdicts by the words they are asked about."""
-
-    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None,
-                 grounded=None, lasting=None):
-        from voice.router import Route
-        self.Route = Route
-        self.lasting_verdicts = lasting or {}  # words → (choice, confidence)
-        self.lasting_checks = []
-        self.grounded_verdict = grounded      # (choice, confidence) or None
-        self.grounded_checks = []             # (note, said)
-        self.routes = routes or {}            # words → (choice, confidence)
-        self.recalled = recalled or {}        # words → [{"text", "from"}]
-        self.complement_verdict = complement  # (choice, confidence) or None
-        self.followthrough_verdict = followthrough  # (choice, confidence) or None
-        self.read_results = reads             # what reads() returns
-        self.state_lines = state or []        # what state() returns
-        self.asked, self.checked, self.followed = [], [], []
-
-    async def route(self, text, recent):
-        self.asked.append((text, list(recent)))
-        verdict = self.routes.get(text)
-        return self.Route(*verdict) if verdict else None
-
-    async def complement(self, question, reply, records):
-        self.checked.append((question, reply, list(records)))
-        return self.Route(*self.complement_verdict) if self.complement_verdict else None
-
-    async def followthrough(self, utterance, reply, told=""):
-        self.followed.append((utterance, reply) if not told else (utterance, reply, told))
-        return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
-
-    async def lasting(self, utterance):
-        self.lasting_checks.append(utterance)
-        verdict = self.lasting_verdicts.get(utterance)
-        return self.Route(*verdict) if verdict else None
-
-    async def grounded(self, note, said):
-        self.grounded_checks.append((note, said))
-        return self.Route(*self.grounded_verdict) if self.grounded_verdict else None
-
-    async def recall(self, scope, text):
-        return list(self.recalled.get(text, []))
-
-    async def state(self, scope):
-        return list(self.state_lines)
-
-    async def reads(self, scope, text):
-        return self.read_results if self.read_results is not None else {"memories": [], "tasks": []}
 
 
 async def drain(rounds=10):

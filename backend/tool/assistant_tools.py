@@ -164,6 +164,12 @@ class RequestListArgs(ListArgs):
 
 
 class RequestAnswerArgs(Arguments):
+    completion_reported: bool = Field(default=False, strict=True, description=(
+        "For a desktop takeover only: true when the cited human message says their action is complete. "
+        "Interpret it in context; questions, intentions and quoted examples are not completion. The resumed tool verifies the page."))
+    requires_confirmation: bool = Field(default=False, strict=True, description=(
+        "True if this answer authorizes spending money, publication, account access, deletion or another consequential action. "
+        "Decide from the action and context, not words in a title. Server-side card and visibility requirements also apply."))
     request_id: str = Field(min_length=1, max_length=64, description="A question id from requests.list.")
     answers: list[list[str]] = Field(min_length=1, max_length=20,
         description="One list per question: the chosen option labels, or one custom answer where custom answers are allowed.")
@@ -223,6 +229,10 @@ class RequestReplyArgs(RequestArgs):
 
 
 class SubmitArgs(Arguments):
+    destination_confirmed: bool = Field(default=False, strict=True, description=(
+        "True only when cited human messages explicitly chose this project as the destination for new work. "
+        "Interpret the whole conversation, not isolated words. False when recommending or guessing a destination; "
+        "the server then asks the user to choose. An answered placement card is applied on retry."))
     project_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=128)
     instructions: str = Field(min_length=1, max_length=8000)
@@ -490,8 +500,15 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                     "attachments": args.attachment_ids,
                     "continuation": args.continuation.model_dump(mode="json") if args.continuation else None}
                 if operation == "tasks.submit":
+                    from assistant.placement import require_placement, task_input
+                    placement_id = await require_placement(ctx, source, task_input(project_id=args.project_id,
+                        title=args.title, prompt=args.instructions, attachments=args.attachment_ids,
+                        model=args.model, continuation=command_args["continuation"], source=source),
+                        destination_confirmed=args.destination_confirmed)
                     value = await accept_task_command(**command_args, project_id=args.project_id, title=args.title,
-                                                       prompt=args.instructions, model=args.model)
+                                                       prompt=args.instructions, model=args.model, placement_id=placement_id)
+                    if value.get("state") == "cancelled":
+                        return ToolResult(title=operation, output=json.dumps(value), metadata={})
                 else:
                     from assistant.confirmations import release_confirmation, require_shared_send_confirmation
                     confirmation = await require_shared_send_confirmation(ctx, task_id=args.task_id,
@@ -555,7 +572,7 @@ assistant_tools = (
     _tool("schedules.run", ScheduleRunArgs, "Accept one immediate execution of an assistant-managed schedule on an explicit human request, even if disabled. Read its current revision first. Returns distinct CronRun and Task/Session/input IDs; accepted is not started or complete. Repeated delivery of this persisted call reuses the same IDs. An unfinished prior execution prevents overlap. Read its Task and actual result for progress."),
     _tool("assets.attach", AttachArgs, "On an original human request, submit these exact asset IDs with the requested instructions to an existing watched Task. For a workspace-visible conversation the user first confirms the text and file names on a card (members will see them); call again after 确认发送. Read tasks.get for current revision. Default followup queues a new turn on its original Session; explicit steer requires its observed run. A receipt means accepted, not that bytes have been delivered or understood. Never change the files' original ownership or pass signed URLs. Pending delivery is recovered with the same input identity."),
     _tool("history.read", HistoryArgs, "Read a bounded page of history from this assistant session or any top-level conversation the user owns (find it with sessions.list). Follow next_cursor until null; unread text is unverified. Memory and knowledge reads inside it are not replayed: search again for current text. In a report, only the bound task's conversation is available."),
-    _tool("tasks.submit", SubmitArgs, "Accept a new private task in an explicitly selected project, citing original human message IDs. The receipt means accepted, not running or completed. Repeated calls use the persisted server tool-call identity."),
+    _tool("tasks.submit", SubmitArgs, "Prepare new work, citing original human message IDs. Supply a recommended existing project and task title. Set destination_confirmed only when the cited human messages chose this destination. Otherwise a card first asks whether to open a conversation there, create a project named after the task, or cancel. After a choice, call again with exactly the original arguments: the server applies it once. After cancel do nothing. A receipt means accepted, not running or completed. Continue existing work with tasks.followup instead."),
     _tool("tasks.followup", FollowupArgs, "Append authorized input to the watched conversation of a task; it is shown there as sent by the assistant. Default followup queues a later turn. For an explicit change to a live run use steer with its exact run_id, generation and current task revision. If the run stops before consuming steer, the receipt becomes not_applied; never automatically turn it into followup. Cite original human message IDs. For a workspace-visible conversation the user first sees a confirmation card with your exact text; after they choose 确认发送, call again with the same text; if they cancel, do not send. A receipt with blocked_by means the conversation waits for the user on that card (e.g. a desktop takeover): the input stays queued and runs after the user handles it; tell them where, with its link."),
     _tool("tasks.pause", ControlArgs, "Pause scheduling of the original task only on explicit human request. Read tasks.get first; provide its current revision and non-idle run identity. Pausing is not yet paused. Preserve inputs, completed work and external effects."),
     _tool("tasks.resume", ControlArgs, "Resume an explicitly paused original task only on human request. Read tasks.get first. Reuses the original Session and input; never create a replacement task. Pending questions still need answers, unknown external outcomes must be verified first. Acceptance does not mean execution has begun."),

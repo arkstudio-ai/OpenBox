@@ -259,8 +259,8 @@ async def usage_summary(
         for kind, r in summary["by_kind"].items():
             if kind == partner.VIDEO_KIND:
                 continue
-            row = {"kind": _external_kind(kind), "credits": credits_text(r["credits"]), "events": r["events"]}
-            if kind in partner.LLM_KINDS:
+            row = {"kind": kind, "credits": credits_text(r["credits"]), "events": r["events"]}
+            if kind == "chat":
                 row["tokens"] = r["quantity"]
             elif kind == "video_compose":
                 row["billed_seconds"] = r["quantity"]

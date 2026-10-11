@@ -259,6 +259,9 @@ async def test_models_me_usage_and_summary(partner_config):
         rows = summary.json()["rows"]
         assert {"quality": "medium", "output_seconds": 30, "credits": "84", "ladder": 1, "ladder_credits": "84"} in rows
         assert summary.json()["ladder_rebate"] == {"status": "pending", "credits": "0"}
+        chat_row = next(r for r in rows if r.get("kind") == "chat")
+        assert chat_row["tokens"] == 46_000 and chat_row["events"] == 1
+        assert sum(1 for r in rows if r.get("kind") == "chat") == 1
         daily = await http.get("/usage/summary", params={"group_by": "day"})
         assert daily.json()["rows"][0]["output_seconds"] == 30
 

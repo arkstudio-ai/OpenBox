@@ -376,10 +376,16 @@ def summarize(tariff: dict, events: list, month: str) -> dict:
         pricing = event.pricing or {}
         partner = pricing.get("partner") or {}
         day = event.created_at.strftime("%Y-%m-%d")
-        kind_row = by_kind.setdefault(event.kind, {"events": 0, "credits": Decimal(0), "quantity": 0})
+        external = "chat" if event.kind in LLM_KINDS else event.kind
+        kind_row = by_kind.setdefault(external, {"events": 0, "credits": Decimal(0), "quantity": 0})
         day_row = by_day.setdefault(day, {"events": 0, "credits": Decimal(0), "output_seconds": 0})
         kind_row["events"] += 1; kind_row["credits"] += credits
         day_row["events"] += 1; day_row["credits"] += credits
+        if event.kind in LLM_KINDS:
+            # Every text call counts toward the month's token volume, tariff-priced or not.
+            kind_row["quantity"] += int(event.total_tokens or 0)
+        elif event.kind == "video_compose":
+            kind_row["quantity"] += int((event.tokens or {}).get("seconds_billed") or 0)
         if event.kind == VIDEO_KIND and partner.get("quality") in video_tiers:
             quality = partner["quality"]; tier = video_tiers[quality]
             seconds = int((event.tokens or {}).get("seconds_billed") or 0)
@@ -403,7 +409,6 @@ def summarize(tariff: dict, events: list, month: str) -> dict:
                     llm["ladder_credits"] += (Decimal(n) * share * price / MILLION)
             llm_cumulative += total
             llm["tokens"] += total; llm["charged"] += credits; llm["events"] += 1
-            kind_row["quantity"] += total
     llm["ladder_credits"] = llm["ladder_credits"].quantize(PRECISION)
     llm["ladder"] = 1 + sum(1 for t in llm_thresholds if llm_cumulative > t)
     ladder_total = llm["ladder_credits"] + sum((r["ladder_credits"] for r in by_quality.values()), Decimal(0))

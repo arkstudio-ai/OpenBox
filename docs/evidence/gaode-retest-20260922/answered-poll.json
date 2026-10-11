@@ -1,0 +1,147 @@
+{
+  "data": [
+    {
+      "id": "msg_01M3470R8RAKN98YRGZ5CG3Z5R",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T09:26:43Z",
+      "updated_at": "2026-09-22T09:26:43Z",
+      "parts": [
+        {
+          "type": "file",
+          "id": "prt_01M3470R9395HHZM3J1SHKJ2PX",
+          "file": {
+            "id": "fil_01M3470QAMHHPTZD19HX5NQVDS",
+            "filename": "retest-1.png",
+            "mime_type": "image/png",
+            "size": 1796,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[redacted URL]",
+            "role": "input"
+          }
+        },
+        {
+          "type": "file",
+          "id": "prt_01M3470R9395HHZM3J1SHKJ2PY",
+          "file": {
+            "id": "fil_01M3470QHM05Z36V2VTY54S64P",
+            "filename": "retest-2.png",
+            "mime_type": "image/png",
+            "size": 1796,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[redacted URL]",
+            "role": "input"
+          }
+        },
+        {
+          "type": "text",
+          "id": "prt_01M3470R9395HHZM3J1SHKJ2PZ",
+          "text": "接口验收，不要生成图片、视频、音频或联网。请确认收到两个附件，然后用 question 工具出一张测试卡：第一题单选 A/B，custom=false；第二题多选 甲/乙/丙，custom=false；第三题自由输入，custom=true。收到回答后复述答案并再出一张继续/停止单选卡。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M3470R8RAKN98YRGZ5CG3Z5S",
+      "role": "assistant",
+      "finish": null,
+      "error": null,
+      "created_at": "2026-09-22T09:26:45Z",
+      "updated_at": "2026-09-22T09:27:32Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M347141CXCEC510SK6Y762A9",
+          "text": "已确认收到 2 个附件：\n1. `retest-1.png` (ID: `asset_01M3470QAMHHPTZD19HX5NQVDS`)\n2. `retest-2.png` (ID: `asset_01M3470QHM05Z36V2VTY54S64P`)\n\n下面为您发起测试问答卡："
+        },
+        {
+          "type": "question",
+          "id": "prt_01M34714GEJVCSF3ZKKZX2V40V",
+          "question_id": "qst_01M34714PT9ZDCQXT3WBB0SR0D",
+          "status": "answered",
+          "expires_at": "2026-09-22T09:36:55Z",
+          "questions": [
+            {
+              "header": "单选题",
+              "question": "第一题：请选择 A 或 B",
+              "options": [
+                {
+                  "label": "A",
+                  "description": ""
+                },
+                {
+                  "label": "B",
+                  "description": ""
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            },
+            {
+              "header": "多选题",
+              "question": "第二题：请选择 甲/乙/丙（可多选）",
+              "options": [
+                {
+                  "label": "甲",
+                  "description": ""
+                },
+                {
+                  "label": "乙",
+                  "description": ""
+                },
+                {
+                  "label": "丙",
+                  "description": ""
+                }
+              ],
+              "multiple": true,
+              "custom": false
+            },
+            {
+              "header": "问答题",
+              "question": "第三题：请输入您的自由回答",
+              "options": [],
+              "multiple": false,
+              "custom": true
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "prt_01M34727V8Z82K5K2JXKH5307V",
+          "text": "已收到并确认您的回答：\n- **第一题（单选）**：A\n- **第二题（多选）**：甲、丙\n- **第三题（自由输入）**：多素材回归\n\n接下来为您弹出确认卡片："
+        },
+        {
+          "type": "question",
+          "id": "prt_01M347284EPTHJY8G47MMNA9KR",
+          "question_id": "qst_01M34728A6WB6FX5DH56G45F91",
+          "status": "pending",
+          "expires_at": "2026-09-22T09:37:32Z",
+          "questions": [
+            {
+              "header": "流程确认",
+              "question": "是否继续执行后续流程？",
+              "options": [
+                {
+                  "label": "继续",
+                  "description": ""
+                },
+                {
+                  "label": "停止",
+                  "description": ""
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

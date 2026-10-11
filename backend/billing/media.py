@@ -340,7 +340,9 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
     """Record (and in enforce, charge) one finished composition. Idempotent on job id."""
     if asset is None:
         return None
-    price = quote_compose(width, height, duration_sec)
+    from billing.partner import quote_compose_for_session
+
+    price = await quote_compose_for_session(job.session_id, width, height, duration_sec)
     unit = "seconds_billed" if "per_second" in price.snapshot else "minutes_billed"
     return await settle(key=f"compose:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
                         session_id=job.session_id, price=price, kind=USAGE_KIND, quantity_known=duration_sec is not None,
@@ -367,9 +369,12 @@ async def settle_generation(job, asset, *, model_id: str, resolution: str | None
                 or not per_second.is_finite() or per_second < 0
                 or (per_second * quantity).quantize(PRECISION) != amount):
             raise ValueError("Invalid stored video generation quote")
-        price = MediaQuote(saved["model_id"], saved["tier"], quantity, amount, snapshot)
+        cost = Decimal(snapshot["cost_credits"]) if snapshot.get("cost_credits") is not None else None
+        price = MediaQuote(saved["model_id"], saved["tier"], quantity, amount, snapshot, cost)
     else:
-        price = quote_generation(model_id, resolution, duration_sec)
+        from billing.partner import quote_generation_for_session
+
+        price = await quote_generation_for_session(job.session_id, model_id, resolution, duration_sec)
     return await settle(key=f"generate:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
                         session_id=job.session_id, price=price, kind=GENERATION_KIND,
                         quantity_known=bool(duration_sec and duration_sec > 0),

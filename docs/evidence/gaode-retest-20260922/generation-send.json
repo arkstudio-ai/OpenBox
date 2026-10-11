@@ -1,0 +1,12 @@
+[
+  {
+    "name": "generate-once",
+    "status": 202,
+    "request_id": "req_01M347BAR932EKCRKNKDYYG4FT",
+    "body": {
+      "session_id": "ses_7YBWVRRS4A9VEXE44FXG2M685X",
+      "user_message_id": "msg_01M347BAVZMV8GP3J1YGPX5MKR",
+      "assistant_message_id": "msg_01M347BAVZMV8GP3J1YGPX5MKS"
+    }
+  }
+]

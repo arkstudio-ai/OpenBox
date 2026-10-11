@@ -1,0 +1,55 @@
+{
+  "data": [
+    {
+      "id": "msg_01M34568EBTJR3M84Z2WZ5TPYX",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T08:54:46Z",
+      "updated_at": "2026-09-22T08:54:46Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M34568EKATX569HDKXNNCKJA",
+          "text": "做一条 10 秒的竖屏短视频：清晨西湖湖面薄雾与断桥，单个镜头，不要人物口播和配音，不加字幕，不做合成或转场，生成完成后直接交付成片。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34568EBTJR3M84Z2WZ5TPYY",
+      "role": "assistant",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T08:54:47Z",
+      "updated_at": "2026-09-22T09:01:07Z",
+      "parts": [
+        {
+          "type": "file",
+          "id": "prt_01M345ENGP3BS4KEW6N9CY8Y5G",
+          "file": {
+            "id": "fil_01M3456QM20VZHHBN0RAADZ1MX",
+            "filename": "segment-video_01M3456QM20VZHHBN0RAADZ1MW.mp4",
+            "mime_type": "video/mp4",
+            "size": 19965646,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[redacted URL]",
+            "role": "final"
+          }
+        },
+        {
+          "type": "text",
+          "id": "prt_01M345F32XXCCMEAX39QGFJZJ5",
+          "text": "已为您生成 10 秒 9:16 竖屏短视频（清晨西湖薄雾与断桥，单镜头纯风景，无配音口播与字幕），成片已直接交付。"
+        },
+        {
+          "type": "text",
+          "id": "prt_01M345HW6VGPK3XM67BNS12Y7V",
+          "text": "已取回任务 `video_01M3456QM20VZHHBN0RAADZ1MW` 的生成结果并重新挂载到对话中。\n\n本任务为单个镜头直接出片（无需后续镜头、合成、口播或配音），已直接交付完整成片。"
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

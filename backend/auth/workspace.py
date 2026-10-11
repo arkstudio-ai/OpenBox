@@ -29,7 +29,11 @@ async def get_workspace(
     if cached is not None:
         return cached
 
-    workspace_id = request.headers.get("X-Workspace-Id", "").strip()
+    if user.get("auth_kind") == "api_key":
+        # A key is bound to one workspace; the header cannot redirect it.
+        workspace_id = str(user.get("workspace_id") or "")
+    else:
+        workspace_id = request.headers.get("X-Workspace-Id", "").strip()
     if not workspace_id:
         user_row = await _user_repo.get(user["user_id"])
         workspace_id = str((user_row or {}).get("default_workspace_id") or "")

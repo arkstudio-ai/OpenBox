@@ -1,0 +1,498 @@
+[
+  {
+    "id": "ses_7YBWVRWTJ4TFQMX8ZSE9555TDF",
+    "title": "Codex 十分钟自动超时回归",
+    "status": "busy",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.038684346225",
+    "created_at": "2026-09-22T09:28:02Z",
+    "updated_at": "2026-09-22T09:28:08Z"
+  },
+  {
+    "id": "ses_7YBWVRXM69MW9XEYXC1APKTEAF",
+    "title": "Codex 中止终态回归",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T09:27:35Z",
+    "updated_at": "2026-09-22T09:27:36Z"
+  },
+  {
+    "id": "ses_7YBWVRZ8954FR1HBFXHPW444BZ",
+    "title": "Codex 多素材修复回归",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "codex-retest-20260922"
+    },
+    "credits_used": "0.266049570263",
+    "created_at": "2026-09-22T09:26:42Z",
+    "updated_at": "2026-09-22T09:27:42Z"
+  },
+  {
+    "id": "ses_7YBWVSGG65C67GE7Y6YNMMF5Q4",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T09:17:17Z",
+    "updated_at": "2026-09-22T09:17:17Z"
+  },
+  {
+    "id": "ses_7YBWVT48N86JSRRCRVTKR3RNRM",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T09:06:29Z",
+    "updated_at": "2026-09-22T09:06:29Z"
+  },
+  {
+    "id": "ses_7YBWVT8NBYN6H4RQ66SWHFGV68",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T09:04:05Z",
+    "updated_at": "2026-09-22T09:04:05Z"
+  },
+  {
+    "id": "ses_7YBWVTSQRKK2NZKTMG91WEZPJ8",
+    "title": "real generation verify",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "real-09221654"
+    },
+    "credits_used": "5.784455397853",
+    "created_at": "2026-09-22T08:54:46Z",
+    "updated_at": "2026-09-22T09:01:07Z"
+  },
+  {
+    "id": "ses_7YBWVTSR8N7S4YWZ4EC9F5C0H7",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T08:54:45Z",
+    "updated_at": "2026-09-22T08:54:45Z"
+  },
+  {
+    "id": "ses_7YBWVX3YSSYSBJ521P6MBK56CW",
+    "title": "post-fix public",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "pf2-1790064852"
+    },
+    "credits_used": "0.0454511835",
+    "created_at": "2026-09-22T08:14:14Z",
+    "updated_at": "2026-09-22T08:14:20Z"
+  },
+  {
+    "id": "ses_7YBWVX3ZAE58D0HPWHP3PDE2BH",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T08:14:13Z",
+    "updated_at": "2026-09-22T08:14:13Z"
+  },
+  {
+    "id": "ses_7YBWVX4CMZ6RMCJP4F7AP9EEH6",
+    "title": "coldstart5",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.100190880675",
+    "created_at": "2026-09-22T08:14:00Z",
+    "updated_at": "2026-09-22T08:14:11Z"
+  },
+  {
+    "id": "ses_7YBWVXCGQ6E77GW1RC6RWDYW5J",
+    "title": "coldstart4",
+    "status": "error",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T08:09:33Z",
+    "updated_at": "2026-09-22T08:10:49Z"
+  },
+  {
+    "id": "ses_7YBWVXQKT37Z5MHSVGJA6XED9N",
+    "title": "coldstart3",
+    "status": "error",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T08:03:30Z",
+    "updated_at": "2026-09-22T08:04:48Z"
+  },
+  {
+    "id": "ses_7YBWVXSGE66WFJN3GBDC8FCDDQ",
+    "title": "coldstart2",
+    "status": "error",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T08:02:28Z",
+    "updated_at": "2026-09-22T08:04:48Z"
+  },
+  {
+    "id": "ses_7YBWVXZJ1S25CHPV15AN9V68Z6",
+    "title": "coldstart",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.045346452585",
+    "created_at": "2026-09-22T07:59:09Z",
+    "updated_at": "2026-09-22T07:59:31Z"
+  },
+  {
+    "id": "ses_7YBWVY32Y6ZTKYCGTKNHAMBBAR",
+    "title": "confpub",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.106291710675",
+    "created_at": "2026-09-22T07:57:14Z",
+    "updated_at": "2026-09-22T07:57:23Z"
+  },
+  {
+    "id": "ses_7YBWVY4J89SY0FHGV3F4NK13RR",
+    "title": "confB",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.051465585075",
+    "created_at": "2026-09-22T07:56:25Z",
+    "updated_at": "2026-09-22T07:56:34Z"
+  },
+  {
+    "id": "ses_7YBWVY5JRHCQA6M7KN8QVDJ5Q3",
+    "title": "confA",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.051465585075",
+    "created_at": "2026-09-22T07:55:52Z",
+    "updated_at": "2026-09-22T07:56:02Z"
+  },
+  {
+    "id": "ses_7YBWVY9PS325QTTWJSFSS2J2XF",
+    "title": "spy",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.107400028125",
+    "created_at": "2026-09-22T07:53:37Z",
+    "updated_at": "2026-09-22T07:53:50Z"
+  },
+  {
+    "id": "ses_7YBWVYBAZKZ0W4HDMXY60C4BTF",
+    "title": "abort2",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:52:43Z",
+    "updated_at": "2026-09-22T07:52:44Z"
+  },
+  {
+    "id": "ses_7YBWVYE6PRF70SV9PQX9QSSXTD",
+    "title": "replay2",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.106922129775",
+    "created_at": "2026-09-22T07:51:09Z",
+    "updated_at": "2026-09-22T07:52:41Z"
+  },
+  {
+    "id": "ses_7YBWVYNYKXG9TSNCQ3D3NS0KJF",
+    "title": "post-fix smoke",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "pf-1790063214"
+    },
+    "credits_used": "0.04556303205",
+    "created_at": "2026-09-22T07:46:56Z",
+    "updated_at": "2026-09-22T07:47:02Z"
+  },
+  {
+    "id": "ses_7YBWVYNZ5512JW28P2YVGZ6GFP",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:46:55Z",
+    "updated_at": "2026-09-22T07:46:55Z"
+  },
+  {
+    "id": "ses_7YBWVYPDJVMZ50D51NEESYMD74",
+    "title": "card",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.119190898905",
+    "created_at": "2026-09-22T07:46:40Z",
+    "updated_at": "2026-09-22T07:46:52Z"
+  },
+  {
+    "id": "ses_7YBWVYQ160RFZD4E3EPE9X9P7M",
+    "title": "abort",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:46:20Z",
+    "updated_at": "2026-09-22T07:46:34Z"
+  },
+  {
+    "id": "ses_7YBWVYSE08VFP2G673DCYKMA9Q",
+    "title": "replay",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {},
+    "credits_used": "0.10059251865",
+    "created_at": "2026-09-22T07:45:01Z",
+    "updated_at": "2026-09-22T07:46:39Z"
+  },
+  {
+    "id": "ses_7YBWW07RZH99P341R6DD44EB0E",
+    "title": "Codex 跨域确认卡验收",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "codex-cors-card-20260922"
+    },
+    "credits_used": "0.064019059605",
+    "created_at": "2026-09-22T07:19:43Z",
+    "updated_at": "2026-09-22T07:21:23Z"
+  },
+  {
+    "id": "ses_7YBWW0FBXQMZG3ZV450PQ3ZQ7B",
+    "title": "Codex 高德中止验收",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "codex-abort-20260922"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:15:34Z",
+    "updated_at": "2026-09-22T07:15:35Z"
+  },
+  {
+    "id": "ses_7YBWW0R2FK3G33C33HR5E12D01",
+    "title": "Codex 高德浏览器联调验收",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "codex-ui-20260922"
+    },
+    "credits_used": "15.008049819674",
+    "created_at": "2026-09-22T07:10:49Z",
+    "updated_at": "2026-09-22T07:29:33Z"
+  },
+  {
+    "id": "ses_7YBWW0SFGSXRC8KDS5SABG6Z5A",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:10:03Z",
+    "updated_at": "2026-09-22T07:10:03Z"
+  },
+  {
+    "id": "ses_7YBWW0TFN4EC10ER1C70HKWWK1",
+    "title": "Codex 高德联调契约验收",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "task_id": "codex-acceptance-1790060969"
+    },
+    "credits_used": "0.180022274834",
+    "created_at": "2026-09-22T07:09:30Z",
+    "updated_at": "2026-09-22T07:13:36Z"
+  },
+  {
+    "id": "ses_7YBWW174CWD0GWEYFJKYQN0ABT",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T07:02:35Z",
+    "updated_at": "2026-09-22T07:02:35Z"
+  },
+  {
+    "id": "ses_7YBWW1C8GJK8G67RMJP7KEA201",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T06:59:47Z",
+    "updated_at": "2026-09-22T06:59:47Z"
+  },
+  {
+    "id": "ses_7YBWW1W9EZ7AZDQ64G1PVEAG4D",
+    "title": "public smoke",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "pub-1790059861"
+    },
+    "credits_used": "0.045039377475",
+    "created_at": "2026-09-22T06:51:02Z",
+    "updated_at": "2026-09-22T06:51:09Z"
+  },
+  {
+    "id": "ses_7YBWW1WA077XWESQEQ6FDP2XR0",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-22T06:51:02Z",
+    "updated_at": "2026-09-22T06:51:02Z"
+  },
+  {
+    "id": "ses_7YBWY78GFQMTAR7FTSA8EXZFVK",
+    "title": "smoke tool 2",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "smoke4-1789987109"
+    },
+    "credits_used": "0.19558244175",
+    "created_at": "2026-09-21T10:38:30Z",
+    "updated_at": "2026-09-21T10:38:39Z"
+  },
+  {
+    "id": "ses_7YBWY78GJJGXBAET6RYFF1AN0J",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:38:30Z",
+    "updated_at": "2026-09-21T10:38:30Z"
+  },
+  {
+    "id": "ses_7YBWY7CJQXDYCPTE7N6ZXY5898",
+    "title": "smoke tool",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "smoke3-1789986976"
+    },
+    "credits_used": "0.138155837363",
+    "created_at": "2026-09-21T10:36:17Z",
+    "updated_at": "2026-09-21T10:36:25Z"
+  },
+  {
+    "id": "ses_7YBWY7CJVH99V3WCB08PSEQREA",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:36:16Z",
+    "updated_at": "2026-09-21T10:36:16Z"
+  },
+  {
+    "id": "ses_7YBWY7NS3E6Z8GJZDCA0S1V7TY",
+    "title": "smoke text 2",
+    "status": "idle",
+    "quality": "high",
+    "metadata": {
+      "task_id": "smoke2-1789986674"
+    },
+    "credits_used": "0.10059251865",
+    "created_at": "2026-09-21T10:31:15Z",
+    "updated_at": "2026-09-21T10:31:29Z"
+  },
+  {
+    "id": "ses_7YBWY7NS6G07TY3PDDF9Z9XXYW",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:31:15Z",
+    "updated_at": "2026-09-21T10:31:15Z"
+  },
+  {
+    "id": "ses_7YBWY8637X8QPT6PB3M644PPZJ",
+    "title": "smoke text",
+    "status": "error",
+    "quality": "high",
+    "metadata": {
+      "task_id": "smoke-1789986140"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:22:20Z",
+    "updated_at": "2026-09-21T10:27:09Z"
+  },
+  {
+    "id": "ses_7YBWY863ARFMCY0CGNAT01AESG",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:22:20Z",
+    "updated_at": "2026-09-21T10:22:20Z"
+  },
+  {
+    "id": "ses_7YBWY893DZSS9FZ0ZN8WB4KW9B",
+    "title": "preflight",
+    "status": "idle",
+    "quality": "medium",
+    "metadata": {
+      "probe": "preflight"
+    },
+    "credits_used": "0",
+    "created_at": "2026-09-21T10:20:42Z",
+    "updated_at": "2026-09-21T10:20:42Z"
+  }
+]

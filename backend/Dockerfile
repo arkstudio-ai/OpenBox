@@ -21,6 +21,20 @@ COPY backend/ .
 COPY container/dev-browser/ /container/dev-browser/
 # Verify the actual release artifact can construct every recovery payload.
 RUN python -c "from sandbox.browser_runtime import runtime_files; runtime_files()"
+# Bytecode is compiled here, not on the first request: a recreated container
+# has no __pycache__, and importing the agent's dependency tree inside the
+# first turn blocked the event loop for a minute (five on a cold host) —
+# health checks timed out and the run lost its lease.
+RUN python -m compileall -q -j 0 /usr/local/lib/python3.12/site-packages /app >/dev/null 2>&1 || true
+# The default litellm start-up fetches its model price table from GitHub,
+# which times out on Chinese hosts; the packaged copy is what we price with.
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
+# tiktoken downloads its vocabulary on first use with a blocking call and no
+# timeout, from a host Chinese servers often cannot reach. Bake it in; the
+# runtime only loads the encoding when this directory is populated.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
+RUN python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" \
+    && test -n "$(ls -A /opt/tiktoken)"
 
 EXPOSE 8080
 CMD ["/bin/sh", "-ec", "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"]

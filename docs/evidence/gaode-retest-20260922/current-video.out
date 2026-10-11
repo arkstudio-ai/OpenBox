@@ -1,0 +1,5 @@
+2026-09-22 09:37:52,504 [openbox.config] INFO Loaded config from /app/openbox.json
+2026-09-22 09:37:52,540 [openbox.db] INFO Database engine initialized: postgres:5432/openbox
+[{"id": "video_01M347BJAZFR5CBJ85J25MVDPV", "kind": "segment", "status": "completed", "model": "wan3.0-video", "provider_task_id": "task_lMAELCYdBAAajs2rbKJp782txbLqTk18", "resolution": "1080p", "duration": "5", "attempt": 1, "output_asset_id": "asset_01M347BJAZFR5CBJ85J25MVDPW", "error": null, "created_at": "2026-09-22 09:32:37.602531+00:00", "completed_at": "2026-09-22 09:37:16.083699+00:00"}]
+[]
+[{"kind": "suggestions", "model_id": "openai/gemini-3.8-flash", "status": "charged", "credits": "0.034474773525", "events": 3}, {"kind": "video_generate", "model_id": "video-gen:wan3.0-video:1080p", "status": "charged", "credits": "6.000000000000", "events": 1}, {"kind": "chat", "model_id": "openai/gemini-3.8-flash", "status": "charged", "credits": "0.726983545643", "events": 23}]

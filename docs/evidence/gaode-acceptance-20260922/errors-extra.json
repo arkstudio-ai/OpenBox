@@ -1,0 +1,52 @@
+[
+  {
+    "name": "unknown-route",
+    "status": 404,
+    "request_id": "req_01M33ZM2R8HV7SWCYGT5Q9MFCC",
+    "body": {
+      "detail": "Not Found"
+    }
+  },
+  {
+    "name": "malformed-json",
+    "status": 400,
+    "request_id": "req_01M33ZM2VEZ33CMJ2GQ5Z6H04F",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "1: JSON decode error",
+        "request_id": "req_01M33ZM2VEZ33CMJ2GQ5Z6H04F",
+        "details": {
+          "field": "1"
+        }
+      }
+    }
+  },
+  {
+    "name": "limit-zero",
+    "status": 400,
+    "request_id": "req_01M33ZM2YZVTKFQB77NQ807GK4",
+    "body": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "limit: Input should be greater than or equal to 1",
+        "request_id": "req_01M33ZM2YZVTKFQB77NQ807GK4",
+        "details": {
+          "field": "limit"
+        }
+      }
+    }
+  },
+  {
+    "name": "cursor-missing",
+    "status": 404,
+    "request_id": "req_01M33ZM32QKXP9DCA61SNEAQ7S",
+    "body": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "Message not found in this session",
+        "request_id": "req_01M33ZM32QKXP9DCA61SNEAQ7S"
+      }
+    }
+  }
+]

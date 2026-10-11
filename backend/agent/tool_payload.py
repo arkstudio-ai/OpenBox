@@ -54,8 +54,38 @@ def _compact(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _encoding_cached_locally() -> bool:
+    """Whether tiktoken can load its vocabulary without going online.
+
+    ``get_encoding`` downloads the BPE file with a blocking ``requests`` call
+    and no timeout. Inside the agent loop that call runs on the event loop,
+    and on a host that cannot reach openaipublic.blob.core.windows.net it
+    stalled the whole process for over a minute (health checks timed out,
+    the run lost its lease). The image bakes the vocabulary into
+    ``TIKTOKEN_CACHE_DIR``; with nothing cached, the estimate below is used.
+    """
+    import os
+    import tempfile
+
+    # The same lookup order tiktoken itself uses, ending with its default
+    # cache under the temp dir (which a developer machine fills on first use).
+    candidates = [os.environ.get("TIKTOKEN_CACHE_DIR"), os.environ.get("DATA_GYM_CACHE_DIR"),
+                  os.path.join(tempfile.gettempdir(), "data-gym-cache")]
+    for cache_dir in candidates:
+        if not cache_dir:
+            continue
+        try:
+            if any(os.scandir(cache_dir)):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 @lru_cache(maxsize=1)
 def _proxy_encoding():
+    if not _encoding_cached_locally():
+        return None
     try:
         import tiktoken
 

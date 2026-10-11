@@ -2010,9 +2010,10 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
 
     duration = approved["duration"]
     billed = "model-chosen length" if duration == -1 else f"{duration}s"
-    from billing.media import billing_status_lines, quote_generation
+    from billing.media import billing_status_lines
+    from billing.partner import quote_generation_for_session
 
-    price = quote_generation(target.model, approved["resolution"], None if duration == -1 else duration)
+    price = await quote_generation_for_session(ctx.session_id, target.model, approved["resolution"], None if duration == -1 else duration)
     price_lines = (
         [f"estimated_credits={format(price.credits.normalize(), 'f')}",
          f"per_second_credits={price.snapshot['per_second']}  seconds_billed={price.minutes_billed}"]
@@ -2255,10 +2256,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             # A marketing-autopilot run fixes model/resolution and owns the budget:
             # enforce both here so a paid submit can never drift from the template.
             from autopilot import ledger as _autopilot
-            from billing.media import quote_generation as _quote_generation
+            from billing.partner import quote_generation_for_session as _quote_generation
 
             _autopilot.check_lock(ctx.session_id, model_id=target.model, resolution=resolution)
-            _quote = _quote_generation(target.model, resolution, None if duration == -1 else duration)
+            _quote = await _quote_generation(ctx.session_id, target.model, resolution, None if duration == -1 else duration)
+            if _quote.snapshot.get("partner") and _quote.credits is None:
+                raise _RequestError(f"This resolution is not offered by your tariff tier: {_quote.snapshot.get('reason')}")
             if getattr(target, "channel", "ark") == "runninghub" and _quote.credits is None:
                 raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
             _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
@@ -2314,9 +2317,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
-            if channel == "runninghub":
-                # The actual job owns this quote, so a rates update during a
-                # long-running generation cannot change its eventual charge.
+            if channel == "runninghub" or _quote.snapshot.get("partner"):
+                # The actual job owns this quote, so a rates (or tariff) update
+                # during a long-running generation cannot change its charge.
                 request_data["billing_quote"] = {
                     "model_id": _quote.model_id, "tier": _quote.tier,
                     "quantity": _quote.minutes_billed, "credits": str(_quote.credits),

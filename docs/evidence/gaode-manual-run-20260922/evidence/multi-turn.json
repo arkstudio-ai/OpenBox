@@ -1,0 +1,172 @@
+{
+  "data": [
+    {
+      "id": "msg_01M34W0Y8PFE69TCTQH3WYE9XD",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:33:49Z",
+      "updated_at": "2026-09-22T15:33:49Z",
+      "parts": [
+        {
+          "type": "file",
+          "id": "prt_01M34W0Y8ZDREKVAW60TEZQ4BP",
+          "file": {
+            "id": "fil_01M34W02QT3GZ71FM7GJPR8BT7",
+            "filename": "same-name.png",
+            "mime_type": "image/png",
+            "size": 82,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[redacted URL]",
+            "role": "input"
+          }
+        },
+        {
+          "type": "file",
+          "id": "prt_01M34W0Y8ZDREKVAW60TEZQ4BQ",
+          "file": {
+            "id": "fil_01M34W04JCEGFZFN959CABDSPM",
+            "filename": "same-name.png",
+            "mime_type": "image/png",
+            "size": 82,
+            "duration_s": null,
+            "width": null,
+            "height": null,
+            "url": "[redacted URL]",
+            "role": "input"
+          }
+        },
+        {
+          "type": "text",
+          "id": "prt_01M34W0Y8ZDREKVAW60TEZQ4BR",
+          "text": "接口手册验收，不生成媒体、不联网。请确认收到两张图片，然后用 question 工具出三题确认卡：单选 A/B（custom=false）；多选甲/乙/丙（custom=false）；自由输入（custom=true，无选项）。收到回答后准确复述并结束，不再出卡。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34W0Y8PFE69TCTQH3WYE9XE",
+      "role": "assistant",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:33:50Z",
+      "updated_at": "2026-09-22T15:35:20Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M34W1B5VS8RBZMS7HVJZ0Q7Q",
+          "text": "已确认收到两张图片（分别为红底与蓝底图片，同名 `same-name.png`）。"
+        },
+        {
+          "type": "question",
+          "id": "prt_01M34W1B79DFQEV8WR6YPFA7R6",
+          "question_id": "qst_01M34W1BCEGRD4XFJ6PD1ZV5VZ",
+          "status": "answered",
+          "expires_at": "2026-09-22T15:44:02Z",
+          "questions": [
+            {
+              "header": "单选题",
+              "question": "请选择 A 或 B：",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "选项 A"
+                },
+                {
+                  "label": "B",
+                  "description": "选项 B"
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            },
+            {
+              "header": "多选题",
+              "question": "请选择甲/乙/丙（可多选）：",
+              "options": [
+                {
+                  "label": "甲",
+                  "description": "选项甲"
+                },
+                {
+                  "label": "乙",
+                  "description": "选项乙"
+                },
+                {
+                  "label": "丙",
+                  "description": "选项丙"
+                }
+              ],
+              "multiple": true,
+              "custom": false
+            },
+            {
+              "header": "自由输入",
+              "question": "请输入内容：",
+              "options": [],
+              "multiple": false,
+              "custom": true
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "prt_01M34W3PABH3173171FFXBGJZA",
+          "text": "已收到您的回答，复述如下：\n\n1. **单选题**（请选择 A 或 B）：`B`\n2. **多选题**（请选择甲/乙/丙）：`甲`、`丙`\n3. **自由输入**（请输入内容）：`手册API答卡验收`\n\n本次验收已完成。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34W3XZ6B18GC6Y4VTQ5QJEV",
+      "role": "user",
+      "finish": "stop",
+      "error": null,
+      "created_at": "2026-09-22T15:35:27Z",
+      "updated_at": "2026-09-22T15:35:27Z",
+      "parts": [
+        {
+          "type": "text",
+          "id": "prt_01M34W3XZEZ1CW0RF0QSKH2H15",
+          "text": "请再出一张继续/停止 question 卡供拒绝测试，不调用任何生成工具，拒绝后结束。"
+        }
+      ]
+    },
+    {
+      "id": "msg_01M34W3XZ6B18GC6Y4VTQ5QJEW",
+      "role": "assistant",
+      "finish": null,
+      "error": null,
+      "created_at": "2026-09-22T15:35:28Z",
+      "updated_at": "2026-09-22T15:35:34Z",
+      "parts": [
+        {
+          "type": "question",
+          "id": "prt_01M34W44CXP4FSEJ3ZSWCRHC2J",
+          "question_id": "qst_01M34W44JJ163ZH9Y7NKNXRX98",
+          "status": "pending",
+          "expires_at": "2026-09-22T15:45:34Z",
+          "questions": [
+            {
+              "header": "流程确认",
+              "question": "请选择继续或停止：",
+              "options": [
+                {
+                  "label": "继续",
+                  "description": "继续当前流程"
+                },
+                {
+                  "label": "停止",
+                  "description": "停止并结束流程"
+                }
+              ],
+              "multiple": false,
+              "custom": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

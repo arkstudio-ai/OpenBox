@@ -1,0 +1,8 @@
+{
+  "text": "接口手册验收，不生成媒体、不联网。请确认收到两张图片，然后用 question 工具出三题确认卡：单选 A/B（custom=false）；多选甲/乙/丙（custom=false）；自由输入（custom=true，无选项）。收到回答后准确复述并结束，不再出卡。",
+  "attachments": [
+    "fil_01M34W02QT3GZ71FM7GJPR8BT7",
+    "fil_01M34W04JCEGFZFN959CABDSPM"
+  ],
+  "client_message_id": "manual-cards-1"
+}

@@ -1,0 +1,9 @@
+2026-09-22 07:14:39,471 [openbox.config] INFO Loaded config from /app/openbox.json
+2026-09-22 07:14:39,502 [openbox.db] INFO Database engine initialized: postgres:5432/openbox
+[{"id": "session_7YBWW0TFN4EC10ER1C70HKWWK1", "status": "idle", "quality": "medium", "video_model": "wan3.0-video", "video_resolution": "1080p"}, {"id": "session_7YBWW0R2FK3G33C33HR5E12D01", "status": "waiting_input", "quality": "medium", "video_model": "wan3.0-video", "video_resolution": "1080p"}]
+[{"id": "01M33ZB34YGHC42JA73YX78P4D", "session_id": "session_7YBWW0TFN4EC10ER1C70HKWWK1", "status": "answered", "expires_at": null, "created_at": "2026-09-22 07:12:33.438853+00:00"}, {"id": "01M33ZCQBYA9AGKJNGGJJ4FE27", "session_id": "session_7YBWW0TFN4EC10ER1C70HKWWK1", "status": "rejected", "expires_at": null, "created_at": "2026-09-22 07:13:26.910640+00:00"}, {"id": "01M33ZBYK80M8B3WWY7AB0G1S8", "session_id": "session_7YBWW0R2FK3G33C33HR5E12D01", "status": "answered", "expires_at": null, "created_at": "2026-09-22 07:13:01.544800+00:00"}, {"id": "01M33ZEFENWYRSR0M393F9BXVT", "session_id": "session_7YBWW0R2FK3G33C33HR5E12D01", "status": "pending", "expires_at": null, "created_at": "2026-09-22 07:14:24.341608+00:00"}]
+[{"id": "key_01M31QPV8Q36CFJHZXJ7V2GT08", "policy": {"question": "auto_reject", "permission": "auto_allow", "allowed_tools": [], "interaction_timeout_s": 600, "max_concurrent_sessions": 5}, "rate_limit": null}]
+api/v1/messages.py 6b8616783a10d8af322582b7718834572fb1c188c1b586ff8b10d615ca97a907
+api/v1/questions.py 634520c4bbe8f224bf6d425d3a90b05eb7fe2ee29325ea269c070bf42f052408
+tool/question_tool.py 63dff261304f41c2583626a67553c22ea89f16c3a84411c461ad020ab3fcf098
+question/question.py 177ebdf40fe80ba52c1b02db8e99fa4fd9347016f464c20301667f12c9e12d2e

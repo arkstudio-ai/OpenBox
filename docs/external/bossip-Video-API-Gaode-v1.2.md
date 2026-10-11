@@ -14,7 +14,7 @@
 |---|---|---|
 | v1.0 | 2026-09-18 | 首版，最小接口集与待确认问题 |
 | v1.1 | 2026-09-21 | 回写高德确认结果：轮询为主、服务端调用、成片拉取签名 URL；模型参数改为质量 / 标准 / 灵活三档；固化视频规格默认值；删除已确认问题 |
-| v1.2 | 2026-10-10 | 对外品牌统一为 bossip；新增 `ultra` 极致档与 `medium` 的 720p 选项；新增查询生成档位、查询账户、积分消费记录、消费汇总四个接口；计费说明补充阶梯计费与对账口径（单价见价目表附件） |
+| v1.2 | 2026-10-10 | 对外品牌统一为 bossip；档位扩为极致 / 质量 / 标准 / 快速 / 灵活五档，按默认分辨率定价、换分辨率乘倍率与 `medium` 的 720p 选项；新增查询生成档位、查询账户、积分消费记录、消费汇总四个接口；计费说明补充阶梯计费与对账口径（单价见价目表附件） |
 
 ---
 
@@ -206,8 +206,8 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | title | string | 否 | 会话标题，便于后台查看 |
-| quality | string | 否 | 生成档位 `ultra` / `high` / `medium` / `low`，缺省 `medium`，见 6.3 |
-| resolution | string | 否 | 输出分辨率，缺省为档位默认值；目前仅 `medium` 可选 `720p`，见 6.3 |
+| quality | string | 否 | 生成档位 `ultra` / `high` / `medium` / `fast` / `low`，缺省 `medium`，见 6.3 |
+| resolution | string | 否 | 输出分辨率，缺省为档位默认值；可选值与倍率见 6.3 |
 | metadata | object | 否 | 接入方自定义键值，用于对账，最多 16 个键，值为字符串 |
 
 ```json
@@ -246,17 +246,18 @@
 
 ### 6.3 生成档位
 
-`quality` 与 bossip 网页端的视频档位一致，接入方无需关心底层模型名称。分辨率按档位预置，`medium` 可通过 `resolution` 选 `720p`。
+`quality` 与 bossip 网页端的视频档位一致，接入方无需关心底层模型名称。每个档位有默认分辨率，按默认分辨率定价；通过 `resolution` 选择其他分辨率时，单价 × 该档位的分辨率倍率。
 
-| 代号 | 名称 | 输出分辨率 | 单镜最长 | 说明 |
-|---|---|---|---|---|
-| `ultra` | 极致 | 1080p | 30 秒 | 长叙事与全模态参考（首尾帧、参考音频），单价最高 |
-| `high` | 质量 | 1080p | 15 秒 | 画质优先，适合正式成片 |
-| `medium` | 标准 | 1080p（可选 720p） | 30 秒 | 日常短视频的均衡选择，**默认** |
-| `low` | 灵活 | 768p | 15 秒 | 快速出片、成本最低，适合预览效果；**该档不支持 1080p** |
+| 代号 | 名称 | 默认分辨率 | 可选分辨率（倍率） | 单镜最长 | 说明 |
+|---|---|---|---|---|---|
+| `ultra` | 极致 | 1080p（×1） | 720p ×0.4、480p ×0.2 | 30 秒 | 长叙事与全模态参考（首尾帧、参考音频），单价最高 |
+| `high` | 质量 | 1080p（×1） | 720p ×0.4、480p ×0.2 | 15 秒 | 画质优先，适合正式成片 |
+| `medium` | 标准 | 720p（×1） | 1080p ×2、480p ×0.5 | 30 秒 | 日常短视频的均衡选择，**默认** |
+| `fast` | 快速 | 768p（×1） | 480p ×0.7 | 15 秒 | 快速生成，支持文字与首尾帧 |
+| `low` | 灵活 | 768p（×1） | 512p ×0.7、2K ×1.7 | 15 秒 | 成本最低，适合预览效果 |
 
 成片时长 30 秒以内由多镜拼接完成，档位只影响单镜生成，不限制成片总长。
-正式出片请使用 `ultra` / `high` / `medium`；`low` 仅适合预览效果。
+高德要求 1080p 成片时，`ultra` / `high` 直接使用默认分辨率，`medium` 需传 `resolution: "1080p"`（×2）；`fast` / `low` 最高 768p，仅适合预览。
 档位可在会话创建时指定，也可在后续需求文本中切换（如"用质量档重做"）。各档单价与阶梯见价目表附件，当前生效单价可通过 6.11 查询。
 
 ---
@@ -394,17 +395,18 @@
   "unit": "credits_per_output_second",
   "billing_month": "2026-10",
   "tiers": [
-    { "quality": "ultra",  "name": "极致", "resolutions": ["1080p"],          "max_shot_seconds": 30, "price": { "1080p": "8.30" }, "ladder": 1 },
-    { "quality": "high",   "name": "质量", "resolutions": ["1080p"],          "max_shot_seconds": 15, "price": { "1080p": "5.55" }, "ladder": 1 },
-    { "quality": "medium", "name": "标准", "resolutions": ["1080p", "720p"],  "max_shot_seconds": 30, "price": { "1080p": "2.70", "720p": "1.40" }, "ladder": 1 },
-    { "quality": "low",    "name": "灵活", "resolutions": ["768p"],           "max_shot_seconds": 15, "price": { "768p": "0.25" }, "ladder": 1 }
+    { "quality": "ultra",  "name": "极致", "default_resolution": "1080p", "max_shot_seconds": 30, "base_price": "8.30", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.2" }, "ladder": 1 },
+    { "quality": "high",   "name": "质量", "default_resolution": "1080p", "max_shot_seconds": 15, "base_price": "5.55", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.2" }, "ladder": 1 },
+    { "quality": "medium", "name": "标准", "default_resolution": "720p",  "max_shot_seconds": 30, "base_price": "1.40", "multipliers": { "720p": "1", "1080p": "2", "480p": "0.5" }, "ladder": 1 },
+    { "quality": "fast",   "name": "快速", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.80", "multipliers": { "768p": "1", "480p": "0.7" }, "ladder": 1 },
+    { "quality": "low",    "name": "灵活", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.25", "multipliers": { "768p": "1", "512p": "0.7", "2k": "1.7" }, "ladder": 1 }
   ]
 }
 ```
 
 | 字段 | 说明 |
 |---|---|
-| price | 每成片秒积分，十进制字符串 |
+| base_price | 默认分辨率下每成片秒积分，十进制字符串；实际单价 = base_price × multipliers[resolution] |
 | ladder | 本月该档位当前所处阶梯（1 / 2 / 3） |
 
 ---
@@ -420,7 +422,7 @@
   "balance": "18234.50",
   "billing_month": "2026-10",
   "month_usage": {
-    "output_seconds": { "ultra": 0, "high": 1200, "medium": 3450, "low": 0 },
+    "output_seconds": { "ultra": 0, "high": 1200, "medium": 3450, "fast": 0, "low": 0 },
     "llm_tokens": 12840000,
     "credits": "17655.00"
   },
@@ -460,9 +462,11 @@
       "quality": "medium",
       "resolution": "1080p",
       "quantity": { "seconds": 12 },
-      "unit_price": "2.70",
+      "base_price": "1.40",
+      "multiplier": "2",
+      "unit_price": "2.80",
       "ladder": 1,
-      "credits": "32.40",
+      "credits": "33.60",
       "status": "charged",
       "note": "镜头 2/4"
     },
@@ -733,7 +737,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 1 | 测试 / 生产环境地址与 API Key | bossip | 开发完成后提供 |
 | 2 | 各档位单价 | 双方商务 | 已出价目表附件（2026-10-10），待签署 |
 | 3 | 开发周期与联调时间 | bossip | 由开发方（麦兔）评估后另行同步 |
-| 4 | `low` 档最高 768p | 高德 | 与 1080p 要求不符，请确认是否需要开放该档位；不需要则接口只接受 `ultra` / `high` / `medium` |
+| 4 | `fast` / `low` 档最高 768p | 高德 | 与 1080p 要求不符，请确认是否需要开放这两档；不需要则接口只接受 `ultra` / `high` / `medium` |
 | 5 | 阶梯累计口径 | 双方商务 | 按各档位分别累计，还是所有档位合计秒数累计；价目表试算按分别累计 |
 
 ---

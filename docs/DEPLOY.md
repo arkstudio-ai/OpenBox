@@ -29,7 +29,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-10 20:27 `20261010-pricing-3dc9b643`（管理员定价控制页、成本口径、剪辑按秒定价）
+## 当前阿里云：2026-10-11 15:22 `20261011-harness-91897a2d`（/v1 开放接口、合作方资费与阶梯计费、API Key）
+
+- 源码 `main@91897a2d`（PR [#58](https://github.com/arkstudio-ai/OpenBox/pull/58) 合并）：高德 `/v1` 开放接口（API Key 鉴权、会话/消息/确认卡/文件、`quality` 五档 + `resolution`、402 预检与限流）、`billing/partner.py` 合作方资费与阶梯计费（仅 `api_key_id` 会话生效，主线用户不受影响）、`/v1/models|me|usage|usage/summary`、`/api/admin/partners`、tiktoken 词表烤入镜像（`TIKTOKEN_CACHE_DIR=/opt/tiktoken`）与本地缓存守卫。对外文档统一为 bossip：`docs/external/bossip-Video-API-Gaode-v1.2.md` 与三份 `bossip-Gaode-*`。
+- 迁移：业务库 `pd17c8d9e0f1 → e7c9a1b3d5f0（api_keys、sessions.quality/metadata/api_key_id）→ pe28a9b0c1d2（合并点）→ pf39b0c1d2e3（partner_tariffs、partner_rebates）`；轨迹库未动。切换前两库 dump 在 `backups/20261011-harness-91897a2d/activation-*/`。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive origin/main`（backend 上下文仓库根 + container；frontend `VITE_BUILD_ID` 为 tag），经 `oss://bossip/_deploy-tmp/<tag>/` 签名链接到 gw2 `releases/<tag>/`，`sha256sum -c` 后 `docker load`，中转对象已删。脚本 `releases/20261011-harness-91897a2d/deploy_gw2_v9.sh`（v8 加 api_keys/partner 表与 /v1 路由核对）。
+- 验证：租约 0 时切换，worker 9 秒、backend 21 秒、frontend 15 秒 healthy；容器内 `catalogue()` 仍 `2026-10-10.2`，gemini 1M 输入售 5.084 / 成本 6、wan3 720p 10 s 售 6（平台价未变）；默认合作方资费 `2026-10-11.1` 五档；`/v1` 路由齐全，前端 nginx 含 `/v1/` 代理；公网 `/api/environment` 200、`/v1/sessions` 与 `/v1/models` 匿名 401、`/api/admin/partners` 匿名 401。
+- 回滚：恢复 `backups/.../docker-compose.override.yml`，旧镜像不认识新修订，启动前 `alembic stamp --purge pd17c8d9e0f1`（新表保留），再依次 `up -d --no-deps trajectory-worker / backend / frontend`。
+
+## 历史阿里云：2026-10-10 20:27 `20261010-pricing-3dc9b643`（管理员定价控制页、成本口径、剪辑按秒定价）
 
 - 源码 `main@3dc9b643`（PR [#67](https://github.com/arkstudio-ai/OpenBox/pull/67)）。方案 [ADMIN_PRICING_PLAN.md](ADMIN_PRICING_PLAN.md)，计费说明见 [CREDIT_BILLING.md](CREDIT_BILLING.md) 10-10 两条。后端、前端、trajectory-worker 三个服务统一到本 tag（worker 从 `20261009-assistant-media-cb9b3fb3` 跟上）。
 - 内容：`rates.json` 每条价目加 `cost` 块（gemini 按 RovinAI、Seedance 按 TokenHub、H3 按秘塔、Turbo 按 RunningHub、Wan 按百炼、IMS/语音按刊例）；新表 `pricing_rules` 承载管理员覆盖，`catalogue()` 叠加后输出形状不变；`usage_events.cost_credits` 记成本；超管新板块 `/app/admin/pricing`（成本 / 售价 / 毛利 / 30 天用量，改价即时生效、审计、历史、撤销、停用）；API `/api/admin/pricing`。

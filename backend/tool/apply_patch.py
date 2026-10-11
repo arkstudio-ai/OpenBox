@@ -82,7 +82,9 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
             elif op["type"] == "delete":
                 if captures_files(ctx):
                     try:
-                        before = _strip_line_numbers(await ctx.sandbox.read_file(op["path"], offset=0, limit=100000))
+                        # An absent path is an answer, not an uncertain request.
+                        previous = await ctx.sandbox.read_file_if_exists(op["path"], offset=0, limit=100000)
+                        before = _strip_line_numbers(previous) if previous is not None else None
                     except Exception:
                         pass
                 outcome = await ctx.sandbox.execute(f"rm -f -- {shlex.quote(op['path'])}")

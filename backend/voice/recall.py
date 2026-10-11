@@ -11,7 +11,7 @@ same with the same authority (user, workspace, main session):
   memories the typed assistant answered from, while the front desk only had
   the profile and preference ones and said it knew nothing.
 - ``search``: one question across memories, documents and knowledge pages,
-  for ``memory_search`` and the recall each utterance starts (voice/router.py).
+  for ``memory_search`` on demand from the realtime model.
   The personal-scope keyword search used before missed the project memory.
 
 What comes back is data, never instructions; texts are bounded and stripped of

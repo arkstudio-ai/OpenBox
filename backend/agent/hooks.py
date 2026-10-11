@@ -345,12 +345,18 @@ class ToolHooks:
             except ValidationError:
                 pass  # The normal tool argument validator reports invalid input.
             except (AssistantError, EffectLedgerError) as exc:
+                from assistant.resource_observations import failure_metadata
                 observation_required = getattr(exc, "code", None) == "RESOURCE_OBSERVATION_REQUIRED"
+                diagnosis = failure_metadata(exc)
+                log.info("Desktop input refused before dispatch session_id=%s part_id=%s code=%s reason=%s",
+                    ctx.session_id, part_id, getattr(exc, "code", type(exc).__name__),
+                    diagnosis.get("observation_reason"))
                 blocked = ToolResult(title="Desktop operation unavailable",
                     output=(str(exc) if observation_required else
                         "This call cannot use its original resource control. Read the current state before requesting a new operation."),
                     metadata={"blocked": True, "error_code":
-                        "RESOURCE_OBSERVATION_REQUIRED" if observation_required else "RESOURCE_CONTROL_HELD"})
+                        "RESOURCE_OBSERVATION_REQUIRED" if observation_required else "RESOURCE_CONTROL_HELD",
+                        **diagnosis})
         if blocked is None:
             # Authorization runs before the body context is installed. Keep
             # probes and permission receipts on this call, never the previous

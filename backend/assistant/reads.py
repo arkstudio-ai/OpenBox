@@ -172,6 +172,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
         newest_control = aliased(AssistantCommand, ranked_controls)
         controls = {row.target_id: row for row in (await db.scalars(
             select(newest_control).where(ranked_controls.c.rank == 1))).all()}
+        from assistant.blocking import blocked_views
+        blocked = await blocked_views(db, [execution for _, execution in scoped])
         values = []
         for task, execution in scoped:
             result_row = latest.get(task.latest_result_id)
@@ -186,7 +188,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                 "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
                 "run_id": item.run_id if item else None, "generation": item.generation if item else None,
             } if submission else None
-            if submission and (submission.delivery == "steer" or item and item.state == "canceled"):
+            if submission and (submission.delivery == "steer" or item and (
+                    item.state == "canceled" or item.outcome == "not_run")):
                 submission_view.update(delivery=submission.delivery,
                     expected_run=(item.origin_ref or {}).get("expected_run") if item else None,
                     state=item.state if item else None, error=item.error if item else None)
@@ -196,7 +199,10 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                      "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                      "phase": driver.phase} if driver else None,
                      "latest_submission": submission_view,
-                     "pending_requests_location": "execution_session"}
+                     "pending_requests_location": "execution_session",
+                     # The card the conversation waits on (e.g. a desktop takeover): queued
+                     # input runs after the user handles it there, at its link.
+                     "blocked_by": blocked.get(execution.id)}
             control = controls.get(task.id)
             if control is not None:
                 value["latest_control"] = {"command_id": control.id, "action": control.action,

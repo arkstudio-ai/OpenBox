@@ -138,6 +138,11 @@ class ArchiveBody(Body):
     expected_revision: int = Field(ge=1, strict=True)
 
 
+class AcknowledgeEffectsBody(Body):
+    idempotency_key: Identity
+    expected_revision: int = Field(ge=1, strict=True)
+
+
 class RetryBody(Body):
     idempotency_key: Identity
     expected_report_attempt: int = Field(ge=1, strict=True)
@@ -445,6 +450,18 @@ async def task_command(task_id: str, body: TaskCommandBody, background_tasks: Ba
         expected_run=body.input.expected_run.model_dump() if body.input.expected_run else None, **_input(body.input))
     schedule_inbox_wake(receipt["execution_session_id"], scope["user_id"])
     return receipt
+
+
+@router.post("/tasks/{task_id}/effects/acknowledge")
+async def acknowledge_task_effects(task_id: Identity, body: AcknowledgeEffectsBody,
+                                   current_user: dict = Depends(get_current_user)):
+    """The owner checked the desktop: release the task's parked unknown outcomes ("我已核对，继续").
+
+    Parked desktop effects become failed/acknowledged_unverified and unknown
+    tool outcomes stop blocking resume and continuation. Nothing is resent.
+    """
+    from assistant.control import acknowledge_effects
+    return await acknowledge_effects(**await _scope(current_user), task_id=task_id, **body.model_dump())
 
 
 @router.get("/commands/{command_id}")

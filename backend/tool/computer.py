@@ -712,9 +712,14 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
     except RunRevoked:
         raise
     except Exception as exc:
+        from assistant.resource_observations import failure_metadata
+        diagnosis = failure_metadata(exc)
+        if diagnosis:
+            log.info("computer %s refused session_id=%s part_id=%s reason=%s", args.action,
+                ctx.session_id, ctx.part_id, diagnosis["observation_reason"])
         return _finalize_result(ToolResult(title="computer unavailable",
             output=f"The shared desktop operation could not proceed: {str(exc)[:300]}",
-            metadata={"error": True}), args.action, started)
+            metadata={"error": True, **diagnosis}), args.action, started)
 
 
 async def _execute_with_lease(args: ComputerArgs, ctx: ToolContext, started: float) -> ToolResult:

@@ -1,4 +1,4 @@
-"""Keeping a long call's context small: summaries, deleted items and a fresh provider session.
+"""Keeping a long call's context small and its provider session open.
 
 Measured on QA (2026-10-07): a 520 s call had sent 73k input tokens, every
 reply re-reading every word said and every result read out. Every 10 user
@@ -8,11 +8,20 @@ items (and notes delivered three replies ago) are deleted, oldest first.
 After 25 minutes or 120k tokens the bridge opens a fresh provider session
 with the memo; the client never notices (``max_call_seconds`` stays the
 user-facing limit).
+
+Measured 2026-10-10: the provider closes a session that has gone without a
+model response for 180 s (Audio 3.1) or 300 s (Omni), close 1007
+``response_idle_timeout``; silent input audio does not count. On 2026-10-09
+13 of 62 calls ended that way while the user waited for a task or used the
+cloud desktop. A text-only reply nobody hears (``provider.KEEPALIVE``),
+asked for once ``keepalive_seconds`` have passed without any response,
+keeps the session open (measured: 400 s on both models, no errors).
 """
 import asyncio
 from contextlib import suppress
 
 from core.log import create_logger
+from voice.models import is_audio
 from voice.transcript import CallTranscript
 
 log = create_logger("voice.upkeep")
@@ -24,12 +33,24 @@ KEEP_ITEMS = 8           # the latest exchanges stay as they are
 NOTE_KEEP_REPLIES = 3    # a delivered note stays for the replies right after it
 SUMMARY_WAIT_SECONDS = 15.0
 LAST_LINES, LAST_CHARS = 6, 600
+# Seconds without a response before a silent one: a minute below the provider's limit (180 s / 300 s).
+AUDIO_KEEPALIVE_SECONDS, OMNI_KEEPALIVE_SECONDS = 120, 240
+
+
+def keepalive_seconds(model: str, configured: int | None = None) -> int:
+    """``voice.keepalive_seconds`` when set (validated to stay well below both limits), else the model's own."""
+    if configured is not None:
+        return configured
+    return AUDIO_KEEPALIVE_SECONDS if is_audio(model) else OMNI_KEEPALIVE_SECONDS
 
 
 class ContextKeeper:
-    def __init__(self, transcript: CallTranscript, *, clock, summarizer=None, protected=lambda: set()):
+    def __init__(self, transcript: CallTranscript, *, clock, summarizer=None, protected=lambda: set(),
+                 keepalive_after: float | None = None):
         self.transcript, self.clock, self.protected = transcript, clock, protected
         self.summarizer = summarizer
+        self.keepalive_after = keepalive_after  # None: never (a bridge without a provider limit to mind)
+        self.responded_at = clock()             # the session's last response, or its start
         self.summary = ""            # the call so far, for the prompt
         self.carried = ""            # the latest lines word for word, after a rotation, until the next memo
         self.covered = 0             # transcript lines the summary covers
@@ -101,6 +122,13 @@ class ContextKeeper:
             return False
         return now - self.session_started >= ROTATE_SECONDS or self.input_tokens > ROTATE_INPUT_TOKENS
 
+    def responded(self) -> None:
+        """Any ``response.done`` (finished, cancelled or silent): the provider's idle clock starts again."""
+        self.responded_at = self.clock()
+
+    def keepalive_due(self) -> bool:
+        return self.keepalive_after is not None and self.clock() - self.responded_at >= self.keepalive_after
+
     async def summary_now(self) -> str:
         """The memo covering the whole call, made now if needed (bounded); the old one on failure."""
         if self.task is None and self.covered < len(self.transcript.lines):
@@ -116,7 +144,9 @@ class ContextKeeper:
         self.carried = text if len(text) <= LAST_CHARS else "…" + text[-LAST_CHARS:]
 
     def rotated(self) -> None:
+        """A fresh session (a rotation, or one opened after the provider dropped the last)."""
         self.session_started, self.input_tokens, self.retry_rotation_at = self.clock(), 0, None
+        self.responded_at = self.session_started
         self._deletions, self._notes = [], []
 
     def rotation_failed(self) -> None:

@@ -246,7 +246,7 @@ async def test_document_derived_task_records_no_derivation_and_deletion_is_not_r
     from tests.unit.assistant_source_fixtures import consume_context
     identity, _, _, config = await seed(monkeypatch)
     document, store = await upload(identity, config)
-    ctx, lease, answer = await start(identity)
+    ctx, lease, answer = await start(identity, prompt="Read the source, then create the derived draft in a new conversation in this project.")
     try:
         result, _, _ = await call_tool(ctx, "memory.search", {"query": "DOC_CANARY"})
         assert not result.metadata.get("error"), result.output
@@ -254,7 +254,7 @@ async def test_document_derived_task_records_no_derivation_and_deletion_is_not_r
         result, _, _ = await call_tool(ctx, "memory.read", {"source_ref": ref})
         assert not result.metadata.get("error"), result.output
         await consume_context(ctx)
-        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id,
+        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id, "destination_confirmed": True,
             "title": "Document-derived draft", "instructions": "Draft a private summary with file attribution.",
             "source_message_ids": [answer.parent_id]})
         assert not result.metadata.get("error"), result.output

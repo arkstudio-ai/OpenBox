@@ -1,8 +1,8 @@
 """Bailian realtime client for one call: connect, configure, translate, send.
 
 Only this module speaks the provider's protocol. The bridge sees
-``ProviderEvent`` values; raw provider error text never leaves this module
-except in a QA-only debug log line with the key scrubbed.
+``ProviderEvent`` values; a provider error's message reaches only the server
+log (key scrubbed, cut to 200 characters), never a client.
 """
 import asyncio
 import base64
@@ -25,6 +25,15 @@ TOOLS = tools.schemas()
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 RETRY_PAUSE_SECONDS = 0.5
 RACE_HEAD_START_SECONDS = 0.4  # the first route usually opens in 0.15-0.25 s
+ERROR_MESSAGE_CHARS = 200
+# A reply nobody hears (voice/upkeep.py): measured 2026-10-10 on Audio and Omni, answered with "嗯" and no audio.
+KEEPALIVE = "这是系统保活，不要说话，只输出一个字：嗯"
+_PROMPT_LEAD = "（后台播报要求，不是用户发言，也不是要转交的新任务。仅适用于紧接着的一次回复。）\n"
+# An error about something other than a reply we asked for: an item, the session prompt, a tool output.
+UNRELATED = frozenset({"item", "session", "duplicate_output"})
+# A key or an account the provider refuses: a fresh session would be refused too.
+_DENIED = ("invalidapikey", "invalid api-key", "invalid api key", "unauthorized", "authentication", "accessdenied",
+           "access denied", "forbidden", "arrearage", "quota")
 
 
 class ProviderUnavailable(Exception):
@@ -46,36 +55,65 @@ class ProviderEvent:
     usage: dict | None = None
     invalid: bool = False
     code: str = ""
-    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / item / other.
+    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / item / session /
+    # session_closed / denied / other; ``param`` is the client event it concerns, ``text`` its scrubbed message.
     reason: str = ""
-    # Conversation items (item_created / item_deleted / transcripts): the provider's own item id.
+    param: str = ""
+    # Conversation items (item_created / item_deleted / output_item / transcripts): the provider's own item id.
     item_id: str = ""
     role: str = ""
     item_type: str = ""
 
 
-def classify_error(message: str) -> str:
-    text = message.lower()
+def classify_error(message: str, param: str = "", code: str = "") -> str:
+    """What an error means for the call. The client event it names (``param``) decides before the wording.
+
+    Measured on Audio (2026-10-10): deleting an item the provider no longer
+    has (it keeps ``max_history_turns``) says "Cannot find item with id"
+    (param ``conversation.item.delete``); a mid-call ``session.update`` with
+    ``turn_detection`` or ``voice`` is refused (param ``session.update``); a
+    session without a response for 180 s is closed (``response_idle_timeout``).
+    """
+    text, param, code = message.lower(), param.lower(), code.lower()
+    if code == "response_idle_timeout" or "session was closed" in text:
+        return "session_closed"
+    if "voice" in text and "not supported" in text:
+        return "voice_unsupported"
+    if any(word in code or word in text for word in _DENIED):
+        return "denied"
+    if param.startswith("conversation.item"):
+        return "item"
+    if param == "session" or param.startswith("session."):
+        return "session"
     if "active response" in text:
         return "active_response"
     if "duplicate" in text and "output" in text:
         return "duplicate_output"
-    if "voice" in text and "not supported" in text:
-        return "voice_unsupported"
     if "without input" in text or "no user message" in text or "no messages" in text:
         return "no_input"
     if ("item" in text and ("not found" in text or "not exist" in text or "invalid" in text)) or (
-            "function call id" in text or "call_id" in text):
+            "cannot find item" in text or "function call id" in text or "call_id" in text):
         # A delete or create of an item, or a tool output for a call the provider dropped ("Unknown function
         # call id", 2026-10-08): never a refused response, though our delivery request may be pending.
         return "item"
     return "other"
 
 
-def translate(event: dict) -> ProviderEvent | None:
+def refuses_reply(reason: str, param: str) -> bool:
+    """Whether an error refused a ``response.create`` of ours; anything else leaves the request pending."""
+    return reason in ("active_response", "no_input") or (param.startswith("response.create")
+                                                         and reason not in UNRELATED)
+
+
+def scrub(message: str, key: str) -> str:
+    """A provider message fit for the log: never the key, at most 200 characters (cut after scrubbing)."""
+    return (message.replace(key, "[hidden]") if key else message)[:ERROR_MESSAGE_CHARS]
+
+
+def translate(event: dict, key: str = "") -> ProviderEvent | None:
     kind = event.get("type")
     if kind == "input_audio_buffer.speech_started":
-        return ProviderEvent("user_started")
+        return ProviderEvent("user_started", item_id=str(event.get("item_id") or ""))
     if kind == "input_audio_buffer.speech_stopped":
         return ProviderEvent("user_stopped", invalid=event.get("reason") == "turn_invalid")
     if kind == "conversation.item.input_audio_transcription.completed":
@@ -90,6 +128,11 @@ def translate(event: dict) -> ProviderEvent | None:
                              call_id=str(item.get("call_id") or ""))
     if kind == "conversation.item.deleted":
         return ProviderEvent("item_deleted", item_id=str(event.get("item_id") or ""))
+    if kind == "response.output_item.added":
+        # Which reply an item belongs to (conversation.item.created does not say): a silent reply's go after it.
+        item = event.get("item") or {}
+        return ProviderEvent("output_item", response_id=event.get("response_id"), item_id=str(item.get("id") or ""),
+                             role=str(item.get("role") or ""), item_type=str(item.get("type") or ""))
     if kind == "response.created":
         return ProviderEvent("response_started", response_id=(event.get("response") or {}).get("id"))
     if kind == "response.audio.delta":
@@ -114,8 +157,9 @@ def translate(event: dict) -> ProviderEvent | None:
                              status=str(response.get("status") or "completed"), usage=response.get("usage"))
     if kind == "error":
         error = event.get("error") or {}
-        return ProviderEvent("provider_error", code=str(error.get("code") or "")[:80],
-                             reason=classify_error(str(error.get("message") or "")))
+        message, param, code = (str(error.get(name) or "") for name in ("message", "param", "code"))
+        return ProviderEvent("provider_error", code=code[:80], param=param[:80], text=scrub(message, key),
+                             reason=classify_error(message, param, code))
     return None
 
 
@@ -147,6 +191,10 @@ class RealtimeProvider:
         self._prompt_items: set[str] = set()
         self._pending_prompts: set[str] = set()
         self._response_prompts: dict[str, set[str]] = {}
+        # How the session ended, once ``events`` is over: the close frame and the last error's code.
+        self.close_code: int | None = None
+        self.close_reason = ""
+        self.last_error = ""
 
     async def open(self) -> None:
         """Handshake until ``session.created``, racing the routes in ``proxy_plan``.
@@ -241,14 +289,21 @@ class RealtimeProvider:
             async for raw in ws:
                 event = json.loads(raw)
                 if event.get("type") == "error":
-                    self._debug_error(event)
-                    raise ProviderUnavailable(str((event.get("error") or {}).get("code") or "error")[:80])
+                    error = event.get("error") or {}
+                    log.info("voice provider handshake error code=%s param=%s message=%s", error.get("code") or "-",
+                             error.get("param") or "-", scrub(str(error.get("message") or ""), self._key) or "-")
+                    raise ProviderUnavailable(str(error.get("code") or "error")[:80])
                 if event.get("type") == expected:
                     return event
         raise ProviderUnavailable(f"closed before {expected}")
 
     async def events(self):
-        """Translated events until the provider closes the connection."""
+        """Translated events until the provider closes the connection.
+
+        Then ``close_code``, ``close_reason`` and ``last_error`` say how it
+        ended; the bridge logs them with the call id and decides whether the
+        call goes on in a fresh session.
+        """
         try:
             async for raw in self._ws:
                 try:
@@ -258,18 +313,14 @@ class RealtimeProvider:
                 if await self._response_prompt_event(event):
                     continue
                 if event.get("type") == "error":
-                    self._debug_error(event)
-                translated = translate(event)
+                    self.last_error = str((event.get("error") or {}).get("code") or "error")[:80]
+                translated = translate(event, self._key)
                 if translated is not None:
                     yield translated
         except websockets.exceptions.ConnectionClosed:
-            return
-
-    def _debug_error(self, event):
-        if self.debug:  # QA only (debug_transcripts); otherwise only the code reaches a log
-            message = str((event.get("error") or {}).get("message") or "")[:200]
-            log.debug("voice provider error message=%s", message.replace(self._key, "[hidden]") if self._key
-                      else message)
+            pass
+        self.close_code = getattr(self._ws, "close_code", None)
+        self.close_reason = str(getattr(self._ws, "close_reason", None) or "")[:120]
 
     async def send_audio(self, pcm: bytes) -> None:
         await self._send({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode("ascii")})
@@ -293,25 +344,42 @@ class RealtimeProvider:
     async def create_response(self, instructions: str | None = None) -> None:
         """Audio requires a user item even for a greeting; Omni supports per-response instructions."""
         if instructions and is_audio(self.config.model):
-            item_id = "voice_prompt_" + uuid.uuid4().hex
-            self._prompt_items.add(item_id)
-            self._pending_prompts.add(item_id)
-            text = ("（后台播报要求，不是用户发言，也不是要转交的新任务。仅适用于紧接着的一次回复。）\n"
-                    + instructions)
-            await self._send_many({"type": "conversation.item.create", "item": {
-                "id": item_id, "type": "message", "role": "user",
-                "content": [{"type": "input_text", "text": text}]}}, {"type": "response.create"})
+            await self._send_many(self._prompt_item(instructions), {"type": "response.create"})
             return
         event = {"type": "response.create"}
         if instructions:
             event["response"] = {"instructions": instructions}
         await self._send(event)
 
+    async def keepalive(self, empty: bool = False) -> None:
+        """A text-only reply nobody hears: the provider closes a session that goes without a response for
+        180 s (Audio) or 300 s (Omni), however much silent audio it is sent (measured 2026-10-10).
+
+        Audio refuses a reply on a conversation without a user message
+        (``empty``, e.g. a fresh session the user has not spoken in yet): there
+        the one-off prompt item goes first, as for any reply of ours.
+        """
+        event = {"type": "response.create", "response": {"modalities": ["text"], "instructions": KEEPALIVE}}
+        if empty and is_audio(self.config.model):
+            await self._send_many(self._prompt_item(KEEPALIVE), event)
+        else:
+            await self._send(event)
+
+    def _prompt_item(self, instructions: str) -> dict:
+        """Audio's one-response prompt: a user item retired with the reply it was for."""
+        item_id = "voice_prompt_" + uuid.uuid4().hex
+        self._prompt_items.add(item_id)
+        self._pending_prompts.add(item_id)
+        return {"type": "conversation.item.create", "item": {
+            "id": item_id, "type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": _PROMPT_LEAD + instructions}]}}
+
     async def _response_prompt_event(self, event: dict) -> bool:
         """Retire Audio's one-response prompts on completion, cancellation or a refused request.
 
         Keep these control items out of the user's transcript and context keeper.
         Audio preserves supplied item IDs (checked live); ordinary notes still pass through.
+        An error about an item or the session prompt refused no reply: the prompt stays for it.
         """
         kind = event.get("type")
         item_id = (event.get("item") or {}).get("id") if kind == "conversation.item.created" else event.get("item_id")
@@ -324,7 +392,7 @@ class RealtimeProvider:
             self._pending_prompts = set()
         if kind == "response.done":
             await self._delete_prompts(self._response_prompts.pop((event.get("response") or {}).get("id", ""), set()))
-        elif kind == "error" and self._pending_prompts:
+        elif kind == "error" and self._pending_prompts and _error_reason(event) not in UNRELATED:
             pending, self._pending_prompts = self._pending_prompts, set()
             await self._delete_prompts(pending)
         return False
@@ -347,6 +415,11 @@ class RealtimeProvider:
         async with self._send_lock:
             for event in events:
                 await self._ws.send(json.dumps(event, ensure_ascii=False))
+
+
+def _error_reason(event: dict) -> str:
+    error = event.get("error") or {}
+    return classify_error(*(str(error.get(name) or "") for name in ("message", "param", "code")))
 
 
 async def _quiet_close(ws) -> None:

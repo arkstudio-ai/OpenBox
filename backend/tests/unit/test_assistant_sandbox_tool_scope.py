@@ -142,9 +142,90 @@ async def test_bash_stream_loss_never_resends_through_execute(standalone, monkey
     hooks, prepared = await prepare(ctx, bash_tool, {"command": "printf fixture"}, monkeypatch)
     result = await dispatch(hooks, prepared)
     assert result.metadata["resource_outcome"] == "outcome_unknown"
+    assert result.metadata["outcome_unknown"] and result.metadata["failure_code"] == "command_stream_interrupted"
     assert [request.url.path for request in sent] == ["/execute_stream"]
     row, = await rows(ctx)
     assert row.state == "outcome_unknown" and row.attempt_count == 1
+
+
+@pytest.mark.parametrize("refusal", ["before_admission", "after_admission"])
+async def test_bash_refused_before_sending_reports_not_sent_not_unknown(standalone, resource, monkeypatch, refusal):
+    """Production 2026-10-09: a refusal must not read as an interrupted stream."""
+    from agent import effect_ledger as effects
+    ctx, sent, _ = standalone
+    hooks, prepared = await prepare(ctx, bash_tool, {"command": "printf fixture"}, monkeypatch)
+    if refusal == "before_admission":
+        await close(resource)
+    else:
+        original = effects.mark_effect_submitting
+
+        async def close_after_admission(claim):
+            await original(claim)
+            await close(resource)
+
+        monkeypatch.setattr(effects, "mark_effect_submitting", close_after_admission)
+    result = await dispatch(hooks, prepared)
+    assert not sent
+    assert result.metadata["error"] and result.metadata["failure_code"] == "command_not_sent"
+    assert result.metadata["refusal_code"] == "RESOURCE_CONTROL_HELD"
+    assert result.metadata["resource_outcome"] == "not_dispatched"
+    assert not result.metadata.get("outcome_unknown") and "not sent" in result.output
+    recorded = await rows(ctx)
+    if refusal == "before_admission":
+        assert not recorded
+    else:
+        # Admission crossed the durable send boundary, then nothing left.
+        row, = recorded
+        assert row.state == "failed" and row.last_error == {"code": "sandbox_request_not_sent"}
+    assert (await drain(resource))["tracked_operations_drained"]
+
+
+@pytest.fixture
+def file_capture(monkeypatch):
+    """Turn on executor file-version capture without a trajectory sink."""
+    changes = []
+
+    async def record(_ctx, path, *, operation, before=None, after=None):
+        changes.append({"path": path, "operation": operation, "before": before, "after": after})
+
+    monkeypatch.setattr("trajectory.files.captures_files", lambda _ctx: True)
+    monkeypatch.setattr("trajectory.files.record_file_change", record)
+    return changes
+
+
+@pytest.mark.parametrize("previous", ["missing", "existing", "unreadable"])
+async def test_write_with_file_capture_reads_previous_version_without_blocking_new_files(
+        standalone, monkeypatch, file_capture, previous):
+    """Production 2026-10-09: 21/27 first writes were refused after a 404 pre-read."""
+    ctx, sent, respond = standalone
+
+    async def files(request):
+        if request.url.path == "/read_file":
+            await respond(request)  # Confirms SQL submitting before the read.
+            if previous == "missing":
+                return httpx.Response(404, json={"detail": "File not found: /workspace/new.txt"})
+            if previous == "unreadable":
+                return httpx.Response(500, json={"detail": "fixture failure"})
+            return httpx.Response(200, json={"content": "     1\told"})
+        return await respond(request)
+
+    ctx.sandbox._transport = httpx.MockTransport(files)
+    args = {"file_path": "/workspace/new.txt", "content": "new"}
+    hooks, prepared = await prepare(ctx, write_tool, args, monkeypatch)
+    result = await dispatch(hooks, prepared)
+    paths = [request.url.path for request in sent]
+    row, = await rows(ctx)
+    if previous == "unreadable":
+        # A genuine failure still latches: the write is refused, never sent,
+        # and the call's effect stays unknown rather than succeeded.
+        assert result.metadata["error"] and result.metadata["resource_outcome"] == "outcome_unknown"
+        assert paths == ["/read_file"] and row.state == "outcome_unknown"
+        assert not file_capture
+        return
+    assert not result.metadata.get("error"), result.output
+    assert paths[:2] == ["/read_file", "/write_file"] and row.state == "succeeded"
+    change, = file_capture
+    assert change["before"] == (None if previous == "missing" else "old") and change["after"] == "new"
 
 
 async def test_swallowed_write_failure_cannot_send_a_fallback_or_publish_success(standalone, monkeypatch):

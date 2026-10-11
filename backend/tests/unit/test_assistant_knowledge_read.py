@@ -255,13 +255,13 @@ async def test_body_derived_task_records_no_derivation_and_keeps_running_after_r
     from assistant.scheduling import require_runnable
     from db.models.assistant import AssistantCommand
     from session.session import create_session
-    ctx, lease, answer, identity, _, page = await start(monkeypatch)
+    ctx, lease, answer, identity, _, page = await start(monkeypatch, prompt="Read the source, then create the derived draft in a new conversation in this project.")
     try:
         ref = await reference(identity, page)
         result, _, _ = await call_tool(ctx, "knowledge.read", {"source_ref": ref})
         assert not result.metadata.get("error"), result.output
         await consume_context(ctx)
-        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id,
+        result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id, "destination_confirmed": True,
             "title": "Body-derived text task", "instructions": "Draft text from the verified knowledge body; do not publish.",
             "source_message_ids": [answer.parent_id]})
         assert not result.metadata.get("error"), result.output

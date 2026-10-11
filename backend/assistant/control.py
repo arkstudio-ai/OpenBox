@@ -34,6 +34,15 @@ from session.internal_parts import begin_session_write
 log = create_logger("assistant.control")
 CONTROL_ACTIONS = frozenset({"pause", "resume", "cancel"})
 UNRESOLVED_EFFECTS = ("submitting", "accepted", "outcome_unknown", "manual_review")
+ACKNOWLEDGE_ACTION = "task_acknowledge_effects"
+MAX_ACKNOWLEDGED_PARTS = 256
+
+
+def effect_unresolved_message(task_id):
+    """Where a blocked continuation is released: the owner's acknowledgment."""
+    return ("Some external outcomes of this task are unverified. Check them on the desktop, then confirm "
+            "with \"我已核对，继续\" on the task card (POST /api/assistant/tasks/"
+            f"{task_id}/effects/acknowledge) before continuing")
 
 
 async def session_tree_locked(db, execution):
@@ -60,6 +69,26 @@ async def pending_resume_locked(db, task_id):
     ).order_by(AssistantCommand.created_at, AssistantCommand.id).limit(1))
 
 
+def _unknown_tool_parts(execution, session_ids):
+    metadata = type_coerce(Part.data, JSON)["metadata"]
+    return select(Part.id).where(
+        Part.user_id == execution.user_id, Part.session_id.in_(session_ids), Part.type == "tool",
+        or_(metadata["outcome_unknown"].as_boolean().is_(True),
+            metadata["recovery_code"].as_string() == "tool_outcome_unknown",
+            metadata["execution_outcome"].as_string() == "unknown"),
+    )
+
+
+async def acknowledged_parts_locked(db, execution):
+    """Tool Parts whose unknown outcome the owner explicitly acknowledged."""
+    refs = (await db.scalars(select(AssistantCommand.source_ref).join(
+        AssistantTask, AssistantTask.id == AssistantCommand.target_id).where(
+        AssistantTask.execution_session_id == execution.id, AssistantTask.user_id == execution.user_id,
+        AssistantCommand.actor_user_id == execution.user_id, AssistantCommand.target_type == "task",
+        AssistantCommand.action == ACKNOWLEDGE_ACTION, AssistantCommand.state == "applied"))).all()
+    return {part for ref in refs for part in (ref or {}).get("acknowledged_part_ids", [])}
+
+
 async def unresolved_effect_locked(db, execution, session_ids):
     effect = await db.scalar(select(ExternalEffect.id).where(
         ExternalEffect.tenant_id == execution.user_id, ExternalEffect.session_id.in_(session_ids),
@@ -68,14 +97,15 @@ async def unresolved_effect_locked(db, execution, session_ids):
     if effect:
         return True
     # A process interruption can leave an untracked tool outcome unknown.
-    # Never silently upgrade that observation to permission to dispatch again.
-    metadata = type_coerce(Part.data, JSON)["metadata"]
-    return bool(await db.scalar(select(Part.id).where(
-        Part.user_id == execution.user_id, Part.session_id.in_(session_ids), Part.type == "tool",
-        or_(metadata["outcome_unknown"].as_boolean().is_(True),
-            metadata["recovery_code"].as_string() == "tool_outcome_unknown",
-            metadata["execution_outcome"].as_string() == "unknown"),
-    ).limit(1)))
+    # Never silently upgrade that observation to permission to dispatch again;
+    # only the owner's acknowledgment (acknowledge_effects) releases it.
+    unknown = _unknown_tool_parts(execution, session_ids)
+    if not await db.scalar(unknown.limit(1)):
+        return False
+    acknowledged = await acknowledged_parts_locked(db, execution)
+    if acknowledged:
+        unknown = unknown.where(Part.id.not_in(sorted(acknowledged)))
+    return bool(await db.scalar(unknown.limit(1)))
 
 
 async def cancel_unclaimed_locked(db, task, execution, now):
@@ -179,7 +209,7 @@ async def _resume_plan_locked(db, task, execution, ids):
     ).limit(1)):
         raise _conflict(task, "ASSISTANT_STILL_STOPPING", "Wait for the original runs to stop before continuing")
     if await unresolved_effect_locked(db, execution, ids):
-        raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", "Verify outstanding external outcomes before continuing")
+        raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", effect_unresolved_message(task.id))
     pending = await db.scalar(select(QuestionCheckpoint.id).where(
         QuestionCheckpoint.session_id == execution.id, QuestionCheckpoint.user_id == task.user_id,
         QuestionCheckpoint.status == "pending",
@@ -331,6 +361,83 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
     return receipt
 
 
+async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, task_id: str,
+                              idempotency_key: str, expected_revision: int):
+    """The owner checked the desktop: release this task's parked unknown outcomes.
+
+    Releases only what nothing else can resolve: desktop effects the ledger
+    already parked in ``manual_review`` (they become ``failed`` /
+    ``acknowledged_unverified``) and transcript tool outcomes marked unknown.
+    In-flight or still-reconciling effects keep blocking, nothing is resent,
+    and the Command plus per-effect evidence record who confirmed what.
+    """
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise ValueError("A positive task revision is required")
+    if not idempotency_key or len(idempotency_key) > 64:
+        raise ValueError("command key must be 1..64 characters")
+    digest = command_digest({"action": "acknowledge_effects", "task_id": task_id,
+                             "expected_revision": expected_revision})
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        await lock_actor(db, user_id)
+        from session.internal_parts import _lock_fenced
+        await _lock_fenced(db, main_id, user_id)
+        await require_membership(db, user_id, workspace_id)
+        command = await db.scalar(select(AssistantCommand).where(
+            AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,
+            AssistantCommand.assistant_session_id == main_id, AssistantCommand.idempotency_key == idempotency_key,
+        ).with_for_update())
+        if command is not None:
+            if command.payload_digest != digest:
+                raise AssistantError(409, "ASSISTANT_COMMAND_CONFLICT", "Command key was used for different input")
+            await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
+            return dict(command.receipt)
+        task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
+                                            main_id=main_id, task_id=task_id, lock=True)
+        if task.control_revision != expected_revision:
+            raise _conflict(task, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
+        ids = await session_tree_locked(db, execution)
+        if await db.scalar(select(AgentDriverState.session_id).where(
+                AgentDriverState.session_id.in_(ids), AgentDriverState.user_id == user_id,
+                AgentDriverState.phase != "idle").limit(1)):
+            # A live run can still settle or mark its own outcomes.
+            raise _conflict(task, "ASSISTANT_STILL_STOPPING", "Wait for the task's runs to stop before confirming outcomes")
+        now = datetime.now(timezone.utc)
+        command_id = generate_id()
+        from agent.effect_ledger import acknowledge_parked_effects_locked
+        effect_ids = await acknowledge_parked_effects_locked(db, tenant_id=user_id, session_ids=ids,
+            actor_user_id=user_id, command_id=command_id)
+        parts = _unknown_tool_parts(execution, ids)
+        acknowledged = await acknowledged_parts_locked(db, execution)
+        if acknowledged:
+            parts = parts.where(Part.id.not_in(sorted(acknowledged)))
+        part_ids = list((await db.scalars(parts.order_by(Part.id).limit(MAX_ACKNOWLEDGED_PARTS))).all())
+        command = AssistantCommand(id=command_id, actor_user_id=user_id, workspace_id=workspace_id,
+            assistant_session_id=main_id, idempotency_key=idempotency_key, action=ACKNOWLEDGE_ACTION,
+            target_type="task", target_id=task.id, payload_digest=digest, expected_revision=expected_revision,
+            source_ref={"actor_user_id": user_id, "entrypoint": "assistant_command",
+                        "acknowledged_effect_ids": effect_ids, "acknowledged_part_ids": part_ids},
+            state="applied", receipt={}, created_at=now, updated_at=now)
+        db.add(command)
+        await db.flush()
+        remaining = await unresolved_effect_locked(db, execution, ids)
+        if task.observed_state == "effect_unknown":
+            # The stopped task was waiting only on these outcomes: converge now.
+            await converge_locked(db, task, execution)
+        receipt = {"command_id": command.id, "task_id": task.id, "execution_session_id": execution.id,
+            "action": "acknowledge_effects", "state": "applied", "acknowledged_effects": len(effect_ids),
+            "acknowledged_tool_outcomes": len(part_ids), "remaining_unresolved": remaining,
+            "task_revision": task.control_revision, "desired_state": task.desired_state,
+            "observed_state": task.observed_state}
+        command.receipt = receipt
+        await append_agent_event_locked(db, execution, kind="assistant.control.accepted", payload=receipt,
+                                         idempotency_key=f"assistant-control:{command.id}")
+    log.info("Unknown outcomes acknowledged task_id=%s command_id=%s effects=%d tool_outcomes=%d remaining=%s",
+        task_id, receipt["command_id"], len(effect_ids), len(part_ids), remaining)
+    return receipt
+
+
 async def resume_binding_locked(db, session_id, run_id, generation):
     return await db.scalar(select(AgentEvent).where(
         AgentEvent.session_id == session_id, AgentEvent.run_id == run_id, AgentEvent.generation == generation,
@@ -370,7 +477,7 @@ async def claim_resume_locked(db, execution, state, command_id):
             or context.get("mode") != "original" or task.intent_revision != context["intent_revision"]):
         raise _conflict(task, "ASSISTANT_RESUME_UNAVAILABLE", "Task continuation changed")
     if await unresolved_effect_locked(db, execution, await session_tree_locked(db, execution)):
-        raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", "Verify outstanding external outcomes before continuing")
+        raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", effect_unresolved_message(task.id))
     state.trigger_message_id = context["trigger_message_id"]
     command.state, command.updated_at = "applied", datetime.now(timezone.utc)
     task.observed_state = "running"

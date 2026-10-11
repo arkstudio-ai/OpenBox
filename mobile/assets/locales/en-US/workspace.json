@@ -47,14 +47,14 @@
   "delChatBody": "The chat and its messages will be deleted. This can't be undone.",
   "delChatMemories": "What the assistant learned from this chat ({{count}} memories) will stop being used too.",
   "greeting": {
-    "morning": "Good morning, {{name}}.",
-    "afternoon": "Good afternoon, {{name}}.",
-    "evening": "Good evening, {{name}}."
+    "morning": "Good morning, {{name}}",
+    "afternoon": "Good afternoon, {{name}}",
+    "evening": "Good evening, {{name}}"
   },
   "greetingPlain": {
-    "morning": "Good morning.",
-    "afternoon": "Good afternoon.",
-    "evening": "Good evening."
+    "morning": "Good morning",
+    "afternoon": "Good afternoon",
+    "evening": "Good evening"
   },
   "emptyHint": "This chat will live under \"{{project}}\". Just say what you want to move forward today.",
   "suggestions": [

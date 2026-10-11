@@ -947,7 +947,18 @@ async def run_loop(
         raise
     if ticket is None:
         # A pending question is not a new executable turn. Preserve its status.
-        await lease.release()
+        # Input this generation claimed never reached the model: close it now
+        # (not_run, hidden from the model) instead of leaving it claimed forever.
+        try:
+            from agent.inbox import settle_refused_claims
+            await settle_refused_claims(lease)
+        except BaseException:
+            await lease.preserve_for_recovery(session_status=None)
+            raise
+        # The reservation showed "busy": a session waiting on its card shows that again.
+        resting = await question_runtime.resting_status(session_id, user_id)
+        await lease.release(session_status=resting if resting != "idle" else None)
+        await question_runtime.publish_status(session_id, user_id, resting)
         return None
     from trajectory import bind as bind_trace, record as record_trace
     try:

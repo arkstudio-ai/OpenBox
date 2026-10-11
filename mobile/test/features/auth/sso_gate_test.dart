@@ -17,9 +17,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _Session implements LogtoSession {
   Completer<String> result = Completer<String>();
   int calls = 0;
+
+  /// The `register` flag of every sign-in, in order.
+  final registers = <bool>[];
+
   @override
   Future<String> signIn(LogtoSso config, {required bool register}) {
     calls++;
+    registers.add(register);
     return result.future;
   }
 
@@ -27,9 +32,22 @@ class _Session implements LogtoSession {
   Future<void> signOut(LogtoSso? config) async {}
 }
 
+/// GET /api/auth/logto/config of a deployment with native SSO.
+const _enabled = <String, dynamic>{
+  'enabled': true,
+  'endpoint': 'https://auth.example.test',
+  'native_app_id': 'native-test',
+};
+
+const _start = Key('sso-start');
+
+/// [config] answers GET /api/auth/logto/config through the real
+/// `logtoSsoProvider`; returning null makes the request fail (offline).
 Future<ProviderContainer> _mount(
   WidgetTester tester,
   _Session session, {
+  bool register = false,
+  Map<String, dynamic>? Function()? config,
   int status = 200,
   Map<String, dynamic>? response,
   bool preferencesFail = false,
@@ -45,7 +63,21 @@ Future<ProviderContainer> _mount(
     InterceptorsWrapper(
       onRequest: (options, handler) {
         requests?.add(options);
-        if (options.path.endsWith('/legal-consent') && consentFail) {
+        if (options.path.endsWith('/logto/config')) {
+          final reply = (config ?? () => _enabled)();
+          if (reply == null) {
+            handler.reject(
+              DioException.connectionError(
+                requestOptions: options,
+                reason: 'offline',
+              ),
+            );
+          } else {
+            handler.resolve(
+              Response(requestOptions: options, statusCode: 200, data: reply),
+            );
+          }
+        } else if (options.path.endsWith('/legal-consent') && consentFail) {
           handler.reject(
             DioException(
               requestOptions: options,
@@ -88,25 +120,18 @@ Future<ProviderContainer> _mount(
     overrides: [
       apiDioProvider.overrideWithValue(dio),
       i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
-      logtoSsoProvider.overrideWith(
-        (ref) async => const LogtoSso(
-          endpoint: 'https://auth.example.test',
-          appId: 'native-test',
-        ),
-      ),
       logtoSessionProvider.overrideWithValue(session),
     ],
   );
   addTearDown(container.dispose);
+  Widget screen(bool register) => Scaffold(
+    body: SsoGate(register: register, child: const Text('password fallback')),
+  );
   final router = GoRouter(
-    initialLocation: '/login',
+    initialLocation: register ? '/register' : '/login',
     routes: [
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const Scaffold(
-          body: SsoGate(register: false, child: Text('password fallback')),
-        ),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => screen(false)),
+      GoRoute(path: '/register', builder: (context, state) => screen(true)),
       GoRoute(
         path: '/app',
         builder: (context, state) => const Scaffold(body: Text('workbench')),
@@ -135,16 +160,64 @@ Future<ProviderContainer> _mount(
   return container;
 }
 
+String _t(ProviderContainer container, String key) =>
+    container.read(i18nProvider).t(key);
+
+/// After a failed attempt: an error and the same button to try again —
+/// never the password form while the server has SSO on.
+void _expectRetry(WidgetTester tester, ProviderContainer container) {
+  expect(container.read(authProvider).isAuthenticated, isFalse);
+  expect(find.text(_t(container, 'auth:errors.ssoFailed')), findsOneWidget);
+  expect(find.text('password fallback'), findsNothing);
+  expect(tester.widget<FilledButton>(find.byKey(_start)).onPressed, isNotNull);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('sign-in and sign-up are two different screens', (tester) async {
+    final container = await _mount(tester, _Session(), acceptPolicies: false);
+    String t(String key) => _t(container, key);
+    expect(find.text(t('auth:loginTitle')), findsOneWidget);
+    expect(find.text(t('auth:loginBody')), findsOneWidget);
+    expect(find.text(t('auth:ssoSignIn')), findsOneWidget);
+    expect(find.text(t('auth:registerTitle')), findsNothing);
+    // The SSO sign-in screen does not ask for a password.
+    final bundle = container.read(i18nProvider).bundle;
+    expect(bundle.lookup('zh-CN', 'auth', 'loginBody'), isNot(contains('密码')));
+    expect(t('auth:loginBody'), isNot(contains('password')));
+
+    await tester.tap(find.text(t('auth:noAccount')));
+    await tester.pumpAndSettle();
+    expect(find.text(t('auth:registerTitle')), findsOneWidget);
+    expect(find.text(t('auth:registerBody')), findsOneWidget);
+    expect(find.text(t('auth:ssoRegister')), findsOneWidget);
+    expect(find.text(t('auth:loginTitle')), findsNothing);
+    expect(find.text(t('auth:ssoSignIn')), findsNothing);
+
+    await tester.tap(find.text(t('auth:haveAccount')));
+    await tester.pumpAndSettle();
+    expect(find.text(t('auth:loginTitle')), findsOneWidget);
+  });
+  for (final register in [false, true]) {
+    testWidgets(
+      '${register ? 'sign-up' : 'sign-in'} opens its own Logto page',
+      (tester) async {
+        final session = _Session();
+        final container = await _mount(tester, session, register: register);
+        await tester.tap(find.byKey(_start));
+        session.result.complete('verified-id-token');
+        await tester.pumpAndSettle();
+        expect(session.registers, [register]);
+        expect(container.read(authProvider).isAuthenticated, isTrue);
+        expect(find.text('workbench'), findsOneWidget);
+      },
+    );
+  }
   testWidgets('SSO waits for an explicit policy choice', (tester) async {
     final session = _Session();
     await _mount(tester, session, acceptPolicies: false);
     expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isFalse);
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNull,
-    );
+    expect(tester.widget<FilledButton>(find.byKey(_start)).onPressed, isNull);
     expect(session.calls, 0);
   });
   testWidgets('receipt uses issued token and native version before sign-in', (
@@ -158,7 +231,7 @@ void main() {
       requests: requests,
       consentFail: true,
     );
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byKey(_start));
     session.result.complete('id-token');
     await tester.pumpAndSettle();
     final receipt = requests.singleWhere(
@@ -171,16 +244,15 @@ void main() {
       'language': 'en-US',
       'channel': 'native',
     });
-    expect(container.read(authProvider).isAuthenticated, isFalse);
-    expect(find.text('password fallback'), findsOneWidget);
+    _expectRetry(tester, container);
   });
   testWidgets('double tap starts one auth request, success opens workbench', (
     tester,
   ) async {
     final session = _Session();
     final container = await _mount(tester, session, preferencesFail: true);
-    await tester.tap(find.byType(FilledButton));
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byKey(_start));
+    await tester.tap(find.byKey(_start));
     expect(session.calls, 1);
     session.result.complete('verified-id-token');
     await tester.pumpAndSettle();
@@ -192,17 +264,18 @@ void main() {
   ) async {
     final session = _Session();
     final container = await _mount(tester, session);
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byKey(_start));
     session.result.completeError(PlatformException(code: 'CANCELED'));
     await tester.pumpAndSettle();
     expect(container.read(authProvider).isAuthenticated, isFalse);
     expect(find.text('password fallback'), findsNothing);
+    expect(find.text(_t(container, 'auth:errors.ssoFailed')), findsNothing);
     expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      tester.widget<FilledButton>(find.byKey(_start)).onPressed,
       isNotNull,
     );
     session.result = Completer<String>();
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byKey(_start));
     session.result.complete('verified-id-token');
     await tester.pumpAndSettle();
     expect(find.text('workbench'), findsOneWidget);
@@ -213,20 +286,22 @@ void main() {
     'FAILED',
     'SECURITY_EXCEPTION',
   ]) {
-    testWidgets('$code does not hang and permits a fresh login', (
-      tester,
-    ) async {
+    testWidgets('$code offers a retry that can still sign in', (tester) async {
       final session = _Session();
       final container = await _mount(tester, session);
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(find.byKey(_start));
       session.result.completeError(PlatformException(code: code));
       await tester.pumpAndSettle();
-      expect(container.read(authProvider).isAuthenticated, isFalse);
-      expect(find.text('password fallback'), findsOneWidget);
-      expect(
-        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-        isNotNull,
-      );
+      _expectRetry(tester, container);
+
+      session.result = Completer<String>();
+      await tester.tap(find.byKey(_start));
+      await tester.pump();
+      expect(find.text(_t(container, 'auth:errors.ssoFailed')), findsNothing);
+      session.result.complete('verified-id-token');
+      await tester.pumpAndSettle();
+      expect(session.calls, 2);
+      expect(find.text('workbench'), findsOneWidget);
     });
   }
   for (final status in [401, 429, 503]) {
@@ -235,15 +310,10 @@ void main() {
       (tester) async {
         final session = _Session();
         final container = await _mount(tester, session, status: status);
-        await tester.tap(find.byType(FilledButton));
+        await tester.tap(find.byKey(_start));
         session.result.complete('id-token');
         await tester.pumpAndSettle();
-        expect(container.read(authProvider).isAuthenticated, isFalse);
-        expect(find.text('password fallback'), findsOneWidget);
-        expect(
-          tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-          isNotNull,
-        );
+        _expectRetry(tester, container);
       },
     );
   }
@@ -259,11 +329,55 @@ void main() {
     ) async {
       final session = _Session();
       final container = await _mount(tester, session, response: response);
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(find.byKey(_start));
       session.result.complete('id-token');
       await tester.pumpAndSettle();
-      expect(container.read(authProvider).isAuthenticated, isFalse);
+      _expectRetry(tester, container);
+    });
+  }
+  testWidgets(
+    'an unreachable SSO config offers a retry, not the password form',
+    (tester) async {
+      var reachable = false;
+      final container = await _mount(
+        tester,
+        _Session(),
+        acceptPolicies: false,
+        config: () => reachable ? _enabled : null,
+      );
+      expect(find.text(_t(container, 'auth:loginTitle')), findsOneWidget);
+      expect(find.text(_t(container, 'auth:ssoUnavailable')), findsOneWidget);
+      expect(find.text('password fallback'), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+
+      reachable = true;
+      await tester.tap(find.byKey(const Key('sso-retry')));
+      await tester.pumpAndSettle();
+      expect(find.text(_t(container, 'auth:ssoUnavailable')), findsNothing);
+      expect(find.byKey(_start), findsOneWidget);
+      expect(find.text('password fallback'), findsNothing);
+    },
+  );
+  for (final config in <Map<String, dynamic>>[
+    {'enabled': false, 'endpoint': '', 'native_app_id': ''},
+    {
+      'enabled': true,
+      'endpoint': 'https://auth.example.test',
+      'native_app_id': '',
+    },
+  ]) {
+    final why = config['enabled'] == true ? 'no native app' : 'SSO off';
+    testWidgets('a server reporting $why keeps the password form', (
+      tester,
+    ) async {
+      await _mount(
+        tester,
+        _Session(),
+        acceptPolicies: false,
+        config: () => config,
+      );
       expect(find.text('password fallback'), findsOneWidget);
+      expect(find.byKey(_start), findsNothing);
     });
   }
 }

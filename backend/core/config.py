@@ -364,6 +364,8 @@ class VoiceConfig(BaseModel):
     """
 
     enabled: bool = False
+    # Provider/session default; user calls use voice.voices.selection's product
+    # default or an explicit per-user model choice made after its rollout.
     model: str = "qwen-audio-3.1-realtime-plus"
     # Alibaba's default for Audio 3.1; Omni resolves to its own default, Tina.
     voice: str = Field(default="longanqian_v3.1", max_length=255)
@@ -379,9 +381,14 @@ class VoiceConfig(BaseModel):
     max_history_turns: int = Field(default=20, ge=1, le=50)
     enable_speech_emotion: bool = True
     max_call_seconds: int = Field(default=1800, ge=60, le=7200)
-    # Quiet this long with work pending: the front desk says what is going on.
-    late_after_seconds: int = Field(default=12, ge=5)
+    # Quiet this long with a request still being done: the front desk says what is going on, once per request
+    # (voice/bridge.py). 12 s made three lines per request, 53 "稍等…" in 50 calls (2026-10-09).
+    late_after_seconds: int = Field(default=20, ge=5)
     turn_timeout_seconds: int = Field(default=120, ge=30)
+    # Seconds without a model response before a silent text-only one keeps the provider session open. The
+    # provider closes a session after 180 s (Audio 3.1) or 300 s (Omni) without one; None: 120 s for Audio,
+    # 240 s for Omni (voice/upkeep.py). An override stays at least 30 s below the shorter limit.
+    keepalive_seconds: int | None = Field(default=None, ge=30, le=150)
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
     # A voice turn's model and reasoning variant; None (or "", the default) keeps the main session's, so a call
@@ -392,18 +399,6 @@ class VoiceConfig(BaseModel):
     summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
-    # Each utterance's route (chat / read / assistant / unclear) by the JEV decision model (memory.jev_*),
-    # judged while the front desk replies (voice/router.py), for users memory.route_jev covers. Off, or
-    # without a JEV key, the front desk's own tool calls decide alone.
-    router: bool = True
-    # A verdict is used once the reply is done (1.5-4 s after the transcript); a cold connection takes 1-2 s.
-    router_timeout_seconds: float = Field(default=3.0, gt=0, le=5)
-    # Plans a request handed over in a call (voice/handover.py) on Bailian's OpenAI-compatible endpoint with
-    # the voice key. Measured 2026-10-08 on six typical requests: qwen3.8-flash got all six (asks when a change
-    # is unspecified) at p50 1.3 s, max 1.6 s; qwen-flash (0.5 s) wrote a change the user never said. Through
-    # the OpenBox gateway the same model took 2-17 s.
-    handover_model: str = "qwen3.8-flash"
-    handover_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 
 class DesktopPublishConfig(BaseModel):

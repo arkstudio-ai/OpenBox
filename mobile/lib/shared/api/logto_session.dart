@@ -13,21 +13,21 @@ class LogtoSso {
   final String appId;
 }
 
-/// Null when Logto or its separate Native application is not configured.
+/// Null only when the server says Logto or its separate Native application is
+/// not configured — the one case for the password form. A request that fails
+/// (offline, timeout, 5xx) stays an error until `ref.invalidate` retries it;
+/// read as "SSO off", one blip would show accounts created through SSO a
+/// password form they cannot use, until the app restarts.
 final logtoSsoProvider = FutureProvider<LogtoSso?>((ref) async {
-  try {
-    final resp = await ref
-        .read(apiDioProvider)
-        .get<Map<String, dynamic>>('/api/auth/logto/config');
-    final data = asMap(resp.data);
-    if (asBool(data['enabled']) != true) return null;
-    final endpoint = asString(data['endpoint']) ?? '';
-    final appId = asString(data['native_app_id']) ?? '';
-    if (endpoint.isEmpty || appId.isEmpty) return null;
-    return LogtoSso(endpoint: endpoint, appId: appId);
-  } catch (_) {
-    return null;
-  }
+  final resp = await ref
+      .read(apiDioProvider)
+      .get<Map<String, dynamic>>('/api/auth/logto/config');
+  final data = asMap(resp.data);
+  if (asBool(data['enabled']) != true) return null;
+  final endpoint = asString(data['endpoint']) ?? '';
+  final appId = asString(data['native_app_id']) ?? '';
+  if (endpoint.isEmpty || appId.isEmpty) return null;
+  return LogtoSso(endpoint: endpoint, appId: appId);
 });
 
 /// Injectable boundary around Logto's native SDK.

@@ -55,6 +55,23 @@ def test_interrupted_replies_without_usage_keep_an_estimate_and_are_flagged():
     assert snapshot["provisional_yuan"] == "0.000300"
 
 
+def test_a_reply_lost_with_its_session_is_counted_once_from_its_audio():
+    meter = CallMeter()
+    meter.settle("before", "completed", USAGE)
+    meter.start("cut")
+    meter.audio("cut", b"\x00" * 48000, "e1")
+    meter.abandon()  # the provider dropped the session: this response.done never comes
+    assert meter.responses["cut"]["status"] == "incomplete" and not meter.pending
+    snapshot = meter.snapshot()
+    assert (snapshot["settled_rounds"], snapshot["unreported_rounds"], snapshot["provisional_yuan"]) == (
+        1, 1, "0.000150")
+    meter.abandon()
+    meter.finish()
+    assert meter.snapshot()["unreported_rounds"] == 1 and meter.snapshot()["provisional_yuan"] == "0.000150"
+    meter.settle("cut", "cancelled", USAGE)  # a usage that still arrives replaces the estimate
+    assert meter.snapshot()["provisional_yuan"] == "0.000000" and meter.snapshot()["settled_rounds"] == 2
+
+
 def test_malformed_usage_is_not_trusted():
     assert usage_tokens(None) is None
     assert usage_tokens({"input_tokens_details": {"text_tokens": -1}, "output_tokens_details": {}}) is None

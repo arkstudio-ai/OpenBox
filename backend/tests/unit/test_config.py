@@ -54,6 +54,17 @@ def test_image_generation_config_defaults():
     assert config.image_generation.timeout_seconds == 600
 
 
+def test_example_images_use_a_runninghub_model_that_runs_on_the_cn_site():
+    """2026-10-10: runninghub.cn answers 40310 for Nano Banana / GPT Image 2."""
+    from tool.image_runninghub import MODELS
+
+    config = OpenBoxConfig(**_load_json(Path(__file__).parents[2] / "openbox.jsonc.example"))
+    settings = config.image_generation
+    assert (settings.provider, settings.model) == ("runninghub", "seedream-v5-pro")
+    assert settings.model in MODELS
+    assert config.provider["runninghub"].base_url == "https://www.runninghub.cn"
+
+
 def test_video_generation_defaults_to_wan_3_at_720p():
     """720p is the tier every model offers and what a vertical short needs.
 

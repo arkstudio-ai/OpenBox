@@ -100,6 +100,9 @@ class ProviderTarget:
     api_key: str
     base_url: str | None
     timeout_seconds: int
+    #: "openai" (synchronous Images API) or "runninghub" (async task API),
+    #: chosen by the configured model id (see tool/image_runninghub.MODELS).
+    channel: str = "openai"
 
 
 @dataclass(frozen=True)
@@ -140,12 +143,15 @@ def _configured_target() -> tuple[ProviderTarget, object]:
     model = settings.model.rsplit("/", 1)[-1].strip()
     if not model:
         raise RuntimeError("image_generation.model is empty in openbox.json")
+    from tool.image_runninghub import MODELS as RUNNINGHUB_MODELS
+
     target = ProviderTarget(
         provider=provider_name,
         model=model,
         api_key=provider.api_key,
         base_url=provider.base_url.rstrip("/") if provider.base_url else None,
         timeout_seconds=settings.timeout_seconds,
+        channel="runninghub" if model in RUNNINGHUB_MODELS else "openai",
     )
     return target, settings
 
@@ -172,6 +178,42 @@ def _validate_size(model: str, size: str) -> str | None:
     if not 655_360 <= pixels <= 8_294_400:
         return "gpt-image-2 total pixels must be between 655,360 and 8,294,400"
     return None
+
+
+def _align_size(model: str, size: str) -> tuple[str, str | None]:
+    """Snap WIDTHxHEIGHT onto gpt-image-2's 16px grid, keeping the aspect ratio.
+
+    Familiar sizes such as 1920x1080 are refused only because 1080 is not a
+    multiple of 16. Returns ``(size, note)``; ``note`` is set when the size
+    changed so the caller can say so. Other limits are left to _validate_size.
+    """
+    match = re.fullmatch(r"(\d+)x(\d+)", size)
+    if model.lower() != "gpt-image-2" or not match:
+        return size, None
+    width, height = int(match.group(1)), int(match.group(2))
+    if width < 16 or height < 16 or (width % 16 == 0 and height % 16 == 0):
+        return size, None
+    ratio = width / height
+    # Fix one side on the grid and derive the other from the ratio, so every
+    # candidate keeps the requested shape to within half a grid step.
+    candidates = set()
+    for side in (width // 16 * 16, width // 16 * 16 + 16):
+        candidates.add((side, max(16, round(side / ratio / 16) * 16)))
+    for side in (height // 16 * 16, height // 16 * 16 + 16):
+        candidates.add((max(16, round(side * ratio / 16) * 16), side))
+
+    def distance(candidate: tuple[int, int]):
+        w, h = candidate
+        change = max(abs(w - width) / width, abs(h - height) / height)
+        return (change, abs(w / h - ratio) / ratio, w * h, w)
+
+    valid = [c for c in candidates if _validate_size(model, f"{c[0]}x{c[1]}") is None]
+    w, h = min(valid or candidates, key=distance)
+    aligned = f"{w}x{h}"
+    return aligned, (
+        f"size {size} was adjusted to {aligned} because {model} needs width and "
+        "height in multiples of 16 (aspect ratio kept as closely as that allows)"
+    )
 
 
 async def _find_owned_asset(ref: str, ctx: ToolContext):
@@ -311,7 +353,14 @@ async def _response_images(response) -> list[bytes]:
             raise RuntimeError("generated image exceeds the 50 MB output limit")
         outputs.append(payload)
     if not outputs:
-        raise RuntimeError("image provider returned no images")
+        # Some gateways answer 200 with an error body instead of a 4xx. That
+        # is still a received response, so it stays an unknown outcome, but
+        # its message is the only clue to what went wrong.
+        error = getattr(response, "error", None)
+        if isinstance(error, dict):
+            error = error.get("message") or error.get("code") or error
+        suffix = f"; provider error: {_redact_provider_text(str(error))}" if error else ""
+        raise RuntimeError("image provider returned no images" + suffix)
     return outputs
 
 
@@ -356,41 +405,50 @@ async def _call_provider(
         # idempotency for image billing, so unknown responses remain terminal.
         common["extra_headers"] = {"X-Client-Request-Id": operation_key}
 
-    # A revoked run starts no paid image request (the request-start fence).
-    await assert_current("request")
-    # Binary inputs are recorded as references to their owned assets. The
-    # provider request contains only public parameters and those references,
-    # never SDK objects, credentials, or expiring signed URLs.
-    context = await context_for_tool(ctx) if ctx is not None else None
-    retained = {}
-    if context is not None:
-        from trajectory.artifacts import capture_asset_reference
-        for item in [*images, *([mask] if mask else [])]:
-            retained[item.asset_id] = await capture_asset_reference(
-                context, asset_id=item.asset_id, oss_key=item.oss_key, media_type=item.mime,
-                size_bytes=len(item.data), name=item.name)
+    try:
+        # A revoked run starts no paid image request (the request-start fence).
+        await assert_current("request")
+        # Binary inputs are recorded as references to their owned assets. The
+        # provider request contains only public parameters and those references,
+        # never SDK objects, credentials, or expiring signed URLs.
+        context = await context_for_tool(ctx) if ctx is not None else None
+        retained = {}
+        if context is not None:
+            from trajectory.artifacts import capture_asset_reference
+            for item in [*images, *([mask] if mask else [])]:
+                retained[item.asset_id] = await capture_asset_reference(
+                    context, asset_id=item.asset_id, oss_key=item.oss_key, media_type=item.mime,
+                    size_bytes=len(item.data), name=item.name)
 
-    def input_reference(item):
-        return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
-                "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
-                "availability": (retained.get(item.asset_id) or {}).get("availability", "not_recorded")}
+        def input_reference(item):
+            return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
+                    "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
+                    "availability": (retained.get(item.asset_id) or {}).get("availability", "not_recorded")}
 
-    snapshot = {**common, "input": {
-        "operation": "edit" if images else "generate",
-        "images": [input_reference(item) for item in images],
-        "mask": input_reference(mask) if mask else None,
-    }}
-    capture = await RequestCapture.start(
-        ctx, purpose="image_generation", model_id=f"{target.provider}/{target.model}",
-        payload=snapshot, capture_level="adapter_input",
-    )
+        snapshot = {**common, "input": {
+            "operation": "edit" if images else "generate",
+            "images": [input_reference(item) for item in images],
+            "mask": input_reference(mask) if mask else None,
+        }}
+        capture = await RequestCapture.start(
+            ctx, purpose="image_generation", model_id=f"{target.provider}/{target.model}",
+            payload=snapshot, capture_level="adapter_input",
+        )
+    except Exception as exc:
+        # Everything above precedes the provider SDK, so nothing was sent.
+        _mark_not_sent(exc)
+        raise
     if ctx is not None:
         ctx._trajectory_image_request_id = capture.context.request_id if capture.context else None
         ctx._trajectory_image_capture = capture
 
     client = None
     try:
-        client = AsyncOpenAI(**client_kwargs)
+        try:
+            client = AsyncOpenAI(**client_kwargs)
+        except Exception as exc:
+            _mark_not_sent(exc)
+            raise
         if images:
             files = [(image.name, image.data, image.mime) for image in images]
             edit_kwargs = dict(common)
@@ -427,6 +485,81 @@ async def _call_provider(
     finally:
         if client is not None:
             await client.close()
+
+
+def _runninghub_effect_context(target: ProviderTarget, planned) -> dict[str, Any]:
+    """What reconciliation needs to query the task later, minus any secret."""
+    from tool import image_runninghub as runninghub
+    from tool.video_providers import provider_route_fingerprint
+
+    route = runninghub.route_for(target.provider, target.model, target.api_key, target.base_url)
+    return {"channel": "runninghub", "endpoint": planned.endpoint, "billing_tier": planned.tier,
+            "provider_route_fingerprint": provider_route_fingerprint(route)}
+
+
+def _image_task_pending_result(mode: str, task_id: str, reason: str, *, operation_key: str,
+                               asset_ids: list[str], notes: list[str]) -> ToolResult:
+    return ToolResult(
+        title=f"Image {mode} still in progress",
+        output="\n".join([
+            f"RunningHub accepted this task (provider_task_id={task_id}), but {reason}.",
+            "It keeps running; the image is saved to the resource centre automatically when it "
+            "finishes. Do not resubmit; tell the person it is still being generated.",
+            *notes,
+        ]),
+        metadata={"error": True, "failure_code": "image_task_pending", "provider_task_id": task_id,
+                  "operation_key": operation_key, "asset_ids": asset_ids, "pending": True,
+                  "do_not_retry": True, "outcome_unknown": False, "manual_review": False},
+    )
+
+
+async def _runninghub_generate(
+    target: ProviderTarget,
+    planned,
+    *,
+    ctx: ToolContext,
+    effect_claim,
+    receipt: dict[str, Any],
+    asset_urls: dict[str, str],
+) -> list[bytes]:
+    """Submit one RunningHub task, record its taskId as the receipt, then poll.
+
+    Once a taskId exists every later failure is either the task's own final
+    failure or a pending task that reconciliation finishes by querying that
+    id; the task is never submitted twice.
+    """
+    from agent.driver import LeaseLostError
+    from agent.trajectory import service_scope
+    from question.runtime import RunRevoked
+    from tool import image_runninghub as runninghub
+
+    route = runninghub.route_for(target.provider, target.model, target.api_key, target.base_url)
+    try:
+        # Signed input URLs are recorded as asset references, never verbatim.
+        async with service_scope(ctx, asset_urls=asset_urls):
+            task_id = await runninghub.submit_task(route, planned)
+    except (RunRevoked, LeaseLostError) as exc:
+        # The service fence refuses a revoked run before any request.
+        _mark_not_sent(exc)
+        raise
+    receipt["task_id"] = task_id
+    log.info("RunningHub image task accepted task_id=%s model=%s endpoint=%s",
+             task_id, target.model, planned.endpoint)
+    if effect_claim is not None:
+        from agent.effect_ledger import record_effect_accepted
+
+        await record_effect_accepted(effect_claim, provider_handle=task_id,
+                                     receipt={"task_id": task_id, "endpoint": planned.endpoint})
+
+    async def progress(state: str, elapsed: float) -> None:
+        await ctx.update_output(f"RunningHub image task {state} ({int(elapsed)}s)…")
+
+    data = await runninghub.wait_for_task(route, task_id, timeout=target.timeout_seconds,
+                                          progress=progress, should_stop=ctx.abort.is_set)
+    try:
+        return [await _download_generated_url(url) for url in runninghub.result_urls(data)[:1]]
+    except Exception as exc:
+        raise runninghub.ImageTaskPending(task_id, "the finished image could not be downloaded yet") from exc
 
 
 def _detect_output(data: bytes, fallback_format: str) -> tuple[str, str]:
@@ -1080,6 +1213,202 @@ def _public_error(exc: Exception) -> str:
     return (prefix + message).strip()[:800]
 
 
+#: Set on an exception raised before the provider SDK sent anything.
+_NOT_SENT = "_openbox_image_request_not_sent"
+#: 4xx answers that may still describe an accepted request (a timed-out or
+#: duplicate in-flight one), so they keep the unknown-outcome protection.
+_AMBIGUOUS_4XX = frozenset({408, 409, 499})
+_QUOTA_HINTS = ("quota", "balance", "billing", "credit", "余额", "额度", "欠费", "充值")
+_CONTENT_HINTS = ("moderation", "content_policy", "content policy", "safety", "sensitive",
+                  "违规", "敏感", "审核")
+_REDACTIONS = (
+    (re.compile(r"</?[A-Za-z][^<>]*>"), " "),
+    (re.compile(r"https?://\S+"), "[url]"),
+    (re.compile(r"(?i)\bbearer\s+\S+"), "Bearer [redacted]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "[redacted]"),
+    (re.compile(r"(?i)\b(api[_-]?key|access[_-]?key[A-Za-z_-]*|secret|token|password|signature|sig)"
+                r"(\s*[=:]\s*)[^\s,;&\"']+"), r"\1\2[redacted]"),
+    (re.compile(r"[A-Za-z0-9+/=_-]{40,}"), "[redacted]"),
+)
+#: kind -> (user-facing reason, what the agent should do next)
+_REJECTIONS = {
+    "invalid_request": ("参数不支持", "Correct the parameters named in the provider message "
+                        "and call image_gen again; a corrected retry is safe."),
+    "content_policy": ("内容审核未通过", "Revise the prompt or input images, then call image_gen again."),
+    "permission": ("权限或额度问题", "Do not retry unchanged; tell the person the image service "
+                   "refused this account or model and an administrator must check it."),
+    "quota": ("权限或额度问题（额度不足）", "Do not retry; tell the person the image service "
+              "account is out of quota or balance."),
+    "not_found": ("模型或接口不可用", "Do not retry unchanged; tell the person the configured "
+                  "image model or endpoint is unavailable."),
+    "rate_limit": ("频率限制，稍后再试", "Wait about 30 seconds before at most one retry; if it "
+                   "repeats, tell the person to try again later."),
+    "not_sent": ("请求未发出", "The request never reached the provider; one retry is safe."),
+    "rejected": ("服务商拒绝了请求", "Do not retry unchanged; report the reason to the person."),
+}
+
+
+@dataclass(frozen=True)
+class _ProviderFailure:
+    """One provider-call failure, split by whether the request was accepted."""
+
+    definite: bool  # provably not accepted: no image produced, nothing charged
+    kind: str
+    status: int | None
+    detail: str  # redacted, truncated provider text; "" when there is none
+    reason: str  # short cause for logs and the unknown-outcome message
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind in {"invalid_request", "content_policy", "rate_limit", "not_sent"}
+
+
+def _mark_not_sent(exc: BaseException) -> None:
+    try:
+        setattr(exc, _NOT_SENT, True)
+    except Exception:  # pragma: no cover - an exception type without __dict__
+        pass
+
+
+def _redact_provider_text(text: str, limit: int = 300) -> str:
+    """Provider text minus markup, URLs and anything shaped like a credential."""
+    value = str(text)
+    for pattern, replacement in _REDACTIONS:
+        value = pattern.sub(replacement, value)
+    value = " ".join(value.split())
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _provider_error_text(exc: BaseException) -> str:
+    body = getattr(exc, "body", None)
+    message = None
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("msg") or body.get("detail") or body.get("error")
+    elif isinstance(body, str):
+        message = body
+    return _redact_provider_text(str(message or getattr(exc, "message", None) or exc))
+
+
+def _rejection_kind(status: int, exc: BaseException, detail: str) -> str:
+    code = str(getattr(exc, "code", None) or "").lower()
+    text = f"{code} {detail}".lower()
+    if status == 402 or (status in (401, 403, 429) and any(h in text for h in _QUOTA_HINTS)):
+        return "quota"
+    if status in (401, 403):
+        return "permission"
+    if status == 429:
+        return "rate_limit"
+    if status == 404:
+        return "not_found"
+    if any(hint in text for hint in _CONTENT_HINTS):
+        return "content_policy"
+    return "invalid_request" if status in (400, 413, 415, 422) else "rejected"
+
+
+def _classify_provider_failure(exc: BaseException) -> _ProviderFailure:
+    """Split failures into proven refusals and possibly-accepted requests.
+
+    Proven refusals are an HTTP 4xx answer (other than 408/409/499) and a
+    request that never left this process. Everything after a request may have
+    reached the provider (timeouts, 5xx, dropped connections, unusable 200
+    responses, undownloadable image URLs) keeps the no-resubmit protection.
+    """
+    import httpx
+    import openai
+
+    from tool.image_runninghub import ImageTaskRejected
+
+    if getattr(exc, _NOT_SENT, False):
+        return _ProviderFailure(True, "not_sent", None, "",
+                                f"{type(exc).__name__} before the request was sent")
+    if isinstance(exc, ImageTaskRejected):
+        # RunningHub's own refusal: an HTTP 4xx, a business code such as 605,
+        # or a connection that never opened. No taskId exists.
+        return _ProviderFailure(True, exc.kind, exc.status, exc.detail or exc.reason, exc.reason)
+    if isinstance(exc, openai.APIStatusError):
+        status, detail = exc.status_code, _provider_error_text(exc)
+        if 400 <= status < 500 and status not in _AMBIGUOUS_4XX:
+            return _ProviderFailure(True, _rejection_kind(status, exc, detail), status, detail,
+                                    f"HTTP {status}")
+        return _ProviderFailure(False, "unknown", status, detail,
+                                f"HTTP {status} after the request was sent")
+    if isinstance(exc, openai.APIConnectionError):
+        cause = exc.__cause__
+        if isinstance(cause, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+                              httpx.ProxyError, httpx.UnsupportedProtocol)):
+            return _ProviderFailure(True, "not_sent", None, "",
+                                    f"{type(cause).__name__}: no connection was established")
+        if isinstance(exc, openai.APITimeoutError):
+            return _ProviderFailure(False, "unknown", None, "",
+                                    "no answer within the timeout after the request was sent")
+        return _ProviderFailure(False, "unknown", None, "",
+                                "the connection dropped after the request was sent")
+    return _ProviderFailure(False, "unknown", None, _redact_provider_text(str(exc)),
+                            f"{type(exc).__name__} while reading the provider response")
+
+
+async def _record_image_rejection(effect_claim, reservations: list[Any],
+                                  failure: _ProviderFailure, *,
+                                  code: str = "image_provider_rejected") -> None:
+    """Persist a proven refusal or failed task: the projection, then the ledger.
+
+    The projection is written without the run fence, so even a worker that
+    lost its fence leaves evidence the reconciler can settle as failed.
+    """
+    error = {"code": code, "kind": failure.kind, "http_status": failure.status}
+    await _set_reserved_image_status(reservations, "rejected", ctx=None, expected={"generating"})
+    if effect_claim is None:
+        return
+    from agent.effect_ledger import (
+        EffectLeaseLostError,
+        record_effect_outcome_unknown,
+        settle_effect,
+    )
+
+    try:
+        await settle_effect(effect_claim, state="failed", error=error,
+                            evidence={"provider_accepted": False})
+        return
+    except Exception:
+        log.warning("image rejection could not settle its effect directly", exc_info=True)
+    try:
+        # Close the claim; reconciliation reads the rejected projection.
+        await record_effect_outcome_unknown(effect_claim, error=error)
+    except EffectLeaseLostError:
+        pass
+
+
+def _rejected_result(mode: str, failure: _ProviderFailure, *, operation_key: str,
+                     asset_ids: list[str], notes: list[str]) -> ToolResult:
+    label, next_step = _REJECTIONS[failure.kind]
+    answer = f"HTTP {failure.status}" if failure.status else "no provider response"
+    lines = [
+        f"The image provider refused this {mode} request: 未受理，不扣费 "
+        "(not accepted, nothing charged).",
+        f"reason={label} ({answer})",
+        *([f"provider_message={failure.detail}"] if failure.detail else []),
+        f"next_step={next_step}",
+        *notes,
+    ]
+    return ToolResult(
+        title=f"Image {mode} rejected: {label}",
+        output="\n".join(lines),
+        metadata={
+            "error": True,
+            "failure_code": "image_provider_rejected",
+            "rejection_kind": failure.kind,
+            "provider_status": failure.status,
+            "operation_key": operation_key,
+            "asset_ids": asset_ids,
+            "provider_accepted": False,
+            "charged": False,
+            "retryable": failure.retryable,
+            "outcome_unknown": False,
+            "manual_review": False,
+        },
+    )
+
+
 async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
@@ -1091,11 +1420,35 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     except Exception as exc:
         return ToolResult(title="image_gen is not configured", output=_public_error(exc))
 
-    size = args.size or settings.default_size
+    requested_size = args.size or settings.default_size
+    size, size_note = _align_size(target.model, requested_size)
+    notes = [f"Note: {size_note}."] if size_note else []
     quality = args.quality or settings.default_quality
     output_format = args.output_format or settings.output_format
-    error = _validate_size(target.model, size)
+    rh_model = None
+    if target.channel == "runninghub":
+        from tool import image_runninghub as runninghub
+
+        rh_model = runninghub.MODELS[target.model]
+        refusal = runninghub.unsupported(
+            rh_model, n=args.n, mask=bool(args.mask_image), background=args.background,
+            input_count=len(args.input_images), prompt=args.prompt,
+        )
+        if refusal:
+            return ToolResult(title="Image request not supported", output=refusal,
+                              metadata={"error": True, "failure_code": "image_request_unsupported"})
+        try:
+            runninghub.plan_request(rh_model, prompt=args.prompt, size=size,
+                                    image_urls=["https://check.invalid"] * len(args.input_images),
+                                    output_format=output_format)
+            error = None
+        except runninghub.ImageRequestRefused as exc:
+            error = str(exc)
+    else:
+        error = _validate_size(target.model, size)
     if error:
+        if size_note:
+            error = f"{error} (requested {requested_size}, aligned to {size})"
         return ToolResult(title="Invalid image size", output=error)
     if quality not in _GPT_IMAGE_2_QUALITIES:
         return ToolResult(title="Invalid image quality", output="quality must be low, medium, high, or auto")
@@ -1135,6 +1488,30 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         images, mask = await _load_inputs(args.input_images, args.mask_image, ctx, oss)
         import hashlib as _hashlib
 
+        planned = None
+        input_urls: dict[str, str] = {}
+        if rh_model is not None:
+            oversized = next((image for image in images
+                              if len(image.data) > rh_model.max_input_mb * 1024 * 1024), None)
+            if oversized is not None:
+                return ToolResult(
+                    title="Image request not supported",
+                    output=f"{oversized.name} is larger than the {rh_model.max_input_mb} MB {rh_model.name} accepts",
+                    metadata={"error": True, "failure_code": "image_request_unsupported"},
+                )
+            # RunningHub fetches inputs itself: short-lived signed URLs of the
+            # caller's own (ownership-checked) assets, never public copies.
+            input_urls = {
+                oss.presign_get(image.oss_key, expires_sec=runninghub.INPUT_URL_TTL_SECONDS): image.asset_id
+                for image in images
+            }
+            planned = runninghub.plan_request(
+                rh_model, prompt=args.prompt, size=size, image_urls=list(input_urls),
+                output_format=output_format,
+                input_size=runninghub.image_dimensions(images[0].data) if images else None,
+            )
+            if planned.note:
+                notes.append(f"Note: {planned.note}.")
         fingerprint = _fingerprint(
             op=mode,
             model=target.model,
@@ -1158,12 +1535,13 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     verb = "Edited" if mode == "edit" else "Generated"
                     return ToolResult(
                         title=f"{verb} 1 image (reused identical result)",
-                        output=(
-                            f"An identical earlier {mode} result was reused without a new provider call.\n"
+                        output="\n".join([
+                            f"An identical earlier {mode} result was reused without a new provider call.",
                             f"- asset_id={reused.asset_id}; name={reused.name}; path={reused.path}; "
-                            f"{reused.mime}; {reused.size} bytes\n"
-                            "Use the asset_id (preferred) or displayed path as input_images for a follow-up edit."
-                        ),
+                            f"{reused.mime}; {reused.size} bytes",
+                            *notes,
+                            "Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.",
+                        ]),
                         metadata={
                             "mode": mode,
                             "model": target.model,
@@ -1171,6 +1549,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             "asset_ids": [reused.asset_id],
                             "names": [reused.name],
                             "size": size,
+                            "requested_size": requested_size,
                             "quality": quality,
                             "reused": True,
                         },
@@ -1203,6 +1582,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     "model": target.model,
                     "output_count": args.n,
                     "output_format": output_format,
+                    **(_runninghub_effect_context(target, planned) if planned is not None else {}),
                 },
             )
         reservations, created = await _reserve_image_outputs(
@@ -1214,6 +1594,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         )
         stored: list[StoredImage] = []
         provider_called = False
+        task_receipt: dict[str, Any] = {}
         should_generate = created
         if effect_prepared is not None and effect_prepared.snapshot.state != "prepared":
             # ``succeeded`` is allowed to fall through to the ready-reservation
@@ -1252,6 +1633,38 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 # guard. No provider call occurred, so the stable reservation
                 # is safe for exactly one caller to claim below.
                 should_generate = True
+            elif all(row.status == "rejected" for row in reservations):
+                # A replay of a call the provider provably refused: nothing
+                # was accepted or charged, so this is not an unknown outcome.
+                return ToolResult(
+                    title=f"Image {mode} was already rejected",
+                    output=(
+                        "The provider already refused this exact image request: 未受理，不扣费 "
+                        "(not accepted, nothing charged). Adjust the request before calling "
+                        "image_gen again."
+                    ),
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_provider_rejected",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "provider_accepted": False,
+                        "charged": False,
+                        "outcome_unknown": False,
+                        "manual_review": False,
+                    },
+                )
+            elif (
+                effect_prepared is not None
+                and effect_prepared.snapshot.provider_handle
+                and effect_prepared.snapshot.state in {"accepted", "outcome_unknown"}
+            ):
+                # A replay of an accepted RunningHub task that is still being
+                # finished: reconciliation owns it through its taskId.
+                return _image_task_pending_result(
+                    mode, effect_prepared.snapshot.provider_handle, "it is still being finished",
+                    operation_key=operation_key, asset_ids=[row.id for row in reservations], notes=notes,
+                )
             else:
                 states = sorted({str(row.status) for row in reservations})
                 return ToolResult(
@@ -1325,17 +1738,23 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     await mark_effect_submitting(effect_claim)
                     await assert_effect_dispatchable(effect_claim)
                 provider_called = True
-                provider_operation = _call_provider(
-                    target,
-                    args,
-                    size=size,
-                    quality=quality,
-                    output_format=output_format,
-                    images=images,
-                    mask=mask,
-                    ctx=ctx,
-                    operation_key=operation_key,
-                )
+                if planned is not None:
+                    provider_operation = _runninghub_generate(
+                        target, planned, ctx=ctx, effect_claim=effect_claim,
+                        receipt=task_receipt, asset_urls=input_urls,
+                    )
+                else:
+                    provider_operation = _call_provider(
+                        target,
+                        args,
+                        size=size,
+                        quality=quality,
+                        output_format=output_format,
+                        images=images,
+                        mask=mask,
+                        ctx=ctx,
+                        operation_key=operation_key,
+                    )
                 if effect_claim is not None:
                     from agent.effect_ledger import (
                         run_with_effect_claim_heartbeat,
@@ -1350,7 +1769,72 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 await _assert_image_current(ctx)
             except Exception as exc:
                 from agent.driver import LeaseLostError
+                from question.runtime import RunRevoked
+                from tool.image_runninghub import ImageTaskFailed, ImageTaskPending
 
+                asset_ids = [row.id for row in reservations]
+                if isinstance(exc, ImageTaskPending):
+                    # Accepted and still running (or not yet downloadable):
+                    # release the claim with the taskId so reconciliation can
+                    # finish it. Reservations stay "generating".
+                    if effect_claim is not None:
+                        from agent.effect_ledger import (
+                            EffectLeaseLostError,
+                            record_effect_outcome_unknown,
+                        )
+
+                        try:
+                            await record_effect_outcome_unknown(
+                                effect_claim, error={"code": "image_task_pending"},
+                                provider_handle=exc.task_id,
+                            )
+                        except EffectLeaseLostError:
+                            pass
+                    log.warning("RunningHub image task pending task_id=%s reason=%s", exc.task_id, exc.reason)
+                    return _image_task_pending_result(mode, exc.task_id, exc.reason,
+                                                      operation_key=operation_key,
+                                                      asset_ids=asset_ids, notes=notes)
+                if isinstance(exc, ImageTaskFailed):
+                    # The accepted task ended in failure: final, no image.
+                    await _record_image_rejection(
+                        effect_claim, reservations,
+                        _ProviderFailure(True, "rejected", None, "", exc.message), code="image_task_failed",
+                    )
+                    return ToolResult(
+                        title=f"Image {mode} failed",
+                        output="\n".join([
+                            f"RunningHub ran this {mode} task (provider_task_id={exc.task_id}) but it failed: "
+                            f"{exc.message}.",
+                            "No image was produced and nothing was charged to the person's credits; "
+                            "a corrected retry is allowed.",
+                            *notes,
+                        ]),
+                        metadata={"error": True, "failure_code": "image_task_failed",
+                                  "provider_task_id": exc.task_id, "operation_key": operation_key,
+                                  "asset_ids": asset_ids, "retryable": True,
+                                  "outcome_unknown": False, "manual_review": False},
+                    )
+                failure = (
+                    _classify_provider_failure(exc)
+                    if provider_called
+                    else _ProviderFailure(False, "unknown", None, "",
+                                          f"{type(exc).__name__} at the send boundary")
+                )
+                if failure.definite:
+                    # The provider refused, or the request never left: nothing
+                    # was accepted or charged, so a corrected retry is safe.
+                    await _record_image_rejection(effect_claim, reservations, failure)
+                    log.warning(
+                        "image provider refused %s: kind=%s status=%s type=%s message=%s",
+                        mode, failure.kind, failure.status, type(exc).__name__,
+                        failure.detail or "-",
+                    )
+                    if isinstance(exc, (LeaseLostError, RunRevoked)):
+                        raise
+                    return _rejected_result(
+                        mode, failure, operation_key=operation_key,
+                        asset_ids=[row.id for row in reservations], notes=notes,
+                    )
                 if effect_claim is not None and provider_called:
                     from agent.effect_ledger import (
                         EffectLeaseLostError,
@@ -1363,6 +1847,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             error={
                                 "code": "image_provider_response_unknown",
                                 "error_type": type(exc).__name__,
+                                "http_status": failure.status,
                             },
                         )
                     except EffectLeaseLostError:
@@ -1392,7 +1877,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 # ambiguous and paid resubmission remains disabled.
                 next_status = (
                     "pending"
-                    if isinstance(exc, LeaseLostError) and not provider_called
+                    if isinstance(exc, (LeaseLostError, RunRevoked)) and not provider_called
                     else "outcome_unknown"
                 )
                 await _set_reserved_image_status(
@@ -1401,26 +1886,40 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     ctx=None,
                     expected={"generating"},
                 )
-                if isinstance(exc, LeaseLostError):
+                if isinstance(exc, (LeaseLostError, RunRevoked)):
                     raise
-                log.warning("image provider outcome unknown: %s", type(exc).__name__)
+                task_id = task_receipt.get("task_id")
+                log.warning(
+                    "image provider outcome unknown: mode=%s status=%s type=%s reason=%s "
+                    "task_id=%s message=%s", mode, failure.status, type(exc).__name__,
+                    failure.reason, task_id or "-", failure.detail or "-",
+                )
                 return ToolResult(
                     title=f"Image {mode} outcome unknown",
-                    output=(
+                    output="\n".join([
                         "The image provider request may have been accepted, but no durable provider "
-                        "receipt is available. Automatic paid resubmission is disabled."
-                    ),
+                        "receipt is available. Automatic paid resubmission is disabled.",
+                        f"reason={failure.reason}",
+                        *([f"provider_task_id={task_id}"] if task_id else []),
+                        *([f"provider_message={failure.detail}"] if failure.detail else []),
+                        "next_step=Tell the person the outcome is uncertain; do not resubmit this "
+                        "request unless they explicitly ask.",
+                        *notes,
+                    ]),
                     metadata={
                         "error": True,
                         "failure_code": "image_provider_outcome_unknown",
                         "operation_key": operation_key,
                         "asset_ids": [row.id for row in reservations],
+                        "provider_status": failure.status,
+                        "provider_task_id": task_id,
                         "outcome_unknown": True,
                         "manual_review": True,
                         "do_not_retry": True,
                     },
                 )
-            if effect_claim is not None:
+            if effect_claim is not None and planned is None:
+                # RunningHub recorded its taskId receipt at submit time.
                 import hashlib as _receipt_hashlib
 
                 from agent.effect_ledger import (
@@ -1585,6 +2084,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         credits = await settle_image(
             key=billing_key, workspace_id=ctx.workspace_id, user_id=ctx.user_id,
             session_id=ctx.session_id, model_id=target.model, count=len(stored),
+            # RunningHub prices by resolution tier, as its price-preview does.
+            **({"tier": planned.tier} if planned is not None else {}),
         )
     except Exception:  # billing must never fail a stored image
         log.warning("image_gen settlement failed", exc_info=True)
@@ -1609,10 +2110,13 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                                   usage_row.credits, "image_generation")
 
     verb = "Edited" if mode == "edit" else "Generated"
+    model_label = f"{rh_model.name} ({target.model})" if rh_model is not None else target.model
     lines = [
-        f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''} with {target.model}.",
+        f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''} with {model_label}.",
         "Each image is stored in OSS and indexed in the resource centre:",
     ]
+    if task_receipt.get("task_id"):
+        lines.insert(1, f"provider_task_id={task_receipt['task_id']}")
     for item in stored:
         card = "attached to chat" if item.attached else "resource saved; chat attachment failed"
         workspace = "workspace copy ready" if item.materialized else "OSS only; workspace copy unavailable"
@@ -1625,6 +2129,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
         lines.append(f"credits={format(credits.normalize(), 'f')}")
         lines += billing_status_lines()
+    lines += notes
     lines.append("Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.")
     return ToolResult(
         title=f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''}",
@@ -1636,8 +2141,10 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             "asset_ids": [item.asset_id for item in stored],
             "names": [item.name for item in stored],
             "size": size,
+            "requested_size": requested_size,
             "quality": quality,
             "credits": format(credits.normalize(), "f") if credits is not None else None,
+            **({"provider_task_id": task_receipt["task_id"]} if task_receipt.get("task_id") else {}),
         },
     )
 
@@ -1652,8 +2159,11 @@ class _ImageEffectReconciler:
     """Reconcile only the deterministic FileAsset/OSS projection.
 
     The synchronous image endpoint exposes no queryable provider handle.  A
-    complete set of ready deterministic asset rows proves local projection;
-    every other state remains manual review and never causes a paid replay.
+    complete set of ready deterministic asset rows proves local projection,
+    and a complete set of ``rejected`` rows records a refusal the dispatching
+    worker observed (HTTP 4xx, or a request that never left) but could not
+    settle itself; every other state remains manual review and never causes a
+    paid replay.
     """
 
     can_reconcile_without_handle = True
@@ -1695,6 +2205,20 @@ class _ImageEffectReconciler:
                 projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
                 evidence={"projection": "file_assets_ready"},
             )
+        if len(by_id) == len(asset_ids) and all(
+            by_id[asset_id].status == "rejected" for asset_id in asset_ids
+        ):
+            return ReconcileDecision(
+                state="failed",
+                receipt=effect.provider_receipt,
+                evidence={"code": "image_provider_rejected", "projection": "file_assets_rejected"},
+            )
+        if (
+            effect.safe_context.get("channel") == "runninghub"
+            and effect.provider_handle
+            and len(by_id) == len(asset_ids)
+        ):
+            return await _reconcile_runninghub_task(effect, [by_id[asset_id] for asset_id in asset_ids])
         return ReconcileDecision(
             state="manual_review",
             receipt=effect.provider_receipt,
@@ -1705,6 +2229,85 @@ class _ImageEffectReconciler:
                 "states": sorted({str(row.status) for row in rows}),
             },
         )
+
+
+async def _reconcile_runninghub_task(effect, rows: list[Any]):
+    """Finish an accepted RunningHub task by querying its taskId, never resending.
+
+    SUCCESS projects the image into the reserved assets (resource centre; the
+    chat turn has ended) and records the charge once per effect; FAILED or
+    CANCELLED is final; anything else is asked again later.
+    """
+    from agent.effect_ledger import ReconcileDecision
+    from core.config import get_config
+    from tool import image_runninghub as runninghub
+    from tool import video_providers
+
+    task_id = effect.provider_handle
+    context = effect.safe_context
+    try:
+        route = runninghub.configured_route(effect.provider, str(context.get("model") or ""), get_config())
+    except Exception:
+        return ReconcileDecision(state="manual_review", provider_handle=task_id,
+                                 evidence={"code": "runninghub_route_unavailable"})
+    if video_providers.provider_route_fingerprint(route) != context.get("provider_route_fingerprint"):
+        # Task ids belong to an account; another credential cannot answer.
+        return ReconcileDecision(state="manual_review", provider_handle=task_id,
+                                 evidence={"code": "runninghub_route_changed"})
+    data = await video_providers.status(route, task_id, operation="image_status")
+    state = runninghub.task_state(data)
+    if state in ("failed", "cancelled"):
+        await _set_reserved_image_status(rows, "rejected", ctx=None,
+                                         expected={"generating", "outcome_unknown", "transfer_failed"})
+        return ReconcileDecision(state="failed", provider_handle=task_id,
+                                 evidence={"code": "image_task_failed", "task_state": state})
+    urls = runninghub.result_urls(data)[:len(rows)]
+    if state != "completed" or len(urls) < len(rows):
+        return ReconcileDecision(state="accepted", provider_handle=task_id, retry_after_seconds=60,
+                                 evidence={"code": "image_task_running", "task_state": state})
+    payloads = [await _download_generated_url(url) for url in urls]
+    await _project_reconciled_images(rows, payloads, str(context.get("output_format") or "png"))
+    try:
+        from billing.media import settle_image
+
+        await settle_image(key=f"image:effect:{effect.effect_id}", workspace_id=rows[0].workspace_id,
+                           user_id=effect.tenant_id, session_id=effect.session_id,
+                           model_id=str(context.get("model") or ""), count=len(rows),
+                           tier=context.get("billing_tier"))
+    except Exception:  # billing must never undo a delivered image
+        log.warning("reconciled image settlement failed", exc_info=True)
+    asset_ids = [row.id for row in rows]
+    return ReconcileDecision(
+        state="succeeded", provider_handle=task_id, receipt={"task_id": task_id},
+        projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
+        evidence={"projection": "file_assets_ready", "reconciled_from": "runninghub_query"},
+    )
+
+
+async def _project_reconciled_images(rows: list[Any], payloads: list[bytes], fallback_format: str) -> None:
+    """Write late images into their reserved, deterministic OSS keys and rows."""
+    from sqlalchemy import update
+
+    from core.oss import get_oss
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+
+    oss = get_oss()
+    for row, data in zip(rows, payloads, strict=True):
+        mime, _ext = _detect_output(data, fallback_format)
+        size = await _upload_bytes(oss, row.oss_key, mime, data)
+        async with get_db_session() as db:
+            # transfer_failed included: the in-call delivery may have failed
+            # after RunningHub finished; its result URL can be fetched again.
+            changed = await db.execute(
+                update(FileAsset)
+                .where(FileAsset.id == row.id, FileAsset.user_id == row.user_id,
+                       FileAsset.status.in_(("generating", "outcome_unknown", "uploading", "transfer_failed")))
+                .values(status="ready", mime=mime, size=size)
+                .execution_options(synchronize_session=False)
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("image reservation changed during reconciliation")
 
 
 _image_effect_reconciler = _ImageEffectReconciler()

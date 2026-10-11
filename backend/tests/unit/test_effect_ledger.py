@@ -395,6 +395,43 @@ async def test_stale_prepared_intent_closes_as_definite_no_send():
     assert phases[-1]["evidence"]["provider_called"] is False
 
 
+@pytest.mark.asyncio
+async def test_owner_acknowledgment_releases_only_parked_desktop_effects_and_never_resends():
+    user, project, session, lease, fence = await _seed("acknowledge")
+    rows = {}
+    for adapter, state in (("sandbox_tool", "manual_review"), ("computer", "manual_review"),
+                           ("image_gen_fixture", "manual_review"), ("sandbox_runtime", "outcome_unknown")):
+        prepared = await _prepare(fence, project, adapter=adapter)
+        claim = await effects.claim_effect_for_dispatch(prepared.snapshot.effect_id, fence)
+        await effects.mark_effect_submitting(claim)
+        await effects.record_effect_outcome_unknown(claim, error={"code": "response_lost"})
+        rows[adapter] = prepared.snapshot.effect_id
+    await lease.release(session_status="idle")
+    for adapter in ("sandbox_tool", "computer", "image_gen_fixture"):
+        assert await effects.recover_effect_once(rows[adapter]) == "manual_review"
+    async with get_db_session() as db:
+        released = await effects.acknowledge_parked_effects_locked(db, tenant_id=user,
+            session_ids=[session], actor_user_id=user, command_id="ack-command")
+        assert await effects.acknowledge_parked_effects_locked(db, tenant_id="someone-else",
+            session_ids=[session], actor_user_id=user, command_id="foreign") == []
+    assert sorted(released) == sorted([rows["sandbox_tool"], rows["computer"]])
+    for adapter, expected in (("sandbox_tool", "failed"), ("computer", "failed"),
+                              ("image_gen_fixture", "manual_review"), ("sandbox_runtime", "outcome_unknown")):
+        assert (await effects.get_effect(rows[adapter])).state == expected
+    phases = await effects.list_effect_evidence(rows["sandbox_tool"])
+    assert phases[-1]["phase"] == "acknowledged"
+    assert phases[-1]["evidence"]["command_id"] == "ack-command"
+    assert phases[-1]["evidence"]["outcome_verified"] is False
+    # Released is not dispatchable: the same call can never be sent again.
+    second = await driver.reserve_run(session, user)
+    retry = effects.EffectRunFence(session, user, second.run_id, second.generation)
+    again = await _prepare(retry, project, adapter="sandbox_tool")
+    assert again.snapshot.state == "failed"
+    with pytest.raises(effects.EffectNotDispatchableError):
+        await effects.claim_effect_for_dispatch(again.snapshot.effect_id, retry)
+    await second.release(session_status="idle")
+
+
 def test_database_lease_expressions_use_server_clocks_for_sqlite_and_postgres():
     class Bind:
         def __init__(self, dialect):

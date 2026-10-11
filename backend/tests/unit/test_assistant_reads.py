@@ -39,11 +39,11 @@ def cursor_key(monkeypatch):
     monkeypatch.setattr(get_config(), "jwt_secret", "assistant-cursor-test-only")
 
 
-async def read_turn():
+async def read_turn(*, prompt=None):
     owner, workspace, main, accepted, execution_lease, report = await result_ready()
     await execution_lease.release(session_status="idle")
     await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
-        prompt="Read the original report and preserve what remains untested.", origin="human",
+        prompt=prompt or "Read the original report and preserve what remains untested.", origin="human",
         origin_ref={"actor_user_id": owner})
     lease = await reserve_run(main.id, owner)
     batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)

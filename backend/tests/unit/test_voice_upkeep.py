@@ -5,9 +5,10 @@ from datetime import datetime
 import pytest
 
 from tests.support.voice_fakes import (FakeClock, FakeLink, ScriptedProvider, audio, done, drain, event, item,
-                                       outbox, started, tool_call)
+                                       outbox, provider_error, silent_reply, started, tool_call)
 from voice import upkeep
-from voice.bridge import Bridge
+from voice.bridge import KEEPALIVE_RETRY_SECONDS, REPLY_GRACE_SECONDS, Bridge
+from voice.models import AUDIO_MODEL, OMNI_MODEL
 from voice.transcript import CallTranscript
 from voice.upkeep import KEEP_ITEMS, ContextKeeper
 
@@ -169,11 +170,13 @@ async def test_a_result_arriving_while_the_new_session_opens_is_told_there(call)
         fresh.append(ScriptedProvider())
         return fresh[-1]
     bridge.opener, bridge.late_after = opener, 600  # a progress reply would come first otherwise
-    await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
     bridge.keeper.session_started -= upkeep.ROTATE_SECONDS
     clock.advance(30)
     await bridge.fill_idle()
     assert bridge.rotating
+    await drain()
+    assert bridge.swapping  # wait for the summary before checking the new-session window
     link.finish("call-1")
     await drain()
     assert not provider.commands("note")  # nothing new goes into the old session
@@ -195,7 +198,7 @@ async def test_results_are_still_told_while_the_memo_for_a_rotation_is_made():
     bridge = Bridge(provider, link, clock=clock, instructions="BASE", summarizer=summaries, opener=opener,
                     wall_clock=lambda: WALL)
     bridge.late_after = 600
-    await replay(bridge, started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
     await exchange(bridge, 1, tokens=130_000)
     await drain()
     assert bridge.rotating and not bridge.swapping  # waiting for the memo, the call goes on
@@ -207,3 +210,148 @@ async def test_results_are_still_told_while_the_memo_for_a_rotation_is_made():
     gate.set()
     await drain()
     assert bridge.provider is fresh[0] and not bridge.rotating
+
+
+def kept_call(model):
+    """A call whose provider closes an idle session: the bridge keeps it open for this model."""
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock, instructions="BASE",
+                    summarizer=Summaries(), wall_clock=lambda: WALL,
+                    keepalive_after=upkeep.keepalive_seconds(model))
+    return bridge, provider, link, clock
+
+
+def test_keepalive_thresholds_stay_a_minute_below_each_providers_limit():
+    assert upkeep.keepalive_seconds(AUDIO_MODEL) == 120  # Audio closes a session after 180 s without a response
+    assert upkeep.keepalive_seconds(OMNI_MODEL) == 240   # Omni after 300 s
+    assert upkeep.keepalive_seconds(AUDIO_MODEL, 90) == upkeep.keepalive_seconds(OMNI_MODEL, 90) == 90
+    keeper = ContextKeeper(CallTranscript(now=lambda: WALL), clock=FakeClock())
+    keeper.clock.advance(10_000)
+    assert not keeper.keepalive_due()  # without a threshold: never (tests, scripts)
+
+
+@pytest.mark.parametrize("model, after", [(AUDIO_MODEL, 120), (OMNI_MODEL, 240)])
+async def test_a_silent_reply_keeps_an_idle_session_open(model, after):
+    bridge, provider, _, clock = kept_call(model)
+    await exchange(bridge, 1)
+    clock.advance(after - 1)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")
+    clock.advance(1)
+    await bridge.fill_idle()
+    assert provider.commands("keepalive") == [("keepalive", False)]  # the user has spoken in this session
+    await bridge.fill_idle()
+    assert len(provider.commands("keepalive")) == 1 and bridge.requested == "keepalive"  # one at a time
+
+
+async def test_the_silent_reply_is_invisible_billed_and_deleted():
+    bridge, provider, link, clock = kept_call(AUDIO_MODEL)
+    await exchange(bridge, 1)
+    outbox(bridge)
+    lines, items, replies = list(bridge.spoken.lines), list(bridge.spoken.items), bridge.keeper.replies
+    clock.advance(120)
+    await bridge.fill_idle()
+    await replay(bridge, *silent_reply("keep", "item_keep"))
+    assert not outbox(bridge)  # no phase, no audio, no cost event: nothing reaches the client
+    assert bridge.spoken.lines == lines and bridge.spoken.items == items  # nor the transcript and summaries
+    assert bridge.keeper.replies == replies and not bridge._replies and not bridge._answering
+    assert not bridge.followup_due and not link.started and not bridge.deliveries  # no turn logic either
+    assert provider.commands("delete") == [("delete", "item_keep")]  # no later reply reads "嗯"
+    assert bridge.meter.responses["keep"]["tokens"]["output_text"] == 2  # billed like any reply
+    assert (bridge.state, bridge.active_response, bridge._keepalives) == ("idle", None, {})
+    clock.advance(119)
+    await bridge.fill_idle()
+    assert len(provider.commands("keepalive")) == 1  # its own done restarted the clock
+    clock.advance(1)
+    await bridge.fill_idle()
+    assert len(provider.commands("keepalive")) == 2
+
+
+async def test_any_reply_restarts_the_clock_and_none_is_sent_while_something_is_going_on():
+    bridge, provider, _, clock = kept_call(AUDIO_MODEL)
+    await exchange(bridge, 1)
+    clock.advance(100)
+    await replay(bridge, started("vad"), audio("vad"), done("vad", status="cancelled"))  # cut short: still counts
+    clock.advance(100)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")
+    clock.advance(20)
+    await replay(bridge, event("user_started"))
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")  # the user is speaking
+    await replay(bridge, event("user_stopped"))
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")  # the VAD answers by itself: its grace
+    await replay(bridge, started("answer"), audio("answer"))
+    clock.advance(REPLY_GRACE_SECONDS)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")  # a reply is playing
+    await replay(bridge, done("answer"))
+    clock.advance(119)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")
+    bridge.closing = True
+    clock.advance(1)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")  # hanging up
+    bridge.closing = False
+    await bridge.begin_limit("max_duration", 1800)
+    assert not provider.commands("keepalive")  # the goodbye instead
+    assert provider.commands("create")[-1][1].endswith("这通电话到时间了，我们文字里继续。")
+
+
+async def test_a_task_still_running_does_not_hold_the_silent_reply_back():
+    """2026-10-09: users waited silently for a delegated task; Audio closed the call after 180 s."""
+    bridge, provider, link, clock = kept_call(AUDIO_MODEL)
+    await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack"), audio("ack"), tool_call("call-1"), done("ack"))
+    for number in range(3):  # the one progress line a request gets, then other replies
+        clock.advance(30)
+        await bridge.fill_idle()
+        await replay(bridge, started(f"p{number}"), audio(f"p{number}"), done(f"p{number}"))
+    assert len(provider.commands("create")) == 1 and bridge.pending_calls
+    clock.advance(119)
+    await bridge.fill_idle()
+    assert not provider.commands("keepalive")
+    clock.advance(1)
+    await bridge.fill_idle()
+    assert provider.commands("keepalive") == [("keepalive", True)]  # no user item in this session yet
+    await replay(bridge, *silent_reply("keep", "item_keep"))
+    assert bridge.pending_calls and not bridge.deliveries
+    link.finish("call-1")  # the result comes in as usual and is told
+    await drain()
+    assert [command[0] for command in provider.sent[-2:]] == ["note", "create"]
+
+
+async def test_a_refused_silent_reply_is_skipped_and_tried_again_later():
+    bridge, provider, _, clock = kept_call(AUDIO_MODEL)
+    await exchange(bridge, 1)
+    clock.advance(120)
+    await bridge.fill_idle()
+    await replay(bridge, provider_error("active_response", param="response.create"))
+    assert bridge.requested is None
+    clock.advance(KEEPALIVE_RETRY_SECONDS - 1)
+    await bridge.fill_idle()
+    assert len(provider.commands("keepalive")) == 1
+    clock.advance(1)
+    await bridge.fill_idle()
+    assert provider.commands("keepalive")[-1] == ("keepalive", False)
+    # Audio found no user message left (it keeps max_history_turns): the next one brings its prompt item.
+    await replay(bridge, provider_error("no_input", param="response.create"))
+    clock.advance(KEEPALIVE_RETRY_SECONDS)
+    await bridge.fill_idle()
+    assert provider.commands("keepalive")[-1] == ("keepalive", True)
+
+
+async def test_a_vad_reply_taken_for_the_silent_one_is_heard():
+    """The user's answer won the race with our request: it is the model's reply after all."""
+    bridge, provider, _, clock = kept_call(AUDIO_MODEL)
+    await exchange(bridge, 1)
+    clock.advance(120)
+    await bridge.fill_idle()
+    outbox(bridge)
+    await replay(bridge, started("vad"), provider_error("active_response", param="response.create"),
+                 audio("vad"), event("assistant_transcript", text="好的", item_id="a-vad", response_id="vad"))
+    items = outbox(bridge)
+    assert [value for value in items if isinstance(value, bytes)] and bridge.state == "responding"
+    await replay(bridge, done("vad"))
+    assert bridge.spoken.lines[-1].text == "好的" and bridge.state == "idle"

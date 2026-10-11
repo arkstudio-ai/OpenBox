@@ -16,6 +16,10 @@ import '../shared/ws/ws_client.dart';
 /// Holds authenticated UI until workspace scope is known, matching the web
 /// WorkspaceLayout bootstrap. It also owns cross-feature cache reset whenever
 /// the active tenant changes.
+///
+/// Before that, it holds every screen while a saved sign-in could not be
+/// checked at launch ([AuthState.offline]): the person is not signed out, so
+/// neither the landing nor the login page is right. Retry settles it.
 class WorkspaceBootstrap extends ConsumerWidget {
   const WorkspaceBootstrap({super.key, required this.child});
 
@@ -24,6 +28,15 @@ class WorkspaceBootstrap extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
+    if (auth.offline) {
+      return auth.isLoading
+          ? const _WorkspaceLoading()
+          : _WorkspaceError(
+              message: ref.watch(i18nProvider).t('auth:sessionOffline'),
+              onRetry: () =>
+                  unawaited(ref.read(authProvider.notifier).retryRestore()),
+            );
+    }
     if (!auth.isAuthenticated) return child;
 
     ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (

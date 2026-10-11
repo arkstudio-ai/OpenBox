@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-10.2",
+  "version": "2026-10-11.1",
   "verified_at": "2026-09-05",
   "credits_per_cny": "1",
   "usd_cny": "6.7787",
@@ -529,7 +529,7 @@
       }
     },
     "image-gen": {
-      "_comment": "Image generation, credits per output image, by model with a default. Placeholder from docs/BILLING_PLAN.md §2 (per_call 0.3); replace with the gateway's real cost / sale price.",
+      "_comment": "Image generation, credits per output image, by model with a default. per_image is a price, or a {resolution tier: price} map for models the provider prices by tier. The openai entries are placeholders from docs/BILLING_PLAN.md §2 (per_call 0.3); the RunningHub entries are official price-preview cost at 1 CNY = 1 credit, no margin (docs/RUNNINGHUB_IMAGE_CHANNEL.md).",
       "default": {
         "vendor": "openai",
         "currency": "CNY",
@@ -541,6 +541,46 @@
         "currency": "CNY",
         "per_image": "0.30",
         "source": "docs/BILLING_PLAN.md §2 占位"
+      },
+      "rhart-image-n-pro": {
+        "vendor": "runninghub",
+        "name": "Nano Banana Pro",
+        "currency": "CNY",
+        "per_image": {"1k": "0.40", "2k": "0.40", "4k": "0.50"},
+        "verified_at": "2026-10-10",
+        "operations": ["text-to-image", "edit"],
+        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "verification": "Official price-preview, both operations, 1:1 and 16:9 identical. runninghub.cn refuses this model with 40310 (offline on the CN site); price kept for a global-site credential."
+      },
+      "rhart-image-n-g31-flash": {
+        "vendor": "runninghub",
+        "name": "Nano Banana 2",
+        "currency": "CNY",
+        "per_image": {"1k": "0.19", "2k": "0.19", "4k": "0.30"},
+        "verified_at": "2026-10-10",
+        "operations": ["text-to-image", "image-to-image"],
+        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "verification": "Official price-preview, both operations. runninghub.cn refuses this model with 40310 (offline on the CN site)."
+      },
+      "rhart-image-g-2": {
+        "vendor": "runninghub",
+        "name": "GPT Image 2",
+        "currency": "CNY",
+        "per_image": {"1k": "0.10", "2k": "0.10", "4k": "0.10"},
+        "verified_at": "2026-10-10",
+        "operations": ["text-to-image", "image-to-image"],
+        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "verification": "Official price-preview, both operations. runninghub.cn refuses this model with 40310 (offline on the CN site)."
+      },
+      "seedream-v5-pro": {
+        "vendor": "runninghub",
+        "name": "Seedream v5 Pro",
+        "currency": "CNY",
+        "per_image": {"1k": "0.27", "2k": "0.54"},
+        "verified_at": "2026-10-10",
+        "operations": ["text-to-image", "image-to-image"],
+        "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
+        "verification": "Official price-preview: <=1024x1024 pixels is the 1k price, larger outputs (2048x2048, 4096x4096) the 2k price. Paid runs 2026-10-10 (text-to-image task 2108835570985078786, image-to-image task 2108835853152690177, 1024x1024) reported usage.thirdPartyConsumeMoney 0.27 each."
       }
     },
     "stt": {

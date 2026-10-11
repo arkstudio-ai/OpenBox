@@ -104,9 +104,9 @@ async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines()
     finally:
         await lease.release(session_status="idle")
     assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []}) == VOICE_TURN_BLOCK.format(
-        length="two or three short sentences")
+        length="be concise and leave space for conversation")
     # The user asked for fuller answers on the phone (Settings → 语音通话).
-    assert "four or five sentences" in voice_turn_block({"detail": "detailed"})
+    assert "include the useful details the user asked for" in voice_turn_block({"detail": "detailed"})
 
 
 async def test_a_spoken_card_answer_reaches_the_model_with_its_exact_form_and_no_default_answers():
@@ -136,7 +136,7 @@ async def test_a_spoken_card_answer_reaches_the_model_with_its_exact_form_and_no
         [block] = [message for message in await projected(ctx) if message.id == VOICE]
         text = block.parts[0]["text"]
         assert "q-video" in text and "video-session" in text and "请填写片名" in text and "需要哪些字幕" in text
-        assert "requests.answer" in text and "ask only the missing" in text and "Never fill unanswered" in text
+        assert "requests.answer" in text and "ask naturally about missing decisions" in text and "Do not guess ambiguous targets, fill unanswered fields" in text
     finally:
         await lease.release(session_status="idle")
 

@@ -7,7 +7,7 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { wsClient } from "@/shared/ws/client"
 import type { SessionStatus } from "@/shared/types/api"
-import { assistantKeys, scopedOptions } from "./assistant"
+import { assistantKeys, scopedOptions, type AssistantBlockingCard } from "./assistant"
 
 export interface AssistantWatchItem {
   task_id: string
@@ -21,6 +21,8 @@ export interface AssistantWatchItem {
   updated_at: string
   pending_questions: number
   latest_result?: { result_id: string; outcome: string; delivery_state: string; created_at: string; summary: string } | null
+  /** The card the conversation waits on, when it waits on one (servers that report it). */
+  blocked_by?: AssistantBlockingCard | null
 }
 
 export interface AssistantWatchPage {

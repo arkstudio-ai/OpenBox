@@ -132,7 +132,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds` 已取单次上限与当日剩余配额的较小值 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
-| `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working` |
+| `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached/reconnected | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working`；2026-10-10 起 `reconnected`：百炼会话断开后续上，用户当时被打断，请其再说一遍 |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
@@ -172,7 +172,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 - 服务端每 10 秒发 `heartbeat`；客户端 30 秒无帧 → 本地结束（`network`），P2 起改为尝试恢复。
 - 服务端 30 秒收不到客户端音频帧 → 关闭 1011（客户端卡死或网络断）。
 - 连接百炼：环境代理与直连两条路线竞速（代理先发、直连 0.4 秒后跟上，先建立会话者胜），单次 `open_timeout` 5 秒，最多两轮；期间客户端处于 `connecting`，超过 25 秒客户端自行结束（`error`）。实测连接到 `ready` 中位 0.35 秒。
-- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。
+- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。2026-10-10 实现：已接听、未挂断、未到时长或积分上限时，服务端重开会话（每次断开最多 2 次、约 1 秒间隔、20 秒内，每通至多 3 次），带上摘要、最后几句和进度，客户端连接不断；用户当时被打断就说一句 `phrase{reconnected}`，否则不出声；重开失败仍按 `error`（`provider_error`，1011）结束。会话长时间没有回复时服务端发一条不出声的保活回复，避免百炼按空闲关闭（Audio 180 秒、Omni 300 秒），见后端文档 §27。
 
 ## 6. 口播内容来源
 

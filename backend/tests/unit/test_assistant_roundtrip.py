@@ -62,7 +62,7 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.submit")
             yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
                 "title": "Roundtrip report", "instructions": "Create a report; browser tests are unverified.",
-                "source_message_ids": [original_message_id]}, "call_id": "delegate-task", "invalid": False}
+                "source_message_ids": [original_message_id], "destination_confirmed": True}, "call_id": "delegate-task", "invalid": False}
             yield {"type": "finish", "reason": "tool_calls", "usage": {}}
         elif phase == "delegate":
             assert '"state": "accepted"' in json.dumps(kwargs["messages"]).replace('\\"', '"')

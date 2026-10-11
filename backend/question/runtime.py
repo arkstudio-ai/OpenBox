@@ -474,6 +474,35 @@ async def publish_status(
         bus.publish("session.error", {**payload, "error": error})
 
 
+async def pending_question_locked(db, execution: SessionExecution) -> QuestionCheckpoint | None:
+    """The oldest card still waiting for an answer in the session's current turn."""
+    return await db.scalar(select(QuestionCheckpoint).where(
+        QuestionCheckpoint.session_id == execution.session_id,
+        QuestionCheckpoint.generation == execution.generation,
+        QuestionCheckpoint.status == "pending",
+    ).order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id).limit(1))
+
+
+async def admission_blocked_locked(db, session_id: str, *, execution: SessionExecution | None = None,
+                                   resuming: bool = False) -> bool:
+    """Whether a card owns this session's next turn, so no other input may start one.
+
+    A pending question at the current turn, or an answer saved and waiting to
+    resume it, comes first. Only a person's own new message supersedes it (it
+    invalidates the card when it is materialized); platform input waits queued
+    instead of being claimed by a generation that start_run would refuse.
+    ``resuming`` is the answer's own continuation, which resume_pending admits.
+    Callers hold the Session lock, or read it as a hint and re-check under it.
+    """
+    if execution is None:
+        execution = await db.get(SessionExecution, session_id)
+    if execution is None:
+        return False
+    if execution.resume_pending and not resuming:
+        return True
+    return await pending_question_locked(db, execution) is not None
+
+
 async def start_run(session_id: str, user_id: str, *, expected_generation: int | None = None,
                     driver_lease=None) -> RunTicket | None:
     # The driver owns execution admission. The question generation still names
@@ -485,12 +514,8 @@ async def start_run(session_id: str, user_id: str, *, expected_generation: int |
     async with transaction(session_id, user_id, fence=False) as (db, session, execution):
         # A reconnect or duplicate prompt delivery is not an answer. Only a
         # committed replacement message advances the generation past an ask.
-        pending = await db.scalar(select(QuestionCheckpoint.id).where(
-            QuestionCheckpoint.session_id == session_id,
-            QuestionCheckpoint.generation == execution.generation,
-            QuestionCheckpoint.status == "pending",
-        ).limit(1))
-        if pending or (expected_generation is None and execution.resume_pending):
+        if await admission_blocked_locked(db, session_id, execution=execution,
+                                          resuming=expected_generation is not None):
             session.status = await waiting_status(db, execution)
             return None
         if expected_generation is not None:
@@ -578,14 +603,18 @@ async def heartbeat(ticket: RunTicket, abort: asyncio.Event) -> None:
 
 
 async def waiting_status(db, execution: SessionExecution, fallback: str = "idle") -> str:
-    pending = await db.scalar(select(QuestionCheckpoint.id).where(
-        QuestionCheckpoint.session_id == execution.session_id,
-        QuestionCheckpoint.generation == execution.generation,
-        QuestionCheckpoint.status == "pending",
-    ).limit(1))
-    if pending:
+    if await pending_question_locked(db, execution) is not None:
         return "waiting_input"
     return "queued" if execution.resume_pending else fallback
+
+
+async def resting_status(session_id: str, user_id: str) -> str:
+    """The status a session shows with no run: waiting on a card, queued to resume, or idle."""
+    async with get_db_session() as db:
+        execution = await db.get(SessionExecution, session_id)
+        if execution is None or execution.user_id != user_id:
+            return "idle"
+        return await waiting_status(db, execution)
 
 
 async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bool = False,

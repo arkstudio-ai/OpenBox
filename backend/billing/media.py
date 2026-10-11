@@ -71,6 +71,9 @@ def _unit_cost(entry: dict | None, unit: str, quantity: Decimal | int, data: dic
     if unit == "per_second":
         price = (price or {}).get(resolution) if isinstance(price, dict) else None
         rule_id = (cost.get("rule_ids") or {}).get(resolution)
+    elif unit == "per_image" and isinstance(price, dict):
+        price = price.get(resolution)
+        rule_id = (cost.get("rule_ids") or {}).get(resolution)
     if price is None:
         return None, None
     per = Decimal(str(price))
@@ -193,8 +196,14 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     }), cost, cost_snap, (table.get("rule_ids") or {}).get(resolution))
 
 
-def quote_image(model_id: str, count: int, *, rates: dict | None = None) -> MediaQuote:
-    """Credits for generated images: count × the model's per-image price (or the default)."""
+def quote_image(model_id: str, count: int, *, tier: str | None = None,
+                rates: dict | None = None) -> MediaQuote:
+    """Credits for generated images: count × the model's per-image price (or the default).
+
+    A model priced by resolution tier (``per_image`` is a ``{tier: price}``
+    map, as RunningHub's price-preview reports) needs the request's ``tier``;
+    an unlisted tier is unpriced rather than guessed.
+    """
     data = rates if rates is not None else catalogue()
     base = {"version": data["version"], "verified_at": data["verified_at"], "kind": IMAGE_KIND}
     model = (model_id or "").rsplit("/", 1)[-1]
@@ -203,15 +212,23 @@ def quote_image(model_id: str, count: int, *, rates: dict | None = None) -> Medi
     key = f"image-gen:{model or 'unknown'}"
     if not isinstance(rate, dict) or count <= 0:
         return MediaQuote(key, "image", 0, None, {**base, "model": key, "reason": "No verified price for this image model"})
-    per_image = Decimal(str(rate["per_image"]))
+    per = rate["per_image"]
+    if isinstance(per, dict):
+        key = f"{key}:{tier}" if tier else key
+        per = per.get(tier or "")
+        if per is None:
+            return MediaQuote(key, tier or "image", 0, None, {
+                **base, "model": key, "reason": f"No verified price for {model} at {tier or 'unknown resolution'}"})
+    per_image = Decimal(str(per))
     if not per_image.is_finite() or per_image < 0:
         raise ValueError("Invalid media rate")
     credits = (per_image * int(count)).quantize(PRECISION)
-    cost, cost_snap = _unit_cost(rate, "per_image", int(count), data)
-    return _with_cost(MediaQuote(key, "image", int(count), credits, {
+    cost, cost_snap = _unit_cost(rate, "per_image", int(count), data, resolution=tier)
+    return _with_cost(MediaQuote(key, tier or "image", int(count), credits, {
         **base, "model": key, "currency": rate["currency"], "per_image": str(per_image), "images": int(count),
         "source": rate.get("source"), "priced_as": model if model in table else "default",
-    }), cost, cost_snap, rate.get("rule_id"))
+        **({"tier": tier} if tier else {}),
+    }), cost, cost_snap, (rate.get("rule_ids") or {}).get(tier) or rate.get("rule_id"))
 
 
 def quote_transcription(model_id: str, duration_sec: float | None, *, rates: dict | None = None) -> MediaQuote:
@@ -383,16 +400,17 @@ async def settle_generation(job, asset, *, model_id: str, resolution: str | None
 
 
 async def settle_image(*, key: str, workspace_id: str, user_id: str, session_id: str | None,
-                       model_id: str, count: int) -> Decimal | None:
+                       model_id: str, count: int, tier: str | None = None) -> Decimal | None:
     """Record (and in enforce, charge) one image_gen call that stored ``count`` images.
 
     ``key`` must be stable per call (the tool-call part id): a retried call
     that stores the same images is one charge.
     """
-    price = quote_image(model_id, count)
+    price = quote_image(model_id, count, tier=tier)
     return await settle(key=key, workspace_id=workspace_id, user_id=user_id, session_id=session_id, price=price,
                         kind=IMAGE_KIND, quantity_known=count > 0,
-                        tokens={"images": count, "model": model_id}, default_title="图片生成")
+                        tokens={"images": count, "model": model_id, **({"tier": tier} if tier else {})},
+                        default_title="图片生成")
 
 
 async def settle_transcription(job, *, workspace_id: str, model_id: str, duration_sec: float | None) -> Decimal | None:

@@ -25,12 +25,14 @@ def no_cached_rules():
 def test_keys_parse_and_map_usage_rows_back_to_items():
     assert ItemKey.parse("llm:gemini-3.8-flash") == ItemKey("llm", "gemini-3.8-flash")
     assert ItemKey.parse("video-gen:MiniMax-H3:768p") == ItemKey("video-gen", "MiniMax-H3", "768p")
+    assert ItemKey.parse("image-gen:seedream-v5-pro:2k") == ItemKey("image-gen", "seedream-v5-pro", "2k")
     assert ItemKey.parse("ims-compose:720p").key == "ims-compose:720p"
     for bad in ("", "llm", "video-gen:x", "llm:a:b", "unknown:x"):
         with pytest.raises(RuleError):
             ItemKey.parse(bad)
     assert ItemKey.for_usage("chat", "openai/gemini-3.8-flash").key == "llm:gemini-3.8-flash"
     assert ItemKey.for_usage("video_generate", "video-gen:wan3.0-video:720p").key == "video-gen:wan3.0-video:720p"
+    assert ItemKey.for_usage("image_gen", "image-gen:seedream-v5-pro:2k").key == "image-gen:seedream-v5-pro:2k"
     assert ItemKey.for_usage("video_compose", "ims-compose-720p").key == "ims-compose:720p"
     assert ItemKey.for_usage("voice_call", "qwen3.8-omni-flash-realtime").key == "voice-realtime:qwen3.8-omni-flash-realtime"
     assert ItemKey.for_usage("hot_trends", "hot-trends:douyin_public").key == "hot-trends:douyin_public"
@@ -89,6 +91,42 @@ def test_a_rule_can_price_an_item_the_base_file_never_had():
     llm = _rule("llm:brand-new-llm", sale={"input": "1", "output": "2"}, rid="pricing_01C")
     data = rules.overlay(base_catalogue(), [llm])
     assert quote("x/brand-new-llm", normalize_usage({"input": 1_000_000}), rates=data).credits == Decimal("1")
+
+
+def test_image_tier_rule_prices_costs_and_disables_only_the_selected_tier():
+    key = "image-gen:seedream-v5-pro:2k"
+    item = ItemKey.parse(key)
+    priced = _rule(key, sale={"per_image": "0.8"}, cost={"per_image": "0.54", "currency": "CNY"})
+    data = rules.overlay(base_catalogue(), [priced])
+    q = media.quote_image(item.model, 2, tier=item.resolution, rates=data)
+    assert (q.model_id, q.credits, q.cost) == (key, Decimal("1.6"), Decimal("1.08"))
+    assert q.snapshot["rule_id"] == priced.id and q.snapshot["cost"]["rule_id"] == priced.id
+    assert rules.item_sale(data, item) == {"per_image": "0.8"}
+    assert rules.item_cost(data, item)["per_image"] == "0.54"
+    assert media.quote_image(item.model, 1, tier="1k", rates=data).credits == Decimal("0.27")
+    assert rules.item_sale(data, ItemKey("image-gen", item.model)) is None
+    disabled = rules.overlay(base_catalogue(), [_rule(key, status="disabled")])
+    assert media.quote_image(item.model, 1, tier="2k", rates=disabled).credits is None
+    assert media.quote_image(item.model, 1, tier="1k", rates=disabled).credits == Decimal("0.27")
+
+
+def test_disabling_all_image_tiers_cannot_fall_back_to_the_generic_image_price():
+    model = "seedream-v5-pro"
+    data = rules.overlay(base_catalogue(), [_rule(f"image-gen:{model}:{tier}", status="disabled",
+                                                 rid="off_" + tier) for tier in ("1k", "2k")])
+    assert media.quote_image(model, 1, tier="1k", rates=data).credits is None
+    assert media.quote_image(model, 1, tier="2k", rates=data).credits is None
+    scalar = rules.overlay(base_catalogue(), [_rule("image-gen:gpt-image-2", status="disabled")])
+    assert media.quote_image("gpt-image-2", 1, rates=scalar).credits is None
+
+
+def test_legacy_model_wide_image_override_keeps_tiers_editable():
+    data = rules.overlay(base_catalogue(), [
+        _rule("image-gen:seedream-v5-pro", sale={"per_image": "0.7"}, rid="legacy"),
+        _rule("image-gen:seedream-v5-pro:2k", sale={"per_image": "0.9"}, rid="tier"),
+    ])
+    assert media.quote_image("seedream-v5-pro", 1, tier="1k", rates=data).credits == Decimal("0.7")
+    assert media.quote_image("seedream-v5-pro", 1, tier="2k", rates=data).credits == Decimal("0.9")
 
 
 def test_expired_and_future_rules_do_not_apply():

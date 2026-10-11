@@ -10,7 +10,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 代码 `6258a020` = `feat/harness-api-v1`（含 10-10 的 main 合并）再合入 `origin/main 3dc9b643`（PR #67 定价控制页、剪辑按秒）+ `/v1` 新增 `quality=fast`、分辨率倍率口径。后端镜像 `openbox-backend:20261011-gaode-6258a020`、前端 `openbox-frontend-v2:20261011-gaode-fe-6258a020`。
 - 迁移坑：分支此前的合并修订用了 `pd17c8d9e0f1`，与 main 新增的 `pricing_rules` 修订同 id；已改为 `pe28a9b0c1d2`（两头 `e7c9a1b3d5f0` + `pd17c8d9e0f1`）。高德库原本 stamp 在旧 id 上，切换时先 `alembic stamp --purge e7c9a1b3d5f0 pc06b7c8d9e0` 再启动（启动自跑 `upgrade head`），`pricing_rules` 表已建，当前 `pe28a9b0c1d2 (mergepoint)`。备份 `backups/pre-gaode-fast-*.dump`、`backups/override.*`。
 - 验证：backend 10 秒 healthy；`/v1/sessions` 401、`/api/admin/pricing` 401、`/api/environment` 200；容器内 `catalogue()` 版本 `2026-10-10.2`（含 cost 字段、Seedance 改价、剪辑按秒）；五档 `resolve_quality` 正确；公网域名三项 200。配置未改（五档与 provider 10-10 已对齐）。
-- 回滚：override 两行改回 `20261010-gaode-ae892425` / `20261010-gaode-fe-0d908bc2`，`alembic downgrade pd17c8d9e0f1`（去掉空合并）后再 `alembic stamp --purge e7c9a1b3d5f0 pd17c8d9e0f1`？不要——旧镜像不认识 `pricing_rules` 修订；正确做法是旧镜像启动前 `alembic stamp --purge e7c9a1b3d5f0 pc06b7c8d9e0`，保留 `pricing_rules` 表不动。
+- 回滚：override 两行改回 `20261010-gaode-ae892425` / `20261010-gaode-fe-0d908bc2`；旧镜像不认识 `pricing_rules` 修订，启动前先 `docker compose run --rm --no-deps -T backend alembic stamp --purge e7c9a1b3d5f0 pc06b7c8d9e0`，`pricing_rules` 表保留不动，再 `docker compose up -d --no-deps backend frontend`。
 
 ## 高德机：2026-10-10 20:15 `20261010-gaode-ae892425`（合入 main、对齐 gw2 五档）
 

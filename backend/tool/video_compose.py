@@ -186,8 +186,8 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
              f"captions={len(timeline.captions)}", f"texts={len(timeline.texts)}",
              f"output={timeline.canvas.width}x{timeline.canvas.height}", f"tier={price.tier}"]
     if price.credits is not None:
-        lines += [f"minutes_billed={price.minutes_billed}", f"estimated_credits={_credits(price.credits)}",
-                  "billing_note=不足 1 分钟按 1 分钟计；合成失败不计费；以成片实际时长结算"]
+        lines += [f"seconds_billed={price.minutes_billed}", f"estimated_credits={_credits(price.credits)}",
+                  "billing_note=按秒计积分，不足 1 分钟按 1 分钟计；合成失败不计费；以成片实际时长结算"]
     else:
         lines.append("estimated_credits=unavailable (" + str(price.snapshot.get("reason")) + ")")
     lines += billing_status_lines()
@@ -195,7 +195,7 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
     return ToolResult(title="Timeline valid", output="\n".join(lines),
                       metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings,
                                 "estimated_credits": _credits(price.credits) if price.credits is not None else None,
-                                "minutes_billed": price.minutes_billed, "tier": price.tier})
+                                "seconds_billed": price.minutes_billed, "tier": price.tier})
 
 
 async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:

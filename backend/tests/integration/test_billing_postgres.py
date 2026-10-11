@@ -27,7 +27,7 @@ from session.session import create_session
 
 
 def create_migrated_schema(connection):
-    billing_tables = {"credit_balances", "credit_ledger", "payment_orders", "usage_events", "billing_subscriptions", "payment_order_requests", "desktop_activations"}
+    billing_tables = {"credit_balances", "credit_ledger", "payment_orders", "usage_events", "billing_subscriptions", "payment_order_requests", "desktop_activations", "pricing_rules"}
     base.Base.metadata.create_all(connection, tables=[
         table for table in base.Base.metadata.sorted_tables if table.name not in billing_tables
     ])
@@ -40,6 +40,7 @@ def create_migrated_schema(connection):
         import_module("db.migrations.versions.d1f3a5b7c9e1_cancel_uncreated_orders").upgrade()
         import_module("db.migrations.versions.a4b6c8d0e2f5_desktop_activation_outbox").upgrade()
         import_module("db.migrations.versions.f8b3d6a1c092_admin_subscription_management").upgrade()
+        import_module("db.migrations.versions.pd17c8d9e0f1_pricing_rules").upgrade()
 
 
 @pytest.fixture

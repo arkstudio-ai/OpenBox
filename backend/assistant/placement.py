@@ -23,10 +23,19 @@ from question import runtime
 KIND = "assistant_placement"
 
 
-def task_input(*, project_id, title, prompt, attachments=(), model=None, continuation=None, source):
-    return {"project_id": project_id, "title": title, "instructions": prompt,
+def task_input(*, project_id, title, prompt, attachments=(), model=None, continuation=None, source, placement=None):
+    value = {"project_id": project_id, "title": title, "instructions": prompt,
             "attachment_ids": list(attachments), "model": model, "continuation": continuation,
             "source_message_ids": list(source.source_message_ids)}
+    if placement is not None:
+        value["placement"] = placement
+    return value
+
+
+def new_project_option(card: dict) -> str | None:
+    """Identify the action, not its position; accept already-issued legacy cards."""
+    options = card.get("options") or []
+    return card.get("new_project_option") or (options[1] if len(options) == 3 else None)
 
 
 async def require_placement(ctx, source, values: dict, *, destination_confirmed: bool = False) -> str | None:
@@ -34,7 +43,8 @@ async def require_placement(ctx, source, values: dict, *, destination_confirmed:
     digest = command_digest(values)
     async with get_db_session() as db:
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-        project = await _project(db, values["project_id"], ctx.user_id, ctx.workspace_id)
+        project = (await _project(db, values["project_id"], ctx.user_id, ctx.workspace_id)
+                   if values["project_id"] else None)
         # An executor retry of an already accepted explicit call keeps the ordinary receipt path.
         prior = await db.scalar(select(AssistantCommand.id).where(
             AssistantCommand.assistant_session_id == main.id, AssistantCommand.actor_user_id == ctx.user_id,
@@ -54,18 +64,28 @@ async def require_placement(ctx, source, values: dict, *, destination_confirmed:
         # checks authentic human provenance and the owned project. No text patterns.
         await _tool_source_locked(db, main, source, "task_create")
         if destination_confirmed:
+            if project is None:
+                raise AssistantError(400, "ASSISTANT_PLACEMENT_REQUIRED",
+                    "No existing destination was selected. Propose a new project and ask, or create the project the user already requested.")
             return None
-        project_name = project.name
+        project_name = project.name if project else None
     from question.question import Question, QuestionOption, ask
-    name = _clean(values["title"])
-    options = [f"在「{project_name}」里新建对话", f"新建项目「{name}」", CANCEL]
-    await ask(ctx.session_id, [Question(header="安排这件事", question=f"这件事放在哪里？\n任务：{values['title']}",
-        custom=False, options=[QuestionOption(label=options[0], description="使用这个项目的文件和背景资料"),
-            QuestionOption(label=options[1], description="新建项目，并在其中开一个对话"),
-            QuestionOption(label=CANCEL, description="暂不创建项目或对话")])],
+    proposal = values.get("placement") or {}
+    name = _clean(proposal.get("project_name") or values["title"])
+    if not 1 <= len(name) <= 128:
+        raise AssistantError(400, "ASSISTANT_PROJECT_INVALID", "Propose a project name of 1 to 128 characters")
+    prompt = _clean(proposal.get("question")) or f"这件事放在哪里？\n任务：{values['title']}"
+    new_option = f"新建项目「{name}」"
+    choices = ([QuestionOption(label=f"在「{project_name}」里新建对话", description="使用这个项目的文件和背景资料")]
+               if project_name is not None else [])
+    choices.extend([QuestionOption(label=new_option, description="新建项目，并在其中开一个对话"),
+                    QuestionOption(label=CANCEL, description="暂不创建项目或对话")])
+    options = [choice.label for choice in choices]
+    await ask(ctx.session_id, [Question(header="安排这件事", question=prompt, custom=False, options=choices)],
         tool={"callID": ctx.part_id, "messageID": ctx.message_id}, user_id=ctx.user_id,
         continuation={"kind": "question", KIND: {"digest": digest, "input": values,
-            "project_name": name, "options": options}}, expires_at=runtime.now() + EXPIRES_AFTER)
+            "project_name": name, "options": options, "new_project_option": new_option}},
+        expires_at=runtime.now() + EXPIRES_AFTER)
     return None
 
 
@@ -80,14 +100,16 @@ async def apply_locked(db, main, question_id: str, values: dict, source_ref: dic
         raise AssistantError(409, "ASSISTANT_PLACEMENT_CHANGED", "Choose where this exact task belongs again")
     options = card.get("options") or []
     answers = row.answers or []
-    if len(options) != 3 or len(answers) != 1 or len(answers[0]) != 1 or answers[0][0] not in options:
+    new_option = new_project_option(card)
+    if (len(options) not in (2, 3) or new_option not in options or len(answers) != 1
+            or len(answers[0]) != 1 or answers[0][0] not in options):
         raise AssistantError(409, "ASSISTANT_PLACEMENT_CHANGED", "The placement choice is unavailable")
     choice = answers[0][0]
     if choice == CANCEL:
         return None, row, {"state": "cancelled"}
     source_ref["placement"] = {"question_id": row.id, "choice": choice, "digest": card["digest"]}
     project_id = values["project_id"]
-    if choice == options[1]:
+    if choice == new_option:
         name = card["project_name"]
         project = await existing_project(db, user_id=main.user_id, workspace_id=main.workspace_id, name=name)
         if project is None:
@@ -113,6 +135,6 @@ def result(card: dict, answers: list) -> dict:
     cancelled = choice == CANCEL
     return {"title": "已取消" if cancelled else "已选择安排位置",
         "output": ("The user cancelled. No project or conversation was created. Do not submit this task." if cancelled else
-            "The user chose " + choice + (". Project name: " + card["project_name"] if choice == card["options"][1] else "") + ". Nothing has been created yet. Call tasks.submit again with exactly "
+            "The user chose " + choice + (". Project name: " + card["project_name"] if choice == new_project_option(card) else "") + ". Nothing has been created yet. Call tasks.submit again with exactly "
             "these original arguments; the server applies the choice atomically: " + json.dumps(card["input"], ensure_ascii=False)),
         "metadata": {"placement": "cancelled" if cancelled else "selected"}}

@@ -51,17 +51,24 @@ def result_view(result) -> dict | None:
     return {key: item.isoformat() if isinstance(item, datetime) else item for key, item in value.items()}
 
 
-async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None, db=None) -> dict:
+async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None,
+                        include_context=False, include_brief=True, db=None) -> dict:
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         rows = list((await db.scalars(select(Project).where(Project.user_id == user_id,
             Project.workspace_id == workspace_id, Project.is_deleted.is_(False), Project.id > (cursor or ""))
             .order_by(Project.id).limit(limit + 1))).all())
-        return _page(rows, limit, lambda row: {"id": row.id, "name": row.name})
+        context = {}
+        if include_context:
+            from assistant.work_context import project_background
+            context = await project_background(db, rows[:limit], user_id=user_id, workspace_id=workspace_id,
+                                               include_brief=include_brief)
+        return _page(rows, limit, lambda row: {"id": row.id, "name": row.name, **context.get(row.id, {})})
 
 
 async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None, query=None,
-                        watched=None, limit=50, cursor=None, include_link=False, db=None) -> dict:
+                        watched=None, limit=50, cursor=None, include_link=False, include_context=False,
+                        include_assistant=True, db=None) -> dict:
     """The user's top-level conversations, newest first (V2: any visibility).
 
     Pages follow next_cursor (the last id of a page).
@@ -99,6 +106,11 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
             statement = statement.where(or_(AssistantTask.id.is_(None), AssistantTask.archived_at.is_not(None)))
         rows = list((await db.execute(statement.order_by(Session.id).limit(limit + 1))).all())
         details = {}
+        background = {}
+        if include_context:
+            from assistant.work_context import conversation_background
+            background = await conversation_background(db, [row.id for row in rows[:limit]], user_id=user_id,
+                                                       include_assistant=include_assistant)
         if include_link:
             from assistant.linking import candidate
             for row in rows[:limit]:
@@ -112,7 +124,8 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
                         watched=row.task_id is not None and row.task_archived_at is None,
                         task_id=row.task_id,
                         latest_summary=summary[:300] + ("…" if len(summary) > 300 else "") if summary else None,
-                        **details.get(row.id, {}))
+                        **details.get(row.id, {}),
+                        **({"recent_messages": background.get(row.id, [])} if include_context else {}))
             return item
         return _page(rows, limit, render)
 

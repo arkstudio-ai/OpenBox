@@ -142,18 +142,16 @@ async def test_names_without_ascii_created_back_to_back_both_get_a_project():
     assert {row.name for row in await projects(owner, workspace)} >= {"项目甲", "项目乙"}
 
 
-async def test_a_name_the_user_never_said_is_refused():
-    """Measured on a voice turn: the fast model named the project after an older topic before the right one."""
+async def test_delegated_naming_does_not_require_literal_name_repetition():
+    """The model resolves the request; the backend checks its authentic human source."""
     owner, _, workspace, main = await assistant()
     before = await projects(owner, workspace)
-    ctx, lease, human = await main_turn(owner, workspace, main, "帮我新建一个项目，名字叫语音演练七号。")
+    ctx, lease, human = await main_turn(owner, workspace, main, "帮我建一个项目筹备咖啡店开业，名字你来起。")
     try:
-        refused, part = await tool_call(ctx, "projects.create", {"name": "语音播报", "source_message_ids": [human]})
-        assert part.status == ToolStatus.ERROR and refused["error"] == "ASSISTANT_PROJECT_NAME_UNSAID"
-        created, _ = await tool_call(ctx, "projects.create", {"name": "语音演练 七号", "source_message_ids": [human]})
-        assert created["state"] == "created" and created["name"] == "语音演练 七号"
+        created, _ = await tool_call(ctx, "projects.create", {"name": "新店启航", "source_message_ids": [human]})
+        assert created["state"] == "created" and created["name"] == "新店启航"
     finally:
         await lease.release(session_status="idle")
     known = {row.id for row in before}
     assert [row.name for row in await projects(owner, workspace)
-            if row.id not in known and row.name != DEFAULT_NAME] == ["语音演练 七号"]
+            if row.id not in known and row.name != DEFAULT_NAME] == ["新店启航"]

@@ -391,9 +391,10 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
     placement = (row.continuation or {}).get("assistant_placement")
     if placement_project_name is not None:
         from assistant.project_tools import _clean, MAX_NAME
+        from assistant.placement import new_project_option
         name = _clean(placement_project_name)
-        if (not placement or len(placement.get("options", [])) != 3
-                or clean != [[placement["options"][1]]] or not name or len(name) > MAX_NAME):
+        if (not placement or new_project_option(placement) is None
+                or clean != [[new_project_option(placement)]] or not name or len(name) > MAX_NAME):
             raise ValueError("Invalid project name or placement option")
     if row.generation != execution.generation:
         raise QuestionGone("superseded")

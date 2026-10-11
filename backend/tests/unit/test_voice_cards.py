@@ -502,6 +502,19 @@ async def test_new_project_choice_carries_user_supplied_name(monkeypatch):
     assert replies == [("q-del", [["新建项目"]], "u1", {"placement_project_name": "春季上新"})]
 
 
+async def test_no_match_card_can_name_the_new_project_in_its_first_option(monkeypatch):
+    placement = {**CARD, "kind": "assistant_placement", "options": ["新建项目「门店筹备」", "取消"],
+                 "new_project_option": "新建项目「门店筹备」", "high_risk": False}
+    replies = answering(monkeypatch, (placement,))
+    heard = Heard()
+    desk, scope = scoped(heard)
+    desk.show(placement)
+    heard.say("行，你安排吧，名字改叫春季上新")
+    result = await cards.answer(scope, selection(placement, 0, project_name="春季上新"))
+    assert result["status"] == "decision_recorded"
+    assert replies == [("q-del", [["新建项目「门店筹备」"]], "u1", {"placement_project_name": "春季上新"})]
+
+
 async def test_unrelated_negative_words_never_decline_any_of_several_cards(call, monkeypatch):
     bridge, provider, _, _ = call
     replies = answering(monkeypatch)

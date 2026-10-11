@@ -25,7 +25,7 @@ KINDS = {"assistant_confirm": "确认", "assistant_send": "确认发送", "memor
 def version(card: dict) -> str:
     """Content identity, independent of wording interpretation or list position."""
     fields = {key: card.get(key) for key in (
-        "card_id", "kind", "action", "prompt", "impact", "options", "expires_at", "generation")}
+        "card_id", "kind", "action", "prompt", "impact", "options", "new_project_option", "expires_at", "generation")}
     return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
 
 
@@ -133,13 +133,15 @@ def _spoken(text: str, lang: str, limit: int) -> str:
 
 def spoken_card(card: dict, handle: str, lang: str = "zh") -> dict:
     """One main-session card as the model reads it: what will be done, its impact, the exact options."""
+    from assistant.placement import new_project_option
     what = str(card.get("prompt") or "").split("\n影响：", 1)[0]
     return {"card": handle, "kind": KINDS.get(card.get("kind"), "确认"), "title": card.get("header") or "",
             "what": _spoken(what, lang, WHAT_CHARS),
             **({"impact": _spoken(card["impact"], lang, IMPACT_CHARS)} if card.get("impact") else {}),
             "version": version(card),
             "options": [{"id": option_id(index), "label": label,
-                         **({"fields": ["project_name"]} if card.get("kind") == "assistant_placement" and index == 1 else {})}
+                         **({"fields": ["project_name"]} if card.get("kind") == "assistant_placement"
+                            and label == new_project_option(card) else {})}
                         for index, label in enumerate(card.get("options") or [])],
             "high_risk": bool(card.get("high_risk"))}
 
@@ -242,7 +244,9 @@ async def _answer(scope, arguments: dict) -> dict:
     chosen = next((i for i in range(len(card["options"])) if option_id(i) == args.option_id), None)
     if chosen is None:
         return {"status": "invalid_choice", "this_call_applied": False, "next": "cards_pending"}
-    if args.project_name is not None and (card["kind"] != "assistant_placement" or chosen != 1):
+    from assistant.placement import new_project_option
+    if args.project_name is not None and (card["kind"] != "assistant_placement"
+                                          or card["options"][chosen] != new_project_option(card)):
         return {"status": "invalid_arguments", "this_call_applied": False,
                 "note": "project_name 仅适用于新建项目选项。"}
     words = (scope.transcript if scope.utterance_index > desk._shown.get(card_id, scope.utterance_index)

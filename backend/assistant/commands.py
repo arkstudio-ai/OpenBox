@@ -290,7 +290,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               client_message_id: str | None = None, video_model: str | None = None,
                               video_resolution: str | None = None, delivery: str = "followup",
                               expected_run: dict | None = None, command_action: str | None = None,
-                              continuation: dict | None = None, placement_id: str | None = None) -> dict:
+                              continuation: dict | None = None, placement_id: str | None = None,
+                              placement: dict | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -340,6 +341,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             if source else {"origin": "human"})})
     if continuation is not None:
         digest = command_digest({"base": digest, "continuation": continuation})
+    if placement is not None:
+        digest = command_digest({"base": digest, "placement": placement})
     if expected_run is not None:
         digest = command_digest({"base": digest, "expected_run": expected_run})
     if variant_explicit:
@@ -386,7 +389,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             from assistant.placement import apply_locked, task_input
             project_id, placement_row, cancelled = await apply_locked(db, main, placement_id,
                 task_input(project_id=project_id, title=title, prompt=prompt, attachments=attachments,
-                    model=model, continuation=continuation, source=source), source_ref)
+                    model=model, continuation=continuation, source=source, placement=placement), source_ref)
             if cancelled:
                 await db.delete(command)  # admission has made no task or project
                 return cancelled

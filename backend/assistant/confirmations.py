@@ -163,10 +163,14 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
         elif continuation.get("kind") == "memory_proposal":
             kind, card, action, high_risk = "memory_proposal", {}, "memory_remember", False
         elif continuation.get("kind") == "question" and continuation.get("assistant_placement"):
-            kind, card, action, high_risk = "assistant_placement", {}, "task_placement", False
+            kind, card, action, high_risk = "assistant_placement", continuation["assistant_placement"], "task_placement", False
         else:
             continue
         question = row.questions[0]
+        placement_fields = {}
+        if kind == "assistant_placement":
+            from assistant.placement import new_project_option
+            placement_fields["new_project_option"] = new_project_option(card)
         cards.append({"card_id": row.id, "kind": kind, "action": action,
                       "header": question.get("header", ""), "prompt": question.get("question", ""),
                       "impact": card.get("impact"),
@@ -174,7 +178,7 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
                       "generation": row.generation,
                       "created_at": runtime.utc(row.created_at).isoformat(),
                       "expires_at": runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
-                      "high_risk": high_risk})
+                      "high_risk": high_risk, **placement_fields})
     return cards
 
 

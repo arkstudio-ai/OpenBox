@@ -194,3 +194,61 @@ async def test_a_name_cannot_be_attached_to_the_cancel_option():
         assert (await card(asked["suspended"])).status == "pending"
     finally:
         await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_no_matching_project_offers_only_creation_or_cancel(cancel):
+    owner, workspace, main, ctx, lease, args = await prepare("帮我做一个咖啡店开业方案")
+    args.pop("project_id")
+    args["placement"] = {"question": "要不要为这件事建一个咖啡店开业项目，在里面开个对话来做？",
+                         "project_name": "咖啡店开业"}
+    try:
+        before = await counts(owner)
+        asked, _ = await tool_call(ctx, "tasks.submit", args)
+        question = await card(asked["suspended"])
+        assert await counts(owner) == before
+        assert question.questions[0]["question"] == args["placement"]["question"]
+        options = [option["label"] for option in question.questions[0]["options"]]
+        assert options == ["新建项目「咖啡店开业」", "取消"]
+        [shown] = await pending_cards(owner, workspace, main.id)
+        from voice.cards import spoken_card
+        spoken = spoken_card(shown, "1")
+        assert spoken["options"][0]["fields"] == ["project_name"]
+        assert "fields" not in spoken["options"][1]
+        await q.reply(question.id, [[options[-1 if cancel else 0]]], owner,
+                      **({} if cancel else {"placement_project_name": "新店筹备"}))
+        receipt, _ = await tool_call(ctx, "tasks.submit", args)
+        if cancel:
+            assert receipt == {"state": "cancelled"} and await counts(owner) == before
+        else:
+            assert receipt["placement"]["project_name"] == "新店筹备"
+            assert await counts(owner) == tuple(value + 1 for value in before)
+            repeat, _ = await tool_call(ctx, "tasks.submit", args)
+            assert repeat == receipt and await counts(owner) == tuple(value + 1 for value in before)
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_changed_proposal_does_not_reuse_an_answer_for_another_project():
+    owner, _, _, ctx, lease, args = await prepare()
+    args.update(project_id=None, placement={"question": "建一个新品发布项目来做？", "project_name": "新品发布"})
+    try:
+        asked, _ = await tool_call(ctx, "tasks.submit", args)
+        question = await card(asked["suspended"])
+        await q.reply(question.id, [[question.questions[0]["options"][0]["label"]]], owner)
+        changed = {**args, "placement": {**args["placement"], "project_name": "不同的项目"}}
+        second, _ = await tool_call(ctx, "tasks.submit", changed)
+        assert second["suspended"] != question.id
+        assert (await counts(owner))[2] == 0
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_missing_project_cannot_skip_the_choice_by_claiming_confirmation():
+    owner, _, _, ctx, lease, args = await prepare()
+    try:
+        before = await counts(owner)
+        denied, _ = await tool_call(ctx, "tasks.submit", {**args, "project_id": None, "destination_confirmed": True})
+        assert denied["error"] == "ASSISTANT_PLACEMENT_REQUIRED" and await counts(owner) == before
+    finally:
+        await lease.release(session_status="idle")

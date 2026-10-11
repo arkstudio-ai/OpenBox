@@ -1,0 +1,35 @@
+{
+  "version": "2026-10-11.1",
+  "currency": "CNY",
+  "_comment": "Default partner tariff (the standard B-end ladder from work/bossip-高德-阶梯价目表-20261010.xlsx). Runtime charges ladder 1; the monthly ladder rebate is settled from usage (billing/partner.py). Sale prices are credits (1 credit = 1 CNY). Video is per output second at the tier's default resolution; other resolutions multiply. Ladder thresholds are cumulative per calendar month.",
+  "video": {
+    "ladder": {"unit": "output_seconds", "thresholds": [5000, 20000]},
+    "tiers": {
+      "ultra":  {"name": "极致", "default_resolution": "1080p", "base_price": ["8.30", "7.10", "5.90"], "multipliers": {"1080p": "1", "720p": "0.4", "480p": "0.19"}},
+      "high":   {"name": "质量", "default_resolution": "1080p", "base_price": ["5.55", "4.70", "3.90"], "multipliers": {"1080p": "1", "720p": "0.4", "480p": "0.19"}},
+      "medium": {"name": "标准", "default_resolution": "720p",  "base_price": ["1.40", "1.20", "1.00"], "multipliers": {"720p": "1", "1080p": "2", "480p": "0.5"}},
+      "fast":   {"name": "快速", "default_resolution": "768p",  "base_price": ["0.80", "0.70", "0.60"], "multipliers": {"768p": "1", "480p": "0.66"}},
+      "low":    {"name": "灵活", "default_resolution": "768p",  "base_price": ["0.25", "0.20", "0.20"], "multipliers": {"768p": "1", "512p": "0.7", "2k": "1.6"}}
+    }
+  },
+  "llm": {
+    "ladder": {"unit": "tokens", "thresholds": [50000000, 200000000]},
+    "tiers": {
+      "high":   {"name": "深度档", "input": ["20.4", "17.4", "14.4"], "output": ["61.2", "52.2", "43.2"], "cache_read": ["2.55", "2.18", "1.80"]},
+      "medium": {"name": "专业档", "input": ["10.2", "8.7", "7.2"],   "output": ["51", "43.5", "36"],     "cache_read": ["1.19", "1.02", "0.84"]},
+      "low":    {"name": "快速档", "input": ["1.4", "1.2", "1.0"],    "output": ["4.6", "4.0", "3.3"],    "cache_read": ["0.17", "0.15", "0.12"]}
+    },
+    "models": {
+      "openai/qwen3.8-max": "high",
+      "openai/gemini-3.8-flash": "medium",
+      "openai/gemini-3.7-flash": "medium",
+      "openai/qwen3.8-flash": "low"
+    }
+  },
+  "compose": {
+    "per_second": {"480p": "0.000375", "720p": "0.00075", "1080p": "0.0015", "2k": "0.003", "4k": "0.006"},
+    "min_seconds": 60,
+    "round_seconds": 60
+  },
+  "rebate": {"settle_day": 10}
+}

@@ -387,27 +387,53 @@
 
 `GET /v1/models`
 
-返回当前 API Key 可用的档位、分辨率与**当前生效单价**（已按本月累计用量落在的阶梯计算）。
+返回当前账户的档位、默认分辨率、分辨率倍率与阶梯状态。`base_price` 为**运行时计费单价**（第一阶梯，默认分辨率下每成片秒积分）；`base_prices` 为三个阶梯的单价；`ladder` 为本月该档位按累计用量所处阶梯（月末对账按此返还差额）。
 
 ```json
 {
   "currency": "CNY",
   "unit": "credits_per_output_second",
+  "tariff_version": "2026-10-11.1",
   "billing_month": "2026-10",
+  "ladder": {
+    "billing": "charged at ladder 1; the ladder difference is rebated after month end",
+    "video_thresholds": [5000, 20000],
+    "llm_thresholds": [50000000, 200000000],
+    "llm_ladder": 1,
+    "month_llm_tokens": 12840000
+  },
   "tiers": [
-    { "quality": "ultra",  "name": "极致", "default_resolution": "1080p", "max_shot_seconds": 30, "base_price": "8.30", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" }, "ladder": 1 },
-    { "quality": "high",   "name": "质量", "default_resolution": "1080p", "max_shot_seconds": 15, "base_price": "5.55", "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" }, "ladder": 1 },
-    { "quality": "medium", "name": "标准", "default_resolution": "720p",  "max_shot_seconds": 30, "base_price": "1.40", "multipliers": { "720p": "1", "1080p": "2", "480p": "0.5" }, "ladder": 1 },
-    { "quality": "fast",   "name": "快速", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.80", "multipliers": { "768p": "1", "480p": "0.66" }, "ladder": 1 },
-    { "quality": "low",    "name": "灵活", "default_resolution": "768p",  "max_shot_seconds": 15, "base_price": "0.25", "multipliers": { "768p": "1", "512p": "0.7", "2k": "1.6" }, "ladder": 1 }
-  ]
+    { "quality": "ultra",  "name": "极致", "available": true, "default_resolution": "1080p", "max_shot_seconds": 30,
+      "base_price": "8.30", "base_prices": ["8.30", "7.10", "5.90"], "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" },
+      "ladder": 1, "month_output_seconds": 0 },
+    { "quality": "high",   "name": "质量", "available": true, "default_resolution": "1080p", "max_shot_seconds": 15,
+      "base_price": "5.55", "base_prices": ["5.55", "4.70", "3.90"], "multipliers": { "1080p": "1", "720p": "0.4", "480p": "0.19" },
+      "ladder": 1, "month_output_seconds": 1200 },
+    { "quality": "medium", "name": "标准", "available": true, "default_resolution": "720p",  "max_shot_seconds": 30,
+      "base_price": "1.40", "base_prices": ["1.40", "1.20", "1.00"], "multipliers": { "720p": "1", "1080p": "2", "480p": "0.5" },
+      "ladder": 1, "month_output_seconds": 3450 },
+    { "quality": "fast",   "name": "快速", "available": true, "default_resolution": "768p",  "max_shot_seconds": 15,
+      "base_price": "0.80", "base_prices": ["0.80", "0.70", "0.60"], "multipliers": { "768p": "1", "480p": "0.66" },
+      "ladder": 1, "month_output_seconds": 0 },
+    { "quality": "low",    "name": "灵活", "available": true, "default_resolution": "768p",  "max_shot_seconds": 15,
+      "base_price": "0.25", "base_prices": ["0.25", "0.20", "0.20"], "multipliers": { "768p": "1", "512p": "0.7", "2k": "1.6" },
+      "ladder": 1, "month_output_seconds": 0 }
+  ],
+  "text_models": [
+    { "tier": "medium", "name": "专业档", "input": "10.2", "output": "51", "cache_read": "1.19",
+      "prices": { "input": ["10.2", "8.7", "7.2"], "output": ["51", "43.5", "36"], "cache_read": ["1.19", "1.02", "0.84"] } }
+  ],
+  "compose": { "per_second": { "480p": "0.000375", "720p": "0.00075", "1080p": "0.0015", "2k": "0.003", "4k": "0.006" },
+               "min_seconds": 60, "round_seconds": 60 }
 }
 ```
 
 | 字段 | 说明 |
 |---|---|
-| base_price | 默认分辨率下每成片秒积分，十进制字符串；实际单价 = base_price × multipliers[resolution] |
-| ladder | 本月该档位当前所处阶梯（1 / 2 / 3） |
+| base_price | 默认分辨率下每成片秒积分（第一阶梯）；实际单价 = base_price × multipliers[resolution] |
+| ladder | 本月该档位当前所处阶梯（1 / 2 / 3），按当月累计成片秒数与 `video_thresholds` 判定 |
+| available | 该档位在当前环境是否可用（不可用的档位不能创建会话） |
+| text_models | 文本模型三档（`prices` 为三阶梯），运行时按第一阶梯计费 |
 
 ---
 
@@ -419,12 +445,12 @@
 {
   "account_id": "acc_01J8ZK...",
   "name": "高德",
-  "balance": "18234.50",
+  "balance": "18234.5",
   "billing_month": "2026-10",
   "month_usage": {
-    "output_seconds": { "ultra": 0, "high": 1200, "medium": 3450, "fast": 0, "low": 0 },
+    "output_seconds": { "high": 1200, "medium": 3450 },
     "llm_tokens": 12840000,
-    "credits": "17655.00"
+    "credits": "17655"
   },
   "limits": { "requests_per_minute": 60, "concurrent_sessions": 5 }
 }
@@ -446,7 +472,7 @@
 | session_id | 否 | 只看某个会话 |
 | task_id | 否 | 按会话 `metadata.task_id` 过滤 |
 | kind | 否 | `video_generate` / `video_compose` / `chat` / `video_transcribe` / `image_gen` |
-| cursor / limit | 否 | 游标分页，`limit` 默认 100、最大 500 |
+| cursor / limit | 否 | 游标分页，`limit` 默认 100、最大 500；按时间倒序 |
 
 **响应**
 
@@ -459,16 +485,16 @@
       "session_id": "ses_01J8ZK...",
       "task_id": "t_456",
       "kind": "video_generate",
+      "model": "wan3.0-video",
       "quality": "medium",
       "resolution": "1080p",
       "quantity": { "seconds": 12 },
       "base_price": "1.40",
       "multiplier": "2",
-      "unit_price": "2.80",
+      "unit_price": "2.800000000000",
       "ladder": 1,
-      "credits": "33.60",
-      "status": "charged",
-      "note": "镜头 2/4"
+      "credits": "33.6",
+      "status": "charged"
     },
     {
       "id": "usage_01J8ZL...",
@@ -476,8 +502,11 @@
       "session_id": "ses_01J8ZK...",
       "task_id": "t_456",
       "kind": "chat",
+      "subkind": "chat",
+      "model": "openai/gemini-3.8-flash",
       "model_tier": "medium",
       "quantity": { "input_tokens": 38210, "output_tokens": 5120, "cached_tokens": 12000 },
+      "ladder": 1,
       "credits": "0.66",
       "status": "charged"
     },
@@ -498,12 +527,12 @@
 }
 ```
 
-`quantity.billed_seconds` 为计费秒数（云端合成按整分钟向上取整）。
+`quantity.billed_seconds` 为计费秒数（云端合成按整分钟向上取整）。`kind=chat` 时 `subkind` 标明文本调用的具体用途（`chat` / `title` / `suggestions` / `compaction` 等），均按文本模型价目计费。
 
 | status | 含义 |
 |---|---|
 | charged | 已扣积分 |
-| refunded | 已退回（如生成失败后退款） |
+| pending | 调用进行中，尚未结算 |
 | free | 不收费（上游未扣费的失败任务） |
 
 记录在任务完成后 1 分钟内可查，保留 180 天。
@@ -512,24 +541,25 @@
 
 ### 6.14 消费汇总
 
-`GET /v1/usage/summary?month=2026-10&group_by=day|quality`
+`GET /v1/usage/summary?month=2026-10&group_by=quality|day`
 
 ```json
 {
   "month": "2026-10",
   "group_by": "quality",
   "rows": [
-    { "quality": "high",   "output_seconds": 1200, "credits": "6660.00" },
-    { "quality": "medium", "output_seconds": 3450, "credits": "9315.00" },
-    { "kind": "video_compose", "minutes": 95, "credits": "9.50" },
-    { "kind": "chat", "tokens": 12840000, "credits": "131.00" }
+    { "quality": "high",   "output_seconds": 1200, "credits": "6660", "ladder": 1, "ladder_credits": "6660" },
+    { "quality": "medium", "output_seconds": 3450, "credits": "4830", "ladder": 1, "ladder_credits": "4830" },
+    { "kind": "video_compose", "billed_seconds": 5700, "credits": "4.275", "events": 95 },
+    { "kind": "chat", "tokens": 12840000, "credits": "131", "events": 410 }
   ],
-  "total_credits": "16115.50",
+  "total_credits": "11625.275",
+  "ladder_credits": "11490",
   "ladder_rebate": { "status": "pending", "credits": "0" }
 }
 ```
 
-`ladder_rebate` 为月末对账后的阶梯折让（按第一阶梯预扣、次月返还）；对账完成后 `status` 变为 `settled` 并给出返还积分。
+`ladder_credits` 为按阶梯口径重算的应付；`ladder_rebate` 为月末对账后的阶梯折让（按第一阶梯预扣、次月返还），对账完成后 `status` 变为 `settled` 并给出返还积分与 `settled_at`。`group_by=day` 时 `rows` 为按日的 `events` / `output_seconds` / `credits`。
 
 ---
 
@@ -738,7 +768,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 2 | 各档位单价 | 双方商务 | 已出价目表附件（2026-10-10），待签署 |
 | 3 | 开发周期与联调时间 | bossip | 由开发方（麦兔）评估后另行同步 |
 | 4 | `fast` / `low` 档最高 768p | 高德 | 与 1080p 要求不符，请确认是否需要开放这两档；不需要则接口只接受 `ultra` / `high` / `medium` |
-| 5 | 阶梯累计口径 | 双方商务 | 按各档位分别累计，还是所有档位合计秒数累计；价目表试算按分别累计 |
+| 5 | 阶梯累计口径 | 双方商务 | 接口实现为**按档位分别累计**（`/v1/models` 的 `ladder` 按档位给出）；如需合计口径需另行约定 |
 
 ---
 

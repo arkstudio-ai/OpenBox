@@ -107,6 +107,7 @@ def create_v1_app() -> FastAPI:
             content=error_body("INTERNAL_ERROR", "Internal error", _request_id(request)),
         )
 
+    from api.v1.account import router as account_router
     from api.v1.files import router as files_router
     from api.v1.messages import router as messages_router
     from api.v1.questions import router as questions_router
@@ -116,6 +117,7 @@ def create_v1_app() -> FastAPI:
     app.include_router(messages_router)
     app.include_router(questions_router)
     app.include_router(files_router)
+    app.include_router(account_router)
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
                    include_in_schema=False)

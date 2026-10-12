@@ -839,6 +839,10 @@
       "open": "Open conversation",
       "answer": "Reply",
       "waitingHint": "It's waiting for your reply — open the conversation to carry on.",
+      "takeoverHint": {
+        "desktop": "It's waiting for you to finish a verification on the cloud desktop — open the conversation, then pick \"我已完成，继续\" when you're done.",
+        "extension": "It's waiting for you to finish a verification in your own browser — then come back to the conversation and pick \"我已完成，继续\"."
+      },
       "followingUp": "I'll keep at it until it's done ({{used}}/{{limit}} follow-ups used)",
       "continuation": {
         "needs_decision": "The next step needs your call — open the conversation.",
@@ -850,9 +854,16 @@
         "reportStopped": "You stopped this report. You can report again from More.",
         "reportFailed": "The report didn't finish. Report again from More, or read the full result.",
         "steerNotApplied": "Your change missed the last round — just tell me again.",
+        "notRunWaiting": "An update didn't run: the conversation was waiting for you on a card. Handle that card, then tell me again.",
         "assetUnavailable": "The attachment is no longer available, so that update didn't run. Please pick the file again.",
         "inputCanceled": "Your latest update was canceled before it ran.",
         "earlier": "This is the result from the notification; there has been newer progress since."
+      },
+      "effectAck": {
+        "hint": "Checked these results on the desktop? Confirming records the unclear steps as not confirmed done; the task carries on from the current state without redoing them.",
+        "action": "I've checked — continue",
+        "done": "Got it, confirmed.",
+        "pending": "Some outcomes are still being checked; try again shortly."
       },
       "controlDone": {
         "pause": "Pause requested — wrapping up the current step.",
@@ -861,6 +872,8 @@
       },
       "checkEffects": "Some outcomes still need checking; until then it can't continue or count as undone.",
       "changed": "The task just changed and has been refreshed — take another look and try again.",
+      "waitingOnCard": "This task is waiting for you on a card in its conversation (such as a cloud desktop verification), so it can't be changed from here. Open the task conversation to handle or dismiss that card.",
+      "openTaskConversation": "Open the task conversation",
       "gone": "This task's conversation has been deleted."
     },
     "taskList": {

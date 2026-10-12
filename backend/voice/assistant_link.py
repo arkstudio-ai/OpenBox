@@ -39,6 +39,7 @@ log = create_logger("voice.assistant_link")
 WAIT_STEP_SECONDS = 0.5  # how soon a hung-up call stops observing, and a claimed message is noticed
 RESUME_ENTRYPOINT = "question_answer"  # the Inbox item an answered main-session card resumes the turn with
 # Commands that give a task work it reports back on by itself, and the task states that mean it is still at it.
+# waiting_input is not one: the task waits for the user on a card, so the call says where to act instead.
 WORK_ACTIONS = ("task_create", "task_input", "task_resume", "task_finish_continuation")
 WORKING = ("queued", "running", "resuming")
 
@@ -110,15 +111,14 @@ class VoiceTurnRef:
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
-    lane: str = "assistant"       # assistant / remember: a main-session turn; local / ask: settled by the handover plan
-    recall: int | None = None     # what the user's records add to a reply: the utterance's number, else None
+    lane: str = "assistant"       # assistant / remember: a main-session turn
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
 
     @property
     def recorded(self) -> bool:
-        """A request of this call (a VoiceTurn row), unlike a report or a recall nobody handed over."""
-        return self.report is None and self.recall is None
+        """A request of this call (a VoiceTurn row), unlike an unsolicited task report."""
+        return self.report is None
 
 
 def turn_outcome(ref: VoiceTurnRef, *, heard: bool = False, pending: bool = False) -> str:
@@ -258,10 +258,6 @@ class AssistantLink:
             log.warning("voice running tasks unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []
 
-    async def answered(self, ref: VoiceTurnRef) -> None:
-        """A request the handover plan settled itself (an answer, or a question back): recorded, no main turn."""
-        await self._add(ref)
-
     async def done(self, ref: VoiceTurnRef, outcome: str, *, delivered: bool = False) -> None:
         """A turn's last word in this call: its outcome and one log line (times, never words)."""
         await self.record(ref, outcome=outcome, delivered=delivered)
@@ -309,23 +305,33 @@ async def resumed_item(session_id: str, user_id: str, after: str) -> str | None:
 
 
 async def running_tasks(session_id: str, user_id: str, inbox_id: str | None) -> list[dict]:
-    """The tasks the run behind ``inbox_id`` created or gave work to that are still at it: id and title each."""
-    from sqlalchemy import JSON, type_coerce
+    """The tasks the run behind ``inbox_id`` created or gave work to that are still at it: id and title each.
+
+    A task waiting on a card in its conversation (a desktop takeover, a question) is not at it: the
+    work handed over waits for the user there, so it is never told as passed on.
+    """
+    from sqlalchemy import JSON, and_, type_coerce
     from db.base import get_db_session
     from db.models.agent_inbox import AgentInboxItem
     from db.models.assistant import AssistantCommand, AssistantTask
+    from db.models.question import QuestionCheckpoint, SessionExecution
     if not inbox_id:
         return []
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, inbox_id)
         if item is None or item.user_id != user_id or item.session_id != session_id or not item.run_id:
             return []
+        waiting = select(QuestionCheckpoint.id).join(
+            SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id).where(and_(
+            QuestionCheckpoint.session_id == AssistantTask.execution_session_id,
+            QuestionCheckpoint.status == "pending",
+            QuestionCheckpoint.generation == SessionExecution.generation)).exists()
         rows = (await db.execute(select(AssistantTask.id, AssistantTask.title).join(
             AssistantCommand, AssistantCommand.target_id == AssistantTask.id).where(
             AssistantCommand.assistant_session_id == session_id, AssistantCommand.actor_user_id == user_id,
             AssistantCommand.target_type == "task", AssistantCommand.action.in_(WORK_ACTIONS),
             type_coerce(AssistantCommand.source_ref, JSON)["run_id"].as_string() == item.run_id,
-            AssistantTask.user_id == user_id, AssistantTask.observed_state.in_(WORKING))
+            AssistantTask.user_id == user_id, AssistantTask.observed_state.in_(WORKING), ~waiting)
             .order_by(AssistantCommand.created_at))).all()
     return list({task_id: {"task_id": task_id, "title": title} for task_id, title in rows}.values())
 

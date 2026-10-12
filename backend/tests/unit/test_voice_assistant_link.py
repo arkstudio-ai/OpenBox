@@ -221,6 +221,39 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
     assert await assistant_link.running_tasks(main.id, owner, None) == []
 
 
+async def waiting_on_card(owner, task_id):
+    """The task's conversation has a card pending in its current turn (a desktop takeover)."""
+    from datetime import datetime, timezone
+    from db.models.assistant import AssistantTask
+    from db.models.question import QuestionCheckpoint, SessionExecution
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        session_id = (await db.get(AssistantTask, task_id)).execution_session_id
+        db.add(SessionExecution(session_id=session_id, user_id=owner, generation=0, run_progress=False,
+                                resume_pending=False, updated_at=now))
+        db.add(QuestionCheckpoint(id=generate_id(), session_id=session_id, user_id=owner, generation=0,
+            status="pending", questions=[{"question": "请完成登录验证", "detail": {"kind": "desktop_takeover"}}],
+            draft=[], continuation={"kind": "question"}, created_at=now, updated_at=now))
+
+
+async def test_a_task_waiting_on_a_card_is_never_told_as_still_at_it():
+    """Measured 2026-10-10: work handed to a task waiting on a desktop takeover was told as passed on, again
+    and again ("我让助理去办"), while it could not run until the user finished the verification."""
+    owner, main, link = await setup()
+    ref = new_ref("让抓订单的任务接着做")
+    await link.start(ref)
+    made = {}
+
+    async def run(run_id):
+        made["working"] = await handed(owner, main, run_id, "整理订单", action="task_input", state="running")
+        made["blocked"] = await handed(owner, main, run_id, "抓取订单", action="task_input", state="running")
+        await handed(owner, main, run_id, "登录店铺", action="task_input", state="waiting_input")
+        await waiting_on_card(owner, made["blocked"])
+    waiting = asyncio.create_task(link.wait(ref))
+    await answer(owner, main, [("「抓取订单」在等你完成云桌面验证。", "final")], during=run)
+    assert (await waiting)["running"] == [{"task_id": made["working"], "title": "整理订单"}]
+
+
 async def test_reply_text_prefers_final_parts_and_never_reads_narration():
     owner, main, link = await setup()
     ref = new_ref()

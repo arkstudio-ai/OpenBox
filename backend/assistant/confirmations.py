@@ -162,14 +162,41 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
             high_risk = bool(card.get("high_risk", True))
         elif continuation.get("kind") == "memory_proposal":
             kind, card, action, high_risk = "memory_proposal", {}, "memory_remember", False
+        elif continuation.get("kind") == "question" and continuation.get("assistant_placement"):
+            kind, card, action, high_risk = "assistant_placement", continuation["assistant_placement"], "task_placement", False
         else:
             continue
         question = row.questions[0]
+        placement_fields = {}
+        if kind == "assistant_placement":
+            from assistant.placement import new_project_option
+            placement_fields["new_project_option"] = new_project_option(card)
         cards.append({"card_id": row.id, "kind": kind, "action": action,
                       "header": question.get("header", ""), "prompt": question.get("question", ""),
                       "impact": card.get("impact"),
                       "options": [option.get("label") for option in question.get("options") or []],
+                      "generation": row.generation,
                       "created_at": runtime.utc(row.created_at).isoformat(),
                       "expires_at": runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
-                      "high_risk": high_risk})
+                      "high_risk": high_risk, **placement_fields})
     return cards
+
+
+async def card_status(user_id: str, workspace_id: str, main_id: str, card_id: str) -> str:
+    """Explain a missing card without implying its action succeeded or revealing another owner's card."""
+    from question import runtime
+    async with get_db_session() as db:
+        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        row = await db.scalar(select(QuestionCheckpoint).where(
+            QuestionCheckpoint.id == card_id, QuestionCheckpoint.session_id == main_id,
+            QuestionCheckpoint.user_id == user_id))
+        if row is None:
+            return "unavailable"
+        if row.status == "answered":
+            return "already_answered"
+        if row.status != "pending":
+            return row.status
+        if row.expires_at and runtime.utc(row.expires_at) <= runtime.now():
+            return "expired"
+        execution = await db.get(SessionExecution, main_id)
+        return "superseded" if execution is None or row.generation != execution.generation else "conflict"

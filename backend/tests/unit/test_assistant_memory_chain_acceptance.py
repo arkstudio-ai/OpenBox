@@ -125,7 +125,7 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
     baseline = await _memory_counts(owner)
     assert baseline["UserMemory"] == baseline["MemoryRevision"] == baseline["MemorySource"] == 1
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
-    request_text = ("Create a task to plan and ask a child to check the proposal. "
+    request_text = ("Create a task in a new conversation in the default project to plan and ask a child to check the proposal. "
                     "Also create a disabled ten-minute schedule and run it once now.")
     human = await inbox.accept_inbox_item(session_id=main.id, user_id=owner,
         delivery="followup", agent="assistant", prompt=request_text,
@@ -165,7 +165,7 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
             source_id = re.findall(r"Original human message_id=([^\]]+)", payload)[-1]
             if step == 1:
                 yield _call(tools["tasks.submit"], {"project_id": main.project_id,
-                    "title": "Isolation chain", "instructions": "Check the proposal, including one child.",
+                    "title": "Isolation chain", "destination_confirmed": True, "instructions": "Check the proposal, including one child.",
                     "source_message_ids": [source_id]}, "chain-task")
             elif step == 2:
                 yield _call(tools["schedules.create"], {"project_id": main.project_id,

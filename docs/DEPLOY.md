@@ -5,7 +5,39 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-10 20:27 `20261010-pricing-3dc9b643`（管理员定价控制页、成本口径、剪辑按秒定价）
+## 高德机：2026-10-11 `20261011-gaode-e1840135`（合作方资费与阶梯计费、/v1 四个账户接口）
+
+- 代码 `feat/harness-api-v1`：`billing/partner.py` 合作方资费（默认 `partner_tariff.default.json` = 高德价表；`partner_tariffs` 表按工作区覆盖）；`/v1` 会话（带 `api_key_id`）的 LLM 计量、视频报价/结算、合成报价/结算全部改走资费（档位默认分辨率基价 × 倍率，文本按档位每百万 token，合成按秒整分钟取整），成本仍取平台价目表。运行时按第一阶梯扣费，`month_summary` 按阶梯重算，`settle_rebate` 月末一次性以 `rebate` 流水返还差额。
+- 新接口：`GET /v1/models`、`/v1/me`、`/v1/usage`、`/v1/usage/summary`；管理端 `/api/admin/partners`（列表、资费 get/put/delete 带 revision 校验、月用量、返利结算，均记审计）。迁移 `pf39b0c1d2e3`（partner_tariffs / partner_rebates）。
+- 验证：高德机 backend 10 秒 healthy，`alembic current` = pf39；用测试 Key 调四个接口均 200，`/v1/models` 五档与倍率同价目表，`/v1/me` 余额与限额正确，`/v1/usage` 能按 task_id 关联；无告警。单测：合作方 8 项 + 相关 200 项 + 视频/合成/autopilot 78 项通过。
+- 未做：返利结算目前由管理员手动调用（无定时任务）；历史（资费上线前）事件不带资费快照，汇总里按原价计入 `total_credits`，不参与阶梯重算。
+- 回滚：override 改回 `20261011-gaode-6258a020`，旧镜像不认识 pf39：启动前 `alembic stamp --purge e7c9a1b3d5f0 pd17c8d9e0f1`（即 pe28 的两个父）后再起，两张新表保留。
+
+## 高德机：2026-10-11 `20261011-gaode-6258a020`（快速档、对标 gw2 定价控制页）
+
+- 代码 `6258a020` = `feat/harness-api-v1`（含 10-10 的 main 合并）再合入 `origin/main 3dc9b643`（PR #67 定价控制页、剪辑按秒）+ `/v1` 新增 `quality=fast`、分辨率倍率口径。后端镜像 `openbox-backend:20261011-gaode-6258a020`、前端 `openbox-frontend-v2:20261011-gaode-fe-6258a020`。
+- 迁移坑：分支此前的合并修订用了 `pd17c8d9e0f1`，与 main 新增的 `pricing_rules` 修订同 id；已改为 `pe28a9b0c1d2`（两头 `e7c9a1b3d5f0` + `pd17c8d9e0f1`）。高德库原本 stamp 在旧 id 上，切换时先 `alembic stamp --purge e7c9a1b3d5f0 pc06b7c8d9e0` 再启动（启动自跑 `upgrade head`），`pricing_rules` 表已建，当前 `pe28a9b0c1d2 (mergepoint)`。备份 `backups/pre-gaode-fast-*.dump`、`backups/override.*`。
+- 验证：backend 10 秒 healthy；`/v1/sessions` 401、`/api/admin/pricing` 401、`/api/environment` 200；容器内 `catalogue()` 版本 `2026-10-10.2`（含 cost 字段、Seedance 改价、剪辑按秒）；五档 `resolve_quality` 正确；公网域名三项 200。配置未改（五档与 provider 10-10 已对齐）。
+- 回滚：override 两行改回 `20261010-gaode-ae892425` / `20261010-gaode-fe-0d908bc2`；旧镜像不认识 `pricing_rules` 修订，启动前先 `docker compose run --rm --no-deps -T backend alembic stamp --purge e7c9a1b3d5f0 pc06b7c8d9e0`，`pricing_rules` 表保留不动，再 `docker compose up -d --no-deps backend frontend`。
+
+## 高德机：2026-10-10 20:15 `20261010-gaode-ae892425`（合入 main、对齐 gw2 五档）
+
+- 代码 `ae892425` = `feat/harness-api-v1` 合入 `origin/main b586185f`（语音、记忆、Seedance 2.5、管理计费）+ `/v1` 新增 `quality=ultra` 与可选 `resolution`；alembic 新增合并修订 `pd17c8d9e0f1`（两头 `e7c9a1b3d5f0` + `pc06b7c8d9e0`），高德库从 `e7c9a1b3d5f0` 一次升到合并点。后端镜像 `openbox-backend:20261010-gaode-ae892425`、前端 `openbox-frontend-v2:20261010-gaode-fe-0d908bc2`（nginx 模板仍含 `/v1/` 代理）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load`，后端上下文为 `git archive HEAD backend container` 的仓库根（只打 backend 会在 `COPY container/dev-browser` 失败）；经 `oss://bossip/_deploy-tmp/<tag>/` 签名链接中转，机上 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 配置：`config/openbox.json` 照 gw2 换成 8 条视频模型与五档（ultra=Seedance 2.5 / high=Seedance 2.0 / medium=Wan 3.0 / low=MiniMax H3 / fast=H3-Max-Turbo），`provider` 加 `tokenspace`（tokenhub 直连）与 `runninghub`；`backend.env` 追加 `TOKENSPACE_API_KEY`、`RUNNINGHUB_API_KEY`。此前 high 档指向的 `video-sd-1080p-pro` 上游 09-29 起已失效。备份 `config/openbox.json.pre-gaode-align-*`、`config/backend.env.pre-gaode-align-*`、`backups/pre-gaode-align-*.dump`。
+- 发布：`/tmp/gaode_deploy.sh` 在机上后台执行（云助手单条 600 秒上限）；租约 0 时切换，backend 15 秒 healthy，frontend healthy；`/v1/sessions` 401、`/api/environment` 200、`gaode-console.html` 200（公网同）。容器内 `resolve_quality`：ultra→2.5@1080p、high→2.0@1080p、medium→wan3@1080p、low→H3@768p；路由 2.5/2.0→tokenhub、wan3/H3→自有 new-api、Turbo→RunningHub。用测试 Key 建了 5 条 `align-check*` 会话验证档位落库（未删）。tokenhub/RunningHub 从该机可达。
+- 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
+- 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
+
+## 当前阿里云：2026-10-11 15:22 `20261011-harness-91897a2d`（/v1 开放接口、合作方资费与阶梯计费、API Key）
+
+- 源码 `main@91897a2d`（PR [#58](https://github.com/arkstudio-ai/OpenBox/pull/58) 合并）：高德 `/v1` 开放接口（API Key 鉴权、会话/消息/确认卡/文件、`quality` 五档 + `resolution`、402 预检与限流）、`billing/partner.py` 合作方资费与阶梯计费（仅 `api_key_id` 会话生效，主线用户不受影响）、`/v1/models|me|usage|usage/summary`、`/api/admin/partners`、tiktoken 词表烤入镜像（`TIKTOKEN_CACHE_DIR=/opt/tiktoken`）与本地缓存守卫。对外文档统一为 bossip：`docs/external/bossip-Video-API-Gaode-v1.2.md` 与三份 `bossip-Gaode-*`。
+- 迁移：业务库 `pd17c8d9e0f1 → e7c9a1b3d5f0（api_keys、sessions.quality/metadata/api_key_id）→ pe28a9b0c1d2（合并点）→ pf39b0c1d2e3（partner_tariffs、partner_rebates）`；轨迹库未动。切换前两库 dump 在 `backups/20261011-harness-91897a2d/activation-*/`。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive origin/main`（backend 上下文仓库根 + container；frontend `VITE_BUILD_ID` 为 tag），经 `oss://bossip/_deploy-tmp/<tag>/` 签名链接到 gw2 `releases/<tag>/`，`sha256sum -c` 后 `docker load`，中转对象已删。脚本 `releases/20261011-harness-91897a2d/deploy_gw2_v9.sh`（v8 加 api_keys/partner 表与 /v1 路由核对）。
+- 验证：租约 0 时切换，worker 9 秒、backend 21 秒、frontend 15 秒 healthy；容器内 `catalogue()` 仍 `2026-10-10.2`，gemini 1M 输入售 5.084 / 成本 6、wan3 720p 10 s 售 6（平台价未变）；默认合作方资费 `2026-10-11.1` 五档；`/v1` 路由齐全，前端 nginx 含 `/v1/` 代理；公网 `/api/environment` 200、`/v1/sessions` 与 `/v1/models` 匿名 401、`/api/admin/partners` 匿名 401。
+- 回滚：恢复 `backups/.../docker-compose.override.yml`，旧镜像不认识新修订，启动前 `alembic stamp --purge pd17c8d9e0f1`（新表保留），再依次 `up -d --no-deps trajectory-worker / backend / frontend`。
+
+## 历史阿里云：2026-10-10 20:27 `20261010-pricing-3dc9b643`（管理员定价控制页、成本口径、剪辑按秒定价）
 
 - 源码 `main@3dc9b643`（PR [#67](https://github.com/arkstudio-ai/OpenBox/pull/67)）。方案 [ADMIN_PRICING_PLAN.md](ADMIN_PRICING_PLAN.md)，计费说明见 [CREDIT_BILLING.md](CREDIT_BILLING.md) 10-10 两条。后端、前端、trajectory-worker 三个服务统一到本 tag（worker 从 `20261009-assistant-media-cb9b3fb3` 跟上）。
 - 内容：`rates.json` 每条价目加 `cost` 块（gemini 按 RovinAI、Seedance 按 TokenHub、H3 按秘塔、Turbo 按 RunningHub、Wan 按百炼、IMS/语音按刊例）；新表 `pricing_rules` 承载管理员覆盖，`catalogue()` 叠加后输出形状不变；`usage_events.cost_credits` 记成本；超管新板块 `/app/admin/pricing`（成本 / 售价 / 毛利 / 30 天用量，改价即时生效、审计、历史、撤销、停用）；API `/api/admin/pricing`。

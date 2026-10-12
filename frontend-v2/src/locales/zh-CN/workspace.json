@@ -47,14 +47,14 @@
   "delChatBody": "对话及其消息记录会被删除，此操作无法撤销。",
   "delChatMemories": "从这段对话里记住的 {{count}} 条信息也会一起失效，助手之后不再使用。",
   "greeting": {
-    "morning": "早上好，{{name}}。",
-    "afternoon": "下午好，{{name}}。",
-    "evening": "晚上好，{{name}}。"
+    "morning": "早上好，{{name}}",
+    "afternoon": "下午好，{{name}}",
+    "evening": "晚上好，{{name}}"
   },
   "greetingPlain": {
-    "morning": "早上好。",
-    "afternoon": "下午好。",
-    "evening": "晚上好。"
+    "morning": "早上好",
+    "afternoon": "下午好",
+    "evening": "晚上好"
   },
   "emptyHint": "这条对话会存在「{{project}}」下。直接说今天想推进什么。",
   "suggestions": [

@@ -11,7 +11,7 @@ history aggregates by the same key the operator prices:
 
     llm:<model>                    data["models"][model]
     video-gen:<model>:<res>        media["video-gen"][model]["per_second"][res]
-    image-gen:<model>              media["image-gen"][model]
+    image-gen:<model>[:<res>]      media["image-gen"][model], optionally a per_image tier
     stt:<model>                    media["stt"][model]
     voice-realtime:<model>         media["voice-realtime"][model]
     ims-compose:<tier>             media["ims-compose-<tier>"]
@@ -36,7 +36,7 @@ REFRESH_SECONDS = 30
 LLM_FIELDS = ("input", "output", "cache_read", "cache_write", "cache_write_1h", "cache_read_explicit")
 VOICE_MODALITIES = ("input_text", "input_audio", "output_text", "output_audio")
 KINDS = ("llm", "video-gen", "image-gen", "stt", "voice-realtime", "ims-compose", "hot-trends")
-_KEY = re.compile(r"^(llm|image-gen|stt|voice-realtime|ims-compose|hot-trends):([^:]{1,120})$|^(video-gen):([^:]{1,120}):([^:]{1,16})$")
+_KEY = re.compile(r"^(llm|image-gen|stt|voice-realtime|ims-compose|hot-trends):([^:]{1,120})$|^(video-gen|image-gen):([^:]{1,120}):([^:]{1,16})$")
 
 
 class RuleError(ValueError):
@@ -201,7 +201,10 @@ def item_sale(data: dict, item: ItemKey) -> dict | None:
         per = (entry.get("per_second") or {}).get(item.resolution)
         return None if per is None else {"per_second": per}
     if item.kind == "image-gen":
-        return {"per_image": entry["per_image"]}
+        per = entry.get("per_image")
+        if isinstance(per, dict):
+            per = per.get(item.resolution)
+        return None if per is None else {"per_image": per}
     if item.kind == "stt":
         return {"per_minute": entry["per_minute"], "min_minutes": entry.get("min_minutes", 1)}
     if item.kind == "ims-compose":
@@ -221,11 +224,12 @@ def item_cost(data: dict, item: ItemKey) -> dict | None:
     cost = (entry or {}).get("cost")
     if not isinstance(cost, dict):
         return None
-    if item.kind == "video-gen":
-        per = (cost.get("per_second") or {}).get(item.resolution)
+    if item.kind == "video-gen" or isinstance(cost.get("per_image"), dict):
+        unit = "per_second" if item.kind == "video-gen" else "per_image"
+        per = (cost.get(unit) or {}).get(item.resolution)
         if per is None:
             return None
-        return {**{k: v for k, v in cost.items() if k != "per_second"}, "per_second": per}
+        return {**{k: v for k, v in cost.items() if k != unit}, unit: per}
     return dict(cost)
 
 
@@ -247,9 +251,16 @@ def _apply_sale(data: dict, item: ItemKey, sale: dict, rule_id: str) -> None:
         data.get("unpriced", {}).pop(item.model, None)
         return
     entry = _media_entry(data, item, create=True)
-    if item.kind == "video-gen":
-        entry.setdefault("per_second", {})[item.resolution] = sale["per_second"]
+    if item.kind == "video-gen" or (item.kind == "image-gen" and item.resolution):
+        unit = "per_second" if item.kind == "video-gen" else "per_image"
+        entry.setdefault(unit, {})[item.resolution] = sale[unit]
         entry.setdefault("rule_ids", {})[item.resolution] = rule_id
+    elif item.kind == "image-gen" and isinstance(entry.get("per_image"), dict):
+        # Preserve tier structure when replaying a legacy model-wide override,
+        # so a later tier override can still be applied independently.
+        for tier in entry["per_image"]:
+            entry["per_image"][tier] = sale["per_image"]
+            entry.setdefault("rule_ids", {})[tier] = rule_id
     else:
         if item.kind == "ims-compose":
             entry.pop("per_minute", None)
@@ -270,12 +281,16 @@ def _apply_cost(data: dict, item: ItemKey, cost: dict, rule_id: str) -> None:
     entry = _media_entry(data, item, create=False)
     if entry is None:
         return
-    if item.kind == "video-gen":
+    if item.kind == "video-gen" or (item.kind == "image-gen" and item.resolution):
+        unit = "per_second" if item.kind == "video-gen" else "per_image"
         block = entry.setdefault("cost", {"currency": cost.get("currency", "CNY")})
         for name in ("basis", "channel", "source", "verified_at", "currency", "duration_bands"):
             if name in cost:
                 block[name] = cost[name]
-        block.setdefault("per_second", {})[item.resolution] = cost["per_second"]
+        previous = block.get(unit)
+        if previous is not None and not isinstance(previous, dict):
+            block[unit] = {tier: previous for tier in entry.get(unit, {})}
+        block.setdefault(unit, {})[item.resolution] = cost[unit]
         block.setdefault("rule_ids", {})[item.resolution] = rule_id
     else:
         entry["cost"] = {**cost, "rule_id": rule_id}
@@ -295,6 +310,14 @@ def _apply_disable(data: dict, item: ItemKey, rule_id: str) -> None:
         entry.get("per_second", {}).pop(item.resolution, None)
         if not entry.get("per_second"):
             data["media"]["video-gen"].pop(item.model, None)
+        return
+    if item.kind == "image-gen":
+        # Keep an empty entry: removing it would fall back to the generic image
+        # price and charge a disabled model/tier anyway.
+        if item.resolution and isinstance(entry.get("per_image"), dict):
+            entry["per_image"].pop(item.resolution, None)
+        else:
+            entry["per_image"] = {}
         return
     if item.kind == "ims-compose":
         data["media"].pop(f"ims-compose-{item.model}", None)

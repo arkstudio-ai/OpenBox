@@ -189,6 +189,19 @@ def test_image_quote_uses_model_price_or_default_per_image():
     assert media.quote_image("gpt-image-2", 0).credits is None
 
 
+def test_runninghub_image_prices_follow_the_resolution_tier():
+    """RunningHub's price-preview (2026-10-10) prices by tier, not per model."""
+    assert media.quote_image("seedream-v5-pro", 1, tier="1k").credits == Decimal("0.27")
+    assert media.quote_image("seedream-v5-pro", 1, tier="2k").credits == Decimal("0.54")
+    assert media.quote_image("rhart-image-n-pro", 1, tier="4k").credits == Decimal("0.50")
+    assert media.quote_image("rhart-image-n-g31-flash", 1, tier="2k").credits == Decimal("0.19")
+    assert media.quote_image("rhart-image-g-2", 1, tier="4k").credits == Decimal("0.10")
+    # A tier the table does not list is unpriced, never the default's price.
+    unknown = media.quote_image("seedream-v5-pro", 1, tier="4k")
+    assert unknown.credits is None and "4k" in unknown.snapshot["reason"]
+    assert media.quote_image("seedream-v5-pro", 1).credits is None
+
+
 def test_transcription_quote_rounds_up_minutes_and_is_unpriced_for_unknown_engine():
     assert media.quote_transcription("fun-asr", 6.123).credits == Decimal("0.05")
     assert media.quote_transcription("fun-asr", 61).credits == Decimal("0.10")

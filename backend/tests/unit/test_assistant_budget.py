@@ -178,7 +178,7 @@ async def test_deadline_during_tool_preserves_the_effect_without_repeating_it(mo
         human = re.findall(r"Original human message_id=([^\]]+)", json.dumps(kwargs["messages"]))[-1]
         yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
             "title": "Committed before timeout", "instructions": "Only draft a short report.",
-            "source_message_ids": [human]}, "call_id": "submit", "invalid": False}
+            "source_message_ids": [human], "destination_confirmed": True}, "call_id": "submit", "invalid": False}
         yield {"type": "finish", "reason": "tool_calls", "usage": {}}
     monkeypatch.setattr(processor, "stream_llm", stream)
     await run(main, owner)
@@ -199,7 +199,7 @@ async def test_tool_cap_preserves_one_committed_task_and_never_dispatches_a_seco
         for index in range(2):
             yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
                 "title": f"Report {index}", "instructions": "Only draft a short report.",
-                "source_message_ids": [human]}, "call_id": f"submit-{index}", "invalid": False}
+                "source_message_ids": [human], "destination_confirmed": True}, "call_id": f"submit-{index}", "invalid": False}
         yield {"type": "finish", "reason": "tool_calls", "usage": {}}
     monkeypatch.setattr(processor, "stream_llm", stream)
     await run(main, owner)

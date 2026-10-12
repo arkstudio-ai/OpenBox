@@ -76,9 +76,40 @@ async def test_table_lists_every_item_with_cost_sale_margin_and_flags(admin):
     assert "no_cost" in rows["llm:claude-opus-5"]["flags"]
     # Items the file prices only at a dead tier still appear, and unused ones say so.
     assert "unused_30d" in rows["video-gen:video-sd-1080p-pro:1080p"]["flags"]
+    assert rows["image-gen:seedream-v5-pro:1k"]["sale"] == {"per_image": "0.27"}
+    assert rows["image-gen:seedream-v5-pro:2k"]["sale"] == {"per_image": "0.54"}
+    assert rows["image-gen:seedream-v5-pro:2k"]["resolution"] == "2k"
     assert set(body["summary"]["flags"]) >= {"below_cost", "unpriced", "expiring", "overridden", "no_cost"}
     kinds = [row["kind"] for row in body["items"]]
     assert kinds == sorted(kinds, key=lambda k: rules.KINDS.index(k))
+
+
+async def test_image_tier_can_be_previewed_changed_and_counted_without_changing_other_tiers(admin):
+    from billing import media
+    key = "image-gen:seedream-v5-pro:2k"
+    await _usage("w_" + uuid.uuid4().hex[:8], model_id=key, kind="image_gen", credits="1.6", cost="1.08")
+    async with _client(admin) as client:
+        changed = await client.put(f"/api/admin/pricing/{key}", json={"request_key": uuid.uuid4().hex,
+            "reason": "test image tier", "expected_revision": 0, "sale": {"per_image": "0.8"},
+            "cost": {"per_image": "0.54", "currency": "CNY"}})
+        assert changed.status_code == 200, changed.text
+        preview = await client.post("/api/admin/pricing/preview", json={"key": key, "usage": {"images": 2}})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["current"]["credits"] == "1.6"
+        assert preview.json()["current"]["cost_credits"] == "1.08"
+        rows = {r["key"]: r for r in (await client.get("/api/admin/pricing")).json()["items"]}
+        assert rows[key]["sale"] == {"per_image": "0.8"}
+        assert rows[key]["usage_30d"]["credits"] == "1.6"
+        assert rows["image-gen:seedream-v5-pro:1k"]["sale"] == {"per_image": "0.27"}
+    assert media.quote_image("seedream-v5-pro", 2, tier="2k").credits == Decimal("1.6")
+
+
+@pytest.mark.parametrize("key", ["image-gen:seedream-v5-pro", "image-gen:seedream-v5-pro:4k", "image-gen:gpt-image-2:2k"])
+async def test_image_pricing_keys_must_match_the_models_actual_tiers(admin, key):
+    async with _client(admin) as client:
+        response = await client.put(f"/api/admin/pricing/{key}", json={"request_key": uuid.uuid4().hex,
+            "reason": "invalid tier", "expected_revision": 0, "sale": {"per_image": "0.8"}})
+    assert response.status_code == 404 and response.json()["detail"]["code"] == "UNKNOWN_ITEM"
 
 
 async def test_write_requires_confirmation_below_cost_then_takes_effect_and_is_audited(admin):

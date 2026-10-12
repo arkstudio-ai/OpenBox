@@ -16,7 +16,7 @@ export type EndReason =
   | "mic_missing"
   | "mic_busy"
 export type TurnState = "accepted" | "working" | "late" | "delivered" | "timeout" | "failed"
-export type PhraseKey = "greeting" | "progress" | "result_in_text" | "limit_reached"
+export type PhraseKey = "greeting" | "progress" | "result_in_text" | "limit_reached" | "reconnected"
 export type LimitReason = "max_duration" | "credits"
 /** What an `error` ending was about, when the client knows: one `voice:errors.*` line each. */
 export type ErrorKey = "connectFailed" | "disabled" | "backlog" | "assistantUnavailable"

@@ -1,0 +1,3 @@
+2026-09-22 13:06:50,741 [openbox.config] INFO Loaded config from /app/openbox.json
+2026-09-22 13:06:50,774 [openbox.db] INFO Database engine initialized: postgres:5432/openbox
+[{"id": "session_7YBWVCDD74K0V3Y8PNXBRQ50DE", "quality": "low", "video_model": "MiniMax-H3", "video_resolution": "768p", "status": "waiting_input"}]

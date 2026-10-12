@@ -120,9 +120,17 @@
     ]
   },
 
+  // Built-in image_gen. A RunningHub model id selects RunningHub's async task
+  // API with that provider's credential: seedream-v5-pro (Seedream v5 Pro, runs
+  // on runninghub.cn), rhart-image-n-pro (Nano Banana Pro),
+  // rhart-image-n-g31-flash (Nano Banana 2), rhart-image-g-2 (GPT Image 2); the
+  // last three answer 40310 on runninghub.cn and need a runninghub.ai provider.
+  // Any other model (gpt-image-2) uses the OpenAI-compatible Images API of the
+  // named provider, e.g. "provider": "openai", "model": "gpt-image-2".
+  // See docs/RUNNINGHUB_IMAGE_CHANNEL.md.
   "image_generation": {
-    "provider": "openai",
-    "model": "gpt-image-2",
+    "provider": "runninghub",
+    "model": "seedream-v5-pro",
     "default_size": "auto",
     "default_quality": "medium",
     "output_format": "png",

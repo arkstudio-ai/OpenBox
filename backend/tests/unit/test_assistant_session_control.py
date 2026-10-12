@@ -220,7 +220,9 @@ async def test_recovery_closes_previously_canceled_suspended_task_once():
     assert (await verify_agent_event_parity(question.session_id, user_id=scope['user_id'])).ok
 
 
-async def test_suspended_stop_cannot_assign_old_question_to_a_new_generation():
+async def test_suspended_stop_never_assigns_the_question_to_a_later_refused_generation():
+    """A start refused while the card waited reserved a generation and ran nothing: the stop
+    still closes the card's own run, and the result names that run, not the later generation."""
     from tests.unit.test_assistant_requests import pending
     scope, created, question, _ = await pending(settle_inbox=True)
     async with get_db_session() as db:
@@ -229,11 +231,16 @@ async def test_suspended_stop_cannot_assign_old_question_to_a_new_generation():
     target = await target_for_session(session, scope['user_id'])
     body = StopBody.model_validate({'task_control': {k: target[k] for k in (
         'task_id', 'expected_revision', 'expected_run')} | {'idempotency_key': 'stale-question'}})
-    with pytest.raises(AssistantError): await stop_task(session, scope['user_id'], body)
+    receipt = await stop_task(session, scope['user_id'], body)
+    assert receipt['observed_state'] == 'canceled'
     async with get_db_session() as db:
-        assert (await db.get(AssistantTask, created['task_id'])).desired_state == 'running'
-        assert (await db.get(QuestionCheckpoint, question.id)).status == 'pending'
+        task = await db.get(AssistantTask, created['task_id'])
+        result = await db.get(TaskResult, task.latest_result_id)
+        assert result.run_id == question.assistant['run_id'] and result.generation == question.assistant['generation']
+        assert (await db.get(QuestionCheckpoint, question.id)).status == 'cancelled'
+        # No generation was reserved to close it.
         assert (await db.get(AgentDriverState, question.session_id)).generation == question.assistant['generation'] + 1
+    assert (await verify_agent_event_parity(question.session_id, user_id=scope['user_id'])).ok
 
 
 async def test_child_and_revoked_authority_cannot_target_parent_control():

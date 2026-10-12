@@ -353,7 +353,7 @@ async def require_observed_result(db, main, binding, source):
 
 
 async def require_next_submission(db, main, task, execution, source_ref):
-    from assistant.control import session_tree_locked, unresolved_effect_locked
+    from assistant.control import effect_unresolved_message, session_tree_locked, unresolved_effect_locked
     reference = source_ref["continuation_authority"]
     policy = task.continuation_policy or {}
     if (reference["task_id"] != task.id or policy.get("last_inbox_id") != reference["coordination_inbox_id"]
@@ -364,7 +364,7 @@ async def require_next_submission(db, main, task, execution, source_ref):
         raise unavailable("ASSISTANT_CONTINUATION_BUDGET")
     ids = await session_tree_locked(db, execution)
     if await unresolved_effect_locked(db, execution, ids):
-        raise unavailable("ASSISTANT_EFFECT_UNRESOLVED")
+        raise AssistantError(409, "ASSISTANT_EFFECT_UNRESOLVED", effect_unresolved_message(task.id))
     if await db.scalar(select(AgentInboxItem.id).where(AgentInboxItem.session_id == execution.id,
             AgentInboxItem.state.in_(("accepted", "claimed"))).limit(1)):
         raise unavailable()

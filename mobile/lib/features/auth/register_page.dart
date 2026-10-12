@@ -83,7 +83,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     return AuthShell(child: SsoGate(register: true, child: _form(context)));
   }
 
-  /// The account/password form — reached only when Logto is unavailable,
+  /// The account/password form — shown only when the server reports SSO off,
   /// see [SsoGate].
   Widget _form(BuildContext context) {
     final t = context.tokens;

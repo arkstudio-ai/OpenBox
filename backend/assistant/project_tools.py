@@ -1,8 +1,8 @@
 """Creating a project the user asked for (docs/ASSISTANT_VOICE_FIX_PLAN.md 2).
 
-The assistant creates a project only on the user's explicit request, or when
-the user names a project that does not exist, and then hands work to it in the
-same turn. A project of the user's with that name (case and spacing aside) is
+The assistant resolves a request or approval from the conversation, including
+delegated naming, then hands work to it in the same turn. Without approval it
+first proposes a destination through placement. A project of the user's with that name (case and spacing aside) is
 returned instead of a duplicate, the default project included.
 
 No cloud desktop is started or created for it: the project's directory is made
@@ -56,18 +56,6 @@ async def existing_project(db, *, user_id: str, workspace_id: str, name: str):
     return named
 
 
-def _plain(text: str) -> str:
-    return re.sub(r"[\W_]+", "", text or "").casefold()
-
-
-async def _said(db, source_ref: dict, name: str) -> bool:
-    """Whether the user's cited words contain the name (spacing, punctuation and case aside)."""
-    from db.models.part import Part
-    ids = [ref["part_id"] for ref in source_ref.get("source_refs") or [] if ref.get("part_id")]
-    texts = (await db.scalars(select(Part.data).where(Part.id.in_(ids)))).all() if ids else []
-    return bool(_plain(name)) and _plain(name) in _plain(" ".join(str((data or {}).get("text") or "") for data in texts))
-
-
 async def _create(*, user_id: str, workspace_id: str, name: str, description: str | None):
     from project import workspace
     try:
@@ -113,11 +101,9 @@ async def create_project(*, user_id: str, workspace_id: str, main_id: str, name:
             return dict(prior.receipt)
         source_ref = (await _tool_source_locked(db, main, source, "project_create") if source is not None else
                       {"actor_user_id": user_id, "entrypoint": "assistant_project_create"})
-        if source is not None and not await _said(db, source_ref, name):
-            # Measured on a voice turn: a fast model named it after an older topic, then made a second one.
-            raise AssistantError(400, "ASSISTANT_PROJECT_NAME_UNSAID",
-                "The cited user words do not contain this project name. Use the name exactly as the user said it "
-                "(their words, not a summary); if they left the name to you, propose one and ask first.")
+        # The model resolves approval and delegated naming in conversation.
+        # A name need not be repeated literally after a proposal was accepted.
+        # Authentic human provenance, ownership and replay protection remain enforced.
         found = await existing_project(db, user_id=user_id, workspace_id=workspace_id, name=name)
         project = (found.id, found.name, "existing") if found is not None else None
     if project is None:

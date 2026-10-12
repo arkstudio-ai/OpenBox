@@ -57,6 +57,26 @@ def post_ledger(db: AsyncSession, account: CreditBalance, *, amount: Decimal,
                         balance_after=account.balance, reference_id=reference_id, created_at=now()))
 
 
+async def precheck_balance(workspace_id: str) -> None:
+    """Refuse new work up front when enforce mode would refuse its first call.
+
+    The meter checks the balance before every LLM call and surfaces a refusal
+    as a session error event, which a machine client only sees after it has
+    already been told its prompt was accepted. The public API asks here first
+    so an empty account answers ``402`` instead of a ``202`` that fails later.
+    Same rule as the meter: the period allowance is credited before the
+    check, and anything at or below zero is refused.
+    """
+    if billing_mode() != "enforce":
+        return
+    async with get_db_session() as db:
+        account = await lock_balance(db, workspace_id)
+        from billing.subscriptions import ensure_period_allowance
+        await ensure_period_allowance(db, account, now())
+        if account.balance <= 0:
+            raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+
+
 @dataclass
 class UsageMeter:
     event_id: str
@@ -66,6 +86,8 @@ class UsageMeter:
     rates: dict
     mode: str
     finished: bool = False
+    #: (tariff, tier name, tier) when the session bills against a partner tariff.
+    partner: tuple | None = None
 
     @classmethod
     async def start(cls, *, model_id: str, session_id: str, user_id: str = "",
@@ -82,10 +104,20 @@ class UsageMeter:
                     raise BillingError("BILLING_SESSION_REQUIRED", "A billable session is required")
                 return None
             workspace_id = session.workspace_id  # never an HTTP workspace header
+            partner_pricing = None
+            if getattr(session, "api_key_id", None):
+                from billing import partner as partner_mod
+                tariff, _revision = await partner_mod.tariff_for_workspace(workspace_id)
+                picked = partner_mod.llm_tier(tariff, model_id)
+                if picked is not None:
+                    partner_pricing = (tariff, picked[0], picked[1])
             account = await lock_balance(db, workspace_id)
             from billing.subscriptions import ensure_period_allowance
             await ensure_period_allowance(db, account, started)
             preview = quote(model_id, {"input": 0, "output": 0}, at=started, rates=rates)
+            if partner_pricing is not None:
+                from billing.partner import quote_llm
+                preview = quote_llm(*partner_pricing, {"input": 0, "output": 0}, platform=preview if preview.credits is not None else None)
             if mode == "enforce":
                 if preview.credits is None:
                     raise BillingError("MODEL_UNPRICED", "This model has no verified credit price")
@@ -98,7 +130,7 @@ class UsageMeter:
                 session_title=session.title or session_id, model_id=model_id, kind=kind,
                 tokens={}, total_tokens=0, credits=None, status="pending",
                 pricing=preview.snapshot, created_at=started))
-        return cls(event_id, workspace_id, model_id, started, rates, mode)
+        return cls(event_id, workspace_id, model_id, started, rates, mode, partner=partner_pricing)
 
     async def finish(self, usage: dict | None) -> Decimal | None:
         """Exactly one settlement, including cancellation after provider usage arrived.
@@ -109,6 +141,9 @@ class UsageMeter:
         """
         normalized = normalize_usage(usage) if usage else None
         price = quote(self.model_id, normalized, at=self.started_at, rates=self.rates) if normalized else None
+        if price is not None and self.partner is not None:
+            from billing.partner import quote_llm
+            price = quote_llm(*self.partner, normalized, platform=price if price.credits is not None else None)
         async with get_db_session() as db:
             account = await lock_balance(db, self.workspace_id)
             event = await db.get(UsageEvent, self.event_id)

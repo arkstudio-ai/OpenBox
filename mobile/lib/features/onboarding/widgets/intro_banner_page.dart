@@ -84,6 +84,7 @@ class _IntroBannerPageState extends ConsumerState<IntroBannerPage> {
                   ),
                   const SizedBox(height: 10),
                   _Secondary(
+                    key: const Key('intro-register'),
                     label: i18n.t('onboarding:intro.register'),
                     onTap: () => _finish(Paths.register),
                     tokens: t,
@@ -226,6 +227,7 @@ class _Primary extends StatelessWidget {
 
 class _Secondary extends StatelessWidget {
   const _Secondary({
+    super.key,
     required this.label,
     required this.onTap,
     required this.tokens,

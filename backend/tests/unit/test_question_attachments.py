@@ -44,7 +44,7 @@ async def test_file_only_answer_survives_draft_and_reaches_model_file_parts_once
     await q.reply(request_id, [[]], "u1", attachments=[["asset-a"]])
     await q.reply(request_id, [[]], "u1", attachments=[["asset-a"]])
     assert await inbox_rows() == []  # Applied only when the continuation owns the session.
-    await apply_answers("s1", "u1")
+    generation = await apply_answers("s1", "u1")
     await apply_answers("s1", "u1")
     rows = await inbox_rows()
     assert len(rows) == 1
@@ -56,6 +56,9 @@ async def test_file_only_answer_survives_draft_and_reaches_model_file_parts_once
 
     lease = await reserve_run("s1", "u1")
     try:
+        # As in run_loop: the continuation's run starts (admitting the saved
+        # answer) before its first boundary drains the answer's files.
+        assert await runtime.start_run("s1", "u1", expected_generation=generation, driver_lease=lease) is not None
         batch = await claim_inbox_boundary(lease, step=1, include_next_turn=False)
         assert batch.attachment_ids == ("asset-a",)
         async with database.get_db_session() as db:

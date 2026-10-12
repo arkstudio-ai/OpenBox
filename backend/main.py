@@ -360,6 +360,8 @@ def create_app() -> FastAPI:
     async def sandbox_subscription_required(_request, exc):
         return JSONResponse(exc.payload, status_code=403)
 
+    from api.v1.app import CORSMiddlewareExemptingV1
+
     from assistant.scheduling import TaskSchedulingHeld
 
     @application.exception_handler(TaskSchedulingHeld)
@@ -367,7 +369,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
 
     application.add_middleware(
-        CORSMiddleware,
+        CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
@@ -446,6 +448,7 @@ def create_app() -> FastAPI:
     from api.admin import router as admin_router
     from api.admin_billing import router as admin_billing_router
     from api.admin_pricing import router as admin_pricing_router
+    from api.admin_partners import router as admin_partners_router
     from api.admin_fleet import router as admin_fleet_router
     from api.admin_skills import router as admin_skills_router
     application.include_router(workspaces_router)
@@ -454,6 +457,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_skills_router)
     application.include_router(admin_billing_router)
     application.include_router(admin_pricing_router)
+    application.include_router(admin_partners_router)
     application.state.trajectory_worker_mode = _trajectory_worker_mode(config)
     if application.state.trajectory_worker_mode == "embedded":
         # Otherwise the trajectory worker serves the admin trajectory API and
@@ -515,6 +519,10 @@ def create_app() -> FastAPI:
 
     application.include_router(agent_router)
     application.include_router(project_brief_router)
+
+    # ── Public harness API (API-key auth, its own error contract) ──
+    from api.v1.app import create_v1_app
+    application.mount("/v1", create_v1_app())
 
     # ── Deployment environment (public; feeds the UI badge) ──
     @application.get("/api/environment")

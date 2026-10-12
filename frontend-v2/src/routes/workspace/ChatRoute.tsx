@@ -3,6 +3,7 @@ import { Navigate, useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
+import { ApiError } from "@/shared/api/http"
 import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus, SuggestionsPart } from "@/shared/types/api"
 import {
   ChatFlow,
@@ -77,9 +78,22 @@ function WaitingForInput({ status, onCancel }: { status?: SessionStatus; onCance
   )
 }
 
+/** A deleted conversation, or one outside the current workspace, answers 404/410. */
+export function isGoneSession(error: unknown) {
+  return error instanceof ApiError && (error.status === 404 || error.status === 410)
+}
+
+/** Not a crash: refreshing the same URL would fail again, so say why once and go home. */
+export function GoneSession() {
+  const { t } = useTranslation("common")
+  useEffect(() => { toast("info", t("pageLoad.sessionGone")) }, [t])
+  return <Navigate to={paths.app} replace />
+}
+
 export default function ChatRoute() {
   const { sessionId = "" } = useParams()
   const session = useSessionQuery(sessionId)
+  if (isGoneSession(session.error)) return <GoneSession />
   if (session.error) throw session.error
   if (!session.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   if (session.data.kind === "assistant") return <Navigate to={paths.assistant} replace />

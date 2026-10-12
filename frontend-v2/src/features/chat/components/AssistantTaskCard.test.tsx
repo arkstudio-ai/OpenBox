@@ -17,6 +17,7 @@ vi.mock("../api/assistant", () => ({
   useAssistantArchive: api.archive,
 }))
 vi.mock("../api/assistant-watch", () => ({ useAssistantWatch: api.watch }))
+vi.mock("../api/assistant-effects", () => ({ useAcknowledgeTaskEffects: () => ({ isPending: false, mutateAsync: vi.fn() }) }))
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en-US" } }) }))
 vi.mock("@/shared/hooks/useApiErrorMessage", () => ({ useApiErrorMessage: () => () => "Unavailable" }))
 vi.mock("@/shared/ui/Toast", () => ({ toast: vi.fn() }))
@@ -171,6 +172,51 @@ describe("assistant task card", () => {
     openMenu()
     expect(screen.queryByRole("menuitem", { name: "assistant.card.pause" })).toBeNull()
     expect(screen.getByRole("menuitem", { name: "assistant.card.resume" })).toBeTruthy()
+  })
+  it.each(["ASSISTANT_STOP_TARGET_CHANGED", "TASK_WAITING_INPUT"])(
+    "explains a %s refusal as a card waiting in the task conversation, with the way there", async (code) => {
+      const { ApiError } = await import("@/shared/api/http")
+      api.control.mockRejectedValue(new ApiError(409, code, "The suspended task source changed"))
+      mount()
+      openMenu()
+      fireEvent.click(screen.getByRole("menuitem", { name: "assistant.card.cancel" }))
+      await waitFor(() => expect(screen.getByText("assistant.card.waitingOnCard")).toBeTruthy())
+      expect(screen.getByRole("link", { name: /assistant.card.openTaskConversation/ }).getAttribute("href")).toBe("/app/s/execution")
+      expect(toast).not.toHaveBeenCalledWith("info", "assistant.card.changed")
+    })
+  it("keeps the generic refresh message for a real revision or run conflict", async () => {
+    const { ApiError } = await import("@/shared/api/http")
+    for (const code of ["ASSISTANT_REVISION_CONFLICT", "ASSISTANT_RUN_CONFLICT"]) {
+      vi.mocked(toast).mockClear()
+      api.control.mockRejectedValueOnce(new ApiError(409, code, "changed"))
+      mount()
+      openMenu()
+      fireEvent.click(screen.getByRole("menuitem", { name: "assistant.card.pause" }))
+      await waitFor(() => expect(toast).toHaveBeenCalledWith("info", "assistant.card.changed"))
+      expect(screen.queryByText("assistant.card.waitingOnCard")).toBeNull()
+      cleanup()
+    }
+  })
+  it("says where to finish a cloud desktop verification the task waits on", () => {
+    const blocked_by = { request_id: "q", kind: "desktop_takeover", host: "login.example.com", title: "Prepare the report",
+      link: "/app/s/execution", browser: "local", done_option: "我已完成，继续" }
+    api.task.mockReturnValue({ data: { ...value, latest_result: null, blocked_by,
+      task: { ...value.task, observed_state: "waiting_input" }, execution_session: { id: "execution", status: "waiting_input" } } })
+    api.watch.mockReturnValue({ data: { items: [], has_more: false } })
+    mount()
+    expect(screen.getByText("assistant.status.waiting")).toBeTruthy()
+    expect(screen.getByText("assistant.card.takeoverHint.desktop")).toBeTruthy()
+    expect(screen.queryByText("assistant.card.waitingHint")).toBeNull()
+    cleanup()
+    api.task.mockReturnValue({ data: { ...value, latest_result: null, blocked_by: { ...blocked_by, browser: "extension" } } })
+    mount()
+    expect(screen.getByText("assistant.card.takeoverHint.extension")).toBeTruthy()
+  })
+  it("explains input that did not run because the conversation waited on a card", () => {
+    api.task.mockReturnValue({ data: { ...value, latest_result: null, latest_submission: { ...value.latest_submission!,
+      disposition: "not_applied", state: "settled", error: { code: "TASK_WAITING_INPUT" } } } })
+    mount()
+    expect(screen.getByText("assistant.card.note.notRunWaiting")).toBeTruthy()
   })
   it("stops following with the current revision, and reports a refusal", () => {
     const mutate = vi.fn((_vars, options: { onSuccess: (receipt: unknown) => void }) => options.onSuccess({ state: "archived" }))

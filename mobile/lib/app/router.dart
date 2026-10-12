@@ -36,6 +36,7 @@ import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
+import 'auth_redirect.dart';
 import 'knowledge_routes.dart';
 import 'workspace_shell.dart';
 
@@ -51,34 +52,16 @@ final routerProvider = Provider<GoRouter>((ref) {
   final refresh = _AuthRefresh(ref);
   ref.onDispose(refresh.dispose);
   return GoRouter(
+    // Every launch starts here; [authRedirect] moves a signed-in account on to
+    // the chat home and a first install to the intro.
     initialLocation: Paths.landing,
     refreshListenable: refresh,
-    redirect: (context, state) {
-      final auth = ref.read(authProvider);
-      final location = state.matchedLocation;
-      if (auth.isLoading) return null;
-      // Install-level intro (docs/MOBILE_ONBOARDING_PLAN.md L1): once per
-      // device, before the landing page, never for a signed-in account.
-      if (location == Paths.landing &&
-          !auth.isAuthenticated &&
-          !ref.read(introSeenProvider)) {
-        return Paths.intro;
-      }
-      final inApp = location.startsWith(Paths.app);
-      final invitation = location.startsWith('/invite/');
-      if ((inApp || invitation) && !auth.isAuthenticated) {
-        return Paths.loginFor(state.uri.toString());
-      }
-      if ((location == Paths.admin || location.startsWith('${Paths.admin}/')) &&
-          auth.user?.role != 'admin') {
-        return Paths.app;
-      }
-      final onAuthPage = location == Paths.login || location == Paths.register;
-      if (onAuthPage && auth.isAuthenticated) {
-        return Paths.postAuthDestination(state.uri);
-      }
-      return null;
-    },
+    redirect: (context, state) => authRedirect(
+      auth: ref.read(authProvider),
+      location: state.matchedLocation,
+      uri: state.uri,
+      introSeen: () => ref.read(introSeenProvider),
+    ),
     routes: [
       GoRoute(
         path: Paths.legal,

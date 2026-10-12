@@ -150,6 +150,14 @@ def _base_items(base: dict) -> dict[str, dict]:
                 for res in ((rate.get("cost") or {}).get("per_second") or {}):
                     item = ItemKey("video-gen", model, res)
                     items.setdefault(item.key, {"item": item, "label": f"{model} {res}"})
+            elif name == "image-gen" and isinstance(rate.get("per_image"), dict):
+                tiers = set(rate["per_image"])
+                costs = (rate.get("cost") or {}).get("per_image")
+                if isinstance(costs, dict):
+                    tiers.update(costs)
+                for res in sorted(tiers):
+                    item = ItemKey(name, model, res)
+                    items.setdefault(item.key, {"item": item, "label": f"{model} {res}"})
             elif name in ("image-gen", "stt", "voice-realtime", "hot-trends"):
                 item = ItemKey(name, model)
                 items.setdefault(item.key, {"item": item, "label": model})
@@ -359,7 +367,7 @@ def preview_quote(item: ItemKey, usage: dict, data: dict) -> dict:
     if item.kind == "video-gen":
         q = media.quote_generation(item.model, item.resolution, float(usage.get("seconds", 10)), rates=data)
     elif item.kind == "image-gen":
-        q = media.quote_image(item.model, int(usage.get("images", 1)), rates=data)
+        q = media.quote_image(item.model, int(usage.get("images", 1)), tier=item.resolution or None, rates=data)
     elif item.kind == "stt":
         q = media.quote_transcription(item.model, float(usage.get("seconds", 60)), rates=data)
     elif item.kind == "ims-compose":
@@ -404,6 +412,12 @@ def _reject(status: int, code: str, detail: dict | None = None) -> None:
 
 def _known_item(item: ItemKey, config) -> bool:
     base = base_catalogue()
+    if item.kind == "image-gen" and (entry := rules.base_entry(base, item)) is not None:
+        per = entry.get("per_image")
+        if isinstance(per, dict):
+            return bool(item.resolution) and (rules.item_sale(base, item) is not None
+                                             or rules.item_cost(base, item) is not None)
+        return not item.resolution
     if rules.base_entry(base, item) is not None and (item.kind != "video-gen" or rules.item_sale(base, item) is not None
                                                      or rules.item_cost(base, item) is not None):
         return True

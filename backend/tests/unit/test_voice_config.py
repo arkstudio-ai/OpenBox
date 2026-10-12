@@ -25,7 +25,8 @@ def test_voice_environment_overrides_read_like_the_memory_ones(monkeypatch):
 
 def test_voice_turns_keep_the_main_sessions_model_unless_configured():
     voice = VoiceConfig()
-    assert (voice.turn_model, voice.turn_variant, voice.late_after_seconds) == (None, None, 12)
+    # One progress line per request, after 20 quiet seconds (2026-10-10: 12 s made "稍等…" a refrain).
+    assert (voice.turn_model, voice.turn_variant, voice.late_after_seconds) == (None, None, 20)
     assert voice.summary_model == "openai/qwen3.8-flash"
 
 
@@ -38,6 +39,15 @@ def test_audio_config_overrides_and_history_limits(monkeypatch):
     assert config.max_history_turns == 40 and not config.enable_speech_emotion
     with pytest.raises(ValueError):
         VoiceConfig(max_history_turns=51)
+
+
+def test_a_keepalive_override_stays_well_below_the_providers_idle_limit(monkeypatch):
+    assert VoiceConfig().keepalive_seconds is None  # 120 s on Audio, 240 s on Omni (voice/upkeep.py)
+    monkeypatch.setenv("VOICE_KEEPALIVE_SECONDS", "90")
+    assert OpenBoxConfig(**_apply_env_overrides({})).voice.keepalive_seconds == 90
+    for refused in (29, 151, 300):  # Audio closes an idle session after 180 s
+        with pytest.raises(ValueError):
+            VoiceConfig(keepalive_seconds=refused)
 
 
 def test_enabled_needs_a_key_and_falls_back_to_dashscope(monkeypatch):

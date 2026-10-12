@@ -107,11 +107,16 @@ class CallMeter:
     def pending(self):
         return any(row["status"] == "in_progress" for row in self.responses.values())
 
-    def finish(self):
-        self.final = True
+    def abandon(self) -> None:
+        """Replies whose ``response.done`` will never come (hang-up, a dropped session): incomplete, each
+        counted once from what was received; a usage that still arrives replaces the estimate."""
         for row in self.responses.values():
             if row["status"] == "in_progress":
                 row["status"] = "incomplete"
+
+    def finish(self):
+        self.final = True
+        self.abandon()
 
     def snapshot(self) -> dict:
         tokens = {key: 0 for key in MODALITIES}

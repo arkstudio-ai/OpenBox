@@ -51,17 +51,24 @@ def result_view(result) -> dict | None:
     return {key: item.isoformat() if isinstance(item, datetime) else item for key, item in value.items()}
 
 
-async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None, db=None) -> dict:
+async def list_projects(*, user_id, workspace_id, main_id, limit=50, cursor=None,
+                        include_context=False, include_brief=True, db=None) -> dict:
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         rows = list((await db.scalars(select(Project).where(Project.user_id == user_id,
             Project.workspace_id == workspace_id, Project.is_deleted.is_(False), Project.id > (cursor or ""))
             .order_by(Project.id).limit(limit + 1))).all())
-        return _page(rows, limit, lambda row: {"id": row.id, "name": row.name})
+        context = {}
+        if include_context:
+            from assistant.work_context import project_background
+            context = await project_background(db, rows[:limit], user_id=user_id, workspace_id=workspace_id,
+                                               include_brief=include_brief)
+        return _page(rows, limit, lambda row: {"id": row.id, "name": row.name, **context.get(row.id, {})})
 
 
 async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, status=None, query=None,
-                        watched=None, limit=50, cursor=None, include_link=False, db=None) -> dict:
+                        watched=None, limit=50, cursor=None, include_link=False, include_context=False,
+                        include_assistant=True, db=None) -> dict:
     """The user's top-level conversations, newest first (V2: any visibility).
 
     Pages follow next_cursor (the last id of a page).
@@ -99,6 +106,11 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
             statement = statement.where(or_(AssistantTask.id.is_(None), AssistantTask.archived_at.is_not(None)))
         rows = list((await db.execute(statement.order_by(Session.id).limit(limit + 1))).all())
         details = {}
+        background = {}
+        if include_context:
+            from assistant.work_context import conversation_background
+            background = await conversation_background(db, [row.id for row in rows[:limit]], user_id=user_id,
+                                                       include_assistant=include_assistant)
         if include_link:
             from assistant.linking import candidate
             for row in rows[:limit]:
@@ -112,7 +124,8 @@ async def list_sessions(*, user_id, workspace_id, main_id, project_id=None, stat
                         watched=row.task_id is not None and row.task_archived_at is None,
                         task_id=row.task_id,
                         latest_summary=summary[:300] + ("…" if len(summary) > 300 else "") if summary else None,
-                        **details.get(row.id, {}))
+                        **details.get(row.id, {}),
+                        **({"recent_messages": background.get(row.id, [])} if include_context else {}))
             return item
         return _page(rows, limit, render)
 
@@ -172,6 +185,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
         newest_control = aliased(AssistantCommand, ranked_controls)
         controls = {row.target_id: row for row in (await db.scalars(
             select(newest_control).where(ranked_controls.c.rank == 1))).all()}
+        from assistant.blocking import blocked_views
+        blocked = await blocked_views(db, [execution for _, execution in scoped])
         values = []
         for task, execution in scoped:
             result_row = latest.get(task.latest_result_id)
@@ -186,7 +201,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                 "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
                 "run_id": item.run_id if item else None, "generation": item.generation if item else None,
             } if submission else None
-            if submission and (submission.delivery == "steer" or item and item.state == "canceled"):
+            if submission and (submission.delivery == "steer" or item and (
+                    item.state == "canceled" or item.outcome == "not_run")):
                 submission_view.update(delivery=submission.delivery,
                     expected_run=(item.origin_ref or {}).get("expected_run") if item else None,
                     state=item.state if item else None, error=item.error if item else None)
@@ -196,7 +212,10 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                      "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                      "phase": driver.phase} if driver else None,
                      "latest_submission": submission_view,
-                     "pending_requests_location": "execution_session"}
+                     "pending_requests_location": "execution_session",
+                     # The card the conversation waits on (e.g. a desktop takeover): queued
+                     # input runs after the user handles it there, at its link.
+                     "blocked_by": blocked.get(execution.id)}
             control = controls.get(task.id)
             if control is not None:
                 value["latest_control"] = {"command_id": control.id, "action": control.action,

@@ -1,0 +1,36 @@
+{
+  "low": {
+    "status": 400,
+    "request_id": "req_01M3470PE5JYVT4YKF8E4DMJHV"
+  },
+  "busy": {
+    "status": 409,
+    "code": "SESSION_BUSY",
+    "request_id": "req_01M3470RHCFTWX9X25F9HGT4V8"
+  },
+  "inflight_replay": {
+    "status": 202,
+    "same_ids": true,
+    "request_id": "req_01M3470RS30NKDZ1QWQZH8N0RB"
+  },
+  "inflight_conflict": {
+    "status": 409,
+    "code": "DUPLICATE_CLIENT_MESSAGE_ID",
+    "request_id": "req_01M3470RXC8PXGYNH1H3V1WD4C"
+  },
+  "unknown_route": {
+    "status": 404,
+    "code": "NOT_FOUND",
+    "request_id": "req_01M3470PXZX2N5Z44QQKVQRZTQ"
+  },
+  "options": {
+    "status": 200,
+    "request_id": "req_01M3470Q1FSS45CAXJZ5P7MTSR"
+  },
+  "history_pagination": {
+    "count": 44,
+    "unique": 44,
+    "ordered": true
+  },
+  "console_sha256": "bb7df6dbf5bbc565518cdbe833d806555a88590314eb8cc323718c6d36e43a2d"
+}

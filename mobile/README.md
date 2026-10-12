@@ -76,6 +76,16 @@ SDK 在系统浏览器里跑 PKCE,拿到 id_token 后交给 `POST /api/auth/logt
 2. 后端 `.env` 填 `LOGTO_NATIVE_APP_ID=<该 Native 应用的 App ID>`,它同时是
    id_token 的第二个合法 audience。
 
+只有服务端明确答复未启用(`enabled: false` 或缺 `native_app_id`)才显示密码表单。
+`/api/auth/logto/config` 请求失败(离线、超时、5xx)显示「重试」;SSO 拉起或换票失败
+也只提示重试,不再退回密码表单。登录与注册两屏的标题、说明、按钮(登录 / 注册)和
+Logto 首屏各不相同,底部链接可互相切换。
+
+冷启动:已登录直接进 `/app`(深链保持原目标)。启动刷新只在 401/403 或单手机登录码
+(`AUTH_MOBILE_SESSION_REPLACED` / `AUTH_MOBILE_LOGIN_REQUIRED`)时登出;离线、超时、
+5xx 保留 refresh cookie —— 内存里已有用户就保持登录,冷启动则显示「暂时连不上服务器」
+重试页(`AuthState.offline`),不会落到首页或登录页。本机没有 refresh cookie 时按未登录处理。
+
 退出也必须把同一个 URI 注册到 Logto Native 应用的 **Post sign-out redirect
 URIs**。`AuthController.signOut()` 先撤销 OpenBox refresh cookie 并清理本地
 用户/workspace/WS，再调用 Logto SDK `signOut()` 结束浏览器 SSO 会话；SDK

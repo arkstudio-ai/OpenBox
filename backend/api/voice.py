@@ -21,11 +21,10 @@ from billing.service import BillingError
 from auth.socket_access import SocketAccess
 from auth.ticket import consume_ticket
 from core.log import create_logger
-from voice import calls, cards, events, handover, phrases, prompt, summary, tools, voices
-from voice import router as turn_router
+from voice import calls, cards, events, phrases, prompt, summary, tools, upkeep, voices
 from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
-from voice.bridge import Bridge
+from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
 from voice.reports import ReportWatcher
@@ -35,7 +34,6 @@ log = create_logger("api.voice")
 router = APIRouter()
 
 provider_factory = RealtimeProvider  # tests replace it with a scripted provider
-handover_planner = handover.plan     # a request handed over is briefed first; tests replace it
 
 MAX_FRAME_BYTES = 12800        # 400 ms of 16 kHz PCM16; clients send 3,200-byte frames
 CLIENT_SILENCE_SECONDS, HEARTBEAT_SECONDS, LOCK_RENEW_SECONDS = 30, 10, 20
@@ -167,7 +165,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                             lang=lang)
 
     async def opener(text):
-        """A fresh provider session for a long call (voice/upkeep.py); the client never sees it."""
+        """A fresh provider session for a long call (voice/upkeep.py) or for one the provider dropped
+        (``Bridge.recover``); the client never sees it."""
         fresh = provider_factory(config, debug=config.debug_transcripts)
         try:
             await fresh.open()
@@ -180,9 +179,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
-                    judge=turn_router.Judge(call_id) if turn_router.enabled(user_id) else None,
-                    planner=handover_planner, known=facts.profile, recap=facts.recap, tell_reports=facts.reports,
-                    detail=facts.detail)
+                    recap=facts.recap, tell_reports=facts.reports,
+                    detail=facts.detail,
+                    keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
+                    reply_gap=REPLY_GAP_SECONDS)  # ours start once the client has played the last reply
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
@@ -240,7 +240,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     if current is not bridge.provider:
                         break  # the replaced session's last words: the new one has the call
                     await bridge.on_provider_event(event)
-            if current is bridge.provider:
+            # The provider closed the session in use (an idle timeout, a server error): a fresh one carries
+            # the call on, the client socket staying open; or the call ends as it always did.
+            if current is bridge.provider and not await bridge.recover(current):
                 raise CallEnded("error", close=1011, error="provider_error")
 
     async def bridge_to_client():
@@ -382,8 +384,9 @@ async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_
     except Exception as exc:  # the call is over either way; an unbilled call is in the log and in voice_calls
         log.error("voice call=%s not billed error=%s", call_id, type(exc).__name__)
     log.info("voice call=%s user=%s client=%s duration=%.1fs turns=%s pending=%s tokens=%s yuan=%s end=%s "
-             "close=%s connect=%s", call_id, user_id, client, duration, len(bridge.refs), pending, snapshot["tokens"],
-             snapshot["total_yuan"], ending.reason, ending.close, getattr(provider, "attempts", None))
+             "close=%s connect=%s recoveries=%s", call_id, user_id, client, duration, len(bridge.refs), pending,
+             snapshot["tokens"], snapshot["total_yuan"], ending.reason, ending.close,
+             getattr(provider, "attempts", None), bridge.recoveries)
     if ending.close is None:
         return
     if ending.error:

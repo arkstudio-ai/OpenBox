@@ -37,11 +37,13 @@ async def read_runtime_catalogue(sandbox, lease, operation):
     from db.models.external_effect import ExternalEffect
     _, resource, _, _, _ = await runtime_context(sandbox, lease)
     async with get_db_session() as db:
+        # Terminal rows (manual_review included) are parked, not in flight:
+        # one lost GET must not hide the desktop's Skill/MCP catalogue forever.
         uncertain = await db.scalar(select(ExternalEffect.id).where(
             ExternalEffect.resource_id == resource.resource_id,
             ExternalEffect.adapter == "sandbox_runtime", ExternalEffect.operation == "catalogue_read",
             ExternalEffect.submitting_at.is_not(None),
-            ExternalEffect.state.not_in(("succeeded", "failed"))).limit(1))
+            ExternalEffect.state.not_in(tuple(effects.TERMINAL_STATES))).limit(1))
     if uncertain:
         raise RuntimePreparationUncertain("An earlier catalogue read has an unresolved outcome")
     result = None

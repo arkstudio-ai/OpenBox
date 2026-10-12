@@ -133,8 +133,9 @@ Omit `size`, `quality`, and `output_format` when the defaults in
   edits.
 - Format: `png`, `jpeg`, or `webp`. Compression applies only to JPEG/WebP.
 - Size: `auto` or `WIDTHxHEIGHT`. For `gpt-image-2`, both edges must be
-  multiples of 16, the longest edge must be at most 3840px, aspect ratio at
-  most 3:1, and total pixels between 655,360 and 8,294,400.
+  multiples of 16 (off-grid sizes are snapped and the result says so), the
+  longest edge must be at most 3840px, aspect ratio at most 3:1, and total
+  pixels between 655,360 and 8,294,400.
 - Common sizes: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`,
   `2048x1152`, `3840x2160`, and `2160x3840`. Square drafts are typically
   fastest.
@@ -145,14 +146,24 @@ Omit `size`, `quality`, and `output_format` when the defaults in
   explicitly requested chroma-key background, or explain that another model
   must be configured for native alpha.
 
+## Configured RunningHub models
+
+When the result names Seedream v5 Pro, Nano Banana Pro/2 or GPT Image 2:
+one image per call (`n=1`; call again per variant), no mask, no transparent
+background. `WIDTHxHEIGHT` becomes the nearest supported aspect ratio and a
+1k/2k/4k tier (Seedream takes exact pixels, 240-8192); `auto` keeps an edited
+image's shape. `image_task_pending` means the paid task is still running and
+will appear in the resource centre: never resubmit it.
+
 ## Boundaries and failure handling
 
 - Use this skill for raster output. Edit established SVG/vector/code-native
   assets directly instead of rasterizing them.
 - Never bypass `image_gen` with ad-hoc HTTP, SDK, or shell calls; doing so loses
   OSS ownership checks, chat attachment creation, and resource-centre indexing.
-- Do not retry a failed provider call automatically: an ambiguous retry may
-  create and bill a second image. Report the error and let the user or agent
-  decide whether to try again.
+- Do not retry an uncertain result (`outcome unknown`, `still in progress`)
+  automatically: it may create and bill a second image. A definite refusal
+  (`未受理，不扣费`) may be retried once its stated reason is fixed; report
+  permission or quota refusals to the person instead of retrying.
 - If OSS is unavailable, report that image generation cannot produce a usable
   OpenBox resource; do not leave the only output in a temporary directory.

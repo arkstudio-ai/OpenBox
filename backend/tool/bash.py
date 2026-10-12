@@ -260,8 +260,21 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
     except Exception as exc:
         from agent.driver import LeaseLostError
         from question.runtime import RunRevoked
+        from sandbox.client import refused_before_send
         if isinstance(exc, (LeaseLostError, RunRevoked)):
             raise
+        refused = refused_before_send(exc) or ""
+        if refused.startswith("POST ") and refused.endswith("/execute_stream"):
+            # Authorization, admission or a precondition refused the request
+            # before it left this process: the command was never sent, so its
+            # outcome is known. Only a stream lost after sending is unknown.
+            code = getattr(exc, "code", None) or type(exc).__name__
+            return ToolResult(
+                title="command not sent",
+                output=f"The command was not sent to the sandbox, so this call did not run it "
+                       f"({code}: {str(exc)[:300]}). Resolve that before trying again.",
+                metadata={"error": True, "failure_code": "command_not_sent", "refusal_code": str(code)[:64]},
+            )
         # A broken stream is not evidence that the remote command never ran.
         # Reissuing it through /execute can duplicate an irreversible action.
         return ToolResult(

@@ -18,6 +18,8 @@ class SubmissionRejected(VideoRequestError):
 
     def __init__(self, data: dict[str, Any]):
         self.code = error_code(data)
+        # For server logs only (callers redact it); never part of the message.
+        self.provider_message = str(data.get("errorMessage") or "")[:500]
         super().__init__(error_message(data))
 
 
@@ -30,13 +32,13 @@ def has_error(data: dict[str, Any]) -> bool:
     return data.get("errorCode") not in (None, "", 0, "0")
 
 
-def error_message(data: dict[str, Any]) -> str:
+def error_message(data: dict[str, Any], media: str = "视频") -> str:
     # Provider text can echo credentials or signed URLs. Only our own messages
     # cross the tool's public-error boundary.
     code = error_code(data)
     if code == "605":
         return "RunningHub 账户余额不足（605）；请联系管理员充值。"
-    return f"RunningHub 视频请求失败（错误码 {code}）；请检查渠道配置和账户状态。"
+    return f"RunningHub {media}请求失败（错误码 {code}）；请检查渠道配置和账户状态。"
 
 
 def task_id(data: dict[str, Any]) -> str:

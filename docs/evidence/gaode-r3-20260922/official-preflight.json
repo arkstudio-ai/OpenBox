@@ -1,0 +1,8 @@
+{
+  "checks": {
+    "key_accepted": true,
+    "not_found_shape": true,
+    "bad_key_is_401": true,
+    "low_quality_accepted": true
+  }
+}

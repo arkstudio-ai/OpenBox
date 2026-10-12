@@ -22,6 +22,8 @@ import {
 } from "../api/assistant"
 import { useAssistantWatch, type AssistantWatchItem } from "../api/assistant-watch"
 import { pendingSendIdentity } from "../lib/pending-send"
+import { requestEffectAcknowledge } from "../stores/effect-acknowledge"
+import { AssistantEffectAcknowledge } from "./AssistantEffectAcknowledge"
 import { taskReceipt } from "../lib/task-receipt"
 import { TASK_STATUS_DOT, TASK_STATUS_TONE, plainSummary, sinceLabel, taskStatus, type TaskStatus } from "../lib/task-status"
 
@@ -54,8 +56,12 @@ function FullResult({ resultId }: { resultId: string }) {
   </div>
 }
 
+/** Refusals that mean the task waits on a card in its own conversation (a cloud desktop
+ *  verification, a question), not that someone else just changed it. */
+const WAITING_ON_CARD = new Set(["ASSISTANT_STOP_TARGET_CHANGED", "TASK_WAITING_INPUT"])
+
 /** Pause / resume / cancel through the existing control command, one at a time. */
-function useTaskControl(value: AssistantTaskView) {
+function useTaskControl(value: AssistantTaskView, onWaitingCard: () => void) {
   const { t } = useTranslation("chat")
   const control = useAssistantControl()
   const errorMessage = useApiErrorMessage()
@@ -80,7 +86,11 @@ function useTaskControl(value: AssistantTaskView) {
         toast("info", t(`assistant.card.controlDone.${action}`))
       } catch (error) {
         if (error instanceof ApiError && error.status < 500) identity.confirmed()
+        // Offer "我已核对，继续" on this card (AssistantEffectAcknowledge).
+        if (error instanceof ApiError && error.code === "ASSISTANT_EFFECT_UNRESOLVED") requestEffectAcknowledge(task.id)
         if (error instanceof ApiError && error.code === "ASSISTANT_EFFECT_UNRESOLVED") toast("info", t("assistant.card.checkEffects"))
+        // Says where to act instead of "it just changed, try again", which never helps here.
+        else if (error instanceof ApiError && error.status === 409 && WAITING_ON_CARD.has(error.code)) onWaitingCard()
         else if (error instanceof ApiError && error.status === 409) toast("info", t("assistant.card.changed"))
         else toast("error", errorMessage(error))
       }
@@ -90,12 +100,13 @@ function useTaskControl(value: AssistantTaskView) {
   return { submit, busy: busy || control.isPending }
 }
 
-function TaskMenu({ value, result, showResult, onToggleResult }: {
+function TaskMenu({ value, result, showResult, onToggleResult, onWaitingCard }: {
   value: AssistantTaskView; result: AssistantResult | null; showResult: boolean; onToggleResult: () => void
+  onWaitingCard: () => void
 }) {
   const { t } = useTranslation("chat")
   const [open, setOpen] = useState(false)
-  const { submit, busy } = useTaskControl(value)
+  const { submit, busy } = useTaskControl(value, onWaitingCard)
   const archive = useAssistantArchive()
   const retry = useRetryAssistantReport()
   const errorMessage = useApiErrorMessage()
@@ -143,6 +154,7 @@ function taskNote(value: AssistantTaskView, result: AssistantResult | null): str
   if (task.observed_state === "resume_blocked") return "assistant.card.note.resumeBlocked"
   if (result?.delivery_state === "blocked") return result.last_error_code === "user_stopped"
     ? "assistant.card.note.reportStopped" : "assistant.card.note.reportFailed"
+  if (submission?.error?.code === "TASK_WAITING_INPUT") return "assistant.card.note.notRunWaiting"
   if (submission?.disposition === "not_applied") return "assistant.card.note.steerNotApplied"
   if (submission?.state === "canceled" && !submission.applied_at) {
     return submission.error?.code === "ASSISTANT_ASSET_UNAVAILABLE" ? "assistant.card.note.assetUnavailable"
@@ -159,9 +171,13 @@ function CardDetails({ status, summary, value, note }: {
   const { continuation, desired_state: desired } = value.task
   const following = continuation?.state === "active" && desired !== "paused"
   const decision = continuation && ["needs_decision", "exhausted"].includes(continuation.state)
+  // A cloud desktop verification is done by the user, not answered: say where.
+  const takeover = value.blocked_by?.kind === "desktop_takeover" ? value.blocked_by : null
+  const waitingHint = takeover
+    ? `assistant.card.takeoverHint.${takeover.browser === "extension" ? "extension" : "desktop"}` : "assistant.card.waitingHint"
   return <>
     {summary && <p className="text-n800 mt-2 line-clamp-3 text-sm leading-relaxed whitespace-pre-line">{summary}</p>}
-    {status === "waiting" && <p className="text-n800 mt-2 text-sm">{t("assistant.card.waitingHint")}</p>}
+    {status === "waiting" && <p className="text-n800 mt-2 text-sm">{t(waitingHint)}</p>}
     {following && <p className="text-n600 mt-2 text-xs">{t("assistant.card.followingUp", {
       used: continuation.followups_used, limit: continuation.max_followups })}</p>}
     {decision && <p className="text-n800 mt-2 text-sm">{t(`assistant.card.continuation.${continuation.state}`)}</p>}
@@ -170,8 +186,9 @@ function CardDetails({ status, summary, value, note }: {
 }
 
 function cardStatus(value: AssistantTaskView, watch: AssistantWatchItem | undefined, result: AssistantResult | null): TaskStatus {
+  const pendingQuestions = Math.max(watch?.pending_questions ?? 0, value.blocked_by ? 1 : 0)
   return taskStatus({ sessionStatus: value.execution_session.status, observedState: value.task.observed_state,
-    desiredState: value.task.desired_state, pendingQuestions: watch?.pending_questions ?? 0, outcome: result?.outcome })
+    desiredState: value.task.desired_state, pendingQuestions, outcome: result?.outcome })
 }
 
 /** The task, its conversation or its project was deleted: nothing left to show or control. */
@@ -185,6 +202,8 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
   // pending questions; a task no longer followed simply goes without them.
   const watch = useAssistantWatch().data?.items.find((item) => item.task_id === taskId)
   const [showResult, setShowResult] = useState(false)
+  // A control refused because the task waits on a card in its conversation: say so, with the way there.
+  const [waitingCard, setWaitingCard] = useState(false)
   const errorMessage = useApiErrorMessage()
   const value = initial ?? query.data
   if (!initial && query.error) {
@@ -215,9 +234,21 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
           </p>
           <CardDetails status={status} summary={summary} value={value}
             note={earlier ? "assistant.card.note.earlier" : taskNote(value, result)} />
+          {waitingCard && (
+            <div role="status" className="border-hair text-n800 mt-3 rounded-xl border px-3 py-2 text-sm">
+              <p>{t("assistant.card.waitingOnCard")}</p>
+              <Link to={paths.chat(task.execution_session_id)}
+                className="text-ink mt-1 inline-flex items-center gap-1 font-medium underline underline-offset-2">
+                {t("assistant.card.openTaskConversation")}
+                <ArrowUpRight size={14} strokeWidth={2.2} aria-hidden />
+              </Link>
+            </div>
+          )}
         </div>
-        <TaskMenu value={value} result={result} showResult={showResult} onToggleResult={() => setShowResult(!showResult)} />
+        <TaskMenu value={value} result={result} showResult={showResult} onToggleResult={() => setShowResult(!showResult)}
+          onWaitingCard={() => setWaitingCard(true)} />
       </div>
+      <AssistantEffectAcknowledge value={value} />
       <div className="mt-3 flex items-center gap-2 ps-5">
         <Link to={paths.chat(task.execution_session_id)}
           className="border-hair text-n800 hover:bg-hairsoft inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm">

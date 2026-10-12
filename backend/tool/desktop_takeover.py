@@ -100,6 +100,37 @@ async def _browser_location(ctx: ToolContext) -> str:
     return "local"
 
 
+def resume_result(answer: str, page: str = "") -> tuple[str, str]:
+    """(title, instruction) the suspended call resumes with, for each kind of answer.
+
+    Used when the answer comes back in-process and when a durable answer is
+    applied (question/continuation.py), whether the user or, on their word that
+    they finished, their personal assistant chose it: either way the page was
+    changed by a person, so the model re-checks it before going on.
+    """
+    answer = (answer or "").strip()
+    page_hint = f"client.page({page!r})" if page else "the same page"
+    if answer == ANSWER_ABANDON:
+        return "用户放弃了该任务", (
+            "The user chose to abandon this browser task. Stop working on it, do not "
+            "retry the challenge, and tell the user what was and was not done."
+        )
+    if answer == ANSWER_SKIP:
+        return "用户跳过了这一步", (
+            "The user chose to skip this step without solving the challenge. Do not "
+            "retry it; continue with the rest of the task by another route if one "
+            "exists, otherwise report that this step was skipped."
+        )
+    return "用户已接管并完成", (
+        f"User has taken over and replied: \"{answer or ANSWER_DONE}\". The page "
+        f"state was changed by a person, not by your script: first re-open "
+        f"{page_hint} and confirm with getAISnapshot() or a screenshot that the "
+        "challenge is gone, then continue from there. Do not repeat the action "
+        "sequence that triggered the challenge, and mention in your final answer "
+        "that the user completed this verification step."
+    )
+
+
 def _question_text(args: DesktopTakeoverArgs, browser: str) -> str:
     lines = [_REASON_TEXT.get(args.reason, _REASON_TEXT["other"])]
     host = _host(args.url)
@@ -149,32 +180,7 @@ async def execute(args: DesktopTakeoverArgs, ctx: ToolContext) -> ToolResult:
         tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,
     )
 
-    answer = (answers[0][0] if answers and answers[0] else "").strip()
-    page_hint = f"client.page({args.page!r})" if args.page else "the same page"
-
-    if answer == ANSWER_ABANDON:
-        output = (
-            "The user chose to abandon this browser task. Stop working on it, do not "
-            "retry the challenge, and tell the user what was and was not done."
-        )
-        title = "用户放弃了该任务"
-    elif answer == ANSWER_SKIP:
-        output = (
-            "The user chose to skip this step without solving the challenge. Do not "
-            "retry it; continue with the rest of the task by another route if one "
-            "exists, otherwise report that this step was skipped."
-        )
-        title = "用户跳过了这一步"
-    else:
-        output = (
-            f"User has taken over and replied: \"{answer or ANSWER_DONE}\". The page "
-            f"state was changed by a person, not by your script: first re-open "
-            f"{page_hint} and confirm with getAISnapshot() or a screenshot that the "
-            "challenge is gone, then continue from there. Do not repeat the action "
-            "sequence that triggered the challenge, and mention in your final answer "
-            "that the user completed this verification step."
-        )
-        title = "用户已接管并完成"
+    title, output = resume_result((answers[0][0] if answers and answers[0] else ""), args.page)
 
     return ToolResult(
         title=title,

@@ -95,10 +95,25 @@ async def _fresh(db, row, execution, task):
     if task.desired_state == "canceled":
         raise QuestionGone("cancelled")
     driver = await db.get(AgentDriverState, row.session_id)
-    if (driver is None or driver.user_id != row.user_id or driver.generation != binding["generation"]
+    if (driver is None or driver.user_id != row.user_id or driver.generation < binding["generation"]
             or driver.run_id not in (None, binding["run_id"]) or driver.abort_requested_at is not None):
         raise QuestionGone("superseded")
+    if driver.generation > binding["generation"] and await consumed_since(db, row, binding["generation"]):
+        # A later generation that consumed input moved the conversation on.
+        # One start_run refused (it ran nothing) leaves the card current.
+        raise QuestionGone("superseded")
     return binding
+
+
+async def consumed_since(db, row, generation: int) -> bool:
+    """Whether a generation after the card's own consumed any input (not merely refused it)."""
+    from sqlalchemy import and_, not_
+    from db.models.agent_inbox import AgentInboxItem
+    return await db.scalar(select(AgentInboxItem.id).where(
+        AgentInboxItem.session_id == row.session_id, AgentInboxItem.user_id == row.user_id,
+        AgentInboxItem.generation > generation,
+        not_(and_(AgentInboxItem.state == "settled", AgentInboxItem.outcome == "not_run")),
+    ).limit(1)) is not None
 
 
 async def emit_question_change(db, row, event_type):

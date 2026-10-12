@@ -20,6 +20,11 @@ from voice.models import AUDIO_MODEL, OMNI_MODEL, is_audio
 
 PREFERENCE_KEY = "assistant_voice"
 MODEL_KEY = "assistant_voice_model"
+# Existing model choices predate the Audio rollout. They remain stored, but
+# every user starts on Audio until explicitly choosing a model after this release.
+# Keep this marker stable across later releases so choices are not reset again.
+MODEL_ROLLOUT_KEY = "assistant_voice_model_rollout"
+MODEL_ROLLOUT = "audio-3.1-20261011"
 MODEL_OPTIONS = (
     {"id": AUDIO_MODEL, "name": "Audio 3.1", "tier": "expert"},
     {"id": OMNI_MODEL, "name": "Omni", "tier": "standard"},
@@ -113,8 +118,9 @@ def resolve(chosen: str | None, default: str, model: str = OMNI_MODEL) -> str:
 
 def selection(extra: dict, config) -> dict:
     """One consistent model/catalogue/voice snapshot, also used to start a call."""
-    default_model = config.model if config.model in MODEL_IDS else AUDIO_MODEL
-    model = extra.get(MODEL_KEY)
+    # Product default, independent of an old deployment's VOICE_MODEL override.
+    default_model = AUDIO_MODEL
+    model = extra.get(MODEL_KEY) if extra.get(MODEL_ROLLOUT_KEY) == MODEL_ROLLOUT else None
     if not isinstance(model, str) or model not in MODEL_IDS:
         model = default_model
     default = resolve(None, config.voice, model)
@@ -137,7 +143,8 @@ async def save_choice(user_id: str, config, *, model: str | None, voice: str | N
     """Save a model/voice atomically without losing another model's saved voice.
 
     Voice-only requests from older clients follow the user's effective model
-    and do not pin the deployment's model as an explicit user preference.
+    and do not count as a new model choice. Model choices after this rollout
+    remain effective across calls and server restarts.
     """
     if (model is None and voice is None) or (model is not None and model not in MODEL_IDS):
         raise ValueError("Pick a listed model or voice")
@@ -153,6 +160,7 @@ async def save_choice(user_id: str, config, *, model: str | None, voice: str | N
                     extra.setdefault(key, legacy)
         if model is not None:
             extra[MODEL_KEY] = model
+            extra[MODEL_ROLLOUT_KEY] = MODEL_ROLLOUT
         state = selection(extra, config)
         if voice is not None:
             if voice not in _by_id(state["model"]):

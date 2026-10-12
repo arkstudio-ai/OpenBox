@@ -51,6 +51,17 @@ DELIVERY_TERMINAL_ERROR = {
         "This request was not sent to the model."
     ),
 }
+#: A claimed input whose generation start_run refused: a pending card owned the turn.
+WAITING_INPUT_ERROR = {
+    "name": "TaskWaitingInput",
+    "code": "TASK_WAITING_INPUT",
+    "message": (
+        "This input was not run: the conversation was waiting for the user to handle a card "
+        "(for example a cloud desktop verification). It was not sent to the model."
+    ),
+}
+#: Settled outcomes of claimed input that never reached the model.
+NEVER_RAN_OUTCOMES = ("delivery_error", "not_run")
 
 
 class InboxError(RuntimeError):
@@ -236,12 +247,23 @@ def _request_digest(
     ).hexdigest()
 
 
+#: Client ids the platform itself writes. A user message carrying one is a
+#: system continuation (materialised as synthetic text), never a person's
+#: prompt, so external callers may not use these prefixes.
+SYSTEM_CLIENT_PREFIXES = ("sjr:", "tabort:", "vjob:")
+
+
+def is_system_client_id(client_id: str | None) -> bool:
+    return bool(client_id) and client_id.startswith(SYSTEM_CLIENT_PREFIXES)
+
+
 def _validate_input(
     *,
     prompt: str,
     attachments: Sequence[str],
     client_id: str | None,
     output_format: dict | None,
+    system: bool = False,
 ) -> tuple[str, ...]:
     if not isinstance(prompt, str) or not prompt or len(prompt) > MAX_PROMPT_CHARS:
         raise ValueError(f"prompt must be 1..{MAX_PROMPT_CHARS} characters")
@@ -249,7 +271,7 @@ def _validate_input(
         if (
             not client_id
             or len(client_id) > 64
-            or client_id.startswith(("sjr:", "tabort:"))
+            or (is_system_client_id(client_id) and not system)
         ):
             raise ValueError("invalid or reserved inbox client id")
     if len(attachments) > MAX_ATTACHMENTS:
@@ -357,8 +379,14 @@ async def accept_inbox_item(
     output_format: dict | None = None,
     origin: InputOrigin = "unknown",
     origin_ref: dict | None = None,
+    system: bool = False,
 ) -> InboxReceipt:
-    """Persist one idempotent input before attempting to own its Session."""
+    """Persist one idempotent input before attempting to own its Session.
+
+    ``system`` marks a platform-written continuation (a reserved client id
+    prefix); it is materialised as a synthetic user message and, unless the
+    caller named a more specific origin, recorded as ``system_recovery``.
+    """
     from session.agent_event_log import prepare_agent_event_write
 
     async with get_db_session() as db:
@@ -370,7 +398,7 @@ async def accept_inbox_item(
             delivery=delivery, prompt=prompt, attachments=attachments, client_id=client_id,
             agent=agent, model=model, video_model=video_model,
             video_resolution=video_resolution, variant=variant, output_format=output_format,
-            origin=origin, origin_ref=origin_ref,
+            origin=origin, origin_ref=origin_ref, system=system,
         )
     if result.created:
         _notify((result.id,))
@@ -393,6 +421,7 @@ async def accept_inbox_item_locked(
     output_format: dict | None = None,
     origin: InputOrigin = "unknown",
     origin_ref: dict | None = None,
+    system: bool = False,
 ) -> InboxReceipt:
     """Accept input inside a caller-owned Session transaction and row lock.
 
@@ -402,6 +431,8 @@ async def accept_inbox_item_locked(
     from session.agent_event_log import append_agent_event_locked, ensure_surface_seed_locked
 
     session_id, user_id = owner.id, owner.user_id
+    if system and origin == "unknown":
+        origin = "system_recovery"
     origin_ref = checked_origin(origin, origin_ref, user_id=user_id)
     if origin == "task_result" and delivery != "followup":
         raise ValueError("task reports must be queued as followup input")
@@ -415,6 +446,7 @@ async def accept_inbox_item_locked(
         attachments=attachments,
         client_id=client_id,
         output_format=output_format,
+        system=system,
     )
     digest = _request_digest(
         delivery=delivery,
@@ -590,6 +622,25 @@ async def wait_for_inbox_terminal(
         _release_item_waiter(item_id, waiters)
 
 
+def human_input():
+    """Input a person typed (or legacy input of unknown origin): it supersedes a waiting card."""
+    return or_(AgentInboxItem.origin.is_(None),
+               AgentInboxItem.origin.not_in(tuple(sorted(NON_HUMAN_ORIGINS))))
+
+
+async def first_superseding_input_locked(db, *, session_id: str, user_id: str) -> AgentInboxItem | None:
+    """While a card owns the next turn, only the oldest human followup may be claimed.
+
+    Materializing it invalidates the card (session._insert_user_message_locked),
+    so it runs first; queued platform input keeps its FIFO order for afterwards.
+    """
+    return await db.scalar(select(AgentInboxItem).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.state == "accepted", AgentInboxItem.delivery == "followup",
+        AgentInboxItem.target == "next-turn", human_input(),
+    ).order_by(AgentInboxItem.created_at, AgentInboxItem.id).limit(1).with_for_update())
+
+
 async def _selected_boundary_rows(
     db,
     *,
@@ -605,6 +656,14 @@ async def _selected_boundary_rows(
     ).limit(1))
     if active_report:
         return []
+    from question.runtime import admission_blocked_locked
+    if await admission_blocked_locked(db, session_id):
+        # A pending card owns the next turn: claiming platform input here would
+        # bind a generation that start_run refuses (and strand the claim).
+        if not include_next_turn:
+            return []
+        human = await first_superseding_input_locked(db, session_id=session_id, user_id=user_id)
+        return [] if human is None else [human]
     next_step = list(
         (
             await db.execute(
@@ -811,7 +870,7 @@ async def _claim_inbox_boundary_once(
                 text=row.prompt,
                 agent=row.agent or owner.agent or "build",
                 model=row.model or owner.model,
-                synthetic=row.origin in NON_HUMAN_ORIGINS,
+                synthetic=row.origin in NON_HUMAN_ORIGINS or is_system_client_id(row.client_id),
                 origin=row.origin or "unknown",
                 origin_ref={**(row.origin_ref or {}), "inbox_id": row.id},
                 variant=row.variant,
@@ -1189,6 +1248,7 @@ async def cancel_inbox_items(
 
 
 async def _has_waking_input(session_id: str, user_id: str) -> bool:
+    from question.runtime import admission_blocked_locked
     waking = (
         select(AgentInboxItem.id)
         .where(
@@ -1199,10 +1259,24 @@ async def _has_waking_input(session_id: str, user_id: str) -> bool:
         )
         .limit(1)
     )
-    # Most wakes find nothing to run. Answer those with a plain read instead
-    # of the Session write lock; input accepted afterwards wakes again.
-    async with get_db_session() as db:
+    # While a pending card owns the next turn, only a person's own followup
+    # wakes the session (it supersedes the card). Reserving a generation for
+    # platform input there would be refused by start_run.
+    superseding = waking.where(AgentInboxItem.delivery == "followup", human_input())
+
+    async def runnable(db) -> bool:
         if (await db.execute(waking)).scalar_one_or_none() is None:
+            return False
+        if await admission_blocked_locked(db, session_id):
+            return (await db.execute(superseding)).scalar_one_or_none() is not None
+        return True
+
+    # Most wakes find nothing to run. Answer those with a plain read instead
+    # of the Session write lock; input accepted afterwards wakes again, and so
+    # does a card that stops waiting (its answer's run ends with a wake, and
+    # periodic recovery covers expiry and cancellation).
+    async with get_db_session() as db:
+        if not await runnable(db):
             return False
     async with get_db_session() as db:
         from db.models.session import Session
@@ -1218,7 +1292,7 @@ async def _has_waking_input(session_id: str, user_id: str) -> bool:
         from assistant.scheduling import held_task_locked
         if await held_task_locked(db, owner) is not None:
             return False
-        return (await db.execute(waking)).scalar_one_or_none() is not None
+        return await runnable(db)
 
 
 async def _reserve_and_claim(session_id: str, user_id: str):
@@ -1252,7 +1326,12 @@ async def _reserve_and_claim(session_id: str, user_id: str):
                 # input instead of waiting for recovery or another API wake.
                 continue
             if batch.empty:
-                await lease.release(session_status="idle")
+                # Nothing claimable after all (a card may own the next turn):
+                # keep what the session shows at rest instead of "idle".
+                from question.runtime import publish_status, resting_status
+                status = await resting_status(session_id, user_id)
+                await lease.release(session_status=status)
+                await publish_status(session_id, user_id, status)
                 return None
             return lease, batch
     except BaseException:
@@ -1483,7 +1562,7 @@ async def latest_turn_input_locked(db, *, session_id, user_id, trigger_message_i
     inputs = select(AgentInboxItem.message_id).where(
         AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
         AgentInboxItem.turn_id == trigger_message_id, AgentInboxItem.state.in_(("claimed", "settled")),
-        or_(AgentInboxItem.outcome.is_(None), AgentInboxItem.outcome != "delivery_error"))
+        or_(AgentInboxItem.outcome.is_(None), AgentInboxItem.outcome.not_in(NEVER_RAN_OUTCOMES)))
     return await db.scalar(select(MessageRow.id).where(
         MessageRow.session_id == session_id, MessageRow.user_id == user_id, MessageRow.role == "user",
         or_(MessageRow.id == trigger_message_id, MessageRow.id.in_(inputs)),
@@ -1491,13 +1570,16 @@ async def latest_turn_input_locked(db, *, session_id, user_id, trigger_message_i
 
 
 async def create_delivery_error_locked(db, owner, *, lease, parent_id, turn_id, error, now):
-    """Create one fenced terminal error inside the caller's settlement transaction."""
+    """Create one fenced terminal error inside the caller's settlement transaction.
+
+    ``lease`` only names the fence (session_id, user_id, run_id, generation).
+    """
     from session.agent_event_log import append_message_events_locked, ensure_surface_seed_locked
     parent = await db.scalar(select(MessageRow).where(MessageRow.id == parent_id,
         MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id,
         MessageRow.role == "user")) if parent_id else None
     if parent is None:
-        raise InboxError("terminal attachment failure lost its user Message")
+        raise InboxError("closing reply lost its user Message")
     latest_created = await db.scalar(select(func.max(MessageRow.created_at)).where(
         MessageRow.session_id == lease.session_id, MessageRow.user_id == lease.user_id))
     if latest_created is not None:
@@ -1528,6 +1610,92 @@ def delivery_error_payloads(assistant):
             {"id": assistant.id, "role": "assistant", "finish": "error", "error": dict(assistant.error)})
 
 
+@dataclass(frozen=True, slots=True)
+class NeverRan:
+    """How claimed input that never reached the model is settled and explained."""
+    outcome: str
+    reason: str  # the surface.model_exclusion reason
+    closing_error: dict
+    row_error: Callable[[AgentInboxItem], dict]
+
+
+DELIVERY_FAILED = NeverRan("delivery_error", "inbox_delivery_error", DELIVERY_TERMINAL_ERROR,
+    lambda row: {**DELIVERY_TERMINAL_ERROR, "delivery_attempts": int(row.delivery_attempts or 0),
+                 "last_error": (dict(row.delivery_last_error)
+                                if isinstance(row.delivery_last_error, dict) else None)})
+WAITING_INPUT = NeverRan("not_run", "inbox_waiting_input", WAITING_INPUT_ERROR,
+                         lambda row: dict(WAITING_INPUT_ERROR))
+
+
+async def close_never_ran_locked(db, owner, rows: Sequence[AgentInboxItem], *, fence, why: NeverRan,
+                                 close_turn: bool, now):
+    """Settle claimed input that never reached the model, inside the caller's transaction.
+
+    ``fence`` is the exact (session, run, generation) the rows were claimed
+    under: the live lease, or the original identity of a released generation
+    (written without a Driver, like a canceled suspended turn). With
+    ``close_turn`` a fenced closing Assistant answers the last input and ends
+    the turn its claim opened. The inputs and that reply stay in the public
+    transcript but leave the model's context. No task result is recorded here.
+    Returns (settled ids, closing Assistant or None, settlement time).
+    """
+    from session.agent_event_log import append_agent_event_locked
+
+    _session_id, run_id, generation = fence
+    closing = None
+    if close_turn and rows:
+        identity = SimpleNamespace(session_id=owner.id, user_id=owner.user_id,
+                                   run_id=run_id, generation=generation)
+        closing = await create_delivery_error_locked(db, owner, lease=identity,
+            parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id, error=why.closing_error, now=now)
+        now = closing.created_at
+    settled: list[str] = []
+    for row in rows:
+        if row.message_id is None:
+            raise InboxError("never-ran input has no user Message")
+        row.state = "settled"
+        row.result_message_id = closing.id if closing is not None else None
+        row.outcome = why.outcome
+        row.error = why.row_error(row)
+        row.claim_expires_at = None
+        row.settled_at = now
+        row.updated_at = now
+        excluded_message_ids = [row.message_id, *((closing.id,) if closing is not None else ())]
+        await append_agent_event_locked(
+            db, owner, kind="surface.model_exclusion",
+            payload={"message_ids": excluded_message_ids, "reason": why.reason, "source_item_id": row.id},
+            run_fence=fence, turn_id=row.turn_id, step_id=row.step_id, message_id=row.message_id,
+            idempotency_key=f"inbox:{row.id}:model-exclusion:{run_id}:{generation}",
+        )
+        await append_agent_event_locked(
+            db, owner, kind="inbox.settled",
+            payload={"item_id": row.id, "state": "settled", "outcome": row.outcome,
+                     "result_message_id": row.result_message_id, "error": row.error},
+            run_fence=fence, turn_id=row.turn_id, step_id=row.step_id, message_id=row.message_id,
+            idempotency_key=f"inbox:{row.id}:settled:{run_id}:{generation}",
+        )
+        settled.append(row.id)
+    return settled, closing, now
+
+
+def publish_closing(closing, *, user_id: str, session_id: str, generation: int | None) -> None:
+    """Show a committed closing reply in open clients (never before its commit).
+
+    A closing written under an older, released generation omits it: clients
+    drop transcript frames older than the newest generation they have seen.
+    """
+    if closing is None:
+        return
+    from bus import bus
+    from bus.events import MESSAGE_CREATED, MESSAGE_UPDATED
+
+    created, updated = delivery_error_payloads(closing)
+    base = {"userId": user_id, "sessionId": session_id,
+            **({"generation": generation} if generation is not None else {})}
+    bus.publish(MESSAGE_CREATED, {**base, "message": created})
+    bus.publish(MESSAGE_UPDATED, {**base, "message": updated})
+
+
 async def _settle_delivery_failures(
     lease,
     *,
@@ -1538,16 +1706,9 @@ async def _settle_delivery_failures(
     if not item_ids:
         return (), None
     run_fence = (lease.session_id, lease.run_id, lease.generation)
-    settled: list[str] = []
-    assistant_id: str | None = None
     assistant_result = None
-    assistant_payload: dict | None = None
-    assistant_update: dict | None = None
     async with get_db_session() as db:
-        from session.agent_event_log import (
-            append_agent_event_locked,
-            prepare_agent_event_write,
-        )
+        from session.agent_event_log import prepare_agent_event_write
 
         owner = await prepare_agent_event_write(
             db,
@@ -1580,92 +1741,55 @@ async def _settle_delivery_failures(
         if not rows:
             return (), None
         now = await _database_utcnow(db)
-        if close_turn:
-            assistant = await create_delivery_error_locked(db, owner, lease=lease,
-                parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id,
-                error=DELIVERY_TERMINAL_ERROR, now=now)
-            assistant_id, now = assistant.id, assistant.created_at
-            assistant_payload, assistant_update = delivery_error_payloads(assistant)
-
-        for row in rows:
-            row.state = "settled"
-            row.result_message_id = assistant_id
-            row.outcome = "delivery_error"
-            row.error = {
-                **DELIVERY_TERMINAL_ERROR,
-                "delivery_attempts": int(row.delivery_attempts or 0),
-                "last_error": (
-                    dict(row.delivery_last_error)
-                    if isinstance(row.delivery_last_error, dict)
-                    else None
-                ),
-            }
-            row.claim_expires_at = None
-            row.settled_at = now
-            row.updated_at = now
-            excluded_message_ids = [row.message_id]
-            if assistant_id is not None:
-                excluded_message_ids.append(assistant_id)
-            await append_agent_event_locked(
-                db,
-                owner,
-                kind="surface.model_exclusion",
-                payload={
-                    "message_ids": excluded_message_ids,
-                    "reason": "inbox_delivery_error",
-                    "source_item_id": row.id,
-                },
-                run_fence=run_fence,
-                turn_id=row.turn_id,
-                step_id=row.step_id,
-                message_id=row.message_id,
-                idempotency_key=(
-                    f"inbox:{row.id}:model-exclusion:"
-                    f"{lease.run_id}:{lease.generation}"
-                ),
-            )
-            await append_agent_event_locked(
-                db,
-                owner,
-                kind="inbox.settled",
-                payload={
-                    "item_id": row.id,
-                    "state": "settled",
-                    "outcome": row.outcome,
-                    "result_message_id": assistant_id,
-                    "error": row.error,
-                },
-                run_fence=run_fence,
-                turn_id=row.turn_id,
-                step_id=row.step_id,
-                message_id=row.message_id,
-                idempotency_key=(
-                    f"inbox:{row.id}:settled:{lease.run_id}:{lease.generation}"
-                ),
-            )
-            settled.append(row.id)
-
+        settled, closing, now = await close_never_ran_locked(
+            db, owner, rows, fence=run_fence, why=DELIVERY_FAILED, close_turn=close_turn, now=now)
         if close_turn:
             from assistant.results import record_execution_result_locked
             assistant_result = await record_execution_result_locked(db, owner, lease=lease,
-                result_message_id=assistant_id, inbox_rows=rows, outcome="delivery_error", now=now)
+                result_message_id=closing.id, inbox_rows=rows, outcome="delivery_error", now=now)
 
     _notify(settled)
-    if assistant_payload is not None and assistant_update is not None:
-        from bus import bus
-        from bus.events import MESSAGE_CREATED, MESSAGE_UPDATED
-
-        base = {
-            "userId": lease.user_id,
-            "sessionId": lease.session_id,
-            "generation": lease.generation,
-        }
-        bus.publish(MESSAGE_CREATED, {**base, "message": assistant_payload})
-        bus.publish(MESSAGE_UPDATED, {**base, "message": assistant_update})
+    publish_closing(closing, user_id=lease.user_id, session_id=lease.session_id, generation=lease.generation)
     if assistant_result is not None:
         from assistant.results import on_execution_result_committed
         await on_execution_result_committed(assistant_result.id)
-    return tuple(settled), assistant_id
+    return tuple(settled), closing.id if closing is not None else None
+
+
+async def settle_refused_claims(lease) -> tuple[str, ...]:
+    """Close the input this generation claimed when start_run refused to run it.
+
+    A pending card (or an answer about to resume it) owned the turn, so no
+    provider step ever started. Each input is settled not_run with a closing
+    reply that ends its turn, both hidden from the model's context, and its
+    task submission is recorded as not applied. No task result is recorded:
+    nothing ran, so nothing may be reported as done.
+    """
+    run_fence = (lease.session_id, lease.run_id, lease.generation)
+    async with get_db_session() as db:
+        from session.agent_event_log import prepare_agent_event_write
+
+        owner = await prepare_agent_event_write(
+            db, session_id=lease.session_id, user_id=lease.user_id, run_fence=run_fence,
+        )
+        rows = list((await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == lease.session_id, AgentInboxItem.user_id == lease.user_id,
+            AgentInboxItem.run_id == lease.run_id, AgentInboxItem.generation == lease.generation,
+            AgentInboxItem.state == "claimed",
+        ).order_by(AgentInboxItem.created_at, AgentInboxItem.id).with_for_update())).all())
+        if not rows:
+            return ()
+        now = await _database_utcnow(db)
+        settled, closing, now = await close_never_ran_locked(
+            db, owner, rows, fence=run_fence, why=WAITING_INPUT, close_turn=True, now=now)
+        from assistant.commands import record_submission_not_applied_locked
+        for row in rows:
+            await record_submission_not_applied_locked(db, owner, row, now=now)
+    _notify(settled)
+    publish_closing(closing, user_id=lease.user_id, session_id=lease.session_id, generation=lease.generation)
+    log.warning("Refused generation settled its claimed input session=%s generation=%s items=%s",
+                lease.session_id, lease.generation, len(settled))
+    return tuple(settled)
 
 
 async def deliver_claimed_attachments(
@@ -1891,6 +2015,12 @@ def schedule_inbox_wake(session_id: str, user_id: str) -> None:
     """Best-effort local wake; periodic recovery is the durable fallback."""
 
     async def wake() -> None:
+        # The task copied its caller's context. A run that ends with this wake
+        # must not stay bound to it: a claimed human message would otherwise
+        # look like that run's own step input and leave a waiting card in place.
+        from question.runtime import auxiliary_run, current_run
+        current_run.set(None)
+        auxiliary_run.set(None)
         try:
             await wake_inbox_session(session_id, user_id)
         except Exception:
@@ -2003,6 +2133,64 @@ async def rebind_recovered_claims(record, lease) -> int:
     return len(rebound)
 
 
+async def _settle_unstarted_claims(item) -> int:
+    """Close one released generation's expired claims that no run ever started.
+
+    Only an idle Driver, no question-runtime run, an expired claim and no reply
+    at all to any of its inputs qualify; everything is re-checked under the
+    Session lock. The rows keep their original (run, generation) fence and no
+    generation is reserved. Settling is a state change of claimed rows, so a
+    repeat finds nothing; it also repairs claims stranded before this existed.
+    """
+    from db.models.question import SessionExecution
+    from session.agent_event_log import prepare_agent_event_write
+
+    fence = (item.session_id, item.run_id, item.generation)
+    async with get_db_session() as db:
+        try:
+            owner = await prepare_agent_event_write(
+                db, session_id=item.session_id, user_id=item.user_id, run_fence=None,
+            )
+        except LookupError:
+            return 0
+        driver = await db.scalar(select(AgentDriverState).where(
+            AgentDriverState.session_id == item.session_id).with_for_update())
+        if driver is not None and (driver.phase != "idle" or driver.run_id is not None):
+            return 0
+        execution = await db.get(SessionExecution, item.session_id)
+        if execution is not None and execution.run_id is not None:
+            return 0
+        now = await _database_utcnow(db)
+        rows = list((await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == item.session_id, AgentInboxItem.user_id == item.user_id,
+            AgentInboxItem.run_id == item.run_id, AgentInboxItem.generation == item.generation,
+            AgentInboxItem.state == "claimed",
+        ).order_by(AgentInboxItem.created_at, AgentInboxItem.id).with_for_update())).all())
+        def expired(row) -> bool:
+            deadline = row.claim_expires_at
+            if deadline is not None and deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            return deadline is not None and deadline <= now
+        if not rows or not all(expired(row) for row in rows) or any(row.message_id is None for row in rows):
+            return 0
+        replied = await db.scalar(select(MessageRow.id).where(
+            MessageRow.session_id == item.session_id, MessageRow.user_id == item.user_id,
+            MessageRow.role == "assistant", MessageRow.parent_id.in_([row.message_id for row in rows]),
+        ).limit(1))
+        if replied is not None:
+            return 0
+        settled, closing, now = await close_never_ran_locked(
+            db, owner, rows, fence=fence, why=WAITING_INPUT, close_turn=True, now=now)
+        from assistant.commands import record_submission_not_applied_locked
+        for row in rows:
+            await record_submission_not_applied_locked(db, owner, row, now=now)
+    _notify(settled)
+    publish_closing(closing, user_id=item.user_id, session_id=item.session_id, generation=None)
+    log.warning("Unstarted expired claims settled session=%s generation=%s items=%s",
+                item.session_id, item.generation, len(settled))
+    return len(settled)
+
+
 async def settle_orphaned_claims() -> int:
     """Converge terminal claims whose owning Driver already disappeared.
 
@@ -2083,6 +2271,16 @@ async def settle_orphaned_claims() -> int:
                 )
             ).scalar_one_or_none()
         if terminal is None:
+            # A generation that start_run refused (a pending card owned the
+            # turn) was released without settling what it claimed. Nothing ran,
+            # so close it under its own fence; a maintenance generation would
+            # only move the generation cards and steering are bound to.
+            try:
+                settled += await _settle_unstarted_claims(item)
+            except Exception:
+                # One unusual claim must not stall the rest of the recovery pass.
+                log.exception("Unstarted claim settlement deferred session=%s generation=%s",
+                              item.session_id, item.generation)
             continue
         # There is no live fence left, so settle through a short exact
         # maintenance generation instead of writing lifecycle evidence unfenced.

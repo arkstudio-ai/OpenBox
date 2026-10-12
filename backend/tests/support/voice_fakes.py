@@ -8,8 +8,15 @@ from voice.provider import ProviderEvent
 USAGE = {"input_tokens": 1200, "output_tokens": 60,
          "input_tokens_details": {"text_tokens": 1180, "audio_tokens": 20},
          "output_tokens_details": {"text_tokens": 10, "audio_tokens": 50}}
+# A silent keepalive reply: text only (measured: "嗯", no audio).
+TEXT_USAGE = {"input_tokens": 1300, "output_tokens": 2,
+              "input_tokens_details": {"text_tokens": 1300, "audio_tokens": 0},
+              "output_tokens_details": {"text_tokens": 2, "audio_tokens": 0}}
 # An audio frame starting with this makes the scripted provider hear a request for the assistant.
 ASK_MARKER = b"ASK!"
+# ... makes the provider close the session (as after 180 s without a response); with CUT the user was speaking.
+DROP_MARKER, CUT_MARKER = b"DRP!", b"CUT!"
+IDLE_CLOSE = "Your session was closed because no response was generated for 180 seconds."
 
 
 def event(kind, **fields):
@@ -41,8 +48,17 @@ def transcript(text, item_id="", speaker="user"):
     return event("user_transcript" if speaker == "user" else "assistant_transcript", text=text, item_id=item_id)
 
 
-def provider_error(reason, code="invalid_request_error"):
-    return event("provider_error", code=code, reason=reason)
+def provider_error(reason, code="invalid_request_error", param="", text=""):
+    return event("provider_error", code=code, reason=reason, param=param, text=text)
+
+
+def silent_reply(response_id, item_id, status="completed"):
+    """What the provider sends for a keepalive: a text-only reply with one output item."""
+    return [started(response_id),
+            event("output_item", response_id=response_id, item_id=item_id, role="assistant", item_type="message"),
+            item(item_id, role="assistant"),
+            event("assistant_transcript", text="嗯", item_id=item_id, response_id=response_id),
+            done(response_id, status=status, usage=TEXT_USAGE)]
 
 
 class FakeClock:
@@ -68,6 +84,8 @@ class ScriptedProvider:
         self.count = 0
         self.items = 0
         self.closed = False
+        # How the session ended (RealtimeProvider sets these once its stream is over).
+        self.close_code, self.close_reason, self.last_error = None, "", ""
 
     # -- what the bridge and the socket call --
     async def open(self):
@@ -86,12 +104,25 @@ class ScriptedProvider:
             yield item
 
     async def send_audio(self, pcm):
+        if self.closed:  # like a closed websocket
+            raise ConnectionError("provider session closed")
         self.sent.append(("audio", len(pcm), bytes(pcm[:4])))
         if self.auto_reply and pcm.startswith(ASK_MARKER):
             self.count += 1
             response_id, call_id = f"resp-{self.count}", f"call-{self.count}"
             self.push(event("user_started"), event("user_stopped"), transcript("帮我看看贪吃蛇进展", f"item-{call_id}"),
                       started(response_id), audio(response_id), tool_call(call_id), done(response_id))
+        elif self.auto_reply and pcm.startswith(CUT_MARKER):
+            self.push(event("user_started"))
+            self.drop()
+        elif self.auto_reply and pcm.startswith(DROP_MARKER):
+            self.drop()
+
+    async def keepalive(self, empty=False):
+        self.sent.append(("keepalive", empty))
+        if self.auto_reply:
+            self.count += 1
+            self.push(*silent_reply(f"resp-{self.count}", f"keep-{self.count}"))
 
     async def send_tool_output(self, call_id, payload):
         self.sent.append(("output", call_id, payload))
@@ -134,8 +165,19 @@ class ScriptedProvider:
     def end(self):
         self.queue.put_nowait(None)
 
+    def drop(self, code=1007, reason=IDLE_CLOSE, error="response_idle_timeout"):
+        """The provider closes the session under the call: its stream ends, later audio cannot be sent."""
+        self.close_code, self.close_reason, self.last_error = code, reason, error
+        self.closed = True
+        self.end()
+
     def commands(self, kind):
         return [item for item in self.sent if item[0] == kind]
+
+    def response_purposes(self):
+        """Transport tests compare the per-response purpose; role preservation is tested separately."""
+        return [(kind, text.rsplit("\n\n", 1)[-1] if text else text)
+                for kind, text in self.commands("create")]
 
 
 class FakeLink:
@@ -182,55 +224,6 @@ class FakeLink:
         await self.record(ref, outcome=outcome, delivered=delivered)
 
 
-class FakeJudge:
-    """The decision model and recall, scripted: verdicts by the words they are asked about."""
-
-    def __init__(self, routes=None, recalled=None, complement=None, reads=None, followthrough=None, state=None,
-                 grounded=None, lasting=None):
-        from voice.router import Route
-        self.Route = Route
-        self.lasting_verdicts = lasting or {}  # words → (choice, confidence)
-        self.lasting_checks = []
-        self.grounded_verdict = grounded      # (choice, confidence) or None
-        self.grounded_checks = []             # (note, said)
-        self.routes = routes or {}            # words → (choice, confidence)
-        self.recalled = recalled or {}        # words → [{"text", "from"}]
-        self.complement_verdict = complement  # (choice, confidence) or None
-        self.followthrough_verdict = followthrough  # (choice, confidence) or None
-        self.read_results = reads             # what reads() returns
-        self.state_lines = state or []        # what state() returns
-        self.asked, self.checked, self.followed = [], [], []
-
-    async def route(self, text, recent):
-        self.asked.append((text, list(recent)))
-        verdict = self.routes.get(text)
-        return self.Route(*verdict) if verdict else None
-
-    async def complement(self, question, reply, records):
-        self.checked.append((question, reply, list(records)))
-        return self.Route(*self.complement_verdict) if self.complement_verdict else None
-
-    async def followthrough(self, utterance, reply, told=""):
-        self.followed.append((utterance, reply) if not told else (utterance, reply, told))
-        return self.Route(*self.followthrough_verdict) if self.followthrough_verdict else None
-
-    async def lasting(self, utterance):
-        self.lasting_checks.append(utterance)
-        verdict = self.lasting_verdicts.get(utterance)
-        return self.Route(*verdict) if verdict else None
-
-    async def grounded(self, note, said):
-        self.grounded_checks.append((note, said))
-        return self.Route(*self.grounded_verdict) if self.grounded_verdict else None
-
-    async def recall(self, scope, text):
-        return list(self.recalled.get(text, []))
-
-    async def state(self, scope):
-        return list(self.state_lines)
-
-    async def reads(self, scope, text):
-        return self.read_results if self.read_results is not None else {"memories": [], "tasks": []}
 
 
 async def drain(rounds=10):

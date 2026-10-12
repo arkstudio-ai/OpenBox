@@ -1,0 +1,27 @@
+[
+  {
+    "name": "quote-create",
+    "status": 201,
+    "request_id": "req_01M34776V6TA63RHC68ET76K34",
+    "body": {
+      "id": "ses_7YBWVRRS4A9VEXE44FXG2M685X",
+      "title": "Codex 异步成片回归待报价",
+      "status": "idle",
+      "quality": "medium",
+      "metadata": {},
+      "credits_used": "0",
+      "created_at": "2026-09-22T09:30:14Z",
+      "updated_at": "2026-09-22T09:30:14Z"
+    }
+  },
+  {
+    "name": "quote-only",
+    "status": 202,
+    "request_id": "req_01M34776ZQVX9P0B1X5AW4ATGN",
+    "body": {
+      "session_id": "ses_7YBWVRRS4A9VEXE44FXG2M685X",
+      "user_message_id": "msg_01M347772MWJDT1D5N6VRSG4SY",
+      "assistant_message_id": "msg_01M347772MWJDT1D5N6VRSG4SZ"
+    }
+  }
+]

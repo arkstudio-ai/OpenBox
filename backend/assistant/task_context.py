@@ -41,6 +41,7 @@ async def task_context(db, main) -> dict:
         .limit(MAX_CONTEXT_TASKS + 1))).all()
     selected = rows[:MAX_CONTEXT_TASKS]
     pending = {}
+    blocked = {}
     if selected:
         pending = dict((await db.execute(select(QuestionCheckpoint.session_id, func.count())
             .join(SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id)
@@ -48,6 +49,11 @@ async def task_context(db, main) -> dict:
                    QuestionCheckpoint.user_id == main.user_id, QuestionCheckpoint.status == "pending",
                    QuestionCheckpoint.generation == SessionExecution.generation)
             .group_by(QuestionCheckpoint.session_id))).all())
+        waiting = [row[0].execution_session_id for row in selected if pending.get(row[0].execution_session_id)]
+        if waiting:
+            from assistant.blocking import blocked_views
+            sessions = (await db.scalars(select(Session).where(Session.id.in_(waiting)))).all()
+            blocked = await blocked_views(db, sessions)
     items = []
     for task, project_name, session_status, result in selected:
         item = {"task_id": task.id, "title": redact_credentials(task.title),
@@ -56,6 +62,11 @@ async def task_context(db, main) -> dict:
                 "desired_state": task.desired_state, "observed_state": task.observed_state,
                 "revision": task.control_revision, "updated_at": _iso(task.updated_at),
                 "pending_questions": pending.get(task.execution_session_id, 0)}
+        if task.execution_session_id in blocked:
+            # Input given to this task waits until the user handles this card there.
+            card = blocked[task.execution_session_id]
+            item["blocked_by"] = {**card, "title": redact_credentials(card["title"]),
+                                  "question": redact_credentials(card["question"])}
         if result is not None:
             summary = result.summary or ""
             item["latest_result"] = {"result_id": result.id, "outcome": result.outcome,

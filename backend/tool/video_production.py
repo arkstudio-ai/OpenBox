@@ -1021,7 +1021,13 @@ async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any])
                 headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
                 json=request_payload,
             )
-        data = await capture_http_response(capture, response)
+        try:
+            data = await capture_http_response(capture, response)
+        except ValueError:
+            # A refusal page (HTML, plain text) still classifies by its status.
+            if response.status_code not in (200, 201, 202):
+                response.raise_for_status()
+            raise
         if response.status_code not in (200, 201, 202):
             response.raise_for_status()
         if not data.get("id"):
@@ -1920,7 +1926,78 @@ async def _daily_submit_count(ctx: ToolContext) -> int:
         )
 
 
-def _model_capability_lines(config) -> list[str]:
+#: How long a definite permission/balance refusal marks a model 暂不可用.
+_UNAVAILABLE_WINDOW = timedelta(minutes=30)
+_UNAVAILABLE_REASONS = {"permission": "权限/账户受限", "balance": "余额不足"}
+
+
+async def _recently_unavailable_models(config) -> dict[str, dict[str, Any]]:
+    """Declared models whose current route definitely refused a submit lately.
+
+    Permission and balance refusals belong to the provider account, not to one
+    request, so a refusal on the same route marks the model for every caller.
+    Advisory only: a lookup failure marks nothing, and a changed route (say, a
+    replaced credential) clears the mark at once.
+    """
+    from sqlalchemy import JSON, type_coerce
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool import video_providers
+
+    ids = [entry.id for entry in getattr(config.video_generation, "models", None) or []]
+    if not ids:
+        return {}
+    submit_error = type_coerce(VideoJob.result_data, JSON)["submit_error"]
+    try:
+        async with get_db_session() as db:
+            rows = (await db.execute(
+                select(VideoJob.model, VideoJob.request_data, VideoJob.result_data, VideoJob.updated_at)
+                .where(
+                    VideoJob.status == "failed",
+                    VideoJob.updated_at >= datetime.now(timezone.utc) - _UNAVAILABLE_WINDOW,
+                    VideoJob.kind == "segment",
+                    VideoJob.provider_task_id.is_(None),
+                    VideoJob.model.in_(ids),
+                    submit_error["unavailable"].as_string().in_(list(_UNAVAILABLE_REASONS)),
+                )
+                .order_by(VideoJob.updated_at.desc())
+                .limit(200)
+            )).all()
+    except Exception:
+        log.warning("video model availability lookup failed", exc_info=True)
+        return {}
+    marks: dict[str, dict[str, Any]] = {}
+    routes: dict[str, str | None] = {}
+    for model, request_data, result_data, updated_at in rows:
+        if model in marks:
+            continue
+        if model not in routes:
+            try:
+                routes[model] = video_providers.provider_route_fingerprint(
+                    video_providers.resolve_route(model, config))
+            except Exception:
+                routes[model] = None
+        if routes[model] is None or (request_data or {}).get("provider_route_fingerprint") != routes[model]:
+            continue
+        error = (result_data or {}).get("submit_error") or {}
+        marks[model] = {"reason": error.get("unavailable"), "code": error.get("code"), "at": updated_at}
+    return marks
+
+
+def _availability_text(mark: dict[str, Any]) -> str:
+    at = mark.get("at")
+    if isinstance(at, datetime):
+        at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        minutes = max(1, int((datetime.now(timezone.utc) - at).total_seconds() // 60))
+        when = f"{minutes} 分钟前"
+    else:
+        when = "最近"
+    reason = _UNAVAILABLE_REASONS.get(mark.get("reason") or "", "服务商拒绝")
+    return f"暂不可用（{when}服务商未受理：{reason}）; do not pick it without asking the person"
+
+
+def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | None = None) -> list[str]:
     """The declared registry, rendered for the agent.
 
     The relay publishes no model or pricing endpoint, so this registry is the
@@ -1959,6 +2036,8 @@ def _model_capability_lines(config) -> list[str]:
             parts.append(f"supports={', '.join(capabilities)}")
         if entry.channel == "runninghub":
             parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
+        if unavailable and entry.id in unavailable:
+            parts.append(f"availability={_availability_text(unavailable[entry.id])}")
         lines.append("  " + "  ".join(parts))
     if not settings.models:
         lines.append("  (no models declared; the configured default is used for every request)")
@@ -1969,14 +2048,16 @@ async def _execute_models(ctx: ToolContext) -> ToolResult:
     from core.config import get_config
 
     config = get_config()
-    lines = _model_capability_lines(config)
+    unavailable = await _recently_unavailable_models(config)
+    lines = _model_capability_lines(config, unavailable)
     chosen = await _session_video_model_id(ctx)
     if chosen:
         lines.insert(1, f"person_selected_model={chosen}")
     return ToolResult(
         title="Video models",
         output="\n".join(lines),
-        metadata={"models": [entry.id for entry in config.video_generation.models]},
+        metadata={"models": [entry.id for entry in config.video_generation.models],
+                  "unavailable_models": sorted(unavailable)},
     )
 
 
@@ -2010,9 +2091,10 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
 
     duration = approved["duration"]
     billed = "model-chosen length" if duration == -1 else f"{duration}s"
-    from billing.media import billing_status_lines, quote_generation
+    from billing.media import billing_status_lines
+    from billing.partner import quote_generation_for_session
 
-    price = quote_generation(target.model, approved["resolution"], None if duration == -1 else duration)
+    price = await quote_generation_for_session(ctx.session_id, target.model, approved["resolution"], None if duration == -1 else duration)
     price_lines = (
         [f"estimated_credits={format(price.credits.normalize(), 'f')}",
          f"per_second_credits={price.snapshot['per_second']}  seconds_billed={price.minutes_billed}"]
@@ -2021,9 +2103,11 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
     ) + billing_status_lines()
     used = await _daily_submit_count(ctx)
     limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
+    unavailable = (await _recently_unavailable_models(get_config())).get(target.model)
     lines = [
         "valid=true",
         f"model={target.model}",
+        *([f"availability={_availability_text(unavailable)}"] if unavailable else []),
         f"resolution={approved['resolution']}  ratio={approved['ratio']}  duration={billed}",
         f"generate_audio={approved['generate_audio']}  watermark={approved['watermark']}",
         f"inputs={len(inputs)}" + (f" roles={'/'.join(roles)}" if roles else ""),
@@ -2059,7 +2143,8 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         metadata={"valid": True, "model": target.model,
                   "estimated_credits": format(price.credits.normalize(), "f") if price.credits is not None else None,
                   "seconds_billed": price.minutes_billed,
-                  "input_bindings": input_bindings},
+                  "input_bindings": input_bindings,
+                  "model_unavailable": bool(unavailable)},
     )
 
 
@@ -2201,19 +2286,126 @@ async def _run_rejected_submission(ctx: ToolContext, target: Any):
         ).order_by(VideoJob.created_at.desc()).limit(1))).scalar_one_or_none()
 
 
+_RESOLUTION_ORDER = ("480p", "512p", "720p", "768p", "1080p", "2k")
+
+
+def _closest_resolution(wanted: str, allowed: list[str]) -> str:
+    if not allowed or wanted in allowed:
+        return wanted
+    rank = {name: index for index, name in enumerate(_RESOLUTION_ORDER)}
+    target = rank.get(wanted, len(_RESOLUTION_ORDER))
+    return min(allowed, key=lambda name: (abs(rank.get(name, 99) - target), -rank.get(name, 99)))
+
+
+async def _alternative_models(failed: Any, request: dict[str, Any], input_mimes: list[str],
+                              roles: tuple[str, ...], *, kind: str) -> list[dict[str, Any]]:
+    """Up to two declared models that would accept this request, with prices.
+
+    Ranked by: same resolution, a different provider route (an account or
+    balance refusal usually covers its whole route, so a balance refusal skips
+    that route entirely), nearest price, then registry order. Models marked
+    unavailable are never offered.
+    """
+    from decimal import Decimal
+
+    from billing.media import quote_generation
+    from core.config import get_config
+    from tool import video_providers
+
+    config = get_config()
+    failed_route = video_providers.provider_route_fingerprint(failed)
+    unavailable = await _recently_unavailable_models(config)
+    duration = request["duration"]
+    seconds = None if duration == -1 else duration
+    reference = quote_generation(failed.model, request["resolution"], seconds).credits
+    ranked = []
+    for index, entry in enumerate(getattr(config.video_generation, "models", None) or []):
+        if entry.id == failed.model or entry.id in unavailable:
+            continue
+        try:
+            route = video_providers.resolve_route(entry.id, config)
+            same_route = video_providers.provider_route_fingerprint(route) == failed_route
+            resolution = _closest_resolution(request["resolution"], list(entry.resolutions or []))
+            video_providers.validate_request(
+                route, resolution=resolution, ratio=request["ratio"], duration=duration,
+                generate_audio=request["generate_audio"], input_mimes=input_mimes, declared=entry,
+                roles=roles, prompt=request["prompt"], watermark=request["watermark"],
+            )
+            credits = quote_generation(entry.id, resolution, seconds).credits
+        except Exception:
+            continue
+        if (same_route and kind == "balance") or (credits is None and route.channel == "runninghub"):
+            continue
+        gap = abs(credits - reference) if credits is not None and reference is not None else Decimal("Infinity")
+        ranked.append(((resolution != request["resolution"], same_route, gap, index), {
+            "model": entry.id, "name": entry.name or entry.id, "resolution": resolution,
+            "duration": duration,
+            "estimated_credits": format(credits.normalize(), "f") if credits is not None else None,
+        }))
+    return [item for _rank, item in sorted(ranked, key=lambda pair: pair[0])[:2]]
+
+
+async def _with_unavailable_guidance(detail: dict, target: Any, request: dict[str, Any], inputs: list[Any],
+                                     roles: list[str], ctx: ToolContext, *, rate_limit_retried: bool) -> dict:
+    """Add what the person needs to choose: alternatives, prices, retry state."""
+    detail = {**detail, "model": target.model}
+    if detail.get("unavailable") == "rate_limit":
+        detail["auto_retried"] = rate_limit_retried
+    try:
+        detail["composer_selected"] = bool(await _session_video_model_id(ctx))
+        detail["alternatives"] = await _alternative_models(
+            target, request, [row.mime for row in inputs], tuple(roles), kind=detail["unavailable"],
+        )
+    except Exception:
+        log.warning("could not rank alternative video models", exc_info=True)
+        detail.setdefault("alternatives", [])
+    return detail
+
+
+def _unavailable_lines(detail: dict) -> list[str]:
+    """Ask-the-person guidance after a refusal that made the model unavailable."""
+    def offer(item: dict) -> str:
+        seconds = "model-chosen length" if item.get("duration") == -1 else f"{item.get('duration')}s"
+        credits = item.get("estimated_credits") or "unpriced"
+        return f"{item['model']} ({item.get('name')}) {item.get('resolution')} {seconds} ≈{credits} credits"
+
+    alternatives = detail.get("alternatives") or []
+    lines = ["not_charged=true (未受理，不扣费)",
+             f"model_status={detail.get('model') or 'this model'} 暂不可用"]
+    if detail.get("unavailable") == "rate_limit":
+        lines.append("auto_retry=" + ("retried once after a short wait; still rate limited"
+                                      if detail.get("auto_retried") else "not attempted"))
+    lines.append("alternatives=" + ("; ".join(offer(item) for item in alternatives)
+                                    if alternatives else "none of the declared models accepts this exact request"))
+    choice = "switch to one of the alternatives above" if alternatives else "change the request"
+    lines.append(
+        "instruction=Do not retry this model in this run and never switch models silently. Ask the "
+        f"person one short question: {choice}, or wait and try later. Submit nothing until they answer."
+        + (" This is their composer selection, so switching means they change it in the composer."
+           if detail.get("composer_selected") else "")
+    )
+    return lines
+
+
 def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = False) -> ToolResult:
     ambiguous = detail.get("submission_outcome") == "ambiguous"
-    return ToolResult(
-        title=("Video submission needs operator review" if ambiguous else
-               "Video submission blocked after rejection" if blocked else "Video generation request rejected"),
-        output=(
-            f"job_id={job_id}\nstatus=failed\nsubmission_outcome={detail.get('submission_outcome', 'rejected')}\n"
-            f"{detail['message']}\n"
+    unavailable = bool(detail.get("unavailable")) and not ambiguous
+    lines = [f"job_id={job_id}", "status=failed",
+             f"submission_outcome={detail.get('submission_outcome', 'rejected')}", detail["message"]]
+    if unavailable:
+        lines += _unavailable_lines(detail)
+    else:
+        lines.append(
             "do_not_resubmit=true; stop this assistant run and report the error. "
             "Do not change the prompt, model or idempotency key to retry. "
             + ("An operator must check the RunningHub task history before a new paid attempt."
                if ambiguous else "A new user turn may retry after the configuration or request is corrected.")
-        ),
+        )
+    return ToolResult(
+        title=("Video submission needs operator review" if ambiguous else
+               "Video submission blocked after rejection" if blocked else
+               "Video model unavailable" if unavailable else "Video generation request rejected"),
+        output="\n".join(lines),
         metadata={**detail, "job_id": job_id, "status": "failed", "error": True,
                   "do_not_resubmit": True, "submission_blocked": blocked},
     )
@@ -2230,6 +2422,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         return await _execute_attach(args, ctx)
     if args.action == "submit":
         accepted_task_id = ""
+        rate_limit_retried = False
         try:
             target, settings = _configured_target(None)
         except Exception as exc:
@@ -2255,10 +2448,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             # A marketing-autopilot run fixes model/resolution and owns the budget:
             # enforce both here so a paid submit can never drift from the template.
             from autopilot import ledger as _autopilot
-            from billing.media import quote_generation as _quote_generation
+            from billing.partner import quote_generation_for_session as _quote_generation
 
             _autopilot.check_lock(ctx.session_id, model_id=target.model, resolution=resolution)
-            _quote = _quote_generation(target.model, resolution, None if duration == -1 else duration)
+            _quote = await _quote_generation(ctx.session_id, target.model, resolution, None if duration == -1 else duration)
+            if _quote.snapshot.get("partner") and _quote.credits is None:
+                raise _RequestError(f"This resolution is not offered by your tariff tier: {_quote.snapshot.get('reason')}")
             if getattr(target, "channel", "ark") == "runninghub" and _quote.credits is None:
                 raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
             _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
@@ -2314,9 +2509,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
-            if channel == "runninghub":
-                # The actual job owns this quote, so a rates update during a
-                # long-running generation cannot change its eventual charge.
+            if channel == "runninghub" or _quote.snapshot.get("partner"):
+                # The actual job owns this quote, so a rates (or tariff) update
+                # during a long-running generation cannot change its charge.
                 request_data["billing_quote"] = {
                     "model_id": _quote.model_id, "tier": _quote.tier,
                     "quantity": _quote.minutes_billed, "credits": str(_quote.credits),
@@ -2482,20 +2677,35 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     declared=video_providers.declared_model(target.model, _get_config()),
                 )
 
+            async def send_once():
+                if submit_path is None:
+                    return await _provider_submit(target, payload)
+                return await video_providers.submit(target, submit_path, payload)
+
             async def submit_and_persist_provider_identity():
-                nonlocal accepted_task_id
+                nonlocal accepted_task_id, rate_limit_retried
                 from agent.trajectory import service_scope
                 async with service_scope(ctx, job=job,
                         asset_urls={ref["url"]: row.id for ref, row in zip(refs, inputs)}):
-                    if submit_path is None:
-                        submitted = await _provider_submit(target, payload)
-                    else:
-                        submitted = await video_providers.submit(target, submit_path, payload)
-                        if getattr(target, "channel", "ark") == "task":
-                            submitted = {
-                                **submitted,
-                                **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
-                            }
+                    try:
+                        submitted = await send_once()
+                    except Exception as first_error:
+                        # A clean 429 created no task, so exactly one retry
+                        # after a short wait cannot pay twice. Anything else
+                        # (or a second 429) goes to the person.
+                        delay = video_providers.rate_limit_retry_delay(first_error)
+                        if delay is None:
+                            raise
+                        rate_limit_retried = True
+                        log.info("video submit rate limited job_id=%s model=%s; one retry in %.1fs",
+                                 job.id, target.model, delay)
+                        await asyncio.sleep(delay)
+                        submitted = await send_once()
+                    if submit_path is not None and getattr(target, "channel", "ark") == "task":
+                        submitted = {
+                            **submitted,
+                            **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
+                        }
                 # Retain the accepted identity even if its first DB write fails.
                 accepted_task_id = video_providers.extract_task_id(target, submitted)
                 submitted_state = _provider_state(submitted, target)
@@ -2607,11 +2817,18 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                         "message": "RunningHub 提交结果未确认，可能已创建付费任务；请核对渠道任务记录，勿自动重复提交。",
                     }
                 if rejection is not None and "critical_submit" in locals():
+                    if rejection.get("unavailable") and rejection.get("submission_outcome") == "rejected":
+                        rejection = await _with_unavailable_guidance(
+                            rejection, target, approved, inputs, roles, ctx,
+                            rate_limit_retried=rate_limit_retried,
+                        )
                     log.warning(
                         "video submit rejected job_id=%s model=%s status=%s code=%s provider_request_id=%s",
                         job.id, target.model, rejection["http_status"], rejection["code"],
                         rejection.get("provider_request_id", "unavailable"),
                     )
+                    # The stored submit_error is what blocks a same-model retry
+                    # in this run and marks the model in action="models".
                     await _update_job(
                         job.id, status="failed", error=rejection["message"],
                         result_data={"submit_error": rejection}, completed_at=datetime.now(timezone.utc),
@@ -2628,6 +2845,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
+                if "critical_submit" in locals():
+                    return ToolResult(
+                        title="Video generation submit failed",
+                        output=(
+                            f"job_id={job.id}\nstatus=failed\nsubmission_outcome=ambiguous\n"
+                            f"{_public_error(exc)}\n"
+                            "instruction=The provider may have accepted this paid task. Do not "
+                            "resubmit or switch to another model without asking the person."
+                        ),
+                        metadata={"job_id": job.id, "status": "failed", "error": True,
+                                  "failure_code": "video_submit_outcome_unknown",
+                                  "submission_outcome": "ambiguous", "do_not_resubmit": True},
+                    )
             return ToolResult(title="Video generation submit failed", output=_public_error(exc))
 
     job = await _owned_job(args.job_id or "", ctx, "segment")

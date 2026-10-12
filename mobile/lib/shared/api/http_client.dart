@@ -110,6 +110,9 @@ Dio buildApiDio({
 
 /// Bare client for the refresh round-trip itself (no auth interceptor, same
 /// cookie jar) — avoids recursion, like the web's plain `fetch` refresh.
+///
+/// The app waits on it before its first frame, so a server that accepts the
+/// connection and never answers must time out too (`receiveTimeout`).
 Dio buildRefreshDio({
   required CookieJar cookieJar,
   String? installationId,
@@ -121,6 +124,7 @@ Dio buildRefreshDio({
       headers: _mobileHeaders(installationId),
       contentType: 'application/json',
       connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
     ),
   );
   if (auth != null) dio.interceptors.add(_authScopeGuard(auth));

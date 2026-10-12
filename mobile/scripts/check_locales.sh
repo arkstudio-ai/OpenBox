@@ -10,9 +10,8 @@ WEB_DIR="$ROOT_DIR/frontend-v2/src/locales"
 MOBILE_DIR="$ROOT_DIR/mobile/assets/locales"
 I18N_FILE="$ROOT_DIR/mobile/lib/shared/i18n/i18n.dart"
 
-# Session trajectory monitoring is too dense to read on a phone, so the app
-# does not ship it or its strings.
-WEB_ONLY_NAMESPACES=(admin-trajectories)
+# The trajectory monitor and operator pricing console are web-only pages.
+WEB_ONLY_NAMESPACES=(admin-trajectories admin-pricing)
 
 diff_args=()
 for namespace in "${WEB_ONLY_NAMESPACES[@]}"; do

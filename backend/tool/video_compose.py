@@ -179,9 +179,10 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
         compiled = _compile(timeline, output_url=f"https://{oss.host}/assets/{ctx.user_id}/validate/preview.mp4")
     except Exception as exc:
         return ToolResult(title="Timeline rejected", output=_public(exc), metadata={"valid": False})
-    from billing.media import billing_status_lines, quote_compose
+    from billing.media import billing_status_lines
+    from billing.partner import quote_compose_for_session
 
-    price = quote_compose(timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
+    price = await quote_compose_for_session(ctx.session_id, timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
     lines = ["valid=true", f"duration_sec={compiled.duration_sec}", f"shots={len(timeline.shots)}",
              f"captions={len(timeline.captions)}", f"texts={len(timeline.texts)}",
              f"output={timeline.canvas.width}x{timeline.canvas.height}", f"tier={price.tier}"]
@@ -238,9 +239,9 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
 
     try:
         from autopilot import ledger as _autopilot
-        from billing.media import quote_compose as _quote_compose
+        from billing.partner import quote_compose_for_session as _quote_compose
 
-        _price = _quote_compose(timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
+        _price = await _quote_compose(ctx.session_id, timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
         _autopilot.guard_paid_step(ctx.session_id, kind="compose", credits=_price.credits if _price.credits is not None else 0,
                                    note=f"{compiled.duration_sec}s {_price.tier}")
     except Exception as exc:

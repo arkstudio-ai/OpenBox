@@ -1,0 +1,18 @@
+{
+  "duration_seconds": 10.031,
+  "bytes": 36812935,
+  "tracks": [
+    {
+      "handler": "vide",
+      "width": 1080.0,
+      "height": 1920.0,
+      "codec": "avc1"
+    },
+    {
+      "handler": "soun",
+      "width": 0.0,
+      "height": 0.0,
+      "codec": "mp4a"
+    }
+  ]
+}

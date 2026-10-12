@@ -33,6 +33,7 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     # deleting on the user's request ask a confirmation card first
     # (assistant.confirmations).
     "tasks.followup": "question",
+    "tasks.submit": "question",
     "assets.attach": "question",
     "requests.answer": "question",
     "projects.delete": "question",
@@ -55,6 +56,7 @@ class Question(BaseModel):
     multiple: bool = False
     custom: bool = True
     allow_attachments: bool = False
+    requires_confirmation: bool = False
     detail: dict[str, Any] | None = None
 
 
@@ -356,8 +358,11 @@ async def reject(request_id: str, user_id: str = "default", **reply_binding) -> 
 
 
 async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None, *,
-                   attachments: list[list[str]] | None = None, **reply_binding) -> dict:
+                   attachments: list[list[str]] | None = None, placement_project_name: str | None = None,
+                   **reply_binding) -> dict:
     owned = await _owned_request(request_id, user_id)
+    if placement_project_name is not None and not (owned.continuation or {}).get("assistant_placement"):
+        raise ValueError("A project name only belongs to a placement choice")
     from assistant.requests import maybe_reply, question_task
     receipt = await maybe_reply(owned, answers=answers, attachments=attachments, **reply_binding)
     if receipt is not None:
@@ -366,26 +371,37 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
         row = await db.get(QuestionCheckpoint, request_id)
         if await question_task(db, row) is not None:
             raise QuestionConflict("Question scope changed; reload before replying")
-        changed = await resolve_locked(db, session, execution, row, answers=answers, attachments=attachments)
+        changed = await resolve_locked(db, session, execution, row, answers=answers, attachments=attachments,
+                                       placement_project_name=placement_project_name)
         if not changed:
-            return {"ok": True, "status": row.status, "session_id": row.session_id}
+            return {"ok": True, "status": row.status, "session_id": row.session_id, "applied": False}
         session_status = session.status
     bus.publish("question.rejected" if answers is None else "question.replied", _event(row))
     await runtime.publish_status(row.session_id, user_id, session_status)
-    return {"ok": True, "status": row.status, "session_id": row.session_id}
+    return {"ok": True, "status": row.status, "session_id": row.session_id, "applied": True}
 
 
-async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user"):
+async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user",
+                         placement_project_name=None):
     """Shared question mutation; caller owns the Session transaction."""
     status = "rejected" if answers is None else "answered"
     questions = [Question(**q) for q in row.questions]
     files = normalize_attachments(questions, attachments)
     clean = None if answers is None else validate_answers(questions, answers, attachments=files)
+    placement = (row.continuation or {}).get("assistant_placement")
+    if placement_project_name is not None:
+        from assistant.project_tools import _clean, MAX_NAME
+        from assistant.placement import new_project_option
+        name = _clean(placement_project_name)
+        if (not placement or new_project_option(placement) is None
+                or clean != [[new_project_option(placement)]] or not name or len(name) > MAX_NAME):
+            raise ValueError("Invalid project name or placement option")
     if row.generation != execution.generation:
         raise QuestionGone("superseded")
     if row.status in ("answered", "rejected"):
         if (row.status != status or row.answers != clean
-                or row.continuation.get("answer_attachments", [[] for _ in questions]) != files):
+                or row.continuation.get("answer_attachments", [[] for _ in questions]) != files
+                or (placement_project_name is not None and placement.get("project_name") != name)):
             raise QuestionConflict("An answer has already been accepted")
         return False
     _check_pending(row, execution)
@@ -393,6 +409,8 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
         raise ValueError("This confirmation does not accept attachments")
     await validate_attachment_ownership(db, session, files)
     await checkpoint_context(db, row, execution)
+    if placement_project_name is not None:
+        row.continuation = {**row.continuation, "assistant_placement": {**placement, "project_name": name}}
     if any(files):
         row.continuation = {**row.continuation, "answer_attachments": files}
     row.status, row.answers, row.updated_at = status, clean, runtime.now()

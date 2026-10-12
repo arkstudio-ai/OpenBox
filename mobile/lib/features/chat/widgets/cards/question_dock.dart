@@ -103,7 +103,11 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
           kind: 'question',
           id: request.id,
           binding: request.assistant!,
-          answer: {'answers': ?answers, 'attachments': ?attachments},
+          answer: {
+            'answers': ?answers,
+            if (attachments?.any((row) => row.isNotEmpty) ?? false)
+              'attachments': attachments,
+          },
           reject: answers == null,
         );
         if (!current()) return;

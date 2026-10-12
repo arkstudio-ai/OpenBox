@@ -155,7 +155,10 @@ class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
     final existing = state[request.id];
     if (existing != null && request.draftRevision <= existing.revision) return;
     if (existing != null &&
-        (existing.dirty || existing.saving || existing.submitting)) {
+        (existing.dirty ||
+            existing.saving ||
+            existing.submitting ||
+            existing.transferring)) {
       return;
     }
     var draft = QuestionDraft.fromAnswers(

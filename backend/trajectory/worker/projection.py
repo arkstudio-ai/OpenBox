@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.log import create_logger
+from trajectory import turns
 from trajectory.config import integer
 from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, existing_payloads, is_ref, json_blob, upload_json_blobs
 from trajectory.projector import TERMINAL, contribution, empty_state, reduce, targets
@@ -418,6 +419,8 @@ class ProjectionService:
                             raise _ReferenceRace()
                     await self._write_records(db, trajectory_id, prepared, links)
                     await self._write_summary(db, locked, events, state, before, until)
+                    # Turn summaries (lite plan §6.1): every turn this batch touched, recomputed from its stored records.
+                    await turns.refresh(db, locked, {record.get("turn_id") for record in prepared}, applied_seq=until)
                     locked.projected_seq = until
                     locked.stored_bytes = (locked.stored_bytes or 0) + inserted
             except _ReferenceRace:
@@ -499,7 +502,7 @@ class ProjectionService:
     async def _write_records(self, db, trajectory_id: str, prepared: list[dict], links: set[tuple[str, int]]) -> None:
         values = [{"trajectory_id": trajectory_id, "record_id": record_key(record["record_id"]), "kind": record["kind"],
                    "status": str(record["status"])[:32], "agent_id": record.get("agent_id"), "message_id": record.get("message_id"),
-                   "start_seq": int(record["start_seq"]), "end_seq": int(record["end_seq"]) if record.get("end_seq") else None,
+                   "turn_id": str(record["turn_id"])[:128] if record.get("turn_id") else None, "start_seq": int(record["start_seq"]), "end_seq": int(record["end_seq"]) if record.get("end_seq") else None,
                    "applied_seq": int(record["as_of_seq"]), "projector_version": PROJECTOR_VERSION, "data": record,
                    "summary": {key: value for key, value in record.items() if key not in {"data", "blocks"}},
                    "search_doc": search_doc(record)} for record in prepared]

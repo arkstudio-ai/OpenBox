@@ -30,6 +30,7 @@ PRIMARY_KEYS = {
     "trajectory_records": ["trajectory_id", "record_id"],
     "trajectory_record_events": ["trajectory_id", "record_id", "seq"],
     "trajectory_session_summaries": ["trajectory_id"],
+    "trajectory_turn_summaries": ["trajectory_id", "turn_id"],
     "trajectory_checkpoints": ["trajectory_id", "through_seq"],
     "trajectory_exports": ["id"],
     "trajectory_meta_sessions": ["id"],
@@ -50,7 +51,10 @@ INDEXES = {
     "trajectory_segments": {("trajectory_id", "to_seq")},
     "trajectory_payloads": {("trajectory_id", "sha256"), ("source_asset_id",)},
     "trajectory_records": {("trajectory_id", "start_seq", "record_id"), ("trajectory_id", "message_id"),
-                           ("trajectory_id", "kind", "status", "start_seq"), ("trajectory_id", "agent_id")},
+                           ("trajectory_id", "kind", "status", "start_seq"), ("trajectory_id", "agent_id"),
+                           ("trajectory_id", "turn_id", "start_seq")},
+    "trajectory_turn_summaries": {("user_id", "started_at", "turn_id"), ("trajectory_id", "started_at"),
+                                  ("session_id", "started_at"), ("status", "started_at")},
     "trajectory_session_summaries": {("last_activity_at", "session_id"), ("user_id", "last_activity_at", "session_id"),
                                      ("workspace_id", "last_activity_at", "session_id"),
                                      ("running_status", "recording_status", "last_activity_at")},
@@ -65,7 +69,7 @@ UNIQUES = {
     "trajectory_payloads": {("trajectory_id", "dedupe_key")},
 }
 CASCADE_CHILDREN = {"trajectory_events", "trajectory_segments", "trajectory_payloads", "trajectory_records", "trajectory_session_sources",
-                    "trajectory_session_summaries", "trajectory_checkpoints", "trajectory_exports"}
+                    "trajectory_session_summaries", "trajectory_turn_summaries", "trajectory_checkpoints", "trajectory_exports"}
 
 
 def _config(**kwargs) -> Config:

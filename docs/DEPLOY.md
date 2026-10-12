@@ -29,7 +29,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-12 17:14 frontend `20261012-trajlite-fe-e884228b`（轨迹监控简明模式前端 M2）
+## 当前阿里云：2026-10-12 17:44 `20261012-trajlite2-d8d02ed1`（后端+worker）/ frontend `20261012-trajlite3-2a327160`（简明模式线上联调修正）
+
+- 线上用真实记录联调简明模式后两轮修正：PR [#74](https://github.com/arkstudio-ai/OpenBox/pull/74)（后端）、[#75](https://github.com/arkstudio-ai/OpenBox/pull/75)、[#76](https://github.com/arkstudio-ai/OpenBox/pull/76)（前端）。设计文档 §11 已记录根因。
+- **后端 `main@d8d02ed1`**：工具记录的 `title` 是结果标题（"exit code: 0"、"Found 27 files"），轮汇总与步骤标签改按 `data.tool` 计数/命名并下发 `tool_id`；每次工具调用留下的策略自动放行权限记录（0 ms）从步骤流隐藏；定时任务把主 Agent 自身记成 `agent` 记录，不再算子任务；私有会话被 audience 过滤后用户列表按可见活动重排。**无迁移**（trace 仍 t0006，业务 `pf39b0c1d2e3`）。切换脚本 `releases/20261012-trajlite2-d8d02ed1/deploy_gw2_v13.sh`（v11 加前端切换）：09:37–09:38 UTC worker/backend/frontend 依次 healthy，末尾重跑回填 17 秒（1,249 轮重算，0 失败）。
+- **前端 `main@2a327160`**（在 d8d02ed1 之上再加 #76）：工具卡/芯片按 `tool_id` 命名、以结果标题作一行摘要；纯工具调用的 AI 回复不成卡；默认只展开用户输入、最后一条回复和失败步骤（此前全开触发 worker 读限流 429）；步骤读取 429 退避重试；步骤与头部时间用本地时钟格式；列表预览去 Markdown 符号。`releases/20261012-trajlite3-2a327160/deploy_gw2_v14.sh`（只换前端）09:44 UTC 15 s healthy。
+- 验证（线上登录后）：用户列表 13 人按最近活动排序正确；某用户对话轮按会话分组、异常筛选生效、工具标签为中文动作名；定时任务轮详情从 129 步降到 54 步，结论句"已完成，但处理文件失败了 3 次"，工具卡显示动作名与结果标题，「技术详情」/「原始记录」跳专业模式。公网 app-build 为新 tag，`/api/admin/trajectories/users` 匿名 401，六服务 healthy。
+- 回滚：前端恢复 `backups/20261012-trajlite3-2a327160/activation-*/docker-compose.override.yml` 后 `up -d --no-deps frontend`；后端/worker 恢复 `backups/20261012-trajlite2-d8d02ed1/activation-*/` 的 override 后依次 `up -d --no-deps trajectory-worker / backend`（回到 `20261012-trajlite-36d67be4`，同 t0006，无需动库）。AWS 未发布。
+
+## 历史阿里云：2026-10-12 17:14 frontend `20261012-trajlite-fe-e884228b`（轨迹监控简明模式前端 M2）
 
 - 源码 `main@e884228b`（PR [#71](https://github.com/arkstudio-ai/OpenBox/pull/71) 合并，含 441a5d12 的 vite 开发代理 SSO 回调改写，仅开发态生效）。只换 **frontend**；backend / trajectory-worker 保持 `20261012-trajlite-36d67be4`。方案 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §7、§12。
 - 内容：`/app/admin/trajectories` 改为简明模式用户列表；原专业会话列表移到 `/app/admin/trajectories/sessions`（会话详情路径不变，旧列表书签带专业筛选键时自动跳转）；`/users/:userId` 某用户的对话轮；`/users/:userId/turns/:sessionId/:turnId` 轮详情步骤流；两个列表页右上角「简明 / 专业」切换；工具动作名取自 `GET /api/admin/trajectories/lite/labels`。

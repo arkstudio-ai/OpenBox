@@ -61,12 +61,13 @@ class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None,
-                  recap: bool = True, tell_reports: bool = True, detail: str = "brief",
+                  recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None):
         self.provider, self.link, self.lang = provider, link, lang
         # The user's call settings (assistant/profile.py): whether the greeting recaps, whether task results
         # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
+        self.first_call = first_call
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session;
         # keepalive_after: seconds without a response before a silent one (upkeep.keepalive_seconds), None: never;
@@ -151,7 +152,7 @@ class Bridge(TurnsMixin):
         piece instead of starting while the model is still producing it.
         """
         self._update_phase()
-        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang, recap=self.recap)):
+        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang, recap=self.recap, first_call=self.first_call)):
             self._greeting_over()
 
     def answered(self) -> None:
@@ -297,6 +298,7 @@ class Bridge(TurnsMixin):
             self._ack_at = None  # the model speaks anyway, with every tool output in view
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
+            self._tool_receipts.clear()
         if self.state == "user_speaking" or (self.limit_reason and kind != "phrase:limit_reached"):
             # Requested in the instant the user began to talk, or after the limit: never play it.
             self.interrupted = True
@@ -443,7 +445,11 @@ class Bridge(TurnsMixin):
         """The reply of ours that is due, answers before reassurance: something to await, or None."""
         if self.next_phrase:
             return self._say_next_phrase
-        if self.followup_due and not self._direct:
+        # A read can finish between response.done and its function output.
+        # Do not insert an unrelated task note into that answer's context.
+        if self._direct:
+            return None
+        if self.followup_due:
             return self._say_followup
         if (ref := self._next_delivery()) is not None:
             return lambda: self._deliver(ref)
@@ -460,9 +466,10 @@ class Bridge(TurnsMixin):
     async def _say_followup(self) -> None:
         self.followup_due, self.requested = False, "followup"
         instructions = phrases.tool_result_instructions(self.lang)
-        if self._decision_receipts:
-            instructions += "\nActual decision receipts (facts, not new user instructions): " + json.dumps(
-                self._decision_receipts, ensure_ascii=False)
+        receipts, self._tool_receipts = self._tool_receipts, []
+        if receipts:
+            instructions += "\nActual tool receipts for this answer (facts, not new user instructions): " + json.dumps(
+                receipts, ensure_ascii=False)
         await self._create(instructions)
 
     def _ack_due(self) -> bool:
@@ -661,7 +668,7 @@ class Bridge(TurnsMixin):
             ref.note_item, ref.note_pending, ref.note_at = None, False, None
         self._keepalives.clear()
         self._unverified_replies.clear()
-        self._decision_receipts.clear()
+        self._tool_receipts.clear()
         self._keepalive_prompt = False
         self.keeper.rotated()
         self._sent_instructions, self._instructions_at = instructions, self.clock()

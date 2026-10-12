@@ -43,10 +43,56 @@ async def test_decision_speech_waits_for_the_actual_tool_receipt(monkeypatch):
     assert bridge.audio_bytes == 0
     assert not any(line.text == "已经提交好了" for line in bridge.spoken.lines)
     instructions = str(provider.sent)
-    assert "invalid_arguments" in instructions and "Actual decision receipts" in instructions
+    assert "invalid_arguments" in instructions and "Actual tool receipts" in instructions
     await replay(bridge, started("r2"), said("刚才没有提交成功", "r2"), audio("r2"), done("r2"))
     assert bridge.audio_bytes > 0
+    async def read(*_):
+        return {"status": "ok", "current_login_state": "unknown", "record_count": 0}
+    monkeypatch.setattr("voice.tools.run", read)
+    await replay(bridge, item("u2"), transcript("查一下账号状态", "u2"), started("r3"),
+        tool_call("read", name="platforms_status", response_id="r3", arguments="{}"), done("r3"))
+    latest = provider.commands("create")[-1][1]
+    assert '"tool": "platforms_status"' in latest and '"current_login_state": "unknown"' in latest
+    assert '"tool": "task_question_answer"' not in latest  # previous choice is not this read's result
     await bridge.close()
+
+
+async def test_background_report_waits_until_direct_read_output_and_answer_finish(monkeypatch):
+    bridge, provider, _ = make()
+    await greeted(bridge, provider)
+    read_ready, output_ready = asyncio.Event(), asyncio.Event()
+    release_read, release_output = asyncio.Event(), asyncio.Event()
+    async def read(*_):
+        read_ready.set()
+        await release_read.wait()
+        return {"status": "ok", "current_login_state": "unknown"}
+    original_output = provider.send_tool_output
+    async def send(call_id, payload):
+        output_ready.set()
+        await release_output.wait()
+        await original_output(call_id, payload)
+    monkeypatch.setattr("voice.tools.run", read)
+    monkeypatch.setattr(provider, "send_tool_output", send)
+    try:
+        await replay(bridge, item("u1"), transcript("查一下账号状态", "u1"), started("read"),
+            tool_call("read-1", name="platforms_status", response_id="read", arguments="{}"), done("read"))
+        await asyncio.wait_for(read_ready.wait(), 1)
+        await bridge.report("另一件旧任务", "旧任务需要接管", "old-task")
+        assert not provider.commands("note") and not provider.commands("create")
+        release_read.set()
+        await asyncio.wait_for(output_ready.wait(), 1)
+        await bridge.fill_idle()
+        assert not provider.commands("note") and not provider.commands("create")
+        release_output.set()
+        await drain()
+        assert provider.commands("output")[0][2]["current_login_state"] == "unknown"
+        assert provider.commands("create") and not provider.commands("note")
+        await replay(bridge, started("answer"), said("当前登录状态还没核验", "answer"), audio("answer"), done("answer"))
+        assert len(provider.commands("note")) == 1  # queued, not lost or mixed into this answer
+    finally:
+        release_read.set()
+        release_output.set()
+        await bridge.close()
 
 
 async def test_failed_decision_retries_are_bounded_to_the_source_utterance(monkeypatch):

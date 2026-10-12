@@ -180,7 +180,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
                     recap=facts.recap, tell_reports=facts.reports,
-                    detail=facts.detail,
+                    detail=facts.detail, first_call=facts.first_call,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
                     reply_gap=REPLY_GAP_SECONDS)  # ours start once the client has played the last reply
 

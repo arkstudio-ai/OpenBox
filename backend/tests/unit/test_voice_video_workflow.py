@@ -26,6 +26,79 @@ CATALOGUE = {"chat": [{"id": "test/model", "name": "Task AI", "vision": True}],
               {"id": "wan3.0", "name": "Wan 3.0", "resolutions": ["720p", "1080p"]}]}
 
 
+@pytest.fixture
+def tiers(monkeypatch):
+    value = {**CATALOGUE, "video_tiers": [{"id": "fast", "name": "快速档", "model": "MiniMax-H3-Max-Turbo",
+        "resolution": "768p", "resolutions": ["480p", "768p"], "credits_per_second": {"768p": "0.77"},
+        "description": "支持第一张和结束图片"}]}
+    monkeypatch.setattr("assistant.model_choices.catalogue", lambda: value)
+    return value
+
+
+async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(tiers):
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "默认空间里用Task AI做咖啡口播，先解释档次")
+    args = {"project_id": main.project_id, "title": "档次样片", "instructions": "咖啡口播",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": "spoken_video",
+            "model": "test/model", "model_confirmed": True}
+    try:
+        before = await counts(owner)
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        pending = await card(result["suspended"])
+        assert pending.questions[0]["header"] == "视频档次"
+        option = pending.questions[0]["options"][0]
+        assert option["label"] == "快速档" and "0.77" in option["description"]
+        assert "MiniMax" not in json.dumps(pending.questions)
+        assert await counts(owner) == before
+        await q.reply(pending.id, [["快速档"]], owner)
+        receipt, _ = await tool_call(ctx, "tasks.submit", args)
+        async with get_db_session() as db:
+            saved = await db.get(Session, receipt["execution_session_id"])
+            assert (saved.video_model, saved.video_resolution) == ("MiniMax-H3-Max-Turbo", "768p")
+            inbound = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == saved.id))
+            assert inbound.origin_ref["confirmed_setup"] == {"task_model": "test/model",
+                "video_model": "MiniMax-H3-Max-Turbo", "video_resolution": "768p"}
+            from agent.input_origin import provider_text
+            rendered = provider_text(inbound.prompt, origin=inbound.origin, reference=inbound.origin_ref)
+            assert "supersede older draft wording" in rendered and "neither paid" in rendered
+        assert (await tool_call(ctx, "tasks.submit", args))[0] == receipt
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_changed_tier_mapping_cannot_silently_replace_an_answered_choice(tiers):
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "做口播，档次我选")
+    args = {"project_id": main.project_id, "title": "旧卡", "instructions": "咖啡口播",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": "spoken_video",
+            "model": "test/model", "model_confirmed": True}
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        await q.reply(result["suspended"], [["快速档"]], owner)
+        tiers["video_tiers"][0]["model"] = "wan3.0"
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        assert result["error"] == "ASSISTANT_VIDEO_TIER_CHANGED"
+        assert (await counts(owner))[2] == 0
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_confirmed_tier_preserves_explicit_resolution_without_another_card(tiers):
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "默认空间用快速档480p做口播，Task AI来执行")
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", {"project_id": main.project_id, "title": "快速档",
+            "instructions": "咖啡口播", "source_message_ids": [human], "destination_confirmed": True,
+            "work_type": "spoken_video", "model": "test/model", "model_confirmed": True,
+            "video_tier": "fast", "video_tier_confirmed": True, "video_resolution": "480p"})
+        assert result["state"] == "accepted"
+        async with get_db_session() as db:
+            saved = await db.get(Session, result["execution_session_id"])
+            assert (saved.video_model, saved.video_resolution) == ("MiniMax-H3-Max-Turbo", "480p")
+    finally:
+        await lease.release(session_status="idle")
+
+
 @pytest.fixture(autouse=True)
 def quiet(monkeypatch):
     from core.config import get_config
@@ -101,7 +174,7 @@ async def voice_form():
 async def test_voice_answers_full_form_with_chosen_owned_picture_without_duplicate_confirmation():
     owner, _, workspace, main, request_id, heard, scope, item = await voice_form()
     image = await asset(owner, workspace, main)
-    args = {"request_id": request_id, "version": item["version"],
+    args = {"request_id": request_id, "version": item["version"], "conversation": item["session_title"],
             "answers": [["直接使用"], ["中文"]], "attachments": [[image], []]}
     assert (await run("task_question_answer", scope, json.dumps(args)))["status"] == "need_user_answer"
     heard.say("用刚才那张图片直接做，字幕用中文")
@@ -109,6 +182,7 @@ async def test_voice_answers_full_form_with_chosen_owned_picture_without_duplica
     assert (await run("task_question_answer", scope, json.dumps(partial)))["status"] == "invalid_arguments"
     result = await run("task_question_answer", scope, json.dumps(args))
     assert result["status"] == "decision_recorded" and result["execution_confirmed"] is False
+    assert result["conversation"] == item["session_title"] and result["session_id"] == item["session_id"]
     saved = await card(request_id)
     assert saved.answers == args["answers"]
     assert saved.continuation["answer_attachments"] == args["attachments"]
@@ -116,10 +190,27 @@ async def test_voice_answers_full_form_with_chosen_owned_picture_without_duplica
     assert (await run("task_question_answer", scope, json.dumps(args)))["status"] == "conflict"
 
 
+async def test_voice_rejects_another_tasks_card_even_when_version_and_answers_fit():
+    owner, _, workspace, main, old_id, heard, scope, old = await voice_form()
+    second = await conversation(owner, workspace, main, "口播交接复测", visibility="private")
+    new_id = await ask(second, owner, questions=[q.Question(question="完整讲稿可以吗？")])
+    fresh = next(row for row in await list_waiting(user_id=owner, workspace_id=workspace, main_id=main.id)
+                 if row["id"] == new_id)
+    scope.desk.show_question(fresh, "zh")
+    heard.say("口播交接复测的讲稿可以，保存后结束，不生成视频")
+    args = {"request_id": old_id, "version": old["version"], "conversation": fresh["session_title"],
+            "answers": [["直接使用"], ["无字幕"]]}
+    result = await run("task_question_answer", scope, json.dumps(args))
+    assert result["status"] == "target_mismatch" and not result["this_call_applied"]
+    assert (await card(old_id)).status == (await card(new_id)).status == "pending"
+    args.pop("conversation")
+    assert (await run("task_question_answer", scope, json.dumps(args)))["status"] == "invalid_arguments"
+
+
 async def test_voice_cannot_use_another_users_picture_or_a_stale_card(monkeypatch):
     owner, other, workspace, main, request_id, heard, scope, item = await voice_form()
     foreign = await asset(owner, workspace, main, user=other)
-    args = {"request_id": request_id, "version": item["version"],
+    args = {"request_id": request_id, "version": item["version"], "conversation": item["session_title"],
             "answers": [["直接使用"], ["中文"]], "attachments": [[foreign], []]}
     heard.say("就按这个做")
     assert (await run("task_question_answer", scope, json.dumps(args)))["status"] == "invalid_arguments"
@@ -158,7 +249,7 @@ async def test_flat_voice_attachments_bind_to_the_only_material_question(encoded
     image = await asset(owner, workspace, main)
     heard.say("直接使用图片，不要字幕")
     result = await run("task_question_answer", scope, json.dumps({
-        "request_id": request_id, "version": item["version"],
+        "request_id": request_id, "version": item["version"], "conversation": item["session_title"],
         "answers": [["直接使用"], ["无字幕"]], "attachments": json.dumps([image]) if encoded else [image]}))
     assert result["status"] == "decision_recorded"
     assert (await card(request_id)).continuation["answer_attachments"] == [[image], []]
@@ -166,7 +257,7 @@ async def test_flat_voice_attachments_bind_to_the_only_material_question(encoded
 
 async def test_invalid_attachment_object_is_not_a_successful_decision():
     result = await run("task_question_answer", None, json.dumps({
-        "request_id": "q1", "version": "v1", "answers": [["Use"]],
+        "request_id": "q1", "version": "v1", "conversation": "Task", "answers": [["Use"]],
         "attachments": [{"asset_id": "not-a-list-of-ids"}]}))
     assert result["status"] == "invalid_arguments" and result["this_call_applied"] is False
     assert result["operation_state"] == "not_applied" and result["execution_confirmed"] is False
@@ -183,7 +274,7 @@ async def test_flat_attachments_never_guess_between_multiple_material_questions(
     scope.desk.show_question(fresh, "zh")
     heard.say("直接使用图片，不要字幕")
     result = await run("task_question_answer", scope, json.dumps({
-        "request_id": request_id, "version": fresh["version"],
+        "request_id": request_id, "version": fresh["version"], "conversation": fresh["session_title"],
         "answers": [["直接使用"], ["无字幕"]], "attachments": [image]}))
     assert result["status"] == "invalid_arguments" and not result["this_call_applied"]
     assert (await card(request_id)).status == "pending"

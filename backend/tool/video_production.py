@@ -2052,6 +2052,11 @@ async def _execute_models(ctx: ToolContext) -> ToolResult:
     chosen = await _session_video_model_id(ctx)
     if chosen:
         lines.insert(1, f"person_selected_model={chosen}")
+    from assistant.model_choices import business_video_tiers
+    from api.metadata import _video_models
+    tiers = business_video_tiers(config, _video_models(config))
+    lines.append("business_video_tiers=" + json.dumps(tiers, ensure_ascii=False))
+    lines.append("Use business tier names in conversation; preserve exact models internally. Reference prices are not a full production quote.")
     return ToolResult(
         title="Video models",
         output="\n".join(lines),

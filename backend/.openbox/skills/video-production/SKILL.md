@@ -18,9 +18,34 @@ Bundled scripts run at `/opt/openbox/skills/video-production/scripts/`. Set `S=/
 
 Resolve this built-in skill's reference links under `/opt/openbox/skills/video-production/` in the sandbox. A backend-host label from the skill loader describes its instruction source; the documented sandbox paths are where the runtime copy belongs.
 
+## Secretary conversation (BossIP v14)
+
+Reuse the brief already confirmed in the assistant conversation. Before drafting, fill only missing
+business context: publishing destination, presenter (the user, a digital presenter, or no presenter),
+approximate duration and one factual selling point. Ask conversationally, one related decision at a
+time; do not force the user through a fixed questionnaire or invent their industry/offer. For Douyin
+local reach, normally suggest 9:16; select HD only within the accepted tier and quote. A non-talking
+showcase must not be forced into a talking-head script. A user who delegates length gets a reasoned
+suggestion, not a silent fixed duration.
+
+Use the live business tier label in user-facing guidance; exact model IDs stay in tool arguments and
+state unless the user asks. Never replace their explicit model choice. Explain material requirements
+from actual capabilities, using “第一张画面/结束画面” before technical terminology. Even a premium tier
+may reject a particular reference video. A library selection or upload is not permission to generate
+replacement pictures. Inspect pixels when explaining an image. Quick-tier pictures get reviewed
+before spending on video; already accepted pictures do not need another identical card.
+
+Explain editing by what it does: joining materials, readable captions and appropriate music. Respect
+no-caption/no-music choices. Do not promise professional precision, free voice changes, or one-minute
+turnarounds. Prefer the existing free simple-cut path when sufficient; quote paid composition before
+it runs. For revisions, keep unaffected assets and disclose any new image/video/voice cost. Delivery
+must include a playable result. Ask naturally about the pace and voice; offer publishing only after
+acceptance, under the person's separate publishing authorization. Account login, private-message
+monitoring, advertising and scheduled reports are separate scopes, not automatic side effects.
+
 ## Hard rules
 
-1. The core workflow has three required `question` tool calls: finished script, complete shots + price, and STT results — plus a fourth, 合成确认, whenever the cut goes through `video_compose` (it spends credits). Turbo also has a material-choice card when the choice is unresolved, and an image-confirmation card when frames need acceptance; these do not replace the core cards. A Markdown heading, table, or request for confirmation is not a card. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
+1. The core workflow has three required `question` tool calls: finished script, complete shots + price, and STT results — plus a fourth, 合成确认, whenever the cut goes through `video_compose` (it spends credits). Turbo also has a material-choice card when the choice is unresolved, and an image-confirmation card when frames need acceptance; these do not replace the core cards. A Markdown heading, table, or request for confirmation is not a card. Reuse already answered subtitle/material decisions; ask only unresolved fields and changed paid scope. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
 2. A plan, state hash, or successful estimate is not approval. Before the person chooses “可以” on the current complete shot card, make zero paid video submits. Separately requested image preparation may happen before that card; accepting images does not approve video spending. Script, segment, prompt, material, model, or resolution changes invalidate affected planning and cost confirmation.
 3. The person's selected model and resolution are creative premises. Read `person_selected_model` and plan within its limits. Never silently change the model or tier. If none is selected for a paid generation, ask one short question before submitting: the registry default or one alternative, each with estimated credits; skip it if they already chose or said 随便/你定. After a provider failure or a `暂不可用` model, never switch models without asking.
 4. Use supplied material first. Call `image_gen` only when the person explicitly asks for generated material, including choosing a generation option on the Turbo material card. With no assets and no such request, use one textual `全片一致的画面基底`, byte for byte in every prompt. Purpose-made, accepted images can be first/last frames; never automatically turn a generated video's still into a general character reference.
@@ -59,14 +84,14 @@ Use `creator_context(action="get_user_context")`; empty is normal. Propose at mo
 
 ### 2. Write and confirm the whole script — card 1
 
-Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied, draft 45–60s first; do not ask duration before showing a usable script. **Fit the length before the card, not after it**: run `$S/split_script.py` and `$S/plan_shots.py` on the draft (step 3's commands) and, if the honest total misses the target by more than max(2s, 15%), rewrite until it fits. Print the complete fitted script with its computed length (e.g. 约 15 秒), then invoke the `question` tool once with:
+Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied or delegated, first ask naturally whether a short introduction or a more detailed piece fits the purpose; use a reasonable stated suggestion if the person delegates. Do not silently lock it to 45–60 seconds. **Fit the length before the card, not after it**: run `$S/split_script.py` and `$S/plan_shots.py` on the draft (step 3's commands) and, if the honest total misses the target by more than max(2s, 15%), rewrite until it fits. Print the complete fitted script with its computed length (e.g. 约 15 秒). Also embed that complete script and length in the question text itself: a card saying only “讲稿是否符合要求” is not reviewable, and the voice front desk may not receive your earlier prose. Do not add a model/tier question when the server's confirmed_setup or person_selected_model already supplies the choice. Then invoke the `question` tool once with:
 
 - 时长：`可以` / `短到约 30 秒` / `长到 60–75 秒` / `需要修改`
 - 字幕：`配字幕（默认）` / `不配字幕`
 
 Keep the fitted lines, durations and rate for step 3. Once the plan is within the stated tolerance and has no unresolved duration warnings, proceed to the card; do not keep rewriting or changing the rate to make an approximate target land on an exact second. Honour an explicitly exact duration request separately.
 
-If duration was supplied, honour it and still ask the subtitle choice. Card 1 repeats only when the **person** asks for a change: after 「可以」 you never rewrite, shorten or lengthen the script on your own — a length problem found later is reported on the next card as a choice, not fixed silently (2026-09-09: a confirmed 15 s script was re-timed to 17 s in step 3, trimmed by the agent, and card 1 was shown twice). On the person's edits, print the full revision and repeat card 1. After confirmation:
+If duration was supplied, honour it. Ask the subtitle choice only if unresolved; an explicit subtitle/no-subtitle choice passed from the assistant is already a decision. Card 1 repeats only when the **person** asks for a change: after 「可以」 you never rewrite, shorten or lengthen the script on your own — a length problem found later is reported on the next card as a choice, not fixed silently (2026-09-09: a confirmed 15 s script was re-timed to 17 s in step 3, trimmed by the agent, and card 1 was shown twice). On the person's edits, print the full revision and repeat card 1. After confirmation:
 
 ```bash
 python3 "$S/state.py" set --slug <slug> --key script --value "<完整讲稿>"
@@ -119,7 +144,7 @@ Run `action="estimate"` for every exact request; each returns `estimated_credits
 - every complete line and every complete model prompt, character for character;
 - each shot's seconds and the honest total; call out mismatch with requested duration;
 - every image/video and the shots using it, or zero-material textual-base wording; for Turbo shots with images, label each shot's first/last frame and the shared boundaries using visible picture labels, not internal asset IDs;
-- `按你选的 <模型> <分辨率> 规划`, or the disclosed registry-default wording;
+- `按你选的 <业务档次> <分辨率> 规划`（内部保留确切模型，用户问起再解释）, or the disclosed registry-default wording;
 - shot count, total paid seconds, planned cost, and any proposed compatibility change with reason. If `estimate` validates parameters but returns no currency amount, say `预计费用暂不可得（estimate 未返回金额）` and stop; never substitute "已产生费用 0 元" for the planned quote. A separately documented dated rate may be shown only as a clearly labelled reference estimate.
 
 Copy every full line, full prompt, seconds, and material assignment into the user-visible response itself; tool-call details do not count as display. Then invoke card 2: `可以` / `修改拆段或 prompt` / `更换模型、分辨率或素材`. This combines shots and spend; no separate fee card. Until the person chooses “可以”, make zero paid submits. Record `python3 "$S/state.py" confirm --slug <slug> --kind shots --note "拆段、prompt、素材、模型、分辨率与费用已确认"`.

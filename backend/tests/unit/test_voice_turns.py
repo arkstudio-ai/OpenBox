@@ -347,7 +347,7 @@ async def test_direct_reads_are_bounded_and_never_raise(monkeypatch):
     assert await tools.run("slow", SCOPE, "{}") == {"status": "unavailable"}
     assert await tools.run("broken", SCOPE, "not json") == {"status": "invalid_arguments", "this_call_applied": False}
     names = [schema["function"]["name"] for schema in tools.schemas()]
-    assert names[:9] == ["assistant_ask", "task_question_answer", "resources_list", "models_available",
+    assert names[:10] == ["assistant_ask", "task_question_answer", "resources_list", "platforms_status", "models_available",
                          "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits"]
 
 

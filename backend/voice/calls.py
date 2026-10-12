@@ -87,6 +87,15 @@ async def previous_call(user_id: str, workspace_id: str) -> dict | None:
     return {"call_id": row.id, "ended_at": _aware(row.ended_at), "summary": row.summary or ""}
 
 
+async def first_call(user_id: str) -> bool:
+    """Once per person, across workspaces; failed handshakes don't count."""
+    async with get_db_session() as db:
+        previous = await db.scalar(select(VoiceCall.id).where(
+            VoiceCall.user_id == user_id, VoiceCall.ended_at.is_not(None),
+            VoiceCall.duration_seconds > 0).limit(1))
+    return previous is None
+
+
 async def latest_call_summary(user_id: str, workspace_id: str, within_hours: int = 24) -> dict | None:
     """The newest call summary of the last ``within_hours`` (for the greeting, and later the text assistant).
 

@@ -8,6 +8,10 @@ class AnswerArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=64)
     version: str = Field(min_length=1, max_length=64)
+    conversation: str = Field(min_length=1, max_length=512,
+        description="The exact conversation title of the task the user is answering, from cards_pending. "
+        "Resolve the user's intended task first, independently of the latest announced card. "
+        "A title/request mismatch is rejected; re-read cards_pending rather than copying another task's ID.")
     answers: list[list[str]] = Field(min_length=1, max_length=20,
         description="One list per displayed question, in question order. Preserve exact option labels; "
         "custom text only when that question permits it. Resolve the user's meaning in context, never assume defaults.")
@@ -54,6 +58,9 @@ async def answer(scope, arguments):
         shown = desk.questions.get(args.request_id)
         if not shown or not args.version or shown.get("version") != args.version:
             return {"status": "conflict", "this_call_applied": False, "next": "cards_pending"}
+        if args.conversation != shown.get("conversation"):
+            return {"status": "target_mismatch", "this_call_applied": False, "execution_confirmed": False,
+                    "next": "cards_pending", "note": "目标任务名称与卡片不一致，没有提交。重新查询用户正在回答的任务，不沿用最近播报的卡片。"}
         count, words = desk.heard()
         if scope.utterance_index is not None:
             count, words = scope.utterance_index, scope.transcript
@@ -69,6 +76,9 @@ async def answer(scope, arguments):
             from types import SimpleNamespace
             ctx = SimpleNamespace(user_id=scope.user_id, workspace_id=scope.workspace_id, session_id=scope.main_session_id)
             row, session = await _target(db, ctx, args.request_id)
+            if args.conversation != session.title:
+                return {"status": "target_mismatch", "this_call_applied": False,
+                        "execution_confirmed": False, "next": "cards_pending"}
             reason, _ = await answerable(db, row, session)
             if reason:
                 return {"status": "human_only", "this_call_applied": False, "link": current["link"]}
@@ -97,5 +107,6 @@ async def answer(scope, arguments):
         desk.questions.pop(args.request_id, None)
         desk._question_shown.pop(args.request_id, None)
         return {"status": "decision_recorded", "this_call_applied": True, "request_id": args.request_id,
+                "conversation": session.title, "session_id": session.id,
                 "link": current["link"], "execution_confirmed": False,
                 "note": "回答和所选素材已交回原任务；任务还需继续执行，不能说视频已生成。"}

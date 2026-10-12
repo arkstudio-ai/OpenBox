@@ -208,6 +208,12 @@ async def models_available(scope: CallScope, arguments: dict) -> dict:
     return await models(user_id=scope.user_id, workspace_id=scope.workspace_id, main_id=scope.main_session_id)
 
 
+async def platforms_status(scope: CallScope, arguments: dict) -> dict:
+    from assistant.status_tools import platforms, spoken_platforms
+    return spoken_platforms(await platforms(user_id=scope.user_id, workspace_id=scope.workspace_id,
+                                            main_id=scope.main_session_id))
+
+
 async def resources_list(scope: CallScope, arguments: dict) -> dict:
     from assistant.assets import list_assets
     value = await list_assets(user_id=scope.user_id, workspace_id=scope.workspace_id,
@@ -240,6 +246,7 @@ from voice.task_questions import AnswerArguments as TaskAnswerArguments, schema 
 DIRECT: dict[str, DirectTool] = {
     "task_question_answer": DirectTool(
         "用户已回答当前任务卡片时，按上下文理解并提交完整答案。可回答讲稿、字幕、素材、首尾帧、时长、费用和验收卡。"
+        "先确定用户针对的 conversation，再取该任务的 request_id/version，不能套用最近播报的另一任务。"
         "先解释用户疑问，不把疑问当同意；没有选完不能补选。不能代做人工验证。", task_question_answer,
         task_answer_schema(), timeout=8.0),
     "resources_list": DirectTool("按最新优先查看用户资源库的文件名称、类型和ID，可按任务会话和媒体类型筛选。"
@@ -249,8 +256,10 @@ DIRECT: dict[str, DirectTool] = {
                                            "session_id": {"type": "string", "maxLength": 64},
                                            "kind": {"type": "string", "enum": ["image", "video", "audio"]},
                                            "cursor": {"type": "string", "maxLength": 64}}}, timeout=4.0),
+    "platforms_status": DirectTool(
+        "查询当前工作空间授权中心的历史记录。当前登录状态未知，不能由无记录推断未连接，也不能由有记录保证已连接；要核验需执行任务查看实际页面。", platforms_status),
     "models_available": DirectTool(
-        "读取真实可选的任务AI模型和视频模型。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),
+        "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频优先讲档次，用户追问才讲具体型号。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),
     "tasks_overview": DirectTool(
         "查看用户关注的任务（名字、项目、状态、最新结果两句、有没有在等用户回复）和定时任务（名称、是否启用、下次运行）。"
         "问有哪些任务、做完没有时用它；做到哪一步、具体内容、原因要交给个人助理。",

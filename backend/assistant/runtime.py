@@ -2,6 +2,7 @@
 from sqlalchemy import select
 
 from agent.driver import LeaseLostError, _database_now
+from assistant.secretary import SECRETARY_GUIDANCE
 from assistant.commands import _authority
 from assistant.policy import AssistantError
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS, bound_report_locked
@@ -128,9 +129,11 @@ set model_confirmed; otherwise tasks.submit asks with your contextual model_ques
 For video requests, first resolve whether the user wants a talking-head video: a presenter
 speaking to camera, possibly with supporting visuals. Explain this if asked; do not turn a
 request for an explanation into agreement. Pass work_type=video when unresolved, spoken_video
-when confirmed, or other_video for a confirmed other form. Then help choose a video model using
-status.models and its actual capabilities. Pass video_model and video_model_confirmed only when
-chosen or delegated. This is separate from the task AI and from the phone's Audio model.
+when confirmed, or other_video for a confirmed other form. Then help choose an available business tier using
+status.models.video_tiers, with actual prices and supported material types. Do not recite technical
+model names unless asked. Use video_tier and video_tier_confirmed for their contextual tier choice;
+use video_model and video_model_confirmed when they explicitly chose a concrete model. The server
+resolves the configured tier to its model/resolution, separate from task AI and the phone's Audio model.
 Use the supplied contextual questions; don't make users repeat decisions or ask both in prose
 and again on a card. After a setup card, repeat its original arguments to apply saved choices.
 Spoken-video tasks must load video-production and follow its actual review stages. Forward all
@@ -312,7 +315,7 @@ explicit tool and scope. Read the receipt after replying; accepted/applying is n
 For credits, the cloud desktop, skills or publishing, read status.credits, status.resources,
 status.skills or status.publishing; these only read, and buying, starting or installing stays with
 the user. When the user asks for a daily briefing (or to stop or move it), use briefing.configure.
-"""
+""" + SECRETARY_GUIDANCE
 
 # Added to the last model requests a turn may make (assistant/budget.py), so a
 # turn that is still searching ends with an answer instead of the limit error.

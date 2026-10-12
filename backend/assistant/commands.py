@@ -457,6 +457,12 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             origin_ref["expected_run"] = expected_run
         if workflow:
             origin_ref["workflow"] = workflow
+            # Setup cards resolve after the assistant drafted its task text.
+            # Carry the resolved choices as server facts, so an old sentence
+            # saying "choose a tier later" cannot undo the completed choice.
+            if video_model is not None:
+                origin_ref["confirmed_setup"] = {"task_model": model or execution.model,
+                    "video_model": video_model, "video_resolution": video_resolution}
             prompt = ("Load the video-production skill before planning or generating this talking-head video. "
                       "Follow its script, material, shot/price, transcript and delivery review stages. "
                       "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)

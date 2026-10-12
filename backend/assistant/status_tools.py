@@ -23,6 +23,56 @@ async def models(*, user_id: str, workspace_id: str, main_id: str) -> dict:
     return catalogue()
 
 
+async def platforms(*, user_id: str, workspace_id: str, main_id: str) -> dict:
+    """Bounded authorization-centre snapshot; no cookie/token reads or probes."""
+    from db.models.platform_account import PlatformAccount
+    from platforms.desktop.sites import list_sites
+    from session.browser_pref import get_browser_mode
+    async with get_db_session() as db:
+        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        rows = (await db.execute(select(
+            PlatformAccount.platform, PlatformAccount.auth_kind, PlatformAccount.status,
+            PlatformAccount.nickname, PlatformAccount.last_probe_at, PlatformAccount.updated_at,
+        ).where(PlatformAccount.workspace_id == workspace_id, PlatformAccount.deleted_at.is_(None))
+          .order_by(PlatformAccount.updated_at.desc()).limit(100))).all()
+    sites = {site.key: {"name": site.display, "login_detection": not site.recon_pending}
+             for site in list_sites()}
+    sites.update({"douyin": {"name": "抖音开放平台授权", "login_detection": True},
+                  "wechat_channels": {"name": "视频号", "login_detection": False}})
+    mode = await get_browser_mode(user_id)
+    return {"status": "ok", "source": "authorization_center", "live_verified": False,
+            "connection_conclusion": "当前登录状态未核验，无法判断现在是否连接。",
+            "browser_mode": mode,
+            "platforms": [{"platform": key, **info, "current_connection": "unverified",
+                "record_state": "recorded" if any(row.platform == key for row in rows) else "not_recorded",
+                "meaning": "仅授权中心记录，当前是否登录未核验。未记录不能断言已退出或未连接。", "accounts": [
+                {"status": row.status, "auth_kind": row.auth_kind, "nickname": row.nickname,
+                 "checked_at": _iso(row.last_probe_at), "updated_at": _iso(row.updated_at),
+                 "applicable": mode != "remote" or row.auth_kind != "desktop_cookie"}
+                for row in rows if row.platform == key]} for key, info in sites.items()],
+            "note": "Stored records only. Empty means no recorded authorization, not verified logout. "
+                    "Desktop records do not describe the user's local Chrome. Verify in the execution task "
+                    "before publishing or advertising. Login grants no publishing, ad-spend or monitoring consent."}
+
+
+def spoken_platforms(value: dict) -> dict:
+    """Keep an incomplete read visibly incomplete for the realtime model.
+
+    Empty rows for every supported site look like negative login results. The
+    phone gets actual stored records plus the explicit unknown conclusion,
+    instead of an apparent checklist of disconnected accounts.
+    """
+    records = [{"platform": platform["platform"], "name": platform["name"], **account}
+               for platform in value["platforms"] for account in platform["accounts"]]
+    return {"status": "login_not_verified", "lookup_completed": True,
+            "source": value["source"], "live_verified": False,
+            "current_login_state": "unknown", "connection_conclusion": value["connection_conclusion"],
+            **({"historical_records": records} if records else {}),
+            "record_finding": "本次只读取历史授权信息，没有检查平台当前页面，因此没有连上或未连上的实时结论。",
+            "browser_mode": value["browser_mode"],
+            "note": "需要实际状态时，应由执行任务查看对应平台页面；用户暂不接入就停在查询，不发起登录或发布。"}
+
+
 def _iso(value):
     if value is None:
         return None

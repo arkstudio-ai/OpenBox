@@ -213,17 +213,18 @@ final routerProvider = Provider<GoRouter>((ref) {
 /// The composition layer's job (§分层): the resources feature owns the data,
 /// the chat composer owns the menu that shows it, and they meet here — the
 /// same hand-off the web does in `routes/workspace/*`.
-ComposerResourceSlot _resourceSlot(WidgetRef ref) => ComposerResourceSlot(
-  mentionSection:
-      (context, {required query, required projectId, required onPick}) =>
-          ResourceMentionSection(
-            query: query,
-            projectId: projectId,
-            onPick: onPick,
-          ),
-  pickAndUpload: (context, {required projectId}) =>
-      pickAndUploadResources(context, ref, projectId: projectId),
-);
+ComposerResourceSlot composerResourceSlot(WidgetRef ref) =>
+    ComposerResourceSlot(
+      mentionSection:
+          (context, {required query, required projectId, required onPick}) =>
+              ResourceMentionSection(
+                query: query,
+                projectId: projectId,
+                onPick: onPick,
+              ),
+      pickAndUpload: (context, {required projectId}) =>
+          pickAndUploadResources(context, ref, projectId: projectId),
+    );
 
 class _ChatRoute extends ConsumerWidget {
   const _ChatRoute({required this.sessionId});
@@ -234,7 +235,7 @@ class _ChatRoute extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => AssistantSessionEntry(
     sessionId: sessionId,
     builder: (_) =>
-        ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref)),
+        ChatScreen(sessionId: sessionId, resources: composerResourceSlot(ref)),
   );
 }
 
@@ -263,7 +264,7 @@ class _AssistantRoute extends ConsumerWidget {
               taskId: taskId,
               resultId: resultId,
               intro: intro,
-              resources: _resourceSlot(ref),
+              resources: composerResourceSlot(ref),
             ),
     );
   }
@@ -283,7 +284,7 @@ class _EmptyChatRoute extends ConsumerWidget {
       child: EmptyChatScreen(
         projectId: projectId,
         projectName: project?.name,
-        resources: _resourceSlot(ref),
+        resources: composerResourceSlot(ref),
       ),
     );
   }

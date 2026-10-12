@@ -17,6 +17,8 @@ class QuestionDraft {
     required this.picked,
     required this.custom,
     required this.useCustom,
+    this.attachments = const [],
+    this.transferring = false,
     this.revision = 0,
     this.dirty = false,
     this.saving = false,
@@ -41,12 +43,15 @@ class QuestionDraft {
       (i) => i < answers.length ? answers[i] : const QuestionDraftAnswer(),
     );
     final firstEmpty = rows.indexWhere(
-      (row) => row.useCustom ? row.custom.trim().isEmpty : row.selected.isEmpty,
+      (row) =>
+          row.attachments.isEmpty &&
+          (row.useCustom ? row.custom.trim().isEmpty : row.selected.isEmpty),
     );
     return QuestionDraft(
       picked: rows.map((r) => r.selected.toSet()).toList(),
       custom: rows.map((r) => r.custom).toList(),
       useCustom: rows.map((r) => r.useCustom).toList(),
+      attachments: rows.map((r) => r.attachments).toList(),
       revision: revision,
       page: firstEmpty >= 0 ? firstEmpty : (count > 0 ? count - 1 : 0),
     );
@@ -55,6 +60,14 @@ class QuestionDraft {
   final List<Set<String>> picked;
   final List<String> custom;
   final List<bool> useCustom;
+  final List<List<String>> attachments;
+  final bool transferring;
+  List<List<String>> get attachmentIds => List.generate(
+    picked.length,
+    (i) => i < attachments.length ? attachments[i] : <String>[],
+  );
+  bool answered(int index) =>
+      answers[index].isNotEmpty || attachmentIds[index].isNotEmpty;
   final int revision;
   final bool dirty;
   final bool saving;
@@ -71,13 +84,15 @@ class QuestionDraft {
         : picked[i].toList(),
   );
   bool get complete =>
-      answers.isNotEmpty && answers.every((row) => row.isNotEmpty);
+      answers.isNotEmpty &&
+      List.generate(picked.length, answered).every((value) => value);
   List<QuestionDraftAnswer> get wire => List.generate(
     picked.length,
     (i) => QuestionDraftAnswer(
       selected: picked[i].toList(),
       custom: custom[i],
       useCustom: useCustom[i],
+      attachments: attachmentIds[i],
     ),
   );
   String get payload => jsonEncode(wire.map((item) => item.toJson()).toList());
@@ -86,6 +101,8 @@ class QuestionDraft {
     List<Set<String>>? picked,
     List<String>? custom,
     List<bool>? useCustom,
+    List<List<String>>? attachments,
+    bool? transferring,
     int? revision,
     bool? dirty,
     bool? saving,
@@ -97,6 +114,8 @@ class QuestionDraft {
     picked: picked ?? this.picked,
     custom: custom ?? this.custom,
     useCustom: useCustom ?? this.useCustom,
+    attachments: attachments ?? this.attachments,
+    transferring: transferring ?? this.transferring,
     revision: revision ?? this.revision,
     dirty: dirty ?? this.dirty,
     saving: saving ?? this.saving,
@@ -252,6 +271,21 @@ class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
       _schedule(id);
     }
   }
+
+  void setAttachments(String id, int count, int index, List<String> ids) {
+    final draft = of(id, count);
+    final rows = [...draft.attachmentIds]..[index] = ids.toSet().toList();
+    if (rows.fold<int>(0, (total, row) => total + row.length) > 32) return;
+    _edit(id, draft.copy(attachments: rows));
+  }
+
+  void setTransferring(String id, int count, bool value) {
+    if (!value && !state.containsKey(id)) return;
+    final draft = of(id, count);
+    state = {...state, id: draft.copy(transferring: value)};
+  }
+
+  bool contains(String id) => state.containsKey(id);
 
   void _schedule(String id) {
     _timers.remove(id)?.cancel();

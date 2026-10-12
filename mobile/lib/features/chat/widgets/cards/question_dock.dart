@@ -17,6 +17,7 @@ import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
 import 'desktop_takeover_detail.dart';
 import 'video_approval_detail.dart';
+import 'question_resources.dart';
 
 /// Blocking question prompt at the end of the transcript (web `QuestionDock`):
 /// answers post as one label-array per question, in order.
@@ -63,11 +64,14 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
   }
 
   Future<void> _submit(QuestionDraft draft) async {
-    if (!draft.complete || draft.submitting) return;
-    await _resolve(draft.answers);
+    if (!draft.complete || draft.submitting || draft.transferring) return;
+    await _resolve(draft.answers, attachments: draft.attachmentIds);
   }
 
-  Future<void> _resolve(List<List<String>>? answers) async {
+  Future<void> _resolve(
+    List<List<String>>? answers, {
+    List<List<String>>? attachments,
+  }) async {
     final request = widget.request;
     final auth = ref.read(authSessionProvider);
     final workspace = ref.read(workspaceScopeProvider);
@@ -76,7 +80,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     bool current() =>
         auth.userId == userId && workspace.currentId == workspaceId;
     final drafts = ref.read(questionDraftProvider.notifier);
-    if (drafts.of(request.id, _count).submitting) return;
+    if (drafts.of(request.id, _count).submitting ||
+        drafts.of(request.id, _count).transferring)
+      return;
     drafts.setSubmitting(request.id, true);
     setState(() => _submitError = null);
     // Read before awaiting: a transcript row arriving mid-request destroys
@@ -97,7 +103,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
           kind: 'question',
           id: request.id,
           binding: request.assistant!,
-          answer: {'answers': ?answers},
+          answer: {'answers': ?answers, 'attachments': ?attachments},
           reject: answers == null,
         );
         if (!current()) return;
@@ -105,7 +111,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
       } else if (answers == null) {
         await api.rejectQuestion(request.id);
       } else {
-        await api.replyQuestion(request.id, answers);
+        await api.replyQuestion(request.id, answers, attachments: attachments);
       }
       if (!current()) return;
       // Do not wait for the WS `question.replied` event to take the card
@@ -150,7 +156,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     final draft = ref
         .read(questionDraftProvider.notifier)
         .of(widget.request.id, _count);
-    if (draft.answers[page].isNotEmpty && page < _count - 1) _goTo(page + 1);
+    if (draft.answered(page) && page < _count - 1) _goTo(page + 1);
   }
 
   @override
@@ -164,7 +170,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     if (_count == 0) return const SizedBox.shrink();
     final page = draft.page.clamp(0, _count - 1);
     final isLastPage = page == _count - 1;
-    final canContinue = isLastPage ? complete : draft.answers[page].isNotEmpty;
+    final canContinue = isLastPage ? complete : draft.answered(page);
     ref.listen(
       questionDraftProvider.select((drafts) => drafts[widget.request.id]),
       (_, next) {
@@ -284,7 +290,8 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               FilledButton(
-                onPressed: canContinue && !draft.submitting
+                onPressed:
+                    canContinue && !(draft.submitting || draft.transferring)
                     ? () async {
                         if (isLastPage) {
                           await _submit(draft);
@@ -308,7 +315,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 ),
                 child: Text(
                   i18n.t(
-                    draft.submitting
+                    (draft.submitting || draft.transferring)
                         ? 'chat:question.submitting'
                         : isLastPage
                         ? 'chat:question.submit'
@@ -318,7 +325,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 ),
               ),
               TextButton(
-                onPressed: draft.submitting ? null : _reject,
+                onPressed: (draft.submitting || draft.transferring)
+                    ? null
+                    : _reject,
                 child: Text(
                   i18n.t(
                     _count > 1 ? 'chat:question.skipAll' : 'chat:question.skip',
@@ -332,9 +341,10 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                     'chat:question.progress',
                     vars: {
                       'count': _count,
-                      'answered': draft.answers
-                          .where((a) => a.isNotEmpty)
-                          .length,
+                      'answered': List.generate(
+                        _count,
+                        draft.answered,
+                      ).where((answered) => answered).length,
                     },
                   ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
@@ -361,7 +371,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               style: TextStyle(color: t.n700, fontSize: FontSizes.xs),
             ),
             TextButton(
-              onPressed: draft.submitting
+              onPressed: (draft.submitting || draft.transferring)
                   ? null
                   : () => ref
                         .read(questionDraftProvider.notifier)
@@ -417,9 +427,28 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             children: [
               for (final option in question.options)
                 ChoiceChip(
-                  label: Text(
-                    option.label,
-                    style: const TextStyle(fontSize: FontSizes.sm),
+                  label: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(context).width - 100,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          option.label,
+                          style: const TextStyle(fontSize: FontSizes.sm),
+                        ),
+                        if (option.description?.trim().isNotEmpty ?? false)
+                          Text(
+                            option.description!,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n600,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                   selected: selected.contains(option.label),
                   showCheckmark: false,
@@ -429,7 +458,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                     color: selected.contains(option.label) ? t.a700 : t.hair,
                   ),
                   labelStyle: TextStyle(color: t.ink),
-                  onSelected: draft.submitting
+                  onSelected: (draft.submitting || draft.transferring)
                       ? null
                       : (on) {
                           ref
@@ -442,7 +471,10 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                                 multiple: question.multiple,
                                 on: on,
                               );
-                          if (on && !question.multiple) _completePage(index);
+                          if (on &&
+                              !question.multiple &&
+                              !question.allowAttachments)
+                            _completePage(index);
                         },
                 ),
             ],
@@ -451,7 +483,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             const SizedBox(height: 6),
             TextField(
               controller: _custom[index],
-              enabled: !draft.submitting,
+              enabled: !(draft.submitting || draft.transferring),
               maxLength: 5000,
               textInputAction: index < _count - 1
                   ? TextInputAction.next
@@ -484,6 +516,8 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
             ),
           ],
+          if (question.allowAttachments)
+            QuestionResources(request: widget.request, index: index),
           if (index < _count - 1 &&
               (question.multiple || draft.useCustom[index]))
             Padding(

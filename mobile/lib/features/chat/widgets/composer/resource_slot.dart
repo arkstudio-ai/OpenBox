@@ -22,12 +22,31 @@ class ComposerResourceSlot {
     required String query,
     required String? projectId,
     required ValueChanged<Resource> onPick,
-  }) mentionSection;
+  })
+  mentionSection;
 
   /// Picks files off the device, uploads them into [projectId], and returns
   /// what landed. Empty when the person cancelled or every upload failed.
   final Future<List<Resource>> Function(
     BuildContext context, {
     required String? projectId,
-  }) pickAndUpload;
+  })
+  pickAndUpload;
+}
+
+/// App-level composition also reaches modal question cards and task sheets.
+class ComposerResources extends InheritedWidget {
+  const ComposerResources({
+    super.key,
+    required this.slot,
+    required super.child,
+  });
+  final ComposerResourceSlot slot;
+
+  static ComposerResourceSlot? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ComposerResources>()?.slot;
+
+  @override
+  bool updateShouldNotify(ComposerResources oldWidget) =>
+      oldWidget.slot != slot;
 }

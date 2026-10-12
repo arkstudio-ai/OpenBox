@@ -228,11 +228,12 @@ class ChatApi {
   /// One label-array per question, in order (nested array shape).
   Future<void> replyQuestion(
     String requestId,
-    List<List<String>> answers,
-  ) async {
+    List<List<String>> answers, {
+    List<List<String>>? attachments,
+  }) async {
     await _dio.post<dynamic>(
       '/api/agent/question/$requestId',
-      data: {'answers': answers},
+      data: {'answers': answers, 'attachments': ?attachments},
     );
   }
 

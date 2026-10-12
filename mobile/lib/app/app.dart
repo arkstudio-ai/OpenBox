@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/voice/widgets/voice_call_host.dart';
+import '../features/chat/widgets/composer/resource_slot.dart';
 import '../shared/appearance/appearance_store.dart';
 import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
@@ -54,18 +55,21 @@ class BossipApp extends ConsumerWidget {
           ),
           // Tap on any empty area dismisses the keyboard — interactive
           // widgets win the gesture arena, so buttons/fields are unaffected.
-          child: NotificationHost(
-            child: WorkspaceBootstrap(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () {
-                  final focus = FocusManager.instance.primaryFocus;
-                  if (focus != null && focus.context != null) focus.unfocus();
-                },
-                // The call bar pushes every screen — and the toasts — down.
-                child: VoiceCallHost(
-                  onOpen: () => unawaited(router.push(Paths.voice)),
-                  child: Stack(children: [?child, const ToastHost()]),
+          child: ComposerResources(
+            slot: composerResourceSlot(ref),
+            child: NotificationHost(
+              child: WorkspaceBootstrap(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () {
+                    final focus = FocusManager.instance.primaryFocus;
+                    if (focus != null && focus.context != null) focus.unfocus();
+                  },
+                  // The call bar pushes every screen — and the toasts — down.
+                  child: VoiceCallHost(
+                    onOpen: () => unawaited(router.push(Paths.voice)),
+                    child: Stack(children: [?child, const ToastHost()]),
+                  ),
                 ),
               ),
             ),

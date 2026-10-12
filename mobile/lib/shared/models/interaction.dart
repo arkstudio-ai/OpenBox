@@ -63,6 +63,7 @@ class QuestionItem {
     this.options = const [],
     this.multiple = false,
     this.custom = true,
+    this.allowAttachments = false,
     this.detail,
   });
 
@@ -76,6 +77,7 @@ class QuestionItem {
     // Absent means allowed — only an explicit false closes the text box
     // (web `item.custom !== false`; the backend's own default is true).
     custom: asBool(json['custom']) ?? true,
+    allowAttachments: asBool(json['allow_attachments']) ?? false,
     detail: json['detail'] is Map<String, dynamic>
         ? json['detail'] as Map<String, dynamic>
         : null,
@@ -86,6 +88,7 @@ class QuestionItem {
   final List<QuestionOption> options;
   final bool multiple;
   final bool custom;
+  final bool allowAttachments;
 
   /// Structured context rendered by first-party confirmation cards
   /// (video script/segment approvals).
@@ -147,6 +150,7 @@ class QuestionDraftAnswer {
     this.selected = const [],
     this.custom = '',
     this.useCustom = false,
+    this.attachments = const [],
   });
 
   factory QuestionDraftAnswer.fromJson(Map<String, dynamic> json) =>
@@ -154,15 +158,18 @@ class QuestionDraftAnswer {
         selected: asList(json['selected']).whereType<String>().toList(),
         custom: asString(json['custom']) ?? '',
         useCustom: asBool(json['use_custom']) ?? false,
+        attachments: asList(json['attachments']).whereType<String>().toList(),
       );
 
   final List<String> selected;
   final String custom;
   final bool useCustom;
+  final List<String> attachments;
 
   Map<String, dynamic> toJson() => {
     'selected': selected,
     'custom': custom,
     'use_custom': useCustom,
+    'attachments': attachments,
   };
 }

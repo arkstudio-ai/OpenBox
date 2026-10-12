@@ -29,6 +29,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
+## 当前 AWS（dev，ai.ueejavelin.org）：2026-10-12 19:40 backend/worker `20261012-trajlite-m3b-72ea6099` / frontend `20261012-trajlite-m3-7511158c`（从 9 月 15 日追平到 gw2）
+
+- 起点 `20260915-main-73a311b`（业务 `c7e9b1d3f5a7`，四容器，无 trace 库 / worker），用与 gw2 完全相同的两个镜像（压缩包经 `oss://bossip/_deploy-tmp/aws-20261012/` 公网签名链接到 EC2 `i-0eaae88c8b67d9bb5`，`sha256sum -c` 后 `docker load`，中转对象已删）。`deploy/gw2`（overlay 与脚本）同样经 OSS 解到 `/opt/openbox/deploy/gw2/`。
+- 一次性改动（脚本 `releases/aws-20261012/deploy_aws_v1.sh`，备份 `backups/aws-20261012/activation-20261012T113931Z/`，含配置、compose、override、`.env` 与业务库 dump 64 表）：`.env` 加 `OPENBOX_TRACE_DB_PASSWORD`（随机）与 `COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml`；`config/backend.env` 加 `INTERNAL_API_TOKEN`（随机）、`TRAJECTORY_RECORDING_ENABLED=true`、`TRAJECTORY_ADMIN_ENABLED=true`、两个 `*_USER_IDS` 留空、`PUBLIC_BASE_URL=https://ai.ueejavelin.org`；override 重写为三行镜像钉住，**worker 用 `TRAJECTORY_BLOB_PROVIDER=local` 落到卷 `trajectory-blobs`**（dev 没有自己的 OSS 桶）；`scripts/create-trace-db.sh` 建 `openbox_trace` 库/角色（`pg_stat_statements` 需 postgres 带 overlay 重建后再跑，未做）。`openbox.json` 未动：没有 `model_tiers`（Composer 显示完整模型列表）、没有 `memory`/`voice` 段（长期记忆与语音关闭）、video 模型表仍是 9 月的 `ark` 通道版本。
+- 切换：租约 0 → worker 21 s healthy（trace 库从空跑到 `t0007_turn_alerts`）→ backend 24 s healthy（业务 53 条迁移 `c7e9b1d3f5a7 → pf39b0c1d2e3`，users/sessions/messages 10/48/2083 前后一致）→ frontend 15 s。11:39:37–11:40:34 UTC。
+- 验证（本机回环 `127.0.0.1:18081`）：`/`、`/api/environment`、`/app/admin/trajectories` 200，`/api/admin/trajectories/users|lite/labels` 匿名 401，worker `/health` writer/db/spool/blob_store 全 true，`index.html` app-build 为新 tag；切换后 backend / worker 无 ERROR/Traceback。公网 `https://ai.ueejavelin.org` 由本机 caddy 加了基础认证，未登录一律 401，公网探测需带凭据。内存：切换后可用 2.1 GB。
+- 已知差异：WUYING 隧道 `openbox-wuying-tunnel` 在 EC2 上是 inactive（发布前就如此），backend 启动日志有 `WUYING sandbox unreachable`；没有 qdrant-memory 容器。简明模式三页可用，但 dev 库此前无录制，轮汇总从本次发布后开始积累，无需回填。
+- 回滚：恢复 `backups/aws-20261012/activation-*/` 的 `.env`、`docker-compose.override.yml`、`config/backend.env`，`docker compose up -d --no-deps backend frontend`，`docker compose rm -sf trajectory-worker`；业务库 53 条迁移不可逆，只能用同目录 `business.dump` 恢复（会丢发布后的写入）。
+
 ## 当前阿里云：2026-10-12 18:23 backend/worker `20261012-trajlite-m3b-72ea6099` / frontend `20261012-trajlite-m3-7511158c`（简明模式 M3：积分、失败告警、结论口径）
 
 - 源码：M3 为 PR [#79](https://github.com/arkstudio-ai/OpenBox/pull/79)（后端）与 [#78](https://github.com/arkstudio-ai/OpenBox/pull/78)（前端），合并后 `main@7511158c`；随后热修 [#80](https://github.com/arkstudio-ai/OpenBox/pull/80)（声明 `turn_alerts_sent` 计数器、无工具名的旧记录文案）`main@72ea6099` 只换了 backend/worker。设计 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §14。
@@ -324,7 +333,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - **云监控配额待处理**：首轮 58 项指标的 3 次 RPC 均返回成功，但后续分钟任务报 `206: reach max time series num`。CLI 回读确认该账号只有 10 个已注册时间序列（含既有 `openbox_preflight`），未实现 58 项全覆盖。metrics timer 当前保留失败状态和重试，worker 本地 `/health`、`/metrics` 正常；不能把首次 200 当作云端完整验收。原因对应 [阿里云配额说明](https://help.aliyun.com/zh/document_detail/151210.html)。未开通付费产品、删除既有指标或扩大告警发送范围；需确定配额/监控产品方案后再完成云端验收。暂未启用自动镜像清理，也未改变现有 OSS 生命周期或告警联系人。
 - 回滚须遵循 [gw2 runbook](../deploy/gw2/RUNBOOK.md#6-rollback)：旧镜像不认识新业务 revision，不能直接切回；先用新镜像降级到 `c7e9b1d3f5a7`，再恢复旧配置和镜像。降级仅重建空旧 trace 表；需要旧 trace 数据时使用上述完整备份，不能用发布后的日常业务备份恢复旧记录。恢复整个业务库前必须处理发布后的新增消息。
 
-## 当前 AWS / 历史阿里云发布：2026-09-15 15:28 `20260915-main-73a311b`（backend + frontend，归零发布，M5 消息中心上线）
+## 历史 AWS / 历史阿里云发布：2026-09-15 15:28 `20260915-main-73a311b`（backend + frontend，归零发布，M5 消息中心上线）
 
 - 源码 `main@73a311b` 全量构建，两边同一 tag，**gw2 与 AWS 自此回到可追溯的 main sha**，此前 gw2 的三层叠加热修镜像（714a30b / 6f90252 / 6aee878+68bb0fa）全部已在 main 内。
   本次随 main 一起上线：PR [#36](https://github.com/arkstudio-ai/OpenBox/pull/36)（Seedance 选择器精简 + Fast 计费 + autopilot 高档改 `video-sd-1080p-pro`）、

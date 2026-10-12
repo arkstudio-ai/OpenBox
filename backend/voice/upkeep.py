@@ -6,8 +6,7 @@ turns, or when a reply's input passes 60k tokens, the small model folds the
 call so far into a short memo the session prompt carries; then the early
 items (and notes delivered three replies ago) are deleted, oldest first.
 After 25 minutes or 120k tokens the bridge opens a fresh provider session
-with the memo; the client never notices (``max_call_seconds`` stays the
-user-facing limit).
+with the memo; the client connection and elapsed call clock continue.
 
 Measured 2026-10-10: the provider closes a session that has gone without a
 model response for 180 s (Audio 3.1) or 300 s (Omni), close 1007

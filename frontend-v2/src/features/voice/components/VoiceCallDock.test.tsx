@@ -109,10 +109,11 @@ describe("VoiceCallDock", () => {
     expect(screen.getByRole("status").textContent).toBe("state.late")
   })
 
-  it("says how many minutes are left near the end", async () => {
-    connected({ maxSeconds: 200 })
+  it("keeps the elapsed clock without a countdown even for a legacy duration cap", async () => {
+    connected({ maxSeconds: 1800, startedAt: Date.now() - 3600_000 })
     render(<VoiceCallDock />)
-    expect(await screen.findByText('duration.remaining:{"minutes":3}')).toBeTruthy()
+    expect(await screen.findByText("60:00")).toBeTruthy()
+    expect(screen.queryByText(/duration\.remaining/)).toBeNull()
   })
 
   it("collapses to the pill and expands back; the pill keeps its own hang-up", () => {

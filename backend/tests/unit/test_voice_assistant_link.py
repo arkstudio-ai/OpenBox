@@ -35,6 +35,14 @@ async def setup(turn_timeout=30, **choice):
     return owner, main, link
 
 
+def test_voice_wait_covers_the_assistant_budget_and_respects_longer_configuration(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr("core.config.get_config", lambda: SimpleNamespace(
+        assistant=SimpleNamespace(ordinary=SimpleNamespace(wall_time_seconds=180))))
+    assert assistant_link.observation_timeout(120) == 210
+    assert assistant_link.observation_timeout(300) == 300
+
+
 def new_ref(text="帮我看看贪吃蛇进展"):
     return VoiceTurnRef(id=generate_id(), provider_call_id=f"call-{generate_id()}", text=text, transcript=text,
                         requested=asyncio.get_running_loop().time())

@@ -9,8 +9,6 @@ LANGS = ("zh", "en")
 PHRASES = {
     "result_in_text": {"zh": "语音结果没能播报，请到对话里查看处理情况。",
                        "en": "I couldn't deliver the voice update. Please check the conversation for its status."},
-    "limit_reached": {"zh": "这通电话到时间了，我们文字里继续。",
-                      "en": "This call has reached its time limit. Let's continue in text."},
     "credits_exhausted": {"zh": "积分用完了，这通电话先到这里，充值后可以接着打。",
                           "en": "You're out of credits, so I'll end the call here. Top up to call again."},
     "reconnected": {"zh": "刚才线路断了一下，您再说一遍？",

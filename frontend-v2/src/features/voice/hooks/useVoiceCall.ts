@@ -20,7 +20,6 @@ export function useVoiceCall() {
       late: state.call.late,
       startedAt: state.call.startedAt,
       stoppedAt: state.call.stoppedAt,
-      maxSeconds: state.call.maxSeconds,
       cost: state.call.cost,
       ended: state.call.ended,
       expanded: state.expanded,

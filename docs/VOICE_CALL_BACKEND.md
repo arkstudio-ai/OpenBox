@@ -47,10 +47,9 @@ class VoiceConfig(BaseModel):
     proxy: Literal["env", "none"] = "env"   # env：按 HTTPS_PROXY 等环境变量走代理，失败再直连
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
-    max_call_seconds: int = Field(default=1800, ge=60, le=7200)
     # （2026-10-08 起删除 daily_seconds：通话走积分，见 §18）
     late_after_seconds: int = Field(default=20, ge=5)
-    turn_timeout_seconds: int = Field(default=120, ge=30)
+    turn_timeout_seconds: int = Field(default=120, ge=30)  # 实际等待至少为助手单轮预算 + 30 秒（默认 210 秒）
     connect_timeout_seconds: int = Field(default=5, ge=2, le=30)
     connect_attempts: int = Field(default=3, ge=1, le=5)
     debug_transcripts: bool = False   # 仅 QA：把每轮转写写进日志
@@ -122,7 +121,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 2. `config.voice.enabled` 且密钥非空 → 否则 4503。
 3. `assistant.service.get_main_session(user_id, workspace_id)` → 空则 4404。
 4. 并发锁：`cache.incr(f"voice:lock:{user_id}", ttl=60) == 1` 才继续，否则 4009；通话中每 20 秒 `cache.set(key, "1", ttl=60)` 续期；结束时 `delete`。
-5. 积分（2026-10-08 起取代当日配额）：`billing.media.voice_credit_room(workspace_id)`，enforce 下余额 ≤ 0 → 4029，否则返回可花的积分；`max_seconds = config.max_call_seconds`。
+5. 积分（2026-10-08 起取代当日配额）：`billing.media.voice_credit_room(workspace_id)`，enforce 下余额 ≤ 0 → 4029，否则返回可花的积分；`ready.max_seconds = null`，无单次时长上限；旧的 `max_call_seconds` / `VOICE_MAX_CALL_SECONDS` 配置忽略。
 6. 建 `VoiceCall(status=active)`；连接百炼（`provider.connect()`，含重试）；失败 → `error{provider_unavailable}` + 1011，`VoiceCall.status=failed`。
 7. `websocket.accept()` 在第 1 步之后立即做（否则无法发自定义关闭码的原因），但 `ready` 只在第 6 步成功后发。
 8. 发 `ready`；启动固定短语 `greeting`。
@@ -267,7 +266,7 @@ PHRASES = {
     "greeting":       {"zh": "嗨，我在，你说。", "en": "Hi, I'm here. Go ahead."},
     "still_working":  {"zh": "还在办，好了我马上告诉你。", "en": "Still on it. I'll tell you as soon as it's done."},
     "result_in_text": {"zh": "办好了，结果我写在对话里了。", "en": "Done. I've put the result in the conversation."},
-    "limit_reached":  {"zh": "这通电话到时间了，我们文字里继续。", "en": "This call has reached its time limit. Let's continue in text."},
+    "credits_exhausted": {"zh": "积分用完了，这通电话先到这里，充值后可以接着打。", "en": "You're out of credits, so I'll end the call here. Top up to call again."},
 }
 
 def phrase_instructions(key, lang) -> str:
@@ -559,7 +558,7 @@ QA 实测（用户 14:07–14:25 的三通电话）：问“它进行到哪一�
 | 问题 | 做法 |
 | --- | --- |
 | 静默超时 | **何时发**：`voice/upkeep.py` 记最后一次 `response.done` 的时间（任何状态都算，取消的也算），新会话从开始时算起。Audio 120 秒、Omni 240 秒没有回复，就在每秒一次的 `fill_idle` 里发一条纯文本保活：`response.create{modalities:["text"], instructions:"这是系统保活，不要说话，只输出一个字：嗯"}`。可用 `voice.keepalive_seconds`（`VOICE_KEEPALIVE_SECONDS`）覆盖，限 30–150 秒，比两种模型的上限都低至少 30 秒。<br>**不发的时候**：用户在说话、有回复在进行或已请求、说完后的 3 秒宽限没过、正在换会话、挂断中、到时告别中。后台任务还在办不算，进度句说满 3 次后照样保活。<br>**发完**：等 `response.done`，再按 `response.output_item.added` 记下的输出项逐个 `conversation.item.delete`。<br>**对用户不可见**：不发音频、`phase`、`cost` 事件；不进转写、摘要、`spoken`，也不计入备注保留的回复数；不当作模型回复，不触发承诺检查、核对、追问和跟进，不清 `followup_due`。用量照常计入 meter，下一条 `cost` 和结算都包含它。<br>**被拒**：因为有回复在进行被拒就跳过，10 秒后再试。<br>**Audio 空会话**：会话里还没有用户消息（例如新会话）时，先发适配层的一次性提示项，回复仍只要文本；Audio 回 `no_input` 后，这个会话的保活都带提示项。<br>实测两种模型都保持到 400 秒，没有报错。 |
-| 断线续上 | **触发**：`api/voice.py` 的 provider 泵发现当前会话的事件流意外结束时调用 `Bridge.recover`；收到 `response_idle_timeout` 这类会话已关闭的错误时，先主动关掉旧连接，再走同一流程。<br>**条件**：通话已接听、没在挂断、没到时长或积分上限、没有鉴权或欠费类错误（`denied`）、本通恢复不到 3 次。<br>**重开**：借用轮换的换会话流程（`_swap_in`），带上摘要、最后几句和进度，但不等备忘、不等安静时刻；每次断开最多试 2 次，间隔约 1 秒，共 20 秒内。轮换进行中就先取消轮换。客户端 WebSocket 一直不断。<br>**麦克风**：`feed_audio` 不再抛错。没有会话在听时保留最近 2 秒音频，新会话就绪后补发；断开时用户正说到一半就丢弃，因为前半句随旧会话没了。<br>**说什么**：用户被打断（正在说、刚说完在等回答、正在听回复、直接查询的回答还没来）就说一句 `reconnected`：“刚才线路断了一下，您再说一遍？”；我们自己还没出声的回复不算打断，否则不出声。<br>**收尾**：进行中的回复记为 incomplete，只算一次，按已收到的音频估算；没人听到的结果重新排队，在新会话里重新注入备注再说；旧会话里直接查询的结果不再回给新会话。<br>**失败**：和以前一样结束（failed / error / 1011）。 |
+| 断线续上 | **触发**：`api/voice.py` 的 provider 泵发现当前会话的事件流意外结束时调用 `Bridge.recover`；收到 `response_idle_timeout` 这类会话已关闭的错误时，先主动关掉旧连接，再走同一流程。<br>**条件**：通话已接听、没在挂断、没到积分上限、没有鉴权或欠费类错误（`denied`）、本通恢复不到 3 次。<br>**重开**：借用轮换的换会话流程（`_swap_in`），带上摘要、最后几句和进度，但不等备忘、不等安静时刻；每次断开最多试 2 次，间隔约 1 秒，共 20 秒内。轮换进行中就先取消轮换。客户端 WebSocket 一直不断。<br>**麦克风**：`feed_audio` 不再抛错。没有会话在听时保留最近 2 秒音频，新会话就绪后补发；断开时用户正说到一半就丢弃，因为前半句随旧会话没了。<br>**说什么**：用户被打断（正在说、刚说完在等回答、正在听回复、直接查询的回答还没来）就说一句 `reconnected`：“刚才线路断了一下，您再说一遍？”；我们自己还没出声的回复不算打断，否则不出声。<br>**收尾**：进行中的回复记为 incomplete，只算一次，按已收到的音频估算；没人听到的结果重新排队，在新会话里重新注入备注再说；旧会话里直接查询的结果不再回给新会话。<br>**失败**：和以前一样结束（failed / error / 1011）。 |
 | 错误归属 | **分类**：`provider.classify_error(message, param, code)` 先看 `param`。`conversation.item*` 归 item；`session.update` 归新增的 session（不算拒绝，只记日志）；消息匹配加上 “cannot find item”；`response_idle_timeout` 归 session_closed；鉴权、欠费、配额归 denied，之后不再尝试恢复。<br>**拒绝**：`refuses_reply` 只认 `param=response.create`（且不是 item、session、重复输出）或 active_response、no_input。别的错误既不放弃请求，也不丢正在等的结果播报；Audio 的一次性提示项同样只在真被拒时删除。<br>**兜底**：不带 param 的真拒绝不能卡住之后的回复，所以请求 8 秒内既没开始也没被拒就放弃，结果重新排队，最多 3 次。<br>**会话更新**：通话中的 `session.update`（`update_instructions`，进度和资料变更 `rebase` 都走它）只发 instructions；轮换和恢复用的是新会话的完整 `configure`。已经处理过音频的会话里，不再改 `turn_detection`、`voice`。 |
 | 日志 | **错误**：供应商错误一行带 call id、code、reason、param、当时的请求，以及去掉密钥、截到 200 字的原文（INFO；以前只在 debug 模式记）。握手错误同样记原文。<br>**断开**：事件流结束时记关闭码、原因和最后一个错误码。<br>**保活与恢复**：保活发送记 DEBUG；恢复记 INFO（尝试次数、结果、累计次数）；通话结束那一行加 `recoveries=`。 |
 
@@ -586,7 +585,7 @@ QA 实测（用户 14:07–14:25 的三通电话）：问“它进行到哪一�
 | 一次交办一句确认 | 服务端补交（模型没调工具、判为要办）后不再补“交给助理了”；只有回复说了“已经办好了”（`CLAIMS_DONE`）才补一句更正（`handed_over_instructions` 改为更正）。模型只调工具没出声时，3 秒（`ACK_WAIT_SECONDS`）内结果没到才请模型自己说一句；结果先到就直接说结果。 |
 | 进度句 | `late_after_seconds` 默认 20（原 12）：安静 20 秒、请求已办 20 秒才说第一句；每件事最多一句，任意两句至少隔 60 秒；“记一下”（lane `remember`）不说；措辞不再引导“稍等/快好了”，也不保证多快好。 |
 | 没人问的话 | “记一下”的结果不播报（关掉该轮，客户端收到 `delivered`，记录 delivered 但无送达时间；停在确认卡片上的照常读）。主动汇报在用户有请求在办时先等着，结果到了一起说：先说用户问的，再用“另外”带一句。记录纠错只在用户问了问题（JEV 判 read 或话里有疑问）或回复声称办好了时才做；闲聊不再被纠正（说过头的核对仍是 ≥0.8）。 |
-| 节奏 | 我们的回复（结果、进度、补充、确认、固定句）等客户端把上一段播完再加 0.8 秒（`REPLY_GAP_SECONDS`，按已发出的音频时长估算，用户插话即视为停播）；到点用一次性定时器再看，不等下一秒的巡检。到时告别不等。`api/voice.py` 打开它；单元测试默认不开。 |
+| 节奏 | 我们的回复（结果、进度、补充、确认、固定句）等客户端把上一段播完再加 0.8 秒（`REPLY_GAP_SECONDS`，按已发出的音频时长估算，用户插话即视为停播）；到点用一次性定时器再看，不等下一秒的巡检。积分耗尽时的告别不等。`api/voice.py` 打开它；单元测试默认不开。 |
 | 安静 | 用户说“闭嘴/别说了/安静点/停止播报/太聒噪了”等（`turns.HUSH`，“安静的咖啡馆”“你别说，还挺好”不算），服务端取消回复、清空客户端播放队列并拦截迟到音频。到用户再次开口（“嗯”不算）前，所有播报暂停，已请求的结果保留在队列中，文字保活照常。转写晚于 VAD 回复时，恢复讲话会补回刚被静音取消的回答；正常 VAD 回复仍只播一次。Audio 3.1 本地真实接口验证：210 秒静默无音频、不断线，随后继续回答。 |
 | 会话提示词进度段 | 只写“还在办：“…”、“…”。”，不带步骤和排队，不含“记一下”。 |
 

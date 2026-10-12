@@ -211,7 +211,8 @@ async def models_available(scope: CallScope, arguments: dict) -> dict:
 async def resources_list(scope: CallScope, arguments: dict) -> dict:
     from assistant.assets import list_assets
     value = await list_assets(user_id=scope.user_id, workspace_id=scope.workspace_id,
-        main_id=scope.main_session_id, limit=12, cursor=arguments.get("cursor"), query=arguments.get("query", ""))
+        main_id=scope.main_session_id, limit=12, cursor=arguments.get("cursor"), query=arguments.get("query", ""),
+        session_id=arguments.get("session_id"), kind=arguments.get("kind"))
     return json.loads(json.dumps(value, default=str))
 
 
@@ -241,9 +242,12 @@ DIRECT: dict[str, DirectTool] = {
         "用户已回答当前任务卡片时，按上下文理解并提交完整答案。可回答讲稿、字幕、素材、首尾帧、时长、费用和验收卡。"
         "先解释用户疑问，不把疑问当同意；没有选完不能补选。不能代做人工验证。", task_question_answer,
         task_answer_schema(), timeout=8.0),
-    "resources_list": DirectTool("查看用户资源库的文件名称、类型和ID，用于帮助选择。文件名不能证明图片内容，"
-        "问图片长什么样交给 assistant_ask 实际查看。分页时使用返回的 next_cursor。", resources_list,
+    "resources_list": DirectTool("按最新优先查看用户资源库的文件名称、类型和ID，可按任务会话和媒体类型筛选。"
+        "query只匹配文件名；用户描述画面内容时不要把画面描述当文件名搜索。问图片长什么样交给 assistant_ask 实际查看。"
+        "分页时保留筛选条件并使用 next_cursor。", resources_list,
         {"type": "object", "properties": {"query": {"type": "string", "maxLength": 200},
+                                           "session_id": {"type": "string", "maxLength": 64},
+                                           "kind": {"type": "string", "enum": ["image", "video", "audio"]},
                                            "cursor": {"type": "string", "maxLength": 64}}}, timeout=4.0),
     "models_available": DirectTool(
         "读取真实可选的任务AI模型和视频模型。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),

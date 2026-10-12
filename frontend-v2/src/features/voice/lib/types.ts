@@ -46,7 +46,7 @@ export interface ReadyEvent {
   model: string
   input_sample_rate: number
   output_sample_rate: number
-  max_seconds: number
+  max_seconds: number | null
   price_date: string
 }
 

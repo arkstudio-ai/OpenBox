@@ -114,16 +114,16 @@ void main() {
       expect(_button('voice-detail'), findsNothing);
     });
 
-    testWidgets('the last five minutes are counted down', (tester) async {
-      final clock = FakeClock();
-      final at = clock.now;
-      clock.advance(const Duration(minutes: 26));
-      await _page(tester, connectedCall(at: at), clock: clock);
-      expect(
-        tester.widget<Text>(_button('voice-timer')).data,
-        '26:00 · 剩余 4 分钟',
-      );
-    });
+    testWidgets(
+      'the elapsed timer continues beyond the old cap without a countdown',
+      (tester) async {
+        final clock = FakeClock();
+        final at = clock.now;
+        clock.advance(const Duration(minutes: 31));
+        await _page(tester, connectedCall(at: at), clock: clock);
+        expect(tester.widget<Text>(_button('voice-timer')).data, '31:00');
+      },
+    );
 
     testWidgets('paused: why, and only hang-up', (tester) async {
       final clock = FakeClock();

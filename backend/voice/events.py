@@ -12,7 +12,7 @@ PHASES = frozenset({"greeting", "listening", "thinking", "speaking", "working"})
 PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reached", "reconnected"})
 TURN_STATES = frozenset({"accepted", "working", "late", "delivered", "timeout", "failed"})
 # credits: the call's cost reached the workspace balance (enforce billing).
-LIMIT_REASONS = frozenset({"max_duration", "credits"})
+LIMIT_REASONS = frozenset({"credits"})
 END_REASONS = frozenset({"hangup", "error", "limit", "quota", "concurrent", "mic_lost", "network",
                          "unsupported", "mic_denied", "mic_missing", "mic_busy"})
 # Shown to the user as is. Never a provider message, key or identifier.
@@ -31,9 +31,10 @@ def _member(value, allowed, name):
     return value
 
 
-def ready(call_id: str, model: str, max_seconds: int, price_date: str) -> dict:
+def ready(call_id: str, model: str, price_date: str) -> dict:
+    # Keep the nullable wire field for installed clients; no duration cap applies.
     return {"type": "ready", "call_id": call_id, "model": model, "input_sample_rate": INPUT_SAMPLE_RATE,
-            "output_sample_rate": OUTPUT_SAMPLE_RATE, "max_seconds": int(max_seconds), "price_date": price_date}
+            "output_sample_rate": OUTPUT_SAMPLE_RATE, "max_seconds": None, "price_date": price_date}
 
 
 def phase(value: str, *, working: bool, late: bool) -> dict:

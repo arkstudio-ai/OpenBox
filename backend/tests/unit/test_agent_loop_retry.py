@@ -100,6 +100,24 @@ async def test_exhaustion_returns_the_final_failure_for_terminal_closure():
     assert result.error == "failure-3"
 
 
+async def test_stalled_gateway_stops_retrying_when_elapsed_budget_is_spent(monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(loop, "time", SimpleNamespace(monotonic=lambda: elapsed[0]))
+    calls, checkpoints = [], []
+    async def attempt():
+        calls.append(1)
+        elapsed[0] += 60
+        return StepResult(outcome=StepOutcome.RETRY, retry_reason="Timeout", error="gateway stalled")
+    async def checkpoint(*args):
+        checkpoints.append(args)
+    async def sleep(delay):
+        elapsed[0] += delay
+    result, retries = await _run_provider_attempts(attempt, checkpoint, max_retries=5,
+        sleep=sleep, delay_for=lambda *_: 2, retry_window_seconds=120)
+    assert len(calls) == 2 and retries == 1 and len(checkpoints) == 1
+    assert result.error == "gateway stalled"
+
+
 @pytest.mark.asyncio
 async def test_retry_delay_receives_the_original_provider_exception():
     provider_error = RuntimeError("provider busy")

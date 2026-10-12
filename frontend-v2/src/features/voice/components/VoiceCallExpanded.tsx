@@ -36,11 +36,6 @@ export function VoiceCallExpanded({ view, controls }: VoiceCallExpandedProps) {
           <VoiceOrb status={view.status} phase={view.phase} muted={view.muted} size="md" />
         </button>
         <span className="text-ink text-md min-w-0 flex-1 truncate font-medium">{name}</span>
-        {view.remainingMinutes !== null && (
-          <span className="text-a700 flex-none text-xs">
-            {t("duration.remaining", { minutes: view.remainingMinutes })}
-          </span>
-        )}
         {view.clock && <span className="text-n700 flex-none text-sm tabular-nums">{view.clock}</span>}
         <button
           type="button"

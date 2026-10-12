@@ -44,6 +44,17 @@ WORK_ACTIONS = ("task_create", "task_input", "task_resume", "task_finish_continu
 WORKING = ("queued", "running", "resuming")
 
 
+def observation_timeout(configured: float) -> float:
+    """Keep listening until a normal assistant turn can actually settle.
+
+    The old 120-second voice wait reported failure while the assistant still
+    had a valid 180-second execution budget and could shortly return a result.
+    Include a bounded allowance for queuing, settlement and result delivery.
+    """
+    from core.config import get_config
+    return max(configured, get_config().assistant.ordinary.wall_time_seconds + 30)
+
+
 def bounded_context(context: dict, budget: int = 6200) -> dict:
     """Fit the ASCII-encoded provenance budget without replacing a human message with generated text.
 

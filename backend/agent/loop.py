@@ -387,6 +387,7 @@ async def _run_provider_attempts(
     delay_for=retry_delay,
     abort: asyncio.Event | None = None,
     before_attempt=None,
+    retry_window_seconds: float = 180.0,
 ):
     """Retry one *persisted* Assistant step without creating retry ghosts.
 
@@ -401,6 +402,7 @@ async def _run_provider_attempts(
     returned to the caller so it can close the one Assistant Message honestly.
     """
     retries = 0
+    started = time.monotonic()
     from assistant.scheduling import TaskSchedulingHeld
     from assistant.budget import AssistantBudgetExceeded
     while True:
@@ -421,8 +423,12 @@ async def _run_provider_attempts(
             return StepResult(outcome=StepOutcome.ERROR, error=str(exc)), retries
         if result.outcome is not StepOutcome.RETRY or retries >= max_retries:
             return result, retries
+        delay = delay_for(retries + 1, getattr(result, "retry_error", None))
+        # An unreachable gateway must not keep a step retrying for many
+        # minutes. Preserve its failure and completed tools for a later retry.
+        if time.monotonic() - started + delay >= retry_window_seconds:
+            return result, retries
         retries += 1
-        delay = delay_for(retries, getattr(result, "retry_error", None))
         await on_retry(retries, max_retries, delay, result)
         if abort is None:
             await sleep(delay)
@@ -2055,7 +2061,9 @@ async def run_loop(
                 if not for_compaction and step >= agent_def.max_steps:
                     result.append({"role": "user", "content": MAX_STEPS_PROMPT})
                 elif (not for_compaction and main_budget is not None
-                        and step >= main_budget.limits["model_requests"] - 1):
+                        and (step >= main_budget.limits["model_requests"] - 1
+                             or main_budget.local_deadline - time.monotonic()
+                             <= min(30, main_budget.limits["wall_time_seconds"] / 4))):
                     from assistant.runtime import LAST_REQUESTS_PROMPT
                     result.append({"role": "user", "content": LAST_REQUESTS_PROMPT})
                 # Fetch image bytes only for the actual provider-shaped path.

@@ -1,4 +1,5 @@
 """Private resource inventory and durable attachment input on the original Task."""
+from sqlalchemy import and_, or_
 from assets.service import owned_ready_query, resource_query
 from assistant.commands import _authority, _project, accept_task_command, command_digest
 from assistant.policy import AssistantError
@@ -8,21 +9,35 @@ from db.models.file_asset import FileAsset
 
 
 async def list_assets(*, user_id, workspace_id, main_id, project_id=None, query="",
-                      source=None, limit=50, cursor=None, db=None):
-    if not 1 <= limit <= 50 or len(query) > 200 or source not in (None, "user", "agent"):
+                      source=None, session_id=None, kind=None, limit=50, cursor=None, db=None):
+    if (not 1 <= limit <= 50 or len(query) > 200 or source not in (None, "user", "agent")
+            or kind not in (None, "image", "video", "audio")):
         raise ValueError("Invalid asset inventory filter")
     async with read_session(db) as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if project_id:
             await _project(db, project_id, user_id, workspace_id)
-        statement = resource_query(user_id, workspace_id, owned_only=True).where(FileAsset.id > (cursor or ""))
+        statement = resource_query(user_id, workspace_id, owned_only=True)
         if project_id:
             statement = statement.where(FileAsset.project_id == project_id)
         if source:
             statement = statement.where(FileAsset.source == source)
+        if session_id:
+            statement = statement.where(FileAsset.session_id == session_id)
+        if kind:
+            statement = statement.where(FileAsset.mime.startswith(kind + "/"))
         if query.strip():
             statement = statement.where(FileAsset.name.icontains(query.strip(), autoescape=True))
-        rows = list((await db.scalars(statement.order_by(FileAsset.id).limit(limit + 1))).all())
+        if cursor:
+            anchor = await db.scalar(statement.where(FileAsset.id == cursor))
+            if anchor is None:
+                raise ValueError("The resource cursor is unavailable for these filters")
+            statement = statement.where(or_(FileAsset.created_at < anchor.created_at,
+                and_(FileAsset.created_at == anchor.created_at, FileAsset.id < anchor.id)))
+        # Generated image IDs contain random hashes, not timestamps. Sorting
+        # by ID hid recent frames behind unrelated older library files.
+        rows = list((await db.scalars(statement.order_by(
+            FileAsset.created_at.desc(), FileAsset.id.desc()).limit(limit + 1))).all())
         # No object keys, presigned URLs, credentials or file contents enter the
         # main assistant. The execution input carries only the original IDs.
         return _page(rows, limit, lambda row: {key: getattr(row, key) for key in (

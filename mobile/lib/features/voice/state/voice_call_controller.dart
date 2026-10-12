@@ -539,7 +539,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (!state.active) return;
     state = endVoiceCall(
       state,
-      // A closing already under way (hang-up, time limit) keeps its reason.
+      // A closing already under way (hang-up, exhausted credits) keeps its reason.
       state.endingReason ?? reason,
       now: _hungUpAt ?? _deps.now(),
       detailKey: detailKey,

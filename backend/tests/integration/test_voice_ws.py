@@ -184,7 +184,7 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         ready = socket.receive_json()
         assert ready["type"] == "ready" and ready["model"] == AUDIO_MODEL
-        assert (ready["input_sample_rate"], ready["output_sample_rate"], ready["max_seconds"]) == (16000, 24000, 1800)
+        assert (ready["input_sample_rate"], ready["output_sample_rate"], ready["max_seconds"]) == (16000, 24000, None)
         assert ready["price_date"] == "2026-10-10"
         greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
@@ -540,6 +540,29 @@ async def test_the_call_is_answered_with_the_greeting_made_and_its_echo_never_cu
     first, second = [command for command in provider.commands("audio")][:2]
     assert first[2] == b"\0\0\0\0" and second[2] == b"\x10\x00\x10\x00"  # held, then the microphone again
 
+
+
+async def test_a_call_past_the_old_duration_caps_keeps_its_socket_until_hangup(http, providers, app, monkeypatch):
+    from types import SimpleNamespace
+    from api import voice as voice_socket
+
+    offset = 0.0
+    monkeypatch.setattr(voice_socket, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + offset))
+    # This test advances only the call clock, not the client's audio producer.
+    monkeypatch.setattr(voice_socket, "CLIENT_SILENCE_SECONDS", 24 * 3600)
+    headers = await account(http)
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        assert socket.receive_json()["max_seconds"] is None
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        offset = 3 * 3600
+        socket.send_bytes(FRAME)
+        # Wait for the server timer, not a client ping: the old cap ran before this heartbeat.
+        heard = read_until(socket, lambda item: item["type"] == "heartbeat")
+        assert heard[-1]["type"] == "heartbeat" and heard[-1]["elapsed_seconds"] >= 3 * 3600
+        assert "limit" not in kinds(heard) and "ended" not in kinds(heard)
+        socket.send_json({"type": "stop"})
+        ended = read_until(socket, lambda item: item["type"] == "ended")[-1]
+        assert ended["reason"] == "hangup" and ended["duration_seconds"] >= 3 * 3600
 
 
 async def test_a_call_ends_with_a_goodbye_when_its_credits_are_spent_and_is_billed(http, providers, app,

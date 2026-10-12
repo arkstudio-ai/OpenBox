@@ -40,7 +40,7 @@
     "title": "Call ended",
     "hangup": "Call ended",
     "error": "The call dropped",
-    "limit": "This call has reached its time limit. Let's continue in text.",
+    "limit": "The call has ended. You can reconnect.",
     "quota": "You're out of credits. Top up to call again.",
     "concurrent": "You are already on a call on another device.",
     "micLost": "The microphone disconnected, so the call ended.",
@@ -78,9 +78,6 @@
       "outputAudio": "Audio out"
     },
     "credits": "{{amount}} credits"
-  },
-  "duration": {
-    "remaining": "{{minutes}} min left"
   },
   "permission": {
     "title": "Microphone needed",

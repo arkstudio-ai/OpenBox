@@ -304,6 +304,8 @@ async def test_litellm_payload_uses_stable_normalized_schemas(monkeypatch):
             raise StopAsyncIteration
 
     async def fake_completion(**kwargs):
+        assert kwargs["timeout"].connect == 10 and kwargs["timeout"].write == 30
+        assert kwargs["timeout"].read == 60 and kwargs["num_retries"] == 0
         captured.append(copy.deepcopy(kwargs))
         return EmptyStream()
 

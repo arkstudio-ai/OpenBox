@@ -48,7 +48,7 @@ sealed class VoiceServerEvent {
       ),
       'cost' => VoiceCostEvent(VoiceCost.fromJson(json)),
       'heartbeat' => VoiceHeartbeatEvent(asInt(json['elapsed_seconds']) ?? 0),
-      'limit' => VoiceLimitEvent(asString(json['reason']) ?? 'max_duration'),
+      'limit' => VoiceLimitEvent(asString(json['reason']) ?? 'credits'),
       'error' => VoiceErrorEvent(
         code: asString(json['code']) ?? 'internal',
         message: asString(json['message']),
@@ -123,7 +123,7 @@ final class VoiceHeartbeatEvent extends VoiceServerEvent {
   final int elapsedSeconds;
 }
 
-/// Time or credits are up (`max_duration` / `credits`): the closing phrase plays,
+/// Credits are exhausted: the closing phrase plays,
 /// then `ended` follows.
 final class VoiceLimitEvent extends VoiceServerEvent {
   const VoiceLimitEvent(this.reason);

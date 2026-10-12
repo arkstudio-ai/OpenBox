@@ -133,7 +133,7 @@ VoiceCallState endVoiceCall(
 }
 
 /// How a socket that closed before `ended` ends the call (§5.5). A closing
-/// that was already under way (hang-up, time limit) keeps its reason.
+/// that was already under way (hang-up, exhausted credits) keeps its reason.
 ({VoiceEndReason reason, String? detailKey}) voiceCloseOutcome(
   int? code,
   VoiceCallState state,

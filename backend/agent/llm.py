@@ -31,6 +31,16 @@ OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 RESPONSES_API_VERSION = "2025-03-01-preview"
 
 
+def request_timeout():
+    """Bound stalled transport phases; streaming progress may continue normally.
+
+    LiteLLM otherwise defaults to ten minutes, longer than an entire assistant
+    turn. The durable loop owns retries, so adapters must not retry invisibly.
+    """
+    import httpx
+    return httpx.Timeout(connect=10.0, write=30.0, read=60.0, pool=10.0)
+
+
 @dataclass(frozen=True)
 class ReasoningProfile:
     """Selectable effort ids for one exact model route.
@@ -1260,7 +1270,7 @@ async def _stream_responses_api(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
         await _assert_dispatch_allowed(trace_ctx)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(timeout=request_timeout()) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
@@ -1758,6 +1768,8 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     from question.runtime import assert_current
     await assert_current("request")
     await _assert_dispatch_allowed(ctx)
+    kwargs.setdefault("timeout", request_timeout())
+    kwargs.setdefault("num_retries", 0)
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1980,6 +1992,8 @@ async def _stream_litellm_direct(
             "max_tokens": request_output_tokens(model_id, variant, max_output_tokens),
             **provider_kwargs,
             **direct_kwargs,
+            "timeout": request_timeout(),
+            "num_retries": 0,
         }
         if extra_body:
             call_kwargs["extra_body"] = extra_body

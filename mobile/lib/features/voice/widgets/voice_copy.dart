@@ -90,14 +90,4 @@ abstract final class VoiceCopy {
   static String cost(I18nState i18n, VoiceCost cost) =>
       '${i18n.t('voice:controls.cost')} '
       '${i18n.t('voice:cost.credits', vars: {'amount': formatYuan(cost.totalYuan)})}';
-
-  /// Next to the timer once less than five minutes remain.
-  static String? remaining(I18nState i18n, VoiceCallState call, int elapsed) {
-    final max = call.maxSeconds;
-    if (max == null || !call.live) return null;
-    final left = max - elapsed;
-    if (left >= 300) return null;
-    final minutes = left <= 0 ? 0 : (left + 59) ~/ 60;
-    return i18n.t('voice:duration.remaining', vars: {'minutes': minutes});
-  }
 }

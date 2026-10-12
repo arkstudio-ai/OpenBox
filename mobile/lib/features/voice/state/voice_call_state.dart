@@ -198,7 +198,7 @@ class VoiceCallState {
   final bool late;
   final String? callId;
 
-  /// Seconds this call may last (`ready.max_seconds`, quota included).
+  /// Legacy wire field; current servers send null and calls have no duration cap.
   final int? maxSeconds;
 
   /// When `ready` arrived, on this device's clock.

@@ -171,13 +171,13 @@ async def test_limit_cancels_the_reply_says_the_phrase_and_silences_the_micropho
     bridge, provider, _, clock = call
     await greeted(bridge, provider)
     await replay(bridge, started("talk"), audio("talk"))
-    await bridge.begin_limit("max_duration", 1800.4)
+    await bridge.begin_limit("credits", 1800.4)
     assert provider.commands("cancel")
-    assert of_type(outbox(bridge), "limit") == [{"type": "limit", "reason": "max_duration", "elapsed_seconds": 1800}]
+    assert of_type(outbox(bridge), "limit") == [{"type": "limit", "reason": "credits", "elapsed_seconds": 1800}]
     await bridge.feed_audio(b"\x05\x00" * 1600)
     assert provider.commands("audio")[-1] == ("audio", 3200, b"\x00\x00\x00\x00")
     await replay(bridge, done("talk", status="cancelled"))
-    assert provider.commands("create") == [("create", phrases.phrase_instructions("limit_reached", "zh"))]
+    assert provider.commands("create") == [("create", phrases.phrase_instructions("credits_exhausted", "zh"))]
     # A VAD reply created in the same instant wins; the provider refuses ours.
     await replay(bridge, started("vad"), provider_error("active_response"))
     assert len(provider.commands("cancel")) == 2 and not bridge.limit_done.is_set()
@@ -363,7 +363,7 @@ async def test_no_recovery_where_the_call_ends_anyway(call, situation):
     elif situation == "hanging_up":
         await bridge.stop()
     elif situation == "limit":
-        await bridge.begin_limit("max_duration", 1800)
+        await bridge.begin_limit("credits", 1800)
     elif situation == "denied":
         await replay(bridge, provider_error("denied", code="Arrearage"))
     else:
@@ -443,8 +443,8 @@ async def test_a_reply_of_ours_waits_until_the_client_has_played_the_last_one(ca
     await replay(bridge, event("user_started"), event("user_stopped", invalid=True))  # the user cut in: it stopped
     assert len(provider.commands("note")) == 2  # nothing playing any more, nothing to wait for
     await replay(bridge, started("tell-2"), audio("tell-2", 48000), done("tell-2"))
-    await bridge.begin_limit("max_duration", 1800)  # the goodbye never waits
-    assert provider.commands("create")[-1] == ("create", phrases.phrase_instructions("limit_reached", "zh"))
+    await bridge.begin_limit("credits", 1800)  # the goodbye never waits
+    assert provider.commands("create")[-1] == ("create", phrases.phrase_instructions("credits_exhausted", "zh"))
     await bridge.close()
     assert bridge._wake is None
 

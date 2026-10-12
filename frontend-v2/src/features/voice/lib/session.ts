@@ -47,7 +47,7 @@ export class VoiceCallSession {
   private stopping = false
   /** Over: nothing more reaches the sink. */
   private done = false
-  /** The server announced the time limit and is saying goodbye. */
+  /** The server announced exhausted credits and is saying goodbye. */
   private limited = false
   private retried = false
   private muted = false

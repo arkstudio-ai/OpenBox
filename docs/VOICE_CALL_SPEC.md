@@ -26,7 +26,7 @@
 | 通话 `VoiceCall` | 一次从接通到挂断的会话；一个用户同时只能有一通 |
 | 语音轮次 `VoiceTurn` | 前台把用户一句话交给后台的一次 `assistant_ask` 调用，对应主会话的一条用户消息和一条回复 |
 | 口播稿 | 后台这一轮的回复文本，经清洗后交给前台念 |
-| 固定短语 | 服务端触发、前台模型按指定文本原样说出的短句（打招呼、还在办、结果在对话里、到时间了）：`response.create` 带 `response.instructions`，与通话同一个声音，实测 0.6 秒出声 |
+| 固定短语 | 服务端触发、前台模型按指定文本原样说出的短句（打招呼、还在办、结果在对话里、积分用完了）：`response.create` 带 `response.instructions`，与通话同一个声音，实测 0.6 秒出声 |
 | 空闲窗口 | 前台既没有在生成/播报、用户也没有在说话的时刻；晚到的结果只能在这里注入 |
 
 ## 3. 一通电话的时间线
@@ -86,7 +86,7 @@ idle ──start()──► requesting_mic ──granted──► connecting ─
 
 手机端多一个本地状态 `paused`（来电或系统中断：暂停采集与播放、继续发零帧保持连接；中断结束回到 `connected`，超过 60 秒则结束 `error`），见移动端文档 §4。
 
-`ended.reason` 枚举：`hangup`（用户挂断）、`error`（服务端 `error` 后关闭）、`limit`（单次时长到）、`quota`（当日配额用完）、`concurrent`（别处已在通话）、`mic_lost`（麦克风断开）、`network`（连接断开）、`unsupported`（浏览器/设备不支持）、`mic_denied`、`mic_missing`、`mic_busy`。
+`ended.reason` 枚举：`hangup`（用户挂断）、`error`（服务端 `error` 后关闭）、`limit`（仅解码历史事件）、`quota`（积分不足）、`concurrent`（别处已在通话）、`mic_lost`（麦克风断开）、`network`（连接断开）、`unsupported`（浏览器/设备不支持）、`mic_denied`、`mic_missing`、`mic_busy`。
 
 ### 4.2 服务端桥接状态
 
@@ -129,14 +129,14 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 
 | type | 字段 | 说明 |
 | --- | --- | --- |
-| `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds` 已取单次上限与当日剩余配额的较小值 |
+| `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds=null`，无通话时长上限 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
 | `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached/reconnected | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working`；2026-10-10 起 `reconnected`：百炼会话断开后续上，用户当时被打断，请其再说一遍 |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
-| `limit` | `reason` ∈ max_duration/daily_quota, `elapsed_seconds` | 到时：服务端先播固定短语 `limit_reached`，再发 `ended` |
+| `limit` | `reason` = credits, `elapsed_seconds` | 积分耗尽：服务端先说明积分不足，再发 `ended{reason:quota}` |
 | `error` | `code`, `message` | `message` 已是可直接显示的用户语言文案；随后关闭连接 |
 | `ended` | `reason` (同 4.1 枚举), `duration_seconds`, `pending_turns`, `cost` | 通话结束的最终事件；之后服务端关闭 1000 |
 
@@ -172,7 +172,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 - 服务端每 10 秒发 `heartbeat`；客户端 30 秒无帧 → 本地结束（`network`），P2 起改为尝试恢复。
 - 服务端 30 秒收不到客户端音频帧 → 关闭 1011（客户端卡死或网络断）。
 - 连接百炼：环境代理与直连两条路线竞速（代理先发、直连 0.4 秒后跟上，先建立会话者胜），单次 `open_timeout` 5 秒，最多两轮；期间客户端处于 `connecting`，超过 25 秒客户端自行结束（`error`）。实测连接到 `ready` 中位 0.35 秒。
-- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。2026-10-10 实现：已接听、未挂断、未到时长或积分上限时，服务端重开会话（每次断开最多 2 次、约 1 秒间隔、20 秒内，每通至多 3 次），带上摘要、最后几句和进度，客户端连接不断；用户当时被打断就说一句 `phrase{reconnected}`，否则不出声；重开失败仍按 `error`（`provider_error`，1011）结束。会话长时间没有回复时服务端发一条不出声的保活回复，避免百炼按空闲关闭（Audio 180 秒、Omni 300 秒），见后端文档 §27。
+- 通话中百炼连接断开：P1 直接 `error` 结束；P2 服务端重连一次并用 `instructions` 带上本通电话已完成轮次的摘要续上。2026-10-10 实现：已接听、未挂断、未到积分上限时，服务端重开会话（每次断开最多 2 次、约 1 秒间隔、20 秒内，每通至多 3 次），带上摘要、最后几句和进度，客户端连接不断；用户当时被打断就说一句 `phrase{reconnected}`，否则不出声；重开失败仍按 `error`（`provider_error`，1011）结束。会话长时间没有回复时服务端发一条不出声的保活回复，避免百炼按空闲关闭（Audio 180 秒、Omni 300 秒），见后端文档 §27。
 
 ## 6. 口播内容来源
 
@@ -180,7 +180,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | --- | --- | --- |
 | 寒暄、澄清、应答（“好，我看一下”） | 前台模型自己 | 前台 |
 | 后台回复 | 主会话这一轮的回复文本 → 清洗（去链接留标签、去列表/标题/代码标记、去 ID 样式串、超过 300 字截断到句末并加“详细的我写在对话里了”） → `function_call_output.speech` | 前台逐字朗读：`response.create` 的 `response.instructions` 要求“逐字朗读：我这边查到了，<speech>”（实测逐字一致） |
-| 打招呼、还在办、结果在对话里、到时间了 | 固定短语文本（第 7 节表格） | 前台按 response 级指令原样说，同一个声音 |
+| 打招呼、还在办、结果在对话里、积分用完了 | 固定短语文本（第 7 节表格） | 前台按 response 级指令原样说，同一个声音 |
 
 前台提示词、后台语音轮次附加提示见 [后端文档 §9](VOICE_CALL_BACKEND.md)。
 
@@ -217,8 +217,8 @@ zh-CN：
     "title": "通话已结束",
     "hangup": "通话已结束",
     "error": "通话中断了",
-    "limit": "这通电话到时间了，我们文字里继续。",
-    "quota": "今天的通话时长用完了，明天再打吧。",
+    "limit": "积分用完了，这通电话先到这里，充值后可以接着打。",
+    "quota": "积分不足，充值后可以继续通话。",
     "concurrent": "你在另一台设备上正在通话。",
     "micLost": "麦克风断开了，通话结束。",
     "network": "网络断开，通话结束。",
@@ -239,7 +239,6 @@ zh-CN：
   "actions": { "redial": "重新拨打", "close": "关闭", "viewInChat": "在对话里查看", "retry": "重试" },
   "cost": { "pending": "本轮金额待确认", "partial": "部分用量未返回，金额可能偏低", "settled": "已核算 {{count}} 轮",
     "items": { "inputText": "文字输入", "inputAudio": "语音输入", "outputText": "文字输出", "outputAudio": "语音输出" } },
-  "duration": { "remaining": "剩余 {{minutes}} 分钟" },
   "permission": {
     "title": "需要使用麦克风",
     "body": "和个人助理通话需要麦克风。只在通话时收音，不保存录音。",
@@ -278,7 +277,7 @@ en-US：
     "title": "Call ended",
     "hangup": "Call ended",
     "error": "The call dropped",
-    "limit": "This call has reached its time limit. Let's continue in text.",
+    "limit": "You're out of credits, so I'll end the call here. Top up to call again.",
     "quota": "Today's call time is used up. Try again tomorrow.",
     "concurrent": "You are already on a call on another device.",
     "micLost": "The microphone disconnected, so the call ended.",
@@ -300,7 +299,6 @@ en-US：
   "actions": { "redial": "Call again", "close": "Close", "viewInChat": "View in conversation", "retry": "Retry" },
   "cost": { "pending": "This turn is not settled yet", "partial": "Some usage was not reported; the amount may be low", "settled": "{{count}} turn(s) settled",
     "items": { "inputText": "Text in", "inputAudio": "Audio in", "outputText": "Text out", "outputAudio": "Audio out" } },
-  "duration": { "remaining": "{{minutes}} min left" },
   "permission": {
     "title": "Microphone needed",
     "body": "Calling the personal assistant needs the microphone. It listens only during the call and nothing is recorded.",
@@ -315,7 +313,7 @@ en-US：
 | key | zh-CN | en-US |
 | --- | --- | --- |
 | `result_in_text` | 办好了，结果我写在对话里了。 | Done. I've put the result in the conversation. |
-| `limit_reached` | 这通电话到时间了，我们文字里继续。 | This call has reached its time limit. Let's continue in text. |
+| `limit_reached` | 积分用完了，这通电话先到这里，充值后可以接着打。 | You're out of credits, so I'll end the call here. Top up to call again. |
 
 ## 8. 提示音与触感
 
@@ -334,7 +332,7 @@ en-US：
 
 - 音色：用户在“设置 → 语音通话”里选（15 个中英文音色，均在当前模型上实测可用，可试听）；下一通电话起生效，通话中途不换；未选或选择已下架时用配置默认（Tina，阿里官方默认「甜甜」，2026-10-09 对齐）。详见 [后端 §17](VOICE_CALL_BACKEND.md#17-读卡确认说了不做的兜底音色选择2026-10-07修复计划-13-9)。
 
-- 单次通话上限 `max_call_seconds`（默认 1800），到点先说一句再结束（`limit{reason:max_duration}`）。没有每日时长配额：通话和其他用量一样走积分（1 积分 = 1 元）。
+- 2026-10-12 起移除单次通话上限和倒计时；旧 `max_call_seconds` / `VOICE_MAX_CALL_SECONDS` 配置不再生效，`ready.max_seconds=null`。没有每日时长配额：通话和其他用量一样走积分（1 积分 = 1 元）。
 - 积分：计费模式 enforce 时，拨号前余额 ≤ 0 → 关闭码 4029；通话中累计费用达到开始时的余额 → `limit{reason:credits}`，前台说“积分用完了，这通电话先到这里，充值后可以接着打。”后以 `ended{reason:quota}` 结束。挂断后按百炼返回的用量（文字/语音 × 输入/输出四种 token，单价在 `billing/rates.json` 的 `media.voice-realtime`）写一条 `usage_events`（kind `voice_call`，标题“语音通话”，每通一条），enforce 扣积分，shadow 只记录。客户端费用显示为“本次消耗 0.0035 积分”。
 - 同一用户同时一通；第二处连接收到 4009。
 - 费用按 `response.done.usage` 核算（价目见后端文档），存 `VoiceCall`；客户端只展示，不参与计算。固定短语与结果朗读都是前台模型的回复，已包含在用量里。
@@ -356,7 +354,7 @@ en-US：
 | 9 | 挂断 | ≤1 秒显示时长与费用；若有未完成轮次显示“还有 n 件事在办” |
 | 10 | 刷新/杀进程 | 通话结束；后台未完成轮次的结果仍出现在文字对话 |
 | 11 | 另一设备再拨 | 提示“你在另一台设备上正在通话” |
-| 12 | 到时 | 听到“这通电话到时间了”，通话结束，文案 `ended.limit` |
+| 12 | 长通话 | 超过原 30 分钟和 2 小时配置边界仍可通话，无倒计时；积分耗尽才结束为 `quota` |
 | 13 | 断网 | 30 秒内提示“网络断开，通话结束”，可重拨 |
 | 14 | 费用 | `VoiceCall` 行的金额与界面一致；账本独立于主助理 |
 

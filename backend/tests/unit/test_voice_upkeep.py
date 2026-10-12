@@ -295,9 +295,9 @@ async def test_any_reply_restarts_the_clock_and_none_is_sent_while_something_is_
     await bridge.fill_idle()
     assert not provider.commands("keepalive")  # hanging up
     bridge.closing = False
-    await bridge.begin_limit("max_duration", 1800)
+    await bridge.begin_limit("credits", 1800)
     assert not provider.commands("keepalive")  # the goodbye instead
-    assert provider.commands("create")[-1][1].endswith("这通电话到时间了，我们文字里继续。")
+    assert provider.commands("create")[-1][1].endswith("积分用完了，这通电话先到这里，充值后可以接着打。")
 
 
 async def test_a_task_still_running_does_not_hold_the_silent_reply_back():

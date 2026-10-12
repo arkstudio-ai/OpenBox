@@ -215,9 +215,8 @@ class _TopBar extends ConsumerWidget {
           VoiceTicker(
             builder: (context, now) {
               final elapsed = callElapsedSeconds(call, now);
-              final remaining = VoiceCopy.remaining(i18n, call, elapsed);
               return Text(
-                [formatCallDuration(elapsed), ?remaining].join(' · '),
+                formatCallDuration(elapsed),
                 key: const Key('voice-timer'),
                 style: TextStyle(
                   fontSize: FontSizes.md,

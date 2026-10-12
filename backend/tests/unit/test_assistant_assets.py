@@ -4,7 +4,7 @@ V2 (PERSONAL_ASSISTANT_DESIGN_V2.md 4.2, D1): each inventory read checks current
 ownership; earlier observations and saved answers are not re-validated.
 """
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from uuid import uuid4
 
@@ -84,6 +84,30 @@ async def test_inventory_is_bounded_private_metadata_without_signing_or_side_eff
     async with get_db_session() as db:
         assert await db.scalar(select(func.count()).select_from(AssistantCommand).where(AssistantCommand.actor_user_id == user)) == 0
         assert await db.scalar(select(func.count()).select_from(Session).where(Session.user_id == user)) == 1
+
+
+async def test_recent_task_images_use_creation_time_and_stable_private_pagination():
+    user, other, workspace, main, _ = await setup_task()
+    now = datetime.now(timezone.utc)
+    old = await asset_for(user, workspace, id="asset_img_zz", session_id=main.id,
+        mime="image/png", created_at=now - timedelta(days=1))
+    newer = await asset_for(user, workspace, id="asset_img_aa", session_id=main.id,
+        mime="image/png", created_at=now)
+    newest = await asset_for(user, workspace, id="asset_img_bb", session_id=main.id,
+        mime="image/png", created_at=now)
+    await asset_for(user, workspace, session_id=main.id, mime="video/mp4")
+    await asset_for(user, workspace, mime="image/png")
+    foreign = await asset_for(other, workspace, session_id=main.id, mime="image/png")
+    scope = dict(user_id=user, workspace_id=workspace, main_id=main.id,
+                 session_id=main.id, kind="image", limit=1)
+    seen, cursor = [], None
+    for _ in range(3):
+        page = await list_assets(**scope, cursor=cursor)
+        seen.extend(x["id"] for x in page["items"])
+        cursor = page["next_cursor"]
+    assert seen == [newest.id, newer.id, old.id] and cursor is None
+    with pytest.raises(ValueError, match="cursor"):
+        await list_assets(**scope, cursor=foreign.id)
 
 
 async def test_two_requests_and_process_restart_replay_one_original_attachment_input():

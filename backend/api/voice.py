@@ -133,7 +133,6 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     # changed mid-call take effect on the next call.
     choice = await voices.user_selection(user_id, config)
     config = config.model_copy(update={"model": choice["model"], "voice": choice["selected"]})
-    max_seconds = config.max_call_seconds
     prices = call_prices(config.model)
     call_id = await calls.create_call(user_id=user_id, workspace_id=workspace_id, main_session_id=main_id,
                                       client=access.client or "web", model=config.model, voice=config.voice)
@@ -158,8 +157,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         if not isinstance(exc, Exception):
             raise
         return
+    from voice.assistant_link import observation_timeout
     link = AssistantLink(call_id=call_id, user_id=user_id, workspace_id=workspace_id, main_session_id=main_id,
-                         lang=lang, turn_timeout=config.turn_timeout_seconds, model=config.turn_model,
+                         lang=lang, turn_timeout=observation_timeout(config.turn_timeout_seconds), model=config.turn_model,
                          variant=config.turn_variant)
     scope = tools.CallScope(user_id=user_id, workspace_id=workspace_id, main_session_id=main_id, call_id=call_id,
                             lang=lang)
@@ -263,14 +263,14 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 polled = now
                 for report in await reports.poll():
                     await bridge.report(report.title, report.text, report.inbox_id, report.task_id)
-            # The call's length, or the credits it may spend (its cost so far includes what is being said).
+            # Calls have no duration cap; only the available credits can end one here.
             spent = room is not None and Decimal(bridge.meter.snapshot()["total_yuan"]) >= room
-            if now - started >= max_seconds or spent:
-                await bridge.begin_limit("credits" if spent else "max_duration", now - started)
+            if spent:
+                await bridge.begin_limit("credits", now - started)
                 with suppress(TimeoutError):
                     await asyncio.wait_for(bridge.limit_done.wait(), LIMIT_WAIT_SECONDS)
                 await asyncio.sleep(bridge.playback_left())  # let the client finish saying it
-                raise CallEnded("quota" if spent else "limit")
+                raise CallEnded("quota")
             if now - beat >= HEARTBEAT_SECONDS:
                 beat = now
                 bridge.emit(events.heartbeat(now - started))
@@ -320,7 +320,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         greeted.cancel()
         if not any(task in done for task in tasks):
             started = last_audio = time.monotonic()  # call time starts when it is answered
-            await websocket.send_json(events.ready(call_id, config.model, max_seconds, prices.date or PRICE_DATE))
+            await websocket.send_json(events.ready(call_id, config.model, prices.date or PRICE_DATE))
             answered = True
             bridge.answered()
             tasks += [asyncio.create_task(coroutine) for coroutine in (

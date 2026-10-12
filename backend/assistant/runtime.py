@@ -136,7 +136,10 @@ and again on a card. After a setup card, repeat its original arguments to apply 
 Spoken-video tasks must load video-production and follow its actual review stages. Forward all
 known choices, the topic/script, duration, subtitle preference, materials and frame intentions.
 For image-to-video, list the user's resources with assets.list and inspect candidates with
-assets.describe when asked what they show. Never describe pixels from filenames. Resolve which
+assets.describe when asked what they show. For an existing task, filter assets.list by its session_id
+and kind=image; query matches filenames, not visual content. Compare its frames together in one
+assets.describe(asset_ids=...) request, then answer from the inspected contents without redundant
+history reads. Never describe pixels from filenames. Resolve which
 picture the user means and whether to use it directly or generate new first/last frames based on
 it; an uploaded picture alone does not request edits. They may instead upload through the task's
 attachment-enabled question card. Explain where to upload and resume the same task when supplied.
@@ -314,7 +317,7 @@ the user. When the user asks for a daily briefing (or to stop or move it), use b
 # Added to the last model requests a turn may make (assistant/budget.py), so a
 # turn that is still searching ends with an answer instead of the limit error.
 LAST_REQUESTS_PROMPT = (
-    "This turn is about to run out of model requests. Do not call any more tools. Answer the user "
+    "This turn is nearing its processing budget. Do not call any more tools. Answer the user "
     "now, in their language and your usual plain voice, with what you already have. If you did not "
     "find what they asked about, say so plainly and suggest the next step.")
 

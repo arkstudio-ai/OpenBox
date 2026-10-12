@@ -209,6 +209,62 @@ async def test_picture_description_reads_owned_pixels_and_refuses_foreign_assets
         await describe(ctx, asset_id=foreign, question="是什么图片？")
 
 
+async def test_frame_comparison_uses_one_request_and_the_selected_model(monkeypatch):
+    from assistant.asset_vision import describe
+    from datetime import datetime, timezone
+    from core.identifier import generate_id
+    from db.models.message import Message
+    owner, _, workspace, main = await assistant()
+    first, last = await asset(owner, workspace, main), await asset(owner, workspace, main)
+    message_id = generate_id()
+    async with get_db_session() as db:
+        (await db.get(Session, main.id)).model = "test/another-default"
+        db.add(Message(id=message_id, session_id=main.id, user_id=owner, role="assistant",
+            model_id="openai/gemini-3.8-flash-high", created_at=datetime.now(timezone.utc)))
+    calls = []
+    closed = []
+    async def chunks(key, **kwargs):
+        yield b"actual-image"
+    async def llm(*args, **kwargs):
+        calls.append(args)
+        try:
+            yield {"type": "text_delta", "text": "第一张双手放下，第二张举起右手。"}
+        finally:
+            closed.append(True)
+    monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(get_object_chunks=chunks))
+    monkeypatch.setattr("agent.vision.supports_vision", lambda _: True)
+    monkeypatch.setattr("agent.llm.stream_llm", llm)
+    ctx = SimpleNamespace(user_id=owner, workspace_id=workspace, session_id=main.id, message_id=message_id)
+    result = await describe(ctx, asset_ids=[first, last], question="两张有什么区别？")
+    assert len(calls) == 1 and len(calls[0][2][0]["_images"]) == 2
+    assert calls[0][4] == "openai/gemini-3.8-flash-high"
+    assert [x["asset_id"] for x in result["images"]] == [first, last]
+    assert closed == [True]
+
+
+async def test_image_timeout_is_reported_as_read_failure_without_partial_description(monkeypatch):
+    from assistant.asset_vision import describe
+    from assistant.policy import AssistantError
+    owner, _, workspace, main = await assistant()
+    image = await asset(owner, workspace, main)
+    closed = []
+    async def chunks(key, **kwargs):
+        yield b"actual-image"
+    async def llm(*args, **kwargs):
+        try:
+            yield {"type": "text_delta", "text": "incomplete"}
+            raise TimeoutError()
+        finally:
+            closed.append(True)
+    monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(get_object_chunks=chunks))
+    monkeypatch.setattr("agent.vision.supports_vision", lambda _: True)
+    monkeypatch.setattr("agent.llm.stream_llm", llm)
+    ctx = SimpleNamespace(user_id=owner, workspace_id=workspace, session_id=main.id)
+    with pytest.raises(AssistantError) as error:
+        await describe(ctx, asset_id=image, question="图片是什么？")
+    assert error.value.code == "ASSISTANT_VISION_TIMEOUT" and closed == [True]
+
+
 async def test_image_provider_preference_is_per_user_and_preserves_other_settings(monkeypatch):
     from db.repository.preference_repo import PgPreferenceRepo
     from session.image_pref import selected

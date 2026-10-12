@@ -417,9 +417,7 @@ class Bridge(TurnsMixin):
                 await self._unanswered()
             if self.limit_reason:
                 if not self.limit_done.is_set():
-                    # Out of credits or out of time: the same goodbye reply, its own words.
-                    key = "credits_exhausted" if self.limit_reason == "credits" else "limit_reached"
-                    await self.say_phrase("limit_reached", phrases.phrase_instructions(key, self.lang))
+                    await self.say_phrase("limit_reached", phrases.phrase_instructions("credits_exhausted", self.lang))
                 return
             if not self._can_inject():
                 return

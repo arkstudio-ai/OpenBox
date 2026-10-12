@@ -90,15 +90,19 @@ async def test_model_request_cap_closes_turn_and_allows_the_next_human_input(mon
         assert (await db.get(AgentInboxItem, second["inbox_id"])).outcome == "succeeded"
 
 
-async def test_the_last_requests_ask_for_an_answer_so_a_searching_turn_still_replies(monkeypatch):
+@pytest.mark.parametrize("limit_kind", ["request", "time"])
+async def test_the_last_requests_ask_for_an_answer_so_a_searching_turn_still_replies(monkeypatch, limit_kind):
     from assistant.runtime import LAST_REQUESTS_PROMPT
-    _, owner, _, main, first = await runtime(monkeypatch, model_requests=3)
+    _, owner, _, main, first = await runtime(monkeypatch, model_requests=3 if limit_kind == "request" else 12)
     told = []
 
     async def stream(**kwargs):
         last = kwargs["messages"][-1]
         told.append(last.get("role") == "user" and last.get("content") == LAST_REQUESTS_PROMPT)
         if not told[-1]:
+            if limit_kind == "time":
+                # Many requests remain, but only enough time for the answer.
+                budget.current.get().local_deadline = budget.time.monotonic() + 20
             # A model that would keep looking, request after request.
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.list")
             yield {"type": "tool_call", "tool": wire, "args": {}, "call_id": f"list-{len(told)}", "invalid": False}
@@ -178,7 +182,8 @@ async def test_deadline_during_tool_preserves_the_effect_without_repeating_it(mo
         human = re.findall(r"Original human message_id=([^\]]+)", json.dumps(kwargs["messages"]))[-1]
         yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
             "title": "Committed before timeout", "instructions": "Only draft a short report.",
-            "source_message_ids": [human], "destination_confirmed": True}, "call_id": "submit", "invalid": False}
+            "source_message_ids": [human], "destination_confirmed": True,
+            "model": main.model, "model_confirmed": True}, "call_id": "submit", "invalid": False}
         yield {"type": "finish", "reason": "tool_calls", "usage": {}}
     monkeypatch.setattr(processor, "stream_llm", stream)
     await run(main, owner)
@@ -199,7 +204,8 @@ async def test_tool_cap_preserves_one_committed_task_and_never_dispatches_a_seco
         for index in range(2):
             yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
                 "title": f"Report {index}", "instructions": "Only draft a short report.",
-                "source_message_ids": [human], "destination_confirmed": True}, "call_id": f"submit-{index}", "invalid": False}
+                "source_message_ids": [human], "destination_confirmed": True,
+                "model": main.model, "model_confirmed": True}, "call_id": f"submit-{index}", "invalid": False}
         yield {"type": "finish", "reason": "tool_calls", "usage": {}}
     monkeypatch.setattr(processor, "stream_llm", stream)
     await run(main, owner)

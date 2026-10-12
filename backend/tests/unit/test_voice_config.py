@@ -15,7 +15,7 @@ def test_voice_environment_overrides_read_like_the_memory_ones(monkeypatch):
     monkeypatch.setenv("VOICE_TURN_VARIANT", "low")
     config = OpenBoxConfig(**_apply_env_overrides({"voice": {"model": "kept"}}))
     assert (config.voice.enabled, config.voice.voice, config.voice.model) == (True, "Tina", "kept")
-    assert config.voice.max_call_seconds == 600
+    assert not hasattr(config.voice, "max_call_seconds")  # legacy duration overrides are ignored
     assert not hasattr(config.voice, "daily_seconds")  # calls are paid in credits, no time quota
     assert (config.voice.turn_model, config.voice.turn_variant) == ("openai/qwen3.8-flash", "low")
     monkeypatch.setenv("VOICE_ENABLED", "yes")
@@ -28,6 +28,11 @@ def test_voice_turns_keep_the_main_sessions_model_unless_configured():
     # One progress line per request, after 20 quiet seconds (2026-10-10: 12 s made "稍等…" a refrain).
     assert (voice.turn_model, voice.turn_variant, voice.late_after_seconds) == (None, None, 20)
     assert voice.summary_model == "openai/qwen3.8-flash"
+
+
+def test_legacy_duration_config_cannot_restore_a_call_time_limit():
+    voice = VoiceConfig.model_validate({"max_call_seconds": 60})
+    assert "max_call_seconds" not in voice.model_dump()
 
 
 def test_audio_config_overrides_and_history_limits(monkeypatch):

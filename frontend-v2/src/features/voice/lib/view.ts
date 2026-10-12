@@ -5,8 +5,6 @@ import type { CallStatus, CostSnapshot, Phase } from "./types"
 
 /** How long after connecting the "just talk" hint stays. */
 const HINT_MS = 10_000
-/** Below this much call time left, the window says how many minutes remain. */
-const REMAINING_NOTE_SECONDS = 5 * 60
 
 export interface CallFacts {
   status: CallStatus
@@ -15,7 +13,6 @@ export interface CallFacts {
   late: boolean
   muted: boolean
   startedAt: number | null
-  maxSeconds: number | null
   cost: CostSnapshot | null
 }
 
@@ -29,7 +26,6 @@ export interface CallView {
   statusKey: string
   /** Copy key for the small note beside it while a handed-off turn is still being worked on. */
   noteKey: string | null
-  remainingMinutes: number | null
   cost: CostSnapshot | null
   showHint: boolean
 }
@@ -52,7 +48,6 @@ function statusKey(call: CallFacts): string {
 export function callView(call: CallFacts, elapsedMs: number): CallView {
   const connected = call.status === "connected"
   const clocked = call.startedAt !== null && (connected || call.status === "ending")
-  const left = call.maxSeconds === null ? null : call.maxSeconds - elapsedMs / 1000
   // The phase leads; a turn still being worked on while the conversation goes
   // on is the side note (spec §4.1). In the working phase it would say it twice.
   const working = connected && call.working && call.phase !== "working"
@@ -63,8 +58,6 @@ export function callView(call: CallFacts, elapsedMs: number): CallView {
     clock: clocked ? formatClock(elapsedMs / 1000) : null,
     statusKey: statusKey(call),
     noteKey: working ? (call.late ? LATE_COPY : PHASE_COPY.working) : null,
-    remainingMinutes:
-      connected && left !== null && left < REMAINING_NOTE_SECONDS ? Math.max(0, Math.ceil(left / 60)) : null,
     cost: call.cost,
     showHint: connected && elapsedMs < HINT_MS,
   }

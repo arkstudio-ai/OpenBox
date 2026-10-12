@@ -70,7 +70,7 @@
 - 键盘：悬浮窗内按钮可 Tab 到达；药丸整体是一个 `button`。
 - 无障碍：状态行 `role="status"` 且 `aria-live="polite"`。
 - 费用：控制行显示 `total_yuan`（保留 4 位）；hover `title` 列出四项明细与 `settled_rounds`；`unreported_rounds>0` 时附 `voice:cost.partial`。
-- 剩余时长：`ready.max_seconds` 减去已用 < 5 分钟时，计时器旁显示 `voice:duration.remaining`。
+- 通话只显示累计时长；没有单次时长上限、倒计时或到时自动挂断。`ready.max_seconds` 为 `null`。
 
 ## 5. 与聊天列表联动
 

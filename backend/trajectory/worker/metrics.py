@@ -30,6 +30,8 @@ COUNTERS = (
     # Wave 3 (shared contract 5).
     "blob_put_raw_bytes", "audit_dead_letters", "failed_batches",
     "read_rejected", "read_timed_out", "read_too_large",
+    # Lite view (docs/SESSION_TRAJECTORY_LITE_PLAN.md §14): failed turns announced to the platform admins.
+    "turn_alerts_sent",
 )
 GAUGES = (
     "spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds", "projection_lag_events",

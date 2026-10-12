@@ -38,6 +38,8 @@ DEFAULT_BACKEND_URL = "http://backend:8080"
 VIEWER_PATH = "/api/internal/trajectory/viewer"
 AUDIT_PATH = "/api/internal/trajectory/audit"
 SESSION_AUDIENCE_PATH = "/api/internal/trajectory/session-audience"
+USAGE_PATH = "/api/internal/trajectory/usage"
+ALERTS_PATH = "/api/internal/trajectory/alerts"
 UNAVAILABLE = "Trajectory authorization is unavailable"
 AUDIT_DEDUPE_SECONDS = 60
 DEDUPED_AUDIT_ACTIONS = frozenset({"admin.trajectory.list", "admin.trajectory.view",
@@ -129,6 +131,16 @@ class HttpBackend:
         response.raise_for_status()
         return response.json()
 
+    async def turn_usage(self, windows: list[dict]) -> dict:
+        response = await self._client.post(USAGE_PATH, headers=self._headers, json={"windows": windows})
+        response.raise_for_status()
+        return response.json()
+
+    async def turn_alerts(self, turns: list[dict]) -> dict:
+        response = await self._client.post(ALERTS_PATH, headers=self._headers, json={"turns": turns})
+        response.raise_for_status()
+        return response.json()
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -152,6 +164,14 @@ class LocalBackend:
         except ValidationError as exc:
             raise AuditRejected("Invalid trajectory audit entries") from exc
         await write_trajectory_audit(batch.entries)
+
+    async def turn_usage(self, windows: list[dict]) -> dict:
+        from api.internal import TrajectoryUsageQuery, trajectory_turn_usage
+        return await trajectory_turn_usage(TrajectoryUsageQuery.model_validate({"windows": windows}))
+
+    async def turn_alerts(self, turns: list[dict]) -> dict:
+        from api.internal import TrajectoryAlertBatch, trajectory_turn_alerts
+        return await trajectory_turn_alerts(TrajectoryAlertBatch.model_validate({"turns": turns}))
 
     async def close(self) -> None:
         return None

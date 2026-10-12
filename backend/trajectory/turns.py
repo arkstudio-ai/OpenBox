@@ -14,9 +14,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, select
 from sqlalchemy.dialects import postgresql, sqlite
 
+from core.log import create_logger
 from trajectory.config import integer
 from trajectory.projector import contribution
 from trajectory.store.models import TrajectoryRecord, TrajectoryTurnSummary
+
+log = create_logger("trajectory.turns")
 
 STATUSES = ("completed", "completed_with_errors", "failed", "waiting", "running", "cancelled", "unknown")
 #: Record kinds whose ``waiting`` status holds the whole turn.
@@ -261,4 +264,57 @@ def payload(row: TrajectoryTurnSummary, *, session_title: str | None = None, at:
         "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
         "usage_complete": bool(row.usage_complete),
         "first_seq": str(row.first_seq), "last_seq": str(row.last_seq), "through_seq": str(row.applied_seq),
+        # Filled by lite.attach_credits from the business backend; null until then or when nothing was charged.
+        "credits": None,
     }
+
+
+#: Seconds of slack around a turn when matching charges by time: a charge is written just after the call it bills.
+USAGE_SLACK_SECONDS = 60
+ALERT_BATCH = 50
+
+
+def usage_window(row: TrajectoryTurnSummary, *, at: datetime | None = None) -> tuple[str, str]:
+    """``(from, to)`` ISO instants of the charges a turn can own: its session from start to end, with slack."""
+    moment = at or datetime.now(timezone.utc)
+    start = instant(row.started_at) or moment
+    end = instant(row.finished_at) or instant(row.last_activity_at) or moment
+    if row.status in {"running", "waiting"}:
+        end = max(end, moment)
+    return ((start - timedelta(seconds=5)).isoformat(), (end + timedelta(seconds=USAGE_SLACK_SECONDS)).isoformat())
+
+
+async def deliver_alerts(db, backend, *, limit: int = ALERT_BATCH, at: datetime | None = None) -> int:
+    """Announce newly failed turns to the platform admins through the business backend; returns turns announced.
+
+    Oldest pending first; a backend refusal of the batch (4xx) still stamps the
+    rows so a bad turn cannot block the queue, a transport failure leaves them
+    for the next pass.
+    """
+    from sqlalchemy import update
+    from trajectory.store.models import TrajectoryMetaSession, TrajectoryMetaUser
+    rows = (await db.execute(select(TrajectoryTurnSummary, TrajectoryMetaSession.title, TrajectoryMetaUser.username)
+        .outerjoin(TrajectoryMetaSession, TrajectoryMetaSession.id == TrajectoryTurnSummary.session_id)
+        .outerjoin(TrajectoryMetaUser, TrajectoryMetaUser.id == TrajectoryTurnSummary.user_id)
+        .where(TrajectoryTurnSummary.status == "failed", TrajectoryTurnSummary.alerted_at.is_(None))
+        .order_by(TrajectoryTurnSummary.started_at).limit(limit))).all()
+    if not rows:
+        return 0
+    payload = [{"turn_id": row.turn_id, "session_id": row.session_id, "user_id": row.user_id,
+                "workspace_id": row.workspace_id, "username": username, "session_title": title,
+                "reason": (row.status_reason or "")[:500] or None,
+                "started_at": instant(row.started_at).isoformat() if row.started_at else None}
+               for row, title, username in rows]
+    try:
+        await backend.turn_alerts(payload)
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status is None or status >= 500:
+            raise
+        log.warning("Trajectory turn alerts refused status=%s turns=%d", status, len(payload))
+    stamp = at or datetime.now(timezone.utc)
+    for row, _, _ in rows:
+        await db.execute(update(TrajectoryTurnSummary).where(
+            TrajectoryTurnSummary.trajectory_id == row.trajectory_id, TrajectoryTurnSummary.turn_id == row.turn_id)
+            .values(alerted_at=stamp))
+    return len(rows)

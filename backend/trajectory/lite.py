@@ -18,7 +18,10 @@ from trajectory import turns
 from trajectory.payload import require_content
 from trajectory.repository import cursor_decode, cursor_encode
 from trajectory.store.models import (TrajectoryMetaSession, TrajectoryMetaUser, TrajectoryRecord, TrajectoryTurnSummary)
+from core.log import create_logger
 from trajectory.types import TrajectoryError, digest, iso
+
+log = create_logger("trajectory.lite")
 
 LABELS_PATH = Path(__file__).resolve().parent / "lite_labels.json"
 #: Bounded scans: how many batches a page may consume before the read is refused (as list_sessions).
@@ -69,6 +72,27 @@ def resolve_tool(tool_id: str, document: dict | None = None) -> dict:
             return {"label": entry.get("label") or tool_id, "group": entry.get("group"), "args": entry.get("args", []),
                     "result": entry.get("result"), "transparent": False, "source": "prefix"}
     return {"label": tool_id, "group": None, "args": [], "result": None, "transparent": False, "source": "default"}
+
+
+# -- Credits (business backend) --
+
+async def attach_credits(windows: list[tuple[str, dict]], items: list[dict], *, field: str = "credits") -> None:
+    """Fill ``items[i][field]`` from the backend's charged credits for ``windows[i]``; a failure leaves nulls.
+
+    ``windows`` pairs each item's key with its usage window (session or user scope plus from/to).
+    """
+    if not windows:
+        return
+    from trajectory.auth import get_backend
+    try:
+        answer = await get_backend().turn_usage([{"key": key, **window} for key, window in windows])
+        credits = answer.get("credits", {}) if isinstance(answer, dict) else {}
+    except Exception as exc:
+        log.debug("Trajectory credits unavailable error_type=%s", type(exc).__name__)
+        return
+    for (key, _), item in zip(windows, items):
+        value = credits.get(key)
+        item[field] = str(value) if value is not None else None
 
 
 # -- Users --
@@ -226,6 +250,12 @@ async def list_users(db, *, q=None, activity_from=None, activity_to=None, has_fa
     # Private sessions the viewer cannot read are left out of a user's numbers and shown activity, so a page is
     # re-ordered by what it shows; the SQL order only decides which users fall on which page.
     page = sorted((payload for payload, _ in items), key=lambda row: (row["last_activity_at"] or "", row["user"]["user_id"]), reverse=True)
+    for row in page:
+        row["credits"] = None
+    window_from = (activity_from or datetime(2000, 1, 1, tzinfo=timezone.utc)).isoformat()
+    window_to = (activity_to or at).isoformat()
+    await attach_credits([(row["user"]["user_id"], {"user_id": row["user"]["user_id"], "from_at": window_from, "to_at": window_to})
+                          for row in page], page)
     return {"items": page, "next_cursor": next_cursor, "has_more": overflow}
 
 
@@ -296,6 +326,7 @@ async def list_user_turns(db, user_id: str, *, statuses=None, activity_from=None
         raise HTTPException(503, detail="Trajectory audience scan exceeds the read budget")
     page = rows[:limit]
     items = [turns.payload(turn, session_title=title, at=at) for turn, title in page]
+    await attach_credits([(turn.turn_id, {"session_id": turn.session_id, **_window_dict(turn, at)}) for turn, _ in page], items)
     next_cursor = None
     if len(rows) > limit and page:
         last, _ = page[-1]
@@ -349,6 +380,12 @@ async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) 
         enriched = turns.with_data(summary, data)
         enriched.pop("data", None)  # step rows stay summaries; the detail endpoint carries content
         steps.append({**enriched, **classify(enriched, document, row.main_agent_id)})
-    return {"summary": turns.payload(row, session_title=session.title if session else None, at=at),
-            "steps": steps, "through_seq": str(trajectory.projected_seq),
+    summary = turns.payload(row, session_title=session.title if session else None, at=at)
+    await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)})], [summary])
+    return {"summary": summary, "steps": steps, "through_seq": str(trajectory.projected_seq),
             "labels_version": document.get("version", 0)}
+
+
+def _window_dict(row, at) -> dict:
+    from_at, to_at = turns.usage_window(row, at=at)
+    return {"from_at": from_at, "to_at": to_at}

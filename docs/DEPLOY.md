@@ -29,7 +29,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-11 15:22 `20261011-harness-91897a2d`（/v1 开放接口、合作方资费与阶梯计费、API Key）
+## 当前阿里云：2026-10-12 13:25 `20261012-pricing-t1-90c9a5be`（用户售价切到合作与定价方案 标准阶梯 T1）
+
+- 源码 `main@90c9a5be`（PR [#68](https://github.com/arkstudio-ai/OpenBox/pull/68) 合并；分支先合入了 10-11 的 main：/v1 开放接口、合作方资费、RunningHub 图片模型）。同一镜像也带上了 91897a2d 之后 main 上队友的提交（`7c504a6e`/`12a5e507` 语音默认 Audio 3.1 与前台措辞、`a54fe6c0` 助理按项目/会话路由、`5d276da3` RunningHub 图片模型落账）。三服务统一到本 tag。
+- 价目：`rates.json` `2026-10-12.1`。文本三档 = 成本 × 1.7：gemini-3.8-flash 10.2 / 51 / 1.19（独立 CNY 条目，不再借 3.7 优惠价别名；3.7 同价）、qwen3.8-max 20.4 / 61.2 / 2.55、qwen3.8-flash 1.4 / 4.6 / 0.17。视频每秒：Seedance 2.5 1080p 8.30、Seedance 2.0 1080p 5.55、Wan 3.0 720p 1.40 / 1080p 2.70、MiniMax-H3 768p 0.25（降）为表列值，其余分辨率按同档售价÷成本倍率推导（见 [CREDIT_BILLING.md](CREDIT_BILLING.md) 10-10 条）。T2/T3 月累计阶梯与源码客户价未实现，全部用户按 T1。合作方 `/v1` 资费不受影响（成本仍取平台价目表）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `origin/main` 干净归档（backend 上下文仓库根，frontend `VITE_BUILD_ID`=tag、`NGINX_IMAGE=nginx:1.31.5-alpine`），本地核对镜像内 rates 版本与两条价、前端 app-build、nginx `/v1` 模板、`nginx -t`。backend image `sha256:c3bdfca4…5087ff83`（压缩包 `dc0efcb9…6daef8ec`，234,687,030 B）；frontend image `sha256:0c96cc28…fb0a0630`（压缩包 `6e697d60…3828701c`，29,648,079 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换脚本 `releases/20261012-pricing-t1-90c9a5be/deploy_gw2_v10.sh`：备份配置与两库 dump（业务 120 表、轨迹 36 表，`backups/20261012-pricing-t1-90c9a5be/activation-20261012T0524*Z/`）→ 租约守门（0 租约、0 进行中视频、0 活跃通话）→ worker 9 s → backend 21 s → frontend 15 s healthy。05:24:40–05:25:39 UTC 完成。**无迁移**（业务库保持 `pf39b0c1d2e3`），`openbox.json` / `backend.env` 未动，`pricing_rules` 无覆盖行。
+- 验证：容器内 `catalogue()` `2026-10-12.1`、别名表已无 gemini-3.8；gemini 1M 输入+1M 输出+1M 缓存 售 52.19 / 成本 30.7，qwen max 63.75 / 37.5，qwen flash 4.77 / 2.8；Seedance 2.5 1080p 10 s 售 83 / 成本 37.42，2.0 55.5 / 24.79，Wan 720p 14 / 6，1080p 27 / 12，H3 768p 2.5 / 0.9，Turbo 768p 7.7 / 3.4，Seedance Fast 720p 18 / 7.99；剪辑与图片未变；默认合作方资费 `2026-10-11.1` 仍加载；管理定价 6 路由、/v1 19 路由。公网首页 200、app-build 为新 tag、`/api/environment` 200、`/api/admin/pricing` `/api/admin/partners` `/v1/models` 匿名 401。三服务重启 0。合并前：读价目的 10 个套件 243 条 + 合作方/v1 53 条全绿；全量单测 6,343 passed / 19 failed，失败均与改价无关（见 PR 评论）。
+- 回滚：恢复备份目录的 `docker-compose.override.yml`（`20261011-harness-91897a2d`），依次 `docker compose up -d --no-deps trajectory-worker / backend / frontend`；无库变更。价目回退也可不换镜像：在超管「模型定价」页逐条改回，或挂 `BILLING_RATES_FILE` 指向旧版 rates.json。AWS 未发布。
+
+## 历史阿里云：2026-10-11 15:22 `20261011-harness-91897a2d`（/v1 开放接口、合作方资费与阶梯计费、API Key）
 
 - 源码 `main@91897a2d`（PR [#58](https://github.com/arkstudio-ai/OpenBox/pull/58) 合并）：高德 `/v1` 开放接口（API Key 鉴权、会话/消息/确认卡/文件、`quality` 五档 + `resolution`、402 预检与限流）、`billing/partner.py` 合作方资费与阶梯计费（仅 `api_key_id` 会话生效，主线用户不受影响）、`/v1/models|me|usage|usage/summary`、`/api/admin/partners`、tiktoken 词表烤入镜像（`TIKTOKEN_CACHE_DIR=/opt/tiktoken`）与本地缓存守卫。对外文档统一为 bossip：`docs/external/bossip-Video-API-Gaode-v1.2.md` 与三份 `bossip-Gaode-*`。
 - 迁移：业务库 `pd17c8d9e0f1 → e7c9a1b3d5f0（api_keys、sessions.quality/metadata/api_key_id）→ pe28a9b0c1d2（合并点）→ pf39b0c1d2e3（partner_tariffs、partner_rebates）`；轨迹库未动。切换前两库 dump 在 `backups/20261011-harness-91897a2d/activation-*/`。

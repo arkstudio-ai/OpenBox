@@ -48,6 +48,8 @@ SEARCH_DOC_CHARS = 4000
 #: Values nested deeper than this inside record data are sized and stored as a whole.
 EXTERNALIZE_DEPTH = 6
 #: Trajectories visited per pass; the next pass continues after the last one.
+#: Failed-turn alerts are delivered at most this often per worker.
+ALERT_INTERVAL_SECONDS = 30
 PASS_TRAJECTORIES = 100
 #: Candidates read per pass for every trajectory visited: those backing off are skipped.
 SCAN_FACTOR = 4
@@ -247,6 +249,8 @@ class ProjectionService:
         self._retry: dict[tuple[str, str], tuple[float, int]] = {}
         #: Monotonic time of the next ``projection_lag_events`` sample.
         self._lag_due = 0.0
+        #: Monotonic time of the next failed-turn alert pass.
+        self._alerts_due = 0.0
         self.last_source_indexed = 0
 
     def _object_guard(self, trajectory_id):
@@ -289,7 +293,26 @@ class ProjectionService:
             self._retry.pop(("project", trajectory_id), None)
             progress += int(await self.maybe_checkpoint(trajectory_id))
         await self._lag_gauge()
+        await self._alerts()
         return progress
+
+    async def _alerts(self) -> None:
+        """Announce newly failed turns (lite plan §14) at most every ALERT_INTERVAL_SECONDS; never raises."""
+        at = time.monotonic()
+        if at < self._alerts_due:
+            return
+        self._alerts_due = at + ALERT_INTERVAL_SECONDS
+        try:
+            from trajectory.auth import get_backend
+            backend = get_backend()
+            async with trace_session() as db:
+                sent = await turns.deliver_alerts(db, backend)
+            if sent and self.metrics is not None:
+                self.metrics.inc("turn_alerts_sent", sent)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("Trajectory turn alert delivery failed error_type=%s", type(exc).__name__)
 
     async def _candidates(self) -> list[str]:
         live = select(SessionTrajectory.id).where(

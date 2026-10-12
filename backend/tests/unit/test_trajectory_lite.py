@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from tests.unit.test_worker_projection_support import (AT, FIXTURES, Ingest, Metrics, add_meta, add_trajectory,  # noqa: F401
     blobs, load_fixture, project_all, settings, trace_db)
 from trajectory import lite, turns
+from trajectory import auth as trajectory_auth
 from trajectory.ops import turns_backfill
 from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryRecord, TrajectoryTurnSummary
@@ -360,3 +361,120 @@ def test_classify_hides_policy_permissions_and_the_main_agent():
     tool = {**_record("tool:t", "tool", 5, title="exit code: 0"), "tool_id": "bash"}
     classified = lite.classify(tool, document)
     assert (classified["tool_id"], classified["label"], classified["group"]) == ("bash", "处理文件", "files")
+
+
+# -- Credits and alerts through the business backend --
+
+class FakeBackend:
+    def __init__(self, *, credits=None, alert_error=None):
+        self.credits = credits or {}
+        self.usage_calls: list[list[dict]] = []
+        self.alert_calls: list[list[dict]] = []
+        self.alert_error = alert_error
+
+    async def turn_usage(self, windows):
+        self.usage_calls.append(windows)
+        return {"credits": {w["key"]: self.credits.get(w["key"]) for w in windows}}
+
+    async def turn_alerts(self, turns_):
+        self.alert_calls.append(turns_)
+        if self.alert_error is not None:
+            raise self.alert_error
+        return {"alerted": len(turns_), "admins": 1}
+
+    async def close(self):
+        return None
+
+
+@pytest.fixture
+def fake_backend():
+    backend = FakeBackend()
+    trajectory_auth.configure_backend(backend)
+    yield backend
+    trajectory_auth.configure_backend(None)
+
+
+async def test_turn_lists_and_detail_carry_credits_from_the_backend(trace_db, blobs, fake_backend):
+    fake_backend.credits = {"turn_a": "2.5", "user_p": "7"}
+    trajectory_id, session_id, user_id = await _project_fixture(blobs)
+    fake_backend.credits["user_" + user_id] = "7"
+    fake_backend.credits[user_id] = "7"
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        detail = await lite.get_turn(db, trajectory, "turn_a", at=NOW)
+        listed = await lite.list_user_turns(db, user_id, at=NOW)
+        users = await lite.list_users(db, at=NOW)
+    assert detail["summary"]["credits"] == "2.5"
+    assert listed["items"][0]["credits"] == "2.5"
+    assert users["items"][0]["credits"] == "7"
+    window = fake_backend.usage_calls[0][0]
+    assert window["key"] == "turn_a" and window["session_id"] == session_id
+    assert window["from_at"] < window["to_at"]
+    user_window = fake_backend.usage_calls[-1][0]
+    assert user_window["user_id"] == user_id and user_window["to_at"] == NOW.isoformat()
+
+
+async def test_credits_stay_null_when_the_backend_is_unavailable(trace_db, blobs):
+    trajectory_id, _, user_id = await _project_fixture(blobs)
+    trajectory_auth.configure_backend(None)
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        assert (await lite.get_turn(db, trajectory, "turn_a", at=NOW))["summary"]["credits"] is None
+        assert (await lite.list_user_turns(db, user_id, at=NOW))["items"][0]["credits"] is None
+
+
+def test_usage_window_covers_the_turn_with_slack_and_open_turns_until_now():
+    row = TrajectoryTurnSummary(started_at=NOW - timedelta(minutes=10), finished_at=NOW - timedelta(minutes=5),
+                                last_activity_at=NOW - timedelta(minutes=5), status="completed")
+    start, end = turns.usage_window(row, at=NOW)
+    assert start == (NOW - timedelta(minutes=10, seconds=5)).isoformat()
+    assert end == (NOW - timedelta(minutes=4)).isoformat()
+    open_row = TrajectoryTurnSummary(started_at=NOW - timedelta(minutes=10), finished_at=None,
+                                     last_activity_at=NOW - timedelta(minutes=8), status="running")
+    assert turns.usage_window(open_row, at=NOW)[1] == (NOW + timedelta(seconds=60)).isoformat()
+
+
+async def test_failed_turns_are_announced_once_oldest_first(trace_db, fake_backend):
+    await _seed_users()
+    async with trace_session() as db:
+        sent = await turns.deliver_alerts(db, fake_backend, at=NOW)
+    assert sent == 1
+    (batch,) = fake_backend.alert_calls
+    assert [item["turn_id"] for item in batch] == ["a1"]
+    assert batch[0] == {"turn_id": "a1", "session_id": "s_a1", "user_id": "user_a", "workspace_id": "ws_a",
+                        "username": "张店长", "session_title": "国庆视频", "reason": None,
+                        "started_at": (NOW - timedelta(hours=1)).isoformat()}
+    async with trace_session() as db:
+        row = await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))
+        assert row.alerted_at is not None
+        # Nothing left: the next pass sends nothing, and a refresh keeps the stamp.
+        assert await turns.deliver_alerts(db, fake_backend, at=NOW) == 0
+        trajectory = await db.get(SessionTrajectory, "t_a1")
+        await turns.refresh(db, trajectory, ["a1"])
+        row = await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))
+        assert row.alerted_at is not None
+
+
+async def test_alert_delivery_stamps_on_refusal_but_retries_on_transport_failure(trace_db):
+    import httpx
+    await _seed_users()
+    refused = FakeBackend(alert_error=httpx.HTTPStatusError("refused", request=httpx.Request("POST", "http://b"),
+                                                            response=httpx.Response(422)))
+    async with trace_session() as db:
+        assert await turns.deliver_alerts(db, refused, at=NOW) == 1
+        assert (await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))).alerted_at is not None
+    await _seed_turn("t_a1", "s_a1", "user_a", "a9", started=3, status="failed", preview="再试")
+    down = FakeBackend(alert_error=httpx.ConnectError("down"))
+    async with trace_session() as db:
+        with pytest.raises(httpx.ConnectError):
+            await turns.deliver_alerts(db, down, at=NOW)
+    async with trace_session() as db:
+        assert (await db.get(TrajectoryTurnSummary, ("t_a1", "a9"))).alerted_at is None
+
+
+def test_the_alert_link_kind_is_allow_listed():
+    from notifications.inbox import validate_link
+    link = {"kind": "admin_trajectory_turn", "userId": "u", "sessionId": "s", "turnId": "t"}
+    assert validate_link(link) == link
+    with pytest.raises(ValueError):
+        validate_link({"kind": "admin_trajectory_turn", "userId": "u"})

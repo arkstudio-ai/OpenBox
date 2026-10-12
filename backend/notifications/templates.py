@@ -15,6 +15,7 @@ TEMPLATES = {
     'platform_auth_expired': ('需要重新授权', '{name} 授权已失效，请重新登录。', 'Sign-in needed', '{name} authorization expired. Sign in again.'),
     'publish_done': ('发布成功', '《{name}》已确认发布。', 'Published', '“{name}” is confirmed published.'),
     'publish_failed': ('发布失败', '《{name}》发布失败，请检查。', 'Publish failed', '“{name}” failed to publish. Review it.'),
+    'trajectory_turn_failed': ('有一轮对话失败', '{name}，点开看哪一步出了问题。', 'A conversation turn failed', '{name}. See which step broke.'),
 }
 PLATFORMS = {'douyin': ('抖音', 'Douyin'), 'douyin_creator': ('抖音创作者中心', 'Douyin Creator'),
              'xiaohongshu': ('小红书', 'Xiaohongshu'), 'bilibili': ('哔哩哔哩', 'Bilibili')}

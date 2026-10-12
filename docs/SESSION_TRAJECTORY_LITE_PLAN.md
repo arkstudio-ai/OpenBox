@@ -369,3 +369,10 @@ M1/M2 发到 gw2 后用真实记录（177 条轨迹、1,249 轮、23 个用户�
 - **文案细节**：步骤时间原来是截取格式化字符串的第 11–19 位，中文 locale 下成了 "GMT+8 09"；改用 Intl 时钟格式。列表预览去掉 Markdown 的 `**`/`###`/`>` 等符号。
 
 未改的已知项：同一轮的"AI 做了什么"芯片按失败数再按次数排序，长尾折成 "+N"；结论句按工具失败字面陈述（例如"处理文件失败了 3 次"），不推断业务原因。
+
+## 14. M3：积分、失败告警、结论口径（2026-10-12）
+
+- **结论句**：失败与"完成但有失败步骤"的轮，结论优先用 AI 最后一条回复的正文（去 Markdown，截 80 字），没有正文才落到工具模板（"发布到抖音失败：…"）。线上一个定时任务轮因此从"已完成，但处理文件失败了 3 次"变成"每日抖音热点轮询异常提醒 任务状态：未完成 异常原因：云电脑上的「抖音热点宝」登录态已失效…"。
+- **积分**：trace 库没有账本，worker 也不连业务库，所以走业务侧内部回调 `POST /api/internal/trajectory/usage`（与 viewer / audience / audit 同一套 `X-Internal-Token`）。请求是最多 200 个窗口，每个窗口是"会话 + 起止时间"或"用户 + 起止时间"；回答是每个窗口内 `usage_events.status = charged` 的 `credits` 之和（无一条收费行回 null，前端显示"未计费"）。按时间匹配而不是 `message_id`，因为视频/图片等媒体扣费不带 message_id。轮的窗口 = 该会话从 `started_at - 5 s` 到 `finished_at + 60 s`（进行中/等待中到当前时刻 + 60 s）；用户的窗口 = 列表的时间范围。worker 的 `HttpBackend / LocalBackend` 各加 `turn_usage`，`lite.attach_credits` 在三个读接口里附加 `credits`，回调失败只留 null、不影响页面。
+- **失败告警**：trace 迁移 `t0007_turn_alerts` 给轮汇总加 `alerted_at`（升级时把已有的 failed 行全部盖章，不补发历史），worker 投影每 30 秒跑一次 `turns.deliver_alerts`：最旧优先取 50 条 `failed` 且未盖章的轮，经 `POST /api/internal/trajectory/alerts` 给**每个活跃超管**各写一条消息中心记录（`kind=trajectory_turn_failed`，`category=system`，`source_key=trajectory:{turn_id}:failed` 幂等，正文只写"用户 · 会话标题"，不带工具输出或错误原文），链接新增白名单类型 `admin_trajectory_turn {userId, sessionId, turnId}`，Web 消息中心点开直达轮详情（App 未识别的类型按既有规则退回消息中心）。业务侧 4xx 拒收也盖章以免卡队列；网络/5xx 留待下一轮。
+- **未做**：成本 `cost_credits` 不展示；积分按时间窗匹配，同一会话里并发的两轮会各自算到重叠部分；告警只有"失败"一种状态，"完成但有失败步骤"不告警。

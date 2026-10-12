@@ -54,9 +54,9 @@
 
 | 档 | 语言模型 | 视频 |
 |---|---|---|
-| 深度 / 质量 | Qwen3.8 Max @ xhigh | SD 1080p Pro，1080p（0.50/秒） |
-| 专业 / 标准 | Gemini 3.8 Flash @ medium（现默认） | Wan 3.0，默认 720p（480p 0.30 / 720p 0.60 / 1080p 1.20 每秒） |
-| 快速 / 灵活 | Qwen3.8 Flash @ low | MiniMax H3，默认 768p（512p 0.33 / 768p 0.50 每秒） |
+| 深度 / 质量 | Qwen3.8 Max @ xhigh | Seedance 2.0，1080p（T1 5.55/秒；极致档 Seedance 2.5 1080p 8.30/秒） |
+| 专业 / 标准 | Gemini 3.8 Flash @ medium（现默认） | Wan 3.0，默认 720p（T1：480p 0.70 / 720p 1.40 / 1080p 2.70 每秒） |
+| 快速 / 灵活 | Qwen3.8 Flash @ low | MiniMax H3，默认 768p（T1：512p 0.17 / 768p 0.25 每秒） |
 
 视频三档名称 2026-09-19 拍板为「质量 / 标准 / 灵活」（配置里的 `label`），说明文案可在 `description` 里改；价格是 rates.json 现值（成本价，未加毛利）。
 

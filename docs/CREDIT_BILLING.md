@@ -48,8 +48,8 @@
 | GPT-5.5 | 5 | 0.5 | 30 |
 | GPT-5.4 | 2.5 | 0.25 | 15 |
 | GPT-5.4 Mini | 0.75 | 0.075 | 4.5 |
-| Qwen3.8 Max，北京 | 12 | 1.5（隐式）/ 1（显式） | 36 |
-| Qwen3.8 Flash，北京 | 0.8 | 0.1 | 2.7 |
+| Qwen3.8 Max（深度档，T1） | 20.4 | 2.55（隐式）/ 1.7（显式） | 61.2 |
+| Qwen3.8 Flash（快速档，T1） | 1.4 | 0.17 | 4.6 |
 | DeepSeek V4 Flash，空闲 / 高峰 | 1.5 / 3 | 0.05 / 0.1 | 4.5 / 9 |
 | DeepSeek V4 Pro，空闲 / 高峰 | 4.5 / 9 | 0.15 / 0.3 | 13.5 / 27 |
 | Claude Opus 5 / 4.8 / 4.7 / 4.6 | 33.8935 | 3.38935 | 169.4675 |
@@ -57,7 +57,7 @@
 | Claude Sonnet 4.6 | 20.3361 | 2.03361 | 101.6805 |
 | Claude Fable 5 | 67.787 | 6.7787 | 338.935 |
 | Claude Haiku 4.5 | 6.7787 | 0.67787 | 33.8935 |
-| Gemini 3.7 / 3.8 Flash，年底前优惠价 | 5.084025 | 0.5084025 | 25.420125 |
+| Gemini 3.8 Flash（专业档，T1；3.7 同价） | 10.2 | 1.19 | 51 |
 
 核价来源：[OpenAI 价格](https://developers.openai.com/api/docs/pricing)、[GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)、[Claude 价格](https://platform.claude.com/docs/en/about-claude/pricing)、[DeepSeek 人民币价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)、[Qwen3.8 Max](https://help.aliyun.com/zh/model-studio/qwen3-8-max)、[Qwen3.8 Flash](https://help.aliyun.com/zh/model-studio/qwen3-8-flash)、[Gemini 价格](https://ai.google.dev/gemini-api/docs/pricing)。标准同步推理价作为产品计费基准，网关的折扣、套餐和返利不改变该价目表。
 
@@ -304,4 +304,11 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 - 成本：阿里 IMS 视频剪辑（非高级模板，中国内地）按成片分钟计，480p/720p/1080p/2K/4K = 0.015/0.03/0.06/0.12/0.24 元/分钟，不足 1 分钟按 1 分钟，失败不扣费。
 - 售价：每秒积分 = 成本 ÷ 60 × 1.5，即 0.000375 / 0.00075 / 0.0015 / 0.003 / 0.006；`min_seconds` 与 `round_seconds` 都是 60，和成本一样按整分钟向上取整，保证每单都是 50% 毛利（61 秒按 120 秒计，否则会低于两分钟的成本）。
 - 代码：`quote_compose` 优先读 `per_second`（带 `min_seconds` / `round_seconds`），旧的 `per_minute` 条目仍按分钟计；`usage_events.tokens` 记 `seconds_billed`；工具输出和确认卡改成 `seconds_billed`。定价页里剪辑五档的单位随之变为每秒，成本列按分钟价折成每秒比较。
+
+## 2026-10-10 用户售价改为「合作与定价方案（公开版）」标准阶梯 T1
+
+- 依据 `work/bossip-合作与定价方案-公开版-20261010.xlsx`（未入库）「模型消耗价目」的 T1 列（视频 0–5,000 秒/月、文本 0–5,000 万 token/月）。T2 / T3 的按月累计阶梯与源码客户专享价**本次未实现**（计费引擎尚无按月用量分档），全部用户按 T1 计。
+- 文本（元 / 百万 token，输入 / 输出 / 缓存命中）：专业档 gemini-3.8-flash 10.2 / 51 / 1.19（不再借 3.7 的美元优惠价别名，3.7 同价）；深度档 qwen3.8-max 20.4 / 61.2 / 2.55；快速档 qwen3.8-flash 1.4 / 4.6 / 0.17。缓存写与显式缓存按同倍率 ×1.7 推导。
+- 视频（元 / 成片秒）表列值：极致 Seedance 2.5 1080p 8.30；质量 Seedance 2.0 1080p 5.55；标准 Wan 3.0 1080p 2.70 / 720p 1.40；灵活 MiniMax-H3 768p 0.25。表未列的分辨率按同档「售价 ÷ 成本」倍率推导并取两位：Seedance 2.5 480p 1.49 / 720p 3.35；Seedance 2.0 480p 0.99 / 720p 2.23；Wan 480p 0.70；Wan Prime 1.01 / 2.03 / 4.05；Seedance 2.0 Fast 0.80 / 1.80；H3 480p / 512p 0.17、2K 0.42；H3-Max-Turbo（快速档，表未列）0.50 / 0.77。
+- 云端合成五档与表一致（见上一条），图片 / 转写 / 语音 / 热点不在表内，售价未动。
 

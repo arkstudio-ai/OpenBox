@@ -199,7 +199,7 @@ async def test_estimate_checks_explicit_intent_and_reports_asset_bindings(config
             {'asset_id': f'asset-{i}', 'role': role} for i, role in enumerate(roles)
         ]
         assert 'operation=image-to-video' in result.output
-        assert result.metadata['estimated_credits'] == '1.7'
+        assert result.metadata['estimated_credits'] == '3.85'  # 768p 5 s at the T1 price 0.77/s
     else:
         assert 'estimated_credits' not in result.metadata
     submit.assert_not_awaited()

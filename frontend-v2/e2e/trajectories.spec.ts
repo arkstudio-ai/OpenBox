@@ -26,7 +26,8 @@ const SHOTS = `${EVIDENCE}/qa-screenshots`
 const NETWORK_LOG = `${EVIDENCE}/qa-fixture-network.jsonl`
 const FIXTURE = "/e2e/fixtures/trajectories.html"
 const RICH = richFixture().seq
-const LIST = "/app/admin/trajectories"
+// The professional session list; the column root is the lite user list since M2.
+const LIST = "/app/admin/trajectories/sessions"
 
 const EVENT_TYPES = new Set(
   Object.entries(EVENT_FAMILIES).flatMap(([family, actions]) =>

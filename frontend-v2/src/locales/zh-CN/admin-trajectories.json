@@ -67,7 +67,8 @@
       "newest": "最近活动在前",
       "oldest": "最早活动在前",
       "label": "排序"
-    }
+    },
+    "proLead": "跨全部用户与工作区的会话列表；每条记录、每个事件都可查看与回放"
   },
   "kind": {
     "user": "用户输入",
@@ -816,5 +817,160 @@
     "retained": "媒体 · {{type}} · {{size}}",
     "source": "来源：{{source}}",
     "load": "加载内容"
+  },
+  "lite": {
+    "mode": {
+      "label": "视图模式",
+      "lite": "简明模式",
+      "pro": "专业模式"
+    },
+    "breadcrumb": "位置",
+    "window": {
+      "label": "时间范围",
+      "today": "今天",
+      "7d": "近 7 天",
+      "30d": "近 30 天",
+      "90d": "近 90 天",
+      "all": "全部"
+    },
+    "turnStatus": {
+      "completed": "已完成",
+      "completed_with_errors": "完成，有失败步骤",
+      "failed": "失败",
+      "waiting": "等待用户",
+      "running": "进行中",
+      "cancelled": "已取消",
+      "unknown": "结果未知"
+    },
+    "waiting": {
+      "generic": "回复",
+      "question": "回答问题",
+      "permission": "确认操作",
+      "takeover": "接管云电脑"
+    },
+    "verdict": {
+      "failedStep": "{{action}}失败：{{reason}}",
+      "failedStepNoReason": "{{action}}失败",
+      "failedReply": "AI 回复失败：{{reason}}",
+      "failedReplyNoReason": "AI 回复失败",
+      "waiting": "等待用户{{kind}}（已等 {{elapsed}}）",
+      "waitingNoElapsed": "等待用户{{kind}}",
+      "completedWithErrors": "已完成，但{{action}}失败了 {{count}} 次",
+      "someStep": "有步骤",
+      "completedAction": "已{{action}} {{count}} 次",
+      "completed": "已完成",
+      "running": "AI 正在处理",
+      "cancelled": "已取消",
+      "unknown": "过程中断，结果未知"
+    },
+    "users": {
+      "title": "用户",
+      "lead": "看每个用户让 AI 做了什么、成了没有、卡在哪一步",
+      "search": "搜索用户",
+      "searchPlaceholder": "搜用户名、邮箱或用户 ID",
+      "onlyFailures": "只看有失败的",
+      "onlyActive": "只看进行中或等待用户的",
+      "open": "查看对话",
+      "loading": "正在加载用户…",
+      "empty": "这段时间没有用户产生记录",
+      "emptyFiltered": "没有符合条件的用户",
+      "footer": "统计范围：{{window}}，按最近活动排序",
+      "column": {
+        "user": "用户",
+        "lastActivity": "最近活动",
+        "status": "当前状态",
+        "turns": "轮次",
+        "failed": "失败",
+        "sessions": "会话数",
+        "usage": "用量（输入 / 输出）"
+      }
+    },
+    "user": {
+      "turns7d": "近 7 天轮次",
+      "noRecentActivity": "近 7 天没有记录到活动"
+    },
+    "turns": {
+      "abnormalOnly": "只看异常",
+      "statusFilter": "结果",
+      "search": "搜对话内容",
+      "searchPlaceholder": "搜用户说的或 AI 回的内容",
+      "clearSession": "取消会话筛选",
+      "onlySession": "只看这个会话",
+      "openPro": "在专业模式打开会话",
+      "groupCount_one": "{{count}} 轮",
+      "groupCount_other": "{{count}} 轮",
+      "updates": "有新活动，点击刷新",
+      "loading": "正在加载对话轮…",
+      "empty": "这段时间没有记录到对话",
+      "emptyFiltered": "没有符合条件的对话轮",
+      "footer_one": "本页 {{count}} 轮",
+      "footer_other": "本页 {{count}} 轮",
+      "attachments": "附件",
+      "noTools": "没有调用工具",
+      "toolCount": "{{label}} ×{{count}}",
+      "column": {
+        "time": "时间",
+        "userSaid": "用户说了什么",
+        "aiDid": "AI 做了什么",
+        "aiSaid": "AI 回了什么",
+        "result": "结果",
+        "duration": "耗时",
+        "usage": "用量"
+      }
+    },
+    "turn": {
+      "loading": "正在加载这一轮…",
+      "backToUser": "该用户的对话",
+      "technicalDetails": "技术详情",
+      "meta": "会话「{{session}}」· {{started}} 开始 · {{finished}} 结束",
+      "notFinished": "尚未",
+      "steps": "步骤",
+      "stepsCount_one": "{{count}} 步",
+      "stepsCount_other": "{{count}} 步",
+      "failedSteps_one": "{{count}} 步失败",
+      "failedSteps_other": "{{count}} 步失败",
+      "retries_one": "重试 {{count}} 次",
+      "retries_other": "重试 {{count}} 次",
+      "replies": "AI 回复",
+      "repliesCount_one": "{{count}} 次",
+      "repliesCount_other": "{{count}} 次",
+      "credits": "积分",
+      "creditsLater": "第二期显示",
+      "flow": "步骤流",
+      "noSteps": "这一轮没有可展示的步骤",
+      "rawRecord": "原始记录",
+      "reasoning": "AI 思考（点开查看）",
+      "noReplyText": "这次回复没有正文",
+      "didWhat": "做了什么",
+      "result": "结果",
+      "asked": "问了什么",
+      "answered": "用户回答",
+      "noAnswerYet": "用户尚未回答",
+      "permissionAsked": "请求确认什么",
+      "decision": "用户决定",
+      "attachmentsInPro": "含附件，在专业模式查看",
+      "loadingStep": "正在加载这一步…",
+      "stepUnavailable": "这一步的内容暂时读不到",
+      "gap": "这期间有一段过程没有记录",
+      "groupTitle": "{{label}} ×{{count}}",
+      "groupAllOk": "全部成功",
+      "groupFailed_one": "{{count}} 次失败",
+      "groupFailed_other": "{{count}} 次失败",
+      "agentSteps_one": "内含 {{count}} 步",
+      "agentSteps_other": "内含 {{count}} 步",
+      "showAgentSteps_one": "展开子任务的 {{count}} 步",
+      "showAgentSteps_other": "展开子任务的 {{count}} 步",
+      "hideAgentSteps": "收起子任务",
+      "step": {
+        "userInput": "用户输入",
+        "assistant": "AI 回复",
+        "question": "向用户提问",
+        "permission": "等待确认",
+        "takeover": "请用户接管云电脑",
+        "job": "后台任务：{{name}}",
+        "artifact": "产物：{{name}}",
+        "agent": "分派子任务：{{name}}"
+      }
+    }
   }
 }

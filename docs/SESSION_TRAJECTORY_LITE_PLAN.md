@@ -1,6 +1,6 @@
 # 轨迹监控 Lite：用户 → 对话轮 → 轮详情
 
-> 日期：2026-10-12。状态：设计已拍板（§10），页面原型已出；**M1 后端已实现**（分支 `feat/trajectory-lite-m1`，实现差异见 §11），M2 前端未开始。
+> 日期：2026-10-12。状态：设计已拍板（§10），页面原型已出；**M1 后端已实现**（PR #70，分支 `feat/trajectory-lite-m1`，实现差异见 §11），**M2 前端已实现**（分支 `feat/trajectory-lite-m2`，实现记录见 §12），均未合并未发布。
 >
 > 现有超管轨迹页面（[UI 规格](./SESSION_TRAJECTORY_UI_SPEC.md)、[协议](./SESSION_TRAJECTORY_PROTOCOL.md)、[存储与 worker 架构](./trajectory-rearch/SPEC.md)）是为工程师排障设计的：28 种记录类型、seq 水位、回放条、九列表格。运营和客服用不起来。本文设计一套面向非技术人员的"简明模式"，作为轨迹监控的默认入口；现有页面保留为"专业模式"。
 >
@@ -345,3 +345,13 @@ M1、M2 合在一个 PR 发 gw2；发布时先跑迁移，再跑回填脚本（�
 - **轮详情返回**：`summary` + `steps`（记录摘要加 `step_type / label / group / collapsible / transparent`）+ `through_seq`（= projected_seq）；步骤全文由前端按需调现有记录详情接口。
 - **删除与过期**：tombstone 时显式删轮汇总；content expire 保留轮汇总（与会话汇总一致）。
 - **测试**：`tests/unit/test_trajectory_lite.py`（规则、投影、回填、读接口、字典覆盖率）、`tests/unit/test_worker_routes_lite.py`（鉴权、审计、形状）；现有路由契约与迁移 schema 测试已随之更新。
+
+## 12. M2 前端实现记录（2026-10-12）
+
+- **目录**：`frontend-v2/src/features/admin-trajectories/lite/`：`types.ts`（接口形状）、`api.ts`（`liteApi` + TanStack 钩子，key 与现有轨迹 key 同根，权限撤销时一起清空）、`params.ts`（URL 状态：筛选、游标、trail）、`labels.ts`（字典解析、状态色调、一句结论模板）、`steps.ts`（步骤流折叠：隐藏类型、低价值工具成组、子 Agent 收纳、重试计数）、`mode.ts`（简明/专业记忆）、`components/`（`UsersPage`、`UserTurnsPage`、`TurnPage`、`StepCards`、`ModeToggle`、`bits`）。
+- **路由**：`/app/admin/trajectories` → 用户列表（简明模式默认）；`/app/admin/trajectories/sessions` → 原专业会话列表；`/sessions/:sessionId` 不变；`/users/:userId` → 某用户的对话轮；`/users/:userId/turns/:sessionId/:turnId` → 轮详情。旧列表书签带 `owner / user / workspace / status / recording / unrecorded / sort` 任一键时 302 到 `/sessions` 并保留查询串；只带 `q / from / to / cursor` 的旧书签无法区分，落到简明模式。
+- **时间窗**：用户列表 `window=today|7d|30d|all`（默认 7d），轮列表 `window=7d|30d|90d|all`（默认 30d）；前端按本地零点换算成 `activity_from` 传给后端，统计列一天内稳定。
+- **轮列表筛选**：「只看异常」= 状态集合 {failed, completed_with_errors, waiting, unknown}，与状态多选共用 `status=` 参数；会话筛选由分组头的「只看这个会话」写入 `session=`；关键字走后端 `q`。每 30 秒探测首行，变化时显示「有新活动，点击刷新」。
+- **轮详情**：步骤流由 `steps.ts` 在前端构建；用户输入、AI 回复和失败步骤默认展开，其余折叠；展开时按记录调现有 `records/{record_id}`（expand=full）取全文，AI 回复按 Markdown 渲染、思考折叠；工具参数/结果复用专业模式的 `JsonTree / TextBlock`。「技术详情」跳 `/sessions/:id?at=<last_seq>`，每张卡「原始记录」加 `record=`。积分位留白标注第二期。
+- **字典**：`GET /lite/labels` 缓存一天，未返回时显示工具原名；结论模板里的"关键动作"列表（发布、生成、发送文件等）在 `labels.ts`，与后端配置无关。
+- **测试**：`lite/params.test.ts`、`labels.test.ts`、`steps.test.ts`、`pages.test.tsx`（三页渲染、URL 筛选、分页、权限拒绝、步骤流折叠与原始记录链接）；更新 `router.test.ts`、`AdminNav.test.tsx`、`WorkspaceLayout.isolation.test.tsx`（新增简明模式首页只读隔离用例）与 e2e 的列表路径常量。未在浏览器里对接真实后端验收，待 M1 发到 gw2 后联调。

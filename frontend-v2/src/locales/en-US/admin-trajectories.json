@@ -67,7 +67,8 @@
       "newest": "Most recent activity first",
       "oldest": "Oldest activity first",
       "label": "Sort"
-    }
+    },
+    "proLead": "Every session across users and workspaces, with every record and event, replayable"
   },
   "kind": {
     "user": "User input",
@@ -816,5 +817,160 @@
     "retained": "Media · {{type}} · {{size}}",
     "source": "Source: {{source}}",
     "load": "Load content"
+  },
+  "lite": {
+    "mode": {
+      "label": "View",
+      "lite": "Simple",
+      "pro": "Professional"
+    },
+    "breadcrumb": "You are here",
+    "window": {
+      "label": "Period",
+      "today": "Today",
+      "7d": "Last 7 days",
+      "30d": "Last 30 days",
+      "90d": "Last 90 days",
+      "all": "All time"
+    },
+    "turnStatus": {
+      "completed": "Completed",
+      "completed_with_errors": "Completed with failed steps",
+      "failed": "Failed",
+      "waiting": "Waiting for user",
+      "running": "In progress",
+      "cancelled": "Cancelled",
+      "unknown": "Outcome unknown"
+    },
+    "waiting": {
+      "generic": "to reply",
+      "question": "to answer a question",
+      "permission": "to confirm an action",
+      "takeover": "to take over the desktop"
+    },
+    "verdict": {
+      "failedStep": "{{action}} failed: {{reason}}",
+      "failedStepNoReason": "{{action}} failed",
+      "failedReply": "The AI reply failed: {{reason}}",
+      "failedReplyNoReason": "The AI reply failed",
+      "waiting": "Waiting for the user {{kind}} ({{elapsed}} so far)",
+      "waitingNoElapsed": "Waiting for the user {{kind}}",
+      "completedWithErrors": "Completed, but {{action}} failed {{count}} time(s)",
+      "someStep": "a step",
+      "completedAction": "{{action}} done {{count}} time(s)",
+      "completed": "Completed",
+      "running": "The AI is still working",
+      "cancelled": "Cancelled",
+      "unknown": "Interrupted; outcome unknown"
+    },
+    "users": {
+      "title": "Users",
+      "lead": "What each user asked the AI to do, whether it worked, and where it got stuck",
+      "search": "Search users",
+      "searchPlaceholder": "Username, email or user ID",
+      "onlyFailures": "Only with failures",
+      "onlyActive": "Only in progress or waiting",
+      "open": "View conversations",
+      "loading": "Loading users…",
+      "empty": "No user produced recordings in this period",
+      "emptyFiltered": "No users match these filters",
+      "footer": "Period: {{window}}, most recent activity first",
+      "column": {
+        "user": "User",
+        "lastActivity": "Last activity",
+        "status": "Current status",
+        "turns": "Turns",
+        "failed": "Failed",
+        "sessions": "Sessions",
+        "usage": "Tokens (in / out)"
+      }
+    },
+    "user": {
+      "turns7d": "Turns, last 7 days",
+      "noRecentActivity": "No recorded activity in the last 7 days"
+    },
+    "turns": {
+      "abnormalOnly": "Problems only",
+      "statusFilter": "Outcome",
+      "search": "Search conversations",
+      "searchPlaceholder": "What the user said or the AI replied",
+      "clearSession": "Clear session filter",
+      "onlySession": "Only this session",
+      "openPro": "Open session in professional view",
+      "groupCount_one": "{{count}} turn",
+      "groupCount_other": "{{count}} turns",
+      "updates": "New activity — click to refresh",
+      "loading": "Loading turns…",
+      "empty": "No conversations recorded in this period",
+      "emptyFiltered": "No turns match these filters",
+      "footer_one": "{{count}} turn on this page",
+      "footer_other": "{{count}} turns on this page",
+      "attachments": "attachments",
+      "noTools": "No tools used",
+      "toolCount": "{{label}} ×{{count}}",
+      "column": {
+        "time": "Time",
+        "userSaid": "User said",
+        "aiDid": "AI did",
+        "aiSaid": "AI replied",
+        "result": "Outcome",
+        "duration": "Duration",
+        "usage": "Tokens"
+      }
+    },
+    "turn": {
+      "loading": "Loading this turn…",
+      "backToUser": "This user's conversations",
+      "technicalDetails": "Technical details",
+      "meta": "Session “{{session}}” · started {{started}} · finished {{finished}}",
+      "notFinished": "not yet",
+      "steps": "Steps",
+      "stepsCount_one": "{{count}} step",
+      "stepsCount_other": "{{count}} steps",
+      "failedSteps_one": "{{count}} failed",
+      "failedSteps_other": "{{count}} failed",
+      "retries_one": "{{count}} retry",
+      "retries_other": "{{count}} retries",
+      "replies": "AI replies",
+      "repliesCount_one": "{{count}}",
+      "repliesCount_other": "{{count}}",
+      "credits": "Credits",
+      "creditsLater": "Coming in phase 2",
+      "flow": "Step flow",
+      "noSteps": "Nothing to show for this turn",
+      "rawRecord": "Raw record",
+      "reasoning": "AI reasoning (click to view)",
+      "noReplyText": "This reply has no text",
+      "didWhat": "What it did",
+      "result": "Result",
+      "asked": "Question",
+      "answered": "User's answer",
+      "noAnswerYet": "No answer yet",
+      "permissionAsked": "Asked to confirm",
+      "decision": "User's decision",
+      "attachmentsInPro": "Has attachments; view them in the professional view",
+      "loadingStep": "Loading this step…",
+      "stepUnavailable": "This step's content is not readable right now",
+      "gap": "Part of this period was not recorded",
+      "groupTitle": "{{label}} ×{{count}}",
+      "groupAllOk": "all succeeded",
+      "groupFailed_one": "{{count}} failed",
+      "groupFailed_other": "{{count}} failed",
+      "agentSteps_one": "{{count}} step inside",
+      "agentSteps_other": "{{count}} steps inside",
+      "showAgentSteps_one": "Show the subtask's {{count}} step",
+      "showAgentSteps_other": "Show the subtask's {{count}} steps",
+      "hideAgentSteps": "Hide subtask steps",
+      "step": {
+        "userInput": "User input",
+        "assistant": "AI reply",
+        "question": "Asked the user",
+        "permission": "Waiting for confirmation",
+        "takeover": "Asked the user to take over the desktop",
+        "job": "Background job: {{name}}",
+        "artifact": "Output: {{name}}",
+        "agent": "Subtask: {{name}}"
+      }
+    }
   }
 }

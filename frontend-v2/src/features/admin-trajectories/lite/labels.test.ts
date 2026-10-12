@@ -155,3 +155,14 @@ describe("the one-line conclusion", () => {
     expect(conclusion(turn({ status: "weird" }), LABELS, t)).toBe("weird")
   })
 })
+
+describe("plainPreview", () => {
+  it("strips Markdown decoration and collapses whitespace", async () => {
+    const { plainPreview } = await import("./text")
+    expect(plainPreview("### 标题\n- **加粗** 和 `code`\n> 引用 [链接](http://x)")).toBe(
+      "标题 加粗 和 code 引用 链接",
+    )
+    expect(plainPreview("  ")).toBeNull()
+    expect(plainPreview(null)).toBeNull()
+  })
+})

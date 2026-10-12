@@ -13,10 +13,11 @@ import { useRecordDetail } from "../../api/queries"
 import { JsonTree } from "../../components/inspector/JsonTree"
 import { TextBlock } from "../../components/inspector/TextBlock"
 import { labelKey, RECORD_STATUS_LABELS, RECORD_STATUS_TONES } from "../../constants/labels"
+import type { TimeMode } from "../../stores/view"
 import type { RecordBlock, Seq, TrajectoryRecord } from "../../types/protocol"
 import { formatDuration, formatInstant } from "../../utils/time"
 import { groupLabel, resolveTool } from "../labels"
-import { isFailed, isOpen, type FlowItem } from "../steps"
+import { isFailed, isOpen, toolId, type FlowItem } from "../steps"
 import type { LiteLabels, LiteStep } from "../types"
 
 const MarkdownRenderer = lazy(() => import("../../components/inspector/MarkdownRenderer"))
@@ -50,13 +51,24 @@ function RecordStatus({ step }: { step: LiteStep }) {
   )
 }
 
+const LOCAL: TimeMode = "local"
+
 function Meta({ step }: { step: LiteStep }) {
   const { i18n } = useTranslation("admin-trajectories")
   const duration = formatDuration(step.duration_ms, i18n.language)
-  const at = formatInstant(step.started_at ?? step.finished_at, "local", i18n.language)
+  const iso = step.started_at ?? step.finished_at
+  const exact = formatInstant(iso, LOCAL, i18n.language)
+  const clock = iso
+    ? new Intl.DateTimeFormat(i18n.language, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date(iso))
+    : null
   return (
-    <span className="text-n500 text-2xs" title={at ?? undefined}>
-      {[at?.slice(11, 19), duration].filter(Boolean).join(" · ")}
+    <span className="text-n500 text-2xs" title={exact ?? undefined}>
+      {[clock, duration].filter(Boolean).join(" · ")}
     </span>
   )
 }
@@ -254,7 +266,7 @@ export function StepCard({
       case "assistant":
         return t("lite.turn.step.assistant")
       case "tool":
-        return step.label || resolveTool(step.title, env.labels).label
+        return step.label || resolveTool(toolId(step), env.labels).label
       case "question":
         return t("lite.turn.step.question")
       case "permission":
@@ -269,9 +281,11 @@ export function StepCard({
         return step.title
     }
   })()
+  // A tool's one-line summary is its result title ("Found 27 files"); the arguments wait inside the card.
   const subtitle =
-    step.step_type === "tool" && step.preview
-      ? step.preview
+    step.step_type === "tool"
+      ? [step.title !== toolId(step) ? step.title : null, step.result_preview].filter(Boolean).join(" · ") ||
+        step.preview
       : step.step_type === "assistant"
         ? null
         : step.preview

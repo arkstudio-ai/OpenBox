@@ -105,6 +105,8 @@ export interface LiteStep extends RecordSummary {
   group: string | null
   collapsible: boolean
   transparent: boolean
+  /** The tool a tool step ran (its title is the result's title, e.g. "exit code: 0"). Absent on older servers. */
+  tool_id?: string | null
 }
 
 export interface TurnDetail {

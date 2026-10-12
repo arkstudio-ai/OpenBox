@@ -757,7 +757,7 @@ def _record_cursor(before, head):
 
 
 async def list_records(db, trajectory, *, through_seq=None, before=None, limit=100, kind=None, status=None, agent_id=None,
-                       blob_store=None):
+                       turn_id=None, blob_store=None):
     head = watermark(trajectory, through_seq)
     require_content(trajectory)
     if head == trajectory.projected_seq:
@@ -765,6 +765,9 @@ async def list_records(db, trajectory, *, through_seq=None, before=None, limit=1
         for value, field in ((kind, TrajectoryRecord.kind), (status, TrajectoryRecord.status), (agent_id, TrajectoryRecord.agent_id)):
             if value:
                 query = query.where(field == value)
+        if turn_id:
+            # Rows projected before t0006 have the column filled by trajectory.ops.turns_backfill.
+            query = query.where(TrajectoryRecord.turn_id == turn_id)
         if before:
             start_seq, record_id = _record_cursor(before, head)
             # Rows are ordered by the key column, which differs from the id only for ids wider than it.
@@ -787,6 +790,8 @@ async def list_records(db, trajectory, *, through_seq=None, before=None, limit=1
         records = [row for row in records if row["status"] == status]
     if agent_id:
         records = [row for row in records if row.get("agent_id") == agent_id]
+    if turn_id:
+        records = [row for row in records if row.get("turn_id") == turn_id]
     if before:
         start_seq, record_id = _record_cursor(before, head)
         records = [row for row in records if (int(row["start_seq"]), row["record_id"]) < (start_seq, record_id)]

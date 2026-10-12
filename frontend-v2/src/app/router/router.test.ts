@@ -28,9 +28,16 @@ describe("admin console routes", () => {
     [paths.adminBilling("orders"), "billing/:tab?"],
     [paths.adminWorkspace("ws-1"), "billing/workspaces/:workspaceId"],
     [paths.adminTrajectories(), "trajectories"],
-    [paths.adminTrajectories("sort=last_activity_asc").split("?")[0], "trajectories"],
+    [paths.adminTrajectories("window=30d").split("?")[0], "trajectories"],
+    [paths.adminTrajectorySessions(), "trajectories/sessions"],
+    [paths.adminTrajectorySessions("sort=last_activity_asc").split("?")[0], "trajectories/sessions"],
     [paths.adminTrajectorySession("session_user_a"), "trajectories/sessions/:sessionId"],
     [paths.adminTrajectorySession("ses/with?odd#chars"), "trajectories/sessions/:sessionId"],
+    [paths.adminTrajectoryUser("user_a"), "trajectories/users/:userId"],
+    [
+      paths.adminTrajectoryTurn("user_a", "session_a", "turn_a"),
+      "trajectories/users/:userId/turns/:sessionId/:turnId",
+    ],
   ])("%s resolves to %s", (pathname, leaf) => {
     const branch = claimedBy(pathname)
     expect(branch).toContain("admin")

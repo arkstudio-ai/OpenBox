@@ -1,7 +1,15 @@
 import { paths } from "@/shared/router/paths"
 
 /** The sections of the admin console, in nav order. */
-export const ADMIN_SECTIONS = ["fleet", "skills", "billing", "pricing", "trajectories", "notifications", "messages"] as const
+export const ADMIN_SECTIONS = [
+  "fleet",
+  "skills",
+  "billing",
+  "pricing",
+  "trajectories",
+  "notifications",
+  "messages",
+] as const
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 
@@ -42,5 +50,11 @@ export function adminLayout(pathname: string): AdminLayout {
   // viewer already knows how to work in a narrower pane — its workspace is a
   // container query that folds the agent tree away below 80rem and hands that
   // filtering to the toolbar's agent menu, which is always present.
-  return { heading: !pathname.startsWith(`${paths.adminTrajectories()}/sessions/`) }
+  // The session detail and the lite turn detail carry their own identity header.
+  const root = paths.adminTrajectories()
+  return {
+    heading:
+      !pathname.startsWith(`${root}/sessions/`) &&
+      !/\/users\/[^/]+\/turns\//.test(pathname.slice(root.length)),
+  }
 }

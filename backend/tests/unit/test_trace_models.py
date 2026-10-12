@@ -40,7 +40,7 @@ def test_json_and_timezone_aware_columns():
     assert json_columns == {
         "trajectory_events.context", "trajectory_events.data", "trajectory_events.hints",
         "trajectory_records.data", "trajectory_records.summary", "trajectory_session_summaries.statistics",
-        "trajectory_checkpoints.state", "trajectory_worker_state.value", "trajectory_audit_outbox.payload",
+        "trajectory_turn_summaries.tool_counts", "trajectory_checkpoints.state", "trajectory_worker_state.value", "trajectory_audit_outbox.payload",
     }
 
 

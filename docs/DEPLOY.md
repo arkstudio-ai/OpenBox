@@ -29,7 +29,26 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-12 13:25 `20261012-pricing-t1-90c9a5be`（用户售价切到合作与定价方案 标准阶梯 T1）
+## 当前阿里云：2026-10-12 17:14 frontend `20261012-trajlite-fe-e884228b`（轨迹监控简明模式前端 M2）
+
+- 源码 `main@e884228b`（PR [#71](https://github.com/arkstudio-ai/OpenBox/pull/71) 合并，含 441a5d12 的 vite 开发代理 SSO 回调改写，仅开发态生效）。只换 **frontend**；backend / trajectory-worker 保持 `20261012-trajlite-36d67be4`。方案 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §7、§12。
+- 内容：`/app/admin/trajectories` 改为简明模式用户列表；原专业会话列表移到 `/app/admin/trajectories/sessions`（会话详情路径不变，旧列表书签带专业筛选键时自动跳转）；`/users/:userId` 某用户的对话轮；`/users/:userId/turns/:sessionId/:turnId` 轮详情步骤流；两个列表页右上角「简明 / 专业」切换；工具动作名取自 `GET /api/admin/trajectories/lite/labels`。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive e884228b`（`VITE_BUILD_ID`=tag，`NGINX_IMAGE=nginx:1.31.5-alpine`，39 s），本地核对 `index.html` app-build、资源含模式切换标记、nginx 模板含 `/api/admin/trajectories/` 代理。frontend image `sha256:30a2f4b6…063b1f23`（压缩包 `a2fcb659…b736471`，29,667,448 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换脚本 `releases/20261012-trajlite-fe-e884228b/deploy_gw2_v12.sh`（只换前端：备份 override → `up -d --no-deps frontend` → 探测）：09:14:12–09:14:36 UTC，15 s healthy。无库变更、无配置变更。
+- 验证：本机与公网 `index.html` app-build 为新 tag；`/app/admin/trajectories` 与 `/app/admin/trajectories/sessions` 200、`/api/admin/trajectories/users` 匿名 401；nginx `-t` 通过且含轨迹代理块；六服务 healthy。线上登录后的三页验收见本条后续补记。
+- 回滚：恢复 `backups/20261012-trajlite-fe-e884228b/activation-20261012T0914*Z/docker-compose.override.yml`（frontend 回 `20261012-pricing-t1-90c9a5be`），`docker compose up -d --no-deps frontend`。AWS 未发布。
+
+## 历史阿里云：2026-10-12 17:08 `20261012-trajlite-36d67be4`（轨迹监控简明模式后端 M1：轮汇总、用户/轮读接口、字典）
+
+- 源码 `main@36d67be4`（PR [#70](https://github.com/arkstudio-ai/OpenBox/pull/70) 合并）。方案与实现记录 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §6、§11。只换 **backend 与 trajectory-worker**（同一镜像）；**frontend 保持 `20261012-pricing-t1-90c9a5be`**，简明模式前端在 PR [#71](https://github.com/arkstudio-ai/OpenBox/pull/71) 另发。
+- 内容：trace 库迁移 `t0005_recorded_audiences → t0006_turn_summaries`（`trajectory_records.turn_id` 列与索引、新表 `trajectory_turn_summaries`）；投影每批后重算触及轮；worker 新增 `GET /api/admin/trajectories/users`、`/users/{user_id}/turns`、`/sessions/{session_id}/turns/{turn_id}`、`/lite/labels`，records 接口新增可选 `turn_id`；工具动作字典 `trajectory/lite_labels.json`（48 条精确 + 14 条前缀，注册表 89 个工具全部命中）；业务侧 `api/internal.py` 审计允许列表加 `lite_users / lite_turns / lite_turn`。业务库**无迁移**（保持 `pf39b0c1d2e3`），`openbox.json` / `backend.env` 未动（sha `5525a1be…` / `5dff3a35…`）。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 36d67be4`（backend 上下文仓库根），命中当日缓存 20 s；本地核对镜像内 lite/turns/字典/迁移文件与 `alembic heads = t0006`。backend image `sha256:26a25365…9ef92406c`（压缩包 `4ad0c014…7f0031b`，234,729,960 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换脚本 `releases/20261012-trajlite-36d67be4/deploy_gw2_v11.sh`（v10 去掉前端切换，加 trace 迁移核对、容器内字典/审计核对、worker 路由核对与末尾一次性回填）：备份配置与两库 dump（业务 120 表、轨迹 36 表，`backups/20261012-trajlite-36d67be4/activation-20261012T0903*Z/`）→ 租约守门（0 租约、0 进行中视频、0 活跃通话）→ worker 9 s healthy（启动自跑 t0006）→ backend 21 s healthy。09:04:23–09:04:56 UTC 完成切换。
+- **回填**：`python -m trajectory.ops.turns_backfill` 在切换后随脚本执行，09:05:01–09:08:28 UTC：177 条轨迹、102,859 行记录补上 `turn_id`、写入 1,248 条轮汇总、0 失败；剩余 498 行无轮（系统状态/基线等，预期）。轮状态分布：completed 855、completed_with_errors 223、cancelled 80、waiting 63、failed 27；23 个用户有轮。
+- 验证：容器内审计允许列表含三个 lite action、字典 version 1、未命名工具 0、宽限 30 分钟；worker 管理路由 18 条含四条 lite 路由；公网 `/api/environment` 200，`/api/admin/trajectories/users|lite/labels|sessions` 匿名 401；backend / worker 重启 0。切换后 worker 两条 `Trajectory checkpoint failed error_type=ReadTooLarge` WARNING 与 10-10 发布时相同，属既有问题。
+- 回滚：恢复备份目录的 `docker-compose.override.yml`（backend 两行回 `20261012-pricing-t1-90c9a5be`），依次 `docker compose up -d --no-deps trajectory-worker / backend`；旧 worker 不认识 t0006，启动前 `alembic -c alembic_trajectory.ini downgrade t0005_recorded_audiences`（删列与表，可由回填重建）。前端未动。AWS 未发布。
+
+## 历史阿里云：2026-10-12 13:25 `20261012-pricing-t1-90c9a5be`（用户售价切到合作与定价方案 标准阶梯 T1）
 
 - 源码 `main@90c9a5be`（PR [#68](https://github.com/arkstudio-ai/OpenBox/pull/68) 合并；分支先合入了 10-11 的 main：/v1 开放接口、合作方资费、RunningHub 图片模型）。同一镜像也带上了 91897a2d 之后 main 上队友的提交（`7c504a6e`/`12a5e507` 语音默认 Audio 3.1 与前台措辞、`a54fe6c0` 助理按项目/会话路由、`5d276da3` RunningHub 图片模型落账）。三服务统一到本 tag。
 - 价目：`rates.json` `2026-10-12.1`。文本三档 = 成本 × 1.7：gemini-3.8-flash 10.2 / 51 / 1.19（独立 CNY 条目，不再借 3.7 优惠价别名；3.7 同价）、qwen3.8-max 20.4 / 61.2 / 2.55、qwen3.8-flash 1.4 / 4.6 / 0.17。视频每秒：Seedance 2.5 1080p 8.30、Seedance 2.0 1080p 5.55、Wan 3.0 720p 1.40 / 1080p 2.70、MiniMax-H3 768p 0.25（降）为表列值，其余分辨率按同档售价÷成本倍率推导（见 [CREDIT_BILLING.md](CREDIT_BILLING.md) 10-10 条）。T2/T3 月累计阶梯与源码客户价未实现，全部用户按 T1。合作方 `/v1` 资费不受影响（成本仍取平台价目表）。

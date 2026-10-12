@@ -57,11 +57,20 @@ export const paths = {
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
   adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
   adminPricing: "/app/admin/pricing",
-  /** `search` is an already-encoded query string without the leading "?". */
+  /** The lite view's user list (the column's landing page). `search` is an already-encoded query string without "?". */
   adminTrajectories: (search?: string) =>
     search ? `/app/admin/trajectories?${search}` : "/app/admin/trajectories",
+  /** The professional session list; it lived at the column root before the lite view landed. */
+  adminTrajectorySessions: (search?: string) =>
+    search ? `/app/admin/trajectories/sessions?${search}` : "/app/admin/trajectories/sessions",
   adminTrajectorySession: (sessionId: string, search?: string) =>
     `/app/admin/trajectories/sessions/${encodeURIComponent(sessionId)}${search ? `?${search}` : ""}`,
+  /** One user's turns across sessions (lite view). */
+  adminTrajectoryUser: (userId: string, search?: string) =>
+    `/app/admin/trajectories/users/${encodeURIComponent(userId)}${search ? `?${search}` : ""}`,
+  /** One turn's step flow (lite view); `back` is the user page query to return to. */
+  adminTrajectoryTurn: (userId: string, sessionId: string, turnId: string, search?: string) =>
+    `/app/admin/trajectories/users/${encodeURIComponent(userId)}/turns/${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}${search ? `?${search}` : ""}`,
 } as const
 
 /** Query params a chat URL may carry to open a workbench panel on arrival. */
@@ -107,5 +116,8 @@ export const routePatterns = {
   adminWorkspace: "billing/workspaces/:workspaceId",
   adminPricing: "pricing",
   adminTrajectories: "trajectories",
+  adminTrajectorySessions: "trajectories/sessions",
   adminTrajectorySession: "trajectories/sessions/:sessionId",
+  adminTrajectoryUser: "trajectories/users/:userId",
+  adminTrajectoryTurn: "trajectories/users/:userId/turns/:sessionId/:turnId",
 } as const

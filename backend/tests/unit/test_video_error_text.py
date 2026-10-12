@@ -78,10 +78,13 @@ def test_a_connection_that_never_opened_says_so():
 
     for failure in (httpx.ConnectError("[Errno 61] Connection refused"),
                     httpx.ConnectTimeout("timed out"),
-                    httpx.ReadTimeout("timed out")):
+                    httpx.ReadTimeout("timed out"),
+                    httpx.ReadError("socket closed")):
         message = _public_error(failure)
         assert "could not reach the video provider" in message
         assert "do not resubmit" in message
+        assert "recorded submission outcome" in message
+        assert "recovery will retry" not in message and "task is unaffected" not in message
 
 
 def test_a_reply_that_did_arrive_is_still_scrubbed():

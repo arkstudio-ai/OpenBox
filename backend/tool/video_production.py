@@ -992,15 +992,12 @@ def _public_error(exc: Exception) -> str:
         reason = str(getattr(response, "reason_phrase", "") or "request failed")
         return f"HTTP {response.status_code}: {reason}"[:200]
     if _is_transport_failure(exc):
-        # A connection that never opened carries no provider content to leak —
-        # the message is about our own network, not their response. Scrubbing
-        # it to "operation failed" made a local outage read as a provider
-        # fault: on 2026-09-01 a few seconds of packet loss was reported to
-        # the user as "the generation service is down", while the paid task
-        # was fine and the sweep recovered it minutes later.
+        # This helper is shared by submit and poll. A lost submit response does
+        # not establish a remote task identity or promise automatic recovery.
         return (
-            "could not reach the video provider (network or proxy). The paid "
-            "task is unaffected and recovery will retry it; do not resubmit."
+            "could not reach the video provider (network or proxy). Check the "
+            "recorded submission outcome and provider task identity; do not resubmit "
+            "while the outcome is unknown."
         )
     return f"{exc.__class__.__name__}: operation failed"
 
@@ -2779,6 +2776,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             raise
         except Exception as exc:
             if "job" in locals() and created:
+                log.warning("video submit/reconcile failed job_id=%s model=%s error_type=%s accepted=%s",
+                            job.id, target.model, type(exc).__name__, bool(accepted_task_id))
                 provider_task_id = accepted_task_id
                 if provider_task_id:
                     # The POST definitely returned a provider identity.  Keep

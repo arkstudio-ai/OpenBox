@@ -1,6 +1,6 @@
 """Multi-channel video provider routing (ported from bossip's executor layer).
 
-Three wire channels behind one route object:
+Wire channels behind one route object:
 
 - ``ark``  — the existing Volcano-Ark shape (``/api/v3/contents/generations/tasks``),
   used by the ``bossip`` relay credential (historically named ``doubao``,
@@ -11,6 +11,9 @@ Three wire channels behind one route object:
 - ``task`` — new-api task channel: ``POST /v1/video/generations`` with an
   ``{code, message, data}`` envelope and uppercase statuses. Used by Wan3.0;
   the wan3 protocol shim (wan3-video-adapter) is deployed with new-api itself.
+- ``dashscope`` — native Alibaba Wan: asynchronous video-synthesis with
+  input.media, parameters, and an output.task_id/task_status envelope.
+- ``runninghub`` — RunningHub's v2 generation and query protocol.
 
 Which model speaks which protocol is *declarable* — a ``video_generation.models``
 entry binds a model to a channel and a credential, so adding a model that
@@ -94,10 +97,13 @@ def _names_a_task(raw: Any) -> bool:
     """Whether a reply carries a provider task identity, i.e. accepted work."""
     if not isinstance(raw, dict):
         return False
-    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-    for value in (raw.get(key) or data.get(key) for key in ("id", "task_id", "taskId")):
-        if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip() not in ("", "0", "-1"):
-            return True
+    for source in (raw, raw.get("data"), raw.get("output")):
+        if not isinstance(source, dict):
+            continue
+        for key in ("id", "task_id", "taskId"):
+            value = source.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip() not in ("", "0", "-1"):
+                return True
     return False
 
 
@@ -155,6 +161,8 @@ def submission_rejection(exc: Exception) -> dict[str, Any] | None:
     if status in _UNAVAILABLE_STATUS:
         return _unavailable_rejection(exc.response)
     if status not in (400, 422):
+        return None
+    if _names_a_task(_bounded_json(exc.response)):
         return None
     detail: dict[str, Any] = {
         "code": "video_provider_request_rejected",
@@ -340,14 +348,14 @@ class VideoRoute:
     base_url: str
     submit_timeout_seconds: int
     status_timeout_seconds: int
-    channel: Literal["ark", "sd2", "task", "runninghub"] = "ark"
+    channel: Literal["ark", "sd2", "task", "runninghub", "dashscope"] = "ark"
     model_type: str = "seedance"
     # "raw" = the new-api quirk: Authorization carries the sk-token verbatim,
     # WITHOUT a "Bearer " prefix.
     auth_scheme: Literal["bearer", "raw"] = "bearer"
     # Only meaningful on the ark channel: TokenSpace contents API vs the
     # BossIP public relay (`/v1/videos` with relay-managed material groups).
-    wire_format: Literal["tokenspace_contents", "bossip_videos", "runninghub_v2"] = "tokenspace_contents"
+    wire_format: Literal["tokenspace_contents", "bossip_videos", "runninghub_v2", "dashscope_video"] = "tokenspace_contents"
 
 
 def provider_route_fingerprint(route: Any) -> str:
@@ -477,7 +485,7 @@ def _declared_route(entry: Any, config) -> VideoRoute:
     channel = entry.channel
     if channel == "ark":
         return _ark_route(entry.id, config, provider_name=entry.provider or settings.provider)
-    model_type = "runninghub_video" if channel == "runninghub" else (WAN3_MODEL_TYPE if channel == "task" else SD2_MODEL_TYPE)
+    model_type = "runninghub_video" if channel == "runninghub" else (WAN3_MODEL_TYPE if channel in ("task", "dashscope") else SD2_MODEL_TYPE)
     provider_name = entry.provider or (settings.channel_providers or {}).get(channel, "")
     if not provider_name:
         raise RuntimeError(
@@ -500,8 +508,8 @@ def _declared_route(entry: Any, config) -> VideoRoute:
         status_timeout_seconds=settings.status_timeout_seconds,
         channel=channel,
         model_type=model_type,
-        auth_scheme="bearer" if channel == "runninghub" else (provider.options or {}).get("auth_scheme", "bearer"),
-        wire_format="runninghub_v2" if channel == "runninghub" else "tokenspace_contents",
+        auth_scheme="bearer" if channel in ("runninghub", "dashscope") else (provider.options or {}).get("auth_scheme", "bearer"),
+        wire_format={"runninghub": "runninghub_v2", "dashscope": "dashscope_video"}.get(channel, "tokenspace_contents"),
     )
 
 
@@ -744,6 +752,11 @@ def validate_request(
 
     if channel == "runninghub":
         return
+    if channel == "dashscope":
+        from tool.video_dashscope import validate
+        validate(resolution=resolution, ratio=ratio, duration=duration,
+                 input_mimes=input_mimes, roles=roles, prompt=prompt)
+        return
     if channel == "sd2" and sd2_native_resolution(route.model) is not None:
         # Only the name-encoded tiers are stuck with the flat body. Everything
         # else on this channel reaches the task adaptor through `metadata`,
@@ -950,6 +963,11 @@ def build_payload(
     The ark channel keeps its historical builder in video_production.py.
     """
     channel = getattr(route, "channel", "ark")
+    if channel == "dashscope":
+        from tool.video_dashscope import build_payload as build_dashscope_payload
+        return build_dashscope_payload(route, prompt=prompt, refs=refs, resolution=resolution,
+                                       ratio=ratio, duration=duration, generate_audio=generate_audio,
+                                       watermark=watermark, seed=seed)
     if channel == "runninghub":
         from tool.video_runninghub import build_payload as build_runninghub_payload
         return build_runninghub_payload(route, prompt=prompt, refs=refs, resolution=resolution,
@@ -1065,12 +1083,16 @@ async def submit(route: Any, path: str, body: dict[str, Any], *,
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response
 
+    channel = getattr(route, "channel", "ark")
+    headers = {"Authorization": auth_header(route), "Content-Type": "application/json"}
+    if channel == "dashscope":
+        headers["X-DashScope-Async"] = "enable"
     async with capture_service_dispatch(purpose=purpose, provider=route.provider,
             model=str(body.get("model") or route.model), operation="POST " + path,
             body=body, profile=purpose) as capture:
-        async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=getattr(route, "channel", "ark") != "runninghub") as client:
+        async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=channel not in ("runninghub", "dashscope")) as client:
             response = await client.post(f"{route.base_url}{path}",
-                headers={"Authorization": auth_header(route), "Content-Type": "application/json"}, json=body)
+                headers=headers, json=body)
         try:
             data = await capture_http_response(capture, response)
         except ValueError:
@@ -1090,7 +1112,10 @@ async def submit(route: Any, path: str, body: dict[str, Any], *,
 
 
 def extract_task_id(route: Any, raw: dict[str, Any]) -> str:
-    if getattr(route, "channel", "ark") == "runninghub":
+    if getattr(route, "channel", "ark") == "dashscope":
+        from tool.video_dashscope import output
+        task_id = str(output(raw).get("task_id") or "")
+    elif getattr(route, "channel", "ark") == "runninghub":
         from tool.video_runninghub import task_id as runninghub_task_id
         task_id = runninghub_task_id(raw)
     elif getattr(route, "channel", "ark") == "sd2":
@@ -1114,8 +1139,11 @@ async def status(route: Any, task_id: str, *, operation: str = "video_status") -
 
     channel = getattr(route, "channel", "ark")
     path = f"/v1/videos/{task_id}" if channel == "sd2" else f"/v1/video/generations/{task_id}"
+    if channel == "dashscope":
+        from urllib.parse import quote
+        path = f"/api/v1/tasks/{quote(task_id, safe='')}"
     async with httpx.AsyncClient(
-        timeout=route.status_timeout_seconds, follow_redirects=channel != "runninghub"
+        timeout=route.status_timeout_seconds, follow_redirects=channel not in ("runninghub", "dashscope")
     ) as client:
         if channel == "runninghub":
             response = await client.post(f"{route.base_url}/openapi/v2/query",
@@ -1139,6 +1167,9 @@ async def status(route: Any, task_id: str, *, operation: str = "video_status") -
 
 def normalize_state(route: Any, data: dict[str, Any]) -> str:
     channel = getattr(route, "channel", "ark")
+    if channel == "dashscope":
+        from tool.video_dashscope import state
+        return state(data)
     if channel == "runninghub":
         from tool.video_runninghub import state
         return state(data)
@@ -1186,6 +1217,9 @@ def normalize_state(route: Any, data: dict[str, Any]) -> str:
 
 def result_video_url(route: Any, data: dict[str, Any]) -> str:
     channel = getattr(route, "channel", "ark")
+    if channel == "dashscope":
+        from tool.video_dashscope import output
+        return str(output(data).get("video_url") or "")
     if channel == "runninghub":
         from tool.video_runninghub import result_url
         return result_url(data)
@@ -1216,6 +1250,9 @@ def result_video_url(route: Any, data: dict[str, Any]) -> str:
 
 
 def failure_detail(route: Any, data: dict[str, Any]) -> str:
+    if getattr(route, "channel", "ark") == "dashscope":
+        from tool.video_dashscope import failure_detail as dashscope_failure
+        return dashscope_failure(data)
     if getattr(route, "channel", "ark") == "runninghub":
         from tool.video_runninghub import error_message
         return error_message(data)

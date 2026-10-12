@@ -30,6 +30,27 @@
 - 内置技能资料的执行路径是 `/opt/openbox/skills/<name>/`；自定义主机技能不会因此取得沙箱文件可访问声明。
 - 网络错误在尚未产生模型输出时使用已有有限重试预算；已产生输出的请求不自动重放。
 
+## Wan 3.0 原生阿里云通道
+
+服务端可将现有 Wan 模型绑定到 `dashscope` 通道。不会自动改动已部署的中转配置，也不会将旧任务 ID 发往新账户或新地址。
+
+```json
+{
+  "provider": {
+    "aliyun-video": {
+      "api_key": "{env:DASHSCOPE_API_KEY}",
+      "base_url": "https://dashscope.aliyuncs.com"
+    }
+  }
+}
+```
+
+在现有 `video_generation.models` 中，将目标 Wan 条目的 `channel` 设为 `dashscope`、`provider` 设为 `aliyun-video`；保留其模型 ID、时长、分辨率和能力声明。也可使用对应地域的工作空间域名，密钥和地址必须属于同一地域。以上是配置片段，不能覆盖整个模型清单。
+
+适配器发送原生 `input.media` 和 `parameters`，保留首帧、尾帧及参考素材的用途，并关闭额外提示词改写。首尾帧不能与参考图像/视频/音频混用；不合法组合在付费提交前拒绝。提交后保存 `output.task_id`，只查询原任务并将成片保存到资源库。查询过期或服务返回异步校验失败时明确报告，不能自动新建一条替代任务。
+
+协议及限制依据：[阿里云 Wan 3.0 API](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)、[千问 Wan 3.0 模型页](https://www.qianwenai.com/models/wan3.0-video)。
+
 ## 验收范围
 
 仅执行与本次变更相关的后端测试、问题卡前端测试、TypeScript 检查和移动端改动文件分析，没有执行全量测试。

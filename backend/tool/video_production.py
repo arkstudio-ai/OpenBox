@@ -2033,6 +2033,8 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
             parts.append(f"supports={', '.join(capabilities)}")
         if entry.channel == "runninghub":
             parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
+        if entry.channel == "dashscope":
+            parts.append("routing=first_frame plus optional last_frame OR reference_image/video/audio; never mix frame roles with reference roles; last_frame requires first_frame; image<=10, video<=5, audio<=5; total reference video/audio duration each<=15s; input+output video duration<=30s; prompt<=20000 characters; output=30fps")
         if unavailable and entry.id in unavailable:
             parts.append(f"availability={_availability_text(unavailable[entry.id])}")
         lines.append("  " + "  ".join(parts))

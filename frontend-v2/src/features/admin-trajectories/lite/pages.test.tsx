@@ -47,6 +47,7 @@ const USER_A: LiteUserRow = {
   input_tokens: 182_000,
   output_tokens: 41_000,
   usage_complete: true,
+  credits: "12.5",
 }
 const USER_B: LiteUserRow = {
   user: { user_id: "user_b", username: null, email: null },
@@ -96,6 +97,7 @@ function turn(patch: Partial<TurnSummary>): TurnSummary {
     input_tokens: 18_200,
     output_tokens: 2_900,
     usage_complete: true,
+    credits: "3.2",
     first_seq: "1",
     last_seq: "40",
     through_seq: "40",
@@ -283,6 +285,8 @@ describe("用户列表", () => {
     expect(screen.getAllByText("user_b").length).toBeGreaterThan(0)
     expect(screen.getByText("lite.turnStatus.waiting")).toBeTruthy()
     expect(screen.getByText("3")).toBeTruthy()
+    expect(screen.getByText("12.5")).toBeTruthy()
+    expect(screen.getAllByText("lite.credits.none").length).toBeGreaterThan(0)
     // The default window is 7 days; the request carries its start.
     const first = get.mock.calls.find(([path]) => path.includes("/users?"))![0]
     expect(first).toContain("activity_from=")
@@ -358,9 +362,9 @@ describe("轮详情", () => {
   it("leads with the verdict and shows the flow with folded files, a failed card and a sub-agent", async () => {
     renderAt("/app/admin/trajectories/users/user_a/turns/session_1/turn_1?back=status%3Dfailed")
     const verdict = await screen.findByTestId("lite-verdict")
-    expect(verdict.textContent).toBe(
-      'lite.verdict.failedStep {"action":"发布到抖音（云电脑）","reason":"login_expired"}',
-    )
+    // The AI's closing explanation is the verdict; the template only steps in when the AI said nothing.
+    expect(verdict.textContent).toBe("视频已生成，但发布时发现抖音登录已过期")
+    expect(screen.getByText("3.2")).toBeTruthy()
     const cards = screen.getAllByTestId("lite-step")
     expect(cards.map((card) => card.getAttribute("data-step-type"))).toEqual([
       "user_input",

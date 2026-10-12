@@ -18,6 +18,7 @@ export type InboxLink =
   | { kind: "auth_center"; workspaceId: string; jobId?: string }
   | { kind: "skills"; workspaceId: string }
   | { kind: "admin_skills" }
+  | { kind: "admin_trajectory_turn"; userId: string; sessionId: string; turnId: string }
   | { kind: "topic"; slug: string }
   | { kind: "url"; url: string }
   | { kind: "inbox" }

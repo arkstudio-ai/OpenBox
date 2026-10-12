@@ -18,10 +18,18 @@ afterEach(() => {
 
 describe("planInboxLink", () => {
   it("links a specific assistant task and original result", () => {
-    expect(planInboxLink({ kind: "assistant_task", workspaceId: "team", sessionId: "main", taskId: "t1", resultId: "r1" }, MEMBER_OF))
-      .toMatchObject({ to: "/app/assistant?task=t1&result=r1", taskId: "t1", resultId: "r1" })
-    expect(planInboxLink({ kind: "assistant_task", workspaceId: "elsewhere", taskId: "t1", resultId: "r1", sessionId: "main" }, MEMBER_OF))
-      .toEqual({ action: "unavailable" })
+    expect(
+      planInboxLink(
+        { kind: "assistant_task", workspaceId: "team", sessionId: "main", taskId: "t1", resultId: "r1" },
+        MEMBER_OF,
+      ),
+    ).toMatchObject({ to: "/app/assistant?task=t1&result=r1", taskId: "t1", resultId: "r1" })
+    expect(
+      planInboxLink(
+        { kind: "assistant_task", workspaceId: "elsewhere", taskId: "t1", resultId: "r1", sessionId: "main" },
+        MEMBER_OF,
+      ),
+    ).toEqual({ action: "unavailable" })
   })
   it("routes session, cron, auth centre and skills inside a workspace the user belongs to", () => {
     expect(planInboxLink({ kind: "session", workspaceId: "team", sessionId: "s1" }, MEMBER_OF)).toEqual({
@@ -72,6 +80,15 @@ describe("planInboxLink", () => {
     expect(planInboxLink({ kind: "open_app" }, MEMBER_OF)).toEqual({ action: "navigate", to: "/app/inbox" })
     expect(planInboxLink(null, MEMBER_OF)).toEqual({ action: "navigate", to: "/app/inbox" })
     expect(planInboxLink({ kind: "admin_skills" }, MEMBER_OF)).toMatchObject({ to: "/app/admin/skills" })
+    expect(
+      planInboxLink(
+        { kind: "admin_trajectory_turn", userId: "u1", sessionId: "s1", turnId: "t1" },
+        MEMBER_OF,
+      ),
+    ).toMatchObject({ action: "navigate", to: "/app/admin/trajectories/users/u1/turns/s1/t1" })
+    expect(planInboxLink({ kind: "admin_trajectory_turn", userId: "u1" } as never, MEMBER_OF)).toEqual({
+      action: "unavailable",
+    })
   })
 })
 
@@ -85,13 +102,25 @@ describe("useOpenInboxLink", () => {
     useWorkspaceStore.setState({ items, currentId: "home" })
     const get = vi.spyOn(http, "get").mockResolvedValue({ task: { task: { id: "t1" } } })
     const { result } = renderHook(() => useOpenInboxLink())
-    const link = { kind: "assistant_task" as const, workspaceId: "team", taskId: "t1", resultId: "r1", sessionId: "main" }
-    await act(async () => { expect(await result.current(link)).toBe("opened") })
-    expect(get).toHaveBeenCalledWith("/api/assistant/results/r1/target", { headers: { "X-Workspace-Id": "team" } })
+    const link = {
+      kind: "assistant_task" as const,
+      workspaceId: "team",
+      taskId: "t1",
+      resultId: "r1",
+      sessionId: "main",
+    }
+    await act(async () => {
+      expect(await result.current(link)).toBe("opened")
+    })
+    expect(get).toHaveBeenCalledWith("/api/assistant/results/r1/target", {
+      headers: { "X-Workspace-Id": "team" },
+    })
     expect(navigate).toHaveBeenCalledWith("/app/assistant?task=t1&result=r1")
     navigate.mockClear()
     get.mockResolvedValue({ task: { task: { id: "another-task" } } })
-    await act(async () => { expect(await result.current(link)).toBe("unavailable") })
+    await act(async () => {
+      expect(await result.current(link)).toBe("unavailable")
+    })
     expect(navigate).not.toHaveBeenCalled()
   })
 
@@ -103,7 +132,17 @@ describe("useOpenInboxLink", () => {
       return { task: { task: { id: "t1" } } }
     })
     const { result } = renderHook(() => useOpenInboxLink())
-    await act(async () => { expect(await result.current({ kind: "assistant_task", workspaceId: "team", taskId: "t1", resultId: "r1", sessionId: "main" })).toBe("unavailable") })
+    await act(async () => {
+      expect(
+        await result.current({
+          kind: "assistant_task",
+          workspaceId: "team",
+          taskId: "t1",
+          resultId: "r1",
+          sessionId: "main",
+        }),
+      ).toBe("unavailable")
+    })
     expect(navigate).not.toHaveBeenCalled()
     expect(useWorkspaceStore.getState().currentId).toBe("home")
     useAuthStore.setState({ user: oldUser })

@@ -1,7 +1,7 @@
 // Small shared pieces of the lite pages: status pill, tool chips, a paging nav
 // and the time/token formatters that read the way an operator scans a list.
 import { useTranslation } from "react-i18next"
-import { formatSince, formatTokens } from "@/shared/lib/format"
+import { formatCredits, formatSince, formatTokens } from "@/shared/lib/format"
 import { StatusPill } from "@/shared/ui/StatusPill"
 import type { TimeMode } from "../../stores/view"
 import { formatDuration, formatInstant } from "../../utils/time"
@@ -78,6 +78,30 @@ export function Tokens({
       </span>
     )
   return <span>{t("list.tokens", { input: formatTokens(input), output: formatTokens(output) })}</span>
+}
+
+/** Credits charged, with the token counts for anyone who hovers; "未计费" when nothing was charged. */
+export function Credits({
+  value,
+  input,
+  output,
+}: {
+  value: string | null | undefined
+  input?: number | null
+  output?: number | null
+}) {
+  const { t } = useTranslation("admin-trajectories")
+  const tokens =
+    input != null && output != null
+      ? t("list.tokens", { input: formatTokens(input), output: formatTokens(output) })
+      : undefined
+  if (value == null)
+    return (
+      <span className="text-n500" title={tokens}>
+        {t("lite.credits.none")}
+      </span>
+    )
+  return <span title={tokens}>{formatCredits(value)}</span>
 }
 
 const DOT = "inline-block size-1.5 flex-none rounded-full"

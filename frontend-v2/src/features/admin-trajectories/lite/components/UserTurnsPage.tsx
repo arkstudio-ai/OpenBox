@@ -26,11 +26,11 @@ import { ABNORMAL_STATUSES, TURN_STATUSES, type TurnStatus, type TurnSummary } f
 import {
   BUTTON,
   Clock,
+  Credits,
   Duration,
   FIELD,
   Paging,
   Since,
-  Tokens,
   ToolChips,
   TurnStatus as TurnStatusPill,
 } from "./bits"
@@ -230,7 +230,7 @@ function TurnsTable({
             <th className={`${CELL} font-medium`}>{t("lite.turns.column.aiSaid")}</th>
             <th className={`${CELL} w-32 font-medium`}>{t("lite.turns.column.result")}</th>
             <th className={`${CELL} w-20 text-end font-medium`}>{t("lite.turns.column.duration")}</th>
-            <th className={`${CELL} w-16 text-end font-medium`}>{t("lite.turns.column.usage")}</th>
+            <th className={`${CELL} w-20 text-end font-medium`}>{t("lite.turns.column.credits")}</th>
           </tr>
         </thead>
         <tbody>
@@ -295,8 +295,8 @@ function TurnsTable({
                   <td className={`${CELL} text-n700 text-end whitespace-nowrap`}>
                     <Duration ms={row.duration_ms} />
                   </td>
-                  <td className={`${CELL} text-n500 text-end whitespace-nowrap`}>
-                    <Tokens input={row.input_tokens} output={row.output_tokens} compact />
+                  <td className={`${CELL} text-n700 text-end whitespace-nowrap`}>
+                    <Credits value={row.credits} input={row.input_tokens} output={row.output_tokens} />
                   </td>
                 </tr>
               ))}

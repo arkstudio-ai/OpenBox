@@ -12,7 +12,14 @@ import { paths } from "@/shared/router/paths"
 import type { InboxLink } from "../api"
 
 export type LinkPlan =
-  | { action: "navigate"; to: string; workspaceId?: string; sessionId?: string; taskId?: string; resultId?: string }
+  | {
+      action: "navigate"
+      to: string
+      workspaceId?: string
+      sessionId?: string
+      taskId?: string
+      resultId?: string
+    }
   | { action: "external"; url: string }
   | { action: "unavailable" }
 
@@ -49,8 +56,13 @@ function planInWorkspace(link: InboxLink, memberOf: readonly string[]): LinkPlan
       const taskId = "taskId" in link ? link.taskId : ""
       const resultId = "resultId" in link ? link.resultId : ""
       if (!taskId || !resultId) return { action: "unavailable" }
-      return { action: "navigate", workspaceId, taskId, resultId,
-        to: `${paths.assistant}?${new URLSearchParams({ task: taskId, result: resultId })}` }
+      return {
+        action: "navigate",
+        workspaceId,
+        taskId,
+        resultId,
+        to: `${paths.assistant}?${new URLSearchParams({ task: taskId, result: resultId })}`,
+      }
     }
     case "session":
       return planSession(link, workspaceId)
@@ -78,6 +90,13 @@ export function planInboxLink(link: InboxLink | null, memberOf: readonly string[
     }
     case "admin_skills":
       return { action: "navigate", to: paths.adminSkills() }
+    case "admin_trajectory_turn": {
+      const userId = "userId" in link ? link.userId : ""
+      const sessionId = "sessionId" in link ? link.sessionId : ""
+      const turnId = "turnId" in link ? link.turnId : ""
+      if (!userId || !sessionId || !turnId) return { action: "unavailable" }
+      return { action: "navigate", to: paths.adminTrajectoryTurn(userId, sessionId, turnId) }
+    }
     case "assistant_task":
     case "session":
     case "cron":
@@ -98,8 +117,9 @@ export function useOpenInboxLink() {
     async (link: InboxLink | null): Promise<OpenResult> => {
       const store = useWorkspaceStore.getState()
       const actor = useAuthStore.getState().user?.id
-      const current = () => actor === useAuthStore.getState().user?.id
-        && store.currentId === useWorkspaceStore.getState().currentId
+      const current = () =>
+        actor === useAuthStore.getState().user?.id &&
+        store.currentId === useWorkspaceStore.getState().currentId
       const plan = planInboxLink(
         link,
         store.items.map((item) => item.id),
@@ -120,11 +140,16 @@ export function useOpenInboxLink() {
       }
       if (plan.resultId && plan.workspaceId) {
         try {
-          const result = await http.get<{ task: { task: { id: string } } }>(`/api/assistant/results/${encodeURIComponent(plan.resultId)}/target`, {
-            headers: { "X-Workspace-Id": plan.workspaceId },
-          })
+          const result = await http.get<{ task: { task: { id: string } } }>(
+            `/api/assistant/results/${encodeURIComponent(plan.resultId)}/target`,
+            {
+              headers: { "X-Workspace-Id": plan.workspaceId },
+            },
+          )
           if (result.task.task.id !== plan.taskId) return "unavailable"
-        } catch { return "unavailable" }
+        } catch {
+          return "unavailable"
+        }
       }
       if (!current()) return "unavailable"
       if (plan.workspaceId && plan.workspaceId !== store.currentId) store.setCurrent(plan.workspaceId)

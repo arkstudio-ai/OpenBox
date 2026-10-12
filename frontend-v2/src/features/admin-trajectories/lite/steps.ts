@@ -105,6 +105,9 @@ export function buildFlow(steps: readonly LiteStep[], mainAgentId: string | null
 function isNoise(step: LiteStep, mainAgentId: string | null): boolean {
   if (step.step_type === "permission" && step.status === "completed" && (step.duration_ms ?? 0) < 1000)
     return true
+  // A model output that only called tools has nothing to read: the tool cards already tell the story.
+  if (step.step_type === "assistant" && !isFailed(step) && (!step.preview || step.preview === "tool calls"))
+    return true
   return step.step_type === "agent" && !!mainAgentId && step.agent_id === mainAgentId
 }
 

@@ -53,6 +53,30 @@ def _has_reference(value) -> bool:
     return False
 
 
+def tool_id_of(record: dict) -> str:
+    """The tool a tool record ran: ``tool_id`` when the caller attached it, else the title (fixtures, old rows)."""
+    return str(record.get("tool_id") or record.get("title") or "tool")
+
+
+#: Record kinds whose ``data`` a refresh reads: the user's attachments, a tool's id.
+DATA_KINDS = ("user", "tool")
+
+
+def with_data(summary: dict, data) -> dict:
+    """A summary plus what the lite view needs from the record's data (lite plan §11)."""
+    if not isinstance(data, dict):
+        return summary
+    inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+    row = {**summary}
+    if summary.get("kind") == "user":
+        row["data"] = inner
+    if summary.get("kind") == "tool":
+        tool = inner.get("tool") or inner.get("name")
+        if tool:
+            row["tool_id"] = str(tool)[:128]
+    return row
+
+
 def _text_preview(record: dict) -> str | None:
     preview = record.get("preview")
     return preview if isinstance(preview, str) and preview.strip() and preview != "tool calls" else None
@@ -115,11 +139,15 @@ def derive(records: list[dict]) -> dict | None:
     else:
         status = "running"
 
+    # Keyed by the tool id (``data.tool``); a record's title is the tool's result title ("exit code: 0").
     tool_counts: dict[str, dict[str, int]] = {}
     for row in by_kind.get("tool", []):
-        entry = tool_counts.setdefault(str(row.get("title") or "tool"), {"total": 0, "failed": 0})
+        entry = tool_counts.setdefault(tool_id_of(row), {"total": 0, "failed": 0})
         entry["total"] += 1
         entry["failed"] += int(row.get("status") in STEP_FAILURES)
+    main_agent_id = (turn or (user if user else rows[0])).get("agent_id")
+    # The main agent may have an ``agent`` record of its own (cron runs); only other agents are sub-agents.
+    sub_agents = [row for row in by_kind.get("agent", []) if row.get("agent_id") != main_agent_id]
 
     totals = contribution(None)
     for row in rows:
@@ -145,12 +173,12 @@ def derive(records: list[dict]) -> dict | None:
         "assistant_preview": _text_preview(spoken[-1]) if spoken else None,
         "user_message_id": user.get("message_id") if user else None,
         "assistant_message_id": last_assistant.get("message_id") if last_assistant else None,
-        "main_agent_id": (turn or (user if user else rows[0])).get("agent_id"),
+        "main_agent_id": main_agent_id,
         "has_attachments": bool(user and _has_reference(user.get("data"))) if user and "data" in user else False,
         "tool_counts": tool_counts,
         "tool_failures": sum(entry["failed"] for entry in tool_counts.values()) + sum(
             1 for row in by_kind.get("job", []) if row.get("status") in STEP_FAILURES),
-        "agent_count": len(by_kind.get("agent", [])), "job_count": len(by_kind.get("job", [])),
+        "agent_count": len(sub_agents), "job_count": len(by_kind.get("job", [])),
         "artifact_count": len(by_kind.get("artifact", [])), "retry_count": len(by_kind.get("retry", [])),
         "request_count": request_count,
         "input_tokens": totals["input_tokens"] if usage_known else None,
@@ -188,14 +216,13 @@ async def refresh(db, trajectory, turn_ids, *, applied_seq: int | None = None) -
     head = applied_seq if applied_seq is not None else trajectory.projected_seq
     for offset in range(0, len(ids), CHUNK):
         chunk = ids[offset:offset + CHUNK]
-        # Only a user record's data is read (attachment references); every other value comes from the summary.
-        rows = (await db.execute(select(TrajectoryRecord.summary, case((TrajectoryRecord.kind == "user", TrajectoryRecord.data),
+        # Only user and tool records' data is read (attachments, the tool id); all else comes from the summary.
+        rows = (await db.execute(select(TrajectoryRecord.summary, case((TrajectoryRecord.kind.in_(DATA_KINDS), TrajectoryRecord.data),
                                                                         else_=None)).where(
             TrajectoryRecord.trajectory_id == trajectory.id, TrajectoryRecord.turn_id.in_(chunk)))).all()
         grouped: dict[str, list[dict]] = {}
         for summary, data in rows:
-            row = {**summary, "data": data.get("data", {})} if isinstance(data, dict) else summary
-            grouped.setdefault(summary["turn_id"], []).append(row)
+            grouped.setdefault(summary["turn_id"], []).append(with_data(summary, data))
         values = []
         for turn_id in chunk:
             derived = derive(grouped.get(turn_id, []))

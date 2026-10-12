@@ -288,6 +288,16 @@ async def test_audience_filters_users_and_turns(trace_db, monkeypatch):
         assert (await lite.list_user_turns(db, "user_a", viewer_id="admin", at=NOW))["items"] == []
         assert len((await lite.list_user_turns(db, "user_b", viewer_id="admin", at=NOW))["items"]) == 2
 
+    async def all_but_a1(viewer_id, targets):
+        # user_a's newest session is private to the viewer: the user is listed by what is left, and the page
+        # is ordered by that shown activity rather than by the hidden session.
+        return {target["session_id"] for target in targets if target["session_id"] != "s_a1"}
+    monkeypatch.setattr(audience, "visible_sessions", all_but_a1)
+    async with trace_session() as db:
+        users = await lite.list_users(db, viewer_id="admin", at=NOW)
+        assert [(item["user"]["user_id"], item["turns"]) for item in users["items"]] == [("user_b", 2), ("user_a", 1), ("user_c", 1)]
+        assert users["items"][1]["last_activity_at"] == iso(NOW - timedelta(hours=30))
+
 
 # -- Labels --
 
@@ -313,3 +323,40 @@ def test_labels_follow_the_configured_file(tmp_path, monkeypatch):
     assert lite.labels()["version"] == 7 and lite.resolve_tool("x")["label"] == "做 X"
     monkeypatch.setenv("TRAJECTORY_LITE_LABELS_PATH", str(tmp_path / "missing.json"))
     assert lite.labels()["version"] == 0 and lite.resolve_tool("x")["source"] == "default"
+
+
+def test_tool_counts_use_the_tool_id_not_the_result_title():
+    rows = _base(status="completed", end_seq=9, finished=9) + [
+        {**_record("tool:c1", "tool", 5, title="exit code: 0"), "tool_id": "bash"},
+        {**_record("tool:c2", "tool", 6, title="Found 3 files"), "tool_id": "glob"},
+        {**_record("tool:c3", "tool", 7, title="Found 1 files", status="failed", reason="boom"), "tool_id": "glob"},
+        _record("tool:c4", "tool", 8, title="read")]  # no tool_id (fixture / pre-M1 rows): the title stands in
+    derived = turns.derive(rows)
+    assert derived["tool_counts"] == {"bash": {"total": 1, "failed": 0}, "glob": {"total": 2, "failed": 1}, "read": {"total": 1, "failed": 0}}
+    assert turns.with_data(_record("tool:x", "tool", 1, title="exit code: 0"), {"data": {"tool": "bash"}})["tool_id"] == "bash"
+    assert turns.with_data(_record("user:x", "user", 1), {"data": {"text": "hi", "attachments": [{"$media": {}}]}})["data"]["attachments"]
+    assert "tool_id" not in turns.with_data(_record("tool:x", "tool", 1), None)
+
+
+def test_the_main_agents_own_record_is_not_a_subtask():
+    rows = _base(status="completed", end_seq=9, finished=9) + [
+        _record("agent:main", "agent", 4, agent_id="agent_main", title="agent"),
+        _record("agent:child", "agent", 5, agent_id="agent_child", title="排查登录态")]
+    derived = turns.derive(rows)
+    assert (derived["main_agent_id"], derived["agent_count"]) == ("agent_main", 1)
+
+
+def test_classify_hides_policy_permissions_and_the_main_agent():
+    document = lite.labels()
+    auto = {**_record("permission:p1", "permission", 3), "duration_ms": 0}
+    assert lite.classify(auto, document)["step_type"] == "hidden"
+    waited = {**_record("permission:p2", "permission", 3), "duration_ms": 65_000}
+    assert lite.classify(waited, document)["step_type"] == "permission"
+    pending = {**_record("permission:p3", "permission", 3, status="waiting"), "duration_ms": None}
+    assert lite.classify(pending, document)["step_type"] == "permission"
+    main = _record("agent:main", "agent", 4, agent_id="agent_main")
+    assert lite.classify(main, document, "agent_main")["step_type"] == "hidden"
+    assert lite.classify(main, document, "agent_other")["step_type"] == "agent"
+    tool = {**_record("tool:t", "tool", 5, title="exit code: 0"), "tool_id": "bash"}
+    classified = lite.classify(tool, document)
+    assert (classified["tool_id"], classified["label"], classified["group"]) == ("bash", "处理文件", "files")

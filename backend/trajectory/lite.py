@@ -223,7 +223,10 @@ async def list_users(db, *, q=None, activity_from=None, activity_to=None, has_fa
         # The cursor is the SQL position (the user's windowed activity, unfiltered), not the displayed one.
         _, (moment, user_id) = items[-1]
         next_cursor = cursor_encode([filters, moment.isoformat(), user_id])
-    return {"items": [payload for payload, _ in items], "next_cursor": next_cursor, "has_more": overflow}
+    # Private sessions the viewer cannot read are left out of a user's numbers and shown activity, so a page is
+    # re-ordered by what it shows; the SQL order only decides which users fall on which page.
+    page = sorted((payload for payload, _ in items), key=lambda row: (row["last_activity_at"] or "", row["user"]["user_id"]), reverse=True)
+    return {"items": page, "next_cursor": next_cursor, "has_more": overflow}
 
 
 # -- Turns --
@@ -302,18 +305,31 @@ async def list_user_turns(db, user_id: str, *, statuses=None, activity_from=None
 
 # -- One turn --
 
-def classify(summary: dict, document: dict) -> dict:
+#: A permission the policy answered by itself: resolved in under this many ms, nobody waited.
+AUTO_PERMISSION_MS = 1000
+
+
+def classify(summary: dict, document: dict, main_agent_id: str | None = None) -> dict:
     """``step_type``, ``label`` and ``group`` of one record summary for the step flow (lite plan §4.3)."""
     kind = summary.get("kind")
     step_type = STEP_TYPES.get(kind, "hidden")
+    base = {"step_type": step_type, "label": None, "group": None, "collapsible": False, "transparent": False,
+            "tool_id": None}
     if kind == "tool":
-        resolved = resolve_tool(str(summary.get("title") or "tool"), document)
+        tool_id = turns.tool_id_of(summary)
+        resolved = resolve_tool(tool_id, document)
         group = resolved["group"]
         collapse = bool(group and document["groups"].get(group, {}).get("collapse"))
-        return {"step_type": "tool", "label": resolved["label"], "group": group,
+        return {**base, "label": resolved["label"], "group": group, "tool_id": tool_id,
                 "collapsible": collapse and summary.get("status") not in turns.STEP_FAILURES,
                 "transparent": resolved["transparent"]}
-    return {"step_type": step_type, "label": None, "group": None, "collapsible": False, "transparent": False}
+    if kind == "permission" and summary.get("status") == "completed" and (summary.get("duration_ms") or 0) < AUTO_PERMISSION_MS:
+        # Policy-approved on the spot: the operator never saw a confirmation card.
+        return {**base, "step_type": "hidden"}
+    if kind == "agent" and main_agent_id and summary.get("agent_id") == main_agent_id:
+        # The main agent's own record (cron runs spawn it explicitly) is the turn, not a subtask.
+        return {**base, "step_type": "hidden"}
+    return base
 
 
 async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) -> dict:
@@ -324,10 +340,15 @@ async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) 
         raise LookupError("Turn not found")
     session = await db.get(TrajectoryMetaSession, trajectory.session_id)
     document = labels()
-    summaries = (await db.scalars(select(TrajectoryRecord.summary).where(
+    rows = (await db.execute(select(TrajectoryRecord.summary, case((TrajectoryRecord.kind.in_(turns.DATA_KINDS), TrajectoryRecord.data),
+                                                                    else_=None)).where(
         TrajectoryRecord.trajectory_id == trajectory.id, TrajectoryRecord.turn_id == turn_id)
         .order_by(TrajectoryRecord.start_seq, TrajectoryRecord.record_id))).all()
-    steps = [{**summary, **classify(summary, document)} for summary in summaries]
+    steps = []
+    for summary, data in rows:
+        enriched = turns.with_data(summary, data)
+        enriched.pop("data", None)  # step rows stay summaries; the detail endpoint carries content
+        steps.append({**enriched, **classify(enriched, document, row.main_agent_id)})
     return {"summary": turns.payload(row, session_title=session.title if session else None, at=at),
             "steps": steps, "through_seq": str(trajectory.projected_seq),
             "labels_version": document.get("version", 0)}

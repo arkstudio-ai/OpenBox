@@ -42,6 +42,8 @@ export interface LiteUserRow {
   input_tokens: number | null
   output_tokens: number | null
   usage_complete: boolean
+  /** Credits charged in the window (decimal string); null when nothing was charged or billing is unreachable. */
+  credits?: string | null
 }
 
 export interface ToolCount {
@@ -81,6 +83,8 @@ export interface TurnSummary {
   first_seq: Seq
   last_seq: Seq
   through_seq: Seq
+  /** Credits the user was charged for this turn (decimal string); null when none or unknown. */
+  credits?: string | null
 }
 
 export type StepType =
@@ -105,6 +109,8 @@ export interface LiteStep extends RecordSummary {
   group: string | null
   collapsible: boolean
   transparent: boolean
+  /** The tool a tool step ran (its title is the result's title, e.g. "exit code: 0"). Absent on older servers. */
+  tool_id?: string | null
 }
 
 export interface TurnDetail {

@@ -26,14 +26,15 @@ import { ABNORMAL_STATUSES, TURN_STATUSES, type TurnStatus, type TurnSummary } f
 import {
   BUTTON,
   Clock,
+  Credits,
   Duration,
   FIELD,
   Paging,
   Since,
-  Tokens,
   ToolChips,
   TurnStatus as TurnStatusPill,
 } from "./bits"
+import { plainPreview } from "../text"
 import { ModeToggle } from "./ModeToggle"
 
 const CELL = "px-3 py-2.5 align-top"
@@ -177,7 +178,7 @@ function Preview({ text, attachments }: { text: string | null; attachments?: boo
   const { t } = useTranslation("admin-trajectories")
   return (
     <span className="line-clamp-2 break-words">
-      {text || <span className="text-n500">{t("common.notRecorded")}</span>}
+      {plainPreview(text) || <span className="text-n500">{t("common.notRecorded")}</span>}
       {attachments && (
         <span className="bg-hairsoft text-n600 text-2xs ms-1 inline-flex items-center gap-1 rounded px-1.5 align-middle">
           <Paperclip size={10} aria-hidden />
@@ -229,7 +230,7 @@ function TurnsTable({
             <th className={`${CELL} font-medium`}>{t("lite.turns.column.aiSaid")}</th>
             <th className={`${CELL} w-32 font-medium`}>{t("lite.turns.column.result")}</th>
             <th className={`${CELL} w-20 text-end font-medium`}>{t("lite.turns.column.duration")}</th>
-            <th className={`${CELL} w-16 text-end font-medium`}>{t("lite.turns.column.usage")}</th>
+            <th className={`${CELL} w-20 text-end font-medium`}>{t("lite.turns.column.credits")}</th>
           </tr>
         </thead>
         <tbody>
@@ -294,8 +295,8 @@ function TurnsTable({
                   <td className={`${CELL} text-n700 text-end whitespace-nowrap`}>
                     <Duration ms={row.duration_ms} />
                   </td>
-                  <td className={`${CELL} text-n500 text-end whitespace-nowrap`}>
-                    <Tokens input={row.input_tokens} output={row.output_tokens} compact />
+                  <td className={`${CELL} text-n700 text-end whitespace-nowrap`}>
+                    <Credits value={row.credits} input={row.input_tokens} output={row.output_tokens} />
                   </td>
                 </tr>
               ))}

@@ -31,7 +31,8 @@ CATEGORY_FOR_KIND = {
 }
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.
-LINK_KINDS = {"session", "assistant_task", "cron", "auth_center", "skills", "admin_skills", "topic", "url", "inbox"}
+LINK_KINDS = {"session", "assistant_task", "cron", "auth_center", "skills", "admin_skills", "admin_trajectory_turn",
+              "topic", "url", "inbox"}
 SESSION_RETENTION = timedelta(days=90)
 EXPIRED_RETENTION = timedelta(days=30)
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
@@ -103,6 +104,13 @@ def validate_link(link, *, first_party: bool = False) -> dict | None:
         out["workspaceId"] = link["workspaceId"]
         if isinstance(link.get("jobId"), str):
             out["jobId"] = link["jobId"]
+    elif kind == "admin_trajectory_turn":
+        # The lite trajectory view of one turn (docs/SESSION_TRAJECTORY_LITE_PLAN.md §14); admins only, no workspace.
+        for field in ("userId", "sessionId", "turnId"):
+            value = link.get(field)
+            if not isinstance(value, str) or not 1 <= len(value) <= 128:
+                raise ValueError(f"Trajectory turn link needs {field}")
+            out[field] = value
     elif kind == "topic":
         if not isinstance(link.get("slug"), str) or not _SLUG.match(link["slug"]):
             raise ValueError("Topic link needs a slug")

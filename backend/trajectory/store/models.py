@@ -306,11 +306,16 @@ class TrajectoryTurnSummary(TraceBase):
     first_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     applied_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: When the failure of this turn was announced to the platform admins (t0007); null = not yet or not failed.
+    alerted_at: Mapped[datetime | None] = mapped_column()
     __table_args__ = (
         Index("ix_trajectory_turn_summaries_owner", "user_id", "started_at", "turn_id"),
         Index("ix_trajectory_turn_summaries_trajectory", "trajectory_id", "started_at"),
         Index("ix_trajectory_turn_summaries_session", "session_id", "started_at"),
         Index("ix_trajectory_turn_summaries_status", "status", "started_at"),
+        Index("ix_trajectory_turn_summaries_alert_pending", "started_at",
+              postgresql_where=text("status = 'failed' AND alerted_at IS NULL"),
+              sqlite_where=text("status = 'failed' AND alerted_at IS NULL")),
     )
 
 

@@ -53,7 +53,7 @@ function fold(steps: LiteStep[], labels: LiteLabels): FlowItem[] {
       items.push({
         kind: "group",
         group: step.group,
-        label: labels.groups[step.group]?.label || step.label || resolveTool(step.title, labels).label,
+        label: labels.groups[step.group]?.label || step.label || resolveTool(toolId(step), labels).label,
         steps: [step],
         failed: 0,
       })
@@ -75,7 +75,7 @@ function fold(steps: LiteStep[], labels: LiteLabels): FlowItem[] {
 export function buildFlow(steps: readonly LiteStep[], mainAgentId: string | null, labels: LiteLabels): Flow {
   const ordered = [...steps].sort((a, b) => seqOf(a) - seqOf(b) || a.record_id.localeCompare(b.record_id))
   const retries = ordered.filter((step) => step.step_type === "retry").length
-  const shown = ordered.filter((step) => SHOWN.has(step.step_type))
+  const shown = ordered.filter((step) => SHOWN.has(step.step_type) && !isNoise(step, mainAgentId))
   const agents = new Map(
     shown.filter((step) => step.step_type === "agent" && step.agent_id).map((step) => [step.agent_id!, step]),
   )
@@ -99,6 +99,20 @@ export function buildFlow(steps: readonly LiteStep[], mainAgentId: string | null
   for (const item of items)
     if (item.kind === "group") item.failed = item.steps.filter((step) => isFailed(step)).length
   return { items, retries, hidden: ordered.length - shown.length }
+}
+
+/** A permission the policy answered by itself, or the main agent's own record: never a card. */
+function isNoise(step: LiteStep, mainAgentId: string | null): boolean {
+  if (step.step_type === "permission" && step.status === "completed" && (step.duration_ms ?? 0) < 1000)
+    return true
+  // A model output that only called tools has nothing to read: the tool cards already tell the story.
+  if (step.step_type === "assistant" && !isFailed(step) && (!step.preview || step.preview === "tool calls"))
+    return true
+  return step.step_type === "agent" && !!mainAgentId && step.agent_id === mainAgentId
+}
+
+export function toolId(step: LiteStep): string {
+  return step.tool_id || step.title
 }
 
 export function isFailed(step: LiteStep): boolean {

@@ -9,11 +9,11 @@ import { Spinner } from "@/shared/ui/Spinner"
 import { AccessNotice } from "../../components/AccessNotice"
 import { useTrajectoryAccess } from "../../stores/access"
 import { EMPTY_DETAIL_PARAMS, serializeDetailParams } from "../../utils/params"
-import { formatDuration, formatInstant } from "../../utils/time"
+import { formatDuration } from "../../utils/time"
 import { useLiteLabels, useTurnDetail } from "../api"
 import { conclusion, turnStatusTone } from "../labels"
 import { buildFlow } from "../steps"
-import { Duration, TurnStatus } from "./bits"
+import { Credits, Duration, TurnStatus } from "./bits"
 import { ModeToggle } from "./ModeToggle"
 import { Flow, UsageLine, type StepEnv } from "./StepCards"
 
@@ -74,7 +74,7 @@ export function TrajectoryTurnPage({
       </p>
     )
   }
-  const { summary, steps, through_seq } = detail.data
+  const { summary, through_seq } = detail.data
   const proHref = (record: string | null) =>
     paths.adminTrajectorySession(
       sessionId,
@@ -88,9 +88,21 @@ export function TrajectoryTurnPage({
   }
   const tone = turnStatusTone(summary.status)
   const verdict = conclusion(summary, labels, t, waitedFor(summary, i18n.language))
-  const started = formatInstant(summary.started_at, "local", i18n.language)
-  const finished = formatInstant(summary.finished_at, "local", i18n.language)
-  const thinking = steps.filter((step) => step.step_type === "assistant").length
+  const stamp = (iso: string | null) =>
+    iso
+      ? new Intl.DateTimeFormat(i18n.language, {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        }).format(new Date(iso))
+      : null
+  const started = stamp(summary.started_at)
+  const finished = stamp(summary.finished_at)
+  const thinking = flow.items.filter(
+    (item) => item.kind === "step" && item.step.step_type === "assistant",
+  ).length
   const userHref = paths.adminTrajectoryUser(userId, back || undefined)
 
   return (
@@ -164,7 +176,9 @@ export function TrajectoryTurnPage({
           </div>
           <div className="flex flex-col">
             <dt className="text-n500 text-2xs">{t("lite.turn.credits")}</dt>
-            <dd className="text-n500 font-medium">{t("lite.turn.creditsLater")}</dd>
+            <dd className="font-medium">
+              <Credits value={summary.credits} />
+            </dd>
           </div>
         </dl>
       </header>

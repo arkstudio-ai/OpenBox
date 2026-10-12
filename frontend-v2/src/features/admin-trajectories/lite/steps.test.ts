@@ -60,7 +60,7 @@ describe("buildFlow", () => {
   it("orders by seq, drops hidden kinds and counts retries as an annotation", () => {
     const flow = buildFlow(
       [
-        step("assistant:1", 9, "assistant"),
+        step("assistant:1", 9, "assistant", { preview: "回复" }),
         step("request:1", 3, "hidden"),
         step("retry:1", 4, "retry"),
         step("user:1", 1, "user_input"),
@@ -112,7 +112,7 @@ describe("buildFlow", () => {
         file("tool:y", 4),
         file("tool:z", 5),
         step("tool:orphan", 6, "tool", { agent_id: "ghost", title: "desktop_publish" }),
-        step("assistant:1", 7, "assistant"),
+        step("assistant:1", 7, "assistant", { preview: "回复" }),
       ].map((item) =>
         item.record_id === "tool:y" || item.record_id === "tool:z" ? { ...item, agent_id: "child" } : item,
       ),
@@ -130,10 +130,37 @@ describe("buildFlow", () => {
 
   it("keeps a gap as a notice in place", () => {
     const flow = buildFlow(
-      [step("user:1", 1, "user_input"), step("gap:1", 2, "gap"), step("assistant:1", 3, "assistant")],
+      [
+        step("user:1", 1, "user_input"),
+        step("gap:1", 2, "gap"),
+        step("assistant:1", 3, "assistant", { preview: "回复" }),
+      ],
       "main",
       LABELS,
     )
     expect(flow.items.map((item) => item.kind)).toEqual(["step", "gap", "step"])
+  })
+
+  it("drops policy-approved permissions and the main agent's own record, keeps real confirmations", () => {
+    const flow = buildFlow(
+      [
+        step("user:1", 1, "user_input"),
+        step("agent:main", 2, "agent", { agent_id: "main", title: "agent" }),
+        step("permission:auto", 3, "permission", { duration_ms: 0 }),
+        step("permission:waited", 4, "permission", { duration_ms: 65_000 }),
+        step("permission:open", 5, "permission", { status: "waiting", duration_ms: null }),
+        step("assistant:calls", 6, "assistant", { preview: "tool calls" }),
+        step("assistant:empty", 7, "assistant", { preview: null }),
+        step("assistant:1", 8, "assistant", { preview: "好的" }),
+      ],
+      "main",
+      LABELS,
+    )
+    expect(flow.items.map((item) => (item.kind === "step" ? item.step.record_id : item.kind))).toEqual([
+      "user:1",
+      "permission:waited",
+      "permission:open",
+      "assistant:1",
+    ])
   })
 })

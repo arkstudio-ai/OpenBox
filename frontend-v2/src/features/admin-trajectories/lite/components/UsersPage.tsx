@@ -20,7 +20,7 @@ import {
   type UsersParams,
 } from "../params"
 import type { LiteUserRow } from "../types"
-import { BUTTON, FIELD, Paging, Since, Tokens, TurnStatus } from "./bits"
+import { BUTTON, Credits, FIELD, Paging, Since, Tokens, TurnStatus } from "./bits"
 import { ModeToggle } from "./ModeToggle"
 
 const WIDE = "hidden lg:table-cell"
@@ -81,6 +81,12 @@ function useColumns(hrefFor: (row: LiteUserRow) => string): DataTableColumn<Lite
       header: t("lite.users.column.sessions"),
       className: `${WIDE} text-end whitespace-nowrap`,
       render: (row) => formatNumber(row.sessions),
+    },
+    {
+      key: "credits",
+      header: t("lite.users.column.credits"),
+      className: "text-end whitespace-nowrap",
+      render: (row) => <Credits value={row.credits} input={row.input_tokens} output={row.output_tokens} />,
     },
     {
       key: "usage",

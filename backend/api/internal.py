@@ -249,3 +249,124 @@ async def write_trajectory_audit(entries: list[TrajectoryAuditEntry]) -> int:
 async def trajectory_audit(batch: TrajectoryAuditBatch) -> dict:
     written = await write_trajectory_audit(batch.entries)
     return {"accepted": len(batch.entries), "written": written}
+
+
+# -- Lite trajectory view (docs/SESSION_TRAJECTORY_LITE_PLAN.md §14): credits per turn, failed-turn alerts --
+
+class TrajectoryUsageWindow(BaseModel):
+    key: str = Field(min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=64)
+    user_id: str | None = Field(default=None, min_length=1, max_length=64)
+    from_at: datetime
+    to_at: datetime
+
+    @model_validator(mode="after")
+    def one_scope(self) -> "TrajectoryUsageWindow":
+        if bool(self.session_id) == bool(self.user_id):
+            raise ValueError("A usage window names a session or a user")
+        if self.to_at < self.from_at:
+            raise ValueError("A usage window ends after it starts")
+        return self
+
+
+class TrajectoryUsageQuery(BaseModel):
+    windows: list[TrajectoryUsageWindow] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def unique_keys(self) -> "TrajectoryUsageQuery":
+        if len({window.key for window in self.windows}) != len(self.windows):
+            raise ValueError("Usage window keys must be unique")
+        return self
+
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def trajectory_turn_usage(query: TrajectoryUsageQuery) -> dict:
+    """Credits the user was charged (``usage_events.status = charged``) inside each window.
+
+    A turn's window is its session between the turn's start and end; a user's
+    window is everything of theirs in a period. Media charges carry no message
+    id, so time is the only join the trace side can offer. Windows without a
+    single charged row answer null, not 0: the lite view then says "未计费".
+    """
+    from decimal import Decimal
+    from db.models.billing import UsageEvent
+    result: dict[str, str | None] = {window.key: None for window in query.windows}
+    if not query.windows:
+        return {"credits": result}
+    by_session = [w for w in query.windows if w.session_id]
+    by_user = [w for w in query.windows if w.user_id]
+    async with get_db_session() as db:
+        for windows, column in ((by_session, UsageEvent.session_id), (by_user, UsageEvent.user_id)):
+            if not windows:
+                continue
+            scopes = {w.session_id or w.user_id for w in windows}
+            start = min(_utc(w.from_at) for w in windows)
+            end = max(_utc(w.to_at) for w in windows)
+            rows = (await db.execute(select(column, UsageEvent.created_at, UsageEvent.credits).where(
+                column.in_(scopes), UsageEvent.status == "charged", UsageEvent.credits.is_not(None),
+                UsageEvent.created_at >= start, UsageEvent.created_at <= end))).all()
+            totals: dict[str, Decimal] = {}
+            for scope, created_at, credits in rows:
+                moment = _utc(created_at)
+                for w in windows:
+                    if (w.session_id or w.user_id) == scope and _utc(w.from_at) <= moment <= _utc(w.to_at):
+                        totals[w.key] = totals.get(w.key, Decimal(0)) + Decimal(credits)
+            for key, total in totals.items():
+                result[key] = format(total.normalize(), "f")
+    return {"credits": result}
+
+
+@router.post("/trajectory/usage", dependencies=[Depends(internal_token)])
+async def trajectory_usage(query: TrajectoryUsageQuery) -> dict:
+    return await trajectory_turn_usage(query)
+
+
+class TrajectoryTurnAlert(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=128)
+    session_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    workspace_id: str | None = Field(default=None, max_length=64)
+    username: str | None = Field(default=None, max_length=128)
+    session_title: str | None = Field(default=None, max_length=255)
+    reason: str | None = Field(default=None, max_length=500)
+    started_at: datetime | None = None
+
+
+class TrajectoryAlertBatch(BaseModel):
+    turns: list[TrajectoryTurnAlert] = Field(max_length=100)
+
+
+async def trajectory_turn_alerts(batch: TrajectoryAlertBatch) -> dict:
+    """One inbox row per platform admin per failed turn; idempotent on (admin, turn).
+
+    No tool output, model text or error detail enters the notice: the body
+    names the user and the session, the link opens the lite turn page.
+    """
+    from notifications.inbox import add_inbox
+    from notifications.templates import compact, render_template
+    if not batch.turns:
+        return {"alerted": 0, "admins": 0}
+    written = 0
+    async with get_db_session() as db:
+        admins = list((await db.execute(select(User.id).where(
+            User.role == "admin", User.is_active.is_(True), User.is_deleted.is_(False)))).scalars())
+        for turn in batch.turns:
+            who = turn.username or turn.user_id
+            what = turn.session_title or "未命名会话"
+            title, body = render_template("trajectory_turn_failed", compact(f"{who} · {what}", 60))
+            link = {"kind": "admin_trajectory_turn", "userId": turn.user_id, "sessionId": turn.session_id,
+                    "turnId": turn.turn_id}
+            for admin_id in admins:
+                await add_inbox(db, user_id=admin_id, workspace_id=None, kind="trajectory_turn_failed",
+                                title=title, body=body, link=link, source_key=f"trajectory:{turn.turn_id}:failed")
+                written += 1
+        await db.commit()
+    return {"alerted": written, "admins": len(admins)}
+
+
+@router.post("/trajectory/alerts", dependencies=[Depends(internal_token)])
+async def trajectory_alerts(batch: TrajectoryAlertBatch) -> dict:
+    return await trajectory_turn_alerts(batch)

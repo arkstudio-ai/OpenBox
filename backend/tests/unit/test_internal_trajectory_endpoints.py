@@ -145,3 +145,66 @@ async def test_naive_timestamps_are_utc_and_refused_rows_do_not_block_the_batch(
     assert await internal.write_trajectory_audit(batch.entries) == 2
     async with business_db() as db:
         assert sorted((await db.scalars(select(AuditLog.id))).all()) == ["ok1", "ok2"]
+
+
+USAGE = "/api/internal/trajectory/usage"
+ALERTS = "/api/internal/trajectory/alerts"
+
+
+async def _charge(db, *, session_id, user_id, credits, created_at, status="charged"):
+    from decimal import Decimal
+    from db.models.billing import UsageEvent
+    from core.identifier import ascending
+    db.add(UsageEvent(id=ascending("usage"), idempotency_key=f"t:{ascending('k')}", workspace_id=f"ws_{user_id}",
+                      user_id=user_id, session_id=session_id, message_id=None, session_title="s", model_id="m",
+                      kind="chat", tokens={}, total_tokens=0, credits=Decimal(credits), status=status,
+                      pricing={"version": "t"}, created_at=created_at))
+
+
+async def test_usage_callback_sums_charged_credits_inside_each_window(backend, business_db):
+    base = datetime(2026, 10, 12, 8, 0, tzinfo=timezone.utc)
+    async with business_db() as db:
+        await _charge(db, session_id="session_a_1", user_id="a", credits="1.5", created_at=base + timedelta(seconds=10))
+        await _charge(db, session_id="session_a_1", user_id="a", credits="0.25", created_at=base + timedelta(seconds=50))
+        await _charge(db, session_id="session_a_1", user_id="a", credits="9", created_at=base + timedelta(minutes=10))
+        await _charge(db, session_id="session_a_1", user_id="a", credits="7", created_at=base + timedelta(seconds=20), status="shadow")
+        await _charge(db, session_id="session_b_1", user_id="b", credits="2", created_at=base + timedelta(seconds=30))
+        await db.commit()
+    windows = [
+        {"key": "turn_1", "session_id": "session_a_1", "from_at": base.isoformat(), "to_at": (base + timedelta(minutes=1)).isoformat()},
+        {"key": "turn_later", "session_id": "session_a_1", "from_at": (base + timedelta(minutes=5)).isoformat(), "to_at": (base + timedelta(minutes=15)).isoformat()},
+        {"key": "turn_empty", "session_id": "session_a_2", "from_at": base.isoformat(), "to_at": (base + timedelta(minutes=1)).isoformat()},
+        {"key": "user_a", "user_id": "a", "from_at": base.isoformat(), "to_at": (base + timedelta(hours=1)).isoformat()},
+    ]
+    response = await backend.post(USAGE, json={"windows": windows}, headers=AUTH)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"credits": {"turn_1": "1.75", "turn_later": "9", "turn_empty": None, "user_a": "10.75"}}
+    assert (await backend.post(USAGE, json={"windows": []}, headers=AUTH)).json() == {"credits": {}}
+    for bad in ({"key": "x", "from_at": base.isoformat(), "to_at": base.isoformat()},
+                {"key": "x", "session_id": "s", "user_id": "u", "from_at": base.isoformat(), "to_at": base.isoformat()},
+                {"key": "x", "session_id": "s", "from_at": (base + timedelta(hours=1)).isoformat(), "to_at": base.isoformat()}):
+        assert (await backend.post(USAGE, json={"windows": [bad]}, headers=AUTH)).status_code == 422
+    assert (await backend.post(USAGE, json={"windows": [windows[0], windows[0]]}, headers=AUTH)).status_code == 422
+    assert (await backend.post(USAGE, json={"windows": windows}, headers={"X-Internal-Token": "wrong"})).status_code == 403
+
+
+async def test_alerts_callback_notifies_every_platform_admin_once_per_turn(backend, business_db):
+    from db.models.notification import Notification
+    turn = {"turn_id": "turn_f1", "session_id": "session_a_1", "user_id": "a", "workspace_id": "ws_a",
+            "username": "张店长", "session_title": "国庆视频", "reason": "login_expired", "started_at": "2026-10-12T08:00:00Z"}
+    response = await backend.post(ALERTS, json={"turns": [turn]}, headers=AUTH)
+    assert response.status_code == 200, response.text
+    # The harness seeds two active platform admins ("admin" and "default"); every one gets the notice.
+    assert response.json() == {"alerted": 2, "admins": 2}
+    # Idempotent on (admin, turn): a redelivery adds nothing.
+    assert (await backend.post(ALERTS, json={"turns": [turn]}, headers=AUTH)).json() == {"alerted": 2, "admins": 2}
+    async with business_db() as db:
+        rows = list((await db.execute(select(Notification).where(Notification.kind == "trajectory_turn_failed"))).scalars())
+    assert sorted(row.user_id for row in rows) == ["admin", "default"]
+    row = next(row for row in rows if row.user_id == "admin")
+    assert (row.category, row.source_key, row.workspace_id) == ("system", "trajectory:turn_f1:failed", None)
+    assert row.title == "有一轮对话失败" and "张店长 · 国庆视频" in row.body and "login_expired" not in row.body
+    assert row.link == {"kind": "admin_trajectory_turn", "userId": "a", "sessionId": "session_a_1", "turnId": "turn_f1"}
+    assert (await backend.post(ALERTS, json={"turns": []}, headers=AUTH)).json() == {"alerted": 0, "admins": 0}
+    assert (await backend.post(ALERTS, json={"turns": [{"turn_id": "x"}]}, headers=AUTH)).status_code == 422
+    assert (await backend.post(ALERTS, json={"turns": [turn]}, headers={"X-Internal-Token": "wrong"})).status_code == 403

@@ -54,7 +54,7 @@ INDEXES = {
                            ("trajectory_id", "kind", "status", "start_seq"), ("trajectory_id", "agent_id"),
                            ("trajectory_id", "turn_id", "start_seq")},
     "trajectory_turn_summaries": {("user_id", "started_at", "turn_id"), ("trajectory_id", "started_at"),
-                                  ("session_id", "started_at"), ("status", "started_at")},
+                                  ("session_id", "started_at"), ("status", "started_at"), ("started_at",)},
     "trajectory_session_summaries": {("last_activity_at", "session_id"), ("user_id", "last_activity_at", "session_id"),
                                      ("workspace_id", "last_activity_at", "session_id"),
                                      ("running_status", "recording_status", "last_activity_at")},

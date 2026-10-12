@@ -1,80 +1,397 @@
 {
   "version": 1,
   "tools": {
-    "desktop_publish": {"label": "发布到抖音（云电脑）", "args": ["title", "platform"], "result": "publish"},
-    "douyin_publish": {"label": "发布到抖音（开放平台）", "args": ["title"], "result": "publish"},
-    "video_generate": {"label": "生成视频", "args": ["tier", "duration", "prompt:40"], "result": "count:已生成 {n} 条"},
-    "video_compose": {"label": "合成视频", "args": ["clips"], "result": "file"},
-    "video_analyze": {"label": "分析视频", "args": ["file"], "result": "text:80"},
-    "video_transcribe": {"label": "视频转文字", "args": ["file"], "result": "length"},
-    "image_gen": {"label": "生成图片", "args": ["prompt:40"], "result": "count:已生成 {n} 张"},
-    "share_file": {"label": "把文件发给用户", "args": ["name", "path"], "result": "sent"},
-    "assets.attach": {"label": "整理附件", "args": ["name"], "group": "assets"},
-    "assets.list": {"label": "整理附件", "group": "assets"},
-    "computer": {"label": "操作云电脑", "args": ["action"], "result": "screenshot", "group": "desktop"},
-    "browser_mode": {"label": "切换云电脑浏览器模式", "args": ["mode"]},
-    "desktop_login": {"label": "云电脑登录", "args": ["platform"], "result": "status"},
-    "desktop_takeover": {"label": "请用户接管云电脑", "args": ["reason"], "result": "takeover"},
-    "hot_trends": {"label": "查询热点", "args": ["platform", "keyword"], "result": "count:{n} 条"},
-    "web_search": {"label": "搜索网页", "args": ["query"], "result": "count:{n} 条"},
-    "web_fetch": {"label": "读取网页", "args": ["url:host"], "result": "length"},
-    "question": {"label": "向用户提问", "args": ["questions"], "result": "answers"},
-    "task": {"label": "分派子任务", "args": ["description:40"], "result": "text:80"},
-    "skill": {"label": "使用技能", "args": ["name"]},
-    "skill_search": {"label": "使用技能", "args": ["query"]},
-    "capability_search": {"label": "查找能力", "args": ["query"]},
-    "skill_manage": {"label": "管理技能", "args": ["action"]},
-    "creator_context": {"label": "读取创作者资料"},
-    "autopilot_run": {"label": "自动运营", "args": ["task"]},
-    "cron": {"label": "设置定时任务", "args": ["schedule", "name"]},
-    "plan_enter": {"label": "规划步骤", "group": "planning"},
-    "plan_exit": {"label": "规划步骤", "group": "planning"},
-    "todo_read": {"label": "规划步骤", "group": "planning"},
-    "todo_write": {"label": "规划步骤", "group": "planning"},
-    "memory_search": {"label": "查阅记忆", "group": "memory"},
-    "memory_read_sources": {"label": "查阅记忆", "group": "memory"},
-    "memory_forget": {"label": "更新记忆", "group": "memory"},
-    "current_task_state": {"label": "查看状态", "group": "internal"},
-    "read": {"label": "处理文件", "args": ["path"], "group": "files"},
-    "write": {"label": "处理文件", "args": ["path"], "group": "files"},
-    "edit": {"label": "处理文件", "args": ["path"], "group": "files"},
-    "multiedit": {"label": "处理文件", "args": ["path"], "group": "files"},
-    "apply_patch": {"label": "处理文件", "group": "files"},
-    "glob": {"label": "处理文件", "args": ["pattern"], "group": "files"},
-    "grep": {"label": "处理文件", "args": ["pattern"], "group": "files"},
-    "bash": {"label": "处理文件", "args": ["command:60"], "group": "files"},
-    "view_image": {"label": "查看图片", "args": ["path"], "group": "files"},
-    "batch": {"label": "批量操作", "transparent": true},
-    "invalid": {"label": "无效调用", "group": "internal"},
-    "mcp_find_tool": {"label": "调用外部工具", "args": ["query"], "group": "mcp"},
-    "mcp_call_tool": {"label": "调用外部工具", "args": ["tool"], "group": "mcp"},
-    "mcp_read_resource": {"label": "调用外部工具", "args": ["uri"], "group": "mcp"}
+    "desktop_publish": {
+      "label": "发布到抖音（云电脑）",
+      "args": [
+        "title",
+        "platform"
+      ],
+      "result": "publish"
+    },
+    "douyin_publish": {
+      "label": "发布到抖音（开放平台）",
+      "args": [
+        "title"
+      ],
+      "result": "publish"
+    },
+    "video_generate": {
+      "label": "生成视频",
+      "args": [
+        "tier",
+        "duration",
+        "prompt:40"
+      ],
+      "result": "count:已生成 {n} 条"
+    },
+    "video_compose": {
+      "label": "合成视频",
+      "args": [
+        "clips"
+      ],
+      "result": "file"
+    },
+    "video_analyze": {
+      "label": "分析视频",
+      "args": [
+        "file"
+      ],
+      "result": "text:80"
+    },
+    "video_transcribe": {
+      "label": "视频转文字",
+      "args": [
+        "file"
+      ],
+      "result": "length"
+    },
+    "image_gen": {
+      "label": "生成图片",
+      "args": [
+        "prompt:40"
+      ],
+      "result": "count:已生成 {n} 张"
+    },
+    "share_file": {
+      "label": "把文件发给用户",
+      "args": [
+        "name",
+        "path"
+      ],
+      "result": "sent"
+    },
+    "assets.attach": {
+      "label": "整理附件",
+      "args": [
+        "name"
+      ],
+      "group": "assets"
+    },
+    "assets.list": {
+      "label": "整理附件",
+      "group": "assets"
+    },
+    "computer": {
+      "label": "操作云电脑",
+      "args": [
+        "action"
+      ],
+      "result": "screenshot",
+      "group": "desktop"
+    },
+    "browser_mode": {
+      "label": "切换云电脑浏览器模式",
+      "args": [
+        "mode"
+      ]
+    },
+    "desktop_login": {
+      "label": "云电脑登录",
+      "args": [
+        "platform"
+      ],
+      "result": "status"
+    },
+    "desktop_takeover": {
+      "label": "请用户接管云电脑",
+      "args": [
+        "reason"
+      ],
+      "result": "takeover"
+    },
+    "hot_trends": {
+      "label": "查询热点",
+      "args": [
+        "platform",
+        "keyword"
+      ],
+      "result": "count:{n} 条"
+    },
+    "web_search": {
+      "label": "搜索网页",
+      "args": [
+        "query"
+      ],
+      "result": "count:{n} 条"
+    },
+    "web_fetch": {
+      "label": "读取网页",
+      "args": [
+        "url:host"
+      ],
+      "result": "length"
+    },
+    "question": {
+      "label": "向用户提问",
+      "args": [
+        "questions"
+      ],
+      "result": "answers"
+    },
+    "task": {
+      "label": "分派子任务",
+      "args": [
+        "description:40"
+      ],
+      "result": "text:80"
+    },
+    "skill": {
+      "label": "使用技能",
+      "args": [
+        "name"
+      ]
+    },
+    "skill_search": {
+      "label": "使用技能",
+      "args": [
+        "query"
+      ]
+    },
+    "capability_search": {
+      "label": "查找能力",
+      "args": [
+        "query"
+      ]
+    },
+    "skill_manage": {
+      "label": "管理技能",
+      "args": [
+        "action"
+      ]
+    },
+    "creator_context": {
+      "label": "读取创作者资料"
+    },
+    "autopilot_run": {
+      "label": "自动运营",
+      "args": [
+        "task"
+      ]
+    },
+    "cron": {
+      "label": "设置定时任务",
+      "args": [
+        "schedule",
+        "name"
+      ]
+    },
+    "plan_enter": {
+      "label": "规划步骤",
+      "group": "planning"
+    },
+    "plan_exit": {
+      "label": "规划步骤",
+      "group": "planning"
+    },
+    "todo_read": {
+      "label": "规划步骤",
+      "group": "planning"
+    },
+    "todo_write": {
+      "label": "规划步骤",
+      "group": "planning"
+    },
+    "memory_search": {
+      "label": "查阅记忆",
+      "group": "memory"
+    },
+    "memory_read_sources": {
+      "label": "查阅记忆",
+      "group": "memory"
+    },
+    "memory_forget": {
+      "label": "更新记忆",
+      "group": "memory"
+    },
+    "current_task_state": {
+      "label": "查看状态",
+      "group": "internal"
+    },
+    "read": {
+      "label": "处理文件",
+      "args": [
+        "path"
+      ],
+      "group": "files"
+    },
+    "write": {
+      "label": "处理文件",
+      "args": [
+        "path"
+      ],
+      "group": "files"
+    },
+    "edit": {
+      "label": "处理文件",
+      "args": [
+        "path"
+      ],
+      "group": "files"
+    },
+    "multiedit": {
+      "label": "处理文件",
+      "args": [
+        "path"
+      ],
+      "group": "files"
+    },
+    "apply_patch": {
+      "label": "处理文件",
+      "group": "files"
+    },
+    "glob": {
+      "label": "处理文件",
+      "args": [
+        "pattern"
+      ],
+      "group": "files"
+    },
+    "grep": {
+      "label": "处理文件",
+      "args": [
+        "pattern"
+      ],
+      "group": "files"
+    },
+    "bash": {
+      "label": "处理文件",
+      "args": [
+        "command:60"
+      ],
+      "group": "files"
+    },
+    "view_image": {
+      "label": "查看图片",
+      "args": [
+        "path"
+      ],
+      "group": "files"
+    },
+    "batch": {
+      "label": "批量操作",
+      "transparent": true
+    },
+    "invalid": {
+      "label": "无效调用",
+      "group": "internal"
+    },
+    "mcp_find_tool": {
+      "label": "调用外部工具",
+      "args": [
+        "query"
+      ],
+      "group": "mcp"
+    },
+    "mcp_call_tool": {
+      "label": "调用外部工具",
+      "args": [
+        "tool"
+      ],
+      "group": "mcp"
+    },
+    "mcp_read_resource": {
+      "label": "调用外部工具",
+      "args": [
+        "uri"
+      ],
+      "group": "mcp"
+    },
+    "tool": {
+      "label": "工具调用（未记录名称）",
+      "group": "internal"
+    }
   },
   "prefixes": {
-    "memory.": {"label": "查阅记忆", "group": "memory"},
-    "knowledge.": {"label": "查阅知识库", "group": "memory"},
-    "schedules.": {"label": "设置定时任务"},
-    "tasks.": {"label": "处理任务请求", "group": "assistant"},
-    "requests.": {"label": "处理任务请求", "group": "assistant"},
-    "results.": {"label": "处理任务请求", "group": "assistant"},
-    "decisions.": {"label": "处理任务请求", "group": "assistant"},
-    "projects.": {"label": "管理项目与设置", "group": "assistant"},
-    "sessions.": {"label": "管理项目与设置", "group": "assistant"},
-    "briefing.": {"label": "管理项目与设置", "group": "assistant"},
-    "assistant.": {"label": "管理项目与设置", "group": "assistant"},
-    "status.": {"label": "查看状态", "group": "internal"},
-    "history.": {"label": "查看状态", "group": "internal"},
-    "mcp_": {"label": "调用外部工具", "group": "mcp"}
+    "memory.": {
+      "label": "查阅记忆",
+      "group": "memory"
+    },
+    "knowledge.": {
+      "label": "查阅知识库",
+      "group": "memory"
+    },
+    "schedules.": {
+      "label": "设置定时任务"
+    },
+    "tasks.": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "requests.": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "results.": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "decisions.": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "projects.": {
+      "label": "管理项目与设置",
+      "group": "assistant"
+    },
+    "sessions.": {
+      "label": "管理项目与设置",
+      "group": "assistant"
+    },
+    "briefing.": {
+      "label": "管理项目与设置",
+      "group": "assistant"
+    },
+    "assistant.": {
+      "label": "管理项目与设置",
+      "group": "assistant"
+    },
+    "status.": {
+      "label": "查看状态",
+      "group": "internal"
+    },
+    "history.": {
+      "label": "查看状态",
+      "group": "internal"
+    },
+    "mcp_": {
+      "label": "调用外部工具",
+      "group": "mcp"
+    }
   },
   "groups": {
-    "files": {"label": "处理文件", "collapse": true},
-    "memory": {"label": "查阅记忆", "collapse": true},
-    "internal": {"label": "查看状态", "collapse": true},
-    "planning": {"label": "规划步骤", "collapse": true},
-    "assistant": {"label": "助手内部操作", "collapse": true},
-    "assets": {"label": "整理附件", "collapse": true},
-    "desktop": {"label": "操作云电脑", "collapse": true},
-    "mcp": {"label": "调用外部工具", "collapse": false}
+    "files": {
+      "label": "处理文件",
+      "collapse": true
+    },
+    "memory": {
+      "label": "查阅记忆",
+      "collapse": true
+    },
+    "internal": {
+      "label": "查看状态",
+      "collapse": true
+    },
+    "planning": {
+      "label": "规划步骤",
+      "collapse": true
+    },
+    "assistant": {
+      "label": "助手内部操作",
+      "collapse": true
+    },
+    "assets": {
+      "label": "整理附件",
+      "collapse": true
+    },
+    "desktop": {
+      "label": "操作云电脑",
+      "collapse": true
+    },
+    "mcp": {
+      "label": "调用外部工具",
+      "collapse": false
+    }
   },
   "statuses": {
     "completed": "已完成",

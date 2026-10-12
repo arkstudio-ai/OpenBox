@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from tests.unit.test_worker_projection_support import (AT, FIXTURES, Ingest, Metrics, add_meta, add_trajectory,  # noqa: F401
     blobs, load_fixture, project_all, settings, trace_db)
 from trajectory import lite, turns
+from trajectory import auth as trajectory_auth
 from trajectory.ops import turns_backfill
 from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryRecord, TrajectoryTurnSummary
@@ -288,6 +289,16 @@ async def test_audience_filters_users_and_turns(trace_db, monkeypatch):
         assert (await lite.list_user_turns(db, "user_a", viewer_id="admin", at=NOW))["items"] == []
         assert len((await lite.list_user_turns(db, "user_b", viewer_id="admin", at=NOW))["items"]) == 2
 
+    async def all_but_a1(viewer_id, targets):
+        # user_a's newest session is private to the viewer: the user is listed by what is left, and the page
+        # is ordered by that shown activity rather than by the hidden session.
+        return {target["session_id"] for target in targets if target["session_id"] != "s_a1"}
+    monkeypatch.setattr(audience, "visible_sessions", all_but_a1)
+    async with trace_session() as db:
+        users = await lite.list_users(db, viewer_id="admin", at=NOW)
+        assert [(item["user"]["user_id"], item["turns"]) for item in users["items"]] == [("user_b", 2), ("user_a", 1), ("user_c", 1)]
+        assert users["items"][1]["last_activity_at"] == iso(NOW - timedelta(hours=30))
+
 
 # -- Labels --
 
@@ -313,3 +324,157 @@ def test_labels_follow_the_configured_file(tmp_path, monkeypatch):
     assert lite.labels()["version"] == 7 and lite.resolve_tool("x")["label"] == "做 X"
     monkeypatch.setenv("TRAJECTORY_LITE_LABELS_PATH", str(tmp_path / "missing.json"))
     assert lite.labels()["version"] == 0 and lite.resolve_tool("x")["source"] == "default"
+
+
+def test_tool_counts_use_the_tool_id_not_the_result_title():
+    rows = _base(status="completed", end_seq=9, finished=9) + [
+        {**_record("tool:c1", "tool", 5, title="exit code: 0"), "tool_id": "bash"},
+        {**_record("tool:c2", "tool", 6, title="Found 3 files"), "tool_id": "glob"},
+        {**_record("tool:c3", "tool", 7, title="Found 1 files", status="failed", reason="boom"), "tool_id": "glob"},
+        _record("tool:c4", "tool", 8, title="read")]  # no tool_id (fixture / pre-M1 rows): the title stands in
+    derived = turns.derive(rows)
+    assert derived["tool_counts"] == {"bash": {"total": 1, "failed": 0}, "glob": {"total": 2, "failed": 1}, "read": {"total": 1, "failed": 0}}
+    assert turns.with_data(_record("tool:x", "tool", 1, title="exit code: 0"), {"data": {"tool": "bash"}})["tool_id"] == "bash"
+    assert turns.with_data(_record("user:x", "user", 1), {"data": {"text": "hi", "attachments": [{"$media": {}}]}})["data"]["attachments"]
+    assert "tool_id" not in turns.with_data(_record("tool:x", "tool", 1), None)
+
+
+def test_the_main_agents_own_record_is_not_a_subtask():
+    rows = _base(status="completed", end_seq=9, finished=9) + [
+        _record("agent:main", "agent", 4, agent_id="agent_main", title="agent"),
+        _record("agent:child", "agent", 5, agent_id="agent_child", title="排查登录态")]
+    derived = turns.derive(rows)
+    assert (derived["main_agent_id"], derived["agent_count"]) == ("agent_main", 1)
+
+
+def test_classify_hides_policy_permissions_and_the_main_agent():
+    document = lite.labels()
+    auto = {**_record("permission:p1", "permission", 3), "duration_ms": 0}
+    assert lite.classify(auto, document)["step_type"] == "hidden"
+    waited = {**_record("permission:p2", "permission", 3), "duration_ms": 65_000}
+    assert lite.classify(waited, document)["step_type"] == "permission"
+    pending = {**_record("permission:p3", "permission", 3, status="waiting"), "duration_ms": None}
+    assert lite.classify(pending, document)["step_type"] == "permission"
+    main = _record("agent:main", "agent", 4, agent_id="agent_main")
+    assert lite.classify(main, document, "agent_main")["step_type"] == "hidden"
+    assert lite.classify(main, document, "agent_other")["step_type"] == "agent"
+    tool = {**_record("tool:t", "tool", 5, title="exit code: 0"), "tool_id": "bash"}
+    classified = lite.classify(tool, document)
+    assert (classified["tool_id"], classified["label"], classified["group"]) == ("bash", "处理文件", "files")
+
+
+# -- Credits and alerts through the business backend --
+
+class FakeBackend:
+    def __init__(self, *, credits=None, alert_error=None):
+        self.credits = credits or {}
+        self.usage_calls: list[list[dict]] = []
+        self.alert_calls: list[list[dict]] = []
+        self.alert_error = alert_error
+
+    async def turn_usage(self, windows):
+        self.usage_calls.append(windows)
+        return {"credits": {w["key"]: self.credits.get(w["key"]) for w in windows}}
+
+    async def turn_alerts(self, turns_):
+        self.alert_calls.append(turns_)
+        if self.alert_error is not None:
+            raise self.alert_error
+        return {"alerted": len(turns_), "admins": 1}
+
+    async def close(self):
+        return None
+
+
+@pytest.fixture
+def fake_backend():
+    backend = FakeBackend()
+    trajectory_auth.configure_backend(backend)
+    yield backend
+    trajectory_auth.configure_backend(None)
+
+
+async def test_turn_lists_and_detail_carry_credits_from_the_backend(trace_db, blobs, fake_backend):
+    fake_backend.credits = {"turn_a": "2.5", "user_p": "7"}
+    trajectory_id, session_id, user_id = await _project_fixture(blobs)
+    fake_backend.credits["user_" + user_id] = "7"
+    fake_backend.credits[user_id] = "7"
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        detail = await lite.get_turn(db, trajectory, "turn_a", at=NOW)
+        listed = await lite.list_user_turns(db, user_id, at=NOW)
+        users = await lite.list_users(db, at=NOW)
+    assert detail["summary"]["credits"] == "2.5"
+    assert listed["items"][0]["credits"] == "2.5"
+    assert users["items"][0]["credits"] == "7"
+    window = fake_backend.usage_calls[0][0]
+    assert window["key"] == "turn_a" and window["session_id"] == session_id
+    assert window["from_at"] < window["to_at"]
+    user_window = fake_backend.usage_calls[-1][0]
+    assert user_window["user_id"] == user_id and user_window["to_at"] == NOW.isoformat()
+
+
+async def test_credits_stay_null_when_the_backend_is_unavailable(trace_db, blobs):
+    trajectory_id, _, user_id = await _project_fixture(blobs)
+    trajectory_auth.configure_backend(None)
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        assert (await lite.get_turn(db, trajectory, "turn_a", at=NOW))["summary"]["credits"] is None
+        assert (await lite.list_user_turns(db, user_id, at=NOW))["items"][0]["credits"] is None
+
+
+def test_usage_window_covers_the_turn_with_slack_and_open_turns_until_now():
+    row = TrajectoryTurnSummary(started_at=NOW - timedelta(minutes=10), finished_at=NOW - timedelta(minutes=5),
+                                last_activity_at=NOW - timedelta(minutes=5), status="completed")
+    start, end = turns.usage_window(row, at=NOW)
+    assert start == (NOW - timedelta(minutes=10, seconds=5)).isoformat()
+    assert end == (NOW - timedelta(minutes=4)).isoformat()
+    open_row = TrajectoryTurnSummary(started_at=NOW - timedelta(minutes=10), finished_at=None,
+                                     last_activity_at=NOW - timedelta(minutes=8), status="running")
+    assert turns.usage_window(open_row, at=NOW)[1] == (NOW + timedelta(seconds=60)).isoformat()
+
+
+async def test_failed_turns_are_announced_once_oldest_first(trace_db, fake_backend):
+    await _seed_users()
+    async with trace_session() as db:
+        sent = await turns.deliver_alerts(db, fake_backend, at=NOW)
+    assert sent == 1
+    (batch,) = fake_backend.alert_calls
+    assert [item["turn_id"] for item in batch] == ["a1"]
+    assert batch[0] == {"turn_id": "a1", "session_id": "s_a1", "user_id": "user_a", "workspace_id": "ws_a",
+                        "username": "张店长", "session_title": "国庆视频", "reason": None,
+                        "started_at": (NOW - timedelta(hours=1)).isoformat()}
+    async with trace_session() as db:
+        row = await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))
+        assert row.alerted_at is not None
+        # Nothing left: the next pass sends nothing, and a refresh keeps the stamp.
+        assert await turns.deliver_alerts(db, fake_backend, at=NOW) == 0
+        trajectory = await db.get(SessionTrajectory, "t_a1")
+        await turns.refresh(db, trajectory, ["a1"])
+        row = await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))
+        assert row.alerted_at is not None
+
+
+async def test_alert_delivery_stamps_on_refusal_but_retries_on_transport_failure(trace_db):
+    import httpx
+    await _seed_users()
+    refused = FakeBackend(alert_error=httpx.HTTPStatusError("refused", request=httpx.Request("POST", "http://b"),
+                                                            response=httpx.Response(422)))
+    async with trace_session() as db:
+        assert await turns.deliver_alerts(db, refused, at=NOW) == 1
+        assert (await db.get(TrajectoryTurnSummary, ("t_a1", "a1"))).alerted_at is not None
+    await _seed_turn("t_a1", "s_a1", "user_a", "a9", started=3, status="failed", preview="再试")
+    down = FakeBackend(alert_error=httpx.ConnectError("down"))
+    async with trace_session() as db:
+        with pytest.raises(httpx.ConnectError):
+            await turns.deliver_alerts(db, down, at=NOW)
+    async with trace_session() as db:
+        assert (await db.get(TrajectoryTurnSummary, ("t_a1", "a9"))).alerted_at is None
+
+
+def test_the_alert_link_kind_is_allow_listed():
+    from notifications.inbox import validate_link
+    link = {"kind": "admin_trajectory_turn", "userId": "u", "sessionId": "s", "turnId": "t"}
+    assert validate_link(link) == link
+    with pytest.raises(ValueError):
+        validate_link({"kind": "admin_trajectory_turn", "userId": "u"})

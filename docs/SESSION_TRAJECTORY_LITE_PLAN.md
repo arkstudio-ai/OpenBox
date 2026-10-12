@@ -355,3 +355,24 @@ M1、M2 合在一个 PR 发 gw2；发布时先跑迁移，再跑回填脚本（�
 - **轮详情**：步骤流由 `steps.ts` 在前端构建；用户输入、AI 回复和失败步骤默认展开，其余折叠；展开时按记录调现有 `records/{record_id}`（expand=full）取全文，AI 回复按 Markdown 渲染、思考折叠；工具参数/结果复用专业模式的 `JsonTree / TextBlock`。「技术详情」跳 `/sessions/:id?at=<last_seq>`，每张卡「原始记录」加 `record=`。积分位留白标注第二期。
 - **字典**：`GET /lite/labels` 缓存一天，未返回时显示工具原名；结论模板里的"关键动作"列表（发布、生成、发送文件等）在 `labels.ts`，与后端配置无关。
 - **测试**：`lite/params.test.ts`、`labels.test.ts`、`steps.test.ts`、`pages.test.tsx`（三页渲染、URL 筛选、分页、权限拒绝、步骤流折叠与原始记录链接）；更新 `router.test.ts`、`AdminNav.test.tsx`、`WorkspaceLayout.isolation.test.tsx`（新增简明模式首页只读隔离用例）与 e2e 的列表路径常量。未在浏览器里对接真实后端验收，待 M1 发到 gw2 后联调。
+
+## 13. 线上联调记录（2026-10-12）
+
+M1/M2 发到 gw2 后用真实记录（177 条轨迹、1,249 轮、23 个用户）走查三页，发现并修正（PR #74/#75/#76）：
+
+- **工具名**：投影给工具记录的 `title` 是结果标题（bash 的 "exit code: 0"、glob 的 "Found 27 files"、share_file 的文件名），导致工具芯片、步骤标题、结论句全是结果文案。改为读记录 `data.tool`；汇总表 `tool_counts` 按工具 id 计数，轮详情步骤带 `tool_id`，前端一律按 id 查字典、以结果标题作一行摘要。回填脚本可重跑，重算 1,249 轮 17 秒。
+- **权限噪音**：每次工具调用都留下策略自动放行的 `permission` 记录（`source_kind=policy`，0 ms），一轮里 74 条。规则：`completed` 且耗时 < 1 s 的权限记录隐藏；等待过、拒绝、超时的保留。
+- **主 Agent 自身记录**：定时任务轮有一条 `agent` 记录就是主 Agent（`agent_id == main_agent_id`），不是子任务；汇总的 `agent_count` 和步骤流都排除它。
+- **纯工具调用的回复**：一轮 26 条 `assistant` 记录里多数只有工具调用块没有正文，成卡只会显示"没有正文"；前端不成卡，只计有正文的回复。
+- **读限流**：默认展开全部回复卡会同时读几十条记录详情，worker 返回 429。改为默认只展开用户输入、最后一条回复和失败步骤；步骤详情遇 429 按 0.8/1.6/3.2/6.4 s 退避重试 4 次。
+- **用户列表排序**：私有会话（`visibility != workspace` 或 `kind == assistant`）对非本工作区成员的超管不可见，被 audience 过滤后用户的统计与"最近活动"只算可见会话，而 SQL 排序键算了全部，出现 "前天" 排在 "3 小时前" 之后。改为页内按可见活动重排，游标仍用 SQL 键。
+- **文案细节**：步骤时间原来是截取格式化字符串的第 11–19 位，中文 locale 下成了 "GMT+8 09"；改用 Intl 时钟格式。列表预览去掉 Markdown 的 `**`/`###`/`>` 等符号。
+
+未改的已知项：同一轮的"AI 做了什么"芯片按失败数再按次数排序，长尾折成 "+N"；结论句按工具失败字面陈述（例如"处理文件失败了 3 次"），不推断业务原因。
+
+## 14. M3：积分、失败告警、结论口径（2026-10-12）
+
+- **结论句**：失败与"完成但有失败步骤"的轮，结论优先用 AI 最后一条回复的正文（去 Markdown，截 80 字），没有正文才落到工具模板（"发布到抖音失败：…"）。线上一个定时任务轮因此从"已完成，但处理文件失败了 3 次"变成"每日抖音热点轮询异常提醒 任务状态：未完成 异常原因：云电脑上的「抖音热点宝」登录态已失效…"。
+- **积分**：trace 库没有账本，worker 也不连业务库，所以走业务侧内部回调 `POST /api/internal/trajectory/usage`（与 viewer / audience / audit 同一套 `X-Internal-Token`）。请求是最多 200 个窗口，每个窗口是"会话 + 起止时间"或"用户 + 起止时间"；回答是每个窗口内 `usage_events.status = charged` 的 `credits` 之和（无一条收费行回 null，前端显示"未计费"）。按时间匹配而不是 `message_id`，因为视频/图片等媒体扣费不带 message_id。轮的窗口 = 该会话从 `started_at - 5 s` 到 `finished_at + 60 s`（进行中/等待中到当前时刻 + 60 s）；用户的窗口 = 列表的时间范围。worker 的 `HttpBackend / LocalBackend` 各加 `turn_usage`，`lite.attach_credits` 在三个读接口里附加 `credits`，回调失败只留 null、不影响页面。
+- **失败告警**：trace 迁移 `t0007_turn_alerts` 给轮汇总加 `alerted_at`（升级时把已有的 failed 行全部盖章，不补发历史），worker 投影每 30 秒跑一次 `turns.deliver_alerts`：最旧优先取 50 条 `failed` 且未盖章的轮，经 `POST /api/internal/trajectory/alerts` 给**每个活跃超管**各写一条消息中心记录（`kind=trajectory_turn_failed`，`category=system`，`source_key=trajectory:{turn_id}:failed` 幂等，正文只写"用户 · 会话标题"，不带工具输出或错误原文），链接新增白名单类型 `admin_trajectory_turn {userId, sessionId, turnId}`，Web 消息中心点开直达轮详情（App 未识别的类型按既有规则退回消息中心）。业务侧 4xx 拒收也盖章以免卡队列；网络/5xx 留待下一轮。
+- **未做**：成本 `cost_credits` 不展示；积分按时间窗匹配，同一会话里并发的两轮会各自算到重叠部分；告警只有"失败"一种状态，"完成但有失败步骤"不告警。

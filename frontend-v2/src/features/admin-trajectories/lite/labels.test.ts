@@ -95,19 +95,41 @@ describe("tool labels", () => {
 })
 
 describe("the one-line conclusion", () => {
-  it("names the failed action and its reason first", () => {
+  it("prefers the AI's own closing explanation for a failed or partly failed turn", () => {
+    const explained = turn({
+      status: "failed",
+      status_reason: "login_expired",
+      assistant_preview: "### 异常提醒\n- **原因**：抖音热点宝登录态已失效（Cookie 过期），无法获取榜单。",
+      tool_counts: { desktop_publish: { total: 1, failed: 1 } },
+    })
+    expect(conclusion(explained, LABELS, t)).toBe(
+      "异常提醒 原因：抖音热点宝登录态已失效（Cookie 过期），无法获取榜单。",
+    )
+    expect(
+      conclusion(turn({ status: "completed_with_errors", assistant_preview: "x".repeat(100) }), LABELS, t),
+    ).toBe(`${"x".repeat(80)}…`)
+  })
+
+  it("names the failed action and its reason when the AI said nothing", () => {
     const failed = turn({
       status: "failed",
       status_reason: "login_expired: creator.douyin.com redirected to /login",
+      assistant_preview: null,
       tool_counts: { video_generate: { total: 1, failed: 0 }, desktop_publish: { total: 1, failed: 1 } },
     })
     expect(conclusion(failed, LABELS, t)).toBe(
       'lite.verdict.failedStep {"action":"发布到抖音（云电脑）","reason":"login_expired: creator.douyin.com redirected to /login"}',
     )
-    expect(conclusion(turn({ status: "failed", status_reason: "context overflow" }), LABELS, t)).toBe(
-      'lite.verdict.failedReply {"reason":"context overflow"}',
+    expect(
+      conclusion(
+        turn({ status: "failed", status_reason: "context overflow", assistant_preview: null }),
+        LABELS,
+        t,
+      ),
+    ).toBe('lite.verdict.failedReply {"reason":"context overflow"}')
+    expect(conclusion(turn({ status: "failed", assistant_preview: null }), LABELS, t)).toBe(
+      "lite.verdict.failedReplyNoReason",
     )
-    expect(conclusion(turn({ status: "failed" }), LABELS, t)).toBe("lite.verdict.failedReplyNoReason")
   })
 
   it("says what the user is being waited on for, with the elapsed time when known", () => {
@@ -137,6 +159,7 @@ describe("the one-line conclusion", () => {
       conclusion(
         turn({
           status: "completed_with_errors",
+          assistant_preview: null,
           tool_failures: 2,
           tool_counts: { read: { total: 3, failed: 2 } },
         }),
@@ -148,9 +171,9 @@ describe("the one-line conclusion", () => {
 
   it("clips a long reason", () => {
     const long = "x".repeat(100)
-    expect(conclusion(turn({ status: "failed", status_reason: long }), LABELS, t)).toBe(
-      `lite.verdict.failedReply {"reason":"${"x".repeat(60)}…"}`,
-    )
+    expect(
+      conclusion(turn({ status: "failed", status_reason: long, assistant_preview: null }), LABELS, t),
+    ).toBe(`lite.verdict.failedReply {"reason":"${"x".repeat(60)}…"}`)
     expect(conclusion(turn({ status: "running" }), LABELS, t)).toBe("lite.verdict.running")
     expect(conclusion(turn({ status: "weird" }), LABELS, t)).toBe("weird")
   })

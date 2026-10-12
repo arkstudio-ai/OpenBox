@@ -13,7 +13,7 @@ import { formatDuration } from "../../utils/time"
 import { useLiteLabels, useTurnDetail } from "../api"
 import { conclusion, turnStatusTone } from "../labels"
 import { buildFlow } from "../steps"
-import { Duration, TurnStatus } from "./bits"
+import { Credits, Duration, TurnStatus } from "./bits"
 import { ModeToggle } from "./ModeToggle"
 import { Flow, UsageLine, type StepEnv } from "./StepCards"
 
@@ -176,7 +176,9 @@ export function TrajectoryTurnPage({
           </div>
           <div className="flex flex-col">
             <dt className="text-n500 text-2xs">{t("lite.turn.credits")}</dt>
-            <dd className="text-n500 font-medium">{t("lite.turn.creditsLater")}</dd>
+            <dd className="font-medium">
+              <Credits value={summary.credits} />
+            </dd>
           </div>
         </dl>
       </header>

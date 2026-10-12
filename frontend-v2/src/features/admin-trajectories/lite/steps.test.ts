@@ -130,7 +130,11 @@ describe("buildFlow", () => {
 
   it("keeps a gap as a notice in place", () => {
     const flow = buildFlow(
-      [step("user:1", 1, "user_input"), step("gap:1", 2, "gap"), step("assistant:1", 3, "assistant", { preview: "回复" })],
+      [
+        step("user:1", 1, "user_input"),
+        step("gap:1", 2, "gap"),
+        step("assistant:1", 3, "assistant", { preview: "回复" }),
+      ],
       "main",
       LABELS,
     )

@@ -5,6 +5,7 @@
 // exact id, then the longest matching prefix, then the id itself.
 import type { TFunction } from "i18next"
 import type { StatusTone } from "@/shared/ui/StatusPill"
+import { plainPreview } from "./text"
 import { EMPTY_LABELS, isTurnStatus, type LiteLabels, type TurnStatus, type TurnSummary } from "./types"
 
 export interface ResolvedTool {
@@ -106,9 +107,12 @@ export function conclusion(
   elapsed?: string | null,
 ): string {
   const reason = clip(summary.status_reason, 60)
+  const said = clip(plainPreview(summary.assistant_preview), 80)
   const failedTool = firstFailedTool(summary, labels)
   switch (summary.status) {
     case "failed":
+      // The AI's own closing explanation beats a template: it names the business reason ("登录态已失效").
+      if (said) return said
       if (failedTool)
         return reason
           ? t("lite.verdict.failedStep", { action: failedTool, reason })
@@ -119,6 +123,7 @@ export function conclusion(
         ? t("lite.verdict.waiting", { kind: waitingKindLabel(summary.waiting_kind, t), elapsed })
         : t("lite.verdict.waitingNoElapsed", { kind: waitingKindLabel(summary.waiting_kind, t) })
     case "completed_with_errors":
+      if (said) return said
       return t("lite.verdict.completedWithErrors", {
         action: failedTool ?? t("lite.verdict.someStep"),
         count: summary.tool_failures,

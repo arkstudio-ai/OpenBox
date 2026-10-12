@@ -882,7 +882,8 @@
         "turns": "轮次",
         "failed": "失败",
         "sessions": "会话数",
-        "usage": "用量（输入 / 输出）"
+        "usage": "用量（输入 / 输出）",
+        "credits": "积分"
       }
     },
     "user": {
@@ -915,7 +916,8 @@
         "aiSaid": "AI 回了什么",
         "result": "结果",
         "duration": "耗时",
-        "usage": "用量"
+        "usage": "用量",
+        "credits": "积分"
       }
     },
     "turn": {
@@ -935,7 +937,6 @@
       "repliesCount_one": "{{count}} 次",
       "repliesCount_other": "{{count}} 次",
       "credits": "积分",
-      "creditsLater": "第二期显示",
       "flow": "步骤流",
       "noSteps": "这一轮没有可展示的步骤",
       "rawRecord": "原始记录",
@@ -971,6 +972,9 @@
         "artifact": "产物：{{name}}",
         "agent": "分派子任务：{{name}}"
       }
+    },
+    "credits": {
+      "none": "未计费"
     }
   }
 }

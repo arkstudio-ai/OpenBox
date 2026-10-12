@@ -882,7 +882,8 @@
         "turns": "Turns",
         "failed": "Failed",
         "sessions": "Sessions",
-        "usage": "Tokens (in / out)"
+        "usage": "Tokens (in / out)",
+        "credits": "Credits"
       }
     },
     "user": {
@@ -915,7 +916,8 @@
         "aiSaid": "AI replied",
         "result": "Outcome",
         "duration": "Duration",
-        "usage": "Tokens"
+        "usage": "Tokens",
+        "credits": "Credits"
       }
     },
     "turn": {
@@ -935,7 +937,6 @@
       "repliesCount_one": "{{count}}",
       "repliesCount_other": "{{count}}",
       "credits": "Credits",
-      "creditsLater": "Coming in phase 2",
       "flow": "Step flow",
       "noSteps": "Nothing to show for this turn",
       "rawRecord": "Raw record",
@@ -971,6 +972,9 @@
         "artifact": "Output: {{name}}",
         "agent": "Subtask: {{name}}"
       }
+    },
+    "credits": {
+      "none": "No charge"
     }
   }
 }

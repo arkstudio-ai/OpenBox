@@ -40,11 +40,13 @@ async def add_task(ctx, key="new-task"):
 @pytest.fixture(autouse=True)
 def no_task_dispatch(monkeypatch):
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
+    monkeypatch.setattr("assistant.model_choices.catalogue", lambda: {
+        "chat": [{"id": "test/model", "name": "Task AI"}], "video": []})
 
 
 def arguments(ctx, answer):
     return {"project_id": ctx.project_id, "title": "Derived task", "instructions": "Only produce a text response",
-            "source_message_ids": [answer.parent_id]}
+            "source_message_ids": [answer.parent_id], "model": "test/model", "model_confirmed": True}
 
 
 async def settle_execution(ctx, receipt):
@@ -312,7 +314,7 @@ async def repeated_result():
     """Four chained task results; each task is submitted from a later human turn."""
     from tests.unit.assistant_source_fixtures import consume_context
     from tests.unit.test_assistant_reads import call_tool, read_turn
-    ctx, lease, answer, accepted, report = await read_turn(prompt="Read the report, then create a new text task in this project.")
+    ctx, lease, answer, accepted, report = await read_turn(prompt="Read the report, then create a new text task in this project with test/model.")
     try:
         for index in range(4):
             output, _, _ = await call_tool(ctx, "history.read", {
@@ -326,7 +328,7 @@ async def repeated_result():
             result = await settle_execution(ctx, accepted)
             report = SimpleNamespace(id=result.result_message_id)
             if index < 3:
-                ctx, lease, answer = await next_turn(ctx, "Read that result and create another text-only task in this project.")
+                ctx, lease, answer = await next_turn(ctx, "Read that result and create another text-only task in this project with test/model.")
         return dict(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id), result.id
     finally:
         await lease.release(session_status="idle")

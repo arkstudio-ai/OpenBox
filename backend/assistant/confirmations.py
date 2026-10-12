@@ -164,6 +164,8 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
             kind, card, action, high_risk = "memory_proposal", {}, "memory_remember", False
         elif continuation.get("kind") == "question" and continuation.get("assistant_placement"):
             kind, card, action, high_risk = "assistant_placement", continuation["assistant_placement"], "task_placement", False
+        elif continuation.get("kind") == "question" and continuation.get("assistant_task_setup"):
+            kind, card, action, high_risk = "assistant_task_setup", continuation["assistant_task_setup"], "task_setup", False
         else:
             continue
         question = row.questions[0]
@@ -172,9 +174,13 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
             from assistant.placement import new_project_option
             placement_fields["new_project_option"] = new_project_option(card)
         cards.append({"card_id": row.id, "kind": kind, "action": action,
+                      **({"task_title": card["input"].get("title", ""),
+                          "task_instructions": card["input"].get("instructions", "")}
+                         if kind in {"assistant_task_setup", "assistant_placement"} else {}),
                       "header": question.get("header", ""), "prompt": question.get("question", ""),
                       "impact": card.get("impact"),
                       "options": [option.get("label") for option in question.get("options") or []],
+                      "option_descriptions": [option.get("description", "") for option in question.get("options") or []],
                       "generation": row.generation,
                       "created_at": runtime.utc(row.created_at).isoformat(),
                       "expires_at": runtime.utc(row.expires_at).isoformat() if row.expires_at else None,

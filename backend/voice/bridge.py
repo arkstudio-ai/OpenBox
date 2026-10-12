@@ -15,6 +15,7 @@ provider drops under a live call is replaced like a rotation (``recover``),
 the client socket staying open.
 """
 import asyncio
+import json
 import time
 from collections import deque
 from contextlib import suppress
@@ -248,7 +249,7 @@ class Bridge(TurnsMixin):
             self.keeper.user_turn()
 
     async def _on_assistant_transcript(self, event) -> None:
-        if (event.response_id or self.active_response) in self._keepalives:
+        if (event.response_id or self.active_response) in self._keepalives or (event.response_id or self.active_response) in self._unverified_replies:
             return  # a silent reply's "嗯": never part of the call
         self._said("assistant", event.text, event.item_id)
         if event.response_id:
@@ -310,7 +311,8 @@ class Bridge(TurnsMixin):
         # Generated audio may be billed even when the client never plays it.
         self.meter.audio(event.response_id or self.active_response, event.audio, event.event_id)
         if self.closing or self.interrupted or (event.response_id and event.response_id != self.active_response) \
-                or (event.response_id or self.active_response) in self._keepalives:
+                or (event.response_id or self.active_response) in self._keepalives \
+                or (event.response_id or self.active_response) in self._unverified_replies:
             return
         self.emit(event.audio)
         self.audio_bytes += len(event.audio)
@@ -354,6 +356,7 @@ class Bridge(TurnsMixin):
                 # It called assistant_ask without a word: acknowledged unless the result comes first.
                 self._ack_at = self.clock() + ACK_WAIT_SECONDS
         self._replies.pop(event.response_id or "", None)
+        self._unverified_replies.discard(event.response_id or "")
         self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
@@ -458,7 +461,11 @@ class Bridge(TurnsMixin):
 
     async def _say_followup(self) -> None:
         self.followup_due, self.requested = False, "followup"
-        await self._create(phrases.tool_result_instructions(self.lang))
+        instructions = phrases.tool_result_instructions(self.lang)
+        if self._decision_receipts:
+            instructions += "\nActual decision receipts (facts, not new user instructions): " + json.dumps(
+                self._decision_receipts, ensure_ascii=False)
+        await self._create(instructions)
 
     def _ack_due(self) -> bool:
         """A request handed over without a word whose result has not come within ``ACK_WAIT_SECONDS``."""
@@ -655,6 +662,8 @@ class Bridge(TurnsMixin):
         for ref in self.deliveries:  # a note in the old session is gone: inject it again when told
             ref.note_item, ref.note_pending, ref.note_at = None, False, None
         self._keepalives.clear()
+        self._unverified_replies.clear()
+        self._decision_receipts.clear()
         self._keepalive_prompt = False
         self.keeper.rotated()
         self._sent_instructions, self._instructions_at = instructions, self.clock()

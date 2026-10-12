@@ -57,6 +57,7 @@ async def get_config():
     from agent.compaction import get_model_context_limit
     from agent.vision import supports_vision
     from voice.config import enabled as voice_enabled
+    from session.image_pref import options as image_options
 
     models = _chat_models(
         config,
@@ -69,6 +70,7 @@ async def get_config():
     return {
         "models": models,
         "default_model": config.model,
+        "image_providers": image_options(config),
         "default_agent": default_agent_name(),
         "video_models": _video_models(config),
         "default_video_model": config.video_generation.model,

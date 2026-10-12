@@ -188,6 +188,10 @@ class ImageGenerationConfig(BaseModel):
 
     provider: str = ""  # empty = provider prefix of the default chat model
     model: str = "gpt-image-2"
+    # The user picks a channel, never a provider credential or arbitrary model.
+    # Administrators choose one concrete RunningHub model for every user.
+    runninghub_provider: str = "runninghub"
+    runninghub_model: str = "seedream-v5-pro"
     default_size: str = "auto"
     default_quality: str = "medium"
     output_format: str = "png"

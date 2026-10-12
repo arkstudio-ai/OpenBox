@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 import random
 import re
 from typing import Any, Callable, Awaitable
+import httpx
 
 from bus import bus
 from bus.events import SESSION_STATUS
@@ -135,6 +136,14 @@ def is_retryable(error: Exception) -> str | None:
     """Check if an error is retryable. Returns a display message or None."""
     if isinstance(error, ContextOverflowError):
         return None
+
+    # httpx commonly raises these with an empty message. Classify the transport
+    # type so a request that has not produced any events can use the existing
+    # bounded retry budget. The processor still refuses to replay partial output.
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return "Timeout"
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
+        return "Network error"
 
     msg = str(error).lower()
 

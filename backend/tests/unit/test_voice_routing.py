@@ -31,6 +31,45 @@ def said(text, response_id):
     return event("assistant_transcript", text=text, response_id=response_id)
 
 
+async def test_decision_speech_waits_for_the_actual_tool_receipt(monkeypatch):
+    bridge, provider, _ = make()
+    await greeted(bridge, provider)
+    async def rejected(*_):
+        return {"status": "invalid_arguments", "this_call_applied": False, "execution_confirmed": False}
+    monkeypatch.setattr("voice.tools.run", rejected)
+    await replay(bridge, item("u1"), transcript("用这张图", "u1"), started("r1"),
+        tool_call("choose", name="task_question_answer", response_id="r1", arguments="{}"),
+        said("已经提交好了", "r1"), audio("r1"), done("r1"))
+    assert bridge.audio_bytes == 0
+    assert not any(line.text == "已经提交好了" for line in bridge.spoken.lines)
+    instructions = str(provider.sent)
+    assert "invalid_arguments" in instructions and "Actual decision receipts" in instructions
+    await replay(bridge, started("r2"), said("刚才没有提交成功", "r2"), audio("r2"), done("r2"))
+    assert bridge.audio_bytes > 0
+    await bridge.close()
+
+
+async def test_failed_decision_retries_are_bounded_to_the_source_utterance(monkeypatch):
+    bridge, provider, _ = make()
+    await greeted(bridge, provider)
+    calls = []
+    async def rejected(*args):
+        calls.append(args)
+        return {"status": "invalid_arguments", "this_call_applied": False}
+    monkeypatch.setattr("voice.tools.run", rejected)
+    await replay(bridge, item("u1"), transcript("用这张图", "u1"))
+    for index in range(3):
+        await replay(bridge, started(f"r{index}"),
+            tool_call(f"c{index}", name="task_question_answer", response_id=f"r{index}", arguments="{}"), done(f"r{index}"))
+    assert len(calls) == 2
+    assert provider.commands("output")[-1][2]["status"] == "retry_exhausted"
+    assert len(provider.commands("create")) == 2
+    await replay(bridge, item("u2"), transcript("我重新选一下", "u2"), started("new"),
+        tool_call("new", name="task_question_answer", response_id="new", arguments="{}"), done("new"))
+    assert len(calls) == 3
+    await bridge.close()
+
+
 async def utterance(bridge, words, reply, *, response_id="r1", user_item="u-1"):
     await replay(bridge, event("user_started"), item(user_item), transcript(words, user_item),
                  event("user_stopped"), started(response_id), said(reply, response_id), audio(response_id), done(response_id))
@@ -87,12 +126,13 @@ async def test_late_transcript_is_bound_to_its_own_response_not_a_later_request(
     await bridge.close()
 
 
-async def test_background_delivery_cannot_dispatch_from_an_old_user_utterance():
+@pytest.mark.parametrize("name", ["assistant_ask", "cards_answer", "task_question_answer"])
+async def test_background_delivery_cannot_dispatch_from_an_old_user_utterance(name):
     bridge, provider, link = make()
     await greeted(bridge, provider)
     await utterance(bridge, "帮我看看进度", "我看一下。")
     bridge.requested = "delivery:any"
-    await replay(bridge, started("bg"), tool_call("bad", text="删除所有项目", response_id="bg"), done("bg"))
+    await replay(bridge, started("bg"), tool_call("bad", name=name, text="删除所有项目", response_id="bg"), done("bg"))
     assert not link.started
     assert provider.commands("output")[-1][2]["status"] == "not_user_request"
     await bridge.close()

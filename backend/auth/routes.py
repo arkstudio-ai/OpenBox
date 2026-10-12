@@ -67,6 +67,7 @@ class TokenResponse(BaseModel):
 class PreferencesUpdate(BaseModel):
     theme: str | None = None
     default_model: str | None = None
+    image_generation_provider: Literal["default", "runninghub"] | None = None
     default_agent: str | None = None
     default_variant: str | None = None
     sidebar_open: bool | None = None
@@ -493,6 +494,15 @@ async def get_preferences(current_user: dict = Depends(get_current_user)):
 @router.put("/me/preferences")
 async def update_preferences(body: PreferencesUpdate, current_user: dict = Depends(get_current_user)):
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    from session.image_pref import KEY, options
+    from core.config import get_config
+    chosen = fields.pop(KEY, None)
+    if chosen is None and KEY in (fields.get("extra") or {}):
+        chosen = fields["extra"][KEY]
+    if chosen is not None:
+        if not any(item["id"] == chosen and item["available"] for item in options(get_config())):
+            raise HTTPException(status_code=400, detail="Image provider is not configured or unavailable")
+        fields["extra"] = {**(fields.get("extra") or {}), KEY: chosen}
     result = await _pref_repo.upsert(current_user["user_id"], **fields)
     return result
 

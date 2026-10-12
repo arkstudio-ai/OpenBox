@@ -185,6 +185,10 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
 async def list_waiting(*, user_id: str, workspace_id: str, main_id: str, limit: int = 30) -> list[dict]:
     """Pending questions across all the user's own conversations, newest first."""
     from assistant.task_context import _iso
+    from assistant.requests import question_version
+    from db.models.message import Message
+    from db.models.file_asset import FileAsset
+    from assets.service import owned_ready_query
     async with get_db_session() as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         rows = (await db.execute(select(QuestionCheckpoint, Session, Project.name).join(
@@ -201,8 +205,22 @@ async def list_waiting(*, user_id: str, workspace_id: str, main_id: str, limit: 
         for row, session, project_name in rows:
             reason, high_risk = await answerable(db, row, session)
             card = card_view(row, session)
+            # Skills display the complete script/quote in prose before asking the
+            # question. The voice model must see it too, not just "可以吗？".
+            parts = (await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
+                Part.session_id == session.id, Part.user_id == user_id, Part.type == "text",
+                Message.role == "assistant", Message.created_at <= row.created_at)
+                .order_by(Part.created_at.desc(), Part.id.desc()).limit(4))).all()
+            context = "\n\n".join(str((part.data or {}).get("text") or "") for part in reversed(parts))
+            draft = row.draft or []
+            asset_ids = {identity for answer in draft for identity in answer.get("attachments") or []}
+            draft_assets = {asset.id: {"asset_id": asset.id, "name": asset.name, "mime": asset.mime}
+                for asset in (await db.scalars(owned_ready_query(user_id, workspace_id).where(
+                    FileAsset.id.in_(asset_ids)))).all()} if asset_ids else {}
             items.append({
                 "kind": "question", "id": row.id, "session_id": session.id,
+                "version": question_version(row),
+                "context": context[-12000:], "context_truncated": len(context) > 12000,
                 "session_title": session.title or "", "project_id": session.project_id,
                 "project_name": project_name, "visibility": session.visibility,
                 "asked_at": _iso(row.created_at), "link": link(session.id),
@@ -210,11 +228,15 @@ async def list_waiting(*, user_id: str, workspace_id: str, main_id: str, limit: 
                 # (browser "local") or in the user's own browser ("extension"), at host.
                 "card_kind": card["kind"],
                 **{key: card[key] for key in ("host", "browser", "done_option") if card.get(key)},
-                "questions": [{"header": item.get("header", ""), "question": str(item.get("question", ""))[:600],
+                "questions": [{"header": item.get("header", ""), "question": str(item.get("question", "")),
                                "options": [option.get("label") for option in item.get("options") or []],
+                               "option_descriptions": [option.get("description", "") for option in item.get("options") or []],
                                "multiple": bool(item.get("multiple")), "custom": item.get("custom", True),
+                               "draft_attachments": [draft_assets[identity] for identity in
+                                   (draft[index].get("attachments") or [] if index < len(draft) else [])
+                                   if identity in draft_assets] if item.get("allow_attachments") else [],
                                **({"allow_attachments": True} if item.get("allow_attachments") else {})}
-                              for item in row.questions or []],
+                              for index, item in enumerate(row.questions or [])],
                 "assistant_may_answer": reason is None,
                 **({"user_only_reason": reason} if reason else
                    {"high_risk": high_risk or session.visibility == "workspace"}),

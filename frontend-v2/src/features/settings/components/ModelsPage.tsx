@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Menu, MenuItem } from "@/shared/ui/Menu"
+import { toast } from "@/shared/ui/Toast"
 import {
   useAgentConfig,
   useAgents,
@@ -63,9 +64,24 @@ export function ModelsPage() {
   const curAgentName = prefs.data?.default_agent ?? config.data?.default_agent
   const modelName = models.find((m) => m.id === curModelId)?.name ?? curModelId ?? DASH
   const agentName = agentList.find((a) => a.name === curAgentName)?.name ?? curAgentName ?? DASH
+  const imageProviders = config.data?.image_providers ?? []
+  const imageProvider = prefs.data?.image_generation_provider ?? "default"
 
   return (
     <RowList>
+      <Row
+        label={t("models.imageProvider")}
+        hint={t("models.imageProviderHint")}
+        right={
+          <MenuPicker
+            value={imageProviders.find((p) => p.id === imageProvider)?.name ?? imageProvider}
+            options={imageProviders.filter((p) => p.available).map((p) => ({ id: p.id, label: p.name }))}
+            onPick={(id) => update.mutate({ image_generation_provider: id as "default" | "runninghub" }, {
+              onError: () => toast("error", t("models.saveFailed")),
+            })}
+          />
+        }
+      />
       <Row
         label={t("models.defaultModel")}
         hint={t("models.defaultModelHint")}

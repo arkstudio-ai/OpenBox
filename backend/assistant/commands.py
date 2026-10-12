@@ -291,7 +291,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               video_resolution: str | None = None, delivery: str = "followup",
                               expected_run: dict | None = None, command_action: str | None = None,
                               continuation: dict | None = None, placement_id: str | None = None,
-                              placement: dict | None = None) -> dict:
+                              placement: dict | None = None, workflow: str | None = None,
+                              setup_id: str | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -309,6 +310,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             raise ValueError("Only direct human input can carry a client message identity")
         idempotency_key = (inbox_key("assistant-coordinate-command", source.coordination_inbox_id)
             if source.coordination_inbox_id else tool_command_key(main_id, source.part_id))
+    if setup_id:
+        if source is None or task_id or source.coordination_inbox_id:
+            raise ValueError("Model setup belongs only to an assistant's new task")
+        idempotency_key = inbox_key("assistant-setup", setup_id)
     if placement_id:
         if source is None or task_id or source.coordination_inbox_id:
             raise ValueError("Placement belongs only to an assistant's new task")
@@ -337,12 +342,16 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
         "source": ({"coordination_inbox_id": source.coordination_inbox_id} if source and source.coordination_inbox_id
-            else {"part_id": placement_id or source.part_id, "source_message_ids": list(source.source_message_ids)}
+            else {"part_id": placement_id or setup_id or source.part_id, "source_message_ids": list(source.source_message_ids)}
             if source else {"origin": "human"})})
     if continuation is not None:
         digest = command_digest({"base": digest, "continuation": continuation})
     if placement is not None:
         digest = command_digest({"base": digest, "placement": placement})
+    if workflow is not None:
+        if workflow != "video-production" or task_id:
+            raise AssistantError(400, "ASSISTANT_WORKFLOW_INVALID", "Invalid workflow for new work")
+        digest = command_digest({"base": digest, "workflow": workflow})
     if expected_run is not None:
         digest = command_digest({"base": digest, "expected_run": expected_run})
     if variant_explicit:
@@ -384,12 +393,21 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         await db.flush()  # The unique command is claimed before any creation.
         source_ref = (await _tool_source_locked(db, main, source, action) if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        if setup_id:
+            from db.models.question import QuestionCheckpoint
+            from assistant.model_choices import KIND
+            setup = await db.get(QuestionCheckpoint, setup_id)
+            if (setup is None or setup.session_id != main.id or setup.user_id != user_id
+                    or setup.status != "answered" or not (setup.continuation or {}).get(KIND)):
+                raise AssistantError(409, "ASSISTANT_SETUP_CHANGED", "Model setup is no longer available")
+            source_ref["task_setup"] = {"question_id": setup_id}
         placement_row = None
         if placement_id:
             from assistant.placement import apply_locked, task_input
             project_id, placement_row, cancelled = await apply_locked(db, main, placement_id,
                 task_input(project_id=project_id, title=title, prompt=prompt, attachments=attachments,
-                    model=model, continuation=continuation, source=source, placement=placement), source_ref)
+                    model=model, continuation=continuation, source=source, placement=placement,
+                    video_model=video_model, video_resolution=video_resolution, workflow=workflow), source_ref)
             if cancelled:
                 await db.delete(command)  # admission has made no task or project
                 return cancelled
@@ -437,6 +455,11 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
         if expected_run is not None:
             origin_ref["expected_run"] = expected_run
+        if workflow:
+            origin_ref["workflow"] = workflow
+            prompt = ("Load the video-production skill before planning or generating this talking-head video. "
+                      "Follow its script, material, shot/price, transcript and delivery review stages. "
+                      "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,

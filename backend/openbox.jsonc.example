@@ -129,6 +129,9 @@
   // named provider, e.g. "provider": "openai", "model": "gpt-image-2".
   // See docs/RUNNINGHUB_IMAGE_CHANNEL.md.
   "image_generation": {
+    // Settings exposes Default / RunningHub; the concrete RunningHub model is centrally managed.
+    "runninghub_provider": "runninghub",
+    "runninghub_model": "seedream-v5-pro",
     "provider": "runninghub",
     "model": "seedream-v5-pro",
     "default_size": "auto",

@@ -27,6 +27,8 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
     monkeypatch.setattr("assistant.results.on_execution_result_committed", on_execution_result_committed)
     config = _loop_config()
     config.permission = {"*": "allow"}
+    monkeypatch.setattr("assistant.model_choices.catalogue", lambda: {
+        "chat": [{"id": config.model, "name": "Task AI"}], "video": []})
     real_history = loop._resolve_history_tool_names
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     monkeypatch.setattr(loop, "_resolve_history_tool_names", real_history)
@@ -62,7 +64,8 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
             wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "tasks.submit")
             yield {"type": "tool_call", "tool": wire, "args": {"project_id": main.project_id,
                 "title": "Roundtrip report", "instructions": "Create a report; browser tests are unverified.",
-                "source_message_ids": [original_message_id], "destination_confirmed": True}, "call_id": "delegate-task", "invalid": False}
+                "source_message_ids": [original_message_id], "destination_confirmed": True,
+                "model": config.model, "model_confirmed": True}, "call_id": "delegate-task", "invalid": False}
             yield {"type": "finish", "reason": "tool_calls", "usage": {}}
         elif phase == "delegate":
             assert '"state": "accepted"' in json.dumps(kwargs["messages"]).replace('\\"', '"')
@@ -101,7 +104,7 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
     await run(main.id)
     phase = "delegate"
     human = await accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
-        prompt="Create a report in the default project. Do not claim browser tests were run.",
+        prompt=f"Create a report in the default project with {config.model}. Do not claim browser tests were run.",
         agent="assistant", origin="human", origin_ref={"actor_user_id": owner})
     await run(main.id)
     async with get_db_session() as db:

@@ -64,5 +64,6 @@ def _merged_extra(current: dict | None, patch: dict | None, onboarding: dict | N
 def _to_dict(row: UserPreference) -> dict:
     data = {c.name: getattr(row, c.name) for c in row.__table__.columns}
     extra = data.get("extra") or {}
+    data["image_generation_provider"] = extra.get("image_generation_provider", "default")
     data[ONBOARDING_KEY] = dict(extra.get(ONBOARDING_KEY) or {}) if isinstance(extra, dict) else {}
     return data

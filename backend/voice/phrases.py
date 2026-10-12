@@ -90,8 +90,14 @@ def card_note(user_text, speech, cards, lang):
 
 
 def card_instructions(lang):
-    return _delivery(lang) + ("说明待决定事项及影响，自然询问用户；当前还没有用户回答。" if _lang(lang) == "zh" else
-                              "Explain the pending decision and its impact, then ask naturally. The user has not answered yet.")
+    return _delivery(lang) + ("围绕卡片标明的任务说明待决定事项及影响，接着当前对话自然询问；不要重新自我介绍。"
+        "选择类问题用日常对话说明，不逐条朗读序号或技术标识；先讲当前需要决定的内容，用户追问再展开。"
+        "选模型时结合需求解释可选项和实际能力，完整清单可留在屏幕，不逐条念型号、序号和参数。"
+        "先给用户容易理解的比较，想了解某项时再展开；不编造质量或速度优势。当前还没有用户回答。" if _lang(lang) == "zh" else
+        "Identify the task named on the card, explain the decision and impact, then continue the conversation naturally without another greeting. "
+        "Explain choices conversationally instead of reading numbered options or technical identifiers; lead with the current decision and expand when asked. "
+        "For model choices, explain relevant options using real capabilities; leave the full list on screen rather than reading identifiers, numbers and specs one by one. "
+        "Give an understandable comparison and expand when asked; do not invent quality or speed advantages. The user has not answered yet.")
 
 
 def question_note(questions, lang):
@@ -111,10 +117,15 @@ def question_followup_instructions(lang):
 def tool_result_instructions(lang):
     return ("结合对话回答刚收到的工具回执。decision_recorded 仅说明选择已记录，accepted 仅说明请求已接收；"
             "execution_confirmed=false 或 execution_result=null 时，业务执行结果尚未返回，不能说成已发出、已创建或已完成。"
+            "invalid_arguments、conflict、need_user_answer、unavailable 都不是成功，this_call_applied=false 时不能说已提交或已记录；"
+            "仅参数格式错误可保持同一用户决定校正参数，结果未知须先查询。retry_allowed=false 时停止调用，说明未提交并等用户下一步。"
             "按实际状态自然回应；需要的选择已明确就不重复确认。") if _lang(lang) == "zh" else (
         "Answer the tool receipt in conversation context. decision_recorded means only a recorded choice; "
         "accepted means only a received request. execution_confirmed=false or execution_result=null means "
         "no execution result is available; do not describe the operation as sent, created or complete. "
+        "invalid_arguments, conflict, need_user_answer and unavailable are failures; this_call_applied=false cannot be described as submitted or recorded. "
+        "Correct a rejected argument shape while preserving the user's exact choice; query first when the outcome is unknown. "
+        "When retry_allowed=false, stop calling tools, explain that nothing was submitted and wait for the user. "
         "Respond naturally to its actual state, without asking again for a clear decision.")
 
 

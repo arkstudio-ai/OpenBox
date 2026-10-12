@@ -218,7 +218,25 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
     return receipt
 
 
-async def assistant_answer(row, answers, *, answered_by: dict, attachments=None) -> dict:
+def question_version(row) -> str:
+    """Identity of the exact task form shown to a voice caller."""
+    return command_digest({"id": row.id, "session": row.session_id, "user": row.user_id,
+        "generation": row.generation, "questions": row.questions,
+        "draft_attachments": [answer.get("attachments") or [] for answer in row.draft or []],
+        "kind": (row.continuation or {}).get("kind"),
+        "expires": runtime.utc(row.expires_at).isoformat() if row.expires_at else None})
+
+
+async def _check_shown_question(db, row, session, expected_version):
+    if expected_version is None:
+        return
+    from question.question import QuestionConflict
+    from assistant.request_answers import answerable
+    if question_version(row) != expected_version or (await answerable(db, row, session))[0]:
+        raise QuestionConflict("The displayed question changed; reload before answering")
+
+
+async def assistant_answer(row, answers, *, answered_by: dict, attachments=None, expected_version=None) -> dict:
     """Apply the personal assistant's own answer to an ordinary question (V2 D6).
 
     The caller (assistant.request_answers) checked the question is one the
@@ -238,6 +256,7 @@ async def assistant_answer(row, answers, *, answered_by: dict, attachments=None)
                 raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Question is unavailable")
             if await question_task(db, saved) is not None:
                 raise questions.QuestionConflict("Question scope changed; reload before answering")
+            await _check_shown_question(db, saved, session, expected_version)
             saved.continuation = {**saved.continuation, "answered_by": answered_by}
             changed = await questions.resolve_locked(db, session, execution, saved, answers=answers,
                                                      attachments=attachments, source_kind="assistant")
@@ -256,6 +275,7 @@ async def assistant_answer(row, answers, *, answered_by: dict, attachments=None)
         saved = await db.get(QuestionCheckpoint, row.id, populate_existing=True)
         if saved is None or saved.user_id != row.user_id or saved.session_id != session.id:
             raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Request is unavailable")
+        await _check_shown_question(db, saved, session, expected_version)
         command = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == row.user_id, AssistantCommand.workspace_id == task.workspace_id,
             AssistantCommand.assistant_session_id == task.assistant_session_id,

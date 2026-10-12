@@ -494,6 +494,7 @@ export interface AuthUser {
 export interface UserPreferences {
   theme?: string | null
   default_model?: string | null
+  image_generation_provider?: "default" | "runninghub"
   default_agent?: string | null
   sidebar_open?: boolean | null
   extra?: Record<string, unknown> | null

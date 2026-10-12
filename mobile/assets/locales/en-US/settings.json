@@ -61,7 +61,10 @@
     "defaultModel": "Default model",
     "defaultModelHint": "Used for new chats.",
     "defaultAgent": "Default agent",
-    "defaultAgentHint": "Agent preset for new chats."
+    "defaultAgentHint": "Agent preset for new chats.",
+    "imageProvider": "Image generation provider",
+    "imageProviderHint": "Used for images and video keyframes. The specific image model is managed by the system.",
+    "saveFailed": "Could not save this setting. Please try again."
   },
   "tools": {
     "skills": "Skills",

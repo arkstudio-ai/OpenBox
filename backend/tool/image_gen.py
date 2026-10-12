@@ -125,11 +125,16 @@ class StoredImage:
     materialized: bool = True
 
 
-def _configured_target() -> tuple[ProviderTarget, object]:
+def _configured_target(channel: str = "default") -> tuple[ProviderTarget, object]:
     from core.config import get_config
 
     config = get_config()
     settings = config.image_generation
+    if channel == "runninghub":
+        settings = settings.model_copy(update={"provider": settings.runninghub_provider,
+                                               "model": settings.runninghub_model})
+    elif channel != "default":
+        raise ValueError("Unknown image generation channel")
     provider_name = settings.provider.strip() or config.model.split("/", 1)[0]
     provider = config.provider.get(provider_name)
     if not provider:
@@ -1416,7 +1421,9 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     ctx._trajectory_image_capture = None
 
     try:
-        target, settings = _configured_target()
+        from session.image_pref import selected
+        channel = await selected(ctx.user_id)
+        target, settings = _configured_target("runninghub") if channel == "runninghub" else _configured_target()
     except Exception as exc:
         return ToolResult(title="image_gen is not configured", output=_public_error(exc))
 

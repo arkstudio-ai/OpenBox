@@ -25,6 +25,16 @@ class ModelsSection extends ConsumerWidget {
         asString(prefs['default_model']) ?? config?.defaultModel ?? '';
     final defaultAgent =
         asString(prefs['default_agent']) ?? config?.defaultAgent ?? 'build';
+    final imageProvider =
+        asString(prefs['image_generation_provider']) ?? 'default';
+    final imageOptions =
+        config?.imageProviders ?? const <ImageProviderOption>[];
+    final imageLabel =
+        imageOptions
+            .where((option) => option.id == imageProvider)
+            .firstOrNull
+            ?.name ??
+        imageProvider;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -33,14 +43,31 @@ class ModelsSection extends ConsumerWidget {
           context,
           ref,
           t,
+          title: i18n.t('settings:models.imageProvider'),
+          hint: i18n.t('settings:models.imageProviderHint'),
+          value: imageLabel,
+          options: [
+            for (final option in imageOptions)
+              if (option.available) (option.id, option.name),
+          ],
+          selected: imageProvider,
+          onPick: (id) =>
+              _update(context, ref, {'image_generation_provider': id}),
+        ),
+        const SizedBox(height: 10),
+        _pickerRow(
+          context,
+          ref,
+          t,
           title: i18n.t('settings:models.defaultModel'),
           hint: i18n.t('settings:models.defaultModelHint'),
           value: config?.byId(defaultModel)?.name ?? defaultModel,
           options: [
-            for (final m in config?.models ?? const <ModelInfo>[]) (m.id, m.name),
+            for (final m in config?.models ?? const <ModelInfo>[])
+              (m.id, m.name),
           ],
           selected: defaultModel,
-          onPick: (id) => _update(ref, {'default_model': id}),
+          onPick: (id) => _update(context, ref, {'default_model': id}),
         ),
         const SizedBox(height: 10),
         _pickerRow(
@@ -52,15 +79,28 @@ class ModelsSection extends ConsumerWidget {
           value: defaultAgent,
           options: [for (final a in agents) (a.name, a.name)],
           selected: defaultAgent,
-          onPick: (name) => _update(ref, {'default_agent': name}),
+          onPick: (name) => _update(context, ref, {'default_agent': name}),
         ),
       ],
     );
   }
 
-  Future<void> _update(WidgetRef ref, Map<String, dynamic> patch) async {
-    await ref.read(settingsApiProvider).updatePreferences(patch);
-    ref.invalidate(preferencesProvider);
+  Future<void> _update(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> patch,
+  ) async {
+    final message = ref.read(i18nProvider).t('settings:models.saveFailed');
+    try {
+      await ref.read(settingsApiProvider).updatePreferences(patch);
+      ref.invalidate(preferencesProvider);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    }
   }
 
   Widget _pickerRow(
@@ -92,20 +132,26 @@ class ModelsSection extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: TextStyle(
-                            fontSize: FontSizes.base,
-                            color: t.ink,
-                            fontWeight: FontWeight.w500)),
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: FontSizes.base,
+                        color: t.ink,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     const SizedBox(height: 2),
-                    Text(hint,
-                        style:
-                            TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+                    Text(
+                      hint,
+                      style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                    ),
                   ],
                 ),
               ),
-              Text(value,
-                  style: TextStyle(fontSize: FontSizes.sm, color: t.n700)),
+              Text(
+                value,
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+              ),
               const SizedBox(width: 4),
               Icon(Icons.expand_more, size: 16, color: t.n500),
             ],
@@ -131,8 +177,10 @@ class ModelsSection extends ConsumerWidget {
             for (final (id, label) in options)
               ListTile(
                 dense: true,
-                title: Text(label,
-                    style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+                title: Text(
+                  label,
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                ),
                 trailing: id == selected
                     ? Icon(Icons.check, size: 18, color: t.a700)
                     : null,

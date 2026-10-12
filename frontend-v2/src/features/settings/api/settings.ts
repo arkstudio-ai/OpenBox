@@ -15,6 +15,7 @@ export interface AgentConfig {
   models: ConfigModel[]
   default_model?: string
   default_agent?: string
+  image_providers?: { id: "default" | "runninghub"; name: string; available: boolean }[]
 }
 export interface AgentSummary {
   name: string
@@ -88,7 +89,7 @@ export function useUpdatePreferences() {
   const userId = useUserId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (patch: Partial<Pick<UserPreferences, "default_model" | "default_agent">>) =>
+    mutationFn: (patch: Partial<Pick<UserPreferences, "default_model" | "default_agent" | "image_generation_provider">>) =>
       http.put<UserPreferences>("/api/auth/me/preferences", patch),
     onSuccess: () => void qc.invalidateQueries({ queryKey: settingsKeys.prefs(userId) }),
   })

@@ -186,6 +186,18 @@ async def test_pre_event_read_error_remains_retryable(monkeypatch):
     assert result.retry_reason == "Network error"
 
 
+@pytest.mark.parametrize("partial", [False, True])
+async def test_empty_timeout_retries_only_before_response_progress(monkeypatch, partial):
+    import httpx
+    error = httpx.ReadTimeout("")
+    result = await run(monkeypatch, **(
+        {"events": [{"type": "text_delta", "text": "already visible"}], "raises_after": error}
+        if partial else {"raises": error}))
+    assert result.outcome is (StepOutcome.ERROR if partial else StepOutcome.RETRY)
+    assert result.retry_reason == (None if partial else "Timeout")
+    assert result.error == "ReadTimeout"
+
+
 async def test_text_delta_then_read_error_is_terminal_not_replayed(monkeypatch):
     result = await run(
         monkeypatch,

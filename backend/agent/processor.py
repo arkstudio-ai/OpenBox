@@ -1391,6 +1391,7 @@ async def process_step(
                     raise
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)
+        error_message = str(e).strip() or type(e).__name__
         if retry_msg and not provider_event_received:
             # Classify only. Whether to retry at all, and how long to wait, is
             # retry *policy* — it belongs to the caller that owns the attempt
@@ -1400,15 +1401,15 @@ async def process_step(
                 outcome=StepOutcome.RETRY,
                 retry_reason=retry_msg,
                 retry_error=e,
-                error=str(e),
+                error=error_message,
                 duration=time.time() - step_start_time,
             )
-        log.error(f"LLM error in session {session_id}: {e}")
-        assistant_info.error = {"message": str(e)}
+        log.error("LLM error in session %s: %s", session_id, error_message)
+        assistant_info.error = {"message": error_message}
         await persist_message(assistant_info, user_id=user_id)
         return StepResult(
             outcome=StepOutcome.ERROR,
-            error=str(e),
+            error=error_message,
             duration=time.time() - step_start_time,
         )
 

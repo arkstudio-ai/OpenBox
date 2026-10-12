@@ -19,7 +19,7 @@ from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelValidationError
 
 from core.log import create_logger
 
@@ -203,6 +203,23 @@ async def cards_pending(scope: CallScope, arguments: dict) -> dict:
     return await cards.pending(scope, arguments)
 
 
+async def models_available(scope: CallScope, arguments: dict) -> dict:
+    from assistant.status_tools import models
+    return await models(user_id=scope.user_id, workspace_id=scope.workspace_id, main_id=scope.main_session_id)
+
+
+async def resources_list(scope: CallScope, arguments: dict) -> dict:
+    from assistant.assets import list_assets
+    value = await list_assets(user_id=scope.user_id, workspace_id=scope.workspace_id,
+        main_id=scope.main_session_id, limit=12, cursor=arguments.get("cursor"), query=arguments.get("query", ""))
+    return json.loads(json.dumps(value, default=str))
+
+
+async def task_question_answer(scope: CallScope, arguments: dict) -> dict:
+    from voice.task_questions import answer
+    return await answer(scope, arguments)
+
+
 async def cards_answer(scope: CallScope, arguments: dict) -> dict:
     from voice import cards
     return await cards.answer(scope, arguments)
@@ -217,7 +234,19 @@ async def credits(scope: CallScope, arguments: dict) -> dict:
             "used_this_month": month.get("my_charged_credits"), "since": month.get("since")}
 
 
+from voice.task_questions import AnswerArguments as TaskAnswerArguments, schema as task_answer_schema
+
 DIRECT: dict[str, DirectTool] = {
+    "task_question_answer": DirectTool(
+        "用户已回答当前任务卡片时，按上下文理解并提交完整答案。可回答讲稿、字幕、素材、首尾帧、时长、费用和验收卡。"
+        "先解释用户疑问，不把疑问当同意；没有选完不能补选。不能代做人工验证。", task_question_answer,
+        task_answer_schema(), timeout=8.0),
+    "resources_list": DirectTool("查看用户资源库的文件名称、类型和ID，用于帮助选择。文件名不能证明图片内容，"
+        "问图片长什么样交给 assistant_ask 实际查看。分页时使用返回的 next_cursor。", resources_list,
+        {"type": "object", "properties": {"query": {"type": "string", "maxLength": 200},
+                                           "cursor": {"type": "string", "maxLength": 64}}}, timeout=4.0),
+    "models_available": DirectTool(
+        "读取真实可选的任务AI模型和视频模型。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),
     "tasks_overview": DirectTool(
         "查看用户关注的任务（名字、项目、状态、最新结果两句、有没有在等用户回复）和定时任务（名称、是否启用、下次运行）。"
         "问有哪些任务、做完没有时用它；做到哪一步、具体内容、原因要交给个人助理。",
@@ -258,16 +287,41 @@ async def run(name: str, scope: CallScope, arguments: str) -> dict:
             raise ValueError("Expected an object")
         if name == "cards_answer":
             parsed = CardAnswerArguments.model_validate(parsed).model_dump(exclude_none=True)
+        elif name == "task_question_answer":
+            parsed = TaskAnswerArguments.model_validate(parsed).model_dump(exclude_none=True)
         else:
             jsonschema.validate(parsed, tool.parameters or _no_parameters())
-    except (ValueError, TypeError, jsonschema.ValidationError):
-        return {"status": "invalid_arguments", "this_call_applied": False}
+    except (ValueError, TypeError, jsonschema.ValidationError) as exc:
+        if name not in {"cards_answer", "task_question_answer"}:
+            return {"status": "invalid_arguments", "this_call_applied": False}
+        field = ".".join(str(part) for part in exc.absolute_path) if isinstance(exc, jsonschema.ValidationError) else "arguments"
+        reason = exc.validator if isinstance(exc, jsonschema.ValidationError) else "invalid_json"
+        shape = _argument_shape(exc.instance) if isinstance(exc, jsonschema.ValidationError) else "unknown"
+        if isinstance(exc, ModelValidationError):
+            error = exc.errors(include_url=False)[0]
+            field = ".".join(str(part) for part in error["loc"])
+            reason, shape = error["type"], _argument_shape(error.get("input"))
+        log.info("voice tool invalid arguments tool=%s field=%s reason=%s shape=%s", name, field, reason, shape)
+        return {"status": "invalid_arguments", "this_call_applied": False, "execution_confirmed": False,
+                "operation_state": "not_applied", "field": field, "reason": reason, "received_shape": shape,
+                "note": "没有提交或记录任何决定。按工具 schema 校正参数后可重试同一选择，不要说已提交。"
+                        'answers 每道题对应一个选项数组；attachments 例如 [["asset_ID"]]，不是素材对象或 JSON 字符串。'
+                        "多个素材问题需逐题分组。相同错误不要反复调用，解释失败并等待用户下一步。"}
     try:
         return await asyncio.wait_for(tool.run(scope, parsed if isinstance(parsed, dict) else {}), tool.timeout)
     except TimeoutError:
         return ({"status": "result_unknown", "execution_confirmed": False,
                  "note": "回答提交超时，先用 cards_pending 核对状态，不自动重试。"}
-                if name == "cards_answer" else dict(UNAVAILABLE))
+                if name in {"cards_answer", "task_question_answer"} else dict(UNAVAILABLE))
     except Exception as exc:  # slow, refused or broken: the model says it could not check
         log.info("voice tool unavailable tool=%s call=%s error=%s", name, scope.call_id, type(exc).__name__)
         return dict(UNAVAILABLE)
+
+
+def _argument_shape(value, depth=0):
+    """Diagnostic types only, never user text, resource names or credentials."""
+    if depth < 3 and isinstance(value, list):
+        return {"type": "array", "length": len(value), "items": [_argument_shape(v, depth + 1) for v in value[:3]]}
+    if isinstance(value, dict):
+        return {"type": "object", "values": [_argument_shape(v, depth + 1) for v in list(value.values())[:3]]} if depth < 3 else "object"
+    return type(value).__name__

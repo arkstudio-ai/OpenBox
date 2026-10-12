@@ -23,12 +23,16 @@ from question import runtime
 KIND = "assistant_placement"
 
 
-def task_input(*, project_id, title, prompt, attachments=(), model=None, continuation=None, source, placement=None):
+def task_input(*, project_id, title, prompt, attachments=(), model=None, continuation=None, source, placement=None,
+               video_model=None, video_resolution=None, workflow=None):
     value = {"project_id": project_id, "title": title, "instructions": prompt,
             "attachment_ids": list(attachments), "model": model, "continuation": continuation,
             "source_message_ids": list(source.source_message_ids)}
     if placement is not None:
         value["placement"] = placement
+    for key, item in (("video_model", video_model), ("video_resolution", video_resolution), ("workflow", workflow)):
+        if item is not None:
+            value[key] = item
     return value
 
 
@@ -133,8 +137,15 @@ def save_receipt(row, receipt: dict) -> None:
 def result(card: dict, answers: list) -> dict:
     choice = answers[0][0] if answers and answers[0] else ""
     cancelled = choice == CANCEL
+    arguments = dict(card["input"])
+    workflow = arguments.pop("workflow", None)
+    if arguments.get("model"):
+        arguments["model_confirmed"] = True
+    if arguments.get("video_model"):
+        arguments["video_model_confirmed"] = True
+        arguments["work_type"] = "spoken_video" if workflow == "video-production" else "other_video"
     return {"title": "已取消" if cancelled else "已选择安排位置",
         "output": ("The user cancelled. No project or conversation was created. Do not submit this task." if cancelled else
-            "The user chose " + choice + (". Project name: " + card["project_name"] if choice == new_project_option(card) else "") + ". Nothing has been created yet. Call tasks.submit again with exactly "
-            "these original arguments; the server applies the choice atomically: " + json.dumps(card["input"], ensure_ascii=False)),
+            "The user chose " + choice + (". Project name: " + card["project_name"] if choice == new_project_option(card) else "") + ". Nothing has been created yet. The task model and any video model have already been chosen; retain those selections (model_confirmed/video_model_confirmed=true). A workflow of video-production means work_type=spoken_video; omit the workflow key when calling tasks.submit. Call tasks.submit again preserving "
+            "these original arguments; the server applies the choice atomically: " + json.dumps(arguments, ensure_ascii=False)),
         "metadata": {"placement": "cancelled" if cancelled else "selected"}}

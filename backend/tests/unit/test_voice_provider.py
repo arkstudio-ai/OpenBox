@@ -158,9 +158,9 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
     assert session["turn_detection"] == {"type": "semantic_vad", "threshold": 0.5, "silence_duration_ms": 700}
     assert session["smooth_output"] is True  # the official switch for a conversational, not written, style
     assert [tool["function"]["name"] for tool in session["tools"]] == [
-        "assistant_ask", "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits",
+        "assistant_ask", "task_question_answer", "resources_list", "models_available", "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits",
         "cards_pending", "cards_answer"]
-    assert session["tools"][2]["function"]["parameters"]["required"] == ["query"]
+    assert next(tool["function"] for tool in session["tools"] if tool["function"]["name"] == "memory_search")["parameters"]["required"] == ["query"]
     assert "enable_search" not in session
     await provider.create_response("只说这一句")
     await provider.create_response()

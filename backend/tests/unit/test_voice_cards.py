@@ -86,7 +86,7 @@ async def test_cards_pending_reads_main_cards_with_handles_and_task_questions(mo
     assert shown["version"] and shown["what"] == "删除项目「测试A」。"
     assert shown["options"] == [{"id": "option_1", "label": "确认"}, {"id": "option_2", "label": "取消"}]
     assert [item["answer_how"] for item in value["task_questions"]] == [
-        "用户明确回答后，用 assistant_ask 结合任务和问题转交选择；保留原话核对，不替用户补选", "要用户自己在屏幕上处理"]
+        "用户明确回答全部问题后，用 task_question_answer 提交对应答案和选中资源；含糊或尚有疑问时先解释，不替用户补选", "要用户自己在屏幕上处理"]
     assert desk.card_id("1") == "q-del" and desk.open() == ["q-del"]
     assert (await cards.pending(scope, {}))["cards"][0]["card"] == "1"  # the same card keeps its handle
 
@@ -236,7 +236,7 @@ def test_a_desktop_takeover_says_where_the_user_finishes_it():
     extension = cards.spoken_question({**takeover, "browser": "extension"})
     assert "在你自己的浏览器里完成验证" in extension["answer_how"] and "云桌面" not in extension["answer_how"]
     plain = cards.spoken_question(FORM)
-    assert plain["kind"] == "question" and plain["answer_how"].startswith("用户明确回答后")
+    assert plain["kind"] == "question" and "task_question_answer" in plain["answer_how"]
 
 
 def test_task_form_keeps_every_field_and_exact_labels():

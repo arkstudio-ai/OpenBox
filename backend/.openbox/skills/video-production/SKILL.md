@@ -49,6 +49,10 @@ On a continuing run, first use `python3 "$S/state.py" show --slug <slug>` and `p
 
 Resolve the effective model from `person_selected_model`, falling back only when absent to the disclosed `default_model`. For `MiniMax-H3-Max-Turbo`, read [references/minimax-turbo-frames.md](references/minimax-turbo-frames.md) and resolve the material choice before card 1: generate a first frame, generate first/last frames, use existing pictures, or text-only video. Reuse an explicit request or saved decision instead of asking again. This step chooses the mode; generate the actual frames only after the script and shot boundaries are known. Other models follow the existing material workflow. Resume already-submitted shots from their recorded requests without retroactively adding image preparation.
 
+For any image-to-video request (including Wan), resolve the intended use of pictures before preparation: use selected library/uploaded pictures directly, or use them as references to generate new frames. Uploading a picture alone does not approve generating replacements. Use a `question` with `allow_attachments: true` so the person can select library files or upload in the same card; a voice assistant can answer that same question with the selected asset IDs. Explain what is visible only after actually inspecting the picture. Match first-frame, last-frame and reference roles to the selected model's live capabilities; do not advertise unsupported modes. Reuse choices already passed by the personal assistant instead of asking again. `image_gen` follows the person's Default/RunningHub setting; do not pick a different image provider or ask them for a concrete image model.
+
+Frame rate is separate from first/last-frame images. Do not promise an adjustable generation FPS when the selected API has no such parameter. Explain provider-fixed settings if asked, preserve a requested delivery FPS for composition, and measure the generated clip's actual frame rate with `ffprobe` alongside duration before acceptance.
+
 ### 1. Read creator context
 
 Use `creator_context(action="get_user_context")`; empty is normal. Propose at most one genuinely stable preference to memory per turn and do not interrupt production for it.
@@ -142,7 +146,7 @@ For every current take:
 python3 "$S/compare_transcript.py" --intended "<逐字台词>" --heard "<实际转写>"
 ```
 
-Measure actual duration. Before card 3 show every playable shot link, complete intended line, complete actual words, planned/actual seconds, similarity, substitutions/omissions, and verdict. Mark `🔴` if similarity is suspect, any substitution exists, or `abs(actual - planned) > max(2s, planned × 25%)`.
+Measure actual duration and frame rate. Before card 3 show every playable shot link, complete intended line, complete actual words, planned/actual seconds, actual FPS, similarity, substitutions/omissions, and verdict. Include the decision-critical results in the question text itself as well: a voice assistant receives that same card, and hidden tool output is not a user-facing review. Never ask for acceptance with only “转写验收结果是否可以” and no results. Mark `🔴` if similarity is suspect, any substitution exists, or `abs(actual - planned) > max(2s, planned × 25%)`.
 
 For a multi-shot cut, also review each join as described in `references/quality.md`: adjacent actual images, motion, voice and pauses. Shared planned frames constrain endpoints but do not prove a seamless join or a consistent voice. Include join findings in card 3; never report an unobserved visual/audio property as checked.
 

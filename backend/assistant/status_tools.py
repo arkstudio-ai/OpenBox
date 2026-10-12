@@ -16,6 +16,13 @@ from db.base import get_db_session
 MONTH_ZONE = "Asia/Shanghai"
 
 
+async def models(*, user_id: str, workspace_id: str, main_id: str) -> dict:
+    async with get_db_session() as db:
+        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+    from assistant.model_choices import catalogue
+    return catalogue()
+
+
 def _iso(value):
     if value is None:
         return None

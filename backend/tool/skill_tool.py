@@ -90,6 +90,21 @@ def _host_files(base: str, limit: int = 20) -> list[str]:
         return []
 
 
+def _host_bundle_note(name: str, path: str) -> list[str]:
+    """Built-in instructions live on the host; their runtime files ship in the sandbox."""
+    from pathlib import Path
+    builtin = Path(__file__).resolve().parents[1] / ".openbox" / "skills"
+    candidate = Path(path).resolve()
+    if candidate.parent == builtin and candidate.name == name:
+        return [f"The instructions above are the application's current built-in {name} skill.",
+                f"Its bundled runtime files are deployed at /opt/openbox/skills/{name}/ in the sandbox.",
+                "Use the exact documented script/reference paths there. If one is missing, report the missing dependency; do not search other directories."]
+    return ["This skill is installed on the backend host, not in",
+            "your workspace. The files below ship with it but are",
+            "NOT readable from here — follow the instructions above",
+            "without trying to open them."]
+
+
 async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     """Load a skill and inject its content.
 
@@ -236,10 +251,7 @@ async def _execute_skill(
     if files:
         output_parts.append("")
         if host_only:
-            output_parts.append("This skill is installed on the backend host, not in")
-            output_parts.append("your workspace. The files below ship with it but are")
-            output_parts.append("NOT readable from here — follow the instructions above")
-            output_parts.append("without trying to open them.")
+            output_parts.extend(_host_bundle_note(args.skill, local_skill.path))
         output_parts.append("<skill_files>")
         for f in files[:50]:
             output_parts.append(f"  {f}")
@@ -358,12 +370,7 @@ async def _execute_selected_skill(
     if files:
         output_parts.append("")
         if host_only:
-            output_parts.extend([
-                "This skill is installed on the backend host, not in",
-                "your workspace. The files below ship with it but are",
-                "NOT readable from here — follow the instructions above",
-                "without trying to open them.",
-            ])
+            output_parts.extend(_host_bundle_note(args.skill, skill.path))
         output_parts.append("<skill_files>")
         output_parts.extend(f"  {filename}" for filename in files[:50])
         if len(files) > 50:

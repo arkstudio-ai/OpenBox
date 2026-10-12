@@ -22,6 +22,8 @@ def quiet(monkeypatch):
     monkeypatch.setattr(get_config(), "jwt_secret", "placement-test-only")
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
     MAIN_MESSAGES.clear()
+    monkeypatch.setattr("assistant.model_choices.catalogue", lambda: {
+        "chat": [{"id": "test/model", "name": "Task AI"}], "video": []})
 
 
 async def counts(owner):
@@ -34,7 +36,7 @@ async def prepare(text="帮我写一份新品发布计划"):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, text)
     args = {"project_id": main.project_id, "title": "新品发布计划", "instructions": "写一份新品发布计划",
-            "source_message_ids": [human]}
+            "source_message_ids": [human], "model": "test/model", "model_confirmed": True}
     return owner, workspace, main, ctx, lease, args
 
 

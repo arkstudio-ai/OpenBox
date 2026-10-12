@@ -28,6 +28,9 @@ class TurnsMixin:
     def _init_turns(self) -> None:
         self.followup_due = False   # tool outputs no reply has answered yet
         self._direct: set[str] = set()  # direct reads still running
+        self._unverified_replies: set[str] = set()
+        self._decision_receipts: list[dict] = []
+        self._decision_failures: dict[tuple[str, int], int] = {}
         self._acks: set[str] = set()    # replies that carried an assistant_ask
         self._replies: dict[str, str] = {}  # reply → words heard, for acknowledgement and reconnect handling
         self.heard_count = 0            # user utterances transcribed so far (CardDesk: spoken after a card?)
@@ -47,8 +50,10 @@ class TurnsMixin:
         if not event.call_id or event.call_id in self._seen_calls:
             return
         self._seen_calls.add(event.call_id)
+        if event.name in {"cards_answer", "task_question_answer"} and (event.response_id or self.active_response):
+            self._unverified_replies.add(event.response_id or self.active_response)
         self._tool_sources[event.call_id] = self._answering.get(event.response_id or self.active_response or "", self._last_user_item)
-        if (event.name in (tools.ASSISTANT_ASK, "cards_answer")
+        if (event.name in (tools.ASSISTANT_ASK, "cards_answer", "task_question_answer")
                 and self.response_kind not in (None, "model", "followup")):
             await self._command("send_tool_output", event.call_id, {
                 "status": "not_user_request", "this_call_applied": False,
@@ -138,7 +143,7 @@ class TurnsMixin:
             source = self._tool_sources.get(event.call_id, "")
             words = self.utterance
             sequence = self.heard_count
-            if event.name == "cards_answer":
+            if event.name in {"cards_answer", "task_question_answer"}:
                 deadline = asyncio.get_running_loop().time() + TRANSCRIPT_WAIT_SECONDS
                 while (source not in self._user_utterances if source else not self.utterance) and asyncio.get_running_loop().time() < deadline and not self.closing:
                     await asyncio.sleep(.05)
@@ -147,7 +152,22 @@ class TurnsMixin:
                 sequence = self._user_utterances.get(source, 0) if source else self.heard_count
             scope = replace(self.scope, transcript=words, utterance_index=sequence,
                             desk=self.desk) if self.scope else None
-            result = await tools.run(event.name, scope, event.arguments) if scope else dict(tools.UNAVAILABLE)
+            decision = event.name in {"cards_answer", "task_question_answer"}
+            key = (event.name, sequence)
+            exhausted = decision and self._decision_failures.get(key, 0) >= 2
+            if exhausted:
+                result = {"status": "retry_exhausted", "this_call_applied": False,
+                          "execution_confirmed": False, "retry_allowed": False,
+                          "note": "这次回答未提交。停止自动重试，等待用户新的输入，或让用户在原卡片提交。"}
+            else:
+                result = await tools.run(event.name, scope, event.arguments) if scope else dict(tools.UNAVAILABLE)
+                if decision and result.get("status") == "invalid_arguments":
+                    self._decision_failures[key] = self._decision_failures.get(key, 0) + 1
+                    if self._decision_failures[key] >= 2:
+                        result = {**result, "retry_allowed": False,
+                                  "next": "Explain that the answer was not submitted. Stop tool retries and wait for the user."}
+                    if len(self._decision_failures) > 32:
+                        self._decision_failures.pop(next(iter(self._decision_failures)))
         finally:
             self._direct.discard(event.call_id)
         # What was really read, never its content: "did it check before it answered?" is in the log.
@@ -161,7 +181,10 @@ class TurnsMixin:
                 self._follow(event.call_id, answer)
         if session != self.session:
             return  # its call was the dropped session's: the fresh one never saw it (the user is asked again)
-        if await self._command("send_tool_output", event.call_id, result):
+        if event.name in {"cards_answer", "task_question_answer"}:
+            self._decision_receipts.append({"tool": event.name, **result})
+            self._decision_receipts = self._decision_receipts[-5:]
+        if await self._command("send_tool_output", event.call_id, result) and not exhausted:
             self.followup_due = True  # the model answers from the output in the next idle window
         await self.fill_idle()
 

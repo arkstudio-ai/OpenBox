@@ -88,13 +88,11 @@ class VideoModelInfo {
   });
 
   factory VideoModelInfo.fromJson(Map<String, dynamic> json) => VideoModelInfo(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? asString(json['id']) ?? '',
-        tier: asString(json['tier']),
-        resolutions: [
-          for (final r in asList(json['resolutions'])) ?asString(r),
-        ],
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? asString(json['id']) ?? '',
+    tier: asString(json['tier']),
+    resolutions: [for (final r in asList(json['resolutions'])) ?asString(r)],
+  );
 
   final String id;
   final String name;
@@ -112,10 +110,10 @@ class ChatTierRow {
   const ChatTierRow({required this.tier, required this.model, this.variant});
 
   factory ChatTierRow.fromJson(Map<String, dynamic> json) => ChatTierRow(
-        tier: asString(json['tier']) ?? '',
-        model: asString(json['model']) ?? '',
-        variant: asString(json['variant']),
-      );
+    tier: asString(json['tier']) ?? '',
+    model: asString(json['model']) ?? '',
+    variant: asString(json['variant']),
+  );
 
   /// `high` | `medium` | `low`.
   final String tier;
@@ -141,20 +139,18 @@ class VideoTierRow {
   });
 
   factory VideoTierRow.fromJson(Map<String, dynamic> json) => VideoTierRow(
-        tier: asString(json['tier']) ?? '',
-        model: asString(json['model']) ?? '',
-        label: asString(json['label']) ?? '',
-        description: asString(json['description']) ?? '',
-        resolutions: [
-          for (final r in asList(json['resolutions'])) ?asString(r),
-        ],
-        resolution: asString(json['resolution']) ?? '',
-        prices: {
-          for (final entry in asMap(json['prices']).entries)
-            if (asString(entry.value) case final String price) entry.key: price,
-        },
-        currency: asString(json['currency']) ?? '',
-      );
+    tier: asString(json['tier']) ?? '',
+    model: asString(json['model']) ?? '',
+    label: asString(json['label']) ?? '',
+    description: asString(json['description']) ?? '',
+    resolutions: [for (final r in asList(json['resolutions'])) ?asString(r)],
+    resolution: asString(json['resolution']) ?? '',
+    prices: {
+      for (final entry in asMap(json['prices']).entries)
+        if (asString(entry.value) case final String price) entry.key: price,
+    },
+    currency: asString(json['currency']) ?? '',
+  );
 
   final String tier;
   final String model;
@@ -180,26 +176,44 @@ class ModelTiers {
   const ModelTiers({this.chat = const [], this.video = const []});
 
   factory ModelTiers.fromJson(Map<String, dynamic> json) => ModelTiers(
-        chat: asList(json['chat'])
-            .whereType<Map<String, dynamic>>()
-            .map(ChatTierRow.fromJson)
-            .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
-            .toList(),
-        video: asList(json['video'])
-            .whereType<Map<String, dynamic>>()
-            .map(VideoTierRow.fromJson)
-            .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
-            .toList(),
-      );
+    chat: asList(json['chat'])
+        .whereType<Map<String, dynamic>>()
+        .map(ChatTierRow.fromJson)
+        .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
+        .toList(),
+    video: asList(json['video'])
+        .whereType<Map<String, dynamic>>()
+        .map(VideoTierRow.fromJson)
+        .where((row) => row.tier.isNotEmpty && row.model.isNotEmpty)
+        .toList(),
+  );
 
   final List<ChatTierRow> chat;
   final List<VideoTierRow> video;
+}
+
+class ImageProviderOption {
+  const ImageProviderOption({
+    required this.id,
+    required this.name,
+    required this.available,
+  });
+  factory ImageProviderOption.fromJson(Map<String, dynamic> json) =>
+      ImageProviderOption(
+        id: asString(json['id']) ?? '',
+        name: asString(json['name']) ?? '',
+        available: asBool(json['available']) ?? false,
+      );
+  final String id;
+  final String name;
+  final bool available;
 }
 
 class AppConfig {
   const AppConfig({
     required this.models,
     this.videoModels = const [],
+    this.imageProviders = const [],
     this.defaultModel = '',
     this.defaultVideoModel = '',
     this.defaultVideoResolution = '',
@@ -209,26 +223,30 @@ class AppConfig {
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
-        models: asList(json['models'])
-            .whereType<Map<String, dynamic>>()
-            .map(ModelInfo.fromJson)
-            .toList(),
-        videoModels: asList(json['video_models'])
-            .whereType<Map<String, dynamic>>()
-            .map(VideoModelInfo.fromJson)
-            .toList(),
-        defaultModel: asString(json['default_model']) ?? '',
-        defaultVideoModel: asString(json['default_video_model']) ?? '',
-        defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
-        defaultAgent: asString(json['default_agent']) ?? 'build',
-        modelTiers: json['model_tiers'] is Map<String, dynamic>
-            ? ModelTiers.fromJson(json['model_tiers'] as Map<String, dynamic>)
-            : const ModelTiers(),
-        voiceEnabled: asBool(json['voice_enabled']) ?? false,
-      );
+    models: asList(
+      json['models'],
+    ).whereType<Map<String, dynamic>>().map(ModelInfo.fromJson).toList(),
+    videoModels: asList(
+      json['video_models'],
+    ).whereType<Map<String, dynamic>>().map(VideoModelInfo.fromJson).toList(),
+    defaultModel: asString(json['default_model']) ?? '',
+    imageProviders: asList(json['image_providers'])
+        .whereType<Map<String, dynamic>>()
+        .map(ImageProviderOption.fromJson)
+        .where((option) => option.id.isNotEmpty)
+        .toList(),
+    defaultVideoModel: asString(json['default_video_model']) ?? '',
+    defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
+    defaultAgent: asString(json['default_agent']) ?? 'build',
+    modelTiers: json['model_tiers'] is Map<String, dynamic>
+        ? ModelTiers.fromJson(json['model_tiers'] as Map<String, dynamic>)
+        : const ModelTiers(),
+    voiceEnabled: asBool(json['voice_enabled']) ?? false,
+  );
 
   final List<ModelInfo> models;
   final List<VideoModelInfo> videoModels;
+  final List<ImageProviderOption> imageProviders;
   final String defaultModel;
   final String defaultVideoModel;
   final String defaultVideoResolution;
@@ -265,12 +283,12 @@ class AgentInfo {
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) => AgentInfo(
-        name: asString(json['name']) ?? '',
-        description: asString(json['description']),
-        model: asString(json['model']),
-        mode: asString(json['mode']),
-        color: asString(json['color']),
-      );
+    name: asString(json['name']) ?? '',
+    description: asString(json['description']),
+    model: asString(json['model']),
+    mode: asString(json['mode']),
+    color: asString(json['color']),
+  );
 
   final String name;
   final String? description;

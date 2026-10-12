@@ -61,7 +61,10 @@
     "defaultModel": "默认模型",
     "defaultModelHint": "新对话默认使用。",
     "defaultAgent": "默认 agent",
-    "defaultAgentHint": "新对话使用的 agent 配置。"
+    "defaultAgentHint": "新对话使用的 agent 配置。",
+    "imageProvider": "图片生成来源",
+    "imageProviderHint": "用于生成图片和视频首尾帧；具体图片模型由系统统一配置。",
+    "saveFailed": "设置未保存，请稍后重试。"
   },
   "tools": {
     "skills": "Skill",

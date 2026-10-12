@@ -1644,7 +1644,7 @@ async def _stream_responses_api(
                     )
         if capture is not None:
             await capture.finish("failed", error=e)
-        log.error(f"Responses API error: {e}")
+        log.error("Responses API error (%s): %s", type(e).__name__, e)
         yield {"type": "error", "error": e}
     finally:
         if capture is not None and not capture.finished:

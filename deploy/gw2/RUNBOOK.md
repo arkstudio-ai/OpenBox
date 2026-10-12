@@ -104,7 +104,7 @@ Code changes and editing this overlay do not apply these production changes by t
 | `scripts/setup-alarms.sh` | operator machine | CloudMonitor alarm rules, dry run unless `--execute`. |
 | `scripts/restore-check.sh` | gw2 | Restores a backup into a scratch database and drops it (§10), dry run unless `--execute`. |
 | `scripts/drill-*.sh`, `scripts/rebuild-trace-db.sh` | gw2 | Drills (§11), dry run unless `--execute`. |
-| `backend/trajectory/ops/{cms,backup,lifecycle,rebuild,deletion,latency}.py` | worker image / operator | Python side of the scripts and of the release comparison (§5 step 9); `python -m trajectory.ops.<module> --help`. |
+| `backend/trajectory/ops/{cms,backup,lifecycle,rebuild,deletion,latency,turns_backfill}.py` | worker image / operator | Python side of the scripts and of the release comparison (§5 step 9); `python -m trajectory.ops.<module> --help`. |
 
 Every script prints its usage with `--help`. Scripts on gw2 read `OPENBOX_DIR` (default `/opt/openbox`).
 
@@ -363,6 +363,23 @@ Keep a terminal probing the public site during every switch, as in previous rele
    and compare the daily growth with the days before the release.
 10. **Operations**: install the timers (§7), apply the lifecycle rules (§9) and alarms (§8) from the operator machine,
     run the drills and the restore check (§10, §11), and append the release record to docs/DEPLOY.md.
+
+### Turn summaries backfill (trace migration t0006, one-off)
+
+The first worker start on an image at or past `t0006_turn_summaries` adds `trajectory_records.turn_id` and the
+`trajectory_turn_summaries` table (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6, §11). New batches fill both; rows projected
+before the migration do not, so the lite admin view shows no turns for them until this runs once, after the worker is
+healthy on the new image:
+
+```bash
+docker compose exec -T trajectory-worker alembic -c alembic_trajectory.ini current   # t0006_turn_summaries
+docker compose exec -T trajectory-worker python -m trajectory.ops.turns_backfill       # exit 0; logs rows filled / turns written
+```
+
+It walks live trajectories one at a time in 500-row pages inside the worker's statement timeout, so it can run
+while the worker ingests. Rerunnable: a second run fills nothing and recomputes the same rows (exit 0). Exit 1 names the
+trajectories that failed; rerun with `--only <trajectory_id ...>`. Rollback of the lite view needs nothing here: the
+column and table are unused by the professional view and are dropped by `alembic downgrade t0005_recorded_audiences`.
 
 ## 6. Rollback
 

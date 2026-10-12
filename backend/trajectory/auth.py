@@ -40,7 +40,9 @@ AUDIT_PATH = "/api/internal/trajectory/audit"
 SESSION_AUDIENCE_PATH = "/api/internal/trajectory/session-audience"
 UNAVAILABLE = "Trajectory authorization is unavailable"
 AUDIT_DEDUPE_SECONDS = 60
-DEDUPED_AUDIT_ACTIONS = frozenset({"admin.trajectory.list", "admin.trajectory.view"})
+DEDUPED_AUDIT_ACTIONS = frozenset({"admin.trajectory.list", "admin.trajectory.view",
+                                   # Lite view polls: the user list, a user's turns, one turn (keyed by session).
+                                   "admin.trajectory.lite_users", "admin.trajectory.lite_turns", "admin.trajectory.lite_turn"})
 #: Refusals of an audit batch that resending the same batch cannot fix.
 AUDIT_REJECTED_STATUSES = frozenset({400, 413, 422})
 #: Defaults of TRAJECTORY_AUDIT_MAX_ATTEMPTS and TRAJECTORY_AUDIT_MAX_AGE_SECONDS. With the 1 h backoff cap,

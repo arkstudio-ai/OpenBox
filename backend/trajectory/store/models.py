@@ -218,6 +218,9 @@ class TrajectoryRecord(TraceBase):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(128))
     message_id: Mapped[str | None] = mapped_column(String(128))
+    #: The record's turn (t0006). Null on rows projected before the column existed until the
+    #: turn backfill (``trajectory.ops.turns_backfill``) copies it out of ``summary``.
+    turn_id: Mapped[str | None] = mapped_column(String(128))
     start_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     end_seq: Mapped[int | None] = mapped_column(BigInteger)
     applied_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -230,6 +233,7 @@ class TrajectoryRecord(TraceBase):
         Index("ix_trajectory_records_message", "trajectory_id", "message_id"),
         Index("ix_trajectory_records_filter", "trajectory_id", "kind", "status", "start_seq"),
         Index("ix_trajectory_records_agent", "trajectory_id", "agent_id"),
+        Index("ix_trajectory_records_turn", "trajectory_id", "turn_id", "start_seq"),
         Index("ix_trajectory_records_search_trgm", "search_doc", postgresql_using="gin",
               postgresql_ops={"search_doc": "gin_trgm_ops"}).ddl_if(dialect="postgresql"),
     )
@@ -260,6 +264,53 @@ class TrajectorySessionSummary(TraceBase):
         Index("ix_trajectory_session_summaries_owner", "user_id", "last_activity_at", "session_id"),
         Index("ix_trajectory_session_summaries_workspace", "workspace_id", "last_activity_at", "session_id"),
         Index("ix_trajectory_session_summaries_status", "running_status", "recording_status", "last_activity_at"),
+    )
+
+
+class TrajectoryTurnSummary(TraceBase):
+    """One row per turn, maintained by the projection worker from the turn's records (lite plan §6.1).
+
+    ``status`` is structural: ``running`` means no terminal fact has been
+    projected yet; readers turn a stale ``running`` into ``unknown`` after
+    ``TRAJECTORY_LITE_RUNNING_GRACE_MINUTES``.
+    """
+    __tablename__ = "trajectory_turn_summaries"
+    trajectory_id: Mapped[str] = mapped_column(String(64), _trajectory_fk(), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column()
+    last_activity_at: Mapped[datetime] = mapped_column(nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    waiting_kind: Mapped[str | None] = mapped_column(String(32))
+    user_preview: Mapped[str | None] = mapped_column(Text)
+    assistant_preview: Mapped[str | None] = mapped_column(Text)
+    user_message_id: Mapped[str | None] = mapped_column(String(128))
+    assistant_message_id: Mapped[str | None] = mapped_column(String(128))
+    main_agent_id: Mapped[str | None] = mapped_column(String(128))
+    has_attachments: Mapped[bool] = _defaulted(Boolean, False)
+    tool_counts: Mapped[dict] = mapped_column(nullable=False)  # {tool id: {"total": n, "failed": n}}
+    tool_failures: Mapped[int] = _defaulted(Integer, 0)
+    agent_count: Mapped[int] = _defaulted(Integer, 0)
+    job_count: Mapped[int] = _defaulted(Integer, 0)
+    artifact_count: Mapped[int] = _defaulted(Integer, 0)
+    retry_count: Mapped[int] = _defaulted(Integer, 0)
+    request_count: Mapped[int] = _defaulted(Integer, 0)
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    usage_complete: Mapped[bool] = _defaulted(Boolean, True)
+    first_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    applied_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    __table_args__ = (
+        Index("ix_trajectory_turn_summaries_owner", "user_id", "started_at", "turn_id"),
+        Index("ix_trajectory_turn_summaries_trajectory", "trajectory_id", "started_at"),
+        Index("ix_trajectory_turn_summaries_session", "session_id", "started_at"),
+        Index("ix_trajectory_turn_summaries_status", "status", "started_at"),
     )
 
 

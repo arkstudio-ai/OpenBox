@@ -203,7 +203,7 @@ class ReadLayer:
                 "has_more": has_more, "committed_seq": str(trajectory.committed_seq)}
 
     async def list_records(self, db, trajectory, *, through_seq=None, before=None, limit=100, kind=None, status=None,
-                           agent_id=None):
+                           agent_id=None, turn_id=None):
         head = self.watermark(trajectory, through_seq)
         if before is not None:
             raise TrajectoryError("Record cursor belongs to another watermark")

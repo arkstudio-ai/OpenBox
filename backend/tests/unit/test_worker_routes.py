@@ -31,6 +31,11 @@ CONTRACT = {
     ("POST", f"{PREFIX}/ticket"),
     # Additive (SPEC §8.12).
     ("GET", f"{PREFIX}/sessions/{{session_id}}/blobs/{{sha256}}"),
+    # Lite view (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6.3).
+    ("GET", f"{PREFIX}/users"),
+    ("GET", f"{PREFIX}/users/{{user_id}}/turns"),
+    ("GET", f"{PREFIX}/sessions/{{session_id}}/turns/{{turn_id}}"),
+    ("GET", f"{PREFIX}/lite/labels"),
 }
 
 

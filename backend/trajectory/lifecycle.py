@@ -27,7 +27,7 @@ from trajectory.config import integer
 from trajectory.storage import check_key, key_prefix, trajectory_prefix
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryExport,
     TrajectoryGcQueue, TrajectoryPayload, TrajectoryRecord, TrajectoryRecordEvent, TrajectorySegment,
-    TrajectorySessionSummary, TrajectoryWorkerState)
+    TrajectorySessionSummary, TrajectoryTurnSummary, TrajectoryWorkerState)
 from trajectory.types import now
 
 log = create_logger("trajectory.lifecycle")
@@ -134,6 +134,7 @@ async def tombstone_trajectory(db, trajectory, *, reason: str, at: datetime | No
     trajectory.updated_at = timestamp
     await _purge_content(db, trajectory, availability="deleted", reason=reason, at=timestamp)
     await db.execute(delete(TrajectorySessionSummary).where(TrajectorySessionSummary.trajectory_id == trajectory.id))
+    await db.execute(delete(TrajectoryTurnSummary).where(TrajectoryTurnSummary.trajectory_id == trajectory.id))
     from trajectory.store.models import TrajectoryMetaSession
     await db.execute(update(TrajectoryMetaSession).where(TrajectoryMetaSession.id == trajectory.session_id,
         TrajectoryMetaSession.user_id == trajectory.user_id).values(projected_activity_at=None))

@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from trajectory import export as exports, payload as payloads, repository
+from trajectory import export as exports, lite, payload as payloads, repository
 from trajectory.auth import record_audit, require_trajectory_admin, revalidate_viewer
 from trajectory.audience import SessionAudienceQuery, session_read, visible_sessions
 from trajectory.store.database import TraceEngineNotInitialized, trace_read_session, trace_session
@@ -155,11 +155,59 @@ async def events(session_id: str, after_seq: str = "0", until_seq: str | None = 
 @session_read
 async def records(session_id: str, through_seq: str | None = None, before: str | None = None,
     limit: int = Query(100, ge=1, le=500), kind: str | None = None, status: str | None = None,
-    agent_id: str | None = None, admin: dict = Depends(require_trajectory_admin)):
+    agent_id: str | None = None, turn_id: str | None = None, admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
+        # ``turn_id`` is additive (lite plan §6.3): without it the call is exactly the pre-t0006 one.
+        extra = {"turn_id": turn_id} if turn_id else {}
         return _json(await repository.list_records(db, trajectory, through_seq=through_seq, before=before,
-                                                   limit=limit, kind=kind, status=status, agent_id=agent_id))
+                                                   limit=limit, kind=kind, status=status, agent_id=agent_id, **extra))
+
+
+# -- Lite view (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6.3): users, a user's turns, one turn, the label dictionary --
+
+@router.get("/users")
+@errors
+async def lite_users(request: Request, admin: dict = Depends(require_trajectory_admin), q: str | None = None,
+    activity_from: datetime | None = None, activity_to: datetime | None = None, has_failures: bool = False,
+    active_only: bool = False, cursor: str | None = None, limit: int = Query(50, ge=1, le=200)):
+    await audit(admin, request, "lite_users", details={"q": q, "has_failures": has_failures, "active_only": active_only})
+    async with trace_read_session() as db:
+        result = await lite.list_users(db, q=q, activity_from=activity_from, activity_to=activity_to,
+                                       has_failures=has_failures, active_only=active_only, cursor=cursor, limit=limit,
+                                       viewer_id=admin["user_id"])
+    return _json(result)
+
+
+@router.get("/users/{user_id}/turns")
+@errors
+async def lite_user_turns(user_id: str, request: Request, admin: dict = Depends(require_trajectory_admin),
+    status: list[str] | None = Query(None), activity_from: datetime | None = None, activity_to: datetime | None = None,
+    session_id: str | None = None, q: str | None = None, cursor: str | None = None,
+    limit: int = Query(50, ge=1, le=100)):
+    await audit(admin, request, "lite_turns", details={"user_id": user_id, "session_id": session_id, "status": status})
+    async with trace_read_session() as db:
+        result = await lite.list_user_turns(db, user_id, statuses=status, activity_from=activity_from,
+                                            activity_to=activity_to, session_id=session_id, q=q, cursor=cursor,
+                                            limit=limit, viewer_id=admin["user_id"])
+    return _json(result)
+
+
+@router.get("/sessions/{session_id}/turns/{turn_id}")
+@errors
+@session_read
+async def lite_turn(session_id: str, turn_id: str, request: Request, admin: dict = Depends(require_trajectory_admin)):
+    async with trace_read_session() as db:
+        _, trajectory = await repository.get_trajectory(db, session_id)
+        result = await lite.get_turn(db, trajectory, turn_id)
+    await audit(admin, request, "lite_turn", session_id, {"turn_id": turn_id})
+    return _json(result)
+
+
+@router.get("/lite/labels")
+@errors
+async def lite_labels(admin: dict = Depends(require_trajectory_admin)):
+    return _json(lite.labels())
 
 
 @router.get("/sessions/{session_id}/records/{record_id:path}")

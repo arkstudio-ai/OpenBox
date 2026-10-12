@@ -18,6 +18,7 @@ import {
   withFilters,
   type ListParams,
 } from "../utils/params"
+import { ModeToggle } from "../lite/components/ModeToggle"
 import { AccessNotice } from "./AccessNotice"
 import { ListSortControl } from "./ListSortControl"
 import { SessionFilters } from "./SessionFilters"
@@ -67,6 +68,10 @@ export function TrajectoryListPage() {
 
   return (
     <div className="flex flex-col gap-4" data-testid="trajectory-list">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-n600 text-sm">{t("list.proLead")}</p>
+        <ModeToggle mode="pro" />
+      </div>
       <SessionFilters
         params={params}
         onApply={(patch) => go(withFilters(params, patch))}

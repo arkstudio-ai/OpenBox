@@ -85,6 +85,42 @@ export default defineConfig({
     // first. They reach the trajectory worker when VITE_TRAJECTORY_PROXY_TARGET
     // names it (e.g. http://localhost:8090) and the backend otherwise.
     proxy: {
+      // Developing against a remote backend (VITE_BACKEND_PROXY_TARGET=https://…): the SSO config it
+      // serves names its own callback, so Logto would send the browser back to that site. With
+      // VITE_DEV_LOGTO_ORIGIN set, the config's redirect URIs are rewritten to this dev origin
+      // (which must be registered on the Logto app); the exchange sends the same URI back.
+      ...(process.env.VITE_DEV_LOGTO_ORIGIN
+        ? {
+            "/api/auth/logto/config": {
+              target: BACKEND_PROXY_TARGET,
+              changeOrigin: true,
+              selfHandleResponse: true,
+              configure(proxy) {
+                proxy.on("proxyRes", (proxyRes, _req, res) => {
+                  const chunks: Buffer[] = []
+                  proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk))
+                  proxyRes.on("end", () => {
+                    const origin = process.env.VITE_DEV_LOGTO_ORIGIN!.replace(/\/$/, "")
+                    let body = Buffer.concat(chunks).toString("utf8")
+                    try {
+                      const parsed = JSON.parse(body)
+                      parsed.redirect_uri = `${origin}/callback`
+                      parsed.post_logout_redirect_uri = origin
+                      body = JSON.stringify(parsed)
+                    } catch {
+                      // Not JSON: pass through.
+                    }
+                    const headers = { ...proxyRes.headers }
+                    delete headers["content-length"]
+                    delete headers["content-encoding"]
+                    res.writeHead(proxyRes.statusCode ?? 200, headers)
+                    res.end(body)
+                  })
+                })
+              },
+            },
+          }
+        : {}),
       "/api/admin/trajectories/": trajectoryProxyTarget,
       "/ws/admin/trajectories": { target: trajectoryProxyTarget.replace(/^http/, "ws"), ws: true },
       "/api": BACKEND_PROXY_TARGET,

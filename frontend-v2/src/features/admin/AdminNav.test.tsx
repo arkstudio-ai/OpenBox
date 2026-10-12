@@ -42,6 +42,7 @@ describe("activeAdminSection", () => {
   it("keeps a trajectory session detail under its column", () => {
     expect(activeAdminSection("/app/admin/trajectories")).toBe("trajectories")
     expect(activeAdminSection("/app/admin/trajectories/sessions/ses-1")).toBe("trajectories")
+    expect(activeAdminSection("/app/admin/trajectories/users/u-1/turns/ses-1/turn-1")).toBe("trajectories")
   })
 
   it("falls back to fleet, the way the index route redirects", () => {
@@ -57,6 +58,9 @@ describe("adminLayout", () => {
 
   it("gives the session detail no column heading — it carries its own", () => {
     expect(adminLayout("/app/admin/trajectories")).toEqual({ heading: true })
+    expect(adminLayout("/app/admin/trajectories/sessions")).toEqual({ heading: true })
     expect(adminLayout("/app/admin/trajectories/sessions/ses-1")).toEqual({ heading: false })
+    expect(adminLayout("/app/admin/trajectories/users/u-1")).toEqual({ heading: true })
+    expect(adminLayout("/app/admin/trajectories/users/u-1/turns/ses-1/turn-1")).toEqual({ heading: false })
   })
 })

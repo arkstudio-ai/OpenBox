@@ -35,7 +35,10 @@ const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
 const AdminPricingRoute = lazy(() => import("@/routes/admin/AdminPricingRoute"))
 const AdminWorkspaceRoute = lazy(() => import("@/routes/admin/AdminWorkspaceRoute"))
 const AdminTrajectoriesRoute = lazy(() => import("@/routes/admin/AdminTrajectoriesRoute"))
+const AdminTrajectorySessionsRoute = lazy(() => import("@/routes/admin/AdminTrajectorySessionsRoute"))
 const AdminTrajectorySessionRoute = lazy(() => import("@/routes/admin/AdminTrajectorySessionRoute"))
+const AdminTrajectoryUserRoute = lazy(() => import("@/routes/admin/AdminTrajectoryUserRoute"))
+const AdminTrajectoryTurnRoute = lazy(() => import("@/routes/admin/AdminTrajectoryTurnRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -116,7 +119,10 @@ export const router = createBrowserRouter([
               { path: routePatterns.adminBilling, element: <AdminBillingRoute /> },
               { path: routePatterns.adminPricing, element: <AdminPricingRoute /> },
               { path: routePatterns.adminTrajectories, element: <AdminTrajectoriesRoute /> },
+              { path: routePatterns.adminTrajectorySessions, element: <AdminTrajectorySessionsRoute /> },
               { path: routePatterns.adminTrajectorySession, element: <AdminTrajectorySessionRoute /> },
+              { path: routePatterns.adminTrajectoryUser, element: <AdminTrajectoryUserRoute /> },
+              { path: routePatterns.adminTrajectoryTurn, element: <AdminTrajectoryTurnRoute /> },
             ],
           },
         ],

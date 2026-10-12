@@ -48,7 +48,7 @@ export function TrajectorySessionPage({ sessionId }: TrajectorySessionPageProps)
       }),
     [setSearch],
   )
-  const backHref = paths.adminTrajectories(detail.back || undefined)
+  const backHref = paths.adminTrajectorySessions(detail.back || undefined)
 
   if (denied) return <AccessNotice denial={denied} />
   // A terminal header error is shown even unbound: deletion forgets the target

@@ -5,6 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云：2026-10-13 07:46 `20261013-secretary-074313a0`（v14 语音秘书、视频流程与安卓 1.0.34）
+
+- 基于 `main@074313a0` 构建，前后端均切换为该标签；trajectory-worker 的代码未变化，保留 `20261012-trajlite-m3b-72ea6099`。AWS 本次未发布。
+- 包含 v14 秘书指引、语义工具与任务模型/项目/会话选择、口播技能卡接管、素材理解、RunningHub 图片来源、长通话和超时恢复；安卓补齐问题卡素材选择/上传/预览/草稿/提交，版本升为正式签名 `1.0.34 (45)`。
+- 配置：语音默认设为 Audio 3.1 / longanqian_v3.1；RunningHub 图片模型由服务端统一选用 Seedream V5 Pro，复用已有 provider；仅 `wan3.0-video` 改为原生 DashScope，复用线上语音的阿里云密钥。其他视频模型及计费配置保持现有值；没有迁移未完成的视频任务。
+- 切换前租约、进行中视频、活跃通话均为 0；配置与两库备份在 `backups/20261013-secretary-074313a0/activation-20261012T234529Z/`。业务库 `pf39b0c1d2e3` / trace `t0007_turn_alerts`，无新迁移。按 backend → healthy → frontend → healthy 切换，其余容器 ID 保持不变。
+- 发布核验：公网首页 build-id 匹配，首页 / environment / Logto 配置均 200，六服务 healthy、重启 0。单实例切换的采样记录中出现短暂 502，随后恢复。按用户要求**没有运行测试、模拟器或业务场景复测**，也没有调用模型生成样片；安卓新素材交互未真机验收。
+- 安卓 7z（约 26.7 MiB）与自 1.0.33 以来的更新简介已发送到指定飞书产品交流群。包和签名详见 [移动端发布记录](MOBILE_RELEASE_1_0_34_20261013.md)，证据 [JSON](evidence/secretary-release-20261013.json)。
+- 回滚：恢复上述备份中的 `openbox.json` 到 `config/openbox.json`、`docker-compose.override.yml` 到部署根目录，再按 backend → healthy → frontend → healthy 执行 `docker compose up -d --no-deps <service>`。无数据库回滚需求；不得重建或删除 postgres / redis / qdrant 数据。
+
 ## 高德机：2026-10-11 `20261011-gaode-e1840135`（合作方资费与阶梯计费、/v1 四个账户接口）
 
 - 代码 `feat/harness-api-v1`：`billing/partner.py` 合作方资费（默认 `partner_tariff.default.json` = 高德价表；`partner_tariffs` 表按工作区覆盖）；`/v1` 会话（带 `api_key_id`）的 LLM 计量、视频报价/结算、合成报价/结算全部改走资费（档位默认分辨率基价 × 倍率，文本按档位每百万 token，合成按秒整分钟取整），成本仍取平台价目表。运行时按第一阶梯扣费，`month_summary` 按阶梯重算，`settle_rebate` 月末一次性以 `rebate` 流水返还差额。
@@ -38,7 +48,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 已知差异：WUYING 隧道 `openbox-wuying-tunnel` 在 EC2 上是 inactive（发布前就如此），backend 启动日志有 `WUYING sandbox unreachable`；没有 qdrant-memory 容器。简明模式三页可用，但 dev 库此前无录制，轮汇总从本次发布后开始积累，无需回填。
 - 回滚：恢复 `backups/aws-20261012/activation-*/` 的 `.env`、`docker-compose.override.yml`、`config/backend.env`，`docker compose up -d --no-deps backend frontend`，`docker compose rm -sf trajectory-worker`；业务库 53 条迁移不可逆，只能用同目录 `business.dump` 恢复（会丢发布后的写入）。
 
-## 当前阿里云：2026-10-12 18:23 backend/worker `20261012-trajlite-m3b-72ea6099` / frontend `20261012-trajlite-m3-7511158c`（简明模式 M3：积分、失败告警、结论口径）
+## 历史阿里云：2026-10-12 18:23 backend/worker `20261012-trajlite-m3b-72ea6099` / frontend `20261012-trajlite-m3-7511158c`（简明模式 M3：积分、失败告警、结论口径）
 
 - 源码：M3 为 PR [#79](https://github.com/arkstudio-ai/OpenBox/pull/79)（后端）与 [#78](https://github.com/arkstudio-ai/OpenBox/pull/78)（前端），合并后 `main@7511158c`；随后热修 [#80](https://github.com/arkstudio-ai/OpenBox/pull/80)（声明 `turn_alerts_sent` 计数器、无工具名的旧记录文案）`main@72ea6099` 只换了 backend/worker。设计 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §14。
 - 内容：业务侧内部回调 `POST /api/internal/trajectory/usage`（按会话/用户时间窗汇总 `usage_events.status=charged` 的 `credits`）与 `POST /api/internal/trajectory/alerts`（失败轮给每个活跃超管各写一条 `system` 消息，`kind=trajectory_turn_failed`，链接类型 `admin_trajectory_turn`）；worker 三个读接口附加 `credits`，投影每 30 s 投递待告警的失败轮；前端三页显示积分（无收费行显示「未计费」），失败/有失败步骤的轮结论优先用 AI 最后回复的说明，消息中心点告警直达轮详情。

@@ -29,7 +29,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-12 17:08 `20261012-trajlite-36d67be4`（轨迹监控简明模式后端 M1：轮汇总、用户/轮读接口、字典）
+## 当前阿里云：2026-10-12 17:14 frontend `20261012-trajlite-fe-e884228b`（轨迹监控简明模式前端 M2）
+
+- 源码 `main@e884228b`（PR [#71](https://github.com/arkstudio-ai/OpenBox/pull/71) 合并，含 441a5d12 的 vite 开发代理 SSO 回调改写，仅开发态生效）。只换 **frontend**；backend / trajectory-worker 保持 `20261012-trajlite-36d67be4`。方案 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §7、§12。
+- 内容：`/app/admin/trajectories` 改为简明模式用户列表；原专业会话列表移到 `/app/admin/trajectories/sessions`（会话详情路径不变，旧列表书签带专业筛选键时自动跳转）；`/users/:userId` 某用户的对话轮；`/users/:userId/turns/:sessionId/:turnId` 轮详情步骤流；两个列表页右上角「简明 / 专业」切换；工具动作名取自 `GET /api/admin/trajectories/lite/labels`。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive e884228b`（`VITE_BUILD_ID`=tag，`NGINX_IMAGE=nginx:1.31.5-alpine`，39 s），本地核对 `index.html` app-build、资源含模式切换标记、nginx 模板含 `/api/admin/trajectories/` 代理。frontend image `sha256:30a2f4b6…063b1f23`（压缩包 `a2fcb659…b736471`，29,667,448 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换脚本 `releases/20261012-trajlite-fe-e884228b/deploy_gw2_v12.sh`（只换前端：备份 override → `up -d --no-deps frontend` → 探测）：09:14:12–09:14:36 UTC，15 s healthy。无库变更、无配置变更。
+- 验证：本机与公网 `index.html` app-build 为新 tag；`/app/admin/trajectories` 与 `/app/admin/trajectories/sessions` 200、`/api/admin/trajectories/users` 匿名 401；nginx `-t` 通过且含轨迹代理块；六服务 healthy。线上登录后的三页验收见本条后续补记。
+- 回滚：恢复 `backups/20261012-trajlite-fe-e884228b/activation-20261012T0914*Z/docker-compose.override.yml`（frontend 回 `20261012-pricing-t1-90c9a5be`），`docker compose up -d --no-deps frontend`。AWS 未发布。
+
+## 历史阿里云：2026-10-12 17:08 `20261012-trajlite-36d67be4`（轨迹监控简明模式后端 M1：轮汇总、用户/轮读接口、字典）
 
 - 源码 `main@36d67be4`（PR [#70](https://github.com/arkstudio-ai/OpenBox/pull/70) 合并）。方案与实现记录 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §6、§11。只换 **backend 与 trajectory-worker**（同一镜像）；**frontend 保持 `20261012-pricing-t1-90c9a5be`**，简明模式前端在 PR [#71](https://github.com/arkstudio-ai/OpenBox/pull/71) 另发。
 - 内容：trace 库迁移 `t0005_recorded_audiences → t0006_turn_summaries`（`trajectory_records.turn_id` 列与索引、新表 `trajectory_turn_summaries`）；投影每批后重算触及轮；worker 新增 `GET /api/admin/trajectories/users`、`/users/{user_id}/turns`、`/sessions/{session_id}/turns/{turn_id}`、`/lite/labels`，records 接口新增可选 `turn_id`；工具动作字典 `trajectory/lite_labels.json`（48 条精确 + 14 条前缀，注册表 89 个工具全部命中）；业务侧 `api/internal.py` 审计允许列表加 `lite_users / lite_turns / lite_turn`。业务库**无迁移**（保持 `pf39b0c1d2e3`），`openbox.json` / `backend.env` 未动（sha `5525a1be…` / `5dff3a35…`）。

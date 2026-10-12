@@ -29,7 +29,17 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 未做：`/v1/models`、`/v1/me`、`/v1/usage*`（对外文档 v1.2 已写，后端未实现）；真实出片未测（会产生费用）；全量单测在本机后台跑，定向 225 项通过。
 - 回滚：override 两行改回 `20260922-gaode-d92cd11` / `20260923-gaode-f233fb0`，`alembic downgrade e7c9a1b3d5f0` 后 `docker compose up -d --no-deps backend frontend`，配置与 env 用上述备份还原。
 
-## 当前阿里云：2026-10-12 17:44 `20261012-trajlite2-d8d02ed1`（后端+worker）/ frontend `20261012-trajlite3-2a327160`（简明模式线上联调修正）
+## 当前阿里云：2026-10-12 18:23 backend/worker `20261012-trajlite-m3b-72ea6099` / frontend `20261012-trajlite-m3-7511158c`（简明模式 M3：积分、失败告警、结论口径）
+
+- 源码：M3 为 PR [#79](https://github.com/arkstudio-ai/OpenBox/pull/79)（后端）与 [#78](https://github.com/arkstudio-ai/OpenBox/pull/78)（前端），合并后 `main@7511158c`；随后热修 [#80](https://github.com/arkstudio-ai/OpenBox/pull/80)（声明 `turn_alerts_sent` 计数器、无工具名的旧记录文案）`main@72ea6099` 只换了 backend/worker。设计 [SESSION_TRAJECTORY_LITE_PLAN.md](SESSION_TRAJECTORY_LITE_PLAN.md) §14。
+- 内容：业务侧内部回调 `POST /api/internal/trajectory/usage`（按会话/用户时间窗汇总 `usage_events.status=charged` 的 `credits`）与 `POST /api/internal/trajectory/alerts`（失败轮给每个活跃超管各写一条 `system` 消息，`kind=trajectory_turn_failed`，链接类型 `admin_trajectory_turn`）；worker 三个读接口附加 `credits`，投影每 30 s 投递待告警的失败轮；前端三页显示积分（无收费行显示「未计费」），失败/有失败步骤的轮结论优先用 AI 最后回复的说明，消息中心点告警直达轮详情。
+- 迁移：trace `t0006_turn_summaries → t0007_turn_alerts`（`trajectory_turn_summaries.alerted_at` + 部分索引；升级时把当时 27 条 `failed` 行盖章，不补发历史）。业务库无迁移（`pf39b0c1d2e3`）。`openbox.json` / `backend.env` 未动。
+- 构建与中转：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive`（7511158c 两镜像；72ea6099 仅 backend），经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点到 gw2，`sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换：`releases/20261012-trajlite-m3-7511158c/deploy_gw2_v15.sh`（两库 dump → 租约守门 → worker 9 s（跑 t0007）→ backend 21 s → frontend 15 s）10:07:56–10:08:48 UTC；`releases/20261012-trajlite-m3b-72ea6099/deploy_gw2_v16.sh`（只换 worker+backend）10:22–10:23 UTC。容器内核对：审计 lite action、告警链接类型与模板、内部路由含 usage/alerts、worker 客户端含 `turn_usage/turn_alerts`、计数器已声明、`tool` 兜底文案。
+- 线上验证（超管登录）：轮列表积分列（例如某轮 1.197643、无收费"未计费"）、轮详情积分 1.458366、定时任务轮结论改为 AI 说明"每日抖音热点轮询异常提醒 … 登录态已失效…"；把一条历史失败轮的 `alerted_at` 清空后，worker 一个周期内给 5 位超管各写了一条「有一轮对话失败 · e · 制作视频请求」，消息中心点开直达该轮。首次投递曾报 `unknown counter turn_alerts_sent`（已由 #80 修复）。
+- 回滚：前端恢复 `backups/20261012-trajlite-m3-7511158c/activation-*/docker-compose.override.yml`；worker/backend 回到 `20261012-trajlite2-d8d02ed1` 时旧 worker 不认识 t0007，启动前 `alembic -c alembic_trajectory.ini downgrade t0006_turn_summaries`（只删 `alerted_at` 与索引）。AWS 未发布。
+
+## 历史阿里云：2026-10-12 17:44 `20261012-trajlite2-d8d02ed1`（后端+worker）/ frontend `20261012-trajlite3-2a327160`（简明模式线上联调修正）
 
 - 线上用真实记录联调简明模式后两轮修正：PR [#74](https://github.com/arkstudio-ai/OpenBox/pull/74)（后端）、[#75](https://github.com/arkstudio-ai/OpenBox/pull/75)、[#76](https://github.com/arkstudio-ai/OpenBox/pull/76)（前端）。设计文档 §11 已记录根因。
 - **后端 `main@d8d02ed1`**：工具记录的 `title` 是结果标题（"exit code: 0"、"Found 27 files"），轮汇总与步骤标签改按 `data.tool` 计数/命名并下发 `tool_id`；每次工具调用留下的策略自动放行权限记录（0 ms）从步骤流隐藏；定时任务把主 Agent 自身记成 `agent` 记录，不再算子任务；私有会话被 audience 过滤后用户列表按可见活动重排。**无迁移**（trace 仍 t0006，业务 `pf39b0c1d2e3`）。切换脚本 `releases/20261012-trajlite2-d8d02ed1/deploy_gw2_v13.sh`（v11 加前端切换）：09:37–09:38 UTC worker/backend/frontend 依次 healthy，末尾重跑回填 17 秒（1,249 轮重算，0 失败）。

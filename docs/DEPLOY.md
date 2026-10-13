@@ -5,7 +5,21 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-13 07:46 `20261013-secretary-074313a0`（v14 语音秘书、视频流程与安卓 1.0.34）
+## 当前阿里云：2026-10-13 12:34 `20261013-creditcap-253f1b8d`（/v1 单次消耗上限 `max_credits`）
+
+- 源码 `main@253f1b8d`（PR [#83](https://github.com/arkstudio-ai/OpenBox/pull/83)），相对上一版只多了 `max_credits`：合作方发送需求时给本次请求设积分上限，镜头生成与云端合成提交前按同一报价预校验，超限不提交、记录 `credit_cap.hit`，`GET /v1/sessions/{id}` 透出 `credit_cap`；文本调用不计入；网页/App 会话无此字段，行为不变。对外文档升 v1.3。
+- 迁移：业务库 `pf39b0c1d2e3 → pg40c1d2e3f4`（`sessions.credit_cap` JSON 列）；轨迹库 `t0007_turn_alerts` 未动。三容器都切到该标签（worker 代码与上一版一致）。配置与两库备份 `backups/20261013-creditcap-253f1b8d/activation-*/`。
+- 切换：`releases/20261013-creditcap-253f1b8d/deploy_gw2_v10.sh`，租约 0 → worker 9 s → backend 21 s → frontend 15 s healthy，0 重启。容器内核对 `catalogue()` `2026-10-12.1`、`SendMessageBody.max_credits` 存在；公网首页 build-id 匹配，`/api/environment` 200，`/v1/*` 与 `/api/admin/*` 匿名 401。
+- 观察：启动恢复阶段对 10-10 的旧会话 `session_7YBVEBDJ…`（status=error，网页会话）报 `Agent tail repair failed … Assistant parent crosses its logical turn`，属该会话历史数据问题，与本次改动无关；轨迹 `ReadTooLarge` WARNING 同前几版。
+- 回滚：恢复备份目录的 `docker-compose.override.yml`，旧镜像启动前 `alembic downgrade pf39b0c1d2e3`（只删一列），再依次 `up -d --no-deps trajectory-worker / backend / frontend`。
+
+## 高德机：2026-10-13 `20261013-creditcap-253f1b8d`（对标 main，含 `max_credits`）
+
+- 与 gw2 同一对镜像（backend + frontend）。切换前用新镜像加载高德机 `openbox.json` 核对五条视频模型路由不变（Seedance 2.5/2.0→tokenhub、wan3/H3→自有 new-api、Turbo→RunningHub），backend 10 秒 healthy，业务库到 `pg40c1d2e3f4`。
+- 验证：测试 Key 发送 `max_credits: "-5"` 得 400 `INVALID_REQUEST`；容器内对测试会话设上限 5 → 预估 4 放行、预估 6 拒绝（`CREDIT_CAP_EXCEEDED`），会话视图出现 `credit_cap.exceeded`，清除后为 `null`。未做真实出片。
+- 回滚：override 两行改回 `20261011-gaode-e1840135` / `20261011-gaode-fe-6258a020`，旧镜像启动前 `alembic downgrade pf39b0c1d2e3`。
+
+## 历史阿里云：2026-10-13 07:46 `20261013-secretary-074313a0`（v14 语音秘书、视频流程与安卓 1.0.34）
 
 - 基于 `main@074313a0` 构建，前后端均切换为该标签；trajectory-worker 的代码未变化，保留 `20261012-trajlite-m3b-72ea6099`。AWS 本次未发布。
 - 包含 v14 秘书指引、语义工具与任务模型/项目/会话选择、口播技能卡接管、素材理解、RunningHub 图片来源、长通话和超时恢复；安卓补齐问题卡素材选择/上传/预览/草稿/提交，版本升为正式签名 `1.0.34 (45)`。

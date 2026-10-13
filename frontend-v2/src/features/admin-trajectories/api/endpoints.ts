@@ -7,6 +7,7 @@ import type {
   CheckpointResponse,
   EventPage,
   ExportJob,
+  PayloadLink,
   PayloadMeta,
   RecordDetail,
   RecordExpand,
@@ -196,6 +197,25 @@ export const trajectoryApi = {
         `/payloads/${encodeURIComponent(payloadId)}${queryString({ through_seq: throughSeq, meta: 1 })}`,
       ),
       withSignal(signal),
+    ),
+
+  /** A signed link to the person's actual output file; the server audits it and signs for minutes only. */
+  payloadLink: (
+    sessionId: string,
+    payloadId: string,
+    throughSeq: Seq,
+    options: { download?: boolean; name?: string | null; signal?: AbortSignal } = {},
+  ) =>
+    http.get<PayloadLink>(
+      sessionPath(
+        sessionId,
+        `/payloads/${encodeURIComponent(payloadId)}/link${queryString({
+          through_seq: throughSeq,
+          download: options.download ? 1 : undefined,
+          name: options.download ? options.name : undefined,
+        })}`,
+      ),
+      withSignal(options.signal),
     ),
 
   /** The JSON a `$ref` stands for, as visible at H (`capabilities.refs` servers). */

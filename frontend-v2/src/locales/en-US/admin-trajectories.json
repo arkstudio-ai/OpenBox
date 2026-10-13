@@ -582,7 +582,15 @@
     "failed": "Couldn't load this content. Try again later.",
     "meta": "{{type}} · {{size}}",
     "mediaLabel": "Protected content {{id}}",
-    "download": "Download"
+    "download": "Download",
+    "open": "Open original",
+    "openHint": "Opens the person's actual output in a new window through a short-lived signed link from the admin API (large videos play too)",
+    "linkRefused": {
+      "pending": "Not produced at this position yet.",
+      "deleted": "This file has been deleted.",
+      "corrupt": "This file is corrupt and cannot be opened.",
+      "not_linkable": "A retained trajectory copy; there is no original file to link."
+    }
   },
   "content": {
     "loading": "Loading captured content…",

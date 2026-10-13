@@ -31,6 +31,8 @@ CONTRACT = {
     ("POST", f"{PREFIX}/ticket"),
     # Additive (SPEC §8.12).
     ("GET", f"{PREFIX}/sessions/{{session_id}}/blobs/{{sha256}}"),
+    # Asset outputs that do not fit a worker read: a signed link to the business object (api.md §2.2 row 8b).
+    ("GET", f"{PREFIX}/sessions/{{session_id}}/payloads/{{payload_id}}/link"),
     # Lite view (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6.3).
     ("GET", f"{PREFIX}/users"),
     ("GET", f"{PREFIX}/users/{{user_id}}/turns"),
@@ -232,6 +234,62 @@ async def test_payload_download_is_audited_and_revalidated_after_the_read(worker
     corrupt = await worker.client.get(SESSION + "/payloads/pld_media")
     assert corrupt.status_code == 409 and corrupt.json()["detail"]["code"] == "trajectory_corrupt"
     assert corrupt.headers["cache-control"] == "no-store" and PRIVATE not in corrupt.content
+
+
+async def test_payload_link_signs_the_asset_object_after_audit_and_revalidation(worker, monkeypatch):
+    from trajectory import payload as payloads
+    signed = []
+
+    def presign(oss_key, *, expires_sec, download_name):
+        signed.append((oss_key, expires_sec, download_name))
+        return f"https://bucket.public.test/{oss_key}?Expires={expires_sec}"
+
+    payloads.set_asset_presigner(presign)
+    monkeypatch.setenv("TRAJECTORY_ASSET_LINK_SECONDS", "900")
+    try:
+        assert (await worker.client.get(SESSION)).status_code == 200  # the viewer's facts are cached now
+        viewer_calls = worker.backend.viewer_calls()
+        response = await worker.client.get(SESSION + "/payloads/pld_asset/link")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["url"] == "https://bucket.public.test/assets/a/race.png?Expires=900"
+        assert body["payload_id"] == "pld_asset" and body["expires_in"] == 900 and body["media_type"] == "image/png"
+        assert body["name"] is None and body["size_bytes"] == len(PRIVATE) and body["expires_at"].endswith("+00:00")
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert signed == [("assets/a/race.png", 900, None)]
+        # Audited like a download, and the viewer was asked about again after the audit.
+        assert worker.backend.viewer_calls() == viewer_calls + 1
+        links = _audited(await worker.delivered_audit(), "admin.trajectory.payload_link")
+        assert [(row.resource_id, row.details) for row in links] == [
+            ("session_a_1", {"payload_id": "pld_asset", "through_seq": "3", "expires_sec": 900, "download": True})] or \
+            [(row.resource_id, row.details) for row in links] == [
+            ("session_a_1", {"payload_id": "pld_asset", "through_seq": "3", "expires_sec": 900, "download": False})]
+        # A download link carries a safe file name: base name only, quotes dropped.
+        response = await worker.client.get(SESSION + "/payloads/pld_asset/link",
+                                           params={"download": "1", "name": '../dir/成片 "final".mp4'})
+        assert response.status_code == 200 and response.json()["name"] == "成片 final.mp4"
+        assert signed[-1] == ("assets/a/race.png", 900, "成片 final.mp4")
+        # A retained copy has no source object: refused, and not audited as a link.
+        copy = await worker.client.get(SESSION + "/payloads/pld_media/link")
+        assert copy.status_code == 409 and copy.json()["detail"]["code"] == "trajectory_payload_not_linkable"
+        assert copy.headers["cache-control"] == "no-store"
+        assert len(_audited(await worker.delivered_audit(), "admin.trajectory.payload_link")) == 2
+        # Position and session scoping are the download's.
+        assert (await worker.client.get(SESSION + "/payloads/pld_asset/link", params={"through_seq": "2"})).status_code == 404
+        assert (await worker.client.get(PREFIX + "/sessions/session_b_1/payloads/pld_asset/link")).status_code == 404
+        assert worker.blob.gets == 0  # a link reads no bytes
+    finally:
+        payloads.set_asset_presigner(None)
+
+
+def test_link_seconds_is_clamped(monkeypatch):
+    from trajectory import payload as payloads
+    monkeypatch.delenv("TRAJECTORY_ASSET_LINK_SECONDS", raising=False)
+    assert payloads.link_seconds() == 600
+    for raw, expected in (("30", 60), ("7200", 3600), ("abc", 600), ("1200", 1200)):
+        monkeypatch.setenv("TRAJECTORY_ASSET_LINK_SECONDS", raw)
+        assert payloads.link_seconds() == expected
 
 
 async def test_payload_meta_reports_availability_without_bytes_or_audit(worker):

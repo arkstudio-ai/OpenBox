@@ -64,7 +64,7 @@ def internal_token(x_internal_token: str = Header(default="")) -> None:
 
 TRAJECTORY_AUDIT_ACTIONS = frozenset({
     "admin.trajectory.list", "admin.trajectory.view", "admin.trajectory.payload",
-    "admin.trajectory.export", "admin.trajectory.download", "trajectory.subscribe",
+    "admin.trajectory.payload_link", "admin.trajectory.export", "admin.trajectory.download", "trajectory.subscribe",
     # Lite view reads (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6.3).
     "admin.trajectory.lite_users", "admin.trajectory.lite_turns", "admin.trajectory.lite_turn",
 })

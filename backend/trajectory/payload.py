@@ -221,6 +221,53 @@ def oss_asset_reader(*, internal: bool | None = None) -> OssAssetReader:
     return OssAssetReader(internal)
 
 
+_asset_presigner = None
+
+#: How long an asset link stays valid; the viewer opens it at once, so minutes, not hours.
+DEFAULT_LINK_SECONDS = 600
+
+
+def set_asset_presigner(presigner) -> None:
+    """Install ``presigner(oss_key, *, expires_sec, download_name) -> str`` for asset links (tests); None restores OSS."""
+    global _asset_presigner
+    _asset_presigner = presigner
+
+
+def link_seconds() -> int:
+    """TRAJECTORY_ASSET_LINK_SECONDS, clamped to 60–3600 (default 600)."""
+    raw = (os.getenv("TRAJECTORY_ASSET_LINK_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_LINK_SECONDS
+    except ValueError:
+        value = DEFAULT_LINK_SECONDS
+    return max(60, min(3600, value))
+
+
+def presign_asset_url(oss_key: str, *, expires_sec: int, download_name: str | None = None) -> str:
+    """A short-lived GET link to a business asset object on the bucket's public endpoint.
+
+    The worker reads assets over the VPC endpoint; a link is for an operator's
+    browser, so it is signed for the public host (OSS V1 signs bucket and key,
+    not the host, so the same signature works on either).
+    """
+    if _asset_presigner is not None:
+        return _asset_presigner(oss_key, expires_sec=expires_sec, download_name=download_name)
+    from core.oss import get_oss
+    return get_oss().presign_get(oss_key, expires_sec, download_name=download_name, internal=False)
+
+
+class PayloadNotLinkable(LookupError):
+    """The payload is a trajectory copy (blob), not a business asset: it has no object to link to."""
+
+
+async def validate_linkable_payload(db, trajectory_id: str, payload_id: str, *, through_seq: int) -> TrajectoryPayload:
+    """``validate_payload`` for a link: the row must be an asset reference with its object key."""
+    row = await validate_payload(db, trajectory_id, payload_id, through_seq=through_seq)
+    if row.storage_kind != "asset" or not row.storage_key:
+        raise PayloadNotLinkable("Trajectory payload is a retained copy without a source object")
+    return row
+
+
 async def read_asset_object(oss_key: str) -> bytes:
     """Bytes of a business asset object; FileNotFoundError when it is gone."""
     return await (_asset_reader or oss_asset_reader())(oss_key)

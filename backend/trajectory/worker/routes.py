@@ -12,7 +12,7 @@ viewer and the content's state are revalidated after that read, and only then
 is the file streamed, so a read revoked meanwhile sends no bytes. The stream
 runs under a transfer slot, not the read slot that prepared it (``read_limits``).
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Literal
 
@@ -275,6 +275,53 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
         raise
     return SpooledResponse(spooled, media_type=media_type, headers={**CONTENT_HEADERS,
         "Content-Disposition": f'attachment; filename="{payload_id}"'})
+
+
+def _link_name(name: str | None) -> str | None:
+    """A download file name an operator asked for: the base name only, printable, bounded."""
+    if not name:
+        return None
+    base = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    base = "".join(ch for ch in base if ch.isprintable() and ch not in '"\'')[:150]
+    return base or None
+
+
+@router.get("/sessions/{session_id}/payloads/{payload_id}/link")
+@errors
+@session_read
+async def payload_link(session_id: str, payload_id: str, request: Request, through_seq: str | None = None,
+                       download: bool = False, name: str | None = None,
+                       admin: dict = Depends(require_trajectory_admin)):
+    """A short-lived signed link to the business object behind an asset payload (the person's actual output).
+
+    Large outputs (a 100 MB video) do not fit a worker read; the link lets the
+    operator's browser fetch the object from the bucket directly. Visibility,
+    deletion and position rules are the download's; a retained copy (blob)
+    has no source object and answers 409 ``trajectory_payload_not_linkable``.
+    The link itself is audited, and the viewer and the row are rechecked after
+    the audit, as for a download.
+    """
+    async with trace_read_session() as db:
+        _, trajectory = await repository.get_trajectory(db, session_id)
+        through = repository.watermark(trajectory, through_seq)
+        try:
+            row = await payloads.validate_linkable_payload(db, trajectory.id, payload_id, through_seq=through)
+        except payloads.PayloadNotLinkable as exc:
+            raise HTTPException(409, detail={"code": "trajectory_payload_not_linkable", "message": str(exc)}) from exc
+    expires = payloads.link_seconds()
+    await audit(admin, request, "payload_link", session_id,
+                {"payload_id": payload_id, "through_seq": str(through), "expires_sec": expires, "download": download})
+    await revalidate_viewer(request, admin["user_id"])
+    async with trace_read_session() as db:
+        _, current = await repository.get_trajectory(db, session_id)
+        row = await payloads.validate_linkable_payload(db, current.id, payload_id, through_seq=through)
+    filename = _link_name(name) if download else None
+    issued = datetime.now(timezone.utc)
+    url = payloads.presign_asset_url(row.storage_key, expires_sec=expires, download_name=filename)
+    return _json({"payload_id": payload_id, "url": url, "expires_in": expires,
+                  "expires_at": (issued + timedelta(seconds=expires)).isoformat(),
+                  "media_type": row.media_type, "size_bytes": row.size_bytes, "name": filename},
+                 headers=CONTENT_HEADERS)
 
 
 @router.get("/sessions/{session_id}/blobs/{sha256}")

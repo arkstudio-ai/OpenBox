@@ -1,11 +1,12 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Download } from "lucide-react"
+import { Download, ExternalLink } from "lucide-react"
 import { formatBytes } from "@/shared/lib/format"
 import { Spinner } from "@/shared/ui/Spinner"
 import { StaleAccessError } from "../../api/access"
 import { usePayload } from "../../api/queries"
 import { useDownloadPayload } from "../../hooks/useDownloadPayload"
+import { useOpenPayloadLink } from "../../hooks/useOpenPayloadLink"
 import type { PayloadRef } from "../../types/protocol"
 import { AvailabilityNote } from "./AvailabilityNote"
 import { useInspector } from "./context"
@@ -20,6 +21,12 @@ interface PayloadViewProps {
   reference: PayloadRef
   /** Captured name offered for the explicit download; the payload id otherwise. */
   filename?: string | null
+  /**
+   * The payload is a reference to the person's own output object (an artifact
+   * with a source asset): offer opening that object through a short-lived
+   * signed link, which large videos need since they exceed a worker read.
+   */
+  openable?: boolean
 }
 
 function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
@@ -41,7 +48,7 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
  * together with the download action. Downloading is an explicit, fresh,
  * server-checked read; the Blob on screen is never handed out.
  */
-export function PayloadView({ reference, filename }: PayloadViewProps) {
+export function PayloadView({ reference, filename, openable = false }: PayloadViewProps) {
   const { t } = useTranslation(NS)
   const { sessionId, throughSeq, refs } = useInspector()
   const [view, setView] = useState<HTMLDivElement | null>(null)
@@ -51,6 +58,7 @@ export function PayloadView({ reference, filename }: PayloadViewProps) {
     shown,
   })
   const download = useDownloadPayload(sessionId, throughSeq, reference.payload_id)
+  const link = useOpenPayloadLink(sessionId, throughSeq, reference.payload_id)
   const content = payload.data
 
   if (content && content.availability !== "available")
@@ -76,6 +84,8 @@ export function PayloadView({ reference, filename }: PayloadViewProps) {
       ? parseJson(content.text)
       : { ok: false as const }
   const downloadFailed = !!download.error && !(download.error instanceof StaleAccessError)
+  const linkFailed = !!link.error && !(link.error instanceof StaleAccessError)
+  const linkRefused = link.data && !link.data.opened ? link.data.reason : null
   return (
     <div ref={setView} className="flex flex-col gap-2" data-testid="trajectory-payload">
       <div className="flex flex-wrap items-center gap-2">
@@ -92,9 +102,27 @@ export function PayloadView({ reference, filename }: PayloadViewProps) {
           <Download size={12} aria-hidden />
           {t("payload.download")}
         </button>
-        {downloadFailed && (
+        {openable && (
+          <button
+            type="button"
+            className="border-hair hover:bg-hairsoft inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-40"
+            onClick={() => void link.open({ filename: filename ?? null }).catch(() => undefined)}
+            disabled={link.isPending}
+            title={t("payload.openHint")}
+            data-testid="trajectory-payload-open"
+          >
+            <ExternalLink size={12} aria-hidden />
+            {t("payload.open")}
+          </button>
+        )}
+        {(downloadFailed || linkFailed) && (
           <span role="alert" className="text-dangerink text-xs">
             {t("payload.failed")}
+          </span>
+        )}
+        {linkRefused && (
+          <span role="status" className="text-n500 text-xs">
+            {t(`payload.linkRefused.${linkRefused}`)}
           </span>
         )}
       </div>

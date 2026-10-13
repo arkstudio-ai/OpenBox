@@ -49,7 +49,12 @@ export function ArtifactPreviewPanel({ record }: PanelProps) {
   } else {
     const reference = payloadRef(data.payload)
     body = reference ? (
-      <PayloadView reference={reference} filename={typeof data.name === "string" ? data.name : null} />
+      <PayloadView
+        reference={reference}
+        filename={typeof data.name === "string" ? data.name : null}
+        // Only the person's own stored object can be linked; trajectory copies cannot.
+        openable={typeof data.source_asset_id === "string" && data.source_asset_id !== ""}
+      />
     ) : (
       <AvailabilityNote state="not_recorded" />
     )

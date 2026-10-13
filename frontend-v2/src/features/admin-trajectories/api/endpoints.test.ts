@@ -98,6 +98,18 @@ describe("admin trajectory endpoints", () => {
     expect(http.post).not.toHaveBeenCalled()
   })
 
+  it("asks for a signed link to an output object as a JSON read, naming the file only for downloads", async () => {
+    await trajectoryApi.payloadLink("ses/1", "pay_1", "12", { signal })
+    await trajectoryApi.payloadLink("ses/1", "pay_1", "12", { download: true, name: "成片 1.mp4", signal })
+    await trajectoryApi.payloadLink("ses/1", "pay_1", "12", { download: false, name: "ignored.mp4", signal })
+    expect(vi.mocked(http.get).mock.calls).toEqual([
+      [`${TRAJECTORY_API}/sessions/ses%2F1/payloads/pay_1/link?through_seq=12`, { signal }],
+      [`${TRAJECTORY_API}/sessions/ses%2F1/payloads/pay_1/link?through_seq=12&download=1&name=%E6%88%90%E7%89%87+1.mp4`, { signal }],
+      [`${TRAJECTORY_API}/sessions/ses%2F1/payloads/pay_1/link?through_seq=12`, { signal }],
+    ])
+    expect(requestBlob).not.toHaveBeenCalled()
+  })
+
   it("has exactly one write: creating an export at a fixed watermark", async () => {
     await trajectoryApi.createExport("ses_b", "34", signal)
     expect(http.post).toHaveBeenCalledWith(

@@ -108,6 +108,17 @@ export interface PayloadMeta {
   sha256: string | null
 }
 
+/** A short-lived signed link to the business object behind an asset payload (`/payloads/{id}/link`). */
+export interface PayloadLink {
+  payload_id: string
+  url: string
+  expires_in: number
+  expires_at: string
+  media_type: string | null
+  size_bytes: number | null
+  name: string | null
+}
+
 /**
  * Content-addressed JSON the server keeps once per trajectory: a system
  * prompt, a tool catalog, one message or any oversized value (SPEC §7.3).

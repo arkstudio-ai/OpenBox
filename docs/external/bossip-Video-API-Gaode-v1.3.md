@@ -2,8 +2,8 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v1.2 |
-| 发布日期 | 2026-10-11 |
+| 文档版本 | v1.3 |
+| 发布日期 | 2026-10-13 |
 | 适用方 | 高德 |
 | 接口版本 | `/v1` |
 | 维护方 | bossip 技术团队 |
@@ -14,6 +14,7 @@
 |---|---|---|
 | v1.0 | 2026-09-18 | 首版，最小接口集与待确认问题 |
 | v1.1 | 2026-09-21 | 回写高德确认结果：轮询为主、服务端调用、成片拉取签名 URL；模型参数改为质量 / 标准 / 灵活三档；固化视频规格默认值；删除已确认问题 |
+| v1.3 | 2026-10-13 | 发送需求新增 `max_credits`（本次请求付费步骤预估总额上限，超限在提交生成前拒绝）；查询会话新增 `credit_cap` 状态；新增会话级错误码 `CREDIT_CAP_EXCEEDED` |
 | v1.2 | 2026-10-11 | 对外品牌统一为 bossip；档位扩为极致 / 质量 / 标准 / 快速 / 灵活五档，按默认分辨率定价、换分辨率乘倍率与 `medium` 的 720p 选项；新增查询生成档位、查询账户、积分消费记录、消费汇总四个接口；计费说明补充阶梯计费与对账口径（单价见价目表附件） |
 
 ---
@@ -273,12 +274,14 @@
 | text | string | 是 | 自然语言需求或修改意见，≤ 20 KB |
 | attachments | string[] | 否 | 素材文件 ID 列表，≤ 20 个 |
 | client_message_id | string | 否 | 幂等键，建议用接入方任务 ID + 序号 |
+| max_credits | string | 否 | 本次请求允许的最高消耗（积分，十进制字符串，0 < 值 ≤ 1,000,000，最多 6 位小数）。只约束本次需求触发的付费步骤（镜头生成、云端合成、语音转写、生图）的**预估**总额：某一步提交前若「已消耗 + 该步预估」超过它，该步不提交、不产生费用，AI 停下并说明；文本处理不计入。不传则本次请求不设上限，并清除上一次设置 |
 
 ```json
 {
   "text": "帮我做一条 25 秒的五一杭州自驾攻略口播，用我上传的路况视频做素材",
   "attachments": ["fil_01J8ZK3M..."],
-  "client_message_id": "t_456-1"
+  "client_message_id": "t_456-1",
+  "max_credits": "120"
 }
 ```
 
@@ -371,7 +374,19 @@
 
 `GET /v1/sessions/{session_id}`
 
-响应结构同 6.2。`credits_used` 为本会话累计消耗积分。
+响应结构同 6.2，另含 `credit_cap`：当前请求的消耗上限状态，未设上限时为 `null`。
+
+```json
+"credit_cap": {
+  "max_credits": "120",
+  "spent": "45.5",
+  "remaining": "74.5",
+  "since": "2026-10-13T08:00:00Z",
+  "exceeded": null
+}
+```
+
+某一步因超限被拒绝后 `exceeded` 变为 `{ "code": "CREDIT_CAP_EXCEEDED", "step": "generation" | "compose", "expected": "33.6", "spent": "100", "at": "…" }`，会话回到 `idle`，AI 的回复会说明原因；接入方可提高 `max_credits` 重新发送需求（同一会话内继续即可，已生成的镜头会复用）。`credits_used` 为本会话累计消耗积分。
 
 ---
 
@@ -753,6 +768,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 生成失败 | 以上游供应商是否实际扣费为准：未扣费则不收费，已扣费则按价目表收取 |
 | 修改轮 | 每次修改按实际重生成的镜头秒数与文本消耗计费，无免费次数 |
 | 余额不足 | 发送需求返回 `402`；处理中 AI 消息 `error.code` 为 `INSUFFICIENT_CREDITS` |
+| 单次上限 | 发送需求时传 `max_credits`，付费步骤预估超限即拒绝提交（不产生该步费用）；状态见 `GET /v1/sessions/{id}` 的 `credit_cap`，错误码 `CREDIT_CAP_EXCEEDED` |
 | 消耗查询 | 会话级 `GET /v1/sessions/{id}` 的 `credits_used`；明细 `GET /v1/usage`；月汇总 `GET /v1/usage/summary` |
 | 对账 | 以 bossip 账单为准，按会话 `metadata.task_id` 关联；消费记录保留 180 天 |
 
@@ -788,6 +804,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 429 | `RATE_LIMITED` | 触发限流 | 按 `Retry-After` 重试 |
 | 500 | `INTERNAL_ERROR` | 服务内部错误 | 携带 `request_id` 联系 bossip |
 | 503 | `LLM_UNAVAILABLE` | 上游模型暂不可用 | 稍后重试 |
+| — | `CREDIT_CAP_EXCEEDED` | 会话级：某付费步骤预估超过本次请求的 `max_credits`，未提交 | 出现在 `credit_cap.exceeded.code`；提高上限后重新发送需求 |
 
 ---
 

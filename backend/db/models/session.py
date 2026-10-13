@@ -45,6 +45,10 @@ class Session(Base):
     #: The API key that created the session, when one did. Per-key concurrency
     #: limits count active sessions by this column.
     api_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Public-API per-request credit cap: {max, since, hit}. Set by ``max_credits``
+    #: on the prompt that started the current turn; checked before every paid
+    #: media step (billing/credit_cap.py). Cleared by the next prompt without one.
+    credit_cap: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     # "normal" | "cron" | "assistant". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,
     # and reaped on their own retention schedule.

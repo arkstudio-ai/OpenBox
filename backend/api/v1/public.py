@@ -66,7 +66,7 @@ def credits_text(value: Decimal | None) -> str:
     return text if text != "-0" else "0"
 
 
-def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False) -> dict:
+def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False, credit_cap: dict | None = None) -> dict:
     """``GET /v1/sessions/{id}`` body from a sessions row.
 
     ``busy`` says a video job or a platform continuation is still running
@@ -80,6 +80,7 @@ def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False
         "resolution": getattr(row, "video_resolution", None),
         "metadata": dict(getattr(row, "metadata_", None) or {}),
         "credits_used": credits_text(credits_used),
+        "credit_cap": credit_cap,
         "created_at": iso_z(row.created_at),
         "updated_at": iso_z(row.updated_at),
     }

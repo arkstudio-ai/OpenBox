@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 适用方 | 高德 |
-| 接口版本 | `/v1`，对应《bossip 视频创作开放接口文档 v1.2》 |
+| 接口版本 | `/v1`，对应《bossip 视频创作开放接口文档 v1.3》 |
 | 测试环境 | `https://gaode.bossipai.com.cn/v1` |
 | 日期 | 2026-09-22 |
 
@@ -95,6 +95,18 @@ curl -sS -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" $BA
 - 同一个 `client_message_id` 但内容不同 → `409 DUPLICATE_CLIENT_MESSAGE_ID`。
 - 文本超过 20 KB → `413`。
 
+## 4a. 单次消耗上限 `max_credits`（v1.3）
+
+```bash
+# 设一个明显不够的上限，走到分镜报价确认后 AI 应拒绝提交生成，不产生生成费用
+curl -s -X POST $BASE/v1/sessions/$SES/messages -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"text":"做一条 30 秒口播","max_credits":"1"}'
+# 轮询到 idle 后查看会话
+curl -s $BASE/v1/sessions/$SES -H "Authorization: Bearer $KEY" | jq '.credit_cap'
+```
+
+预期：`credit_cap.exceeded.code == "CREDIT_CAP_EXCEEDED"`，`step` 为 `generation`，`expected` 为被拒绝那一步的预估积分；`/v1/usage` 里没有新的 `video_generate` 记录（文本处理记录正常存在）。再发一条不带 `max_credits` 的需求，`credit_cap` 变回 `null`。
+
 ## 5. 轮询消息
 
 ```bash
@@ -149,7 +161,7 @@ curl -sS -H "Authorization: Bearer $KEY" $BASE/sessions/$SES
 curl -sS -H "Authorization: Bearer $KEY" "$BASE/sessions?limit=20"
 ```
 
-返回该 Key 名下的会话，最新在前：`{"data":[…会话结构同 6.2…],"next_cursor":"…","has_more":true}`，用 `cursor=<next_cursor>` 翻页。接口文档 v1.2 未列此端点，属于额外提供，用于后台查看与控制台"最近会话"。
+返回该 Key 名下的会话，最新在前：`{"data":[…会话结构同 6.2…],"next_cursor":"…","has_more":true}`，用 `cursor=<next_cursor>` 翻页。接口文档 v1.3 未列此端点，属于额外提供，用于后台查看与控制台"最近会话"。
 
 ## 8b. 账户与用量接口（v1.2）
 

@@ -34,6 +34,18 @@ class SendMessageBody(BaseModel):
     text: str = Field(min_length=1, max_length=65_536)
     attachments: list[str] = Field(default_factory=list)
     client_message_id: str | None = Field(default=None, max_length=64)
+    #: Most credits the paid steps of this request may cost (decimal string).
+    #: A generation or compose whose estimate would overrun it is refused
+    #: before submission; see billing/credit_cap.py.
+    max_credits: str | None = Field(default=None, max_length=24)
+
+    @field_validator("max_credits")
+    @classmethod
+    def _valid_cap(cls, value: str | None) -> str | None:
+        from billing.credit_cap import parse_max_credits
+
+        parse_max_credits(value)
+        return value
 
     @field_validator("client_message_id")
     @classmethod
@@ -162,6 +174,9 @@ async def send_message(
         raise ApiError(409, "SESSION_BUSY", "session is busy, wait for idle or abort it first")
     await _precheck_credits(row.workspace_id)
     await _check_key_concurrency(identity)
+    from billing.credit_cap import parse_max_credits, set_cap
+
+    max_credits = parse_max_credits(body.max_credits)
 
     model, _ = resolve_model(row.model, get_config(), context=f"v1 session {row.id}")
     try:
@@ -186,6 +201,9 @@ async def send_message(
     except ValueError as exc:
         raise ApiError(400, "INVALID_REQUEST", str(exc)) from exc
 
+    if receipt.created:
+        # The cap belongs to this request only: a prompt without one clears it.
+        await set_cap(row.id, max_credits)
     if receipt.state == "accepted":
         await wake_inbox_session(row.id, row.user_id)
     user_message_id = receipt.message_id or await _wait_for_user_message(

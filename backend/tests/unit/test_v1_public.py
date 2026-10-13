@@ -171,7 +171,7 @@ def test_session_view_and_status_mapping():
     view = public.session_view(row, Decimal("12.500000"))
     assert view == {
         "id": "ses_1", "title": "", "status": "busy", "quality": "high", "resolution": "1080p",
-        "metadata": {"task_id": "t_1"},
+        "metadata": {"task_id": "t_1"}, "credit_cap": None,
         "credits_used": "12.5", "created_at": "2026-09-21T08:00:00Z", "updated_at": "2026-09-21T08:00:00Z",
     }
     assert public.session_status("idle") == "idle"

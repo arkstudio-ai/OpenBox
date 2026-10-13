@@ -2105,6 +2105,9 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         if price.credits is not None
         else [f"estimated_credits=unavailable ({price.snapshot.get('reason')})"]
     ) + billing_status_lines()
+    from billing import credit_cap as _credit_cap
+
+    price_lines += await _credit_cap.estimate_lines(ctx.session_id)
     used = await _daily_submit_count(ctx)
     limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
     unavailable = (await _recently_unavailable_models(get_config())).get(target.model)
@@ -2462,6 +2465,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
             _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
                                        note=f"{target.model} {resolution} {duration}s")
+            from billing import credit_cap as _credit_cap
+
+            await _credit_cap.guard(ctx.session_id, step="generation", credits=_quote.credits,
+                                    note=f"{target.model} {resolution} {duration}s")
             rejected = await _run_rejected_submission(ctx, target)
             if rejected is not None:
                 return _rejected_submission_result(

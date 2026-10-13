@@ -192,6 +192,9 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
     else:
         lines.append("estimated_credits=unavailable (" + str(price.snapshot.get("reason")) + ")")
     lines += billing_status_lines()
+    from billing import credit_cap as _credit_cap
+
+    lines += await _credit_cap.estimate_lines(ctx.session_id)
     lines += [f"warning={w}" for w in compiled.warnings]
     return ToolResult(title="Timeline valid", output="\n".join(lines),
                       metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings,
@@ -244,6 +247,9 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         _price = await _quote_compose(ctx.session_id, timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
         _autopilot.guard_paid_step(ctx.session_id, kind="compose", credits=_price.credits if _price.credits is not None else 0,
                                    note=f"{compiled.duration_sec}s {_price.tier}")
+        from billing import credit_cap as _credit_cap
+
+        await _credit_cap.guard(ctx.session_id, step="compose", credits=_price.credits, note=f"{compiled.duration_sec}s {_price.tier}")
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")

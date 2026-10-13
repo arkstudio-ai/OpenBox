@@ -11,17 +11,19 @@ import { AssistantIntroEntry, AssistantReadBoundary, AssistantRequests, Assistan
 import { introStartsByItself } from "@/shared/appearance/assistant-profile"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import { ChatSessionView } from "./ChatRoute"
+import { CompanionWelcome } from "@/features/chat"
 
-export default function AssistantRoute() {
+interface AssistantRouteProps { compact?: boolean; realtimeSurface?: "assistant" | "workspace" }
+export default function AssistantRoute({ compact = false, realtimeSurface }: AssistantRouteProps) {
   const userId = useAuthStore((state) => state.user?.id)
   const workspaceId = useWorkspaceStore((state) => state.currentId)
-  return <AssistantEntry key={`${userId}:${workspaceId}`} workspaceId={workspaceId} />
+  return <AssistantEntry key={`${userId}:${workspaceId}`} workspaceId={workspaceId} compact={compact} realtimeSurface={realtimeSurface} />
 }
 
 /** The personal assistant: one long conversation with a secretary. Tasks live
  *  and pending requests live in "我的任务"; a dismissible hint above the
  *  composer points to that drawer without occupying the conversation. */
-function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
+function AssistantEntry({ workspaceId, compact, realtimeSurface }: { workspaceId: string | null } & AssistantRouteProps) {
   const [params] = useSearchParams()
   const taskId = params.get("task")
   const resultId = params.get("result")
@@ -51,12 +53,12 @@ function AssistantEntry({ workspaceId }: { workspaceId: string | null }) {
   </div>
   if (!mainId || !snapshot.data) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   return <AssistantReadBoundary snapshot={snapshot.data}>
-    {taskId && resultId && <AssistantNotificationTarget key={`${taskId}:${resultId}`} taskId={taskId} resultId={resultId} />}
+    {!compact && taskId && resultId && <AssistantNotificationTarget key={`${taskId}:${resultId}`} taskId={taskId} resultId={resultId} />}
     <div className="min-h-0 flex-1">
-      <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest}
-        welcome={(fill) => <AssistantWelcome onPick={fill} />}
+      <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest} realtimeSurface={realtimeSurface} compact={compact}
+        welcome={(fill) => compact ? <CompanionWelcome onPick={fill} /> : <AssistantWelcome onPick={fill} />}
         extraFooter={<AssistantRequests compact />}
-        aside={({ fill, quiet }) => <AssistantIntroEntry quiet={quiet} onPick={fill} />}
+        aside={compact ? undefined : ({ fill, quiet }) => <AssistantIntroEntry quiet={quiet} onPick={fill} />}
         onSend={wentStraightToWork} />
     </div>
   </AssistantReadBoundary>

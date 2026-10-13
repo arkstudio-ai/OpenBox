@@ -24,13 +24,13 @@ export function AiWatermark({ className }: { className?: string }) {
 export function AiDisclosure() {
   const { t, i18n } = useTranslation("chat")
   return (
-    <div className="text-n700 mt-1 flex flex-wrap items-center justify-center gap-x-2 text-sm leading-5">
+    <div className="text-n700 flex flex-wrap items-center justify-center gap-x-2 px-4 pb-1 text-center text-xs leading-4">
       <span>{t("aigc.notice")}</span>
       <a
         href={legalPath("ai", i18n.language)}
         target="_blank"
         rel="noopener noreferrer"
-        className="hover:text-ink decoration-n400 min-h-8 content-center underline underline-offset-4 transition-colors"
+        className="hover:text-ink decoration-n400 inline-flex min-h-5 items-center underline underline-offset-4 transition-colors"
       >
         {t("aigc.serviceTitle")}
       </a>

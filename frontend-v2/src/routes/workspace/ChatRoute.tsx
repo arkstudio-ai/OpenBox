@@ -168,8 +168,14 @@ function TranscriptArea({ loading, welcome, children }: { loading: boolean; welc
   return welcome ?? children
 }
 
-export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter, aside, onSend }: {
+function chatEventSurface(assistant: boolean, override?: "assistant" | "workspace") {
+  return override ?? (assistant ? "assistant" : "workspace")
+}
+
+export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter, aside, onSend, realtimeSurface, compact }: {
   sessionId: string; assistant?: boolean; sendRequest?: SendRequest
+  realtimeSurface?: "assistant" | "workspace"
+  compact?: boolean
   /** Shown instead of the empty transcript; `fill` puts a prompt into the composer. */
   welcome?: (fill: (prompt: string) => void) => ReactNode
   /** More pending cards after this conversation's own (the assistant's "needs you"). */
@@ -180,7 +186,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
   onSend?: (context: { empty: boolean }) => void
 }) {
   const currentUserId = useAuthStore((state) => state.user?.id)
-  useChatEvents(sessionId, assistant ? "assistant" : "workspace")
+  useChatEvents(sessionId, chatEventSurface(assistant, realtimeSurface))
 
   // `?panel=desktop&control=1` is the URL form of a takeover card's link
   // (paths.desktopTakeover): open the panel on arrival, then drop the params
@@ -304,7 +310,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TranscriptArea loading={loading} welcome={extras.welcomeView}>
-        <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
+        <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy} compact={compact}
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
           footer={footer} onStop={stop} retry={retry}
@@ -327,8 +333,9 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
         <Composer
           key={sessionId}
           assistant={assistant}
+          compact={compact}
           busy={busy}
-          suggestions={extras.suggestions}
+          suggestions={compact ? undefined : extras.suggestions}
           historyScrollRef={historyScrollRef}
           onSubmit={(text, opts) => {
             onSend?.({ empty: turns.length === 0 })

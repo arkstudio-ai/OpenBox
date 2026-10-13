@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./tokens.css";
+@import "./companion.css";
 @import "streamdown/styles.css";
 /* Streamdown components carry Tailwind classes inside dist — scan them. */
 @source "../../node_modules/streamdown/dist/*.js";

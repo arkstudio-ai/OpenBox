@@ -2,7 +2,7 @@
 // tool event lands in the stream store; todo.updated invalidates the todo query;
 // permission/question prompts land in the pending store; a reconnect refetches
 // the current session snapshot and the pending lists it may have missed.
-import { useEffect } from "react"
+import { useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "@/shared/ui/Toast"
 import { useQueryClient } from "@tanstack/react-query"
@@ -12,9 +12,16 @@ import { chatKeys } from "../api/keys"
 import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
+import { retainChatSubscription } from "../lib/shared-subscription"
 
 /** Tools that change the sidebar's projects or conversations. */
-const LIST_TOOLS = new Set(["projects.create", "projects.delete", "sessions.delete", "sessions.rename", "tasks.submit"])
+const LIST_TOOLS = new Set([
+  "projects.create",
+  "projects.delete",
+  "sessions.delete",
+  "sessions.rename",
+  "tasks.submit",
+])
 
 /** Copy for a run that ended in failure.
  *
@@ -24,14 +31,17 @@ const LIST_TOOLS = new Set(["projects.create", "projects.delete", "sessions.dele
  */
 function useRunFailureMessage() {
   const { t } = useTranslation("errors")
-  return (error?: { message?: string; code?: string }): string => {
-    if (error?.code) {
-      const byCode = t(error.code, { defaultValue: "" })
-      if (byCode) return byCode
-    }
-    const detail = error?.message?.trim()
-    return detail || t("runFailed")
-  }
+  return useCallback(
+    (error?: { message?: string; code?: string }): string => {
+      if (error?.code) {
+        const byCode = t(error.code, { defaultValue: "" })
+        if (byCode) return byCode
+      }
+      const detail = error?.message?.trim()
+      return detail || t("runFailed")
+    },
+    [t],
+  )
 }
 
 export function useChatEvents(sessionId: string, surface?: "assistant" | "workspace"): void {
@@ -43,112 +53,125 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
     // Ensure the socket is up while a chat is open (idempotent; never disconnects
     // here — the connection is app-global).
     void wsClient.connect(surface)
-
-    const stream = useStreamStore.getState()
-    const pending = usePendingStore.getState()
-    const accept = (d: { sessionId: string; generation?: number }) =>
-      stream.acceptEventGeneration(d.sessionId, d.generation)
-    const offs: Array<() => void> = [
-      wsClient.on("message.created", (d) => {
-        if (accept(d)) stream.addMessage(d.sessionId, d.message)
-      }),
-      wsClient.on("message.updated", (d) => {
-        if (accept(d)) stream.updateMessage(d.sessionId, d.message)
-      }),
-      wsClient.on("message.text_delta", (d) => {
-        if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.text)
-      }),
-      wsClient.on("part.created", (d) => {
-        if (accept(d)) stream.addPart(d.sessionId, d.messageId, d.part)
-      }),
-      wsClient.on("part.updated", (d) => {
-        if (accept(d)) stream.updatePart(d.sessionId, d.messageId, d.part)
-      }),
-      wsClient.on("part.delta", (d) => {
-        if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.delta)
-      }),
-      wsClient.on("tool.running", (d) => {
-        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "running", d.data)
-      }),
-      wsClient.on("tool.completed", (d) => {
-        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data)
-        // The assistant made or deleted a project or conversation: the sidebar shows it now.
-        if (d.tool && LIST_TOOLS.has(d.tool)) {
-          void qc.invalidateQueries({ queryKey: ["projects", userId] })
-          void qc.invalidateQueries({ queryKey: ["sessions", userId] })
-        }
-      }),
-      wsClient.on("tool.error", (d) => {
-        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)
-      }),
-      wsClient.on("session.status", (d) => {
-        if (!stream.applyStatusEvent(d.sessionId, d.status, d.generation)) return
-        // A fresh run supersedes whatever the last one failed with.
-        if (d.status === "busy") stream.clearRunError(d.sessionId)
-        if (d.status === "retry" && d.attempt) {
-          stream.setRetry(d.sessionId, d.attempt, d.maxAttempts ?? d.attempt)
-        }
-        qc.setQueryData(["session", userId, d.sessionId], (old: object | undefined) =>
-          old ? { ...old, status: d.status } : old,
-        )
-        // The terminal idle/error edge is also a consistency barrier: pull
-        // the final full parts in case this tab missed the last delta/update.
-        if (d.status === "idle" || d.status === "error" || d.status === "waiting_input" || d.status === "queued") {
-          void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
-          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
-        }
-      }),
-      wsClient.on("session.finalizing", (d) => {
-        stream.applyStatusEvent(d.sessionId, "finalizing", d.generation)
-      }),
-      wsClient.on("session.error", (d) => {
-        if (!stream.applyStatusEvent(d.sessionId, "error", d.generation)) return
-        // Say it twice, deliberately. The toast is what someone sees if they
-        // are looking; the line above the composer is what remains for someone
-        // who was not, or who dismissed the toast — without it, a failed run
-        // leaves a screen that looks exactly like a working one.
-        const message = runFailureMessage(d.error)
-        toast("error", message)
-        stream.setRunError(d.sessionId, message)
-      }),
-      wsClient.on("session.title", () => void qc.invalidateQueries({ queryKey: ["sessions", userId] })),
-      // Also the single session, not just the sidebar list: the composer's
-      // mode picker reads that record, and the agent changes underneath it
-      // whenever the model enters or leaves plan mode. Without this the
-      // picker kept claiming the old mode until something else refetched.
-      wsClient.on("session.updated", (d) => {
-        if (!accept(d)) return
-        void qc.invalidateQueries({ queryKey: ["sessions", userId] })
-        if (d.sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
-      }),
-      wsClient.on(
-        "todo.updated",
-        (d) => void qc.invalidateQueries({ queryKey: chatKeys.todo(userId, d.sessionId) }),
-      ),
-      wsClient.on("permission.asked", (d) => pending.addPermission(d)),
-      wsClient.on("permission.replied", (d) => pending.removePermission(interactionRequestId(d))),
-      wsClient.on("question.asked", (d) => {
-        pending.addQuestion(d)
-        void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
-      }),
-      wsClient.on("question.updated", (d) => pending.addQuestion(d)),
-      ...(["question.replied", "question.rejected", "question.cancelled"] as const).map((event) =>
-        wsClient.on(event, (d) => {
-          const id = d.request_id ?? d.id
-          if (id) pending.removeQuestion(id)
-          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
-          if (d.session_id) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.session_id) })
+    // Reconnection refreshes each mounted conversation independently.
+    const offReconnect = wsClient.on("__connected", () => {
+      if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
+      if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
+    })
+    const release = retainChatSubscription(qc, `stream:${userId}`, () => {
+      const stream = useStreamStore.getState()
+      const pending = usePendingStore.getState()
+      const accept = (d: { sessionId: string; generation?: number }) =>
+        stream.acceptEventGeneration(d.sessionId, d.generation)
+      const offs: Array<() => void> = [
+        wsClient.on("message.created", (d) => {
+          if (accept(d)) stream.addMessage(d.sessionId, d.message)
         }),
-      ),
-      wsClient.on("__connected", () => {
-        if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
-        if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
-        void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })
-        void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
-      }),
-    ]
+        wsClient.on("message.updated", (d) => {
+          if (accept(d)) stream.updateMessage(d.sessionId, d.message)
+        }),
+        wsClient.on("message.text_delta", (d) => {
+          if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.text)
+        }),
+        wsClient.on("part.created", (d) => {
+          if (accept(d)) stream.addPart(d.sessionId, d.messageId, d.part)
+        }),
+        wsClient.on("part.updated", (d) => {
+          if (accept(d)) stream.updatePart(d.sessionId, d.messageId, d.part)
+        }),
+        wsClient.on("part.delta", (d) => {
+          if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.delta)
+        }),
+        wsClient.on("tool.running", (d) => {
+          if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "running", d.data)
+        }),
+        wsClient.on("tool.completed", (d) => {
+          if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data)
+          // The assistant made or deleted a project or conversation: the sidebar shows it now.
+          if (d.tool && LIST_TOOLS.has(d.tool)) {
+            void qc.invalidateQueries({ queryKey: ["projects", userId] })
+            void qc.invalidateQueries({ queryKey: ["sessions", userId] })
+          }
+        }),
+        wsClient.on("tool.error", (d) => {
+          if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)
+        }),
+        wsClient.on("session.status", (d) => {
+          if (!stream.applyStatusEvent(d.sessionId, d.status, d.generation)) return
+          // A fresh run supersedes whatever the last one failed with.
+          if (d.status === "busy") stream.clearRunError(d.sessionId)
+          if (d.status === "retry" && d.attempt) {
+            stream.setRetry(d.sessionId, d.attempt, d.maxAttempts ?? d.attempt)
+          }
+          qc.setQueryData(["session", userId, d.sessionId], (old: object | undefined) =>
+            old ? { ...old, status: d.status } : old,
+          )
+          // The terminal idle/error edge is also a consistency barrier: pull
+          // the final full parts in case this tab missed the last delta/update.
+          if (
+            d.status === "idle" ||
+            d.status === "error" ||
+            d.status === "waiting_input" ||
+            d.status === "queued"
+          ) {
+            void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+            void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+          }
+        }),
+        wsClient.on("session.finalizing", (d) => {
+          stream.applyStatusEvent(d.sessionId, "finalizing", d.generation)
+        }),
+        wsClient.on("session.error", (d) => {
+          if (!stream.applyStatusEvent(d.sessionId, "error", d.generation)) return
+          // Say it twice, deliberately. The toast is what someone sees if they
+          // are looking; the line above the composer is what remains for someone
+          // who was not, or who dismissed the toast — without it, a failed run
+          // leaves a screen that looks exactly like a working one.
+          const message = runFailureMessage(d.error)
+          toast("error", message)
+          stream.setRunError(d.sessionId, message)
+        }),
+        wsClient.on("session.title", () => void qc.invalidateQueries({ queryKey: ["sessions", userId] })),
+        // Also the single session, not just the sidebar list: the composer's
+        // mode picker reads that record, and the agent changes underneath it
+        // whenever the model enters or leaves plan mode. Without this the
+        // picker kept claiming the old mode until something else refetched.
+        wsClient.on("session.updated", (d) => {
+          if (!accept(d)) return
+          void qc.invalidateQueries({ queryKey: ["sessions", userId] })
+          if (d.sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
+        }),
+        wsClient.on(
+          "todo.updated",
+          (d) => void qc.invalidateQueries({ queryKey: chatKeys.todo(userId, d.sessionId) }),
+        ),
+        wsClient.on("permission.asked", (d) => pending.addPermission(d)),
+        wsClient.on("permission.replied", (d) => pending.removePermission(interactionRequestId(d))),
+        wsClient.on("question.asked", (d) => {
+          pending.addQuestion(d)
+          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+        }),
+        wsClient.on("question.updated", (d) => pending.addQuestion(d)),
+        ...(["question.replied", "question.rejected", "question.cancelled"] as const).map((event) =>
+          wsClient.on(event, (d) => {
+            const id = d.request_id ?? d.id
+            if (id) pending.removeQuestion(id)
+            void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+            if (d.session_id) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.session_id) })
+          }),
+        ),
+        wsClient.on("__connected", () => {
+          void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })
+          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+        }),
+      ]
+      return () => {
+        for (const off of offs) off()
+      }
+    })
     return () => {
-      for (const off of offs) off()
+      offReconnect()
+      release()
     }
   }, [qc, userId, sessionId, runFailureMessage, surface])
 }

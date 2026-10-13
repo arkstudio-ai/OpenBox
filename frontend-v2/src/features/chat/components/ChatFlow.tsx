@@ -55,6 +55,7 @@ function VirtualRows({ rows, scrollRef }: { rows: Row[]; scrollRef: RefObject<HT
 }
 
 interface Props {
+  compact?: boolean
   turns: Turn[]
   sessionId: string
   busy: boolean
@@ -76,7 +77,7 @@ interface Props {
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, allowTodoEdits = true, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, allowTodoEdits = true, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder, compact = false }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   // Keep the element attached while child layout effects update the
@@ -274,7 +275,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
       <div
         ref={setScrollElement}
         onScroll={onScroll}
-        className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
+        className={cn("scr h-full overflow-y-auto overscroll-contain pt-1.5 pb-2 [overflow-anchor:none]", compact ? "px-4" : "px-3 sm:px-6.5")}
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-190 flex-col gap-6 pb-4">
           {virtual ? (

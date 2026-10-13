@@ -3,6 +3,7 @@
 // work; this keeps what the window shows and the call's latency marks.
 import { create } from "zustand"
 import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { env } from "@/shared/config/env"
 import { callReducer, initialCall, isLive, type CallAction } from "./lib/reducer"
 import { VoiceCallSession, type SessionSink } from "./lib/session"
@@ -16,6 +17,8 @@ export interface TimingMark {
 
 interface VoiceStore {
   call: CallState
+  /** A live call keeps talking to the workspace whose ticket opened it. */
+  workspaceId: string | null
   /** The window's form, card or pill. Local only: the server never hears of it. */
   expanded: boolean
   muted: boolean
@@ -67,6 +70,7 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
   })
   return {
     call: initialCall,
+    workspaceId: null,
     expanded: true,
     muted: false,
     timings: [],
@@ -77,7 +81,7 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
         return
       }
       mirror = debugMirrorEnabled()
-      set({ timings: [], muted: false, expanded: true })
+      set({ timings: [], muted: false, expanded: true, workspaceId: useWorkspaceStore.getState().currentId })
       const next: VoiceCallSession = new VoiceCallSession(sinkFor(() => session === next))
       session = next
       next.start()
@@ -108,5 +112,5 @@ useAuthStore.subscribe((auth, previous) => {
   const leaving = session
   session = null
   leaving.abandon()
-  useVoiceStore.setState({ call: initialCall, muted: false })
+  useVoiceStore.setState({ call: initialCall, muted: false, workspaceId: null })
 })

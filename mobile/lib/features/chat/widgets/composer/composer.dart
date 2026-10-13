@@ -453,7 +453,6 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final compactDisclosure = _focusNode.hasFocus;
     final config = ref.watch(appConfigProvider).valueOrNull;
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
 
@@ -534,7 +533,7 @@ class _ComposerState extends ConsumerState<Composer> {
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
 
     final input = Container(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: t.card,
@@ -568,7 +567,7 @@ class _ComposerState extends ConsumerState<Composer> {
                   setState(() => _attachments.remove(resource)),
             ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
@@ -584,6 +583,7 @@ class _ComposerState extends ConsumerState<Composer> {
               ),
               decoration: InputDecoration(
                 isDense: true,
+                contentPadding: EdgeInsets.zero,
                 border: InputBorder.none,
                 hintText: i18n.t(
                   '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
@@ -594,7 +594,7 @@ class _ComposerState extends ConsumerState<Composer> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 4, 8, 8),
+            padding: const EdgeInsets.fromLTRB(10, 2, 8, 0),
             child: Row(
               children: [
                 // The controls scroll rather than squeeze: a long model name
@@ -658,8 +658,6 @@ class _ComposerState extends ConsumerState<Composer> {
                                 ),
                           ),
                         ],
-                        if (compactDisclosure)
-                          const AiDisclosure(compact: true),
                         if (widget.session?.tokenUsage != null &&
                             activeModel != null &&
                             !widget.assistant) ...[
@@ -685,6 +683,7 @@ class _ComposerState extends ConsumerState<Composer> {
               ],
             ),
           ),
+          const AiDisclosure(),
         ],
       ),
     );
@@ -701,7 +700,6 @@ class _ComposerState extends ConsumerState<Composer> {
             ),
           ),
         input,
-        if (!compactDisclosure) const AiDisclosure(),
       ],
     );
   }

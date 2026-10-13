@@ -8,6 +8,7 @@ import type { SessionStatus } from "@/shared/types/api"
 import type { SendMessageVars } from "./messages"
 import { useStreamStore } from "../stores/stream"
 import { pendingSendIdentity } from "../lib/pending-send"
+import { retainChatSubscription } from "../lib/shared-subscription"
 
 export interface AssistantResult {
   result_id: string
@@ -319,99 +320,101 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
   const qc = useQueryClient()
   useEffect(() => {
     if (!enabled || !mainId || !workspaceId || userId === "anonymous") return
-    const key = assistantKeys.snapshot(userId, workspaceId)
-    const initial = qc.getQueryData<AssistantSnapshot>(key)
-    let cursor = initial?.event_cursor
-    let position = initial?.high_water_mark ?? 0
-    let stopped = false
-    let running = false
-    let requested = false
-    let viewHints = 0
-    let appliedViewHints = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const abort = new AbortController()
-    const current = () => !stopped && useAuthStore.getState().user?.id === userId
-      && useWorkspaceStore.getState().currentId === workspaceId
-    const refreshViews = async (snapshotToo: boolean) => {
-      if (!current()) return
-      await qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
-        // Gap recovery already fetched this exact snapshot.
-        predicate: (query) => EVENT_VIEWS.has(query.queryKey[3]) && (snapshotToo || query.queryKey[3] !== "snapshot"),
-      }, { throwOnError: true })
-    }
-    const snapshot = async () => {
-      const hints = viewHints
-      const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
-        queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal) })
-      if (!current() || value.session?.id !== mainId) return false
-      await refreshViews(false)
-      if (!current()) return false
-      cursor = value.event_cursor
-      position = value.high_water_mark
-      appliedViewHints = hints
-      return !!cursor
-    }
-    const schedule = () => {
-      requested = true
-      if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
-    }
-    const refresh = () => {
-      viewHints += 1
-      schedule()
-    }
-    const changed = (data: { sessionId: string; generation?: number }) => {
-      if (data.sessionId === mainId && useStreamStore.getState().acceptEventGeneration(mainId, data.generation)) refresh()
-    }
-    const drain = async () => {
-      if (!current() || running) return
-      running = true
-      requested = false
-      let attemptedHints = viewHints
-      try {
-        if (!cursor && !await snapshot()) return
-        for (let count = 0; count < 5 && current(); count++) {
-          const page = await http.get<AssistantEventPage>(`/api/assistant/events?after=${encodeURIComponent(cursor!)}`,
-            scopedOptions(workspaceId, abort.signal))
-          if (!current()) return
-          if (page.state === "snapshot_required") {
-            attemptedHints = viewHints
-            if (!await snapshot()) return
-            requested = true
-            break
-          }
-          const next = eventPosition(page, mainId, position)
-          const hints = viewHints
-          if (page.events?.length || hints > appliedViewHints) {
-            attemptedHints = hints
-            await refreshViews(true)
-            appliedViewHints = hints
-          }
-          if (!current()) return
-          // Commit the cursor only after the corresponding read views refresh.
-          cursor = next.cursor
-          position = next.position
-          if (!page.has_more) break
-          if (count === 4) requested = true
-        }
-      } catch {
-        // Keep the last applied cursor. A new hint during this read still
-        // needs its queued pass; the same failure without a new hint waits
-        // for the next poll instead of retrying in a tight loop.
-        requested = viewHints > attemptedHints
-      } finally {
-        running = false
-        if (requested && current()) schedule()
+    return retainChatSubscription(qc, `assistant:${userId}:${workspaceId}:${mainId}`, () => {
+      const key = assistantKeys.snapshot(userId, workspaceId)
+      const initial = qc.getQueryData<AssistantSnapshot>(key)
+      let cursor = initial?.event_cursor
+      let position = initial?.high_water_mark ?? 0
+      let stopped = false
+      let running = false
+      let requested = false
+      let viewHints = 0
+      let appliedViewHints = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const abort = new AbortController()
+      const current = () => !stopped && useAuthStore.getState().user?.id === userId
+        && useWorkspaceStore.getState().currentId === workspaceId
+      const refreshViews = async (snapshotToo: boolean) => {
+        if (!current()) return
+        await qc.invalidateQueries({ queryKey: assistantKeys.all(userId, workspaceId),
+          // Gap recovery already fetched this exact snapshot.
+          predicate: (query) => EVENT_VIEWS.has(query.queryKey[3]) && (snapshotToo || query.queryKey[3] !== "snapshot"),
+        }, { throwOnError: true })
       }
-    }
-    // One serialized pass owns socket hints and durable replay. A hint
-    // received during a read schedules one fresh pass afterward; it must
-    // neither cancel that read repeatedly nor disappear behind it. Socket
-    // hints carry the latency; the interval is only a fallback.
-    const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
-      wsClient.on("tool.completed", schedule), wsClient.on("__connected", refresh)]
-    const poll = setInterval(schedule, 15_000)
-    schedule()
-    return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }
+      const snapshot = async () => {
+        const hints = viewHints
+        const value = await qc.fetchQuery({ queryKey: key, staleTime: 0,
+          queryFn: ({ signal }) => fetchAssistantSnapshot(workspaceId, signal) })
+        if (!current() || value.session?.id !== mainId) return false
+        await refreshViews(false)
+        if (!current()) return false
+        cursor = value.event_cursor
+        position = value.high_water_mark
+        appliedViewHints = hints
+        return !!cursor
+      }
+      const schedule = () => {
+        requested = true
+        if (!running && timer === undefined && current()) timer = setTimeout(() => { timer = undefined; void drain() }, 150)
+      }
+      const refresh = () => {
+        viewHints += 1
+        schedule()
+      }
+      const changed = (data: { sessionId: string; generation?: number }) => {
+        if (data.sessionId === mainId && useStreamStore.getState().acceptEventGeneration(mainId, data.generation)) refresh()
+      }
+      const drain = async () => {
+        if (!current() || running) return
+        running = true
+        requested = false
+        let attemptedHints = viewHints
+        try {
+          if (!cursor && !await snapshot()) return
+          for (let count = 0; count < 5 && current(); count++) {
+            const page = await http.get<AssistantEventPage>(`/api/assistant/events?after=${encodeURIComponent(cursor!)}`,
+              scopedOptions(workspaceId, abort.signal))
+            if (!current()) return
+            if (page.state === "snapshot_required") {
+              attemptedHints = viewHints
+              if (!await snapshot()) return
+              requested = true
+              break
+            }
+            const next = eventPosition(page, mainId, position)
+            const hints = viewHints
+            if (page.events?.length || hints > appliedViewHints) {
+              attemptedHints = hints
+              await refreshViews(true)
+              appliedViewHints = hints
+            }
+            if (!current()) return
+            // Commit the cursor only after the corresponding read views refresh.
+            cursor = next.cursor
+            position = next.position
+            if (!page.has_more) break
+            if (count === 4) requested = true
+          }
+        } catch {
+          // Keep the last applied cursor. A new hint during this read still
+          // needs its queued pass; the same failure without a new hint waits
+          // for the next poll instead of retrying in a tight loop.
+          requested = viewHints > attemptedHints
+        } finally {
+          running = false
+          if (requested && current()) schedule()
+        }
+      }
+      // One serialized pass owns socket hints and durable replay. A hint
+      // received during a read schedules one fresh pass afterward; it must
+      // neither cancel that read repeatedly nor disappear behind it. Socket
+      // hints carry the latency; the interval is only a fallback.
+      const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
+        wsClient.on("tool.completed", schedule), wsClient.on("__connected", refresh)]
+      const poll = setInterval(schedule, 15_000)
+      schedule()
+      return () => { stopped = true; abort.abort(); clearInterval(poll); clearTimeout(timer); off.forEach((stop) => stop()) }
+    })
   }, [enabled, mainId, qc, userId, workspaceId])
 }
 

@@ -1,0 +1,20 @@
+/* The compact conversation reuses the same components as the full assistant.
+   Container-scoped spacing avoids changing the main page's desktop layout. */
+.companion-window .scr {
+  scrollbar-width: thin;
+}
+/* Use the shared focus rules: text fields stay chromeless while their
+   InputGroup shows focus. Buttons and links keep the global keyboard ring. */
+.companion-window textarea {
+  font-size: var(--text-sm);
+  max-height: 104px;
+}
+.companion-window [data-turn-key] {
+  overflow-wrap: anywhere;
+}
+.companion-window .companion-call-ended > div {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+}

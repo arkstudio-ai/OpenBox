@@ -13,6 +13,7 @@ import { ApiError } from "@/shared/api/http"
 import { toast } from "@/shared/ui/Toast"
 import { useForgetLearned, useLearnedStyle, type LearnedItem } from "../api/assistant"
 import { Choices, Field, Switch } from "./controls"
+import { CompanionAppearanceSettings } from "./CompanionAppearanceSettings"
 
 type Editable = Pick<
   AssistantProfile,
@@ -73,6 +74,7 @@ export function AssistantPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <CompanionAppearanceSettings />
       <form
         className="flex flex-col gap-6"
         onSubmit={(event) => {

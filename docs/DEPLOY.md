@@ -5,7 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-13 12:34 `20261013-creditcap-253f1b8d`（/v1 单次消耗上限 `max_credits`）
+## 当前阿里云：2026-10-13 17:45 `20261013-trajlink-1170e8e4`（轨迹产物「打开原文件」OSS 直链）
+
+- 源码 `main@1170e8e4`（PR [#85](https://github.com/arkstudio-ai/OpenBox/pull/85) 合并）。同一镜像带上了 `253f1b8d` 之后 main 上队友未发布的提交：`b4237830` 悬浮助理与紧凑输入框（`5311ee4c` 合并）。三服务统一到本 tag。
+- 内容：worker 新路由 `GET /api/admin/trajectories/sessions/{sid}/payloads/{payload_id}/link`，对 `storage_kind=asset` 的产物签发桶公网 host 的短时效 GET 直链（`TRAJECTORY_ASSET_LINK_SECONDS` 默认 600 秒），可见性 / 删除 / 位置规则同下载，签发前审计 `admin.trajectory.payload_link` 并复核观看者与行，留存副本回 409 `trajectory_payload_not_linkable`；`api/internal.py` 审计白名单加入该动作。前端产物面板对带 `source_asset_id` 的产物显示「打开原文件」，点击先开窗再填链接。背景：轨迹库 1,715 条视频产物中 924 条超过 worker 8 MiB 读取上限，受控下载看不了。文档：`docs/trajectory-rearch/maps/api.md` §2.2 8b、`SESSION_TRAJECTORY_PROTOCOL.md` §7。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `origin/main` 干净归档，本地核对镜像内路由与白名单、前端 app-build 与 `trajectory-payload-open` 资源、`nginx -t`。backend image `sha256:4baeac1c…7995b173`（压缩包 `7e677a5e…04fb4fbf`，234,854,805 B）；frontend image `sha256:db52e458…bd0d6ecda`（压缩包 `38a86e2b…8114b6df`，29,672,104 B）。经 `oss://bossip/_deploy-tmp/<tag>/` 内网端点中转，gw2 `sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换脚本 `releases/20261013-trajlink-1170e8e4/deploy_gw2_v17.sh`：备份配置与两库 dump（业务 120 表、轨迹 37 表，`backups/20261013-trajlink-1170e8e4/activation-20261013T0943*Z/`）→ 租约守门（0 租约、0 进行中视频、0 活跃通话）→ worker 9 s → backend 21 s → frontend 15 s healthy。09:44:10–09:45:04 UTC 完成。**无迁移**（业务库保持 `pg40c1d2e3f4`），`openbox.json` / `backend.env` 未动。
+- 验证：backend 与 worker 容器内都能看到 link 路由，审计白名单含 `payload_link`，有效期 600；公网首页 200、app-build 为新 tag、`/api/environment` 200，`/api/admin/pricing`、`/api/admin/trajectories/sessions`、link 路由（经 nginx 到 worker 与 worker 直连）匿名均 401，前端资源含「打开原文件」按钮。三服务重启 0。合并前：后端轨迹 / worker 30 个文件全跑（与改动相关的仅两处路由计数常量 19→20；`test_trajectory_lite` 工具标签、`producers_delegation`、`worker_app_metrics` 三个失败在 main 上同样失败），前端 `admin-trajectories` 41 文件 324 条通过。**未做超管浏览器实测**（需 admin 账号登录轨迹监控打开一条带视频产物的会话点「打开原文件」）。
+- 观察：backend 启动后 `agent.recovery` 对会话 `session_7YBVEBDJXT5V1YV6055XCZ18YE` 报两次 `Agent tail repair failed … Assistant parent crosses its logical turn`，是启动时的既有会话修复，与本次改动无关，未处理。
+- 回滚：恢复备份目录的 `docker-compose.override.yml`（`20261013-creditcap-253f1b8d`），依次 `docker compose up -d --no-deps trajectory-worker / backend / frontend`；无库变更。AWS 未发布。
+
+## 历史阿里云：2026-10-13 12:34 `20261013-creditcap-253f1b8d`（/v1 单次消耗上限 `max_credits`）
 
 - 源码 `main@253f1b8d`（PR [#83](https://github.com/arkstudio-ai/OpenBox/pull/83)），相对上一版只多了 `max_credits`：合作方发送需求时给本次请求设积分上限，镜头生成与云端合成提交前按同一报价预校验，超限不提交、记录 `credit_cap.hit`，`GET /v1/sessions/{id}` 透出 `credit_cap`；文本调用不计入；网页/App 会话无此字段，行为不变。对外文档升 v1.3。
 - 迁移：业务库 `pf39b0c1d2e3 → pg40c1d2e3f4`（`sessions.credit_cap` JSON 列）；轨迹库 `t0007_turn_alerts` 未动。三容器都切到该标签（worker 代码与上一版一致）。配置与两库备份 `backups/20261013-creditcap-253f1b8d/activation-*/`。

@@ -79,45 +79,46 @@ class AiMediaOverlay extends StatelessWidget {
 }
 
 class AiDisclosure extends ConsumerWidget {
-  const AiDisclosure({super.key, this.compact = false});
-
-  final bool compact;
+  const AiDisclosure({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     void showInfo() => context.push(Paths.legalDocument('ai'));
-    if (compact) {
-      return TextButton(
-        onPressed: showInfo,
-        style: TextButton.styleFrom(
-          foregroundColor: t.n700,
-          textStyle: const TextStyle(fontSize: FontSizes.sm, height: 1.4),
-        ),
-        child: Text(i18n.t('chat:aigc.label')),
-      );
-    }
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
         children: [
-          Flexible(
-            child: Text(
-              i18n.t('chat:aigc.notice'),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: FontSizes.sm,
-                height: 1.4,
-                color: t.n700,
-              ),
+          Text(
+            i18n.t('chat:aigc.notice'),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              height: 1.5,
+              color: t.n700,
             ),
           ),
-          IconButton(
-            tooltip: i18n.t('chat:aigc.serviceTitle'),
-            onPressed: showInfo,
-            icon: Icon(Icons.info_outline, size: 16, color: t.n700),
+          Tooltip(
+            message: i18n.t('chat:aigc.serviceTitle'),
+            child: TextButton(
+              onPressed: showInfo,
+              style: TextButton.styleFrom(
+                foregroundColor: t.n700,
+                minimumSize: const Size(0, 24),
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: const TextStyle(
+                  fontSize: FontSizes.xs,
+                  height: 1.5,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+              child: Text(i18n.t('chat:aigc.serviceTitle')),
+            ),
           ),
         ],
       ),

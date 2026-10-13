@@ -50,6 +50,7 @@ export interface ComposerSubmit {
 
 interface Props {
   assistant?: boolean
+  compact?: boolean
   busy: boolean
   suggestions?: SuggestionsPart
   historyScrollRef?: RefObject<HTMLDivElement | null>
@@ -133,6 +134,7 @@ function placeholderKey(dragging: boolean, busy: boolean, assistant: boolean): s
  *  round button morphs between send and stop. */
 export function Composer({
   assistant = false,
+  compact = false,
   busy,
   suggestions,
   historyScrollRef,
@@ -215,7 +217,8 @@ export function Composer({
     const ta = taRef.current
     if (!ta) return
     ta.style.height = "auto"
-    ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT)}px`
+    // Let CSS size an empty field; only a draft needs a measured height.
+    if (text) ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT)}px`
   }, [text])
 
   const appliedDraft = useRef<number | undefined>(undefined)
@@ -308,7 +311,10 @@ export function Composer({
   const placeholder = t(placeholderKey(drop.dragging, busy, assistant))
 
   return (
-    <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
+    <div className={cn(
+      "flex-none pt-1",
+      compact ? "px-4 pb-1" : "px-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] sm:px-6.5",
+    )}>
       <div className="mx-auto w-full max-w-190">
         {(suggestionChips.visible || suggestionChips.loading) && (
           <SuggestionDock historyScrollRef={historyScrollRef}>
@@ -341,8 +347,8 @@ export function Composer({
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               className={cn(
-                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
-                attachments.items.length > 0 ? "pt-2" : "pt-4",
+                "scr text-ink placeholder:text-n700 block max-h-50 min-h-8 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
+                attachments.items.length > 0 ? "pt-1.5" : "pt-2",
               )}
             />
             {mention.open && (
@@ -357,7 +363,7 @@ export function Composer({
             {mentionSlot}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-1">
+          <div className="flex flex-wrap items-center gap-1 px-3">
             <ComposerActions
               disabled={!canAttach}
               title={canAttach ? t("attach") : t("attachNeedSandbox")}
@@ -389,17 +395,8 @@ export function Composer({
             />
           </div>
 
-          <div className="flex justify-end px-4 pb-1.5">
-            <span className="text-n600 text-2xs">
-              {t(
-                shortcut.shortcut === "mod_enter"
-                  ? "composer.sendShortcut.hintModEnter"
-                  : "composer.sendShortcut.hintEnter",
-              )}
-            </span>
-          </div>
+          <AiDisclosure />
         </InputGroup>
-        <AiDisclosure />
       </div>
     </div>
   )

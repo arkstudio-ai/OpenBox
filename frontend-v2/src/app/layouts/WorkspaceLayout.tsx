@@ -7,7 +7,8 @@ import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { AssistantTopbarActions, QuestionDock, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { useResourceMention } from "@/features/resources"
-import { VoiceCallButton, VoiceCallDock } from "@/features/voice"
+import { VoiceCallButton } from "@/features/voice"
+import { AssistantFloatingEntry } from "./AssistantFloatingEntry"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -184,7 +185,7 @@ export default function WorkspaceLayout() {
       {/* On every page of the shell, takeover pages included: a call started
           from the assistant goes on while the user looks elsewhere. */}
       <Suspense fallback={null}>
-        <VoiceCallDock />
+        <AssistantFloatingEntry surface={isAssistant || isObservation ? "assistant" : "workspace"} />
       </Suspense>
     </div>
   )

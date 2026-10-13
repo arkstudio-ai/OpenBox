@@ -421,6 +421,8 @@ def create_app() -> FastAPI:
 
     from api.assistant import router as assistant_router
     application.include_router(assistant_router)
+    from api.assistant_appearance import router as assistant_appearance_router
+    application.include_router(assistant_appearance_router)
 
     from api.memory_search import router as memory_search_router
     from api.memory_debug import router as memory_debug_router

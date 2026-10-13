@@ -494,6 +494,10 @@ async def get_preferences(current_user: dict = Depends(get_current_user)):
 @router.put("/me/preferences")
 async def update_preferences(body: PreferencesUpdate, current_user: dict = Depends(get_current_user)):
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Portrait object references can only be written by the bounded avatar
+    # upload endpoint, never supplied through arbitrary preference JSON.
+    if isinstance(fields.get("extra"), dict):
+        fields["extra"].pop("assistant_companion", None)
     from session.image_pref import KEY, options
     from core.config import get_config
     chosen = fields.pop(KEY, None)

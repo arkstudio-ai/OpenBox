@@ -7,6 +7,7 @@
 import { create } from "zustand"
 import i18n, { persistLanguage, type AppLanguage } from "@/shared/i18n"
 import { http } from "@/shared/api/http"
+import { useAuthStore } from "@/shared/api/auth-store"
 import type { UserPreferences } from "@/shared/types/api"
 import {
   DEFAULT_ASSISTANT_PROFILE,
@@ -164,8 +165,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       })
     },
     setAssistantProfile: async (patch) => {
-      get().applyAssistantView(await http.put<unknown>("/api/assistant/profile", patch))
-      return get().assistant
+      const userId = useAuthStore.getState().user?.id
+      const view = await http.put<unknown>("/api/assistant/profile", patch)
+      if (useAuthStore.getState().user?.id === userId) get().applyAssistantView(view)
+      return readAssistantProfile(view)
     },
     recordIntro: async (event) => {
       get().applyAssistantView(await http.post<unknown>("/api/assistant/intro", event))

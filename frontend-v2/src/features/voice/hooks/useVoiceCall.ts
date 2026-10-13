@@ -15,6 +15,7 @@ export function useVoiceCall() {
   return useVoiceStore(
     useShallow((state) => ({
       status: state.call.status,
+      workspaceId: state.workspaceId,
       phase: displayPhase(state.call),
       working: state.call.working,
       late: state.call.late,

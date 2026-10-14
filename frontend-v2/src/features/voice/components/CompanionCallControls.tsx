@@ -1,10 +1,11 @@
-import { Mic, MicOff, Phone, PhoneOff } from "lucide-react"
+import { Phone, PhoneOff } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useVoiceEnabled } from "../api/voice"
 import { useCallElapsed, useVoiceCall } from "../hooks/useVoiceCall"
 import { isLive } from "../lib/reducer"
 import { callView } from "../lib/view"
 import { CostTag } from "./CostTag"
+import { MuteButton } from "./MuteButton"
 import { VoiceCallEnded } from "./VoiceCallEnded"
 import { VoiceOrb } from "./VoiceOrb"
 
@@ -37,32 +38,26 @@ export function CompanionCallControls() {
     )
   return (
     <div className="bg-surface/60 space-y-2 px-4 py-3">
-      <div className="flex items-center gap-2">
-        <VoiceOrb status={view.status} phase={view.phase} muted={view.muted} size="sm" />
-        <span role="status" aria-live="polite" className="min-w-0 flex-1 text-sm">
-          {t(view.statusKey, { ns: "voice" })}
-        </span>
-        {view.clock && <span className="text-n700 text-xs tabular-nums">{view.clock}</span>}
-        {call.status === "connected" && (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-32 flex-1 items-center gap-2">
+          <VoiceOrb status={view.status} phase={view.phase} muted={view.muted} size="sm" />
+          <span role="status" aria-live="polite" className="min-w-0 flex-1 text-sm">
+            {t(view.statusKey, { ns: "voice" })}
+          </span>
+          {view.clock && <span className="text-n700 text-xs tabular-nums">{view.clock}</span>}
+        </div>
+        <div className="ms-auto flex items-center gap-2">
+          {call.status === "connected" && <MuteButton muted={call.muted} onClick={call.toggleMute} />}
           <button
             type="button"
-            onClick={call.toggleMute}
-            aria-label={t(call.muted ? "controls.unmute" : "controls.mute", { ns: "voice" })}
-            aria-pressed={call.muted}
-            className="border-hair hover:bg-hairsoft flex size-11 shrink-0 items-center justify-center rounded-full border"
+            onClick={call.hangUp}
+            disabled={call.status === "ending"}
+            aria-label={t("controls.hangUp", { ns: "voice" })}
+            className="bg-danger-soft text-danger-ink flex size-11 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
           >
-            {call.muted ? <MicOff size={17} aria-hidden /> : <Mic size={17} aria-hidden />}
+            <PhoneOff size={17} aria-hidden />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={call.hangUp}
-          disabled={call.status === "ending"}
-          aria-label={t("controls.hangUp", { ns: "voice" })}
-          className="bg-danger-soft text-danger-ink flex size-11 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
-        >
-          <PhoneOff size={17} aria-hidden />
-        </button>
+        </div>
       </div>
       {view.cost && (
         <div className="flex items-center justify-between gap-2 text-xs">

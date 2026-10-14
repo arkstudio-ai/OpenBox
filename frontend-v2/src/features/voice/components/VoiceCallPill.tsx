@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 import type { CallControls, CallView } from "../lib/view"
 import { HangUpButton } from "./HangUpButton"
+import { MuteButton } from "./MuteButton"
 import { VoiceOrb } from "./VoiceOrb"
 
 export interface VoiceCallPillProps {
@@ -35,6 +36,9 @@ export function VoiceCallPill({ view, controls }: VoiceCallPillProps) {
       <span role="status" aria-live="polite" className="sr-only">
         {status}
       </span>
+      {view.status === "connected" && (
+        <MuteButton muted={view.muted} onClick={controls.onToggleMute} size="icon" compact />
+      )}
       <HangUpButton
         onClick={controls.onHangUp}
         tone={dialling ? "cancel" : "hangUp"}

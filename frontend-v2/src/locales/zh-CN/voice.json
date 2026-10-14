@@ -9,6 +9,8 @@
     "connecting": "正在接通…",
     "greeting": "已接通",
     "listening": "我在听",
+    "muted": "麦克风已静音",
+    "mutedShort": "已静音",
     "thinking": "想一下…",
     "speaking": "在说话",
     "working": "在办，稍等…",
@@ -20,6 +22,8 @@
   "controls": {
     "mute": "静音",
     "unmute": "取消静音",
+    "muteHint": "关闭麦克风，通话和助手播报继续",
+    "unmuteHint": "打开麦克风，继续说话",
     "speaker": "扬声器",
     "earpiece": "听筒",
     "hangUp": "挂断",

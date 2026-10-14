@@ -9,6 +9,8 @@
     "connecting": "Connecting…",
     "greeting": "Connected",
     "listening": "Listening",
+    "muted": "Microphone muted",
+    "mutedShort": "Muted",
     "thinking": "Thinking…",
     "speaking": "Speaking",
     "working": "On it, one moment…",
@@ -20,6 +22,8 @@
   "controls": {
     "mute": "Mute",
     "unmute": "Unmute",
+    "muteHint": "Mute your microphone; the call and assistant audio continue",
+    "unmuteHint": "Unmute your microphone to speak again",
     "speaker": "Speaker",
     "earpiece": "Earpiece",
     "hangUp": "Hang up",

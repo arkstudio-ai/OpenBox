@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily OpenBox (Gaode) PostgreSQL backup at 03:30 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+Unit=openbox-pg-backup.service
+
+[Install]
+WantedBy=timers.target

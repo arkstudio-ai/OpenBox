@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenBox (Gaode) weekly Docker image prune
+Documentation=file:/opt/openbox/deploy/gaode/README.md
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=OPENBOX_DIR=/opt/openbox
+ExecStart=/opt/openbox/deploy/gw2/scripts/prune-images.sh --keep 3 --execute
+Nice=10

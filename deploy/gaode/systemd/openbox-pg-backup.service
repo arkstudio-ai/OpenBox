@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenBox (Gaode production) PostgreSQL backup to OSS
+Documentation=file:/opt/openbox/deploy/gaode/README.md
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=OPENBOX_DIR=/opt/openbox
+ExecStart=/opt/openbox/deploy/gaode/scripts/pg-backup-gaode.sh
+TimeoutStartSec=2h
+Nice=10

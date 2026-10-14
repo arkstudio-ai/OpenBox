@@ -1,10 +1,10 @@
-import { ChevronUp, Mic, MicOff } from "lucide-react"
+import { ChevronUp } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useAssistantNames } from "@/shared/appearance/useAssistantNames"
-import { cn } from "@/shared/lib/cn"
 import type { CallControls, CallView } from "../lib/view"
 import { CostTag } from "./CostTag"
 import { HangUpButton } from "./HangUpButton"
+import { MuteButton } from "./MuteButton"
 import { VoiceOrb } from "./VoiceOrb"
 
 export interface VoiceCallExpandedProps {
@@ -59,23 +59,7 @@ export function VoiceCallExpanded({ view, controls }: VoiceCallExpandedProps) {
       </div>
       {view.showHint && <p className="text-n600 mt-0.5 text-xs">{t("hint.start")}</p>}
       <div className="border-hair mt-3 flex items-center gap-2 border-t pt-3">
-        {connected && (
-          <button
-            type="button"
-            onClick={controls.onToggleMute}
-            className={cn(
-              "border-hair text-n800 hover:bg-hairsoft flex h-8 flex-none items-center gap-1.5 rounded-full border px-3 text-sm",
-              view.muted && "bg-n200",
-            )}
-          >
-            {view.muted ? (
-              <MicOff size={15} strokeWidth={2.2} aria-hidden />
-            ) : (
-              <Mic size={15} strokeWidth={2.2} aria-hidden />
-            )}
-            {view.muted ? t("controls.unmute") : t("controls.mute")}
-          </button>
-        )}
+        {connected && <MuteButton muted={view.muted} onClick={controls.onToggleMute} compact />}
         <span className="min-w-0 flex-1" />
         {showCost && view.cost && <CostTag cost={view.cost} />}
         <HangUpButton

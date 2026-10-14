@@ -88,8 +88,9 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
     },
     hangUp: () => session?.hangUp(),
     toggleMute: () => {
+      if (get().call.status !== "connected" || !session) return
       const muted = !get().muted
-      session?.setMuted(muted)
+      session.setMuted(muted)
       set({ muted })
     },
     setExpanded: (expanded) => set({ expanded }),

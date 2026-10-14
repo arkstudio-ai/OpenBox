@@ -13,6 +13,8 @@ import { useFloatingPosition } from "../hooks/useFloatingPosition"
 import { useAutoDismiss, useLevelVariable, useVoiceCall } from "../hooks/useVoiceCall"
 import { isLive } from "../lib/reducer"
 import { CompanionCallControls } from "./CompanionCallControls"
+import { CompanionCallBadge, CompanionEntryLabel } from "./CompanionCallIndicator"
+import { MuteButton } from "./MuteButton"
 
 interface SettingsContext {
   inCall: boolean
@@ -39,7 +41,8 @@ export function AssistantCompanion({ children, settings: Settings }: Props) {
   const [visited, setVisited] = useState(false)
   const [page, setPage] = useState<"chat" | "settings">("chat")
   const open = opened || (call.status !== "idle" && call.expanded)
-  const orb = useFloatingPosition(`bossip:companion:${userId}:orb`, { width: 72, height: 96 })
+  const quickMute = call.status === "connected" && !open
+  const orb = useFloatingPosition(`bossip:companion:${userId}:orb`, { width: 72, height: quickMute ? 148 : 96 })
   const panel = useFloatingPosition(`bossip:companion:${userId}:panel`, { width: 424, height: 660 })
   const windowRef = useRef<HTMLDivElement>(null)
   const launcherRef = useRef<HTMLButtonElement>(null)
@@ -95,13 +98,14 @@ export function AssistantCompanion({ children, settings: Settings }: Props) {
             >
               <CompanionAvatar appearance={appearance} className="size-full" />
             </span>
-            {inCall && (
-              <span className="bg-s600 border-card absolute right-1 bottom-1 size-3.5 rounded-full border-2" />
-            )}
+            <CompanionCallBadge inCall={inCall} muted={call.muted} />
           </button>
-          <span className="bg-card/90 text-n700 text-2xs mx-auto block w-fit max-w-full truncate rounded-full px-2 py-0.5 text-center shadow-sm">
-            {inCall ? t("call.active") : name}
-          </span>
+          <CompanionEntryLabel inCall={inCall} muted={call.muted} name={name} />
+          {quickMute && (
+            <div className="mt-1 flex justify-center">
+              <MuteButton muted={call.muted} onClick={call.toggleMute} size="icon" />
+            </div>
+          )}
           <span id={`${panelId}-move`} className="sr-only">
             {t("moveHint")}
           </span>

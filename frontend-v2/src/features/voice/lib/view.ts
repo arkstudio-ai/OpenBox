@@ -38,6 +38,7 @@ export interface CallControls {
 }
 
 function statusKey(call: CallFacts): string {
+  if (call.status === "connected" && call.muted && call.phase === "listening") return "state.muted"
   if (call.status === "connected")
     return call.phase === "working" && call.late ? LATE_COPY : PHASE_COPY[call.phase]
   if (call.status === "requesting_mic" || call.status === "connecting" || call.status === "ending")

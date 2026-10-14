@@ -10,12 +10,12 @@ ECS `i-uf6fm76cksm8z1cd7bqs`（cn-shanghai，`/opt/openbox`，无 trajectory ove
 - 安装：`cp -r deploy/gaode /opt/openbox/deploy/`（随仓库同步），`install -m 0644 deploy/gaode/systemd/* /etc/systemd/system/`，`systemctl daemon-reload && systemctl enable --now openbox-pg-backup.timer openbox-prune-images.timer`。
 - `openbox-prune-images.timer`：每周日 04:30 跑 gw2 的 `prune-images.sh --keep 3 --execute`（不依赖 overlay）。
 
-## 告警（云监控，联系人组「云账号报警联系人」）
+## 告警（云监控，联系人组「openbox-gaode-alerts」，与 gw2 分开）
 
 - 应用分组 `openbox-gaode`（GroupId 247562556，含该 ECS）。
 - 主机可用性探测 `gaode-api-environment`（任务 2034951）：云监控插件在本机每分钟 GET `http://127.0.0.1:80/api/environment`，HTTP 状态 ≥ 400 连续 2 次或延迟 > 5 s 连续 3 次告警。公网站点监控（`CreateSiteMonitor`）在本账号返回 ExceedingQuota，需在控制台开通站点监控后再建；主机探测不覆盖 lighthouse 反代与证书，证书由 lighthouse 的续期 timer 负责。
 - ECS 规则：`openbox-gaode-cpu`（CPU > 85% 持续 5 分钟）、`openbox-gaode-mem`（内存 > 90% 持续 5 分钟）、`openbox-gaode-disk`（磁盘 > 85% 持续 3 分钟）；内存、磁盘和可用性探测都依赖主机云监控插件（argusagent）。`InstallMonitoringAgent` API 在这台机报 YUNDUN.Execute，Argus 脚本 URL 已 404；插件最终用 OOS 公共模板装上：`aliyun oos StartExecution --RegionId cn-shanghai --TemplateName ACS-ECS-ConfigureCloudMonitorAgent --Parameters '{"action":"install","targets":{"Type":"ResourceIds","ResourceIds":["i-uf6fm76cksm8z1cd7bqs"],"RegionId":"cn-shanghai"}}'`（2026-10-14 执行 exec-4163ee9783914a0195d2，状态 running）。
-- **联系人组「云账号报警联系人」目前没有任何联系人，告警无处可发**：在云监控控制台「报警联系人」加手机/邮箱并加入该组。
+- 五条告警（三条 ECS + 可用性探测的状态码/延迟）和应用分组都指向联系人组 `openbox-gaode-alerts`（2026-10-14 建，当前成员是账号默认联系人「浙江真的科技有限公司」，短信 190****0595）。要换人或加人：云监控控制台「报警联系人」加联系人后加入该组；gw2 以后的告警用单独的组，不要共用。
 
 ## Key 与账户
 

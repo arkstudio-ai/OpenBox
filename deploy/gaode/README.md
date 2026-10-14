@@ -21,3 +21,12 @@ ECS `i-uf6fm76cksm8z1cd7bqs`（cn-shanghai，`/opt/openbox`，无 trajectory ove
 
 - 正式 Key：`key_01M4W5JBWHTV7YE71K3WYZHMGM`（前缀 `obx_sk_N8N-smVn`，到 2027-10-14，60/min，并发 10），密钥文件 `/opt/openbox/secrets/gaode-api-key-prod-20261014.json`（root 600，字段 `secret`）。测试 Key `key_01M31QPV8Q36CFJHZXJ7V2GT08` 11-20 到期，高德切换后用 `scripts/issue_api_key.py --revoke` 撤销。
 - 用户 gaode / 工作区 `01M31Q8VPZSFYV95BDFM608D33`：正式与测试共用一个工作区（桌面按工作区分配，拆分需再买一台桌面）；对账以 `metadata.task_id` 与切换日期区分。
+
+## 测试环境 gaode-test.bossipai.com.cn（2026-10-14 建）
+
+- ECS `openbox-gaode-test` `i-uf6bbmnu8of60i0su4co`，cn-shanghai-b，`ecs.e-c1m2.large` 2c4g，40G ESSD PL0，5Mbps 按流量，包月 ¥64 自动续费；公网 `106.14.89.214`，内网 `10.100.1.90`（同 VPC/交换机）；安全组 `openbox-gaode-test-sg` sg-uf6gai8rnxeoqdbx48up（80 只放 lighthouse 106.52.167.53，2222 全网，无 22，只用云助手）。bossip-newapi 安全组 sg-uf61yit0irjcov15390u 已放行 10.100.1.90 → 3000。
+- 部署：`/opt/openbox` 从高德机克隆（compose / override / openbox.json / backend.env / gaode-console.html / aliyun-config），镜像 `20261013-trajlink-1170e8e4`（= 当时 main 头，领先高德线上一版），业务库全新迁到 head。backend.env 改动：全新 JWT/盐/通道密钥/INTERNAL_API_TOKEN/库密码，`WUYING_ENV_TAG=gaode-test`、`WUYING_RELAY_HOST=106.14.89.214`、`WUYING_RELAY_HOSTKEY` 为本机 ed25519、`WUYING_DESKTOP_TYPE=eds.enterprise_office.4c8g`、`APP_ENV=staging`、`MAX_CONCURRENT_AGENTS=4`、`POOL_ADOPT_ALLOWLIST` 空、域名全部换 gaode-test。桌面反向隧道 sshd（2222、obxtunnel、`/usr/local/bin/obx-authkeys` 读 `/etc/openbox/authkeys.env`）已起。
+- 账号（`/opt/openbox/secrets/accounts.txt`，root 600）：`obx-ops`（admin）、`gaode`（工作区 `01M4WGPK388FG3DRT08Z602ZFT`）。gaode 工作区由超管接口开通 max 月付订阅（含 1,680 套餐积分）+ 300 积分；订阅激活自动购买了 4c8g 桌面 `ecd-epnsbj1fkffqa83st`（约 ¥109.5/月，`POOL_AUTO_RENEW=true` 由应用续费）。
+- 测试 Key：`key_01M4WGPR29E9WR95C9P3B4DNJD`（前缀见 `secrets/gaode-test-api-key.json`，180 天到 2027-04-12，60/min，并发 4），`/v1/me` 经本机 nginx 验证 200。
+- 域名：lighthouse 已有 `/opt/nginx/conf.d/gaode-test.conf`（80：ACME + 301）和续期脚本/timer `bossip-gaode-test-cert-renew`；**DNS A 记录 `gaode-test.bossipai.com.cn → 106.52.167.53` 需在 DNSPod 添加**，之后在 lighthouse 签证书并补 443 块（照 gaode.conf，上游 `http://106.14.89.214`）。
+- 未配：备份 timer、云监控告警（测试环境不配）；发布顺序应为 测试机 → 高德线上，镜像同 tag。

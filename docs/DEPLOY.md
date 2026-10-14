@@ -5,7 +5,16 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-13 17:45 `20261013-trajlink-1170e8e4`（轨迹产物「打开原文件」OSS 直链）
+## 当前阿里云：2026-10-14 13:44 `20261014-companion-63dcb411`（PC 静音控制与安卓 1.0.35）
+
+- 源码 `main@63dcb4112dc22832eb192070e21386af35b75227`，从干净归档构建 linux/amd64 镜像和正式签名安卓 APK `1.0.35（46）`。包含 PC 悬浮助手、快捷设置、自定义形象、展开与收起状态静音、紧凑输入框和安卓 AI 提示布局；移动端悬浮窗口尚未实现。
+- 配置与两库备份 `/opt/openbox/backups/20261014-companion-63dcb411/activation-20261014T054254Z`；租约、进行中视频、活跃通话均为 0 后，依次 worker → backend → frontend 切换。三应用容器使用同一标签，基础设施容器保持原 ID。
+- 无新迁移，业务库 `pg40c1d2e3f4`、轨迹库 `t0007_turn_alerts`；`.env`、`backend.env`、`openbox.json`、基础 compose 哈希一致，仅 override 的三项镜像更新。保留 Audio 3.1 默认及已有 RunningHub / Wan 配置，AWS 和高德环境本次未发布。
+- 发布核验：六服务 healthy、重启 0；公网首页、environment、Logto 配置 200，app-build 与标签一致；助手形象与管理轨迹匿名请求 401。切换采样首页全部 200，environment 曾短暂 502，之后恢复。按要求没有执行测试、模拟器、真机业务复测或模型调用。
+- 正式 APK 与 7z 签名、版本、哈希、ABI 和 16 KiB 对齐已核验；7z 及自 1.0.34 以来的更新简介已发送至指定飞书产品交流群。详情见 [安卓发布记录](MOBILE_RELEASE_1_0_35_20261014.md)、[发布证据](evidence/companion-release-20261014.json)。OSS 私有中转对象保留，未清理现有资源。
+- 回滚：恢复上述备份目录的 `docker-compose.override.yml`，依次 `docker compose up -d --no-deps trajectory-worker`、`backend`、`frontend`，逐一确认 healthy。数据库与模型配置无需变更；保留旧镜像和备份。
+
+## 历史阿里云：2026-10-13 17:45 `20261013-trajlink-1170e8e4`（轨迹产物「打开原文件」OSS 直链）
 
 - 源码 `main@1170e8e4`（PR [#85](https://github.com/arkstudio-ai/OpenBox/pull/85) 合并）。同一镜像带上了 `253f1b8d` 之后 main 上队友未发布的提交：`b4237830` 悬浮助理与紧凑输入框（`5311ee4c` 合并）。三服务统一到本 tag。
 - 内容：worker 新路由 `GET /api/admin/trajectories/sessions/{sid}/payloads/{payload_id}/link`，对 `storage_kind=asset` 的产物签发桶公网 host 的短时效 GET 直链（`TRAJECTORY_ASSET_LINK_SECONDS` 默认 600 秒），可见性 / 删除 / 位置规则同下载，签发前审计 `admin.trajectory.payload_link` 并复核观看者与行，留存副本回 409 `trajectory_payload_not_linkable`；`api/internal.py` 审计白名单加入该动作。前端产物面板对带 `source_asset_id` 的产物显示「打开原文件」，点击先开窗再填链接。背景：轨迹库 1,715 条视频产物中 924 条超过 worker 8 MiB 读取上限，受控下载看不了。文档：`docs/trajectory-rearch/maps/api.md` §2.2 8b、`SESSION_TRAJECTORY_PROTOCOL.md` §7。

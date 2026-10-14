@@ -1,0 +1,179 @@
+{
+  "build": {
+    "commit": "63dcb4112dc22832eb192070e21386af35b75227",
+    "release": "20261014-companion-63dcb411",
+    "version": "1.0.35",
+    "version_code": 46,
+    "baseline": "074313a0970556650a8af319de7b18c535991076",
+    "tests_run": false,
+    "api_base": "https://ai.bossipai.com.cn",
+    "apk_name": "BossIP-Android-1.0.35-46-20261014.apk",
+    "apk_bytes": 90074408,
+    "apk_sha256": "f8deb566afaf88fe49e8aaf24c660d1593357f6176e9465231eaf77299600d5d",
+    "certificate_sha256": "161650a5683223010b68accbfa0894f21498746d5559a7e2e1baebbfff016196",
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "debuggable": false,
+    "signing": "bossip-release",
+    "zipalign_16k": true,
+    "archive": "/Users/andrewwang/Desktop/BossIP-Android-1.0.35-46-20261014.7z",
+    "archive_bytes": 27297040,
+    "archive_sha256": "3ba562da2b673845fabbb6033f61b5ba6c97b7adb6a1c709cf3491747e84698b",
+    "archive_apk_hash_matches": true
+  },
+  "deployment": {
+    "release": "20261014-companion-63dcb411",
+    "commit": "63dcb4112dc22832eb192070e21386af35b75227",
+    "before": {
+      "images": {
+        "backend": "openbox-backend:20261013-trajlink-1170e8e4",
+        "frontend": "openbox-frontend-v2:20261013-trajlink-1170e8e4",
+        "trajectory-worker": "openbox-backend:20261013-trajlink-1170e8e4"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "5dff3a358c62488ecac2aa6c3381d9d8423c48d7c5abfc245a25fa60e52b37fe",
+        "config/openbox.json": "dc1f4b8a84701b48af5ae9ef9acc3ff483982d4ec091aae89a93148231087cdf",
+        "docker-compose.yml": "2bb3da060b674cb9bd371536cd2473e1eb08d83f12dc3bd841ae001cd3dc4b35",
+        "docker-compose.override.yml": "fb734acf0c454de7975b54e8e6259e2118101a1dd43c3309fa69dae1fd7cb398"
+      },
+      "revisions": {
+        "business": "pg40c1d2e3f4",
+        "trace": "t0007_turn_alerts"
+      }
+    },
+    "after": {
+      "images": {
+        "backend": "openbox-backend:20261014-companion-63dcb411",
+        "frontend": "openbox-frontend-v2:20261014-companion-63dcb411",
+        "trajectory-worker": "openbox-backend:20261014-companion-63dcb411"
+      },
+      "config": {
+        ".env": "f8d16daf8cc1963712ea9d46414adc76455cdc602005e9649576f5f5636be360",
+        "config/backend.env": "5dff3a358c62488ecac2aa6c3381d9d8423c48d7c5abfc245a25fa60e52b37fe",
+        "config/openbox.json": "dc1f4b8a84701b48af5ae9ef9acc3ff483982d4ec091aae89a93148231087cdf",
+        "docker-compose.yml": "2bb3da060b674cb9bd371536cd2473e1eb08d83f12dc3bd841ae001cd3dc4b35",
+        "docker-compose.override.yml": "a75e1da41a7ed3fa0eee918d62cbeaad65ba6636c226d8ee3bb5edc2d3034386"
+      },
+      "revisions": {
+        "business": "pg40c1d2e3f4",
+        "trace": "t0007_turn_alerts"
+      }
+    },
+    "backup": "/opt/openbox/backups/20261014-companion-63dcb411/activation-20261014T054254Z",
+    "backups": {
+      "business": {
+        "bytes": 99998472,
+        "sha256": "9e0273923c2e76a8b61cf7e257881e46eba809845baee9c589217a6be9f1ec9a"
+      },
+      "trace": {
+        "bytes": 82017412,
+        "sha256": "9459267fae3293960706f71eba029af75efc1e7475f5de1cddf2f7c275bc2694"
+      }
+    },
+    "active_before": {
+      "executions": 0,
+      "videos": 0,
+      "voice": 0
+    },
+    "started_at": 1791956604.504375,
+    "completed_at": 1791956647.1764178,
+    "checks": {
+      "/": 200,
+      "/api/environment": 200
+    },
+    "health": {
+      "backend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "openbox-backend:20261014-companion-63dcb411"
+      },
+      "frontend": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "openbox-frontend-v2:20261014-companion-63dcb411"
+      },
+      "trajectory-worker": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "openbox-backend:20261014-companion-63dcb411"
+      },
+      "postgres": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine"
+      },
+      "redis": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "public.ecr.aws/docker/library/redis:7-alpine"
+      },
+      "qdrant-memory": {
+        "health": "healthy",
+        "restarts": 0,
+        "image": "qdrant/qdrant:v1.19.0"
+      }
+    },
+    "tests_run": false,
+    "migration_required": false,
+    "other_containers_unchanged": true,
+    "config_changes": []
+  },
+  "public_health": {
+    "at": 1791956666.330854,
+    "build_id": "20261014-companion-63dcb411",
+    "status": {
+      "/": 200,
+      "/api/environment": 200,
+      "/api/auth/logto/config": 200,
+      "/api/assistant/appearance": 401,
+      "/api/admin/trajectories/sessions": 401
+    },
+    "matches_release": true,
+    "tests_run": false
+  },
+  "health_sampling": {
+    "/": {
+      "200": 39
+    },
+    "/api/environment": {
+      "200": 32,
+      "502": 7
+    }
+  },
+  "transport": {
+    "backend.tgz": {
+      "bytes": 234021260,
+      "sha256": "c4a6a96371bdd56f8db9b7d7a69c778e2c6f72e30c5bce33038399839c1ab829"
+    },
+    "frontend.tgz": {
+      "bytes": 29669246,
+      "sha256": "b2e51aa442498d2872be922d18c147a8e37ecf75cb3bca92e1f62cf6138418b9"
+    },
+    "tools.tgz": {
+      "bytes": 3853,
+      "sha256": "85449f62e719e76aa77db9073160545d28bf239b8c97de7600a732e06cba9efb"
+    }
+  },
+  "delivery": {
+    "group": "(产品交流群)吴潇洋, 张阳, 潘晨熙, 汪瀚林等8人",
+    "archive_name": "BossIP-Android-1.0.35-46-20261014.7z",
+    "archive_sent": true,
+    "summary_sent": true,
+    "verified_at": "2026-10-14T05:46:37.847Z",
+    "screenshot": "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/release-20261014/feishu-sent.png"
+  },
+  "tests_run": false,
+  "verification_scope": [
+    "release build",
+    "release signature and APK metadata",
+    "archive member hash",
+    "deployment backup and container health",
+    "public build ID and HTTP status"
+  ],
+  "runtime_configuration_changed": false,
+  "oss_transfer_objects_retained": true
+}

@@ -32,6 +32,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 观察：启动恢复阶段对 10-10 的旧会话 `session_7YBVEBDJ…`（status=error，网页会话）报 `Agent tail repair failed … Assistant parent crosses its logical turn`，属该会话历史数据问题，与本次改动无关；轨迹 `ReadTooLarge` WARNING 同前几版。
 - 回滚：恢复备份目录的 `docker-compose.override.yml`，旧镜像启动前 `alembic downgrade pf39b0c1d2e3`（只删一列），再依次 `up -d --no-deps trajectory-worker / backend / frontend`。
 
+## 高德机：2026-10-16 01:05 `20261016-planquote-8b6babe2`（/v1 计划级预估与确认卡硬校验）
+
+- 源码 `main@8b6babe2`（PR [#89](https://github.com/arkstudio-ai/OpenBox/pull/89) 合并）。内容：`video_generate action=quote_plan` 服务端按合作方资费重算整片（镜头 + 转写 + 合成）并登记为会话 `plan_quote`，模型报的数只对比不采信；card 2 标 `kind=plan_confirm`、「可以」带 `estimated_credits`，答该项时硬校验 余额 ≥ 总额（402 `INSUFFICIENT_CREDITS_FOR_PLAN`，details required/available/shortfall）与 已花+在途+总额 ≤ `max_credits`（402 `CREDIT_CAP_EXCEEDED`，hit.step=plan）；`GET /v1/sessions/{id}` 新增 `estimate`；对外文档升 v1.4。
+- 迁移：业务库 `pg40c1d2e3f4 → ph51d2e3f4a5`（`sessions.plan_quote` JSON 列），启动自跑。frontend 保持 `20261013-creditcap-253f1b8d`，`openbox.json` / `backend.env` 未动。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 8b6babe2 backend container`；压缩包 `8fbfacd5…c99e2e8c`（240,895,708 B）。经 `oss://bossip/_deploy-tmp/<tag>/`（`--endpoint oss-cn-shanghai.aliyuncs.com`）签名链接到机上 `releases/<tag>/`，`sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换：`/tmp/gaode_deploy_planquote.sh` 后台执行：备份 override 与业务库 `backups/pre-gaode-planquote-20261016T010456.dump` → 镜像内核对（路由不变、`plan_quote` 模块、SKILL 含 `quote_plan`/`plan_confirm`/`screen_text`、迁移文件）→ 租约 0 → `up -d --no-deps backend` 10 秒 healthy → `alembic current = ph51d2e3f4a5`、列存在。
+- 验证：`/v1/sessions` 401、`/api/environment` 200。容器内对测试会话 `planquote-check`（未删）登记 10-15 crab-voucher 同款计划（Seedance 2.0 1080p 5 镜 10/8/9/7/8 s + 5 条转写，模型谎报每项 1 积分）：服务端定价 233.35、5 项被纠正；上限 60 时答「可以」被拒 `CREDIT_CAP_EXCEEDED step=plan expected=233.35`，答"修改拆段"放行，上限 300 时放行；`GET /v1/sessions/{id}.estimate.total=233.35`、`balance_sufficient=true`。切换后 5 分钟无 WARNING/ERROR。未做真实出片；余额不足分支只有单测覆盖（高德工作区余额 6356）。
+- 待对齐：高德目前每条消息都传 `max_credits=60`，计划级校验会把 5 镜 233 积分的方案在 card 2 前就拦住（`plan_blocked=true`），助手会改报缩减方案；要让"一条片子一个预算"生效，高德需改传整片预算（如 300）。
+- 回滚：override 的 backend 行改回 `20261015-subcap-4811a3b6`，旧镜像启动前 `docker compose run --rm --no-deps -T backend alembic downgrade pg40c1d2e3f4`（只删一列），再 `up -d --no-deps backend`。gw2 / AWS 本次未发布（PR 已在 main，随下次 gw2 发布带上，gw2 需同样跑迁移）。
+
 ## 高德机：2026-10-15 23:40 `20261015-subcap-4811a3b6`（/v1 上限计入在途镜头、技能抽帧检画面文字）
 
 - 源码 `main@4811a3b6`（PR [#86](https://github.com/arkstudio-ai/OpenBox/pull/86) + [#87](https://github.com/arkstudio-ai/OpenBox/pull/87) 合并）。起因：10-15 高德 `crab-voucher` 会话选了"不配字幕"，Seedance 2.0 仍把镜头 4、5 的台词画进画面（"限时"画成"随时"），card 3 只比对 STT 没看画面即以"纯净无字幕"交付；同日核对 `max_credits` 硬闸 10 天内从未拒绝过提交，且同轮并发提交的镜头互不计入。

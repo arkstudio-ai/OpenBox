@@ -14,7 +14,7 @@ import { CompanionAppearanceSettings } from "./CompanionAppearanceSettings"
 
 interface Props {
   inCall: boolean
-  onResetPosition: () => void
+  onResetPosition?: () => void
   onNavigate: () => void
 }
 const selectClass = "bg-card border-hair text-ink min-h-11 w-full min-w-0 rounded-xl border px-3 text-sm"
@@ -193,13 +193,15 @@ export function AssistantQuickSettings({ inCall, onResetPosition, onNavigate }: 
         <QuickConversationSettings />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 pt-4 text-xs">
-        <button
-          type="button"
-          onClick={onResetPosition}
-          className="text-n700 hover:text-ink min-h-11 underline underline-offset-4"
-        >
-          {t("settings.resetPosition")}
-        </button>
+        {onResetPosition && (
+          <button
+            type="button"
+            onClick={onResetPosition}
+            className="text-n700 hover:text-ink min-h-11 underline underline-offset-4"
+          >
+            {t("settings.resetPosition")}
+          </button>
+        )}
         <Link
           to={paths.settings("assistant")}
           onClick={onNavigate}

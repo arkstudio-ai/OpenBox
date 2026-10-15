@@ -7,8 +7,9 @@ import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { AssistantTopbarActions, QuestionDock, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { useResourceMention } from "@/features/resources"
-import { VoiceCallButton } from "@/features/voice"
+import { VoiceCallDock } from "@/features/voice"
 import { AssistantFloatingEntry } from "./AssistantFloatingEntry"
+import { AssistantPageActions } from "./AssistantPageActions"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -145,7 +146,7 @@ export default function WorkspaceLayout() {
             isAssistant && (
               <>
                 <Suspense fallback={null}>
-                  <VoiceCallButton />
+                  <AssistantPageActions key={userId} />
                 </Suspense>
                 <Suspense fallback={null}>
                   <AssistantTopbarActions renderQuestion={renderAssistantQuestion} />
@@ -182,10 +183,15 @@ export default function WorkspaceLayout() {
           <WorkbenchPanel sessionId={chatSessionId} developerMode={developerMode} />
         </Suspense>
       )}
-      {/* On every page of the shell, takeover pages included: a call started
-          from the assistant goes on while the user looks elsewhere. */}
+      {/* The assistant page already owns the conversation. Keep only call
+          controls there (also while resolving a legacy chat URL); the shared
+          call session survives either presentation and all route changes. */}
       <Suspense fallback={null}>
-        <AssistantFloatingEntry surface={isAssistant || isObservation ? "assistant" : "workspace"} />
+        {isAssistant || !ownSessionReady ? (
+          <VoiceCallDock />
+        ) : (
+          <AssistantFloatingEntry surface={isObservation ? "assistant" : "workspace"} />
+        )}
       </Suspense>
     </div>
   )

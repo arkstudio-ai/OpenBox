@@ -2,8 +2,8 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v1.3 |
-| 发布日期 | 2026-10-13 |
+| 文档版本 | v1.4 |
+| 发布日期 | 2026-10-16 |
 | 适用方 | 高德 |
 | 接口版本 | `/v1` |
 | 维护方 | bossip 技术团队 |
@@ -12,6 +12,7 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.4 | 2026-10-16 | 发送需求新增「预估与预校验」：AI 在分镜与报价确认卡前把整片计划交服务端报价并登记，回复该卡确认选项时按整片总额校验余额与 `max_credits`；查询会话新增 `estimate`；确认卡问题新增 `kind`、选项新增 `estimated_credits`；新增错误码 `INSUFFICIENT_CREDITS_FOR_PLAN`；计费说明新增「计划预校验」 |
 | v1.0 | 2026-09-18 | 首版，最小接口集与待确认问题 |
 | v1.1 | 2026-09-21 | 回写高德确认结果：轮询为主、服务端调用、成片拉取签名 URL；模型参数改为质量 / 标准 / 灵活三档；固化视频规格默认值；删除已确认问题 |
 | v1.3 | 2026-10-13 | 发送需求新增 `max_credits`（本次请求付费步骤预估总额上限，超限在提交生成前拒绝）；查询会话新增 `credit_cap` 状态；新增会话级错误码 `CREDIT_CAP_EXCEEDED` |
@@ -298,6 +299,17 @@
 接口立即返回，之后通过 6.5 轮询 `assistant_message_id` 对应的消息获取进展与结果。
 会话处于 `busy` 时返回 `409 SESSION_BUSY`，需等待空闲或先中止。
 
+**预估与预校验**
+
+AI 在给出「分镜与报价确认」卡之前，会把整片计划交给 bossip 服务端按当前价目与档位重新报价，并登记为本会话的预估。预估包含：计划内每个镜头的生成费、每镜口播校验的转写费，以及（选带转场合成时）云端合成费；**不含**后续因口误或画面文字而重拍的镜头——重拍前会单独报价并再次确认。
+
+- 预估总额写在确认卡的问题文本里，同时以结构化字段出现在卡片上：该问题带 `kind: "plan_confirm"`，「可以」选项带 `estimated_credits`（整片预估积分，十进制字符串），见 8.2。
+- 随时可通过 6.9 的 `estimate` 字段查询：`exceeds_cap` 表示「预估 + 本次请求已消耗」是否超过 `max_credits`；`balance_sufficient` / `shortfall` 表示当前余额是否足够、还差多少。
+- 接入方回复「可以」（6.6）时作为硬校验：余额不足整片预估返回 `402 INSUFFICIENT_CREDITS_FOR_PLAN`（`details.required / available / shortfall`）；超过 `max_credits` 返回 `402 CREDIT_CAP_EXCEEDED`（`details.expected` 为整片预估，并记入 `credit_cap.exceeded`，`step` 为 `plan`）。两种情况都不进入生成、不产生费用，卡片仍为 `pending`；充值或在下一条需求提高 `max_credits` 后，可再次回复同一张卡。
+- AI 自己发现预估已超出余额或 `max_credits` 时不会出卡，而是在回复中说明差额并给出缩减镜头数 / 时长或换档的方案。
+
+预估按登记时的价目计算；实际扣费仍以每一步完成时的报价为准（第 10 节）。此前的逐步校验保持不变：确认后每一镜提交前仍按「已消耗 + 该步预估 ≤ max_credits」检查。
+
 ---
 
 ### 6.5 轮询消息
@@ -344,6 +356,8 @@
 
 确认卡已回复或已超时返回 `409 INTERACTION_RESOLVED`。
 
+回复带 `kind: "plan_confirm"` 的「分镜与报价确认」卡、且选中带 `estimated_credits` 的选项时，服务端先按整片预估校验：余额不足返回 `402 INSUFFICIENT_CREDITS_FOR_PLAN`，超过 `max_credits` 返回 `402 CREDIT_CAP_EXCEEDED`；两者都不改变卡片状态（仍为 `pending`），见 6.4「预估与预校验」。选择其它选项或自由文本不触发校验。
+
 ---
 
 ### 6.7 拒绝确认卡
@@ -374,7 +388,7 @@
 
 `GET /v1/sessions/{session_id}`
 
-响应结构同 6.2，另含 `credit_cap`：当前请求的消耗上限状态，未设上限时为 `null`。
+响应结构同 6.2，另含 `credit_cap`（当前请求的消耗上限状态，未设上限时为 `null`）与 `estimate`（AI 登记的整片预估，尚未登记时为 `null`）。
 
 ```json
 "credit_cap": {
@@ -386,7 +400,33 @@
 }
 ```
 
-某一步因超限被拒绝后 `exceeded` 变为 `{ "code": "CREDIT_CAP_EXCEEDED", "step": "generation" | "compose", "expected": "33.6", "spent": "100", "at": "…" }`，会话回到 `idle`，AI 的回复会说明原因；接入方可提高 `max_credits` 重新发送需求（同一会话内继续即可，已生成的镜头会复用）。`credits_used` 为本会话累计消耗积分。
+某一步因超限被拒绝后 `exceeded` 变为 `{ "code": "CREDIT_CAP_EXCEEDED", "step": "generation" | "compose" | "plan", "expected": "33.6", "spent": "100", "at": "…" }`，会话回到 `idle`，AI 的回复会说明原因；`step` 为 `plan` 时是回复分镜与报价确认卡被拒（6.4），卡片仍可回复。接入方可提高 `max_credits` 重新发送需求（同一会话内继续即可，已生成的镜头会复用）。`credits_used` 为本会话累计消耗积分。
+
+```json
+"estimate": {
+  "total": "233.1",
+  "items": [
+    { "kind": "generation", "shot": 1, "model": "wan3.0-video", "resolution": "1080p", "seconds": 12, "credits": "43.2" },
+    { "kind": "transcribe", "shot": 1, "model": "fun-asr", "resolution": null, "seconds": 12, "credits": "0.05" },
+    { "kind": "compose", "shot": null, "model": null, "resolution": "1080p", "seconds": 58, "credits": "0.09" }
+  ],
+  "exceeds_cap": false,
+  "balance_sufficient": true,
+  "shortfall": "0",
+  "created_at": "2026-10-16T08:00:00Z",
+  "confirmed_at": null
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| total | 整片预估积分（十进制字符串），为 `items[].credits` 之和 |
+| items | 计划内每个付费步骤：`kind` 为 `generation`（镜头生成）/ `transcribe`（口播转写）/ `compose`（云端合成）；`shot` 镜头序号；`seconds` 计划秒数；`credits` 该步预估 |
+| exceeds_cap | 「预估 + 本次请求已消耗」是否超过 `max_credits`；未设上限时为 `false` |
+| balance_sufficient / shortfall | 当前余额是否足够支付整片预估，不足时还差多少（积分） |
+| created_at / confirmed_at | 登记时间；接入方确认分镜与报价卡的时间，未确认为 `null` |
+
+预估在每次 AI 重新规划（修改拆段、换模型或分辨率）后更新；重拍不计入。
 
 ---
 
@@ -668,7 +708,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 场景 | 确认卡 | 说明 |
 |---|---|---|
 | 视频创作 | 讲稿确认 | AI 写完讲稿后，确认内容与成片风格 |
-| 视频创作 | 分镜与报价确认 | 展示每镜画面、时长与总价，用户确认后才开始付费生成 |
+| 视频创作 | 分镜与报价确认 | 展示每镜画面、时长与总价，用户确认后才开始付费生成。问题带 `kind: "plan_confirm"`，「可以」选项带 `estimated_credits`；回复该选项时按整片预估校验余额与 `max_credits`（6.4） |
 | 视频创作（条件） | 口播校验结果 | 生成后转写发现口误时，确认重拍或接受 |
 | 视频创作（条件） | 合成确认 | 合成费用高于报价或用户中途改风格时 |
 | 视频剪辑 | 剪辑方案确认 | 通常一张，简单任务可能没有 |
@@ -713,7 +753,26 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | header | 问题短标题 |
 | multiple | 是否多选 |
 | custom | 是否允许用户输入选项之外的文本 |
+| kind | 可选，问题类型。目前只有 `plan_confirm`：分镜与报价确认，其确认选项的回复会按整片预估做硬校验（6.4）；其它问题不带此字段 |
+| options[].estimated_credits | 可选，选中该项所承诺的预估积分（十进制字符串，与服务端报价一致），只出现在会产生费用的选项上；接入方可用它展示「约 N 积分」 |
 | expires_at | 超时时间，10 分钟。超时按拒绝处理，AI 停下，用户可再发消息继续 |
+
+分镜与报价确认卡的问题示例：
+
+```json
+{
+  "header": "分镜与报价",
+  "question": "共 5 镜 58 秒，整片预估 233.1 积分（含转写与合成），可以开始生成吗？",
+  "kind": "plan_confirm",
+  "options": [
+    { "label": "可以", "description": "", "estimated_credits": "233.1" },
+    { "label": "修改拆段或 prompt", "description": "" },
+    { "label": "更换模型、分辨率或素材", "description": "" }
+  ],
+  "multiple": false,
+  "custom": true
+}
+```
 
 确认卡正文（讲稿全文、分镜表、报价明细）在同一消息中位于卡片之前的 `text` 部件里，需一并展示。
 
@@ -769,6 +828,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 修改轮 | 每次修改按实际重生成的镜头秒数与文本消耗计费，无免费次数 |
 | 余额不足 | 发送需求返回 `402`；处理中 AI 消息 `error.code` 为 `INSUFFICIENT_CREDITS` |
 | 单次上限 | 发送需求时传 `max_credits`，付费步骤预估超限即拒绝提交（不产生该步费用）；状态见 `GET /v1/sessions/{id}` 的 `credit_cap`，错误码 `CREDIT_CAP_EXCEEDED` |
+| 计划预校验 | 分镜与报价确认卡前，AI 登记整片预估（计划内镜头 + 转写 + 合成，不含重拍）；回复该卡确认选项时按整片总额校验余额与 `max_credits`，不足返回 `402 INSUFFICIENT_CREDITS_FOR_PLAN`、超限返回 `402 CREDIT_CAP_EXCEEDED`，都不进入生成；预估见 `GET /v1/sessions/{id}` 的 `estimate` |
 | 消耗查询 | 会话级 `GET /v1/sessions/{id}` 的 `credits_used`；明细 `GET /v1/usage`；月汇总 `GET /v1/usage/summary` |
 | 对账 | 以 bossip 账单为准，按会话 `metadata.task_id` 关联；消费记录保留 180 天 |
 
@@ -795,6 +855,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 400 | `INVALID_REQUEST` | 参数错误，`message` 说明字段 | 修正参数 |
 | 401 | `UNAUTHORIZED` | API Key 缺失或无效 | 检查 Key |
 | 402 | `INSUFFICIENT_CREDITS` | 积分不足 | 联系充值 |
+| 402 | `INSUFFICIENT_CREDITS_FOR_PLAN` | 回复分镜与报价确认卡时余额不足整片预估；`details` 含 `required` / `available` / `shortfall` | 充值后再次回复同一张卡，或让 AI 缩减计划 |
 | 404 | `NOT_FOUND` | 会话或文件不存在 | 检查 ID |
 | 409 | `SESSION_BUSY` | 会话处理中 | 等待 `idle` 或先中止 |
 | 409 | `INTERACTION_RESOLVED` | 确认卡已回复或已超时 | 刷新状态 |
@@ -804,7 +865,7 @@ Markdown 格式。同一部件的 `text` 在处理中会增长，按 `id` 覆盖
 | 429 | `RATE_LIMITED` | 触发限流 | 按 `Retry-After` 重试 |
 | 500 | `INTERNAL_ERROR` | 服务内部错误 | 携带 `request_id` 联系 bossip |
 | 503 | `LLM_UNAVAILABLE` | 上游模型暂不可用 | 稍后重试 |
-| — | `CREDIT_CAP_EXCEEDED` | 会话级：某付费步骤预估超过本次请求的 `max_credits`，未提交 | 出现在 `credit_cap.exceeded.code`；提高上限后重新发送需求 |
+| 402 / — | `CREDIT_CAP_EXCEEDED` | 付费步骤或整片预估超过本次请求的 `max_credits`，未提交。回复分镜与报价确认卡时作为 `402` 返回（`details.step` 为 `plan`，`expected` 为整片预估）；其它步骤出现在 `credit_cap.exceeded.code` | 提高上限后重新发送需求（再次回复同一张卡即可继续） |
 
 ---
 

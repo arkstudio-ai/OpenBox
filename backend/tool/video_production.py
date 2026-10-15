@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent.driver import LeaseLostError
+from billing.plan_quote import PlanItem
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -113,8 +114,15 @@ class VideoInputRef(BaseModel):
 
 
 class VideoGenerateArgs(BaseModel):
-    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch", "attach"]
+    action: Literal["models", "estimate", "quote_plan", "submit", "status", "wait", "cancel", "fetch", "attach"]
     job_id: str | None = Field(default=None, max_length=96)
+    #: For action="quote_plan": every paid step of the plan about to go on the
+    #: shots + price card. Priced server-side and registered on the session.
+    plan_items: list[PlanItem] | None = Field(default=None, max_length=64, description=(
+        "quote_plan only: the whole plan's paid steps — one generation item per shot (model, resolution, "
+        "seconds), one transcribe item per shot, and one compose item for the piece when the cut goes through "
+        "video_compose. The server re-prices every item with the same quote the step will be charged at and "
+        "registers the total as this session's plan; any credits you pass are compared, never trusted."))
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     # ── describe the shot directly ──
     #: Describe the shot. Supplying it means an open generation.
@@ -188,6 +196,10 @@ class VideoGenerateArgs(BaseModel):
         if self.action == "estimate":
             if not self.prompt:
                 raise ValueError("estimate requires prompt")
+            return self
+        if self.action == "quote_plan":
+            if not self.plan_items:
+                raise ValueError("quote_plan requires plan_items")
             return self
         if self.action == "submit":
             if not self.idempotency_key:
@@ -2435,11 +2447,80 @@ def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = Fa
     )
 
 
+async def _execute_quote_plan(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Price the whole plan on the server and register it for the card-2 gate."""
+    from billing import credit_cap as _credit_cap
+    from billing import plan_quote
+    from billing.media import billing_status_lines
+
+    try:
+        plan = await plan_quote.register(ctx.session_id, list(args.plan_items or []))
+    except plan_quote.PlanUnpriced as exc:
+        return ToolResult(
+            title="Plan cannot be priced",
+            output="\n".join([
+                "plan_registered=false",
+                *[f"unpriced={reason}" for reason in exc.reasons],
+                "Nothing was registered. Fix the item (model, resolution, seconds) or drop it; a plan with an unpriced "
+                "step must not be put on the card as a number.",
+            ]),
+            metadata={"plan_registered": False, "unpriced": list(exc.reasons)},
+        )
+    if plan is None:
+        return ToolResult(title="Plan cannot be registered", output="plan_registered=false\nThis call needs a session.",
+                          metadata={"plan_registered": False})
+    lines = ["plan_registered=true", f"plan_total={plan['total']}", f"plan_items={len(plan['items'])}"]
+    corrections = []
+    for row in plan["items"]:
+        where = f"shot={row['shot']} " if row.get("shot") else ""
+        what = " ".join(str(v) for v in (row.get("model"), row.get("resolution")) if v)
+        lines.append(f"item: {where}{row['kind']} {what} {row['seconds']}s credits={row['credits']}".replace("  ", " "))
+        if row.get("claimed_credits") is not None:
+            corrections.append(f"{where}{row['kind']}: you said {row['claimed_credits']}, the server prices {row['credits']}")
+    lines += [f"corrected={text}" for text in corrections]
+    lines += billing_status_lines()
+    if plan["available"] is not None:
+        lines.append(f"balance_available={plan['available']}  balance_sufficient={str(plan['balance_sufficient']).lower()}"
+                     f"  shortfall={plan['shortfall']}")
+    lines += await _credit_cap.estimate_lines(ctx.session_id)
+    if plan["credit_cap"] is not None:
+        lines.append(f"exceeds_cap={str(plan['exceeds_cap']).lower()}")
+    blocked = []
+    if not plan["balance_sufficient"]:
+        blocked.append(f"the balance ({plan['available']}) does not cover the plan ({plan['total']}); short {plan['shortfall']}")
+    if plan["exceeds_cap"]:
+        blocked.append(f"the plan ({plan['total']}) plus what this request already spent exceeds max_credits "
+                       f"({plan['credit_cap']['max_credits']}, remaining {plan['credit_cap']['remaining']})")
+    if blocked:
+        lines += [f"plan_blocked=true  reason={'; '.join(blocked)}",
+                  "Do not raise card 2 as it stands: the confirming answer would be refused. Tell the person the plan's "
+                  "total and the shortfall, and offer fewer shots / shorter shots, a lower tier, a top-up, or (for an API "
+                  "request) a higher max_credits on the next message."]
+    else:
+        lines.append("plan_blocked=false")
+    lines += [
+        "",
+        "Registered as this session's plan estimate (planned shots + transcription + compose; retakes are quoted "
+        "separately before they are resubmitted). Write plan_total into card 2's question text, give that question "
+        f"kind=\"{plan_quote.PLAN_CONFIRM_KIND}\" and set estimated_credits=\"{plan['total']}\" on its 「可以」 option; "
+        "the server re-checks the balance and max_credits against the whole plan when it is answered. Nothing was submitted.",
+    ]
+    return ToolResult(
+        title=f"Plan priced at {plan['total']} credits" + (" — blocked" if blocked else ""),
+        output="\n".join(lines),
+        metadata={"plan_registered": True, "plan_total": plan["total"], "items": plan["items"],
+                  "exceeds_cap": plan["exceeds_cap"], "balance_sufficient": plan["balance_sufficient"],
+                  "shortfall": plan["shortfall"], "plan_blocked": bool(blocked)},
+    )
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
     if args.action == "estimate":
         return await _execute_estimate(args, ctx)
+    if args.action == "quote_plan":
+        return await _execute_quote_plan(args, ctx)
     if args.action == "fetch":
         return await _execute_fetch(args, ctx)
     if args.action == "attach":
@@ -3407,7 +3488,9 @@ composer model or an explicit change of intent. Never omit requested images \
 or relabel them as endpoints to pass validation. \
 Use action="estimate" \
 to validate a request for free \
-before paying. A finished video lands in OSS and, when a sandbox is present, \
+before paying; action="quote_plan" prices a whole plan (every shot, transcription and compose) \
+on the server and registers it as the session's estimate before the shots + price card. \
+A finished video lands in OSS and, when a sandbox is present, \
 in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
 video asset there. action="attach" re-sends an owned asset to the user as a card (no sandbox); \
 never write a link to it. \

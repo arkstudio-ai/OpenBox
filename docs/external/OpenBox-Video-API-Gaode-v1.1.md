@@ -1,6 +1,6 @@
 # OpenBox 视频创作开放接口文档
 
-> 本版本已被《bossip 视频创作开放接口文档 v1.3》（`bossip-Video-API-Gaode-v1.3.md`）取代，仅作历史留档。
+> 本版本已被《bossip 视频创作开放接口文档 v1.4》（`bossip-Video-API-Gaode-v1.4.md`）取代，仅作历史留档。
 
 | 项目 | 内容 |
 |---|---|

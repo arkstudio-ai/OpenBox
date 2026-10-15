@@ -49,6 +49,10 @@ class Session(Base):
     #: on the prompt that started the current turn; checked before every paid
     #: media step (billing/credit_cap.py). Cleared by the next prompt without one.
     credit_cap: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    #: Whole-plan estimate the production skill registers before the shots +
+    #: price card: {total, items, created_at, confirmed_at}. Checked against the
+    #: balance and the credit cap when that card is confirmed (billing/plan_quote.py).
+    plan_quote: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     # "normal" | "cron" | "assistant". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,
     # and reaped on their own retention schedule.

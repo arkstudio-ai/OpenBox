@@ -1,4 +1,6 @@
 """Question tool: LLM asks user structured questions."""
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -23,6 +25,10 @@ Usage notes:
 class QuestionOption(BaseModel):
     label: str
     description: str = ""
+    estimated_credits: str | None = Field(default=None, max_length=24, description=(
+        "Credits this choice commits to, as a decimal string copied from a server quote "
+        "(quote_plan's plan_total, an estimate's estimated_credits). Set it only on options that "
+        "spend; API callers see it on the card."))
 
 
 class QuestionItem(BaseModel):
@@ -36,6 +42,10 @@ class QuestionItem(BaseModel):
     multiple: bool = False
     custom: bool = Field(default=True, description="Allow free-text answers; set false to require one of the offered options")
     allow_attachments: bool = Field(default=False, description="Offer resource-library selection and local upload for this question")
+    kind: Literal["plan_confirm"] | None = Field(default=None, description=(
+        "plan_confirm marks the shots + price card of a plan registered with video_generate action=quote_plan: "
+        "its option carrying estimated_credits is the approval, and the server refuses that answer when the "
+        "balance or max_credits cannot cover the whole plan."))
 
 
 class QuestionArgs(BaseModel):
@@ -63,11 +73,13 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
         QModel(
             question=q.question,
             header=q.header,
-            options=[QOpt(label=o.label, description=o.description) for o in q.options],
+            options=[QOpt(label=o.label, description=o.description, estimated_credits=o.estimated_credits)
+                     for o in q.options],
             multiple=q.multiple,
             custom=q.custom,
             allow_attachments=q.allow_attachments,
             requires_confirmation=q.requires_confirmation,
+            kind=q.kind,
         )
         for q in args.questions
     ]

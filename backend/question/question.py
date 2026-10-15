@@ -47,6 +47,10 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
 class QuestionOption(BaseModel):
     label: str
     description: str = ""
+    #: Credits this choice commits to, as a decimal string from a server
+    #: quote. Shown to API callers; on a ``plan_confirm`` question it also
+    #: marks the option whose answer is gated by billing/plan_quote.py.
+    estimated_credits: str | None = None
 
 
 class Question(BaseModel):
@@ -57,6 +61,9 @@ class Question(BaseModel):
     custom: bool = True
     allow_attachments: bool = False
     requires_confirmation: bool = False
+    #: ``plan_confirm``: the shots + price card of a registered plan; its
+    #: confirming answer is checked against the balance and the credit cap.
+    kind: str | None = None
     detail: dict[str, Any] | None = None
 
 
@@ -363,6 +370,12 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
     owned = await _owned_request(request_id, user_id)
     if placement_project_name is not None and not (owned.continuation or {}).get("assistant_placement"):
         raise ValueError("A project name only belongs to a placement choice")
+    if answers is not None:
+        # Confirming a priced plan the workspace cannot pay for (or that
+        # overruns the request's max_credits) is refused before anything is
+        # scheduled; the refusal reaches the caller as its own error.
+        from billing.plan_quote import gate_answer
+        await gate_answer(owned.session_id, owned.questions, answers)
     from assistant.requests import maybe_reply, question_task
     receipt = await maybe_reply(owned, answers=answers, attachments=attachments, **reply_binding)
     if receipt is not None:
@@ -414,6 +427,9 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
     if any(files):
         row.continuation = {**row.continuation, "answer_attachments": files}
     row.status, row.answers, row.updated_at = status, clean, runtime.now()
+    if status == "answered":
+        from billing.plan_quote import mark_confirmed
+        mark_confirmed(session, row.questions, clean)
     await record_checkpoint(db, row, execution, "question.resolved",
                             {"answers": clean, "attachments": files, "decision": status, "source_kind": source_kind})
     from notifications.events import cancel_event

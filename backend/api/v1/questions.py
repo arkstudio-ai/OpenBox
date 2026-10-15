@@ -29,18 +29,39 @@ async def _resolve(session_id: str, question_id: str, identity: dict, answers: l
         # The contract answers every repeat with 409, including a retry of
         # the same answer; the caller refreshes the card's status instead.
         raise ApiError(409, "INTERACTION_RESOLVED", f"Question is already {request.status}")
+    from billing.credit_cap import CreditCapExceeded
+    from billing.plan_quote import PlanInsufficientCredits, gate_answer
+
     try:
         if answers is None:
             await q_mod.reject(request_id, user_id=row.user_id)
         else:
+            # The same gate runs inside reply(); checking here first keeps the
+            # partner's refusal independent of how the card is then resolved.
+            await gate_answer(row.id, getattr(request, "questions", None) or [], answers)
             await q_mod.reply(request_id, answers, user_id=row.user_id)
     except KeyError:
         raise ApiError(404, "NOT_FOUND", "Question not found")
     except (q_mod.QuestionGone, q_mod.QuestionConflict) as exc:
         raise ApiError(409, "INTERACTION_RESOLVED", str(exc)) from exc
+    except PlanInsufficientCredits as exc:
+        # Confirming the shots + price card commits to the whole plan: the
+        # balance must cover it now, not just be above zero.
+        raise ApiError(402, exc.code, str(exc), details={
+            "required": _credits(exc.required), "available": _credits(exc.available),
+            "shortfall": _credits(exc.shortfall)}) from exc
+    except CreditCapExceeded as exc:
+        raise ApiError(402, exc.code, str(exc), details={
+            "step": exc.step, "expected": _credits(exc.expected), "spent": _credits(exc.spent),
+            "max_credits": _credits(exc.cap)}) from exc
     except ValueError as exc:
         raise ApiError(400, "INVALID_REQUEST", str(exc)) from exc
     return {"ok": True}
+
+
+def _credits(value) -> str:
+    text = format(value.normalize(), "f")
+    return text if text != "-0" else "0"
 
 
 @router.post("/{question_id}")

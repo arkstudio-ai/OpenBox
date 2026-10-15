@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from auth.middleware import get_current_user
 from pydantic import BaseModel, Field
 
+from billing.credit_cap import CreditCapExceeded
 from question import question as q_mod
 from assistant.policy import AssistantError
 
@@ -42,7 +43,11 @@ async def _question_action(action):
         raise HTTPException(410, {"code": "QUESTION_GONE", "status": exc.status})
     except q_mod.QuestionConflict as exc:
         raise HTTPException(409, {"code": "QUESTION_CONFLICT", "message": str(exc)})
+    except CreditCapExceeded as exc:
+        # Confirming a plan over the request's max_credits (billing/plan_quote.py).
+        raise HTTPException(402, {"code": exc.code, "message": str(exc)})
     except ValueError as exc:
+        # Includes PlanInsufficientCredits: the balance does not cover the plan being confirmed.
         raise HTTPException(422, str(exc))
 
 

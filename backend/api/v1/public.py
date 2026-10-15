@@ -66,11 +66,14 @@ def credits_text(value: Decimal | None) -> str:
     return text if text != "-0" else "0"
 
 
-def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False, credit_cap: dict | None = None) -> dict:
+def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False, credit_cap: dict | None = None,
+                 estimate: dict | None = None) -> dict:
     """``GET /v1/sessions/{id}`` body from a sessions row.
 
     ``busy`` says a video job or a platform continuation is still running
-    for the session even though the model's own run has ended.
+    for the session even though the model's own run has ended. ``estimate``
+    is the registered whole-plan quote (billing/plan_quote.py), None until
+    the skill registers one.
     """
     return {
         "id": public_id(row.id),
@@ -81,6 +84,7 @@ def session_view(row, credits_used: Decimal | None = None, *, busy: bool = False
         "metadata": dict(getattr(row, "metadata_", None) or {}),
         "credits_used": credits_text(credits_used),
         "credit_cap": credit_cap,
+        "estimate": estimate,
         "created_at": iso_z(row.created_at),
         "updated_at": iso_z(row.updated_at),
     }
@@ -121,17 +125,24 @@ def _question_from_checkpoint(part: dict, checkpoint) -> dict:
     }
 
 
+def _public_option(o: dict) -> dict:
+    option = {"label": o.get("label") or "", "description": o.get("description") or ""}
+    if o.get("estimated_credits") is not None:
+        option["estimated_credits"] = str(o["estimated_credits"])
+    return option
+
+
 def _public_question(q: dict) -> dict:
-    return {
+    out = {
         "header": q.get("header") or "",
         "question": q.get("question") or "",
-        "options": [
-            {"label": o.get("label") or "", "description": o.get("description") or ""}
-            for o in (q.get("options") or [])
-        ],
+        "options": [_public_option(o) for o in (q.get("options") or [])],
         "multiple": bool(q.get("multiple")),
         "custom": bool(q.get("custom", True)),
     }
+    if q.get("kind"):
+        out["kind"] = str(q["kind"])
+    return out
 
 
 def _native_question(part: dict) -> dict:

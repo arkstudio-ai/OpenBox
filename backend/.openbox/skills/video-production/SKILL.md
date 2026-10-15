@@ -140,7 +140,7 @@ Read the zero-exit advice. `镜头跟随` is valid for a deliberate walking shot
 
 ### 5. Estimate and show complete shots + price — card 2
 
-Run `action="estimate"` for every exact request; each returns `estimated_credits` (requested seconds × the model/tier rate) — sum them and show the total as the planned cost. Before invoking the card, show without abbreviation:
+Run `action="estimate"` for every exact request; each returns `estimated_credits` (requested seconds × the model/tier rate). Then call `video_generate(action="quote_plan", plan_items=[…])` once with the whole plan: one `generation` item per shot (model, resolution, seconds), one `transcribe` item per shot, and one `compose` item for the piece when the cut will go through `video_compose`. The server re-prices every item and registers the total as this session's plan; its `plan_total` — not your own sum — is the planned cost in prose and inside card 2's question text. If it answers `plan_blocked=true` (balance or `max_credits` cannot cover the plan), do not raise the card: state the total and the shortfall and offer fewer or shorter shots, a lower tier, a top-up or a higher `max_credits`. Before invoking the card, show without abbreviation:
 
 - every complete line and every complete model prompt, character for character;
 - each shot's seconds and the honest total; call out mismatch with requested duration;
@@ -148,7 +148,7 @@ Run `action="estimate"` for every exact request; each returns `estimated_credits
 - `按你选的 <业务档次> <分辨率> 规划`（内部保留确切模型，用户问起再解释）, or the disclosed registry-default wording;
 - shot count, total paid seconds, planned cost, and any proposed compatibility change with reason. If `estimate` validates parameters but returns no currency amount, say `预计费用暂不可得（estimate 未返回金额）` and stop; never substitute "已产生费用 0 元" for the planned quote. A separately documented dated rate may be shown only as a clearly labelled reference estimate.
 
-Copy every full line, full prompt, seconds, and material assignment into the user-visible response itself; tool-call details do not count as display. Then invoke card 2: `可以` / `修改拆段或 prompt` / `更换模型、分辨率或素材`. This combines shots and spend; no separate fee card. Until the person chooses “可以”, make zero paid submits. Record `python3 "$S/state.py" confirm --slug <slug> --kind shots --note "拆段、prompt、素材、模型、分辨率与费用已确认"`.
+Copy every full line, full prompt, seconds, and material assignment into the user-visible response itself; tool-call details do not count as display. Then invoke card 2: `可以` / `修改拆段或 prompt` / `更换模型、分辨率或素材`, with the question marked `kind: "plan_confirm"` and `estimated_credits: "<plan_total>"` on the `可以` option — the server checks the whole plan against the balance and `max_credits` when that option is chosen and refuses it otherwise. This combines shots and spend; no separate fee card. Until the person chooses “可以”, make zero paid submits. Record `python3 "$S/state.py" confirm --slug <slug> --kind shots --note "拆段、prompt、素材、模型、分辨率与费用已确认"`.
 
 ### 6. Submit together and record immediately
 

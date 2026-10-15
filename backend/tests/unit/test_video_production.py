@@ -1342,6 +1342,9 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
         "question",
         "video_generate",
         "video_transcribe",
+        # 2026-10-15: the picture-text check behind card 3 — STT cannot see a
+        # caption the generation model burnt into the frame.
+        "video_analyze",
         # 2026-09-09: cloud composition (IMS) for cuts that need effects; the
         # ffmpeg path in the sandbox stays for plain concat + burnt captions.
         "video_compose",
@@ -1353,7 +1356,8 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
     assert "video_project" not in text and "video_render" not in text
 
     # Progressive disclosure: the body stays small, detail lives alongside it.
-    assert len(text.splitlines()) <= 200
+    # (Was 200; main had drifted to 219 before the 2026-10-15 picture-text step.)
+    assert len(text.splitlines()) <= 240
     for name in ("prompt-recipes.md", "model-guide.md", "quality.md"):
         assert (skill_dir / "references" / name).is_file()
         assert name in skill

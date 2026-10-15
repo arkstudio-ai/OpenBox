@@ -5,6 +5,7 @@ allowed-tools:
   - question
   - video_generate
   - video_transcribe
+  - video_analyze
   - video_compose
   - image_gen
   - creator_context
@@ -45,7 +46,7 @@ monitoring, advertising and scheduled reports are separate scopes, not automatic
 
 ## Hard rules
 
-1. The core workflow has three required `question` tool calls: finished script, complete shots + price, and STT results — plus a fourth, 合成确认, whenever the cut goes through `video_compose` (it spends credits). Turbo also has a material-choice card when the choice is unresolved, and an image-confirmation card when frames need acceptance; these do not replace the core cards. A Markdown heading, table, or request for confirmation is not a card. Reuse already answered subtitle/material decisions; ask only unresolved fields and changed paid scope. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
+1. The core workflow has three required `question` tool calls: finished script, complete shots + price, and STT + picture-text results — plus a fourth, 合成确认, whenever the cut goes through `video_compose` (it spends credits). Turbo also has a material-choice card when the choice is unresolved, and an image-confirmation card when frames need acceptance; these do not replace the core cards. A Markdown heading, table, or request for confirmation is not a card. Reuse already answered subtitle/material decisions; ask only unresolved fields and changed paid scope. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
 2. A plan, state hash, or successful estimate is not approval. Before the person chooses “可以” on the current complete shot card, make zero paid video submits. Separately requested image preparation may happen before that card; accepting images does not approve video spending. Script, segment, prompt, material, model, or resolution changes invalidate affected planning and cost confirmation.
 3. The person's selected model and resolution are creative premises. Read `person_selected_model` and plan within its limits. Never silently change the model or tier. If none is selected for a paid generation, ask one short question before submitting: the registry default or one alternative, each with estimated credits; skip it if they already chose or said 随便/你定. After a provider failure or a `暂不可用` model, never switch models without asking.
 4. Use supplied material first. Call `image_gen` only when the person explicitly asks for generated material, including choosing a generation option on the Turbo material card. With no assets and no such request, use one textual `全片一致的画面基底`, byte for byte in every prompt. Purpose-made, accepted images can be first/last frames; never automatically turn a generated video's still into a general character reference.
@@ -129,7 +130,7 @@ Use `person`, `scene`, `outfit`, `prop` to describe creative purposes; see `refe
 
 For Turbo image modes, now prepare the **whole approved scope's** material set using `references/minimax-turbo-frames.md`. For N consecutive shots in one scene, first/last-frame mode normally uses N+1 planned images; adjacent shots share the exact boundary asset. Generate or resolve all needed images, inspect them, show their shot assignments, and obtain acceptance before the video quote. Existing accepted pictures need no repeat card; text-only mode needs no images or image-confirmation card. Record the preparation decision and each shot's structured frame mapping in state. Frame preparation can depend on a common identity image, but video shots must not depend on earlier generated videos to supply their inputs.
 
-Write every prompt in full. Put the exact line after `口播台词：` and end the line there, use tone not speed, restrain scene decoration, and require `无字幕`. Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
+Write every prompt in full. Put the exact line after `口播台词：` and end the line there, use tone not speed, restrain scene decoration, and forbid text in the picture with the full negative form — `画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成` — placed right after the visual base, not after the line (a bare `无字幕` only earns a lint warning; it lowers the odds and proves nothing, so step 7 still looks at the frames). Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
 
 ```bash
 python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "<逐字台词>" --anchor "<逐字基底>" --images <N> --videos <N>
@@ -161,9 +162,9 @@ A timeout is normal, and a paid task is never replaced. On `polling_paused=true`
 
 A true failure's first corrective idea is one unchanged retry. It is another paid shoot: first report affected shot count, seconds, unchanged model/resolution, and fresh estimate, and obtain explicit confirmation. Only after that retry fails propose a targeted prompt change.
 
-### 7. Transcribe and compare — card 3
+### 7. Transcribe, look at the frames, compare — card 3
 
-For every current take:
+For every current take, two checks, both required — STT hears the words, only the frames show what was drawn:
 
 ```bash
 "$S/extract_audio.sh" shot1.mp4 shot1.mp3
@@ -171,7 +172,13 @@ For every current take:
 python3 "$S/compare_transcript.py" --intended "<逐字台词>" --heard "<实际转写>"
 ```
 
-Measure actual duration and frame rate. Before card 3 show every playable shot link, complete intended line, complete actual words, planned/actual seconds, actual FPS, similarity, substitutions/omissions, and verdict. Include the decision-critical results in the question text itself as well: a voice assistant receives that same card, and hidden tool output is not a user-facing review. Never ask for acceptance with only “转写验收结果是否可以” and no results. Mark `🔴` if similarity is suspect, any substitution exists, or `abs(actual - planned) > max(2s, planned × 25%)`.
+```text
+video_analyze(action="screen_text", source="<absolute workspace path of shot1.mp4>")
+```
+
+`screen_text` samples about 1 fps (6–16 frames), asks the vision model only whether any text appears, and returns `has_text=` with each text verbatim (misspellings included), its kind and the seconds it shows at; `credits=` is what that look cost — disclose it on the card. A retake at the same path is checked afresh. If the tool is refused or unavailable, fall back to `"$S/extract_frames.sh" shot1.mp4 shot1_frames --frames 6` and `view_image` each frame yourself; if neither is possible, the card says `画面文字未检查` and marks the shot `🔴` — never describe an unviewed picture as clean. Why this is not optional: 2026-10-15 (Gaode, crab-voucher) Seedance 2.0 drew the spoken lines into shots 4–5 as captions, with 限时 rendered as 随时, although every prompt said 无字幕; STT scored 97.8%/100% and the cut was delivered as “纯净无字幕”.
+
+Measure actual duration and frame rate. Before card 3 show every playable shot link, complete intended line, complete actual words, planned/actual seconds, actual FPS, similarity, substitutions/omissions, the picture-text result (无文字 / which seconds, which text, which kind, and the misspellings against `口播台词：`) and its cost, and verdict. Include the decision-critical results in the question text itself as well: a voice assistant receives that same card, and hidden tool output is not a user-facing review. Never ask for acceptance with only “转写验收结果是否可以” and no results. Mark `🔴` if similarity is suspect, any substitution exists, `has_text=true` or the picture was not checked, or `abs(actual - planned) > max(2s, planned × 25%)`. A `🔴` for picture text always offers `重拍该段`; when the person chose 不配字幕 a take with text has no silent path to delivery — generated captions cannot be removed or corrected, and with 配字幕 they double up with the burnt ASS.
 
 For a multi-shot cut, also review each join as described in `references/quality.md`: adjacent actual images, motion, voice and pauses. Shared planned frames constrain endpoints but do not prove a seamless join or a consistent voice. Include join findings in card 3; never report an unobserved visual/audio property as checked.
 
@@ -199,7 +206,7 @@ Captions use the accepted actual transcript, never the written line. Two paths:
 - Words change: always STT; one-character substitutions can keep high similarity and invert meaning.
 - An extra “艾特” before the line: an `@` reached the model. The line belongs after `口播台词：` with no `@` anywhere; fix the prompt before a paid retry, since an unchanged one repeats it.
 - Background changes: anchor it and avoid decorative overload.
-- Generated text is wrong: require `无字幕`; burn accepted STT words later.
+- Text in the picture, wrong or unwanted: the model drew the line itself (2026-10-15, two of five Seedance shots, despite 无字幕 twice). Full negative wording up front lowers the odds; `video_analyze(action="screen_text")` on every take is what catches it; one unchanged paid retry first, then the prompt. Burn accepted STT words later.
 - Captions overflow or joins drift: use `$S/build_ass.py` and `$S/compose.sh`, not an ad-hoc concat.
 - Identity material is rejected: use the product's own authorisation flow; never externalise or bypass it.
 - Selected tier ignores a reference: disclose and offer choices; never continue silently.

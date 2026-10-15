@@ -260,10 +260,9 @@ async def test_watch_reads_the_same_user_workspace_and_main_as_the_card_tool(mon
     assert identities == [{"user_id": "u1", "workspace_id": "w1", "main_id": "main-1", "limit": cards.WATCH_LIMIT}]
 
 
-async def test_pending_form_is_announced_once_without_a_tool_call_even_when_reports_are_off(call):
+async def test_new_pending_form_is_announced_once_when_reports_are_on(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
-    bridge.tell_reports = False
     await bridge.waiting_cards([], [FORM])
     note = provider.commands("note")[-1][1]
     assert "q-video" in note and "50秒" in note
@@ -275,6 +274,25 @@ async def test_pending_form_is_announced_once_without_a_tool_call_even_when_repo
     assert len(provider.commands("note")) == 1
     assert not link.started and not link.records  # a reminder creates no user input or billed voice turn
     assert bridge._asked[1].questions == [FORM]
+
+
+async def test_reconnecting_does_not_replay_existing_cards_but_a_new_version_is_announced(call):
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    bridge.seed_waiting_cards([CARD], [FORM])
+    await bridge.waiting_cards([CARD], [FORM])
+    assert not provider.commands("note") and not bridge.desk.questions
+    changed = {**FORM, "version": "updated-question-version"}
+    await bridge.waiting_cards([CARD], [changed])
+    assert len(provider.commands("note")) == 1 and FORM["id"] in provider.commands("note")[0][1]
+
+
+async def test_unsolicited_cards_respect_report_preference(call):
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    bridge.tell_reports = False
+    await bridge.waiting_cards([CARD], [FORM])
+    assert not provider.commands("note") and not bridge.desk.questions
 
 
 async def test_card_appearing_while_user_speaks_waits_and_is_withdrawn_if_answered_on_screen(call):

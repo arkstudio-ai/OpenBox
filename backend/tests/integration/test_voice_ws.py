@@ -51,7 +51,6 @@ def providers(app, monkeypatch):
     # An old deployment must not override the product's Audio default for users.
     monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only", model=OMNI_MODEL, voice="Tina"))
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
-    monkeypatch.setattr("voice.bridge.GREETING_MARGIN_SECONDS", 0.0)
     made = []
 
     def factory(config, *, debug=False):
@@ -125,7 +124,7 @@ def logged(*names):
             logger.disabled = was
 
 
-async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does_not_end_the_call(
+async def test_old_form_is_not_replayed_and_new_form_survives_a_watch_failure(
         http, providers, app, monkeypatch):
     from voice import cards
     from tests.unit.test_voice_cards import FORM
@@ -135,7 +134,7 @@ async def test_waiting_form_is_announced_after_greeting_and_a_watch_failure_does
         scopes.append(scope)
         if len(scopes) == 1:
             raise TimeoutError("temporary database delay")
-        return [], [FORM]
+        return [], [FORM] if len(scopes) < 4 else [FORM, {**FORM, "id": "new-form", "version": "new-version"}]
 
     monkeypatch.setattr(cards, "waiting", waiting)
     monkeypatch.setattr(cards, "POLL_SECONDS", 0.05)
@@ -521,24 +520,22 @@ async def test_configured_audio_clone_id_reaches_the_provider_and_call_record(ht
 
 
 
-async def test_the_call_is_answered_with_the_greeting_made_and_its_echo_never_cuts_it(http, providers, app):
-    """The client rings until the greeting is made; while it plays, the microphone reaches no model."""
+async def test_opening_does_not_silence_the_users_first_audio(http, providers, app):
     client = TestClient(app)
     headers = await account(http)
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         ready = socket.receive_json()
         provider = providers.made[-1]
-        # Made before the answer: the greeting was requested and finished before `ready` went out.
-        assert ready["type"] == "ready" and provider.response_purposes()
+        # The opening streams after ready; its playback never gates microphone input.
+        assert ready["type"] == "ready"
         greeting = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
-        socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])  # its own echo, at once
-        heard_greeting()
+        socket.send_bytes(b"\x10\x00" * 1600)
         socket.send_bytes(b"\x10\x00" * 1600)
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: False)
     first, second = [command for command in provider.commands("audio")][:2]
-    assert first[2] == b"\0\0\0\0" and second[2] == b"\x10\x00\x10\x00"  # held, then the microphone again
+    assert first[2] == second[2] == b"\x10\x00\x10\x00"
 
 
 

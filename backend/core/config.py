@@ -381,7 +381,7 @@ class VoiceConfig(BaseModel):
     proxy: Literal["env", "none"] = "env"
     vad_threshold: float = Field(default=0.5, ge=-1, le=1)
     silence_ms: int = Field(default=700, ge=200, le=6000)
-    # Qwen-Audio 3.1: smart_turn owns turn timing; the acoustic VAD knobs above do not apply.
+    # Qwen-Audio calls use cloud server_vad for prompt interruption; the knobs above apply.
     max_history_turns: int = Field(default=20, ge=1, le=50)
     enable_speech_emotion: bool = True
     # Quiet this long with a request still being done: the front desk says what is going on, once per request

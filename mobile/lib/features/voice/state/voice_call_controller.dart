@@ -240,9 +240,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     await _route(speaker: !external);
     if (!_current(generation)) return;
 
-    // 3. The socket. It rings until the server answers, which it does once
-    //    the greeting is made: then that plays in one piece, like a person
-    //    picking up.
+    // 3. Ring until the provider is ready. The opening then streams while
+    //    capture stays active, so it can be interrupted like any other reply.
     audio.startRinging();
     state = state.copyWith(status: VoiceCallStatus.connecting);
     _connectTimer = Timer(

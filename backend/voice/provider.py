@@ -116,6 +116,12 @@ def translate(event: dict, key: str = "") -> ProviderEvent | None:
         return ProviderEvent("user_started", item_id=str(event.get("item_id") or ""))
     if kind == "input_audio_buffer.speech_stopped":
         return ProviderEvent("user_stopped", invalid=event.get("reason") == "turn_invalid")
+    if kind == "conversation.item.input_audio_transcription.delta":
+        # Audio reports confirmed text separately from its unconfirmed stash;
+        # Omni uses delta. Ambient transcription is a different event and ignored.
+        text = str(event.get("text") or event.get("delta") or "")
+        item_id = str(event.get("item_id") or "")
+        return ProviderEvent("user_transcribing", text=text, item_id=item_id) if text.strip() and item_id else None
     if kind == "conversation.item.input_audio_transcription.completed":
         return ProviderEvent("user_transcript", text=str(event.get("transcript") or ""),
                              item_id=str(event.get("item_id") or ""))
@@ -273,7 +279,11 @@ class RealtimeProvider:
             "tools": TOOLS,
         }
         if is_audio(config.model):
-            session.update(turn_detection={"type": "smart_turn"}, max_history_turns=config.max_history_turns,
+            # Smart turn can defer speech_started until the whole utterance
+            # ends, too late to cut a short opening. The cloud VAD provides
+            # prompt speech-start events without trusting raw local energy.
+            session.update(turn_detection={"type": "server_vad", "threshold": config.vad_threshold,
+                                           "silence_duration_ms": config.silence_ms}, max_history_turns=config.max_history_turns,
                            enable_speech_emotion=config.enable_speech_emotion)
         else:
             session.update(smooth_output=True, turn_detection={"type": "semantic_vad",

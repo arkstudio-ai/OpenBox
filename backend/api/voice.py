@@ -38,8 +38,6 @@ provider_factory = RealtimeProvider  # tests replace it with a scripted provider
 MAX_FRAME_BYTES = 12800        # 400 ms of 16 kHz PCM16; clients send 3,200-byte frames
 CLIENT_SILENCE_SECONDS, HEARTBEAT_SECONDS, LOCK_RENEW_SECONDS = 30, 10, 20
 LIMIT_WAIT_SECONDS = 10        # for the limit_reached phrase to be said
-# Answer once the greeting is made (the client rings meanwhile); a slow one is answered while still coming.
-GREETING_WAIT_SECONDS = 8
 # "quota": the call's credits ran out (VOICE_CALL_SPEC §9).
 STATUS = {"hangup": "ended", "network": "ended", "error": "failed", "limit": "limit", "quota": "limit"}
 GONE = (WebSocketDisconnect, RuntimeError, OSError)  # what sending to a closed client raises
@@ -143,7 +141,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         await provider.open()  # overlaps the context reads
         facts = await context
         instructions = prompt.front_instructions(facts, lang, prompt.local_now())
-        await provider.configure(instructions)
+        opening_instructions = prompt.front_instructions(facts, lang, prompt.local_now(), opening=True)
+        await provider.configure(opening_instructions)
     except BaseException as exc:  # including a cancelled handshake: nothing may stay open or "active"
         context.cancel()
         log.warning("voice call=%s provider unavailable error=%s attempts=%s", call_id, type(exc).__name__,
@@ -177,6 +176,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         return fresh
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
+                    opening_instructions=opening_instructions,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
                     recap=facts.recap, tell_reports=facts.reports,
@@ -285,12 +285,18 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
 
     async def pending_cards():
         # Independent of the heartbeat/credit timer: a slow question read must not stall a call.
-        failures = 0
+        failures, initialized = 0, False
         while True:
             reading = asyncio.create_task(asyncio.wait_for(cards.waiting(bridge.scope), cards.POLL_TIMEOUT_SECONDS))
             try:
                 snapshot = await asyncio.shield(reading)
-                await bridge.waiting_cards(*snapshot)
+                if not initialized:
+                    # Existing decisions stay available through cards_pending;
+                    # reconnecting is not a request to read them aloud again.
+                    bridge.seed_waiting_cards(*snapshot)
+                    initialized = True
+                else:
+                    await bridge.waiting_cards(*snapshot)
                 failures = 0
             except asyncio.CancelledError:
                 # Finish the bounded read before call settlement. Cancelling an in-flight SQLite read
@@ -308,25 +314,19 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     try:
         bridge.progress.start()
         await reports.start()
-        # The greeting is made before the call is answered: the client rings meanwhile
-        # (docs/VOICE_CALL_SPEC.md §3), then hears it in one piece.
+        # Answer as soon as the provider is configured. Both audio directions
+        # run before requesting the opening, so the very first words can interrupt it.
+        started = last_audio = time.monotonic()
+        await websocket.send_json(events.ready(call_id, config.model, prices.date or PRICE_DATE))
+        answered = True
+        bridge.answered()
         tasks = [asyncio.create_task(coroutine) for coroutine in (
             provider_to_bridge(), client_to_bridge(), access.watch(),
-            raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")))]
+            raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
+            bridge_to_client(), timers(), pending_cards(),
+            raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()
-        greeted = asyncio.create_task(bridge.greeted.wait())
-        done, _ = await asyncio.wait([*tasks, greeted], timeout=GREETING_WAIT_SECONDS,
-                                     return_when=asyncio.FIRST_COMPLETED)
-        greeted.cancel()
-        if not any(task in done for task in tasks):
-            started = last_audio = time.monotonic()  # call time starts when it is answered
-            await websocket.send_json(events.ready(call_id, config.model, prices.date or PRICE_DATE))
-            answered = True
-            bridge.answered()
-            tasks += [asyncio.create_task(coroutine) for coroutine in (
-                bridge_to_client(), timers(), pending_cards(),
-                raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         stopped = stopped or time.monotonic()
         ending = _ending(next(task for task in tasks if task in done), call_id)
     except GONE:

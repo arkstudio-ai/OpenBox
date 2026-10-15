@@ -42,7 +42,9 @@ class TurnsMixin:
         self._user_utterances: dict[str, int] = {}  # original audio item → transcript sequence
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
-        self._notified_questions: set[str] = set()
+        self._notified_questions: set[tuple[str, str]] = set()
+        self._initial_cards: dict[str, str] = {}
+        self._initial_questions: dict[str, str] = {}
         self._ack_at: float | None = None     # a silent handover is acknowledged then, unless its result came
         self._heard_replies: deque[str] = deque(maxlen=16)  # the latest replies the user heard words of
 
@@ -365,22 +367,31 @@ class TurnsMixin:
         self._update_phase()
         await self.fill_idle()
 
-    async def waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
-        """Proactively read pending input, even if unsolicited task-result reports are disabled.
+    def seed_waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
+        """A connection is not a request to replay pre-existing decisions.
 
-        Polling gives a fresh authorized snapshot. Queue each question once, withdraw unanswered
-        announcements resolved on another client, and let the usual idle/greeting/barge-in rules speak it.
+        Do not mark these cards as shown: the model must read them explicitly
+        before answering. A new version during the call may be announced.
         """
+        self._initial_cards = {c["card_id"]: cards.version(c) for c in main_cards}
+        self._initial_questions = {q["id"]: q.get("version", "") for q in questions}
+
+    async def waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
+        """Announce new decisions, respecting report preferences and the current conversation."""
         if self.closing:
             return
         self.desk.reconcile(main_cards, questions)
-        main_ids, question_ids = {c["card_id"] for c in main_cards}, {q["id"] for q in questions}
+        question_ids = {q["id"] for q in questions}
+        card_versions = {c["card_id"]: cards.version(c) for c in main_cards}
+        question_versions = {q["id"]: q.get("version", "") for q in questions}
         for notice in list(self.deliveries):
-            stale = ((notice.questions and not any(q["id"] in question_ids for q in notice.questions))
-                     or (notice.reason == "card_notice" and not any(c["card_id"] in main_ids for c in notice.cards)))
+            stale = ((notice.questions and not any(question_versions.get(q["id"]) == q.get("version", "")
+                                                   for q in notice.questions))
+                     or (notice.reason == "card_notice" and not any(
+                         card_versions.get(c["card_id"]) == cards.version(c) for c in notice.cards)))
             if stale and notice.delivery == "queued":
                 self.deliveries.remove(notice)
-                self._notified_questions.difference_update(q["id"] for q in notice.questions or [])
+                self._notified_questions.difference_update((q["id"], q.get("version", "")) for q in notice.questions or [])
                 if notice.note_item:
                     await self._delete(notice.note_item)
         if self._asked:
@@ -389,20 +400,28 @@ class TurnsMixin:
                 q["request_id"] for q in (asked.context or {}).get("task_questions") or []}
             if asked_ids and not asked_ids & question_ids:
                 self._asked = None
+        if not self.tell_reports:
+            return  # user-requested card reads and the request's own result still work
         queued_cards = {c["card_id"] for ref in self.deliveries for c in ref.cards or []}
         for card in main_cards:
+            if self._initial_cards.get(card["card_id"]) == cards.version(card):
+                continue
             # A pending voice turn returns its own confirmation through _settle. Let that path carry
             # both the card and its receipt, rather than racing it with a second announcement.
-            if self.pending_calls or self.desk.handle(card["card_id"]) is not None or card["card_id"] in queued_cards:
+            if (self.pending_calls or self.desk._versions.get(card["card_id"]) == cards.version(card)
+                    or card["card_id"] in queued_cards):
                 continue
             notice = VoiceTurnRef(id=generate_id(), provider_call_id=f"card:{card['card_id']}"[:64], text="",
                                   transcript="", requested=self.clock(), report="", cards=[card],
                                   status="ok", reason="card_notice", delivery="queued")
             self.deliveries.append(notice)
         for question in questions:
-            if question["id"] in self._notified_questions or question["id"] in self.desk.questions:
+            key = (question["id"], question.get("version", ""))
+            if (self._initial_questions.get(question["id"]) == key[1]
+                    or key in self._notified_questions
+                    or self.desk.questions.get(question["id"], {}).get("version") == key[1]):
                 continue
-            self._notified_questions.add(question["id"])
+            self._notified_questions.add(key)
             notice = VoiceTurnRef(id=generate_id(), provider_call_id=f"question:{question['id']}"[:64], text="",
                                   transcript="", requested=self.clock(), report="", questions=[question],
                                   status="ok", reason="question_notice", delivery="queued")

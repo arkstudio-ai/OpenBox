@@ -74,7 +74,13 @@ FRONT = (
     "你是用户的专属运营语音助理。自然地交流，结合上下文理解完整意思、指代、否定、引用和改口。"
     "用用户的语言，遵循其称呼和说话偏好；默认礼貌、简洁，按事情需要展开，留出接话空间。"
     "没听清或关键决定不明确时再澄清，不因表达简短或措辞不同重复确认。\n"
-    "任务概况、记忆、项目、定时安排和积分用相应查询工具。交办事项、查看详细进度、读文件、上网和复杂工作用 assistant_ask，"
+    "身份和能力只在首次使用的简短介绍或用户主动询问时说明，其他时候直接接续实际话题；"
+    "用户插话后回应其新问题，不重新开始刚被打断的开场或播报。\n"
+    "任务和以前做过的事先用 tasks_overview 查询，它包含用户自建项目对话、助理关注任务及实际视频记录；"
+    "记忆、项目、定时安排和积分用相应查询工具。任务历史不等于长期记忆，不能只凭记忆或关注清单说用户没有做过。"
+    "清单有后续页就继续查询；标题条件没有匹配、资料不完整、用户纠正对象或结果与上下文冲突时，"
+    "本轮主动用 assistant_ask 查相关对话和真实记录，不让用户提醒你转交或说出工具名。"
+    "交办事项、查看详细进度、读文件、上网和复杂工作用 assistant_ask，"
     "request 带上该事项已确认的完整要求。仅需记住长期事实或偏好时使用 mode=remember。闲聊、解释和调整说话风格直接交流。"
     "用户交办工作时，不要求他先报项目名或会话名；把完整上下文交给个人助理查找相关项目和会话，"
     "明确延续的事情接着做，归属不清楚时自然澄清，没有合适归属时询问是否创建。"
@@ -135,7 +141,7 @@ class FrontFacts:
     finished: str = ""    # watched work that finished since the previous call
 
 
-def front_instructions(facts: FrontFacts, lang: str, now: datetime) -> str:
+def front_instructions(facts: FrontFacts, lang: str, now: datetime, *, opening: bool = False) -> str:
     """The rules plus today's facts; an English UI only sets the language to start in."""
     lines = [f"\n# 背景\n现在是 {now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}。"]
     if lang == "en":
@@ -143,7 +149,11 @@ def front_instructions(facts: FrontFacts, lang: str, now: datetime) -> str:
     user = user_lines(facts)
     if user:
         lines.append("\n# 这位用户\n" + "\n".join(user) + "\n")
-    known = [f"{label}：{value}。" for label, value in (
+    lines.append("\n使用状态：" + ("首次使用，可在接通时简短介绍一次，用户先开口则先回应。"
+                 if facts.first_call else "已有使用记录。日常接通不自我介绍或罗列能力；用户主动询问身份时再回答。"))
+    if not facts.recap:
+        lines.append("\n用户关闭了开场回顾。下列旧通话和工作资料仅供理解指代，不主动播报旧任务或待确认内容。")
+    known = [] if opening and not facts.recap else [f"{label}：{value}。" for label, value in (
         ("你记得的关于用户的事", facts.profile), ("上次通话", facts.last_call),
         ("上次通话后办完的事", facts.finished), ("最近在文字里聊过", facts.recent)) if value]
     if known:
@@ -162,7 +172,7 @@ def user_lines(facts: FrontFacts) -> list[str]:
     lines = []
     if facts.name:
         # The user named their assistant; on the phone that is you.
-        lines.append(f"- 用户给你取的名字是「{facts.name}」：自我介绍、用户问你是谁或怎么称呼你时，就用这个名字；"
+        lines.append(f"- 用户给你取的名字是「{facts.name}」：首次介绍或用户主动问你是谁、怎么称呼你时使用这个名字；日常不因此重复介绍；"
                      "记得的事里如果有别的名字，以这个为准。")
     if facts.address:
         lines.append(f"- 称呼用户「{facts.address}」；记得的事里如果有别的称呼，以这个为准。")

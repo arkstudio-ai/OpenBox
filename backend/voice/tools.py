@@ -141,31 +141,22 @@ def state_label(state: str | None, lang: str) -> str:
 
 
 async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
-    """The watch list, as the assistant sees it each turn (assistant.reads.watch_list), and the scheduled jobs.
-
-    The jobs ride along: asked "确定办完了吗" about a 5-minute job, the front desk read the task list
-    only, found nothing running and said it was done (2026-10-08).
-    """
-    from assistant.reads import watch_list
-    value, jobs = await asyncio.gather(watch_list(user_id=scope.user_id, workspace_id=scope.workspace_id),
-                                       schedules_list(scope, {}))
-    zone = _zone()
-    tasks = []
-    for item in value["items"][:MAX_TASKS]:
-        project = (item.get("project") or {}).get("name")
-        task = {"title": item.get("title") or project, "project": project,
-                "state": item.get("observed_state") or "unknown",
-                "state_label": state_label(item.get("observed_state"), scope.lang)}
-        if item.get("pending_questions"):
-            task["waiting_questions"] = item["pending_questions"]
-        result = item.get("latest_result")
-        if result:
-            task["latest"] = opening(result.get("summary"))
-            task["latest_at"] = when(result.get("created_at"), zone)
-        tasks.append(task)
-    return {"status": "ok", "tasks": tasks, "more": bool(value.get("has_more")),
+    """All owned project conversations, including work not linked to the assistant."""
+    from voice.work import overview
+    value, jobs = await asyncio.gather(overview(scope, arguments, limit=MAX_TASKS), schedules_list(scope, {}))
+    for task in value["items"]:
+        task["state_label"] = state_label(task["state"], scope.lang)
+        if "latest" in task:
+            task["latest"] = opening(task["latest"])
+            task["latest_at"] = when(task["latest_at"], _zone())
+    return {"status": "ok", "tasks": value["items"], "more": bool(value["next_cursor"]),
+            **{key: value[key] for key in ("next_cursor", "observed_at", "coverage", "title_filter_only",
+                                         "query_relaxed", "needs_assistant", "untrusted_data", "grants_authority")},
             "schedules": jobs.get("schedules") or [],
-            "note": "任务只有状态和最新结果；做到哪一步、具体内容和原因要交给个人助理查"}
+            "note": "包含用户自建项目对话和助理关注任务，按最近活动排序。idle只表示对话没运行，不表示工作完成；"
+                    "video.output_available=true才证实已有可用成片。more=true时继续翻页。query_relaxed=true表示标题没匹配，"
+                    "已扩大为最近候选；候选不等于命中，结合上下文核对实际对象，仍不符就继续查或转交。"
+                    "needs_assistant=true、对象不符或要查具体内容时，本轮交给个人助理查相关对话，不要求用户提醒转交。"}
 
 
 async def memory_search(scope: CallScope, arguments: dict) -> dict:
@@ -261,9 +252,15 @@ DIRECT: dict[str, DirectTool] = {
     "models_available": DirectTool(
         "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频优先讲档次，用户追问才讲具体型号。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),
     "tasks_overview": DirectTool(
-        "查看用户关注的任务（名字、项目、状态、最新结果两句、有没有在等用户回复）和定时任务（名称、是否启用、下次运行）。"
-        "问有哪些任务、做完没有时用它；做到哪一步、具体内容、原因要交给个人助理。",
-        tasks_overview),
+        "查用户做过的工作、最近任务和视频：包括用户自行创建的项目对话及助理关注任务，按最近活动排序，"
+        "返回真实视频生成和成片状态、时间、会话链接与近期内容。query仅筛标题，不是语义全文搜索；"
+        "不确定标题先不填query，找最新视频可填media_kind=video。标题无匹配会自动扩大到最近候选，由你结合语义核对对象。"
+        "more=true时保留筛选条件翻页。"
+        "没找到、与用户描述不符或需详细历史时，本轮主动调用assistant_ask查对话，不让用户提醒。",
+        tasks_overview, {"type": "object", "properties": {
+            "query": {"type": "string", "maxLength": 200},
+            "media_kind": {"type": "string", "enum": ["video"]},
+            "cursor": {"type": "string", "maxLength": 2048}}, "additionalProperties": False}, timeout=4.0),
     "memory_search": DirectTool(
         "在用户的记忆里搜一件事：人、项目的事实（谁负责、在哪、什么安排）、偏好、说过的话、上传的资料和知识页。"
         "query 写成一句完整的问题，带上名字（比如“云杉项目的负责人是谁”）。",

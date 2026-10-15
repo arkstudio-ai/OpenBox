@@ -230,21 +230,39 @@ async def test_transcripts_are_kept_for_the_call_and_logged_with_the_call_id_onl
         logger.disabled = was_disabled
 
 
-async def test_the_greeting_is_made_before_the_answer_and_its_playback_is_never_cut_by_echo(call):
-    """Made while the client rings; once answered, the microphone counts again only after it has played."""
-    from voice.bridge import GREETING_MARGIN_SECONDS
+async def test_opening_accepts_real_input_and_clears_audio_on_barge_in(call):
     bridge, provider, link, clock = call
+    bridge.answered()
     await bridge.start()
     assert not bridge.greeted.is_set()
-    await replay(bridge, started("greet"), audio("greet", size=48000), done("greet"))  # one second of speech
-    assert bridge.greeted.is_set() and bridge.greeting_bytes == 48000
-    bridge.answered()
-    await bridge.feed_audio(b"\x10\x00" * 1600)
-    clock.advance(1.0 + GREETING_MARGIN_SECONDS - 0.1)
-    await bridge.feed_audio(b"\x10\x00" * 1600)
-    clock.advance(0.2)
-    await bridge.feed_audio(b"\x10\x00" * 1600)
-    assert [command[2] for command in provider.commands("audio")] == [b"\0\0\0\0", b"\0\0\0\0", b"\x10\x00\x10\x00"]
+    await replay(bridge, started("greet"), audio("greet", size=48000))
+    outbox(bridge)
+    pcm = b"\x10\x00" * 1600
+    await bridge.feed_audio(pcm)
+    assert provider.commands("audio")[-1][2] == pcm[:4]
+    await replay(bridge, event("user_started", item_id="u-interrupt"))
+    assert bridge.greeted.is_set() and not bridge.greeting
+    assert of_type(outbox(bridge), "playback.clear") and provider.commands("cancel")
+    await replay(bridge, audio("greet"), done("greet", status="cancelled"))
+    assert not any(isinstance(item, bytes) for item in outbox(bridge))
+
+
+async def test_an_early_user_does_not_get_a_late_opening(call):
+    bridge, provider, _, _ = call
+    await replay(bridge, event("user_started", item_id="early-user"))
+    await bridge.start()
+    assert bridge.greeted.is_set() and not provider.commands("create")
+
+
+async def test_opening_history_is_withheld_then_restored_before_answering_the_user(call):
+    _, provider, link, clock = call
+    bridge = Bridge(provider, link, clock=clock, instructions="full conversation history",
+                    opening_instructions="current user preferences")
+    await bridge.start()
+    assert "full conversation history" not in provider.commands("create")[0][1]
+    await replay(bridge, started("greet"), audio("greet"), event("user_started", item_id="user"))
+    assert provider.commands("instructions")[-1][1] == "full conversation history"
+    assert not bridge.greeting and bridge.interrupted
 
 
 async def test_a_refused_greeting_does_not_hold_the_call(call):

@@ -43,12 +43,14 @@ def greeting_instructions(lang, recap=True, *, first_call=False):
     if first_call:
         from assistant.secretary import FIRST_CONTACT
         return FIRST_CONTACT + (" Use English for the introduction and conversation." if _lang(lang) == "en" else "")
-    return ("通话接通了，按用户偏好自然打招呼。" +
-            ("可结合已知的上次通话和完成记录，不推测当前进度。" if recap else "用户不希望开场回顾以前的事。") +
-            "这是接通事件，不是业务请求。") if _lang(lang) == "zh" else (
-        "Greet the user naturally using their preferences. " +
-        ("You may use known past-call and completion facts; do not infer current progress. " if recap else "Do not recap previous work. ") +
-        "This connection event is not a business request.")
+    return ("这是已有使用记录的用户接通。按实际聊天上下文和用户偏好简短接话，"
+            "不重新介绍身份、职责或能力，不展开业务菜单；详细回答偏好不要求详细开场。" +
+            ("确与当前话题相关时可接续上次通话和完成记录，不推测当前进度。" if recap else "用户不希望开场回顾以前的事。") +
+            "用户已开口就优先回应，不补播开场。接通事件不是业务请求。") if _lang(lang) == "zh" else (
+        "This is a returning user. Open briefly from the actual conversation and preferences, without an identity, "
+        "role or capabilities introduction or a business menu. A preference for detail does not mean a long opening. " +
+        ("Resume past-call or completion facts only when relevant; do not infer current progress. " if recap else "Do not recap previous work. ") +
+        "Give priority to the user's words, without resuming an interrupted opening. Connection is not a business request.")
 
 
 def note_body(status, user_text, speech, lang, *, report_title=None, asked="", running=()):

@@ -750,6 +750,23 @@ async def _create_pending_job(
         return existing, asset, False
 
 
+async def _existing_job_for_key(ctx: ToolContext, kind: str, idempotency_key: str):
+    """The caller's job already reserved under this idempotency key, if any."""
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        return (
+            await db.execute(
+                select(VideoJob).where(
+                    VideoJob.user_id == ctx.user_id,
+                    VideoJob.kind == kind,
+                    VideoJob.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+
+
 async def _owned_job(job_id: str, ctx: ToolContext, kind: str):
     from db.base import get_db_session
     from db.models.video_job import VideoJob
@@ -2465,10 +2482,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
             _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
                                        note=f"{target.model} {resolution} {duration}s")
-            from billing import credit_cap as _credit_cap
-
-            await _credit_cap.guard(ctx.session_id, step="generation", credits=_quote.credits,
-                                    note=f"{target.model} {resolution} {duration}s")
             rejected = await _run_rejected_submission(ctx, target)
             if rejected is not None:
                 return _rejected_submission_result(
@@ -2591,17 +2604,28 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             "duplicate_in_flight": True,
                         },
                     )
-            job, asset, created = await _create_pending_job(
-                ctx=ctx,
-                kind="segment",
-                idempotency_key=args.idempotency_key or "",
-                model=target.model,
-                prompt=prompt,
-                request_data=request_data,
-                filename=None,
-                request_hash=request_hash,
-                prompt_hash=prompt_hash,
-            )
+            # The /v1 credit cap counts this job in flight from its row, so the
+            # check and the row write happen under one per-session lock: the
+            # other shots of this round, submitted concurrently, wait here and
+            # then see this one's quote. An idempotent re-submit was admitted
+            # when its row was created and is not charged against the cap again.
+            from billing import credit_cap as _credit_cap
+
+            admitted = await _existing_job_for_key(ctx, "segment", args.idempotency_key or "")
+            async with _credit_cap.reserve(ctx.session_id, step="generation", credits=_quote.credits,
+                                           note=f"{target.model} {resolution} {duration}s",
+                                           already_admitted=admitted is not None):
+                job, asset, created = await _create_pending_job(
+                    ctx=ctx,
+                    kind="segment",
+                    idempotency_key=args.idempotency_key or "",
+                    model=target.model,
+                    prompt=prompt,
+                    request_data=request_data,
+                    filename=None,
+                    request_hash=request_hash,
+                    prompt_hash=prompt_hash,
+                )
             if not created:
                 if job.status == "completed":
                     await _attach_completed(job, ctx)

@@ -249,20 +249,29 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
                                    note=f"{compiled.duration_sec}s {_price.tier}")
         from billing import credit_cap as _credit_cap
 
-        await _credit_cap.guard(ctx.session_id, step="compose", credits=_price.credits, note=f"{compiled.duration_sec}s {_price.tier}")
+        # The job row already exists (reserved above, before the quote was
+        # known), so the cap check leaves it out and, still under the session's
+        # cap lock, prices it: the next guard of this session counts it in
+        # flight at this quote until settle_compose writes the usage row.
+        async with _credit_cap.reserve(ctx.session_id, step="compose", credits=_price.credits,
+                                       note=f"{compiled.duration_sec}s {_price.tier}", exclude_job_id=job.id):
+            await vp._update_job(job.id, request_data={
+                "timeline": resolved,
+                "ims_timeline": compiled.timeline,
+                "output_media_config": compiled.output_media_config,
+                "client_token": compiled.client_token,
+                "compile_warnings": compiled.warnings,
+                "duration_sec": compiled.duration_sec,
+                "billing_quote": {
+                    "model_id": _price.model_id, "tier": _price.tier, "quantity": _price.minutes_billed,
+                    "credits": str(_price.credits) if _price.credits is not None else None,
+                    "snapshot": _price.snapshot,
+                },
+            })
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")
         return ToolResult(title="Composition refused", output=_public(exc), metadata={"job_id": job.id, "budget_stop": True})
-
-    await vp._update_job(job.id, request_data={
-        "timeline": resolved,
-        "ims_timeline": compiled.timeline,
-        "output_media_config": compiled.output_media_config,
-        "client_token": compiled.client_token,
-        "compile_warnings": compiled.warnings,
-        "duration_sec": compiled.duration_sec,
-    })
     try:
         from agent.trajectory import service_scope, register_owned_media_inputs
         asset_urls = await register_owned_media_inputs(ctx, [shot.asset for shot in timeline.shots])

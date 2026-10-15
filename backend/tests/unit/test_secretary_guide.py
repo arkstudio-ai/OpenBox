@@ -27,8 +27,39 @@ async def test_first_introduction_ignores_failed_handshake_and_other_users():
                             snapshot=CallMeter().snapshot())
     assert not await calls.first_call(owner)
     assert await calls.first_call(other)
-    assert "完整的标准介绍" in phrases.greeting_instructions("zh", first_call=True)
-    assert "完整的标准介绍" not in phrases.greeting_instructions("zh")
+    assert "首次使用" in phrases.greeting_instructions("zh", first_call=True)
+    assert "不重新介绍" in phrases.greeting_instructions("zh")
+
+
+async def test_completed_text_onboarding_is_not_a_first_voice_meeting():
+    from assistant.profile import intro_event
+    owner, _, _ = await accounts()
+    assert await calls.first_call(owner)
+    await intro_event(owner, "dismiss")
+    assert not await calls.first_call(owner)
+
+
+async def test_prior_human_text_use_does_not_repeat_the_first_meeting_on_the_phone():
+    from tests.unit.test_assistant_sessions_v2 import main_turn
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    assert await calls.first_call(owner)
+    _, lease, _ = await main_turn(owner, workspace, main, "先看看我最近的工作")
+    try:
+        assert not await calls.first_call(owner)
+    finally:
+        await lease.release(session_status="idle")
+
+
+def test_disabled_recap_withholds_old_work_from_the_opening_but_not_later_queries():
+    from voice.prompt import FrontFacts, front_instructions, local_now
+    facts = FrontFacts(recap=False, name="小助理", last_call="旧任务的过时结论",
+                       recent="刚才文字里的记录", profile="已知用户背景", finished="以前完成的任务")
+    opening = front_instructions(facts, "zh", local_now(), opening=True)
+    full = front_instructions(facts, "zh", local_now())
+    assert "小助理" in opening
+    for value in (facts.last_call, facts.recent, facts.profile, facts.finished):
+        assert value not in opening and value in full
 
 
 async def test_authorization_snapshot_is_scoped_redacted_and_not_a_live_probe(monkeypatch):

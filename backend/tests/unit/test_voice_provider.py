@@ -223,13 +223,14 @@ async def test_the_slower_session_is_closed(monkeypatch):
     assert all(sock.closed for sock in sockets[1:])
 
 
-async def test_audio_session_uses_smart_turn_and_a_compatible_voice():
-    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL, voice="Tina", max_history_turns=35))
+async def test_audio_session_uses_cloud_vad_for_prompt_interruption_and_a_compatible_voice():
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL, voice="Tina", max_history_turns=35,
+                                           vad_threshold=0.65, silence_ms=900))
     provider._ws = FakeSocket([{"type": "session.updated"}])
     await provider.configure("BASE")
     session = provider._ws.sent[0]["session"]
     assert session["voice"] == "longanqian_v3.1"
-    assert session["turn_detection"] == {"type": "smart_turn"}
+    assert session["turn_detection"] == {"type": "server_vad", "threshold": 0.65, "silence_duration_ms": 900}
     assert session["enable_speech_emotion"] and session["max_history_turns"] == 35
     assert "smooth_output" not in session
     assert session["tools"] == provider_module.TOOLS

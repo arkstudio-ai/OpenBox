@@ -88,12 +88,28 @@ async def previous_call(user_id: str, workspace_id: str) -> dict | None:
 
 
 async def first_call(user_id: str) -> bool:
-    """Once per person, across workspaces; failed handshakes don't count."""
+    """First assistant use across text and voice, not the first call on a device.
+
+    A failed handshake is not a meeting. Existing onboarding or a human input
+    to the personal assistant means the user has already met the assistant.
+    """
+    from assistant.profile import intro_from_extra
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.preference import UserPreference
+    from db.models.session import Session
     async with get_db_session() as db:
+        extra = await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == user_id))
+        if intro_from_extra(extra)["status"] != "new":
+            return False
         previous = await db.scalar(select(VoiceCall.id).where(
             VoiceCall.user_id == user_id, VoiceCall.ended_at.is_not(None),
             VoiceCall.duration_seconds > 0).limit(1))
-    return previous is None
+        if previous is not None:
+            return False
+        human = await db.scalar(select(AgentInboxItem.id).join(Session, Session.id == AgentInboxItem.session_id).where(
+            AgentInboxItem.user_id == user_id, AgentInboxItem.origin == "human",
+            Session.user_id == user_id, Session.kind == "assistant").limit(1))
+    return human is None
 
 
 async def latest_call_summary(user_id: str, workspace_id: str, within_hours: int = 24) -> dict | None:

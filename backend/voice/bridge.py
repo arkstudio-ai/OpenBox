@@ -37,8 +37,6 @@ OUTBOX_LIMIT = 1000
 REPLY_GRACE_SECONDS = 3.0
 STOP_WAIT_SECONDS, CLOSE_WAIT_SECONDS = 2.0, 3.0  # final usage after hang-up; turn observers' last step
 PLAYBACK_MARGIN_SECONDS = 0.3
-# After the greeting has played on the client, the microphone counts again (echo of its last word aside).
-GREETING_MARGIN_SECONDS = 0.3
 # A reply of ours starts only once the client has played the last one, and this long after: results used to go
 # in at response.done, seconds before the client had played the reply, and came out back to back
 # (2026-10-09: 72 places with three front-desk lines in a row). None (``reply_gap``): no pacing (tests).
@@ -60,6 +58,7 @@ UNSENT_AUDIO_BYTES = events.INPUT_SAMPLE_RATE * 2 * 2  # the microphone's last t
 class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
+                 opening_instructions: str | None = None,
                  opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None):
@@ -77,6 +76,7 @@ class Bridge(TurnsMixin):
         self.state = "idle"                     # idle / user_speaking / responding
         self.active_response: str | None = None
         self.interrupted = False                # the active reply's audio is dropped
+        self._speech_until: float | None = None
         self.pending_calls = {}                 # provider call_id → VoiceTurnRef, until its result is in
         self.deliveries = deque()               # results waiting to be told, oldest first
         # model / phrase:<key> / delivery:<turn_id> / progress / followup / aside
@@ -90,7 +90,6 @@ class Bridge(TurnsMixin):
         self.meter = CallMeter(rates, price_date=price_date)
         self.greeting, self.closing, self.limit_reason = True, False, None
         self.greeted = asyncio.Event()          # set: the greeting was said in full, refused or cut
-        self.greeting_bytes = 0                 # its audio, to know when the client has played it
         self.answered_at: float | None = None   # when the client was told the call is answered
         self.rotating = self.swapping = False   # a fresh session is being prepared / swapped in
         self.recovering = False                 # the provider dropped the session: a fresh one is being opened
@@ -114,7 +113,9 @@ class Bridge(TurnsMixin):
         self.spoken = CallTranscript(now=wall_clock)
         self.keeper = ContextKeeper(self.spoken, clock=clock, summarizer=summarizer, protected=self._protected_items,
                                     keepalive_after=keepalive_after)
-        self.base_instructions = self._sent_instructions = instructions
+        self.base_instructions = instructions
+        self.opening_instructions = opening_instructions
+        self._sent_instructions = opening_instructions if opening_instructions is not None else instructions
         self._instructions_at: float | None = None
         self._seen_calls: set[str] = set()
         self._claimed: str | None = None        # the request the active reply was taken to answer
@@ -146,17 +147,18 @@ class Bridge(TurnsMixin):
             self.emit(events.phase(value, working=working, late=late))
 
     async def start(self) -> None:
-        """While the client still rings: a free greeting from the session's facts; it also checks the voice.
-
-        The call is answered (``ready``) once it is made, so it plays in one
-        piece instead of starting while the model is still producing it.
-        """
+        """An interruptible opening after the client is ready to speak and listen."""
+        if self.state == "user_speaking" or self._last_user_item:
+            self._greeting_over()
+            await self._sync_instructions(force=True)
+            return
         self._update_phase()
         if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang, recap=self.recap, first_call=self.first_call)):
             self._greeting_over()
+            await self._sync_instructions(force=True)
 
     def answered(self) -> None:
-        """The client was just told the call is answered: it plays the greeting made beforehand now."""
+        """The client is ready; microphone input is accepted throughout playback."""
         self.answered_at = self.clock()
         if self.audio_bytes:  # the greeting's audio so far, queued while it rang: it starts playing now
             self._playing_until = self.answered_at + self.audio_bytes / OUTPUT_BYTES_PER_SECOND
@@ -165,25 +167,14 @@ class Bridge(TurnsMixin):
         self.greeting = False
         self.greeted.set()
 
-    def _holding_input(self) -> bool:
-        """While the greeting plays: a speakerphone hears it again, and the VAD would cut it off as a barge-in."""
-        if self.answered_at is None:
-            return False
-        if self.greeting:
-            return True
-        if not self.greeting_bytes:
-            return False  # refused or cut: nothing is playing
-        playing = self.greeting_bytes / OUTPUT_BYTES_PER_SECOND + GREETING_MARGIN_SECONDS
-        return self.clock() < self.answered_at + playing
-
     async def feed_audio(self, pcm: bytes) -> None:
         """Never raises: while no session listens (a dropped one, a fresh one opening) the latest two seconds
         are kept for the next session, and the provider pump recovers the call or ends it."""
         if self.closing:
             return
-        # After the limit nobody starts a new turn, and the greeting is never cut off by its own echo;
-        # silence keeps the stream well formed.
-        frame = bytes(len(pcm)) if self.limit_reason or self._holding_input() else pcm
+        # Only a spent call limit silences input. Acoustic echo cancellation is
+        # the capture layer's responsibility; muting playback also mutes real interruptions.
+        frame = bytes(len(pcm)) if self.limit_reason else pcm
         if self.recovering:
             self._keep_unsent(frame)
             return
@@ -221,6 +212,7 @@ class Bridge(TurnsMixin):
             await handler(event)
 
     async def _on_user_started(self, event) -> None:
+        already_cut = self.interrupted and self._playing_until is None
         self.state, self.interrupted, self.awaiting_since = "user_speaking", True, None
         if self.greeting:
             self._greeting_over()
@@ -228,11 +220,41 @@ class Bridge(TurnsMixin):
         self._last_user_item = event.item_id or ""
         self.quiet_since = self.clock()
         self.meter.pending_input = True
-        self.emit(events.playback_clear())
-        self._playing_until = None  # the client has stopped playing
+        self._speech_until = None
+        if not already_cut:
+            await self._interrupt_playback()
+        else:
+            await self._sync_instructions(force=True)
         self._update_phase()
 
+    async def _on_user_transcribing(self, event) -> None:
+        # Only confirmed user ASR, never ambient audio or an unconfirmed ASR
+        # stash. Raw microphone energy also contains speaker echo and noise.
+        # A partial stops playback; it cannot create a user item or authorize work.
+        if event.item_id == self._last_user_item:
+            return  # canonical VAD owns this turn, including ASR arriving after speech_stopped
+        playing = self._playing_until is not None and self.clock() < self._playing_until
+        if playing and not self.interrupted:
+            self._speech_until = self.clock() + REPLY_GRACE_SECONDS
+            await self._interrupt_playback(source="partial_transcript")
+        elif self._speech_until is not None:
+            self._speech_until = self.clock() + REPLY_GRACE_SECONDS
+
+    async def _interrupt_playback(self, *, source: str = "provider_vad") -> None:
+        self.interrupted = True
+        if self.greeting:
+            self._greeting_over()
+        self.emit(events.playback_clear())
+        log.info("voice interruption call=%s source=%s", self.call_id, source)
+        self._playing_until = None  # the client has stopped playing
+        if self.active_response:
+            await self._command("cancel_response")
+        # Restore navigation/history before the response to this real utterance.
+        # The opening must not read old task summaries when recap is disabled.
+        await self._sync_instructions(force=True)
+
     async def _on_user_stopped(self, event) -> None:
+        self._speech_until = None
         self.state = "idle" if self.state == "user_speaking" else self.state
         # A valid end of speech gets the VAD's own reply; a filtered one (turn_invalid) gets nothing.
         self.awaiting_since = None if event.invalid else self.clock()
@@ -299,7 +321,9 @@ class Bridge(TurnsMixin):
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
             self._tool_receipts.clear()
-        if self.state == "user_speaking" or (self.limit_reason and kind != "phrase:limit_reached"):
+        if (self.state == "user_speaking"
+                or (self._speech_until is not None and self.clock() < self._speech_until)
+                or (self.limit_reason and kind != "phrase:limit_reached")):
             # Requested in the instant the user began to talk, or after the limit: never play it.
             self.interrupted = True
             await self._command("cancel_response")
@@ -341,7 +365,6 @@ class Bridge(TurnsMixin):
         self.quiet_since = self.clock()
         self.keeper.response_done(event.usage)
         if kind == "phrase:greeting":
-            self.greeting_bytes = self.audio_bytes if heard else 0
             self._greeting_over()
         elif kind == "phrase:limit_reached":
             self.limit_done.set()
@@ -404,7 +427,8 @@ class Bridge(TurnsMixin):
 
     def _can_inject(self) -> bool:
         return (self.state == "idle" and self.requested is None and self.active_response is None
-                and not self.closing and not self.swapping and not self.recovering and not self._awaiting_reply())
+                and not self.closing and not self.swapping and not self.recovering and not self._awaiting_reply()
+                and (self._speech_until is None or self.clock() >= self._speech_until))
 
     async def fill_idle(self) -> None:
         """After every change and every second: at most one reply of ours, answers before reassurance, each once
@@ -592,7 +616,8 @@ class Bridge(TurnsMixin):
 
     def _instructions(self) -> str:
         section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None else ""
-        return with_sections(self.base_instructions, call_so_far=self.keeper.summary, progress=section,
+        base = self.opening_instructions if self.greeting and self.opening_instructions is not None else self.base_instructions
+        return with_sections(base, call_so_far=self.keeper.summary, progress=section,
                              last_lines=self.keeper.carried)
 
     async def _sync_instructions(self, *, force: bool = False) -> None:

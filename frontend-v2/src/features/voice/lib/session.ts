@@ -132,8 +132,8 @@ export class VoiceCallSession {
     this.sink.mark("mic_granted")
     this.sink.dispatch({ type: "mic_granted" })
     // Only now, not before the permission prompt: a ring under the browser's dialog is noise.
-    // It rings until the server answers, which it does once the greeting is made, so that plays
-    // in one piece, like a person picking up.
+    // Ring until the provider is ready. The opening streams after the answer;
+    // capture stays active so the user can interrupt it.
     this.ring()
     this.connectTimer = window.setTimeout(
       () => this.finish({ reason: "error", errorKey: "connectFailed" }),

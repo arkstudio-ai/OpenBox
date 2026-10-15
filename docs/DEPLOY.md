@@ -32,6 +32,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 观察：启动恢复阶段对 10-10 的旧会话 `session_7YBVEBDJ…`（status=error，网页会话）报 `Agent tail repair failed … Assistant parent crosses its logical turn`，属该会话历史数据问题，与本次改动无关；轨迹 `ReadTooLarge` WARNING 同前几版。
 - 回滚：恢复备份目录的 `docker-compose.override.yml`，旧镜像启动前 `alembic downgrade pf39b0c1d2e3`（只删一列），再依次 `up -d --no-deps trajectory-worker / backend / frontend`。
 
+## 高德机：2026-10-15 23:40 `20261015-subcap-4811a3b6`（/v1 上限计入在途镜头、技能抽帧检画面文字）
+
+- 源码 `main@4811a3b6`（PR [#86](https://github.com/arkstudio-ai/OpenBox/pull/86) + [#87](https://github.com/arkstudio-ai/OpenBox/pull/87) 合并）。起因：10-15 高德 `crab-voucher` 会话选了"不配字幕"，Seedance 2.0 仍把镜头 4、5 的台词画进画面（"限时"画成"随时"），card 3 只比对 STT 没看画面即以"纯净无字幕"交付；同日核对 `max_credits` 硬闸 10 天内从未拒绝过提交，且同轮并发提交的镜头互不计入。
+- 内容：`billing/credit_cap.py` 的 `spent` = 已结算 + 在途（`video_jobs` 未失败且无结算行的 segment/render 按 `request_data.billing_quote.credits` 计），`reserve()` 按会话加锁包住 guard→写 job 行，会话视图与估算行多出 `settled` / `in_flight`；`video_analyze` 新增 `screen_text`（约 1 fps 抽 6–16 帧问视觉模型有无文字，费用在卡上披露），技能 card 3 必做画面文字检查、有字 🔴 并给"重拍该段"，prompt 无字幕措辞改为完整否定并前置，`extract_frames.sh` 兜底。
+- 构建：本机 `docker buildx --platform linux/amd64 --load` 从 `git archive 4811a3b6 backend container`（上下文仓库根）；backend image `sha256:c27b5306…`（压缩包 `6ed65986…9370d081`，240,654,049 B）。仅后端变更，frontend 保持 `20261013-creditcap-253f1b8d`。经 `oss://bossip/_deploy-tmp/<tag>/`（须 `--endpoint oss-cn-shanghai.aliyuncs.com`）签名链接到机上 `releases/<tag>/`，`sha256sum -c` 后 `docker load`，中转对象已删。
+- 切换：`/tmp/gaode_deploy.sh` 后台执行：备份 override 与业务库 `backups/pre-gaode-subcap-20261015T233914.dump` → 租约 0 → `up -d --no-deps backend` 10 秒 healthy。**无迁移**（`pg40c1d2e3f4` 不变），`openbox.json` / `backend.env` 未动。
+- 验证：`/v1/sessions` 401、`/api/environment` 200；镜像内核对 `credit_cap.reserve`、`IN_FLIGHT_JOB_KINDS`、`SCREEN_TEXT_KIND`、SKILL.md 含 `screen_text` 与"画面中不出现任何文字"、`extract_frames.sh` 存在。容器内对测试会话 `subcap-check`（未删）设上限 60：先放行 55.5，再插入一条未结算 55.5 的 segment job 后预估 44.4 被拒 `CREDIT_CAP_EXCEEDED`，视图 `settled=0 / in_flight=55.5 / remaining=4.5`，清理后 `credit_cap=null`。切换后 10 分钟无 WARNING/ERROR。未做真实出片（`screen_text` 的线上视觉调用未实测）。
+- 回滚：override 的 backend 行改回 `20261013-creditcap-253f1b8d`，`docker compose up -d --no-deps backend`；无库变更。gw2 / AWS 本次未发布（两个 PR 已在 main，随下次 gw2 发布带上）。
+
 ## 高德机：2026-10-13 `20261013-creditcap-253f1b8d`（对标 main，含 `max_credits`）
 
 - 与 gw2 同一对镜像（backend + frontend）。切换前用新镜像加载高德机 `openbox.json` 核对五条视频模型路由不变（Seedance 2.5/2.0→tokenhub、wan3/H3→自有 new-api、Turbo→RunningHub），backend 10 秒 healthy，业务库到 `pg40c1d2e3f4`。

@@ -16,30 +16,50 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 import shlex
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, Field, model_validator
 
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
-from video.analysis import PROMPT, AnalysisParseError, VideoAnalysis, parse_analysis
+from video.analysis import (
+    PROMPT,
+    SCREEN_TEXT_PROMPT,
+    AnalysisParseError,
+    VideoAnalysis,
+    parse_analysis,
+    parse_screen_text,
+)
 
 log = create_logger("tool.video_analyze")
 
 KIND = "analyze"
+#: `action="screen_text"`: frames only, one question — is there text in the picture?
+SCREEN_TEXT_KIND = "screen_text"
+#: Text-check sampling: about one frame per second, never fewer than this many
+#: frames per clip, never more than the vision call comfortably takes.
+SCREEN_TEXT_MIN_FRAMES = 6
+SCREEN_TEXT_MAX_FRAMES = 16
+_MD5 = re.compile(r"^[0-9a-f]{32}$")
 _MEDIA_HOSTS = ("douyinvod.com", "aliyuncs.com", "bytecdn.cn", "byteimg.com")
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0 Safari/537.36"
 
 
 class VideoAnalyzeArgs(BaseModel):
-    action: Literal["analyze", "status"] = "analyze"
+    #: `analyze` — the full structured breakdown (frames + transcript).
+    #: `screen_text` — only "is there any text in the picture?", sampled at
+    #: about 1 fps, for checking a generated take before accepting it.
+    action: Literal["analyze", "status", "screen_text"] = "analyze"
     #: An owned asset_id (or asset name), a workspace path, or an https media
     #: URL (direct mp4/m3u8 — not a web page).
     source: str | None = Field(default=None, min_length=1, max_length=2048)
-    #: Number of frames to sample; default from config.
+    #: Number of frames to sample; default from config (analyze) or about one
+    #: per second of video (screen_text).
     frames: int | None = Field(default=None, ge=4, le=16)
     #: Set false to skip speech-to-text (e.g. music-only clips).
     transcribe: bool | None = None
@@ -49,8 +69,8 @@ class VideoAnalyzeArgs(BaseModel):
 
     @model_validator(mode="after")
     def _by_action(self) -> "VideoAnalyzeArgs":
-        if self.action == "analyze" and not self.source:
-            raise ValueError("analyze requires source")
+        if self.action in ("analyze", "screen_text") and not self.source:
+            raise ValueError(f"{self.action} requires source")
         if self.action == "status" and not self.job_id:
             raise ValueError("status requires job_id")
         return self
@@ -138,8 +158,13 @@ def _headers_for(kind: str, ffmpeg_input: str) -> str:
 
 
 async def _sample(ctx: ToolContext, *, kind: str, ffmpeg_input: str, workdir: str, frames: int,
-                  width: int, max_seconds: int, want_audio: bool) -> dict[str, Any]:
-    """ffprobe + ffmpeg in the sandbox. Returns duration and the produced file names."""
+                  width: int, max_seconds: int, want_audio: bool,
+                  frames_from_duration: Callable[[float], int] | None = None) -> dict[str, Any]:
+    """ffprobe + ffmpeg in the sandbox. Returns duration and the produced file names.
+
+    `frames_from_duration` lets a caller pick the frame count once the clip's
+    length is known (the text check wants about one frame per second).
+    """
     hdr = _headers_for(kind, ffmpeg_input)
     src = shlex.quote(ffmpeg_input)
     probe = await ctx.sandbox.execute(
@@ -155,6 +180,8 @@ async def _sample(ctx: ToolContext, *, kind: str, ffmpeg_input: str, workdir: st
         raise AnalyzeRefusal("the video reports zero duration")
     if duration > max_seconds:
         raise AnalyzeRefusal(f"video is {duration:.0f}s; the analysis limit is {max_seconds}s")
+    if frames_from_duration is not None:
+        frames = frames_from_duration(duration)
     fps = frames / max(duration, 1.0)
     cmd = (
         f"mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && rm -f frame_*.jpg audio.mp3 && "
@@ -167,7 +194,22 @@ async def _sample(ctx: ToolContext, *, kind: str, ffmpeg_input: str, workdir: st
     names = [n.strip() for n in (res.stdout or "").splitlines() if n.strip()]
     produced = sorted(n for n in names if n.startswith("frame_") and n.endswith(".jpg"))
     return {"duration": duration, "frames": produced, "audio": "audio.mp3" in names,
-            "stderr": (res.stderr or "").strip()[-300:]}
+            "fps": fps, "stderr": (res.stderr or "").strip()[-300:]}
+
+
+def _screen_text_frames(duration: float) -> int:
+    """About one frame per second, clamped: a 15 s Seedance shot gives 15 frames,
+    a 30 s Wan shot the 16-frame ceiling (one every ~2 s; a burnt caption stays
+    up longer than that), a 4 s shot still gets 6 frames."""
+    return max(SCREEN_TEXT_MIN_FRAMES, min(SCREEN_TEXT_MAX_FRAMES, math.ceil(duration)))
+
+
+async def _content_digest(ctx: ToolContext, path: str) -> str | None:
+    """md5 of a workspace file, so a retake written to the same path is never
+    answered from the previous take's cached report."""
+    res = await ctx.sandbox.execute(f"md5sum {shlex.quote(path)} | cut -d' ' -f1", timeout=120)
+    value = (res.stdout or "").strip().splitlines()[-1:] or [""]
+    return value[0] if _MD5.match(value[0]) else None
 
 
 async def _stage(ctx: ToolContext, oss, *, workdir: str, job_id: str, frame_files: list[str], audio: bool) -> dict[str, Any]:
@@ -201,7 +243,8 @@ async def _transcribe(audio_url: str) -> dict[str, Any]:
 
 
 async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration: float, transcript: str,
-                    timeout: int) -> tuple[str, dict[str, Any], Any]:
+                    timeout: int, prompt_text: str | None = None,
+                    purpose: str = "video_analyze") -> tuple[str, dict[str, Any], Any]:
     """One vision call, metered like any other LLM call (kind video_analyze)."""
     import litellm
 
@@ -209,7 +252,8 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     from billing.pricing import normalize_usage
     from billing.service import UsageMeter
 
-    content: list[dict[str, Any]] = [{"type": "text", "text": PROMPT.format(n=len(frames), duration=round(duration, 1), transcript=transcript or "（无）")}]
+    text_part = prompt_text or PROMPT.format(n=len(frames), duration=round(duration, 1), transcript=transcript or "（无）")
+    content: list[dict[str, Any]] = [{"type": "text", "text": text_part}]
     content += [{"type": "image_url", "image_url": {"url": u}} for u in frames]
     from question.runtime import assert_current
     # A revoked run starts no vision request and opens no billing meter.
@@ -224,7 +268,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
         from agent.trajectory import RequestCapture, litellm_chunk_blocks
         payload = dict(model=model, messages=[{"role": "user", "content": content}],
                        temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
-        capture = await RequestCapture.start(ctx, purpose="video_analyze", model_id=model,
+        capture = await RequestCapture.start(ctx, purpose=purpose, model_id=model,
                                              payload=payload, capture_level="adapter_input")
         response = await litellm.acompletion(**payload)
         await capture.chunk(response, blocks=litellm_chunk_blocks(response))
@@ -245,7 +289,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
             async def settle():
                 charged = await meter.finish(usage)
                 await capture_billing(capture.context if capture is not None else None,
-                                      meter, usage, charged, "video_analyze")
+                                      meter, usage, charged, purpose)
                 return charged
             settlement = asyncio.create_task(settle())
             try:
@@ -258,7 +302,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
 
 # ── job plumbing ─────────────────────────────────────────────────────────────
 
-async def _find_cached(ctx: ToolContext, key: str):
+async def _find_cached(ctx: ToolContext, key: str, kind: str = KIND):
     from sqlalchemy import select
 
     from db.base import get_db_session
@@ -266,8 +310,37 @@ async def _find_cached(ctx: ToolContext, key: str):
 
     async with get_db_session() as db:
         return (await db.execute(select(VideoJob).where(
-            VideoJob.user_id == ctx.user_id, VideoJob.kind == KIND, VideoJob.idempotency_key == key,
+            VideoJob.user_id == ctx.user_id, VideoJob.kind == kind, VideoJob.idempotency_key == key,
             VideoJob.status == "completed"))).scalar_one_or_none()
+
+
+async def _retain_media(ctx: ToolContext, *, kind: str, seed: str, job, media_urls: list[str]):
+    """Bind the staged frames/audio to the trajectory as derived inputs.
+
+    Returns (media_ctx, asset_urls, retained_media): the context the vision
+    call runs under, plus the two maps a later service_scope needs.
+    """
+    import copy
+
+    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from trajectory import enabled
+
+    media_ctx = copy.copy(ctx)
+    retained_media, asset_urls = {}, {}
+    if not enabled(ctx.user_id):
+        return media_ctx, asset_urls, retained_media
+    source_id = seed.removeprefix("asset:") if kind == "asset" else None
+    if source_id is None and _owned_bucket_key(seed, ctx) is not None:
+        source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
+    if source_id:
+        retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
+        media_ctx._trajectory_media_urls = retained_media
+    else:
+        asset_urls = await register_owned_media_inputs(ctx, media_urls)
+        # Reuse the same retained map for the subsequent vision input.
+        async with service_scope(ctx, job=job, asset_urls=asset_urls) as retained_ctx:
+            media_ctx._trajectory_media_urls = dict(retained_ctx._trajectory_media_urls)
+    return media_ctx, asset_urls, retained_media
 
 
 def _lines(job, analysis: dict[str, Any] | None, *, cached: bool) -> list[str]:
@@ -302,14 +375,19 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
 
     cfg = get_config().video_analysis
     if args.action == "status":
-        job = await vp._owned_job(args.job_id or "", ctx, KIND)
+        job = await vp._owned_job(args.job_id or "", ctx, KIND) or await vp._owned_job(args.job_id or "", ctx, SCREEN_TEXT_KIND)
         if not job:
             return ToolResult(title="Analysis job not found", output="No owned analysis job has that job_id.")
+        if job.kind == SCREEN_TEXT_KIND:
+            return ToolResult(title="Screen text check", output="\n".join(_screen_text_lines(job, cached=False)),
+                              metadata={"job_id": job.id, "status": job.status, "screen_text": (job.result_data or {}).get("screen_text")})
         return ToolResult(title="Video analysis", output="\n".join(_lines(job, (job.result_data or {}).get("analysis"), cached=False)),
                           metadata={"job_id": job.id, "status": job.status})
 
     if not ctx.sandbox:
         return ToolResult(title="No sandbox", output="Sampling frames needs the person's cloud desktop (ffmpeg runs there).")
+    if args.action == "screen_text":
+        return await _execute_screen_text(args, ctx, cfg)
     frames_n = args.frames or cfg.frames
     want_audio = cfg.transcribe if args.transcribe is None else args.transcribe
     try:
@@ -367,24 +445,9 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
-        from agent.trajectory import service_scope, register_owned_media_inputs, retain_derived_media_inputs
-        from trajectory import enabled
-        import copy
-        media_ctx = copy.copy(ctx)
+        from agent.trajectory import service_scope
         media_urls = list(staged["frames"]) + ([staged["audio_url"]] if staged["audio_url"] else [])
-        retained_media, asset_urls = {}, {}
-        if enabled(ctx.user_id):
-            source_id = seed.removeprefix("asset:") if kind == "asset" else None
-            if source_id is None and _owned_bucket_key(seed, ctx) is not None:
-                source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
-            if source_id:
-                retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
-                media_ctx._trajectory_media_urls = retained_media
-            else:
-                asset_urls = await register_owned_media_inputs(ctx, media_urls)
-                # Reuse the same retained map for the subsequent vision input.
-                async with service_scope(ctx, job=job, asset_urls=asset_urls) as retained_ctx:
-                    media_ctx._trajectory_media_urls = dict(retained_ctx._trajectory_media_urls)
+        media_ctx, asset_urls, retained_media = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=media_urls)
 
         transcript: dict[str, Any] = {}
         stt_credits = None
@@ -439,6 +502,138 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                       metadata={"job_id": job.id, "status": job.status, "analysis": analysis, "credits": result["credits"]})
 
 
+# ── screen_text ──────────────────────────────────────────────────────────────
+
+def _screen_text_lines(job, *, cached: bool) -> list[str]:
+    lines = [f"job_id={job.id}", f"status={job.status}"]
+    result = job.result_data or {}
+    if cached:
+        lines.append("cached=true")
+    for k in ("frames_used", "duration_sec", "interval_sec", "credits"):
+        if result.get(k) is not None:
+            lines.append(f"{k}={result[k]}")
+    if job.error:
+        lines.append(f"error={job.error}")
+    report = result.get("screen_text")
+    if report is not None:
+        lines.append(f"has_text={'true' if report.get('has_text') else 'false'}")
+        lines.append("screen_text=" + json.dumps(report, ensure_ascii=False))
+    return lines
+
+
+def _screen_text_result(job, *, cached: bool) -> ToolResult:
+    report = (job.result_data or {}).get("screen_text") or {}
+    verdict = "有文字" if report.get("has_text") else "无文字"
+    return ToolResult(title=f"Screen text check · {verdict}" + (" (cached)" if cached else ""),
+                      output="\n".join(_screen_text_lines(job, cached=cached)),
+                      metadata={"job_id": job.id, "status": job.status, "cached": cached or None,
+                                "screen_text": report or None, "credits": (job.result_data or {}).get("credits")})
+
+
+async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) -> ToolResult:
+    """Frames only, one question: does any text appear in the picture?
+
+    Same sampling/staging/metering as `analyze`, but no transcript, about one
+    frame per second, a prompt that asks for nothing except text, and a cache
+    key that includes the file's md5 — the skill writes retakes to the same
+    path, and a cached verdict for the previous take would be exactly the kind
+    of unobserved pass this action exists to prevent.
+    """
+    from tool import video_production as vp
+    from question.runtime import RunRevoked
+
+    try:
+        from core.oss import OssNotConfigured, get_oss
+
+        try:
+            oss = get_oss()
+        except OssNotConfigured as exc:
+            raise AnalyzeRefusal(f"video_analyze needs the OSS asset bucket: {exc}") from exc
+        kind, ffmpeg_input, seed = await _resolve_source(args.source or "", ctx)
+        if kind == "path":
+            digest = await _content_digest(ctx, ffmpeg_input)
+            seed = f"{seed}:md5:{digest}" if digest else f"{seed}:at:{int(datetime.now(timezone.utc).timestamp())}"
+    except Exception as exc:
+        return ToolResult(title="Screen text check refused", output=_public(exc))
+
+    frames_hint = args.frames or 0
+    key = f"screen_text:{_digest(seed, frames_hint, False, cfg.model)}"
+    if not args.force:
+        cached = await _find_cached(ctx, key, SCREEN_TEXT_KIND)
+        if cached:
+            return _screen_text_result(cached, cached=True)
+    else:
+        key = f"{key}:{int(datetime.now(timezone.utc).timestamp())}"
+
+    job, _asset, created = await vp._create_pending_job(
+        ctx=ctx, kind=SCREEN_TEXT_KIND, idempotency_key=key, model=cfg.model, prompt=None,
+        request_data={"source_kind": kind, "source": seed, "frames": frames_hint or "~1fps", "transcribe": False},
+        filename=None, request_hash=vp.content_hash({"seed": seed, "frames": frames_hint, "m": cfg.model, "mode": "screen_text"}),
+        reserve_output=False,
+    )
+    if not created and job.status == "completed":
+        return _screen_text_result(job, cached=True)
+
+    workdir = f"/tmp/obx-analyze/{job.id}"
+    try:
+        from autopilot import ledger as _autopilot
+
+        # One vision call, no STT: reserve less than a full analysis.
+        _autopilot.guard_paid_step(ctx.session_id, kind="analysis", credits="0.10", note=f"screen_text {seed[:60]}")
+    except _autopilot.BudgetStop as exc:
+        await vp._update_job(job.id, status="failed", error=f"budget stop: {exc}", completed_at=datetime.now(timezone.utc))
+        return ToolResult(title="Screen text check refused", output=str(exc), metadata={"job_id": job.id, "status": "failed", "budget_stop": True})
+    try:
+        await ctx.update_output("Sampling frames in the sandbox…")
+        sampled = await _sample(
+            ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_hint or SCREEN_TEXT_MIN_FRAMES,
+            width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=False,
+            frames_from_duration=None if frames_hint else _screen_text_frames,
+        )
+        floor = min(cfg.min_frames, SCREEN_TEXT_MIN_FRAMES)
+        if len(sampled["frames"]) < floor:
+            raise AnalyzeRefusal(
+                f"only {len(sampled['frames'])} frame(s) could be sampled (need ≥{floor}); "
+                f"the picture was NOT checked. ffmpeg: {sampled['stderr'] or 'no detail'}"
+            )
+        await ctx.update_output("Staging frames for the model…")
+        staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=sampled["frames"], audio=False)
+        if len(staged["frames"]) < floor:
+            raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{floor}); the picture was NOT checked")
+
+        media_ctx, _asset_urls, _retained = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=list(staged["frames"]))
+        interval = round(1.0 / sampled["fps"], 2) if sampled["fps"] else 0.0
+        prompt_text = SCREEN_TEXT_PROMPT.format(n=len(staged["frames"]), interval=interval, duration=round(sampled["duration"], 1))
+        await ctx.update_output("Reading the frames for text…")
+        text, usage, credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
+                                               transcript="", timeout=cfg.timeout_seconds, prompt_text=prompt_text,
+                                               purpose="video_screen_text")
+        report = parse_screen_text(text, frame_count=len(staged["frames"]), interval_sec=interval).model_dump()
+        result = {
+            "screen_text": report, "frames_used": len(staged["frames"]), "duration_sec": round(sampled["duration"], 2),
+            "interval_sec": interval, "usage": usage, "credits": _fmt(credits) if credits else None,
+            "oss_prefix": staged["prefix"],
+        }
+        await vp._update_job(job.id, status="completed", error=None, result_data=result,
+                             completed_at=datetime.now(timezone.utc), attempt=1)
+    except RunRevoked:
+        raise
+    except AnalysisParseError as exc:
+        await vp._update_job(job.id, status="failed", error=f"screen text unparseable: {exc}", completed_at=datetime.now(timezone.utc))
+        return ToolResult(title="Screen text check failed", output=str(exc), metadata={"job_id": job.id, "status": "failed"})
+    except Exception as exc:
+        await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=datetime.now(timezone.utc))
+        return ToolResult(title="Screen text check failed", output=_public(exc), metadata={"job_id": job.id, "status": "failed"})
+    finally:
+        try:
+            await ctx.sandbox.execute(f"rm -rf {shlex.quote(workdir)}", timeout=30)
+        except Exception:
+            pass
+
+    job = await vp._owned_job(job.id, ctx, SCREEN_TEXT_KIND)
+    return _screen_text_result(job, cached=False)
+
+
 def _public(exc: Exception) -> str:
     from billing.service import BillingError
     from tool.video_production import _public_error
@@ -458,7 +653,17 @@ Frames are sampled with ffmpeg in the sandbox and shown to a vision model \
 together with the transcript; the result is cached per source. Fewer than the \
 configured minimum of frames is an error — the tool never analyses from text \
 alone. Costs: transcription per minute plus the vision call's tokens \
-(reported as credits=)."""
+(reported as credits=).
+
+`action="screen_text"` answers one question about a clip: does any text \
+appear in the picture (captions, titles, watermarks, logos, text on objects)? \
+It samples about one frame per second (6–16 frames), skips transcription, and \
+returns has_text= plus every text seen with the seconds it appears at, \
+copied verbatim including misspellings. Use it on every generated take before \
+accepting it: a generation model can burn the spoken line into the frame even \
+when the prompt forbids subtitles, and speech-to-text cannot see that. A \
+retake written to the same workspace path is checked afresh (cache key \
+includes the file's md5). Cost: one vision call (credits=)."""
 
 video_analyze_tool = define_tool(
     "video_analyze",

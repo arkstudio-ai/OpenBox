@@ -36,6 +36,7 @@ def test_every_bundled_script_exists_and_is_executable():
         "build_ass.py",
         "compose.sh",
         "extract_audio.sh",
+        "extract_frames.sh",
     }
     present = {item.name for item in SCRIPTS.iterdir() if item.is_file()}
 
@@ -45,7 +46,7 @@ def test_every_bundled_script_exists_and_is_executable():
 
 
 def test_shell_scripts_parse():
-    for name in ("compose.sh", "extract_audio.sh"):
+    for name in ("compose.sh", "extract_audio.sh", "extract_frames.sh"):
         subprocess.run(["bash", "-n", str(SCRIPTS / name)], check=True)
 
 
@@ -158,12 +159,12 @@ def _lint(prompt: str, script: str = "今天教你三招", **kw):
 
 GOOD = (
     "全片一致的画面基底：同一主播、同一背景\n"
+    "画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。\n"
     "固定镜头。构图：竖屏 9:16 半身中景。\n"
     "自然肢体动作：抬手示意。\n"
     "语气：自然清晰。\n"
     "人物面对镜头开口说话。\n"
-    "口播台词：今天教你三招\n"
-    "无字幕，字幕只能后期合成。"
+    "口播台词：今天教你三招"
 )
 
 
@@ -189,8 +190,8 @@ def test_an_at_sign_is_caught_because_the_model_reads_it_aloud():
 def test_the_label_is_found_in_a_one_paragraph_prompt():
     """Agents often write the whole prompt on one line, the label last."""
     paragraph = (
-        "全片一致的画面基底：同一主播、同一背景。固定镜头，半身中景。"
-        "自然肢体动作：抬手示意。语气：自然清晰。无字幕。口播台词：今天教你三招"
+        "全片一致的画面基底：同一主播、同一背景。画面中不出现任何文字、字幕、标题、水印。"
+        "固定镜头，半身中景。自然肢体动作：抬手示意。语气：自然清晰。口播台词：今天教你三招"
     )
     report = _lint(paragraph)
 
@@ -204,6 +205,32 @@ def test_broll_drops_the_performance_rules_but_keeps_continuity():
 
     assert _lint(bare, script="城市空镜", speech=False)["ok"] is True
     assert _lint(bare)["ok"] is False
+
+
+def test_a_bare_no_subtitles_still_passes_but_is_called_weak_and_late():
+    """2026-10-15 (Gaode, crab-voucher): every prompt said 无字幕 twice and Seedance
+    2.0 still drew the line into shots 4–5. The weak form is not a failure —
+    thousands of recipes use it — but the linter says what to write instead,
+    and that it belongs with the picture, before the spoken line."""
+    weak = GOOD.replace("画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。\n", "")
+    weak += "\n无字幕，字幕只能后期合成。"
+    report = _lint(weak)
+
+    assert report["ok"] is True
+    codes = {w.split("]")[0].strip("[") for w in report["warnings"]}
+    assert codes == {"no_subtitles_weak", "no_subtitles_late"}
+    assert any("画面中不出现任何文字、字幕、标题、水印" in w for w in report["warnings"])
+
+    # strong wording after the line: only the placement is questioned
+    late = GOOD.replace("画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。\n", "")
+    late += "\n画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。"
+    assert [w.split("]")[0] for w in _lint(late)["warnings"]] == ["[no_subtitles_late"]
+
+    # nothing at all is still the failure it always was
+    none = GOOD.replace("画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。\n", "")
+    assert any(issue["code"] == "no_subtitles" for issue in _lint(none)["issues"])
+    # the rule book carries the strong form as its example
+    assert lint_prompt.PROMPT_LINT_RULES["no_subtitles"]["accepted_examples"][0].startswith("画面中不出现任何文字")
 
 
 def test_a_reference_number_with_no_such_asset_is_caught():
@@ -480,3 +507,77 @@ def test_the_skill_forbids_probing_and_reads_the_menu_first():
     # The no-probe rule has to precede the step that needs the numbers.
     assert text.index("Never probe") < text.index("Split at meaning")
     assert "spends real money on each guess" in flowed
+
+
+# ── looking at the picture, not just listening to it ────────────────────────
+
+def _stub_ffmpeg(tmp_path):
+    """ffprobe answers 12.4 s; ffmpeg writes exactly the frames it is asked for."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "ffprobe").write_text("#!/bin/sh\necho 12.4\n")
+    (binaries / "ffmpeg").write_text(
+        "#!/bin/sh\n"
+        "out=''; n=0\n"
+        "while [ $# -gt 0 ]; do case \"$1\" in -frames:v) n=\"$2\"; shift 2;; *) out=\"$1\"; shift;; esac; done\n"
+        "echo \"$@\" > /dev/null\n"
+        "i=1; while [ $i -le $n ]; do printf jpg > \"$(printf \"$out\" $i)\"; i=$((i+1)); done\n"
+    )
+    for item in binaries.iterdir():
+        item.chmod(0o755)
+    return {"PATH": f"{binaries}:/usr/bin:/bin"}
+
+
+def test_extract_frames_spreads_the_frames_over_the_clip_and_says_when_each_was_taken(tmp_path):
+    """Card 3's fallback picture check: the agent needs to know which second a
+    frame shows to report "字幕出现在 8–11 秒", so the script says so."""
+    out = tmp_path / "frames"
+    done = subprocess.run(
+        ["bash", str(SCRIPTS / "extract_frames.sh"), "shot4.mp4", str(out), "--frames", "6"],
+        env=_stub_ffmpeg(tmp_path), capture_output=True, text=True, check=True,
+    )
+
+    report = json.loads(done.stdout)
+    assert report["duration"] == 12.4 and report["frames_produced"] == 6
+    assert [f["sec"] for f in report["frames"]] == [0.0, 2.1, 4.1, 6.2, 8.3, 10.3]
+    assert all(Path(f["file"]).is_file() for f in report["frames"])
+
+
+def test_extract_frames_usage_errors_exit_two_like_the_other_scripts(tmp_path):
+    env = _stub_ffmpeg(tmp_path)
+    for argv in (["shot4.mp4"], ["shot4.mp4", str(tmp_path / "x"), "--frames", "0"],
+                 ["shot4.mp4", str(tmp_path / "x"), "--bogus"]):
+        done = subprocess.run(["bash", str(SCRIPTS / "extract_frames.sh"), *argv],
+                              env=env, capture_output=True, text=True)
+        assert done.returncode == 2, argv
+
+
+def test_the_skill_looks_at_every_takes_frames_before_card_3():
+    """STT passed the crab-voucher takes that carried burnt, misspelt captions.
+
+    2026-10-15, Gaode production: 无字幕 twice per prompt, shots 4–5 captioned
+    anyway (限时 drawn as 随时), 97.8%/100% similarity, delivered as 纯净无字幕.
+    The card has to show what the frames contain, with a reshoot option, and a
+    picture nobody looked at is never reported as clean.
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    flowed = " ".join(text.split())
+    frontmatter = text.split("---", 2)[1]
+    quality = (SCRIPTS.parent / "references/quality.md").read_text(encoding="utf-8")
+    recipes = (SCRIPTS.parent / "references/prompt-recipes.md").read_text(encoding="utf-8")
+
+    assert "  - video_analyze\n" in frontmatter
+    assert 'video_analyze(action="screen_text"' in text
+    assert "$S/extract_frames.sh" in text
+    assert "画面文字未检查" in text and "never describe an unviewed picture as clean" in flowed
+    assert "`has_text=true` or the picture was not checked" in flowed
+    assert "重拍该段" in text and "不配字幕 a take with text has no silent path" in flowed
+    assert "disclose it on the card" in flowed
+    # the stronger prompt wording is advice; the frames are the check
+    assert "画面中不出现任何文字、字幕、标题、水印" in text
+    assert "lowers the odds and proves nothing" in flowed
+
+    assert "2026-10-15" in quality and "限时" in quality and "随时" in quality
+    assert "画面文字检查（每个 take 必做）" in quality
+    assert "抽帧检出" in quality and "检到即重拍" in quality
+    assert "2026-10-15" in recipes and "这只能降低概率" in recipes

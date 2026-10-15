@@ -38,6 +38,26 @@ def normalize_spoken_text(value: str) -> str:
     return compact.translate({ord(char): None for char in _FILLERS})
 
 
+#: The strong form of the no-text rule: it names text itself, not just
+#: subtitles, so the model has no "title" or "watermark" loophole left. Measured
+#: 2026-10-15: the weak 无字幕 was ignored on 2 of 5 Seedance 2.0 shots.
+_STRONG_NO_TEXT = (
+    "不出现任何文字",
+    "不要出现任何文字",
+    "不得出现任何文字",
+    "没有任何文字",
+    "no text of any kind",
+    "no on-screen text",
+)
+
+
+def _first_index(text: str, phrases: tuple[str, ...]) -> int | None:
+    folded = text.casefold()
+    hits = [folded.find(p.casefold()) for p in phrases]
+    hits = [h for h in hits if h >= 0]
+    return min(hits) if hits else None
+
+
 PROMPT_LINT_RULES = {
     "dialogue_exact": {
         "requirement": (
@@ -96,12 +116,33 @@ PROMPT_LINT_RULES = {
     },
     "no_subtitles": {
         "requirement": (
-            "State that the generated segment has no subtitles; captions are added only in post."
+            "Forbid every kind of text in the picture — subtitles, titles, watermarks — "
+            "and say captions are added only in post. Put it early, right after the visual "
+            "base, not after the spoken line. This lowers the odds; it is not proof: "
+            "Seedance 2.0 burnt the spoken line into the frame (with 限时 drawn as 随时) on "
+            "2026-10-15 although every prompt said 无字幕 twice, so the frames of every "
+            "take are still checked before acceptance."
         ),
         "accepted_examples": [
-            "无字幕，字幕只能后期合成",
-            "No subtitles; subtitles are added only in post-production",
-            "Subtitles: none; captions added in post",
+            "画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。",
+            "No text of any kind in the frame — no subtitles, titles or watermarks; "
+            "captions are added only in post-production.",
+        ],
+    },
+    "no_subtitles_weak": {
+        "requirement": (
+            "A bare 无字幕 is the weak form; prefer the full negative description that "
+            "names 文字、字幕、标题、水印 (warning)."
+        ),
+        "accepted_examples": ["画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。"],
+    },
+    "no_subtitles_late": {
+        "requirement": (
+            "The no-text rule is part of the picture description: place it right after "
+            "the visual base, before 口播台词： (warning)."
+        ),
+        "accepted_examples": [
+            "全片一致的画面基底：…\n画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成。\n…\n口播台词：…",
         ],
     },
     "unsafe_asset_reference": {
@@ -273,19 +314,40 @@ def lint_prompt(
         ("语气", "口播语气", "tone", "delivery", "speaking style", "performance style"),
     ):
         fail("tone", "prompt 缺少语气描述")
-    if not contains_any(
-        prompt,
-        (
-            "无字幕",
-            "不要字幕",
-            "不显示字幕",
-            "no subtitles",
-            "without subtitles",
-            "subtitles: none",
-            "captions: none",
-        ),
-    ):
-        fail("no_subtitles", "prompt 必须写明无字幕，字幕只能后期合成")
+    no_text_phrases = (
+        "不出现任何文字",
+        "不要出现任何文字",
+        "不得出现任何文字",
+        "没有任何文字",
+        "不出现文字",
+        "无字幕",
+        "不要字幕",
+        "不显示字幕",
+        "no text of any kind",
+        "no on-screen text",
+        "no text",
+        "no subtitles",
+        "without subtitles",
+        "subtitles: none",
+        "captions: none",
+    )
+    no_text_at = _first_index(prompt, no_text_phrases)
+    if no_text_at is None:
+        fail(
+            "no_subtitles",
+            "prompt 必须写明画面中不出现任何文字、字幕、标题、水印，字幕只能后期合成",
+        )
+    else:
+        if not contains_any(prompt, _STRONG_NO_TEXT):
+            warnings.append(
+                "[no_subtitles_weak] 只写了“无字幕”：建议改为“画面中不出现任何文字、字幕、"
+                "标题、水印；字幕只能后期合成”——生成端仍可能把台词画进画面，抽帧检查不能省"
+            )
+        label_at = _first_index(prompt, ("口播台词", "spoken line"))
+        if label_at is not None and no_text_at > label_at:
+            warnings.append(
+                "[no_subtitles_late] 无文字要求写在台词之后：建议紧跟画面基底、放在口播台词之前"
+            )
     if re.search(r"https?://|asset://|asset[_-][A-Za-z0-9]", prompt, re.IGNORECASE):
         fail(
             "unsafe_asset_reference",

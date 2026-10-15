@@ -9,10 +9,10 @@ const QuickSettings = lazy(() =>
 )
 // A narrow desktop window (including a browser side panel) is still a PC.
 // Pointer capability, rather than the sidebar breakpoint, selects this entry.
-const desktop = window.matchMedia("(pointer: fine)")
+const desktop = window.matchMedia?.("(pointer: fine)")
 const subscribe = (changed: () => void) => {
-  desktop.addEventListener("change", changed)
-  return () => desktop.removeEventListener("change", changed)
+  desktop?.addEventListener("change", changed)
+  return () => desktop?.removeEventListener("change", changed)
 }
 interface Props {
   surface: "assistant" | "workspace"
@@ -20,7 +20,7 @@ interface Props {
 
 /** Composition only: reuse the existing assistant conversation, voice call, and account settings. */
 export function AssistantFloatingEntry({ surface }: Props) {
-  const isDesktop = useSyncExternalStore(subscribe, () => desktop.matches)
+  const isDesktop = useSyncExternalStore(subscribe, () => desktop?.matches ?? false)
   const userId = useAuthStore((state) => state.user?.id)
   const workspaceId = useWorkspaceStore((state) => state.currentId)
   const call = useVoiceCall()

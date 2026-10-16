@@ -2032,7 +2032,10 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
     """
     settings = config.video_generation
     lines = [f"default_model={settings.model}", ""]
+    from tool.video_providers import effective_reference_support
+
     for entry in settings.models:
+        reference_support = effective_reference_support(entry)
         parts = [f"id={entry.id}"]
         if entry.name:
             parts.append(f"name={entry.name}")
@@ -2051,10 +2054,10 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
             name
             for name, on in (
                 ("seed", entry.supports_seed),
-                ("first/last frame", entry.supports_first_last_frame),
-                ("reference audio", entry.supports_reference_audio),
-                ("frame image" if entry.channel == "runninghub" else "reference image", entry.supports_reference_image),
-                ("reference video", entry.supports_reference_video),
+                ("first/last frame", reference_support["frames"]),
+                ("reference audio", reference_support["audio"]),
+                ("frame image" if entry.channel == "runninghub" else "reference image", reference_support["image"]),
+                ("reference video", reference_support["video"]),
             )
             if on
         ]
@@ -2064,6 +2067,8 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
             parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
         if entry.channel == "dashscope":
             parts.append("routing=first_frame plus optional last_frame OR reference_image/video/audio; never mix frame roles with reference roles; last_frame requires first_frame; image<=10, video<=5, audio<=5; total reference video/audio duration each<=15s; input+output video duration<=30s; prompt<=20000 characters; output=30fps")
+        if entry.channel == "sd2" and not reference_support["video"] and entry.supports_reference_video:
+            parts.append("routing=this configured adapter cannot carry video references; do not infer native vendor capabilities or silently extract/rebuild frames")
         if unavailable and entry.id in unavailable:
             parts.append(f"availability={_availability_text(unavailable[entry.id])}")
         lines.append("  " + "  ".join(parts))

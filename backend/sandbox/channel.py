@@ -262,6 +262,10 @@ class WuyingChannel:
 
         # Repair new/pooled guests before starting their application channel.
         await ensure_desktop_browser_runtime(desktop_id, authority_check=attempt.current)
+        # Pooled/golden images may predate the host's current workflow. Update
+        # only the built-in bundle before exposing this guest to its user.
+        from sandbox.skill_runtime import ensure_desktop_video_skill
+        await ensure_desktop_video_skill(desktop_id, authority_check=attempt.current)
 
         api_key = (
             decrypt_action_key(record["action_api_key_ciphertext"])

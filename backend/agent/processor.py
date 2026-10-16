@@ -74,6 +74,10 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
+    "do_not_retry", "outcome_unknown", "manual_review", "operation_key",
+    "asset_id", "asset_ids", "requested_count", "received_count", "missing_count",
+    "completed_count", "failed_count", "remaining_count",
+    "max_batch_calls", "requested_calls",
 })
 
 # A browser can disappear at any point in a long model response. The first
@@ -485,7 +489,7 @@ async def process_step(
     provider_binding_digest: str | None = None,
     provider_dialect: str | None = None,
     prompt_cache_key: str = "",
-    tool_body_timeout_seconds: float = DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
+    tool_body_timeout_seconds: float | None = None,
 ) -> StepResult:
     """Run one LLM turn: stream it, persist its parts, execute its tool calls.
 
@@ -874,12 +878,16 @@ async def process_step(
         pending_tool_calls, duplicate_indexes, has_call_id_conflict = (
             prepare_tool_call_batch(original_tool_calls)
         )
+        from tool.batch import image_batch_rejection, image_call_count
+        image_limit_failure = image_batch_rejection(sum(image_call_count(
+            str(wire_to_canonical.get(event["tool"], event["tool"])), event.get("args") or {}, execution_tools,
+        ) for event in pending_tool_calls))
 
-        if has_call_id_conflict:
+        if has_call_id_conflict or image_limit_failure is not None:
             log.warning(
-                "Rejected assistant tool-call batch with conflicting call ids "
-                "(count=%d)",
+                "Rejected assistant tool-call batch before dispatch (count=%d reason=%s)",
                 len(original_tool_calls),
+                "image_batch_limit_exceeded" if image_limit_failure is not None else "conflicting_provider_call_id",
             )
             for tc_idx, tc_event in enumerate(original_tool_calls):
                 collision_id = sanitize_call_id(
@@ -900,12 +908,12 @@ async def process_step(
                         provider_binding_digest=provider_binding_digest,
                         provider_dialect=provider_dialect,
                     ),
-                    error=(
+                    error=image_limit_failure.output if image_limit_failure is not None else (
                         "Provider returned conflicting tool calls with the same call id; "
                         "the entire batch was blocked before execution."
                     ),
-                    title="Conflicting tool call ids blocked",
-                    metadata={"blocked": True},
+                    title=image_limit_failure.title if image_limit_failure is not None else "Conflicting tool call ids blocked",
+                    metadata=image_limit_failure.metadata if image_limit_failure is not None else {"blocked": True},
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
@@ -922,7 +930,7 @@ async def process_step(
                     "requested_arguments": public_value(tc_event.get("args") or {}),
                     "schema": schema, "schema_source": schema_source}, context=rejected_trace)
                 await record_trace("tool.finished", {"tool": wire_name, "status": "denied",
-                    "reason": "conflicting_provider_call_id", "duration_ms": None,
+                    "reason": "image_batch_limit_exceeded" if image_limit_failure is not None else "conflicting_provider_call_id", "duration_ms": None,
                     "model_output": tool_part.error}, context=rejected_trace)
                 await persist_part(
                     tool_part,
@@ -1336,12 +1344,17 @@ async def process_step(
                     run_fence=run_fence,
                 )
 
+            from tool.tool import tool_body_timeout
             return ScheduledToolCall(
                 prepare=prepare,
                 commit=commit,
                 aborted_before_dispatch=aborted_before_dispatch,
                 timed_out=timed_out,
                 parallel_safe=_parallel_classifier(tc_event),
+                body_timeout=lambda: tool_body_timeout(
+                    execution_tools.get(str(wire_to_canonical.get(tc_event["tool"]))),
+                    tc_event["args"], ctx,
+                ),
             )
 
         await run_ordered_tool_calls(

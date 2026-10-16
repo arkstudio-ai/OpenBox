@@ -39,6 +39,7 @@ class _NestedCall:
     persisted: bool = False
     committed: bool = False
     parallel_safe: bool = False
+    timeout_seconds: float = 600.0
 
 
 def _call_id(ctx: ToolContext, index: int, tool_id: str) -> str:
@@ -62,6 +63,15 @@ class NestedToolRuntime:
     def __init__(self, hooks: Any, ctx: ToolContext):
         self.hooks = hooks
         self.ctx = ctx
+        self.parent_part_id = ctx.part_id
+
+    async def _finalize(self, prepared, outcome):
+        try:
+            return await self.hooks.finalize_execute(prepared, outcome)
+        finally:
+            # Generic hooks merge the completed call id into their shared
+            # context. A nested call must retain its parent's durable slot.
+            self.ctx.part_id = self.parent_part_id
 
     async def _save(self, call: _NestedCall, *, is_new: bool) -> None:
         from session.session import save_part
@@ -142,7 +152,7 @@ class NestedToolRuntime:
                 "nested_tool_not_found",
             )
             return
-        if tool.parallel_safe is False:
+        if tool.parallel_safe is False and not getattr(tool, "batch_serial_safe", False):
             guidance = (
                 " Use computer(action='batch', actions=[...]) for ordered desktop actions."
                 if call.tool_id == "computer" else ""
@@ -154,6 +164,8 @@ class NestedToolRuntime:
             )
             return
         call.parallel_safe = tool.parallel_safe is True
+        from tool.tool import tool_body_timeout
+        call.timeout_seconds = tool_body_timeout(tool, call.args, self.ctx)
 
         call.hook_prepared = await self.hooks.prepare_execute(
             call.tool_id,
@@ -168,7 +180,16 @@ class NestedToolRuntime:
 
     async def _dispatch(self, call: _NestedCall) -> _NestedCall:
         if call.direct_result is None:
-            call.hook_outcome = await self.hooks.dispatch_execute(call.hook_prepared)
+            call.part.status = ToolStatus.RUNNING
+            await self._save(call, is_new=False)
+            deadline = asyncio.timeout(call.timeout_seconds)
+            try:
+                async with deadline:
+                    call.hook_outcome = await self.hooks.dispatch_execute(call.hook_prepared)
+            except TimeoutError:
+                if not deadline.expired():
+                    raise
+                call.hook_outcome = await self.hooks.timeout_execute(call.hook_prepared, call.timeout_seconds)
         return call
 
     async def _commit(self, call: _NestedCall) -> ToolResult:
@@ -187,11 +208,11 @@ class NestedToolRuntime:
                     terminal_event="error",
                     terminal_error=result.output,
                 )
-                result = await self.hooks.finalize_execute(
+                result = await self._finalize(
                     call.hook_prepared, hook_outcome,
                 )
             else:
-                result = await self.hooks.finalize_execute(
+                result = await self._finalize(
                     call.hook_prepared, call.hook_outcome,
                 )
         if result is None:  # defensive: every prepared slot must terminate
@@ -252,7 +273,7 @@ class NestedToolRuntime:
                     part=ToolPartData(
                         id="part_" + _call_id(self.ctx, index, tool_id).removeprefix("nested_"),
                         tool=tool_id,
-                        status=ToolStatus.RUNNING,
+                        status=ToolStatus.PENDING,
                         input=dict(args),
                         call_id=_call_id(self.ctx, index, tool_id),
                         canonical_tool_id=tool_id,
@@ -267,7 +288,16 @@ class NestedToolRuntime:
                 calls.append(call)
                 await self._prepare(call)
             pending: list[asyncio.Task[_NestedCall]] = []
-            dispatched: list[_NestedCall] = []
+            results: list[ToolResult] = []
+
+            async def commit_finished(finished):
+                for completed in finished:
+                    results.append(await self._commit(completed))
+                    failed = sum(bool(r.metadata.get("error") or r.metadata.get("blocked")) for r in results)
+                    await self.ctx.update_output(
+                        f"Batch: {len(results) - failed} completed, {failed} failed, "
+                        f"{len(calls) - len(results)} remaining.\n{results[-1].title}\n{results[-1].output[-1000:]}"
+                    )
             for call in calls:
                 if call.parallel_safe:
                     task = asyncio.create_task(self._dispatch(call), name=f"nested-tool:{call.part.id}")
@@ -275,14 +305,11 @@ class NestedToolRuntime:
                     pending.append(task)
                 else:
                     if pending:
-                        dispatched.extend(await asyncio.gather(*pending))
+                        await commit_finished(await asyncio.gather(*pending))
                         pending.clear()
-                    dispatched.append(await self._dispatch(call))
+                    await commit_finished([await self._dispatch(call)])
             if pending:
-                dispatched.extend(await asyncio.gather(*pending))
-            results: list[ToolResult] = []
-            for call in dispatched:
-                results.append(await self._commit(call))
+                await commit_finished(await asyncio.gather(*pending))
             return results
         except BaseException:
             for task in tasks:

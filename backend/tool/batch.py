@@ -14,10 +14,46 @@ class BatchArgs(BaseModel):
     invocations: list[Invocation] = Field(description="List of tool calls to execute in parallel (max 25)")
 
 
+def image_batch_limit() -> int:
+    import os
+    value = int(os.environ.get("IMAGE_BATCH_MAX_CALLS", "10"))
+    if not 1 <= value <= 25:
+        raise ValueError("IMAGE_BATCH_MAX_CALLS must be between 1 and 25")
+    return value
+
+
+def image_call_count(tool_id: str, args: dict, lookup) -> int:
+    info = lookup.get(tool_id) if lookup is not None else None
+    canonical = getattr(info, "id", tool_id)
+    if canonical == "image_gen":
+        return 1
+    if canonical == "batch":
+        invocations = args.get("invocations") or []
+        if isinstance(invocations, list):
+            # Recursion is rejected by the dispatcher, never traversed here.
+            return sum((getattr(lookup.get(i.get("tool")), "id", i.get("tool"))
+                        if lookup is not None else i.get("tool")) == "image_gen"
+                       for i in invocations if isinstance(i, dict))
+    return 0
+
+
+def image_batch_rejection(count: int) -> ToolResult | None:
+    limit = image_batch_limit()
+    if count <= limit:
+        return None
+    return ToolResult(title="Image batch limit exceeded",
+        output=f"本批包含 {count} 次图片生成或修改调用，单批最多允许 {limit} 次。整批未执行、未提交付费请求；请减少数量后重新提交。",
+        metadata={"error": True, "blocked": True, "failure_code": "image_batch_limit_exceeded",
+                  "max_batch_calls": limit, "requested_calls": count})
+
+
 async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     """Execute multiple tool calls in parallel."""
     if len(args.invocations) > 25:
-        return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
+        return ToolResult(title="Error", output="Maximum 25 invocations allowed.", metadata={"error": True, "blocked": True})
+    rejected = image_batch_rejection(image_call_count("batch", args.model_dump(), ctx._tool_execution_lookup))
+    if rejected is not None:
+        return rejected
 
     if ctx._nested_tool_runtime is not None:
         results = await ctx._nested_tool_runtime.execute_batch([
@@ -30,7 +66,10 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
                 for inv, result in zip(args.invocations, results)
             ),
             metadata={"error": any(result.metadata.get("error") or result.metadata.get("blocked")
-                for result in results)},
+                for result in results),
+                "completed_count": sum(not (r.metadata.get("error") or r.metadata.get("blocked")) for r in results),
+                "failed_count": sum(bool(r.metadata.get("error") or r.metadata.get("blocked")) for r in results),
+                "remaining_count": 0},
         )
     if ctx.run_fence is not None:
         return ToolResult(title="Batch unavailable",
@@ -76,7 +115,7 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
                 rejection = "Tool not found"
             elif memory_operation(inv.tool, {"input": inv.parameters}):
                 rejection = "Call memory and task reads directly so their temporary results retain authorization and version checks."
-            elif tool.parallel_safe is False:
+            elif tool.parallel_safe is False and not getattr(tool, "batch_serial_safe", False):
                 rejection = "Tool is not safe for parallel execution."
                 if inv.tool == "computer":
                     rejection += " Use computer(action='batch', actions=[...]) for ordered desktop actions."
@@ -152,11 +191,29 @@ Run 1-25 independent tool calls concurrently. Ordering is not guaranteed;
 one failure does not stop others.
 
 Without a parallel-safety declaration, tools run sequentially in list order.
+Image generation/editing explicitly supports serial batch children, each with
+its own operation and billing identity. Completed children are saved immediately.
+Generation and editing share a configured per-batch limit (default 10 calls,
+each producing 1-4 images); over-limit batches are rejected before any dispatch.
 Call memory/task reads directly to retain temporary evidence checks.
 
 Do not nest `batch`, include dependent calls, or parallelize ordered/overlapping
 mutations. `computer` is stateful and rejected; use `computer(action='batch', ...)`
 for ordered desktop actions needing no intermediate screenshot."""
+
+def _batch_body_timeout(args: dict, ctx: ToolContext) -> float:
+    from tool.tool import tool_body_timeout
+    lookup = ctx._tool_execution_lookup
+    invocations = args.get("invocations") or []
+    if not isinstance(invocations, list) or len(invocations) > 25:
+        return 600.0
+    # An outer composite must not cancel a later image merely because its
+    # earlier serial siblings consumed the ordinary single-tool deadline.
+    return 60.0 + sum(tool_body_timeout(
+        lookup.get(inv.get("tool")) if lookup is not None and isinstance(inv, dict) else None,
+        inv.get("parameters") or {} if isinstance(inv, dict) else {}, ctx,
+    ) for inv in invocations)
+
 
 batch_tool = define_tool(
     "batch",
@@ -164,4 +221,5 @@ batch_tool = define_tool(
     parameters=BatchArgs,
     execute=execute,
     sandbox_required=False,
+    body_timeout=_batch_body_timeout,
 )

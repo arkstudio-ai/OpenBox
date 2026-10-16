@@ -180,6 +180,10 @@ class ToolInfo:
     # None preserves legacy Batch availability, but runs the tool serially.
     # Only an explicit True enables the new scheduler's parallel execution.
     parallel_safe: bool | None = None
+    # Explicit permission for independent, serial children in a composite.
+    # This does not grant permission to overlap their paid side effects.
+    batch_serial_safe: bool = False
+    body_timeout: Callable[[dict, ToolContext], float] | None = None
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -205,6 +209,8 @@ def define_tool(
     sandbox_required: bool = True,
     never_prune: bool = False,
     parallel_safe: bool | None = None,
+    batch_serial_safe: bool = False,
+    body_timeout: Callable[[dict, ToolContext], float] | None = None,
     raw_schema: dict | None = None,
     source: str = "builtin",
     plane: str = "platform",
@@ -292,6 +298,8 @@ def define_tool(
         sandbox_required=sandbox_required,
         never_prune=never_prune,
         parallel_safe=parallel_safe,
+        batch_serial_safe=batch_serial_safe,
+        body_timeout=body_timeout,
         raw_schema=raw_schema,
         source=source,
         plane=plane,
@@ -301,3 +309,13 @@ def define_tool(
         pack=pack,
         same_response_safe=same_response_safe,
     )
+
+
+def tool_body_timeout(tool: ToolInfo | None, args: dict, ctx: ToolContext) -> float:
+    """Resolve a trusted tool definition's deadline, never a model argument."""
+    import math
+    budget = getattr(tool, "body_timeout", None)
+    value = budget(args, ctx) if budget else 600.0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError("tool body timeout must be finite and positive")
+    return float(value)

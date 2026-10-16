@@ -16,7 +16,7 @@ class BatchArgs(BaseModel):
 
 def image_batch_limit() -> int:
     import os
-    value = int(os.environ.get("IMAGE_BATCH_MAX_CALLS", "10"))
+    value = int(os.environ.get("IMAGE_BATCH_MAX_CALLS", "5"))
     if not 1 <= value <= 25:
         raise ValueError("IMAGE_BATCH_MAX_CALLS must be between 1 and 25")
     return value
@@ -193,7 +193,7 @@ one failure does not stop others.
 Without a parallel-safety declaration, tools run sequentially in list order.
 Image generation/editing explicitly supports serial batch children, each with
 its own operation and billing identity. Completed children are saved immediately.
-Generation and editing share a configured per-batch limit (default 10 calls,
+Generation and editing share a configured per-batch limit (default 5 calls,
 each producing 1-4 images); over-limit batches are rejected before any dispatch.
 Call memory/task reads directly to retain temporary evidence checks.
 

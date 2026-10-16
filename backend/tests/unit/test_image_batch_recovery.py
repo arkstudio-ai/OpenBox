@@ -119,6 +119,9 @@ async def test_cancel_after_send_closes_assets_and_notifies_once_without_replay(
 
 
 async def test_seven_image_children_are_serial_commit_immediately_and_continue_after_failure(fenced_image_env, monkeypatch):
+    # Exercise the historical seven-item regression with an explicit test
+    # override; production defaults to the user's chosen five-call limit.
+    monkeypatch.setenv("IMAGE_BATCH_MAX_CALLS", "10")
     user, lease, context = await _seed_image_run("image-batch")
     ctx = context("part-batch")
     ctx._tool_execution_lookup = {"image_gen": image_gen_tool}

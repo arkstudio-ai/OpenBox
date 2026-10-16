@@ -261,6 +261,11 @@ class NestedToolRuntime:
         invocations: Sequence[tuple[str, dict[str, Any]]],
     ) -> list[ToolResult]:
         """Prepare in order, run safe bodies concurrently, commit in order."""
+        from tool.batch import image_batch_rejection, image_call_count
+        rejected = image_batch_rejection(sum(image_call_count(tool_id, args, self.ctx._tool_execution_lookup)
+                                              for tool_id, args in invocations))
+        if rejected is not None:
+            return [rejected for _ in invocations]
         calls: list[_NestedCall] = []
         tasks: list[asyncio.Task[_NestedCall]] = []
         try:

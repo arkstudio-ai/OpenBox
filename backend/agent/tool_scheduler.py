@@ -55,6 +55,7 @@ class ScheduledToolCall:
     # Only the exact boolean True is parallel. Missing/None/truthy classifiers
     # remain exclusive; a callable may reclassify an unstarted call live.
     parallel_safe: object = False
+    body_timeout: Callable[[], float] | None = None
 
     def is_parallel_safe(self) -> bool:
         try:
@@ -86,7 +87,7 @@ async def run_ordered_tool_calls(
     abort,
     *,
     max_parallel: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
-    body_timeout_seconds: float = DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
+    body_timeout_seconds: float | None = None,
 ) -> ToolScheduleResult:
     """Run model-ordered calls with bounded parallel bodies and barriers.
 
@@ -97,14 +98,14 @@ async def run_ordered_tool_calls(
     """
     if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         raise ValueError("max_parallel must be a positive integer")
-    if (
+    if body_timeout_seconds is not None and (
         isinstance(body_timeout_seconds, bool)
         or not isinstance(body_timeout_seconds, (int, float))
         or not math.isfinite(float(body_timeout_seconds))
         or body_timeout_seconds <= 0
     ):
         raise ValueError("body_timeout_seconds must be a finite positive number")
-    body_timeout_seconds = float(body_timeout_seconds)
+    body_timeout_seconds = float(body_timeout_seconds) if body_timeout_seconds is not None else None
 
     next_index = 0
     started = committed = skipped = 0
@@ -145,7 +146,7 @@ async def _run_group(
     *,
     parallel_group: bool,
     max_parallel: int,
-    body_timeout_seconds: float,
+    body_timeout_seconds: float | None,
 ) -> _GroupResult:
     """Run one exclusive barrier or one reclassifiable parallel suffix."""
     slots: list[Any] = [_EMPTY for _ in group]
@@ -176,7 +177,12 @@ async def _run_group(
             committed += 1
 
     async def settle(index: int, body: Callable[[], Awaitable[Any]]) -> int:
-        timeout_scope = asyncio.timeout(body_timeout_seconds)
+        deadline = body_timeout_seconds
+        if deadline is None:
+            deadline = group[index].body_timeout() if group[index].body_timeout else DEFAULT_TOOL_BODY_TIMEOUT_SECONDS
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or deadline <= 0:
+            raise ValueError("tool body timeout must be finite and positive")
+        timeout_scope = asyncio.timeout(deadline)
         try:
             async with timeout_scope:
                 slots[index] = await body()
@@ -188,7 +194,7 @@ async def _run_group(
             else:
                 try:
                     slots[index] = await group[index].timed_out(
-                        body_timeout_seconds
+                        deadline
                     )
                 except BaseException as timeout_error:
                     remember_failure(timeout_error)

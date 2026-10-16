@@ -63,6 +63,19 @@ async def until(predicate) -> None:
     raise AssertionError("condition did not become true")
 
 
+async def test_native_image_calls_over_limit_are_all_closed_before_dispatch(monkeypatch, processor_spy):
+    monkeypatch.setenv("IMAGE_BATCH_MAX_CALLS", "2")
+    async def body(_args, _ctx):
+        pytest.fail("An over-limit native image batch reached the provider")
+    await run_step(monkeypatch, tools={"image_gen": tool_info("image_gen", body, parallel_safe=False)},
+        hooks=ToolHooks(session_id="session", user_id="user"), ctx=ToolContext(), abort=asyncio.Event(),
+        stream=stream_of(tool_events([(f"image-{i}", "image_gen") for i in range(3)])))
+    saves, _ = processor_spy
+    terminal = [s for s in saves if s["status"] == "error"]
+    assert len(terminal) == 3
+    assert all(s["metadata"]["failure_code"] == "image_batch_limit_exceeded" for s in terminal)
+
+
 @pytest.fixture
 def processor_spy(monkeypatch):
     saves: list[dict] = []

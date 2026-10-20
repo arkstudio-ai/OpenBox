@@ -1,0 +1,257 @@
+{
+  "activation": {
+    "tag": "20261020-video-completion-da0bef1d",
+    "old_image": "openbox-backend:20261016-video-material-cae33477-r2",
+    "new_image": "openbox-backend:20261020-video-completion-da0bef1d",
+    "image_id": "sha256:157ae5cffd13ba8552381dce92ca2c2a5e61083af1373e73b67d2c52a4e147ce",
+    "backup": "/opt/openbox/backups/20261020-video-completion-da0bef1d/activation-20261020T091411Z",
+    "unchanged_services": {
+      "openbox-frontend-1": "b0fbf9bebac0",
+      "openbox-trajectory-worker-1": "656a9bbf7120",
+      "openbox-qdrant-memory-1": "f1bdfc91b485",
+      "openbox-postgres-1": "745a495da1be",
+      "openbox-redis-1": "4c1a6fb5613a"
+    },
+    "source_hashes": {
+      "job_recovery.py": "da0bef1d14b15520e6d6fe4fa1575ef74138c1ab47ce96c5f7b97ec04a890d29",
+      "video_production.py": "c676f32d8a8b660a7a34bc4db70ba95fbdab2f2dd7f8199f56b4eef13e82fe86"
+    },
+    "gates_after": "0|0|0|0",
+    "restart_count": "0",
+    "completed_at": "2026-10-20T09:18:49.875738+00:00"
+  },
+  "probes": [
+    {
+      "at": "2026-10-20T09:18:08.989228+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:09.183370+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:11.358257+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:11.534052+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:13.717545+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:13.880652+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:16.037968+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:16.210041+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:18.370516+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:18.538099+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:20.706514+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:20.872373+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:23.053793+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:23.256847+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:25.430652+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:25.619149+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:27.782321+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:27.952030+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:30.129566+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:30.293298+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:32.448264+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:32.619764+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:34.785556+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:34.947685+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:37.102393+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:37.270630+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:39.451089+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:39.634655+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:41.818849+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:41.991569+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:44.162174+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:44.335874+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:46.491796+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:46.682575+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:48.888296+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-20T09:18:49.082784+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    }
+  ],
+  "local_commit": "bb6b7ff8",
+  "local_tests": {
+    "passed": 98,
+    "paid_model_calls": 0,
+    "real_voice_acceptance": false
+  },
+  "production_readback": "source hashes, health, public endpoints and post-startup logs inspected",
+  "post_activation_readback": [
+    "BEGIN\nid|status|attached_message_id|pending\nvideo_01M5BQMHHM953ZKZWDKR1KBRE2|completed|message_01M5C14X4XZE6ZH941Y39CJ1GM|\n(1 row)\nunexpected_legacy_resumes\n0\n(1 row)\nCOMMIT\nopenbox-backend:20261020-video-completion-da0bef1d healthy restarts=0\nbackend-1  | 2026-10-20 09:19:12,048 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBV3XV2SAAFR2AVE62Y6CX7HB\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:12,189 [openbox.agent.recovery] ERROR Agent tail repair failed session=session_7YBVEBDJXT5V1YV6055XCZ18YE\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:13,347 [openbox.agent.recovery_service] WARNING Agent recovery converged expired=4 outboxes=0 rejoined=0 repaired=3 resumed=0 unbound=0 subagents=0 interrupts=0 inbox_resumed=0 inbox_settled=0 effects=0/0/0/0 effect_stale=0 stale=0\nbackend-1  | 2026-10-20 09:19:28,425 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBTVNVX839GP4DWWZTFYKXCWX\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:28,526 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBV0QKZNPWQPQ45SPHX03HAYZ\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:28,787 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBV3XV2SAAFR2AVE62Y6CX7HB\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:29,071 [openbox.agent.recovery] ERROR Agent tail repair failed session=session_7YBVEBDJXT5V1YV6055XCZ18YE\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:30,228 [openbox.agent.recovery_service] WARNING Agent recovery converged expired=4 outboxes=0 rejoined=0 repaired=3 resumed=0 unbound=0 subagents=0 interrupts=0 inbox_resumed=0 inbox_settled=0 effects=0/0/0/0 effect_stale=0 stale=0\nbackend-1  | 2026-10-20 09:19:45,417 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBTVNVX839GP4DWWZTFYKXCWX\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:45,998 [openbox.sandbox.manager] WARNING Failed to auto-acquire sandbox: SandboxSubscriptionRequired\nbackend-1  | 2026-10-20 09:19:46,075 [openbox.api.ws] WARNING Failed to ensure container for user=01M2AESZVTXZNPK5KAP76S7DJM: 普通 LLM 对话可继续使用；执行 sandbox 或连接无影云需要有效的付费套餐。\nbackend-1  | 2026-10-20 09:19:46,230 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBV0QKZNPWQPQ45SPHX03HAYZ\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:46,588 [openbox.agent.recovery] ERROR Could not settle recovered inbox session=session_7YBV3XV2SAAFR2AVE62Y6CX7HB\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:47,099 [openbox.agent.recovery] ERROR Agent tail repair failed session=session_7YBVEBDJXT5V1YV6055XCZ18YE\nbackend-1  | Traceback (most recent call last):\nbackend-1  | 2026-10-20 09:19:48,615 [openbox.agent.recovery_service] WARNING Agent recovery converged expired=4 outboxes=0 rejoined=0 repaired=3 resumed=0 unbound=0 subagents=0 interrupts=0 inbox_resumed=0 inbox_settled=0 effects=0/0/0/0 effect_stale=0 stale=0\n"
+  ],
+  "legacy_recovery_observation": {
+    "rows": [
+      "BEGIN\nsession_id|client_id|origin|state|accepted_at|intent_revision\nsession_7YBV3XV2SAAFR2AVE62Y6CX7HB|vjob:video_01M4W2RY7AQ3WYP7VPEA0D9P2P|system_recovery|claimed|2026-10-14 02:12:42.793764+00|\nsession_7YBV0QKZNPWQPQ45SPHX03HAYZ|vjob:video_01M53Z4JRBE1S6WPBXSAF00Z54|system_recovery|claimed|2026-10-17 03:56:01.227455+00|\nsession_7YBTVNVX839GP4DWWZTFYKXCWX|vjob:video_01M54A67960ZA7SG84HVSRWAD6|system_recovery|claimed|2026-10-17 06:59:42.996517+00|\n(3 rows)\nCOMMIT\n"
+    ],
+    "scope": "Historical claimed inbox items lacking intent revision still log ASSISTANT_INTENT_UNVERIFIED; original old tail-repair error persists. No historical records were rewritten."
+  }
+}

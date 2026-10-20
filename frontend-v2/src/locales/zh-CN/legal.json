@@ -20,15 +20,15 @@
   "readPrivacy": "隐私政策",
   "readAi": "AI 服务说明",
   "saved": "已记录协议版本",
-  "operator": "南宁贝之宝科技有限公司",
+  "operator": "跨域通（北海）数字科技有限公司",
   "brand": "BossIP",
   "version": "2026-09-28",
   "updatedAt": "2026-09-28",
-  "siteIcp": "桂ICP备2025071816号-2",
-  "appIcp": "桂ICP备2025071816号-3A",
+  "siteIcp": "桂ICP备2025063385号-3",
+  "appIcp": "",
   "icpUrl": "https://beian.miit.gov.cn/",
   "contactEmail": "hello@bossip.ai",
-  "publicOrigin": "https://ai.bossipai.com.cn",
+  "publicOrigin": "https://ai.kuayetong.cn",
   "providerLinks": [
     {
       "label": "极光隐私政策",
@@ -49,7 +49,7 @@
           "id": "provider",
           "title": "1. 服务提供者与适用范围",
           "paragraphs": [
-            "BossIP 由南宁贝之宝科技有限公司提供。本协议适用于 BossIP 网站及 iOS、Android 客户端的账号、AI 内容生成、文件处理和云端工作辅助服务。具体可用功能以您所用版本和订购方案为准。"
+            "BossIP 由跨域通（北海）数字科技有限公司提供。本协议适用于 BossIP 网站及 iOS、Android 客户端的账号、AI 内容生成、文件处理和云端工作辅助服务。具体可用功能以您所用版本和订购方案为准。"
           ]
         },
         {
@@ -105,7 +105,7 @@
           "id": "scope",
           "title": "1. 我们是谁",
           "paragraphs": [
-            "南宁贝之宝科技有限公司在提供 BossIP 服务时处理相关个人信息。本政策与个人信息收集清单、第三方与 SDK 清单及权限说明共同介绍信息处理方式。公开阅读本政策无需登录。"
+            "跨域通（北海）数字科技有限公司在提供 BossIP 服务时处理相关个人信息。本政策与个人信息收集清单、第三方与 SDK 清单及权限说明共同介绍信息处理方式。公开阅读本政策无需登录。"
           ]
         },
         {
@@ -238,7 +238,7 @@
           "id": "channels",
           "title": "受理渠道",
           "paragraphs": [
-            "请使用本页的邮件入口联系南宁贝之宝科技有限公司。您无需登录即可发送咨询、投诉或隐私请求。请在邮件主题中注明“BossIP”以及问题类型，方便分派处理。"
+            "请使用本页的邮件入口联系跨域通（北海）数字科技有限公司。您无需登录即可发送咨询、投诉或隐私请求。请在邮件主题中注明“BossIP”以及问题类型，方便分派处理。"
           ]
         },
         {

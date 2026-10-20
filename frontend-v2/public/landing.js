@@ -1,7 +1,7 @@
 (function () {
   const config = {
     siteUrl: "",
-    ctaUrl: "https://ai.bossipai.com.cn/",
+    ctaUrl: "https://app.kuayetong.cn/",
     consoleUrl: "/",
     contactUrl: "mailto:hello@bossip.ai",
     ...(window.BOSSIP_LANDING_CONFIG || {}),

@@ -20,15 +20,15 @@
   "readPrivacy": "Privacy",
   "readAi": "AI notice",
   "saved": "Policy version recorded",
-  "operator": "南宁贝之宝科技有限公司",
+  "operator": "跨域通（北海）数字科技有限公司",
   "brand": "BossIP",
   "version": "2026-09-28",
   "updatedAt": "2026-09-28",
-  "siteIcp": "桂ICP备2025071816号-2",
-  "appIcp": "桂ICP备2025071816号-3A",
+  "siteIcp": "桂ICP备2025063385号-3",
+  "appIcp": "",
   "icpUrl": "https://beian.miit.gov.cn/",
   "contactEmail": "hello@bossip.ai",
-  "publicOrigin": "https://ai.bossipai.com.cn",
+  "publicOrigin": "https://ai.kuayetong.cn",
   "providerLinks": [
     {
       "label": "Jiguang privacy",
@@ -49,7 +49,7 @@
           "id": "provider",
           "title": "1. Provider and scope",
           "paragraphs": [
-            "BossIP is provided by 南宁贝之宝科技有限公司. These terms cover accounts, AI generation, file processing and cloud work assistance on our website and iOS/Android apps. Available features depend on your version and plan."
+            "BossIP is provided by 跨域通（北海）数字科技有限公司. These terms cover accounts, AI generation, file processing and cloud work assistance on our website and iOS/Android apps. Available features depend on your version and plan."
           ]
         },
         {
@@ -105,7 +105,7 @@
           "id": "scope",
           "title": "1. Who we are",
           "paragraphs": [
-            "南宁贝之宝科技有限公司 processes personal information to provide BossIP. Read this policy with the collection, third-party/SDK and permission notices. No account is required to read these documents."
+            "跨域通（北海）数字科技有限公司 processes personal information to provide BossIP. Read this policy with the collection, third-party/SDK and permission notices. No account is required to read these documents."
           ]
         },
         {
@@ -238,7 +238,7 @@
           "id": "channels",
           "title": "Contact channel",
           "paragraphs": [
-            "Use the email links on this page to contact 南宁贝之宝科技有限公司. No login is needed to send an inquiry, complaint or privacy request. Include “BossIP” and the issue type in the subject."
+            "Use the email links on this page to contact 跨域通（北海）数字科技有限公司. No login is needed to send an inquiry, complaint or privacy request. Include “BossIP” and the issue type in the subject."
           ]
         },
         {

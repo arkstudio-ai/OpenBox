@@ -1397,6 +1397,7 @@ async def _finalize_segment(
         job.id,
         status="completed",
         result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
+                     "completion_delivery_pending": True,
                      "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,

@@ -11,8 +11,8 @@ from video import job_recovery
 async def test_resume_conversation_accepts_a_system_followup(monkeypatch):
     calls = {}
 
-    async def driver_state(session_id):
-        return SimpleNamespace(run_id=None, phase="idle")
+    async def resume_reference(job):
+        return {}
 
     async def accept(**kwargs):
         calls["accept"] = kwargs
@@ -22,7 +22,7 @@ async def test_resume_conversation_accepts_a_system_followup(monkeypatch):
         calls["wake"] = (session_id, user_id)
         return "run_1"
 
-    monkeypatch.setattr("agent.driver.get_driver_state", driver_state)
+    monkeypatch.setattr(job_recovery, "_resume_reference", resume_reference)
     monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
     monkeypatch.setattr("agent.inbox.wake_inbox_session", wake)
     job = SimpleNamespace(id="video_1", session_id="session_1", user_id="u1")
@@ -33,14 +33,14 @@ async def test_resume_conversation_accepts_a_system_followup(monkeypatch):
     assert calls["wake"] == ("session_1", "u1")
 
 
-async def test_resume_conversation_leaves_a_live_run_alone(monkeypatch):
-    async def driver_state(session_id):
-        return SimpleNamespace(run_id="run_9", phase="running")
+async def test_resume_conversation_leaves_a_held_task_alone(monkeypatch):
+    async def resume_reference(job):
+        return None
 
     async def accept(**kwargs):
-        raise AssertionError("must not queue while a run is live")
+        raise AssertionError("must not queue while a task is held")
 
-    monkeypatch.setattr("agent.driver.get_driver_state", driver_state)
+    monkeypatch.setattr(job_recovery, "_resume_reference", resume_reference)
     monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
     assert await job_recovery.resume_conversation(SimpleNamespace(id="v", session_id="s", user_id="u")) is False
     assert await job_recovery.resume_conversation(SimpleNamespace(id="v", session_id=None, user_id="u")) is False

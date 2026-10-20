@@ -58,10 +58,10 @@
 gw3 是跨域通（北海）数字科技有限公司的独立部署，主体与备案和 gw2 不同，所以有自己的长期分支 `gw3` = main + 主体定制提交。
 
 - 2026-10-20 建：基于 main@cae33477（gw3 后端镜像对应的提交）+ 77ccc6ec。改动只在前端：
-  - `frontend-v2/src/locales/{zh-CN,en-US}/legal.json`：`operator` = 跨域通（北海）数字科技有限公司，`siteIcp` = 桂ICP备2025063385号-3，`appIcp` 置空（gw3 没有 App），`publicOrigin` = https://ai.kuayetong.cn，正文三处主体名。
+  - `frontend-v2/src/locales/{zh-CN,en-US}/legal.json`：`operator` = 跨域通（北海）数字科技有限公司，`siteIcp` = 桂ICP备2025063385号-3，`appIcp` 置空（gw3 没有 App），`publicOrigin` = https://ai.kuayetong.cn，正文三处主体名；`contactEmail` = 17677423547@163.com（落地页 `contactUrl` 同步）。
   - `frontend-v2/public/landing.html` 页脚与链接；`landing.config.js` / `landing.js` 的 `ctaUrl` = https://app.kuayetong.cn/（原来指 gw2，会把用户带走）；`scripts/check-seo-landing.mjs` 同步。
   - `frontend-v2/index.html` canonical / og / ld+json → https://ai.kuayetong.cn。
   - 协议版本号保持 `2026-09-28`：后端 `backend/auth/legal.py` 用 `Literal` 钉死，前端单独改会让同意协议 422。
 - 全面排查结论（2026-10-20）：后端镜像、`/opt/openbox` 配置、gw3 数据库 1215 个文本列均无「贝之宝 / 2025071816」；main 里另有 `mobile/assets/locales/*/legal.json`（App，gw3 不发）和 `docs/LEGAL_CENTER_*.md`（gw2 历史文档）未改。
 - 跟进 main：`git checkout gw3 && git merge origin/main`，冲突只会出现在上面这几个文件，保留 gw3 的主体/备案/域名；merge 后 `grep -rE '贝之宝|2025071816|ai.bossipai.com.cn' frontend-v2/src frontend-v2/public frontend-v2/index.html` 必须为空。
-- 发布：gw3 的**前端**一律从 `gw3` 分支构建（tag `YYYYMMDD-gw3-<sha8>`），不要把 gw2 的前端镜像直接搬过来；后端暂时与 main 同镜像。流程：本机 `git archive HEAD frontend-v2` → `docker buildx --platform linux/amd64 --build-arg VITE_BUILD_ID=<tag>` → OSS `_deploy-tmp/<tag>/fe.tgz` 签名链接 → 机上 curl + `sha256sum -c` + `docker load` → 改 override 的 frontend `image:` 行 → `docker compose up -d --no-deps frontend`，并在容器里 grep 确认无旧主体。当前前端 `20261020-gw3-77ccc6ec`。
+- 发布：gw3 的**前端**一律从 `gw3` 分支构建（tag `YYYYMMDD-gw3-<sha8>`），不要把 gw2 的前端镜像直接搬过来；后端暂时与 main 同镜像。流程：本机 `git archive HEAD frontend-v2` → `docker buildx --platform linux/amd64 --build-arg VITE_BUILD_ID=<tag>` → OSS `_deploy-tmp/<tag>/fe.tgz` 签名链接 → 机上 curl + `sha256sum -c` + `docker load` → 改 override 的 frontend `image:` 行 → `docker compose up -d --no-deps frontend`，并在容器里 grep 确认无旧主体。当前前端 `20261020-gw3-49ab4c7c`（分支 gw3@49ab4c7c）。

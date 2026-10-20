@@ -10,8 +10,8 @@ WEB_DIR="$ROOT_DIR/frontend-v2/src/locales"
 MOBILE_DIR="$ROOT_DIR/mobile/assets/locales"
 I18N_FILE="$ROOT_DIR/mobile/lib/shared/i18n/i18n.dart"
 
-# The trajectory monitor and operator pricing console are web-only pages.
-WEB_ONLY_NAMESPACES=(admin-trajectories admin-pricing)
+# The trajectory monitor, pricing console and PC floating assistant are web-only.
+WEB_ONLY_NAMESPACES=(admin-trajectories admin-pricing companion)
 
 diff_args=()
 for namespace in "${WEB_ONLY_NAMESPACES[@]}"; do

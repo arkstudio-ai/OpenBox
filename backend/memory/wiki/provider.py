@@ -53,6 +53,10 @@ class ConfiguredWikiModel:
         text = mask_sensitive(json.dumps(data, ensure_ascii=False))
         bare_model = model.split("/", 1)[-1]
         responses = _needs_responses_api(model)
+        # JSON-mode providers require an explicit JSON instruction even when a
+        # caller already describes the object shape (e.g. memory reconciliation).
+        # Keep this transport requirement independent of each caller's prompt.
+        system = system.rstrip() + "\nReturn a valid JSON object only."
         if responses:
             url = root + "/responses"
             payload = {"model": bare_model, "stream": False, "max_output_tokens": 3500,

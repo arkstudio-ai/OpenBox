@@ -37,9 +37,10 @@ class AskArguments(BaseModel):
     request: str = Field(min_length=1, max_length=8000, description=(
         "给执行助理的完整请求，包含上下文中已确定的对象、要求和最新修改；不能只抄最后一句，也不能补造用户决定。"))
     question_id: str = Field(default="", max_length=64, description=(
-        "回答任务提问时使用已展示的 request_id；新请求不填。确认或安排位置卡使用 cards_answer。"))
-    mode: Literal["request", "remember"] = Field(default="request", description=(
-        "request：交办或查询；remember：仅保存用户表达的长期事实或偏好，不执行其他业务，不额外播报。"))
+        "查看或修改已有任务卡时使用 cards_pending 返回的 request_id；修改用mode=revise。无关新请求不填。"))
+    mode: Literal["request", "remember", "revise"] = Field(default="request", description=(
+        "request：交办或查询；revise：用户修改正在等待任务卡的原任务，必须带该卡question_id，完整转交新要求，不先回答旧卡；"
+        "remember：仅保存长期事实或偏好。"))
 
 
 class CardAnswerArguments(BaseModel):
@@ -154,6 +155,8 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
                                          "query_relaxed", "needs_assistant", "untrusted_data", "grants_authority")},
             "schedules": jobs.get("schedules") or [],
             "note": "包含用户自建项目对话和助理关注任务，按最近活动排序。idle只表示对话没运行，不表示工作完成；"
+                    "waiting_input表示任务在等用户决定，不是后台还在计算；pending_request是当前待确认内容，"
+                    "用它的request_id查询cards_pending核对选项，不能沿用旧汇报或说报价还没出来。"
                     "video.output_available=true才证实已有可用成片。more=true时继续翻页。query_relaxed=true表示标题没匹配，"
                     "已扩大为最近候选；候选不等于命中，结合上下文核对实际对象，仍不符就继续查或转交。"
                     "needs_assistant=true、对象不符或要查具体内容时，本轮交给个人助理查相关对话，不要求用户提醒转交。"}
@@ -236,7 +239,8 @@ from voice.task_questions import AnswerArguments as TaskAnswerArguments, schema 
 
 DIRECT: dict[str, DirectTool] = {
     "task_question_answer": DirectTool(
-        "用户已回答当前任务卡片时，按上下文理解并提交完整答案。可回答讲稿、字幕、素材、首尾帧、时长、费用和验收卡。"
+        "仅提交当前任务卡已经询问的完整答案。用户增加要求、换素材或改变制作方式（即使同时同意讲稿），"
+        "必须用 assistant_ask(mode=revise,question_id=该卡ID)整体转交，不先提交旧卡。"
         "先确定用户针对的 conversation，再取该任务的 request_id/version，不能套用最近播报的另一任务。"
         "先解释用户疑问，不把疑问当同意；没有选完不能补选。不能代做人工验证。", task_question_answer,
         task_answer_schema(), timeout=8.0),
@@ -271,8 +275,12 @@ DIRECT: dict[str, DirectTool] = {
     "credits": DirectTool("查工作区的积分余额和用户本月用掉的积分。", credits),
     "cards_pending": DirectTool(
         "列出此刻等用户决定的卡片：个人助理要做的高风险操作的确认（删除、代答、发送、记忆），"
-        "以及任务对话里等用户回答的问题。返回要念给用户听的内容。",
-        cards_pending, timeout=4.0),
+        "以及任务对话里等用户回答的问题。每次解释、推荐或回答卡片前都先查询，包括刚播报过的卡片，"
+        "以免继续讲用户已在屏幕处理的旧选项。已知目标用 request_id 或任务名称 query，只在问全部待办时不筛选。",
+        cards_pending, {"type": "object", "properties": {
+            "request_id": {"type": "string", "description": "确切的卡片 ID 或已展示的 card 标识"},
+            "query": {"type": "string", "description": "用户点名的任务或项目名称"}},
+            "additionalProperties": False}, timeout=4.0),
     "cards_answer": DirectTool(
         "根据完整对话理解用户对已展示卡片的决定，提交确切 card、version 和 option_id。"
         "目标或选择不明确时先澄清，多个卡片不能凭最近顺序猜。用户补充所选新项目的名称仍属于本卡片，填 project_name；"

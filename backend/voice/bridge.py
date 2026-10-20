@@ -61,8 +61,16 @@ class Bridge(TurnsMixin):
                  opening_instructions: str | None = None,
                  opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
-                 keepalive_after: float | None = None, reply_gap: float | None = None):
+                 keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
+                 context_sink=None):
         self.provider, self.link, self.lang = provider, link, lang
+        self.unified = unified
+        self.shared_context = ""
+        self.context_sink = context_sink
+        self._context_dirty = False
+        self._context_task = None
+        self.decision_context = ""
+        self._transcript_turns = set()
         # The user's call settings (assistant/profile.py): whether the greeting recaps, whether task results
         # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
@@ -144,6 +152,8 @@ class Bridge(TurnsMixin):
                  else "working" if working else "listening")
         if (value, working, late) != self._phase:
             self._phase = (value, working, late)
+            log.debug("voice phase call=%s value=%s state=%s pending=%d", self.call_id, value,
+                      self.state, len(self.pending_calls))
             self.emit(events.phase(value, working=working, late=late))
 
     async def start(self) -> None:
@@ -153,7 +163,8 @@ class Bridge(TurnsMixin):
             await self._sync_instructions(force=True)
             return
         self._update_phase()
-        if not await self.say_phrase("greeting", phrases.greeting_instructions(self.lang, recap=self.recap, first_call=self.first_call)):
+        if not await self.say_phrase("greeting", phrases.greeting_instructions(
+                self.lang, recap=self.recap, first_call=self.first_call, unified=self.unified)):
             self._greeting_over()
             await self._sync_instructions(force=True)
 
@@ -264,25 +275,96 @@ class Bridge(TurnsMixin):
         await self.fill_idle()
 
     async def _on_user_transcript(self, event) -> None:
+        # Some realtime sessions omit speech_stopped. Final ASR closes only
+        # its own utterance; a late transcript cannot end newer live speech.
+        if self.state == "user_speaking" and (not self._last_user_item or event.item_id == self._last_user_item):
+            self.state, self._speech_until = "idle", None
+            self.awaiting_since = self.clock()  # still allow the provider's native VAD reply
         self.utterance = event.text  # becomes VoiceTurn.transcript
         if self._said("user", event.text, event.item_id):
             self.heard_count += 1
             if event.item_id:
                 self._user_utterances[event.item_id] = self.heard_count
             self.keeper.user_turn()
+            if self.unified and event.text.strip():
+                await self._forward_transcript(event)
+
+    async def _forward_transcript(self, event) -> None:
+        """Every final ASR item enters the same durable inbox, once. No intent router."""
+        from assistant.identities import inbox_key
+        from voice.assistant_link import VoiceTurnRef
+        # Session rotation can reuse provider IDs. A repeated final event in
+        # the same session is a retry, never a second business request.
+        key = inbox_key("voice-transcript", self.call_id, self.session, event.item_id or self.heard_count)
+        if key in self._transcript_turns:
+            return
+        self._transcript_turns.add(key)
+        # Final ASR also ends its own utterance if the VAD stop was lost. A
+        # delayed transcript must not end a newer utterance still being spoken.
+        if self.state != "user_speaking" or not self._last_user_item or event.item_id == self._last_user_item:
+            if self.state == "user_speaking":
+                self.state = "idle"
+            self.awaiting_since = self._speech_until = None
+        context = self._call_context(event.text, source_item=event.item_id)
+        context["handover_source"] = "confirmed_transcript"
+        ref = VoiceTurnRef(id=key, provider_call_id=key, text=event.text, transcript=event.text,
+                           requested=self.clock(), context=context)
+        if not self.pending_calls and self.progress is not None:
+            self.progress.reset()
+        self.pending_calls[key] = ref
+        self.refs.append(ref)
+        # Persist acceptance before proceeding, so hang-up cannot lose heard
+        # words. The expensive assistant run and result observation stay async.
+        try:
+            await self.link.start(ref)
+        except Exception as exc:
+            log.warning("voice transcript acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
+            await self._settle(ref, {"status": "failed", "speech": phrases.speech_text("unavailable", self.lang)})
+            return
+        self._turn(ref, "accepted")
+        if self._ack_at is None:
+            self._ack_at = self.clock() + ACK_WAIT_SECONDS
+        self._spawn(self._observe_transcript(ref))
+        self._update_phase()
+
+    async def _observe_transcript(self, ref) -> None:
+        try:
+            result = await self.link.wait(ref, elapsed=self.clock() - ref.requested, on_message=self._on_message)
+        except Exception as exc:
+            log.warning("voice transcript observation failed call=%s error=%s", self.call_id, type(exc).__name__)
+            result = {"status": "failed", "speech": phrases.speech_text("failed", self.lang)}
+        if result is not None:
+            await self._settle(ref, result)
 
     async def _on_assistant_transcript(self, event) -> None:
         if (event.response_id or self.active_response) in self._keepalives or (event.response_id or self.active_response) in self._unverified_replies:
             return  # a silent reply's "嗯": never part of the call
+        await self._track_spoken_cards(event)
         self._said("assistant", event.text, event.item_id)
         if event.response_id:
             self._replies[event.response_id] = self._replies.get(event.response_id, "") + event.text
 
+    async def _on_assistant_transcribing(self, event) -> None:
+        await self._track_spoken_cards(event, partial=True)
+
     def _said(self, speaker: str, text: str, item_id: str = "") -> bool:
         added = self.spoken.add(speaker, text, item_id)
+        if added and speaker in {"user", "assistant"} and self.context_sink and not self.closing:
+            self._context_dirty = True
+            if self._context_task is None or self._context_task.done():
+                self._context_task = self._spawn(self._share_context())
         if added and self.debug:  # QA only: transcripts never reach the log otherwise
             log.info("voice transcript call=%s %s text=%s", self.call_id, speaker, " ".join(text.split()))
         return added
+
+    async def _share_context(self):
+        # One writer per call, coalescing speech events without blocking audio.
+        while self._context_dirty and not self.closing:
+            self._context_dirty = False
+            try:
+                await self.context_sink(list(self.spoken.lines))
+            except Exception as exc:
+                log.warning("voice context publish failed call=%s error=%s", self.call_id, type(exc).__name__)
 
     async def _on_item_created(self, event) -> None:
         if event.role == "assistant" and self.response_kind == "keepalive":
@@ -313,6 +395,33 @@ class Bridge(TurnsMixin):
         self.started_seq = self.seq
         self.meter.start(event.response_id)
         self.settled.clear()
+        if self.unified and kind == "model":
+            # Providers may automatically generate after VAD. Such speculative
+            # answers must never be played or treated as shared facts.
+            self._unverified_replies.add(event.response_id or "")
+            self.interrupted = True
+            await self._command("cancel_response")
+            self._update_phase()
+            return
+        if kind in self._withdrawn_deliveries:
+            # A browser click can arrive after response.create, before response.created.
+            self.interrupted = True
+            await self._command("cancel_response")
+            self._update_phase()
+            return
+        self._native_playing = self._native_pending if kind in ("model", "followup") else {}
+        self._native_response = event.response_id if kind in ("model", "followup") else None
+        self._native_sources = self._card_sources.copy() if self._native_response else {}
+        self._native_text = ""
+        if kind in ("model", "followup"):
+            self._native_pending = {}
+            self._playing_decision = None  # an older delivery does not own this new native reply
+        if (self._native_playing and self._cards_epoch > self._native_read_epoch
+                and any(self._native_versions.get(k) != v for k, v in self._native_playing.items())):
+            self._native_playing.clear()
+            await self._interrupt_playback(source="decision_changed")
+            self._update_phase()
+            return
         if ref := self._delivery(kind):
             ref.delivery = "delivering"
         if kind in ("model", "followup") and event.response_id:
@@ -346,6 +455,10 @@ class Bridge(TurnsMixin):
         self._playing_until = max(self._playing_until or now, now) + len(event.audio) / OUTPUT_BYTES_PER_SECOND
         if not self.audio_sent:
             self.audio_sent, self.first_audio_at = True, now
+            if (ref := self._delivery(self.response_kind)) and ref.delivery_requested_at is not None:
+                log.info("voice delivery audio call=%s turn=%s source=%s provider_to_first_audio_ms=%.1f",
+                         self.call_id, ref.id, ref.provider_call_id,
+                         max(now - ref.delivery_requested_at, 0) * 1000)
             self._update_phase()
 
     async def _on_response_done(self, event) -> None:
@@ -502,8 +615,9 @@ class Bridge(TurnsMixin):
                 )
 
     async def _acknowledge(self) -> None:
-        self._ack_at, self.requested = None, "followup"
-        await self._create(phrases.tool_result_instructions(self.lang))
+        self._ack_at, self.requested = None, "progress" if self.unified else "followup"
+        await self._create(phrases.receipt_instructions(self.lang) if self.unified
+                           else phrases.tool_result_instructions(self.lang))
 
     def _played_out(self) -> bool:
         """The client has played our last reply and ``reply_gap`` has passed since (always, without pacing)."""
@@ -559,6 +673,8 @@ class Bridge(TurnsMixin):
         self.meter.start(event.response_id)  # billed like any reply
         self.settled.clear()
         self._keepalives.setdefault(event.response_id or "", set())
+        if event.response_id:
+            self._silent_responses.append(event.response_id)
         if self.state == "user_speaking" or self.limit_reason:
             await self._command("cancel_response")
 
@@ -573,6 +689,8 @@ class Bridge(TurnsMixin):
     def _unsilence(self) -> None:
         """What we took for our silent reply was the VAD's answer to the user (our request lost the race)."""
         self._keepalives.pop(self.active_response or "", None)
+        if self.active_response in self._silent_responses:
+            self._silent_responses.remove(self.active_response)
         self.audio_sent, self.audio_bytes, self.first_audio_at, self.awaiting_since = False, 0, None, None
         self.quiet_since = self.clock()
         if self.active_response:
@@ -615,10 +733,22 @@ class Bridge(TurnsMixin):
         await self._sync_instructions(force=True)
 
     def _instructions(self) -> str:
-        section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None else ""
+        section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None and not self.unified else ""
         base = self.opening_instructions if self.greeting and self.opening_instructions is not None else self.base_instructions
+        if self.unified:
+            from voice.prompt import UNIFIED_FRONT
+            if not base.startswith(UNIFIED_FRONT):
+                base = UNIFIED_FRONT + "\n" + base
+        if self.shared_context:
+            base += "\n" + self.shared_context
+        if self.decision_context:
+            base += "\n" + self.decision_context
         return with_sections(base, call_so_far=self.keeper.summary, progress=section,
                              last_lines=self.keeper.carried)
+
+    async def refresh_shared_context(self, value: str) -> None:
+        self.shared_context = value
+        await self._sync_instructions(force=True)
 
     async def _sync_instructions(self, *, force: bool = False) -> None:
         if not self.base_instructions:
@@ -651,7 +781,8 @@ class Bridge(TurnsMixin):
         self.last_progress = self.clock()
         await self._sync_instructions(force=True)
         self.requested = "progress"
-        await self._create(phrases.progress_instructions(self.progress.step if self.progress else "", self.lang))
+        await self._create(phrases.receipt_instructions(self.lang, delayed=True) if self.unified else
+                           phrases.progress_instructions(self.progress.step if self.progress else "", self.lang))
         self._update_phase()
 
     async def _rotate(self) -> None:
@@ -692,6 +823,7 @@ class Bridge(TurnsMixin):
         for ref in self.deliveries:  # a note in the old session is gone: inject it again when told
             ref.note_item, ref.note_pending, ref.note_at = None, False, None
         self._keepalives.clear()
+        self._silent_responses.clear()
         self._unverified_replies.clear()
         self._tool_receipts.clear()
         self._keepalive_prompt = False

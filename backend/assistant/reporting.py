@@ -21,8 +21,8 @@ from session.agent_event_log import append_agent_event_locked, prepare_agent_eve
 REPORT_TOOLS = frozenset({"tasks.get", "results.read", "history.read"})
 ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submit", "tasks.followup", "tasks.list", "decisions.propose", "assets.list", "assets.attach", "schedules.list", "schedules.create", "schedules.update", "schedules.run",
                                 "tasks.pause", "tasks.resume", "tasks.cancel", "tasks.link_existing", "tasks.archive", "sessions.rename", "requests.list", "requests.get", "requests.reply", "knowledge.directory", "knowledge.read", "memory.search", "memory.read",
-                                "memory.remember", "memory.update", "memory.forget", "assistant.preferences",
-                                "projects.brief.read", "projects.brief.update", "requests.answer",
+                                "memory.remember", "memory.update", "memory.forget", "assistant.preferences", "cards.list", "cards.answer",
+                                "projects.brief.read", "projects.brief.update", "requests.answer", "requests.revise",
                                 "projects.create", "projects.delete", "sessions.delete", "tasks.delete",
                                 "status.credits", "status.resources", "status.skills", "status.publishing",
                                 "status.briefing", "briefing.configure", "status.models", "status.platforms", "assets.describe"}
@@ -134,11 +134,15 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
         else:
             _, parts = await validate_result_source(db, result, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         from assistant.reads import result_view
+        from assistant.execution_errors import result_execution_error
+        execution_error = await result_execution_error(db, result, user_id=user_id)
         if summary:
-            return {**result_view(result), "task_id": result.task_id, "untrusted_data": True}
+            return {**result_view(result), "task_id": result.task_id,
+                    "execution_error": execution_error, "untrusted_data": True}
         if ctx is not None and record:
             await _read_call(db, main, ctx, "results.read")
-        version = command_digest({"refs": result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION})
+        version = command_digest({"refs": result.output_refs, "projection": EVIDENCE_PROJECTION_VERSION,
+                                  "execution_error": execution_error})
         if (offset and source_version != version) or (source_version is not None and source_version != version):
             raise AssistantError(409, "ASSISTANT_REPORT_VERSION", "Reload the result's original sources")
         entries, spans = [], []
@@ -161,7 +165,8 @@ async def read_result_sources(*, user_id: str, workspace_id: str, main_id: str, 
         next_offset = offset + sum(len(row["text"]) for row in entries)
         return {**result_view(result), "result_id": result_id, "task_id": result.task_id, "run_id": result.run_id,
                 "generation": result.generation, "result_message_id": result.result_message_id,
-                "outcome": result.outcome, "source_version": version, "sources": entries,
+                "outcome": result.outcome, "execution_error": execution_error,
+                "source_version": version, "sources": entries,
                 "offset": offset, "next_offset": next_offset if next_offset < total else None,
                 "total_chars": total, "truncated": next_offset < total, "untrusted_data": True}
 

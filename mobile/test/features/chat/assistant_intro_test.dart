@@ -413,6 +413,11 @@ void main() {
       expect(f.profileApi.introEvents, [
         {'event': 'bypass'},
       ]);
+      // The external provider container owns the pending-card polling timer.
+      // Dispose it before Flutter checks for timers, not only in tearDown.
+      await tester.pumpWidget(const SizedBox.shrink());
+      f.close();
+      await tester.pump(const Duration(milliseconds: 1));
     },
   );
 }

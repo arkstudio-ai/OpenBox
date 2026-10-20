@@ -480,6 +480,7 @@ async def pending_question_locked(db, execution: SessionExecution) -> QuestionCh
         QuestionCheckpoint.session_id == execution.session_id,
         QuestionCheckpoint.generation == execution.generation,
         QuestionCheckpoint.status == "pending",
+        QuestionCheckpoint.detached.is_(False),
     ).order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id).limit(1))
 
 
@@ -674,6 +675,16 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
         from question.question import checkpoint_context, record_checkpoint
         # Adopt a legacy pending question before changing its persisted state.
         await checkpoint_context(db, row, execution)
+        from assistant.pending import detachable, detach_locked, finish_locked
+        if status == "superseded" and detachable(row, session):
+            # Conversation generations are not task identities. Keep the exact
+            # preparation/confirmation alive while a new topic gets its own run.
+            if row.status in ("answered", "rejected"):
+                row.detached = True
+                await finish_locked(db, session, execution, row)
+            else:
+                await detach_locked(db, session, row)
+            continue
         from notifications.events import cancel_event
         await cancel_event(db, row.user_id, f"question:{row.id}")
         row.status = status
@@ -706,7 +717,7 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
     execution.resume_error = None
     execution.next_attempt_at = None
     execution.updated_at = now()
-    return list(rows)
+    return [row for row in rows if row.status == status]
 
 
 def publish_invalidated(rows: list) -> None:

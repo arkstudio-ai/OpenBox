@@ -28,6 +28,7 @@ from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
 from voice.reports import ReportWatcher
+from voice.updates import CallUpdates
 from voice.provider import RealtimeProvider
 
 log = create_logger("api.voice")
@@ -174,6 +175,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             await fresh.close()
             raise
         return fresh
+    from voice.live_context import publish as publish_context
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
@@ -182,7 +184,19 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail, first_call=facts.first_call,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
-                    reply_gap=REPLY_GAP_SECONDS)  # ours start once the client has played the last reply
+                    reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines))
+    from voice.shared_context import SharedContextWatcher
+    shared_context = SharedContextWatcher(scope)
+    updates = CallUpdates(scope)
+
+    async def deliver_reports(found):
+        for report in found:
+            await bridge.report(report.title, report.text, report.inbox_id, report.task_id,
+                                running=report.running, decision_versions=report.decision_versions)
+
+    async def deliver_context(fresh):
+        if fresh:
+            await bridge.refresh_shared_context(fresh)
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
@@ -254,15 +268,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("network", close=None) from None
 
     async def timers():
-        beat = renew = polled = started
+        beat = renew = started
         while True:
             await asyncio.sleep(1)
             now = time.monotonic()
-            if now - polled >= ReportWatcher.POLL_SECONDS:
-                # A task's result the assistant reported meanwhile is told in the call too.
-                polled = now
-                for report in await reports.poll():
-                    await bridge.report(report.title, report.text, report.inbox_id, report.task_id)
             # Calls have no duration cap; only the available credits can end one here.
             spent = room is not None and Decimal(bridge.meter.snapshot()["total_yuan"]) >= room
             if spent:
@@ -287,6 +296,11 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         # Independent of the heartbeat/credit timer: a slow question read must not stall a call.
         failures, initialized = 0, False
         while True:
+            try:
+                await asyncio.wait_for(updates.cards.wait(), cards.POLL_SECONDS)
+            except TimeoutError:
+                pass
+            updates.cards.clear()
             reading = asyncio.create_task(asyncio.wait_for(cards.waiting(bridge.scope), cards.POLL_TIMEOUT_SECONDS))
             try:
                 snapshot = await asyncio.shield(reading)
@@ -307,10 +321,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 failures += 1
                 if failures == 1 or failures % 30 == 0:
                     log.warning("voice cards watch failed call=%s error=%s", call_id, type(exc).__name__)
-            await asyncio.sleep(cards.POLL_SECONDS)
 
     tasks, ending, answered = [], CallEnded("network", close=None), False
-    reports = ReportWatcher(user_id=user_id, main_session_id=main_id)
+    reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
     try:
         bridge.progress.start()
         await reports.start()
@@ -324,6 +337,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             provider_to_bridge(), client_to_bridge(), access.watch(),
             raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
             bridge_to_client(), timers(), pending_cards(),
+            updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
+            updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -333,6 +348,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         pass
     finally:
         unsubscribe_profile()
+        updates.close()
         with anyio.CancelScope(shield=True):
             provider_pump, pumps = (tasks[0], tasks[1:]) if tasks else (None, [])
             for task in pumps:

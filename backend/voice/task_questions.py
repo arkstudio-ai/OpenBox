@@ -64,7 +64,7 @@ async def answer(scope, arguments):
         count, words = desk.heard()
         if scope.utterance_index is not None:
             count, words = scope.utterance_index, scope.transcript
-        if count <= desk._question_shown.get(args.request_id, count) or not words.strip():
+        if not words.strip() or count < 1:
             return {"status": "need_user_answer", "this_call_applied": False}
         current = next((item for item in await list_waiting(user_id=scope.user_id,
             workspace_id=scope.workspace_id, main_id=scope.main_session_id) if item["id"] == args.request_id), None)
@@ -85,6 +85,19 @@ async def answer(scope, arguments):
             items = [q.Question(**item) for item in row.questions]
             try:
                 attachments = args.attachments
+                # A script-only card cannot carry a newly chosen picture.
+                # Do not discard the file or submit only the old yes/no fields:
+                # route the complete human request for task revision instead.
+                selected = list(dict.fromkeys(identity for values in attachments or []
+                    for identity in ([values] if isinstance(values, str) else values)))
+                if selected and not any(item.allow_attachments for item in items):
+                    await q.validate_attachment_ownership(db, session, [selected])
+                    return {"status": "revision_required", "this_call_applied": False,
+                            "execution_confirmed": False, "request_id": row.id,
+                            "attachment_ids": selected,
+                            "note": "所选素材属于对原任务的修改，旧卡没有提交；交接完整原话和素材继续处理。"}
+                if count <= desk._question_shown.get(args.request_id, count):
+                    return {"status": "need_user_answer", "this_call_applied": False}
                 if attachments and isinstance(attachments[0], str):
                     targets = [index for index, item in enumerate(items) if item.allow_attachments]
                     if len(targets) != 1:

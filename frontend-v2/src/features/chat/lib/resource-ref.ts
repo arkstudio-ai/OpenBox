@@ -6,6 +6,7 @@
 export interface AttachableResource {
   id: string
   name: string
+  description?: string
   mime: string
   size: number
   kind: string

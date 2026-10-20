@@ -29,7 +29,16 @@ async def test_the_greeting_leaves_the_past_alone_when_the_user_asked():
     await bridge.start()
     [(_, instructions)] = [command for command in provider.sent if command[0] == "create"][:1]
     assert instructions == bridge._instructions() + "\n\n" + phrases.greeting_instructions("zh", recap=False)
-    assert "不希望开场回顾以前" in instructions and "上次通话" in phrases.greeting_instructions("zh")
+    assert "不主动提任务" in instructions and "不主动提任务" in phrases.greeting_instructions("zh")
+
+
+def test_opening_never_replays_old_decisions_but_regular_context_retains_history():
+    from voice.prompt import FrontFacts, front_instructions, local_now
+    facts = FrontFacts(recap=True, last_call="旧卡还等确认", recent="素材准备好了")
+    opening = front_instructions(facts, "zh", local_now(), opening=True)
+    normal = front_instructions(facts, "zh", local_now())
+    assert "旧卡还等确认" not in opening and "素材准备好了" not in opening
+    assert "旧卡还等确认" in normal and "可能已经过时" in normal
 
 
 async def test_results_nobody_asked_about_stay_in_the_conversation_when_turned_off():

@@ -40,7 +40,7 @@ WAIT_STEP_SECONDS = 0.5  # how soon a hung-up call stops observing, and a claime
 RESUME_ENTRYPOINT = "question_answer"  # the Inbox item an answered main-session card resumes the turn with
 # Commands that give a task work it reports back on by itself, and the task states that mean it is still at it.
 # waiting_input is not one: the task waits for the user on a card, so the call says where to act instead.
-WORK_ACTIONS = ("task_create", "task_input", "task_resume", "task_finish_continuation")
+WORK_ACTIONS = ("task_create", "task_input", "task_revise", "task_resume", "task_finish_continuation")
 WORKING = ("queued", "running", "resuming")
 
 
@@ -67,10 +67,14 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
     if fits(context):
         return context
     kept = {"call_truncated": True}
+    if context.get("spoken_input_id"):
+        kept["spoken_input_id"] = context["spoken_input_id"]
     if context.get("detail"):
         kept["detail"] = context["detail"]
     if context.get("handover_source"):
         kept["handover_source"] = context["handover_source"]
+    if context.get("revision_request"):
+        kept["revision_request"] = context["revision_request"]
     if questions := context.get("task_questions"):
         kept["task_questions"] = [{"request_id": item["request_id"], "session_id": item["session_id"],
                                    "questions_omitted": True} for item in questions]
@@ -125,6 +129,8 @@ class VoiceTurnRef:
     lane: str = "assistant"       # assistant / remember: a main-session turn
     settled: float | None = None  # bridge clock, for the turn's log line
     finished: float | None = None
+    delivery_requested_at: float | None = None  # provider boundary, distinct from local queue time
+    decision_versions: dict | None = None  # exact decisions read by this turn, never the global pending list
 
     @property
     def recorded(self) -> bool:
@@ -164,9 +170,11 @@ class AssistantLink:
             context["request"] = ref.text
 
         async def accept(context: dict | None):
+            from assistant.identities import inbox_key
             return await inputs.accept_turn(
                 user_id=self.user_id, workspace_id=self.workspace_id, main_id=self.main_session_id,
-                client_id=f"voice:{self.call_id}:{self.count}", text=text, model=self.model,
+                client_id=inbox_key("voice-input", self.call_id,
+                                    (context or {}).get("spoken_input_id") or ref.provider_call_id), text=text, model=self.model,
                 variant=self.variant, entrypoint=VOICE_ENTRYPOINT,
                 extra_ref={"voice_call_id": self.call_id, **({"voice_context": context} if context else {})})
         try:
@@ -224,11 +232,36 @@ class AssistantLink:
                     if receipt.result_message_id else "")
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
-            cards = await self.cards()  # the turn may be waiting for the user's confirmation
+            cards = await self.cards(message_id=receipt.result_message_id)  # only this turn's decisions
             running = await self.running(ref)  # or it passed the work on: the task's result comes later
             speech = clean(text, self.lang) or ("" if cards else phrases.phrase_text("result_in_text", self.lang))
+            from voice.decisions import for_turn
+            versions, stale = await for_turn(self.main_session_id, self.user_id, self.workspace_id, ref.inbox_id)
             return {"status": "ok", "speech": speech, **({"cards": cards} if cards else {}),
+                    **({"decision_versions": versions, "speech_stale": stale} if versions else {}),
                     **({"running": running} if running else {})}
+        # The coordinator can time out after its command committed. Never
+        # turn that reply failure into "the video failed; submit it again".
+        from assistant.receipts import describe, for_inbox
+        try:
+            async with asyncio.timeout(3):
+                submissions = await for_inbox(self.main_session_id, self.user_id, ref.inbox_id)
+        except Exception as exc:
+            log.warning("voice submission receipt unread call=%s error=%s", self.call_id, type(exc).__name__)
+            await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
+            return {"status": "unavailable", "execution_confirmed": False,
+                    "speech": ("这轮回复没有完成，目前也无法核实任务指令是否已提交，请先查看原任务状态。"
+                               if self.lang != "en" else
+                               "The reply did not finish and submission could not be verified. Check the task first.")}
+        if submissions:
+            await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
+                              message_id=receipt.message_id or ref.message_id)
+            speech = (("个人助理这轮回复未完成，但任务指令已有提交记录。" if self.lang != "en" else
+                       "The assistant reply did not finish, but task instructions were submitted. ")
+                      + describe(submissions, self.lang))
+            return {"status": "ok", "reason": "submission_receipt", "speech": speech,
+                    "submissions": submissions, "reply_completed": False,
+                    "execution_confirmed": False}
         await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
         return {"status": "failed", "speech": phrases.speech_text("failed", self.lang)}
 
@@ -252,11 +285,11 @@ class AssistantLink:
             await asyncio.sleep(WAIT_STEP_SECONDS)
         return None
 
-    async def cards(self) -> list[dict]:
+    async def cards(self, *, message_id: str | None = None) -> list[dict]:
         """The main session's cards waiting for the user; none if they cannot be read."""
         from assistant.confirmations import pending_cards
         try:
-            return await pending_cards(self.user_id, self.workspace_id, self.main_session_id)
+            return await pending_cards(self.user_id, self.workspace_id, self.main_session_id, message_id=message_id)
         except Exception as exc:  # the result is still told; the card stays on screen
             log.warning("voice cards unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []

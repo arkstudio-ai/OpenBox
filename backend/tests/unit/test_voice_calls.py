@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from assistant.service import ensure_main_session
 from cache.memory_cache import MemoryCache
@@ -36,6 +36,37 @@ async def test_one_call_per_user_across_workers(cache):
     assert not await calls.acquire_lock("u1")  # a renewed lock is still an integer counter
     await calls.release_lock("u1")
     assert await calls.acquire_lock("u1")
+
+
+async def test_live_conversation_context_is_scoped_and_never_creates_business_turns(cache):
+    from types import SimpleNamespace
+    from voice import live_context
+    from voice.tools import CallScope
+    from voice.transcript import CallTranscript
+    owner, identity = await new_call()
+    async with get_db_session() as db:
+        row = await db.get(VoiceCall, identity)
+        main = SimpleNamespace(id=row.main_session_id, user_id=owner, workspace_id=row.workspace_id)
+        scope = CallScope(owner, row.workspace_id, row.main_session_id, identity)
+    earlier = datetime.now(timezone.utc) - timedelta(seconds=2)
+    transcript = CallTranscript(now=lambda: earlier)
+    transcript.add("user", "周末想去青桐公园走走")
+    transcript.add("assistant", "可以带点水")
+    transcript.add("note", "内部后台结果不能冒充用户说的话")
+    transcript.now = lambda: earlier + timedelta(seconds=10)
+    transcript.add("user", "后来才聊到书店")
+    await live_context.publish(scope, transcript.lines)
+    async with get_db_session() as db:
+        value = await live_context.read(db, main)
+        assert [line["speaker"] for line in value["lines"]] == ["user", "assistant", "user"]
+        as_of_input = await live_context.read(db, main, before=earlier + timedelta(seconds=1))
+        assert [line["text"] for line in as_of_input["lines"]] == ["周末想去青桐公园走走", "可以带点水"]
+        assert await live_context.read(db, main, before=earlier - timedelta(seconds=1)) is None
+        assert not (await db.scalars(select(VoiceTurn).where(VoiceTurn.call_id == identity))).all()
+        assert await live_context.read(db, SimpleNamespace(id=main.id, user_id="stranger", workspace_id=main.workspace_id)) is None
+        # Cached text cannot grant access without the matching owned SQL call.
+        await cache.set(live_context.key(owner, main.workspace_id, main.id), {**value, "call_id": "another-call"})
+        assert await live_context.read(db, main) is None
 
 
 async def test_finish_records_the_ledger_and_turn_stamps():

@@ -108,6 +108,34 @@ async def test_independent_model_or_empty_fallback(chat, monkeypatch, configured
     assert chat[4][0]["model_id"] == expected
 
 
+@pytest.mark.parametrize("address,expected", [("王老师", "王老师"), ("", "老板")])
+async def test_suggestions_read_current_identity_after_rename_or_clear(chat, address, expected):
+    from assistant import profile
+    await message(chat, text="你叫什么，怎么称呼我？")
+    await message(chat, "assistant", "我叫旧助理，称呼您旧称呼。", "stop")
+    await profile.save(chat[0], {"name": "新助理", "address": address})
+    mid = await completed(chat)
+    await suggestions.generate_suggestions(chat[2], mid, "openai/chat-picked")
+    request = chat[4][0]
+    instructions = "\n".join(request["system"])
+    assert '"assistant_name": "新助理"' in instructions
+    assert f'"user_address": "{expected}"' in instructions
+    assert "旧助理" not in instructions and "旧称呼" not in instructions
+    assert "旧助理" in request["messages"][0]["content"]  # original history is preserved
+    assert (await saved(chat))[0].data["status"] == "completed"
+
+
+async def test_isolated_suggestions_do_not_load_account_identity(chat, monkeypatch):
+    from unittest.mock import AsyncMock
+    blocked = AsyncMock(side_effect=AssertionError("isolated account settings"))
+    monkeypatch.setattr("assistant.profile.load", blocked)
+    async with runtime.transaction(chat[1], chat[0]) as (_, session, _):
+        session.memory_policy = "assistant_isolated"
+    await suggestions.generate_suggestions(chat[2], await completed(chat), "openai/chat-picked")
+    blocked.assert_not_awaited()
+    assert chat[4][0]["system"] == [suggestions.SYSTEM]
+
+
 def test_openbox_json_config_support(tmp_path):
     path = tmp_path / "openbox.json"
     path.write_text('{"suggestion_model": "openai/independent"}')

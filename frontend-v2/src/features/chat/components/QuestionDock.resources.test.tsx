@@ -25,9 +25,9 @@ const scope: MentionScope = {
     kind: "image", sandboxPath: "/workspace/uploads/portrait.png", url: "https://assets.example/portrait.png" }],
 }
 
-function mount(value = request) {
+function mount(value = request, resourceScope = scope) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<QueryClientProvider client={client}><QuestionDock request={value} resourceScope={scope} /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><QuestionDock request={value} resourceScope={resourceScope} /></QueryClientProvider>)
 }
 
 function pickResource() {
@@ -59,6 +59,22 @@ afterEach(() => {
 })
 
 describe("Ask resource answers", () => {
+  it("searches descriptions on the server and submits the original older asset ID", async () => {
+    const resource = { ...scope.items[0]!, description: "red circle" }
+    const search = vi.fn().mockResolvedValue([resource])
+    mount(request, { ...scope, items: [], search })
+    fireEvent.click(screen.getByRole("button", { name: "composer.resourceCenter" }))
+    fireEvent.change(screen.getByLabelText("question.searchResources"), { target: { value: "red circle" } })
+    const pick = await screen.findByRole("button", { name: /portrait\.png.*red circle/ })
+    fireEvent.click(pick)
+    fireEvent.click(screen.getByTestId("question-primary-action"))
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/agent/question/assets-question", {
+      answers: [[]], attachments: [["asset-a"]],
+    }))
+    expect(search).toHaveBeenCalledWith("red circle", expect.any(AbortSignal))
+    expect(createAsset).not.toHaveBeenCalled()
+  })
+
   it("offers resource actions only on questions that request attachments", () => {
     mount({ ...request, questions: [{ question: "How long?" }] })
     expect(screen.queryByRole("button", { name: "composer.uploadFile" })).toBeNull()

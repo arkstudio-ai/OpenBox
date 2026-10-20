@@ -68,9 +68,7 @@ async def _record_failure(lease, expected, error):
         if terminal:
             message = await inbox.create_delivery_error_locked(db, session, lease=lease,
                 parent_id=parent, turn_id=origin["trigger_message_id"], now=now,
-                error={**inbox.DELIVERY_TERMINAL_ERROR,
-                    "message": error["message"] + " No new model request was sent for this continuation.",
-                    "reason_code": error["code"], "delivery_attempts": attempt})
+                error=inbox.delivery_terminal_error(error, attempts=attempt))
             # Original human inputs remain intact, including constraints
             # consumed by an earlier run. The new error has no file body.
             from assistant.results import record_execution_result_locked

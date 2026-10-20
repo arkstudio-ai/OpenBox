@@ -1,0 +1,103 @@
+{
+  "verified_at": "2026-10-10T12:08:20.910913+00:00",
+  "branch": "codex/long-term-memory-plan",
+  "base_commit": "7293ba784367e7cd8aa76fb63a1fb26aeb00e5ef",
+  "scope": "BossIP feedback follow-up; finish missing Claude scratchpad placement work and verify local fixes",
+  "claude_worktrees_checked": 8,
+  "temporary_branch_findings": {
+    "voice_reliability": "already integrated",
+    "desktop_and_effects": "already integrated",
+    "pending_card_deadlock": "already integrated; 69427a0c relevant code matches 3e3321eb",
+    "mobile_login": "already integrated",
+    "media_and_runninghub": "already integrated",
+    "voice_natural_speech": "already integrated; audio hush gap repaired here",
+    "placement_phase2_draft": "implemented here"
+  },
+  "changes": [
+    "Hush blocks and cancels provider audio, clears client playback and holds queued results until meaningful speech resumes",
+    "Late ASR after a cancelled VAD answer triggers one replacement answer",
+    "Durable new-conversation/new-project/cancel choice before unspecified task creation, atomic project/task creation and card-bound idempotency",
+    "Voice placement choices require a specific user option and are not handed over as a new task",
+    "Remove welcome punctuation from web and mobile locales"
+  ],
+  "automated_checks": [
+    {
+      "suite": "backend integrated assistant, pending-card and voice regressions",
+      "passed": 346,
+      "note": "followed by voice-specific validation after card wording/routing additions"
+    },
+    {
+      "suite": "final voice cards, phrases, turns, routing",
+      "passed": 238
+    },
+    {
+      "suite": "frontend QuestionDock, resources, AssistantTaskCard, effect acknowledgment, gone-session route",
+      "passed": 75
+    },
+    {
+      "suite": "frontend tsc -b",
+      "result": "passed"
+    },
+    {
+      "suite": "i18n parity",
+      "result": "passed"
+    },
+    {
+      "suite": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "browser": {
+    "base": "http://127.0.0.1:3001",
+    "cases": [
+      {
+        "case": "unspecified work shows new conversation/new project/cancel card",
+        "result": "passed"
+      },
+      {
+        "case": "cancel placement",
+        "result": "passed; no task created; assistant confirmed cancellation"
+      },
+      {
+        "case": "choose new project",
+        "result": "passed; one project and one task created; asked original question before work"
+      },
+      {
+        "case": "cancel task waiting for answer",
+        "result": "passed; UI stopped, command applied, desired/observed canceled, checkpoint cancelled",
+        "execution_session_id": "session_7YBVD5RBGEKAVS86WJ28TEZFEV"
+      },
+      {
+        "case": "nonexistent conversation",
+        "result": "passed; redirected to /app"
+      },
+      {
+        "case": "welcome punctuation",
+        "result": "passed; visible 晚上好 without full stop"
+      }
+    ],
+    "screenshots": [
+      "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/bossip-feedback-20261010/placement-card.jpg",
+      "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/bossip-feedback-20261010/task-waiting.jpg",
+      "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/bossip-feedback-20261010/task-cancelled.jpg",
+      "/Volumes/fanxiang/workspace2/OpenBox/.local-dev/bossip-feedback-20261010/missing-session-home.jpg"
+    ],
+    "transient_failure": "One real model request hit the existing 180-second assistant time budget; confirmed no task was created, then retry completed the flow"
+  },
+  "live_voice": {
+    "base": "http://127.0.0.1:8081",
+    "model": "qwen-audio-3.1-realtime-plus",
+    "call_id": "01M4JSKQNFRBQ03NVM6BZYNSMX",
+    "ready": true,
+    "quiet_sent_at": 11.65,
+    "quiet_window_start": 18.15,
+    "quiet_window_end": 228.22,
+    "survived_quiet": true,
+    "quiet_audio_bytes": 0,
+    "resume_sent_at": 228.22,
+    "answered_after_resume": true
+  },
+  "live_voice_regression_found": "First run was silent and connected, but resume failed because VAD preceded ASR. Added regression tests and repeated the same 210-second quiet test successfully.",
+  "environment": "local QA database openbox_memory_dev; no production deployment or production mutation",
+  "git_state": "changes left uncommitted; pre-existing untracked research and feedback documents preserved"
+}

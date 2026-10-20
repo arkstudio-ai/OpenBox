@@ -44,6 +44,7 @@ class WorkspaceShell extends ConsumerStatefulWidget {
 
 class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   StreamSubscription<AppEvent>? _workbenchSub;
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -191,73 +192,88 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         ? null
         : project?.name ?? i18n.t('workspace:unsorted');
 
-    return Scaffold(
-      backgroundColor: t.bg,
-      appBar: AppBar(
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: FontSizes.lg,
-                fontWeight: FontWeight.w500,
-                color: t.ink,
-              ),
-            ),
-            if (subtitle != null)
+    return PopScope<Object?>(
+      // Includes the drawer's local history entry. Pushed chat pages keep
+      // their normal pop (and iOS swipe); only a root chat opens the menu.
+      canPop: ModalRoute.canPopOf(context) ?? false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || ModalRoute.of(context)?.isCurrent != true) return;
+        if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+          FocusManager.instance.primaryFocus?.unfocus();
+          return;
+        }
+        _scaffoldKey.currentState?.openDrawer();
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: t.bg,
+        appBar: AppBar(
+          titleSpacing: 0,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                subtitle,
+                title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                style: TextStyle(
+                  fontSize: FontSizes.lg,
+                  fontWeight: FontWeight.w500,
+                  color: t.ink,
+                ),
               ),
+              if (subtitle != null)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
+            ],
+          ),
+          actions: [
+            // Cron reminder pill before the panel toggle (web Topbar).
+            if (widget.sessionId != null)
+              CronStatusPill(
+                projectId: session?.projectId,
+                onOpen: () => context.push(
+                  Paths.workbench(widget.sessionId!, tab: 'cron'),
+                ),
+              ),
+            if (widget.sessionId != null)
+              CoachAnchor(
+                name: 'panel.entry',
+                child: IconButton(
+                  icon: Icon(
+                    Icons.space_dashboard_outlined,
+                    size: 20,
+                    color: t.n700,
+                  ),
+                  tooltip: i18n.t('workspace:openPanel'),
+                  onPressed: () =>
+                      context.push(Paths.workbench(widget.sessionId!)),
+                ),
+              ),
+            ...widget.actions,
+            const SizedBox(width: 4),
           ],
         ),
-        actions: [
-          // Cron reminder pill before the panel toggle (web Topbar).
-          if (widget.sessionId != null)
-            CronStatusPill(
-              projectId: session?.projectId,
-              onOpen: () =>
-                  context.push(Paths.workbench(widget.sessionId!, tab: 'cron')),
-            ),
-          if (widget.sessionId != null)
-            CoachAnchor(
-              name: 'panel.entry',
-              child: IconButton(
-                icon: Icon(
-                  Icons.space_dashboard_outlined,
-                  size: 20,
-                  color: t.n700,
-                ),
-                tooltip: i18n.t('workspace:openPanel'),
-                onPressed: () =>
-                    context.push(Paths.workbench(widget.sessionId!)),
-              ),
-            ),
-          ...widget.actions,
-          const SizedBox(width: 4),
-        ],
+        drawer: SessionDrawer(
+          activeSessionId: widget.sessionId,
+          assistantUnread: assistantUnread,
+        ),
+        onDrawerChanged: (isOpen) {
+          // The drawer overlays the entire screen. A chat composer keyboard
+          // must not cover its account/settings actions (including swipe-open).
+          if (isOpen) FocusManager.instance.primaryFocus?.unfocus();
+          if (isOpen) {
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => unawaited(_drawerGuide()),
+            );
+          }
+        },
+        body: widget.child,
       ),
-      drawer: SessionDrawer(
-        activeSessionId: widget.sessionId,
-        assistantUnread: assistantUnread,
-      ),
-      onDrawerChanged: (isOpen) {
-        // The drawer overlays the entire screen. A chat composer keyboard
-        // must not cover its account/settings actions (including swipe-open).
-        if (isOpen) FocusManager.instance.primaryFocus?.unfocus();
-        if (isOpen) {
-          WidgetsBinding.instance.addPostFrameCallback(
-            (_) => unawaited(_drawerGuide()),
-          );
-        }
-      },
-      body: widget.child,
     );
   }
 }

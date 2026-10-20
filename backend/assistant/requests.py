@@ -106,13 +106,24 @@ async def _fresh(db, row, execution, task):
 
 
 async def consumed_since(db, row, generation: int) -> bool:
-    """Whether a generation after the card's own consumed any input (not merely refused it)."""
-    from sqlalchemy import and_, not_
+    """Whether a later generation advanced work, rather than settling the card's own reply."""
+    from sqlalchemy import and_, func, not_, or_
     from db.models.agent_inbox import AgentInboxItem
+    from db.models.message import Message
+    ignored = [and_(AgentInboxItem.state == "settled", AgentInboxItem.outcome == "not_run")]
+    reply = await db.get(Message, row.message_id) if row.message_id else None
+    if (reply is not None and reply.session_id == row.session_id and reply.user_id == row.user_id
+            and reply.role == "assistant" and reply.parent_id):
+        # A crash after saving a suspended reply but before settling its input
+        # is recovered under a new Driver generation. No new work was consumed.
+        # Exempt only that exact input/result pair, never every recovered item.
+        ignored.append(and_(AgentInboxItem.state == "settled", AgentInboxItem.outcome == "recovered",
+                            AgentInboxItem.message_id == reply.parent_id,
+                            AgentInboxItem.result_message_id == reply.id))
     return await db.scalar(select(AgentInboxItem.id).where(
         AgentInboxItem.session_id == row.session_id, AgentInboxItem.user_id == row.user_id,
         AgentInboxItem.generation > generation,
-        not_(and_(AgentInboxItem.state == "settled", AgentInboxItem.outcome == "not_run")),
+        not_(func.coalesce(or_(*ignored), False)),
     ).limit(1)) is not None
 
 

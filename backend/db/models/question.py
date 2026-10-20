@@ -50,6 +50,9 @@ class QuestionCheckpoint(Base):
     draft_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     continuation: Mapped[dict] = mapped_column(JSONType, nullable=False)
     applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Main-assistant preparation/confirmation may outlive the conversational turn.
+    # Detached cards retain their exact input; answering them never resumes an old run.
+    detached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)

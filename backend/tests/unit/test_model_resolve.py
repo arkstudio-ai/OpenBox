@@ -44,3 +44,14 @@ def test_the_default_is_offered_even_when_absent_from_the_list():
     cfg = Cfg("openai/gpt-5.6-luna", ["openai/claude-opus-5"])
     assert "openai/gpt-5.6-luna" in configured_models(cfg)
     assert resolve("openai/gpt-5.6-luna", cfg) == ("openai/gpt-5.6-luna", None)
+
+
+def test_removed_gpt_preference_cannot_reenter_via_voice_or_old_messages():
+    from agent.model_resolve import resolve_step_model
+    config = Cfg("openai/qwen3.8-flash", ["openai/qwen3.8-flash"])
+    for field in ("agent_model", "message_model", "session_model"):
+        values = dict(agent_model=None, message_model=None, session_model=None)
+        values[field] = "openai/gpt-5.6-luna"
+        selection = resolve_step_model(**values, config=config)
+        assert selection.model_id == config.model
+        assert selection.replaced_from == "openai/gpt-5.6-luna"

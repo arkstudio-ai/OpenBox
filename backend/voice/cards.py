@@ -176,7 +176,10 @@ def spoken_question(item: dict, lang: str = "zh") -> dict:
     if value["kind"] == "desktop_takeover":
         value["answer_how"] = takeover_how(item)
     elif item.get("assistant_may_answer"):
-        value["answer_how"] = "用户明确回答全部问题后，用 task_question_answer 提交对应答案和选中资源；含糊或尚有疑问时先解释，不替用户补选"
+        value["answer_how"] = ("用户仅回答卡片已有问题时，用 task_question_answer 提交完整答案。"
+            "若增加要求、更换素材或重做方案（包括同意讲稿但换图），立即使用 assistant_ask，"
+            "mode=revise、question_id=本卡request_id，完整转交修改；不先答旧卡，不要求再确认已明确的修改。"
+            "查询或闲聊不处理卡片；没有选完不能补选。")
     else:
         value["answer_how"] = "要用户自己在屏幕上处理"
     return value
@@ -213,13 +216,24 @@ async def pending(scope, arguments: dict) -> dict:
     """cards_pending: the main session's cards (answerable here) and questions waiting in task conversations."""
     cards, questions = await waiting(scope)
     scope.desk.reconcile(cards, questions)
+    # Filter only the returned observation, never the authoritative snapshot
+    # used to reconcile other cards in this call.
+    identity, query = arguments.get("request_id"), str(arguments.get("query") or "").strip().casefold()
+    if identity:
+        cards = [card for card in cards if card["card_id"] == identity or scope.desk.card_id(identity) == card["card_id"]]
+        questions = [item for item in questions if item["id"] == identity]
+    if query:
+        cards = [card for card in cards if query in " ".join(str(card.get(key) or "")
+                 for key in ("task_title", "task_instructions", "header", "prompt")).casefold()]
+        questions = [item for item in questions if query in " ".join(str(item.get(key) or "")
+                     for key in ("session_title", "project_name", "context")).casefold()]
     shown = [spoken_card(card, scope.desk.show(card), scope.lang) for card in cards]
     task_questions = [scope.desk.show_question(item, scope.lang) for item in questions[:MAX_QUESTIONS]]
     if not shown and not task_questions:
         return {"status": "none"}
     return {"status": "ok", "cards": shown, "task_questions": task_questions,
             "waiting_count": len(questions),
-            "how": "结合对话说明待决定事项和影响；由用户决定，使用返回的卡片标识和选项 id 提交。"}
+            "how": "先按用户本次意图处理：仅查询就说明现状；修改任务用assistant_ask(mode=revise)；仅回答原问题才提交卡片。查询结果本身不是要求用户再次确认。"}
 
 
 

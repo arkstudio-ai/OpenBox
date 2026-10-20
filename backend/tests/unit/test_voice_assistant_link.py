@@ -100,10 +100,22 @@ async def test_start_accepts_a_voice_marked_turn_wakes_the_assistant_and_records
         item = await db.get(AgentInboxItem, ref.inbox_id)
     assert item.prompt == "帮我看看贪吃蛇进展" and item.origin == "human"
     assert item.origin_ref["entrypoint"] == "assistant_voice" and item.origin_ref["voice_call_id"] == link.call_id
-    assert item.origin_ref["client_message_id"] == f"voice:{link.call_id}:1"
+    from assistant.identities import inbox_key
+    assert item.origin_ref["client_message_id"] == inbox_key("voice-input", link.call_id, ref.provider_call_id)
     assert quick_steps == [(main.id, owner)]
     row = await turn_row(ref)
     assert (row.call_id, row.inbox_id, row.outcome, row.transcript) == (link.call_id, ref.inbox_id, "pending", ref.text)
+
+
+async def test_provider_retry_of_one_spoken_input_reuses_durable_inbox():
+    owner, main, link = await setup()
+    first, retry, later = new_ref("重拍一二四五段。"), new_ref("重拍一二四五段。"), new_ref("重拍一二四五段。")
+    first.context = retry.context = {"spoken_input_id": "audio-item-1"}
+    later.context = {"spoken_input_id": "audio-item-2"}
+    await link.start(first)
+    await link.start(retry)
+    await link.start(later)
+    assert first.inbox_id == retry.inbox_id != later.inbox_id
 
 
 async def test_the_request_goes_with_the_users_words_and_the_call_and_alone_if_that_is_too_much():
@@ -217,6 +229,7 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
     async def run(run_id):
         made["searching"] = await handed(owner, main, run_id, "查询OpenAI最新技术发展")
         made["more"] = await handed(owner, main, run_id, "继续整理资料", action="task_input", state="running")
+        made["revision"] = await handed(owner, main, run_id, "改用新照片重新规划", action="task_revise", state="queued")
         await handed(owner, main, run_id, "已经做完的", state="completed")         # its result is in already
         await handed(owner, main, run_id, "暂停的", action="task_pause", state="paused")  # no work given
         await handed(owner, main, "another-run", "别的回合派的")                     # not this turn's
@@ -224,7 +237,8 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
     await answer(owner, main, [("已经帮你安排去查了，正在后台检索。", "final")], during=run)
     assert await waiting == {"status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
         {"task_id": made["searching"], "title": "查询OpenAI最新技术发展"},
-        {"task_id": made["more"], "title": "继续整理资料"}]}
+        {"task_id": made["more"], "title": "继续整理资料"},
+        {"task_id": made["revision"], "title": "改用新照片重新规划"}]}
     assert await assistant_link.running_tasks(main.id, "someone-else", ref.inbox_id) == []
     assert await assistant_link.running_tasks(main.id, owner, None) == []
 

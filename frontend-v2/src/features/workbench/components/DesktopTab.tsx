@@ -640,7 +640,7 @@ function WorkspaceDesktopTab({ workspaceId }: { workspaceId: string | null }) {
               : t("desktop.readonly")
             : t(`desktop.${phase}`)}
         </span>
-        <ChannelStatus state={channelState} />
+        {phase !== "subscriptionRequired" && <ChannelStatus state={channelState} />}
         {phase === "connected" && (
           <>
             <label className="text-n700 flex flex-none cursor-pointer items-center gap-1.5 text-sm">

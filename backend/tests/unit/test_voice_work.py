@@ -69,6 +69,27 @@ async def test_video_filter_ignores_stt_and_does_not_claim_unavailable_output_is
     assert item["state"] == "output_unavailable" and item["video"]["asset_id"] is None
 
 
+async def test_status_includes_current_decision_without_replaying_answered_or_expired_cards():
+    from tests.unit.test_assistant_requests_v2 import ask_in
+    from db.models.question import QuestionCheckpoint
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, title="鲜果店视频")
+    identity, _ = await ask_in(session, owner, question="新图方案21.71积分，是否开始生成？", options=[{"label": "可以"}])
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id)
+    [item] = (await overview(scope, {}))["items"]
+    assert item["state"] == "waiting_input" and item["waiting_for_user"]
+    assert item["pending_request"]["request_id"] == identity
+    assert "21.71" in item["pending_request"]["questions"][0]["question"]
+    async with get_db_session() as db:
+        (await db.get(QuestionCheckpoint, identity)).expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    assert "pending_request" not in (await overview(scope, {}))["items"][0]
+    async with get_db_session() as db:
+        row = await db.get(QuestionCheckpoint, identity)
+        row.expires_at, row.status = None, "answered"
+    assert "pending_request" not in (await overview(scope, {}))["items"][0]
+
+
 async def test_work_pages_bind_actor_and_filters_and_do_not_leak_shared_workspace_members(monkeypatch):
     monkeypatch.setattr(get_config(), "jwt_secret", "test-voice-work-cursor-secret")
     owner, other, workspace = await accounts()

@@ -144,6 +144,10 @@ async def ensure_engine(config: Any) -> AsyncEngine:
 def _upgrade_desktop_assistant_columns(connection) -> None:
     """Preserve old workspace audiences and unknown input authorship on desktop."""
     additions = {
+        "question_checkpoints": {"detached": "BOOLEAN NOT NULL DEFAULT 0"},
+        "file_assets": {"description": "TEXT NOT NULL DEFAULT ''", "description_updated_at": "DATETIME",
+                        "description_state": "VARCHAR(16) NOT NULL DEFAULT 'none'",
+                        "description_attempts": "INTEGER NOT NULL DEFAULT 0", "description_lease_until": "DATETIME"},
         "sessions": {
             "visibility": "VARCHAR(16) NOT NULL DEFAULT 'workspace'",
             "memory_policy": "VARCHAR(32) NOT NULL DEFAULT 'standard'",
@@ -192,6 +196,9 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_active_assistant "
         "ON sessions (user_id, workspace_id) WHERE kind = 'assistant' AND is_deleted = 0"
     )
+    if sa.inspect(connection).has_table("file_assets"):
+        connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_file_assets_description_work "
+                                   "ON file_assets (description_state, description_lease_until)")
     if sa.inspect(connection).has_table("assistant_commands"):
         connection.exec_driver_sql(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_assistant_request_decision "
@@ -632,8 +639,10 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "question_checkpoints": frozenset({
         "id", "session_id", "user_id", "generation", "message_id", "part_id", "status",
         "questions", "answers", "draft", "draft_revision", "continuation", "applied",
-        "created_at", "updated_at", "expires_at",
+        "created_at", "updated_at", "expires_at", "detached",
     }),
+    "file_assets": frozenset({"id", "description", "description_updated_at", "description_state",
+                             "description_attempts", "description_lease_until"}),
     "desktop_activations": frozenset({
         "workspace_id", "request_id", "user_id", "state", "step", "attempts", "error",
         "next_run_at", "lease_owner", "lease_until", "purchase_kind", "purchase_started_at",

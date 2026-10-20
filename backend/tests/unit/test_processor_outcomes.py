@@ -101,14 +101,53 @@ def test_actionable_validation_metadata_survives_persistence_filter():
     }
 
 
-async def run(monkeypatch, **stream_kwargs):
+async def run(monkeypatch, before_tools=None, **stream_kwargs):
     monkeypatch.setattr(P, "stream_llm", fake_stream(**stream_kwargs))
     return await process_step(
         session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
         system=[], llm_messages=[], tools={}, model_id="test/model",
         ctx=Ctx(), hooks=None, assistant_info=Info(), sandbox=None,
         abort=NotAborted(), doom_loop_history=[],
+        before_tools=before_tools,
     )
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_text_only_or_interrupted_stream_never_prepares_runtime(monkeypatch, interrupted):
+    from unittest.mock import AsyncMock
+    prepare = AsyncMock()
+    events = [{"type": "text_delta", "text": "VID_2026"}]
+    if interrupted:
+        events.append({"type": "error", "error": RuntimeError("missing terminal chunk")})
+    else:
+        events.append({"type": "finish", "reason": "stop", "usage": {}})
+    await run(monkeypatch, events=events, before_tools=prepare)
+    prepare.assert_not_awaited()
+
+
+async def test_runtime_is_prepared_once_before_first_tool_in_batch(monkeypatch):
+    order = []
+    async def prepare():
+        order.append("snapshot")
+    async def execute(args, ctx):
+        order.append(args["path"])
+        return ToolResult(output="read")
+    class Hooks:
+        async def wrap_execute(self, name, execute_fn, args, ctx, **kwargs):
+            return await execute_fn(args, ctx)
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {"type": "tool_call", "tool": "read", "args": {"path": "a"}, "call_id": "one"},
+        {"type": "tool_call", "tool": "read", "args": {"path": "b"}, "call_id": "two"},
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+    result = await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
+        system=[], llm_messages=[], tools={"read": SimpleNamespace(execute=execute)}, model_id="test/model",
+        ctx=Ctx(), hooks=Hooks(), assistant_info=Info(), sandbox=None,
+        abort=NotAborted(), doom_loop_history=[], before_tools=prepare,
+    )
+    assert result.outcome is StepOutcome.CONTINUE
+    assert order == ["snapshot", "a", "b"]
 
 
 # ── plain completion ──

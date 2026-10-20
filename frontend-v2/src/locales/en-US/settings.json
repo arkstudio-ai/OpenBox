@@ -214,7 +214,7 @@
     "nameLabel": "Name",
     "placeholder": "e.g. Mary (leave empty for the default “Personal assistant”)",
     "addressLabel": "What it calls you",
-    "addressPlaceholder": "e.g. Andrew (leave empty for no name)",
+    "addressPlaceholder": "e.g. Andrew (defaults to 老板 when empty)",
     "toneLabel": "Tone",
     "tone": {
       "warm": "Warm",

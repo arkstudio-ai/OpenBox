@@ -6,7 +6,7 @@ import pytest
 from agent import llm
 
 
-@pytest.mark.parametrize("purpose", ["compaction", "compaction_chunk"])
+@pytest.mark.parametrize("purpose", ["chat", "compaction", "compaction_chunk"])
 @pytest.mark.parametrize("reason", ["stop", "length", "content_filter", None])
 async def test_litellm_summary_requires_a_normal_terminal_chunk(monkeypatch, purpose, reason):
     import litellm
@@ -40,7 +40,7 @@ async def test_litellm_summary_requires_a_normal_terminal_chunk(monkeypatch, pur
         assert not any(event["type"] == "finish" for event in events)
 
 
-@pytest.mark.parametrize("purpose", ["compaction", "compaction_chunk"])
+@pytest.mark.parametrize("purpose", ["chat", "compaction", "compaction_chunk"])
 @pytest.mark.parametrize("terminal", ["response.completed", "response.incomplete", None])
 async def test_responses_summary_requires_a_completed_event(monkeypatch, purpose, terminal):
     import httpx

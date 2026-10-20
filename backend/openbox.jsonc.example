@@ -11,7 +11,7 @@
   // Lightweight model for MCP tool filtering (uses same provider gateway).
   // A fast/cheap model that picks relevant tools from large MCP tool lists.
   // Leave empty to use the default model.
-  "mcp_filter_model": "openai/gpt-5.6-luna",
+  "mcp_filter_model": "openai/qwen3.8-flash",
 
   // Optional model for next-step suggestions above the composer.
   // Omit or leave empty to follow the user's selected chat model.
@@ -30,7 +30,6 @@
   // conversation are replaced with a note instead of failing the whole turn.
   "models": [
     { "id": "openai/gemini-3.8-flash", "name": "Gemini 3.8 Flash", "max_tokens": 64000, "context_limit": 1000000, "vision": true },
-    { "id": "openai/gpt-5.6-luna", "name": "GPT-5.6 Luna", "max_tokens": 128000, "context_limit": 256000, "vision": true },
     { "id": "openai/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "max_tokens": 64000, "context_limit": 1048576, "vision": false },
     { "id": "openai/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "max_tokens": 64000, "context_limit": 1048576, "vision": false },
     { "id": "openai/qwen3.8-max", "name": "Qwen3.8 Max", "max_tokens": 131072, "context_limit": 1000000, "vision": true },
@@ -123,10 +122,8 @@
   // Built-in image_gen. A RunningHub model id selects RunningHub's async task
   // API with that provider's credential: seedream-v5-pro (Seedream v5 Pro, runs
   // on runninghub.cn), rhart-image-n-pro (Nano Banana Pro),
-  // rhart-image-n-g31-flash (Nano Banana 2), rhart-image-g-2 (GPT Image 2); the
-  // last three answer 40310 on runninghub.cn and need a runninghub.ai provider.
-  // Any other model (gpt-image-2) uses the OpenAI-compatible Images API of the
-  // named provider, e.g. "provider": "openai", "model": "gpt-image-2".
+  // rhart-image-n-g31-flash (Nano Banana 2); the last two require a runninghub.ai provider.
+  // Non-RunningHub models use the configured provider's compatible Images API.
   // See docs/RUNNINGHUB_IMAGE_CHANNEL.md.
   "image_generation": {
     // Settings exposes Default / RunningHub; the concrete RunningHub model is centrally managed.
@@ -263,7 +260,7 @@
 
   // Per-agent overrides
   "agent": {
-    // "build": { "model": "openai/gpt-4o", "max_steps": 100 },
+    // "build": { "model": "openai/qwen3.8-flash", "max_steps": 100 },
     // "explore": { "model": "anthropic/claude-haiku-4-20250514" }
   },
 
@@ -319,6 +316,10 @@
     // Per-user daily ceiling on composition submits (0 = off). Back-pressure, not approval.
     "daily_job_limit": 100
   },
+
+  // Automatic upload descriptions are independent of the long video-analysis route.
+  // The model must be available and accept images; captioning uses its lowest reasoning setting.
+  "asset_description": { "model": "openai/qwen3.8-flash" },
 
   // video_analyze: sampled frames (ffmpeg in the sandbox) + transcript → structured
   // analysis by a vision-capable chat model. min_frames is a hard floor: with no

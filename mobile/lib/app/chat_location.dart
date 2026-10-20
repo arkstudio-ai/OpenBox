@@ -1,0 +1,122 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../features/chat/api/assistant_api.dart';
+import '../shared/api/providers.dart';
+import '../shared/config/env.dart';
+import '../shared/router/paths.dart';
+
+/// A device bookmark, not a conversation snapshot. Authentication and workspace
+/// membership must settle before reading it; the session entry still checks
+/// access with the server before mounting any history.
+class ChatLocationStore {
+  ChatLocationStore(this.prefs);
+  final SharedPreferences prefs;
+
+  String _userKey(String userId) =>
+      'bossip:last-chat:${jsonEncode([Env.apiBase, userId])}:';
+
+  String _key(AssistantScope scope) =>
+      '${_userKey(scope.userId)}${scope.workspaceId}';
+
+  bool hasSavedChat(String userId) =>
+      prefs.getKeys().any((key) => key.startsWith(_userKey(userId)));
+
+  static String? chatPath(String location) {
+    final uri = Uri.tryParse(location);
+    if (uri == null || uri.hasScheme || uri.hasAuthority) return null;
+    if (uri.path == Paths.app || uri.path == Paths.assistant) return uri.path;
+    final segments = uri.pathSegments;
+    if (segments.length == 3 &&
+        segments[0] == 'app' &&
+        segments[1] == 's' &&
+        RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(segments[2])) {
+      return uri.path;
+    }
+    return null;
+  }
+
+  String? read(AssistantScope scope) {
+    final stored = prefs.getString(_key(scope));
+    return stored == null ? null : chatPath(stored);
+  }
+
+  Future<void> remember(AssistantScope scope, String location) async {
+    final path = chatPath(location);
+    if (path == null || read(scope) == path) return;
+    await prefs.setString(_key(scope), path);
+  }
+}
+
+final chatLocationStoreProvider = Provider<ChatLocationStore>(
+  (ref) => ChatLocationStore(ref.read(prefsProvider)),
+);
+
+/// Only mounted, authorized chat pages record a location. A settings page,
+/// voice call, task/result query or an unverified deep link is never saved as
+/// the next launch destination. Popping a pushed chat records the visible
+/// chat underneath it again.
+class RememberChatLocation extends ConsumerStatefulWidget {
+  const RememberChatLocation({
+    super.key,
+    required this.location,
+    required this.child,
+  });
+
+  final String location;
+  final Widget child;
+
+  @override
+  ConsumerState<RememberChatLocation> createState() =>
+      _RememberChatLocationState();
+}
+
+class _RememberChatLocationState extends ConsumerState<RememberChatLocation> {
+  GoRouter? _router;
+  AssistantScope? _scope;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final router = GoRouter.maybeOf(context);
+    if (router == _router) return;
+    _router?.routerDelegate.removeListener(_schedule);
+    _router = router;
+    router?.routerDelegate.addListener(_schedule);
+  }
+
+  void _schedule() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      final scope = _scope;
+      if (scope == null || ref.read(assistantScopeProvider) != scope) return;
+      final current = GoRouterState.of(context).uri.path;
+      if (current != widget.location) return;
+      // Saving a navigation bookmark must never block the chat on disk errors.
+      unawaited(
+        ref
+            .read(chatLocationStoreProvider)
+            .remember(scope, widget.location)
+            .catchError((Object _) {}),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _router?.routerDelegate.removeListener(_schedule);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scope = ref.watch(assistantScopeProvider);
+    _schedule();
+    return widget.child;
+  }
+}

@@ -564,6 +564,7 @@
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",
     "continueAfterError": "Just send another message to continue. If a task report failed, use More on its card to report again.",
+    "replyIncomplete": "This reply did not finish",
     "link": {
       "title": "Follow an existing conversation",
       "description": "Pick one of your earlier conversations for me to follow. Its history stays, I won't start anything on my own, and you can ask me to continue it later. For conversations your team can see, I'll ask you before sending anything there.",
@@ -722,7 +723,7 @@
       "address": {
         "question": "What should I call you?",
         "useAccount": "Call me {{name}}",
-        "none": "No name needed",
+        "none": "Call me 老板",
         "placeholder": "e.g. Andrew"
       },
       "name": {

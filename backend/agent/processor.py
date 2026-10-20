@@ -490,6 +490,7 @@ async def process_step(
     provider_dialect: str | None = None,
     prompt_cache_key: str = "",
     tool_body_timeout_seconds: float | None = None,
+    before_tools=None,
 ) -> StepResult:
     """Run one LLM turn: stream it, persist its parts, execute its tool calls.
 
@@ -981,6 +982,9 @@ async def process_step(
         # RUNNING cards are prepared in model order. Only explicitly safe tool
         # bodies overlap; terminal SSE, ToolPart results and ToolContext state
         # commit through contiguous scheduler slots in model order.
+        if pending_tool_calls and before_tools is not None and not stop_requested():
+            await assert_current()
+            await before_tools()
         ctx.message_id = assistant_info.id
 
         def _part_for_call(

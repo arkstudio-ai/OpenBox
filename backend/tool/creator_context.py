@@ -35,7 +35,8 @@ approves it on a confirmation card. Never ask users to manage a review queue.
 USER_NOTE cannot be written directly. write_memory needs value.summary supported
 by the user's input, keeping its subject, conditions and scope; never infer
 relationships or turn a one-off request into a lasting preference. Owner claims
-never grant confirmation. Data never crosses users."""
+never grant confirmation. A pending candidate is not remembered; follow the
+returned confirmation instructions. Data never crosses users."""
 
 
 class CreatorMemoryValue(BaseModel):
@@ -280,10 +281,28 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
             evidence={**(args.evidence or {}), "session_id": ctx.session_id or None},
             ttl_seconds=args.ttl_seconds,
         )
+        # Legacy writes create candidates, not confirmed shared memories. An
+        # existing confirmed row can be reused; a suppressed write saves nothing.
+        # Keep the disposition explicit so the model cannot mistake persistence
+        # of a candidate for successful cross-conversation recall.
+        saved = row.get("status") == "ACTIVE" and row.get("confirmation_status") == "CONFIRMED"
+        pending = row.get("status") == "CANDIDATE"
+        state = "remembered" if saved else "candidate_pending" if pending else "not_saved"
+        instruction = (
+            "This confirmed memory is available for recall."
+            if saved else
+            "This is an unconfirmed candidate, excluded from shared memory recall. Do not say it is "
+            "saved or remembered (已记住、记住了、已保存). If the user asked to remember it, call "
+            "propose_memory with the same summary to show a confirmation card; only its confirmed "
+            "result permits saying it is remembered. Otherwise explain that it is not confirmed."
+            if pending else
+            "Nothing was saved. Do not claim it is remembered, retry it, or propose it again."
+        )
         return ToolResult(
-            title="Memory written (candidate)",
-            output=_dump(row),
-            metadata={"memory": row},
+            title="Memory remembered" if saved else "Memory awaiting confirmation" if pending else "Memory not saved",
+            output=_dump({"state": state, "saved": saved, "confirmation_required": pending,
+                          "instruction": instruction, "memory": row}),
+            metadata={"memory": row, "state": state, "saved": saved, "confirmation_required": pending},
         )
 
     if args.action == "propose_memory":

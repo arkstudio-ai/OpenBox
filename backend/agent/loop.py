@@ -20,6 +20,7 @@ from agent.compaction import (
 )
 from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
+from agent.latency import measured_run, phase as latency_phase, bind_run as bind_latency_run
 from agent.processor import StepOutcome, StepResult, process_step
 from agent.structured_output import (
     SYSTEM_PROMPT as STRUCTURED_OUTPUT_SYSTEM_PROMPT,
@@ -899,6 +900,7 @@ async def _preserve_failed_run(
     return matched
 
 
+@measured_run
 async def run_loop(
     session_id: str,
     user_id: str = "default",
@@ -943,6 +945,7 @@ async def run_loop(
             lease = await reserve_run(session_id, user_id, trigger_message_id=trigger)
         except DriverBusyError:
             return None
+    bind_latency_run(lease.run_id)
     lease_context = None
     try:
         ticket = await question_runtime.start_run(
@@ -1050,6 +1053,7 @@ async def run_loop(
             run_fence=run_fence,
         )
 
+        latency_phase("runtime_acquire")
         # Get sandbox client
         from sandbox import sandbox_manager
         from sandbox.entitlement import (
@@ -1069,7 +1073,7 @@ async def run_loop(
             else:
                 if subscription_sandbox_enabled():
                     await require_sandbox_subscription(session.workspace_id)
-                sandbox = await sandbox_manager.get_client(session_id, user_id=user_id)
+                sandbox = await sandbox_manager.get_client(session_id, user_id=user_id, prepare=False)
         except SandboxSubscriptionRequired as exc:
             sandbox = None
             sandbox_error = exc.payload
@@ -1084,9 +1088,11 @@ async def run_loop(
             sandbox = None
             sandbox_error = {"code": "RESOURCE_PREPARATION_UNAVAILABLE",
                 "detail": "桌面控制权已变化，或准备操作结果尚未确认。请检查当前桌面状态后再发起新的执行。"}
-        # get_client already ensures the project's directory on every healthy
-        # acquisition, including the first run after a sandbox outage.
+        # A scoped catalogue remains available during pure conversation. The
+        # working directory and snapshots are prepared before actual tools.
 
+        latency_phase("history")
+        sandbox_directory_prepared = False
         step = 0
         # (step, reminder): a reply that promised later work nothing will do gets one more step
         # (assistant/follow_through.py); the reminder follows that reply in the next request only.
@@ -1236,6 +1242,7 @@ async def run_loop(
             task_continuation = await resume_binding_locked(db, session_id, lease.run_id, lease.generation)
 
         while True:
+            latency_phase("history")
             try:
                 await question_runtime.assert_current("step")
             except question_runtime.RunRevoked:
@@ -1485,6 +1492,7 @@ async def run_loop(
             # Skill discovery is project/workdir scoped. Resolve the session
             # directory before tool materialization and pass it explicitly;
             # providers must never infer a long-lived backend process cwd.
+            latency_phase("tool_catalogue")
             session_workdir = await workdir_for_session(session)
             resolved_step_tools = await resolve_step_tools(
                 agent_def,
@@ -1497,6 +1505,7 @@ async def run_loop(
                 in {"shadow", "portable", "native_auto"},
                 return_catalogue_state=True,
             )
+            latency_phase("context")
             from agent.subagent_authority import (
                 compose_subagent_authority,
                 restrict_tools,
@@ -2061,9 +2070,7 @@ async def run_loop(
                 if not for_compaction and step >= agent_def.max_steps:
                     result.append({"role": "user", "content": MAX_STEPS_PROMPT})
                 elif (not for_compaction and main_budget is not None
-                        and (step >= main_budget.limits["model_requests"] - 1
-                             or main_budget.local_deadline - time.monotonic()
-                             <= min(30, main_budget.limits["wall_time_seconds"] / 4))):
+                        and main_budget.needs_reply(step)):
                     from assistant.runtime import LAST_REQUESTS_PROMPT
                     result.append({"role": "user", "content": LAST_REQUESTS_PROMPT})
                 # Fetch image bytes only for the actual provider-shaped path.
@@ -2328,8 +2335,10 @@ async def run_loop(
             last_step_info = assistant_info
             run_message_ids.add(assistant_info.id)
 
-            # Step start with snapshot
-            start_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None else None
+            # Snapshot immediately before tool execution, not every text reply.
+            start_snapshot = None
+            runtime_prepared = False
+            latency_phase("request_prepare")
             step_start = StepStartPart(
                 id=ascending("part"),
                 step=step,
@@ -2343,6 +2352,23 @@ async def run_loop(
                 user_id=user_id,
                 run_fence=run_fence,
             )
+
+            async def _prepare_step_runtime():
+                nonlocal start_snapshot, runtime_prepared, sandbox_directory_prepared
+                if sandbox is None or runtime_prepared:
+                    return
+                latency_phase("snapshot_before")
+                # Keep the exact client used to freeze this step's catalogue.
+                # Directory initialization retains its lease/resource checks;
+                # a revoked route cannot be replaced under an existing step.
+                if not sandbox_directory_prepared:
+                    await sandbox_manager._ensure_session_dir(sandbox, session_id)
+                    sandbox_directory_prepared = True
+                start_snapshot = await snapshot.track(session_id, sandbox)
+                step_start.snapshot = start_snapshot
+                await save_part(step_start, user_id=user_id, run_fence=run_fence)
+                runtime_prepared = True
+                latency_phase("model_and_tools")
 
             # User messages freeze an explicit selection for replay. Synthetic
             # continuations (plan approval, reminders, compaction) may omit it;
@@ -2589,6 +2615,7 @@ async def run_loop(
                 ctx._native_tool_plan = prepared_attempt.native_plan
                 ctx._native_portable_tools = prepared_attempt.native_portable_tools
                 ctx._native_portable_system = prepared_attempt.native_portable_system
+                latency_phase("model_and_tools")
                 result = await process_step(
                     session_id=session_id,
                     user_id=user_id,
@@ -2602,6 +2629,7 @@ async def run_loop(
                     hooks=hooks,
                     assistant_info=assistant_info,
                     sandbox=sandbox,
+                    before_tools=_prepare_step_runtime,
                     abort=abort,
                     doom_loop_history=doom_loop_history,
                     user_variant=prepared_attempt.user_variant,
@@ -2693,7 +2721,10 @@ async def run_loop(
                 before_attempt=_before_provider_attempt,
             )
             if main_budget is not None and main_budget.error:
+                await main_budget.reconcile_error()
                 result = StepResult(outcome=StepOutcome.ERROR, error=main_budget.error["message"])
+            elif main_budget is not None:
+                main_budget.slowest_step_seconds = max(main_budget.slowest_step_seconds, result.duration or 0)
             if getattr(ctx, "trace_context", None) is not None:
                 last_step_requests[step] = ctx.trace_context.request_id
             if run_trace is not None:
@@ -2796,12 +2827,15 @@ async def run_loop(
                     })
             else:
                 provider_compact_fail_count = 0
+            latency_phase("postprocess")
             collected_text = result.text
             total_usage = result.usage
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
             # Step finish with snapshot
-            end_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None else None
+            latency_phase("snapshot_after")
+            end_snapshot = await snapshot.track(session_id, sandbox) if runtime_prepared else None
+            latency_phase("finalize_step")
             await _finish_step_gateway(
                 session_id=session_id,
                 message_id=assistant_info.id,
@@ -2885,6 +2919,7 @@ async def run_loop(
                         pass
                 await main_budget.close()
                 if main_budget.error:
+                    await main_budget.reconcile_error()
                     assistant_info.error = main_budget.error
                     finish_reason, failed = "error", True
             assistant_info.finish = finish_reason
@@ -2973,6 +3008,7 @@ async def run_loop(
         if main_budget is not None:
             await main_budget.close()
             if main_budget.error:
+                await main_budget.reconcile_error()
                 failed, completed = True, False
                 # Deadline expiry during context preparation/compaction has no
                 # active provider step to close. Preserve earlier tool results
@@ -3113,6 +3149,7 @@ async def run_loop(
         # turn's pending tool cards as interrupted.  Keep the session in the
         # explicit finalizing phase until every read-model cleanup is durable.
         await lease.assert_current()
+        latency_phase("finalize_run")
         await _post_loop_cleanup()
         await lease.assert_current()
         from agent.inbox import settle_claimed_inbox_items
@@ -3431,6 +3468,16 @@ async def _build_system_prompt(
         f"</env>"
     )
     parts.append(env_info)
+
+    # Account identity is authoritative even when memory recall is disabled or
+    # carries an old greeting template. Frozen subagents and isolated sessions
+    # retain their own explicit context; only the user's normal chat inherits it.
+    if (session_kind == "normal" and user_id and not memory_isolated
+            and agent_def.name in ("build", "plan") and frozen_subagent is None):
+        from assistant.profile import settings_section
+        section = await settings_section(user_id)
+        if section:
+            parts.append(section)
 
     # The shared evidence contract also applies to later tool reads and to
     # empty prefetch results. It is policy, not a remembered fact.

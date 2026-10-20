@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:bossip_mobile/app/auth_redirect.dart';
+import 'package:bossip_mobile/app/chat_location.dart';
 import 'package:bossip_mobile/app/router.dart';
 import 'package:bossip_mobile/app/workspace_bootstrap.dart';
 import 'package:bossip_mobile/features/onboarding/state/onboarding_store.dart';
@@ -43,6 +44,12 @@ class _Auth extends AuthController {
   AuthState build() => _initial;
 }
 
+class _Workspace extends ActiveWorkspaceController {
+  @override
+  Future<ActiveWorkspaceState> build() async =>
+      const ActiveWorkspaceState(currentId: 'workspace-1');
+}
+
 /// Where the app's real router takes a launch at [location] (its
 /// `initialLocation` when null), redirects included.
 Future<String> _launch(
@@ -50,13 +57,23 @@ Future<String> _launch(
   AuthState auth, {
   String? location,
   bool introSeen = false,
+  String? lastChat,
+  String bookmarkUser = 'u1',
+  String bookmarkWorkspace = 'workspace-1',
 }) async {
   SharedPreferences.setMockInitialValues({introSeenKey: introSeen});
   final prefs = await SharedPreferences.getInstance();
+  if (lastChat != null) {
+    await ChatLocationStore(prefs).remember((
+      userId: bookmarkUser,
+      workspaceId: bookmarkWorkspace,
+    ), lastChat);
+  }
   final container = ProviderContainer(
     overrides: [
       prefsProvider.overrideWithValue(prefs),
       authProvider.overrideWith(() => _Auth(auth)),
+      activeWorkspaceProvider.overrideWith(_Workspace.new),
     ],
   );
   addTearDown(container.dispose);
@@ -174,6 +191,71 @@ void main() {
   });
 
   group('app router', () {
+    testWidgets('a cold launch restores only this account and workspace', (
+      tester,
+    ) async {
+      expect(
+        await _launch(tester, _signedIn, lastChat: '/app/s/fruit-shop'),
+        '/app/s/fruit-shop',
+      );
+      expect(
+        await _launch(tester, _signedIn, lastChat: '/app/assistant?task=old'),
+        '/app/assistant',
+      );
+      expect(
+        await _launch(
+          tester,
+          _signedIn,
+          lastChat: '/app/s/fruit-shop',
+          bookmarkUser: 'someone-else',
+        ),
+        '/app',
+      );
+      expect(
+        await _launch(
+          tester,
+          _signedIn,
+          lastChat: '/app/s/fruit-shop',
+          bookmarkWorkspace: 'another-workspace',
+        ),
+        '/app',
+      );
+    });
+
+    testWidgets('saved chat never overrides a link or explicit new chat', (
+      tester,
+    ) async {
+      for (final destination in ['/app', '/app/s/new-link', '/app/inbox']) {
+        expect(
+          await _launch(
+            tester,
+            _signedIn,
+            location: destination,
+            lastChat: '/app/s/fruit-shop',
+          ),
+          destination,
+        );
+      }
+      expect(
+        await _launch(
+          tester,
+          _signedIn,
+          location: '/login?redirect=%2Fapp%2Finbox',
+          lastChat: '/app/s/fruit-shop',
+        ),
+        '/app/inbox',
+      );
+      expect(
+        await _launch(
+          tester,
+          _signedOut,
+          lastChat: '/app/s/fruit-shop',
+          introSeen: true,
+        ),
+        '/',
+      );
+    });
+
     testWidgets('a signed-in launch opens the chat home', (tester) async {
       expect(await _launch(tester, _signedIn), '/app');
       expect(await _launch(tester, _signedIn, introSeen: true), '/app');

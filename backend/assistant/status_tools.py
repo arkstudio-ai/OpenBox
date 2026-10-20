@@ -97,7 +97,10 @@ async def credits(*, user_id: str, workspace_id: str, main_id: str) -> dict:
             func.coalesce(func.sum(case((UsageEvent.status == "charged", UsageEvent.credits), else_=0)), 0),
         ).where(UsageEvent.workspace_id == workspace_id, UsageEvent.user_id == user_id,
                 UsageEvent.created_at >= start, usage_audience(user_id, UsageEvent)))).one()
+        from sandbox.entitlement import sandbox_access_status
+        execution_access = await sandbox_access_status(db, workspace_id)
         return {"workspace_balance": str(account.balance), "billing_mode": billing_mode(),
+                "execution_access": execution_access,
                 "this_month": {"since": start.astimezone(zone).date().isoformat(), "time_zone": MONTH_ZONE,
                                "my_tokens": int(totals[0] or 0), "my_charged_credits": str(totals[1] or 0)},
                 "note": "The billing page has plans, orders and the full ledger; buying is done there."}
@@ -109,6 +112,8 @@ async def resources(*, user_id: str, workspace_id: str, main_id: str) -> dict:
     from session.browser_pref import get_browser_mode
     async with get_db_session() as db:
         await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        from sandbox.entitlement import sandbox_access_status
+        execution_access = await sandbox_access_status(db, workspace_id)
     record = await cloud_desktop_repo.get_for_workspace(workspace_id)
     desktop = {"state": "not_provisioned"}
     if record:
@@ -116,7 +121,8 @@ async def resources(*, user_id: str, workspace_id: str, main_id: str) -> dict:
                    "updated_at": _iso(record.get("updated_at"))}
         if record.get("status") == "failed" and record.get("error"):
             desktop["error"] = str(record["error"])[:300]
-    return {"cloud_desktop": desktop, "browser_preference": await get_browser_mode(user_id),
+    return {"cloud_desktop": desktop, "execution_access": execution_access,
+            "browser_preference": await get_browser_mode(user_id),
             "note": "Starting, stopping or buying resources is done by the user in the product (云桌面 / 资源中心)."}
 
 

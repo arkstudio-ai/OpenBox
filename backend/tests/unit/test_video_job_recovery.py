@@ -20,6 +20,42 @@ RELAY_TARGET = SimpleNamespace(
 DUMMY_SETTINGS = SimpleNamespace(max_provider_output_bytes=10**9, poll_interval_seconds=5)
 
 
+async def test_completed_delivery_scan_only_retries_pending_unattached_owned_jobs(monkeypatch):
+    from db.base import get_db_session
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+
+    uid, sid = "u_completion_scan", "session_completion_scan"
+    async with get_db_session() as db:
+        db.add(Session(id=sid, user_id=uid, workspace_id="w", project_id="p",
+                       agent="build", status="idle", created_at=NOW(), updated_at=NOW()))
+    jobs = []
+    for marker, attached, owner in [(True, None, uid), (False, None, uid),
+                                    (True, "message_attached", uid), (True, None, "foreign")]:
+        jobs.append(await _insert_job(
+            age_seconds=300, user_id=owner, session_id=sid, status="completed",
+            completed_at=NOW() - timedelta(seconds=300),
+            result_data={"completion_delivery_pending": marker},
+            attached_message_id=attached,
+        ))
+    seen = []
+
+    async def resume(job):
+        seen.append(job.id)
+        return True
+
+    monkeypatch.setattr(job_recovery, "resume_conversation", resume)
+    monkeypatch.setattr(job_recovery, "_completion_scan_after", None)
+    await job_recovery.resume_unattached_completions()
+    assert seen == [jobs[0]]
+    async with get_db_session() as db:
+        row = await db.get(VideoJob, jobs[0])
+        row.attached_message_id = "message_delivered"
+    seen.clear()
+    await job_recovery.resume_unattached_completions()
+    assert seen == []
+
+
 async def test_expired_output_stops_recovery_without_resubmitting(monkeypatch):
     from tool import video_production as vp
     from video.transfer import TransferError

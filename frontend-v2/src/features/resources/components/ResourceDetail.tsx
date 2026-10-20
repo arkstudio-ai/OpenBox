@@ -1,10 +1,11 @@
 // Right column: the meta header DEEIX puts above its preview (thumbnail,
 // name, date | type | size, status chip) plus the preview surface itself.
 import { useTranslation } from "react-i18next"
+import { useState } from "react"
 import { Download, ExternalLink, Trash2 } from "lucide-react"
 import { formatBytes, formatDateTime } from "@/shared/lib/format"
 import { cn } from "@/shared/lib/cn"
-import { downloadResource } from "../api/resources"
+import { downloadResource, useDescribeResource, useRecognizeResource } from "../api/resources"
 import { KIND_ICON, SOURCE_LABEL } from "../constants"
 import { ResourcePreview } from "./ResourcePreview"
 import type { Resource } from "../types"
@@ -93,7 +94,72 @@ export function ResourceDetail({ resource, onDelete }: Props) {
         </button>
       </div>
 
+      <ResourceDescription key={resource.id} resource={resource} />
       <ResourcePreview resource={resource} onDownload={download} />
     </section>
+  )
+}
+
+function ResourceDescription({ resource }: { resource: Resource }) {
+  const { t } = useTranslation("resources")
+  const [draft, setDescription] = useState<string | null>(null)
+  const description = draft ?? resource.description ?? ""
+  const update = useDescribeResource()
+  const recognize = useRecognizeResource()
+  const recognizing = resource.descriptionState === "pending" || resource.descriptionState === "processing"
+  const changed = description.trim() !== (resource.description ?? "")
+
+  return (
+    <form
+      className="border-hair flex flex-none flex-col gap-2 border-b px-5 py-3"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (changed) update.mutate({ id: resource.id, description: description.trim() }, {
+          onSuccess: () => setDescription((current) => current === description ? null : current),
+        })
+      }}
+    >
+      <label htmlFor={`resource-description-${resource.id}`} className="text-n700 text-sm font-medium">
+        {t("description.label")}
+      </label>
+      <textarea
+        id={`resource-description-${resource.id}`}
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        placeholder={t("description.placeholder")}
+        maxLength={2000}
+        rows={2}
+        className="border-hair text-ink bg-surface rounded-lg border px-3 py-2 text-sm"
+      />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-n600 text-xs">{t("description.hint")}</span>
+        <button
+          type="submit"
+          disabled={!changed || update.isPending}
+          className="text-a700 flex-none rounded-md px-3 py-1 text-sm disabled:opacity-40"
+        >
+          {t(update.isPending ? "description.saving" : "description.save")}
+        </button>
+      </div>
+      {resource.kind === "image" && (
+        <div className="text-n600 flex items-center justify-between gap-3 text-xs" aria-live="polite">
+          <span>{t(recognizing ? "description.recognizing" : resource.descriptionState === "ready"
+            ? "description.recognized" : resource.descriptionState === "failed"
+              ? "description.recognitionFailed" : resource.descriptionState === "unsupported"
+                ? "description.unsupported" : "description.autoHint")}</span>
+          {!resource.description && !recognizing && resource.descriptionState !== "unsupported" && (
+            <button type="button" disabled={recognize.isPending || !!draft?.trim()}
+              className="text-a700 flex-none rounded-md px-3 py-1 disabled:opacity-40"
+              onClick={() => recognize.mutate(resource.id)}>{t("description.recognize")}</button>
+          )}
+        </div>
+      )}
+      {recognize.isError && <p role="alert" className="text-dangerink text-xs">{t("description.recognitionFailed")}</p>}
+      {update.isError && (
+        <p role="alert" className="text-dangerink text-xs">
+          {t("description.error")}
+        </p>
+      )}
+    </form>
   )
 }

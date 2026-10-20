@@ -106,10 +106,9 @@ class VideoInputRef(BaseModel):
     asset_id: str = Field(max_length=512)
     #: Omitted: inferred from the mime type. Audio must say its role.
     role: VideoRefRole | None = Field(default=None, description=(
-        "The asset's purpose in this shot, determined from the person's request and context, "
-        "not upload order. first_frame/last_frame are the actual starting/ending composition; "
-        "reference_image is a subject/style reference, not automatically a frame. "
-        "RunningHub Turbo requires explicit frame roles even for one image."
+        "Use the person's intent, never upload count/order: first_frame animates the starting "
+        "image; last_frame pins the ending; reference_image supplies subject/style, not an endpoint. "
+        "RunningHub Turbo requires explicit frame roles, even for one image."
     ))
 
 
@@ -119,10 +118,9 @@ class VideoGenerateArgs(BaseModel):
     #: For action="quote_plan": every paid step of the plan about to go on the
     #: shots + price card. Priced server-side and registered on the session.
     plan_items: list[PlanItem] | None = Field(default=None, max_length=64, description=(
-        "quote_plan only: the whole plan's paid steps — one generation item per shot (model, resolution, "
-        "seconds), one transcribe item per shot, and one compose item for the piece when the cut goes through "
-        "video_compose. The server re-prices every item with the same quote the step will be charged at and "
-        "registers the total as this session's plan; any credits you pass are compared, never trusted."))
+        "quote_plan: one generation (model/resolution/seconds) and transcribe item per shot, "
+        "plus compose when using video_compose. Server-priced at billing rates; claimed credits "
+        "are compared, never trusted."))
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     # ── describe the shot directly ──
     #: Describe the shot. Supplying it means an open generation.
@@ -132,18 +130,15 @@ class VideoGenerateArgs(BaseModel):
         default=None,
         max_length=160,
         description=(
-            "An id from action=models. If person_selected_model is present, that "
-            "composer choice is authoritative: omit this field or pass the exact "
-            "same id. Never silently substitute another model."
+            "ID from action=models. person_selected_model is authoritative: omit or repeat it exactly. "
+            "Never silently substitute; only the person may change the composer model."
         ),
     )
     resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
         default=None,
         description=(
-            "A resolution tier supported by action=models (including MiniMax 512p/768p/2k). "
-            "If the person selected a resolution in the composer, "
-            "omit this field or pass that exact value; changing it requires the person "
-            "to update the composer selection first."
+            "Tier supported by action=models. If selected in the composer, omit or repeat exactly; "
+            "the person must update that selection before changing tiers."
         ),
     )
     ratio: str | None = Field(default=None, max_length=16, description=(
@@ -164,14 +159,10 @@ class VideoGenerateArgs(BaseModel):
     #: finished second "第 2 段" no matter which shot it actually is.
     shot: int | None = Field(default=None, ge=1, le=200)
     input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8, description=(
-        "Assets explicitly needed for this shot from the conversation. Include an image when "
-        "the person asks to animate it; do not attach unrelated earlier images. RunningHub "
-        "Turbo routes no assets to text-to-video and explicitly selected first_frame/last_frame "
-        "assets to image-to-video. Do not infer roles from count or upload order. If the person "
-        "wants each image animated separately, use one first_frame per separate shot; if they "
-        "want several subjects/styles combined, these are reference images, not first/last frames. "
-        "Clarify ambiguous intent before submitting. Never drop requested references to bypass "
-        "model limits; Turbo cannot use generic image, video or audio references."
+        "Actual asset IDs relevant to this shot. Animate images separately: one first_frame per "
+        "shot, estimate the total. Combined subjects/styles: reference_image. RunningHub Turbo: "
+        "no assets for text-to-video, explicit first_frame/last_frame for image-to-video; no generic "
+        "image/video/audio references."
     ))
     #: Pay twice for a second take of a request already in flight.
     allow_duplicate: bool = False
@@ -1409,6 +1400,7 @@ async def _finalize_segment(
         job.id,
         status="completed",
         result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
+                     "completion_delivery_pending": True,
                      "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
@@ -3475,33 +3467,17 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
     )
 
 
+# Keep shared rules here and parameter-specific rules on their fields: both
+# are sent on every request, so repeating the workflow inflates the schema.
 VIDEO_GENERATE_DESCRIPTION = """\
-Generate video (the only way to create one): describe the shot in `prompt`, optionally naming model, resolution, ratio, \
-duration, audio, seed and reference assets, and pass an idempotency_key. \
-Use action="models" to read what each model accepts. A returned `person_selected_model` and the person's \
-composer resolution are authoritative: omit those fields or repeat them \
-exactly, and never silently choose another model or tier. Resolve image intent \
-from the request and relevant conversation before building input_assets: an \
-image to animate is a first_frame; an explicitly described ending is a \
-last_frame; several subject/product/style references are reference_image, \
-not automatically first/last frames. Use actual asset IDs, never upload \
-count/order as evidence of purpose. To animate each image separately, create one shot per \
-first_frame and estimate the total cost. If the intended selection or use is ambiguous, ask one focused question \
-before any paid call. RunningHub Turbo only supports explicit frames, not \
-generic/multiple reference images; explain this and request a compatible \
-composer model or an explicit change of intent. Never omit requested images \
-or relabel them as endpoints to pass validation. \
-Use action="estimate" \
-to validate a request for free \
-before paying; action="quote_plan" prices a whole plan (every shot, transcription and compose) \
-on the server and registers it as the session's estimate before the shots + price card. \
-A finished video lands in OSS and, when a sandbox is present, \
-in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
-video asset there. action="attach" re-sends an owned asset to the user as a card (no sandbox); \
-never write a link to it. \
-Distinct jobs may run together; never parallelize two mutations of one job. \
-A paid submit is never replaced after an ambiguous result — reconcile the \
-same job or key."""
+Generate video only through this tool. models lists capabilities; estimate validates a shot for free before paying; \
+quote_plan registers a server-priced whole plan before the shots + price card. submit requires prompt and idempotency_key. \
+Before paying, clarify ambiguous asset selection or purpose. If a model cannot use requested references, \
+explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
+Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \
+fetch re-delivers an owned video to the workspace; attach shows an owned asset card without a sandbox; never write an asset link. \
+Different jobs may run together; never parallelize mutations of one job. \
+After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
 Transcribe speech from any audio asset you own: pass asset_id and an \

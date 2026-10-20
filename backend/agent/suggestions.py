@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import aclosing
 from datetime import datetime, timedelta, timezone
 
@@ -133,6 +134,8 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
             context = await load_context(ticket.session_id, ticket.user_id, message_id, db=db)
             if context is None:
                 return
+            from memory.session_policy import memory_isolated
+            inherit_identity = not memory_isolated(session)
             model = get_config().suggestion_model.strip() or chat_model
             part = SuggestionsPart(
                 session_id=ticket.session_id, message_id=message_id, model=model, status="pending",
@@ -157,10 +160,24 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
         # Use the model's supported off tier for this auxiliary request only.
         variants = reasoning_profile(model).variants
         variant = next((value for value in ("none", "off") if value in variants), None)
+        system = [SYSTEM]
+        if inherit_identity:
+            from assistant.identity import DEFAULT_ADDRESS
+            from assistant.profile import load
+            profile = await load(ticket.user_id)
+            system.append(
+                "Current account identity for the assistant in this conversation: "
+                + json.dumps({"assistant_name": profile.name, "user_address": profile.address or DEFAULT_ADDRESS},
+                             ensure_ascii=False)
+                + ". These settings override older names in conversation and previous_summary; an empty assistant "
+                "name means no custom name. Do not suggest restoring an old name, resolving an obsolete name "
+                "conflict, or changing these settings unless the latest user request asks for it. Preserve names "
+                "when quoting original documents or writing for third parties. Do not greet or introduce yourself."
+            )
         result = None
         stream = stream_llm(
             agent_def=AgentDef(name="suggestions", description="Next-step suggestions"),
-            system=[SYSTEM], messages=[{"role": "user", "content": context}],
+            system=system, messages=[{"role": "user", "content": context}],
             tools={TOOL_NAME: tool}, model_id=model,
             ctx=ToolContext(session_id=ticket.session_id, user_id=ticket.user_id, message_id=message_id),
             variant=variant, tool_choice="required", billing_kind="suggestions",

@@ -27,7 +27,8 @@ async def list_assets(*, user_id, workspace_id, main_id, project_id=None, query=
         if kind:
             statement = statement.where(FileAsset.mime.startswith(kind + "/"))
         if query.strip():
-            statement = statement.where(FileAsset.name.icontains(query.strip(), autoescape=True))
+            statement = statement.where(or_(FileAsset.name.icontains(query.strip(), autoescape=True),
+                FileAsset.description.icontains(query.strip(), autoescape=True)))
         if cursor:
             anchor = await db.scalar(statement.where(FileAsset.id == cursor))
             if anchor is None:
@@ -41,7 +42,7 @@ async def list_assets(*, user_id, workspace_id, main_id, project_id=None, query=
         # No object keys, presigned URLs, credentials or file contents enter the
         # main assistant. The execution input carries only the original IDs.
         return _page(rows, limit, lambda row: {key: getattr(row, key) for key in (
-            "id", "name", "mime", "size", "source", "project_id", "session_id", "created_at")})
+            "id", "name", "description", "mime", "size", "source", "project_id", "session_id", "created_at")})
 
 
 async def sources(db, main, arguments, value):

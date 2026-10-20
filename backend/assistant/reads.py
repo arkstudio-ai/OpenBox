@@ -187,11 +187,14 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
             select(newest_control).where(ranked_controls.c.rank == 1))).all()}
         from assistant.blocking import blocked_views
         blocked = await blocked_views(db, [execution for _, execution in scoped])
+        from assistant.execution_errors import result_execution_errors
+        errors = await result_execution_errors(db, latest.values(), user_id=user_id)
         values = []
         for task, execution in scoped:
             result_row = latest.get(task.latest_result_id)
             result = result_view(result_row)
             if result is not None:
+                result["execution_error"] = errors.get(result_row.id)
                 result["processed_sequence"] = (processed.get(result_row.processed_message_id)
                                                 if result_row.processed_message_id else None)
             submission = submissions.get(task.id)
@@ -200,6 +203,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                 "inbox_id": submission.inbox_id, "disposition": submission.disposition,
                 "accepted_at": submission.accepted_at, "applied_at": submission.applied_at,
                 "run_id": item.run_id if item else None, "generation": item.generation if item else None,
+                "state": item.state if item else None, "outcome": item.outcome if item else None,
+                "delivery": submission.delivery,
             } if submission else None
             if submission and (submission.delivery == "steer" or item and (
                     item.state == "canceled" or item.outcome == "not_run")):

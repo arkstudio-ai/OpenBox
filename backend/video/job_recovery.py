@@ -34,6 +34,7 @@ _failed_once: set[str] = set()
 _route_mismatch_once: set[str] = set()
 _route_mismatch_overflow_warned = False
 _scan_after: tuple[datetime, str] | None = None
+_completion_scan_after: tuple[datetime, str] | None = None
 
 
 def schedule_startup_recovery() -> None:
@@ -153,7 +154,56 @@ async def sweep() -> int:
                 _failed_once.add(job.id)
                 if len(_failed_once) > 500:
                     _failed_once.clear()
+    await resume_unattached_completions()
     return advanced
+
+
+async def resume_unattached_completions() -> None:
+    """Retry completion delivery independently of provider recovery.
+
+    A finalized job is durable evidence even if the process dies before inbox
+    acceptance. Once accepted, the inbox's own recovery owns delivery. Page
+    past temporarily unavailable sessions so they cannot starve later jobs.
+    """
+    global _completion_scan_after
+    from sqlalchemy import JSON, and_, or_, select, type_coerce
+
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.assistant import AssistantTask
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+
+    now = datetime.now(timezone.utc)
+    conditions = [
+        VideoJob.kind == "segment", VideoJob.status == "completed",
+        type_coerce(VideoJob.result_data, JSON)["completion_delivery_pending"].as_boolean().is_(True),
+        VideoJob.output_asset_id.isnot(None), VideoJob.attached_message_id.is_(None),
+        VideoJob.completed_at >= now - timedelta(days=LOOKBACK_DAYS),
+        VideoJob.completed_at < now - timedelta(seconds=STALE_AFTER_SECONDS),
+        Session.is_deleted.is_(False),
+        or_(AssistantTask.id.is_(None), and_(
+            AssistantTask.desired_state == "running", AssistantTask.archived_at.is_(None))),
+        ~select(AgentInboxItem.id).where(
+            AgentInboxItem.session_id == VideoJob.session_id,
+            AgentInboxItem.user_id == VideoJob.user_id,
+            AgentInboxItem.client_id == "vjob:" + VideoJob.id,
+        ).exists(),
+    ]
+    if _completion_scan_after is not None:
+        stamp, job_id = _completion_scan_after
+        conditions.append(or_(VideoJob.completed_at > stamp, and_(
+            VideoJob.completed_at == stamp, VideoJob.id > job_id)))
+    async with get_db_session() as db:
+        rows = list((await db.scalars(select(VideoJob).join(Session, and_(
+            Session.id == VideoJob.session_id, Session.user_id == VideoJob.user_id,
+        )).outerjoin(AssistantTask, AssistantTask.execution_session_id == Session.id)
+            .where(*conditions).order_by(VideoJob.completed_at, VideoJob.id)
+            .limit(MAX_JOBS_PER_SWEEP))).all())
+    _completion_scan_after = ((rows[-1].completed_at, rows[-1].id)
+                              if len(rows) == MAX_JOBS_PER_SWEEP else None)
+    for job in rows:
+        await resume_conversation(job)
 
 
 async def _recover_job(job) -> bool:
@@ -253,21 +303,21 @@ async def resume_conversation(job) -> bool:
 
     The tool tells the model to end its run once a generation outlives the
     inline wait budget, so a job that finishes later has nobody to hand the
-    result to: the chat sat there until the person typed something. A
-    system continuation (reserved ``vjob:`` client id, synthetic text) lets
-    the model pick the job back up and deliver. Idempotent per job; a run
-    that is still live will attach the result itself and is left alone.
+    result to: the chat sat there until the person typed something. Persist a
+    next-turn continuation even while its current run is live: that run may
+    be returning its timeout reply instead of fetching the result. The inbox
+    serializes execution and retries wakes; its reserved ``vjob:`` key makes
+    acceptance idempotent per job.
     """
     session_id = getattr(job, "session_id", None)
     user_id = getattr(job, "user_id", None)
     if not session_id or not user_id:
         return False
     try:
-        from agent.driver import get_driver_state
         from agent.inbox import accept_inbox_item, wake_inbox_session
 
-        state = await get_driver_state(session_id)
-        if state is not None and state.run_id and state.phase not in ("idle", None):
+        reference = await _resume_reference(job)
+        if reference is None:
             return False
         receipt = await accept_inbox_item(
             session_id=session_id,
@@ -276,6 +326,7 @@ async def resume_conversation(job) -> bool:
             prompt=RESUME_PROMPT.format(job_id=job.id),
             client_id=f"vjob:{job.id}",
             system=True,
+            origin_ref=reference,
         )
         if receipt.state == "accepted":
             await wake_inbox_session(session_id, user_id)
@@ -283,6 +334,47 @@ async def resume_conversation(job) -> bool:
     except Exception as exc:
         log.warning(f"Could not resume conversation for video job {job.id}: {type(exc).__name__}: {exc}")
         return False
+
+
+async def _resume_reference(job) -> dict | None:
+    """Keep the submitting intent; never assign an old video to a newer goal."""
+    from sqlalchemy import JSON, select, type_coerce
+
+    from assistant.scheduling import held_task_locked
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.assistant import AssistantTask
+    from db.models.session import Session
+    from trajectory.jobs import CONTEXT_KEY
+
+    async with get_db_session() as db:
+        session = await db.scalar(select(Session).where(
+            Session.id == job.session_id, Session.user_id == job.user_id, Session.is_deleted.is_(False)))
+        if session is None or await held_task_locked(db, session) is not None:
+            return None
+        task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id))
+        if task is None:
+            return {}
+        if task.archived_at is not None:
+            return None
+        query = select(AgentInboxItem).where(
+            AgentInboxItem.session_id == session.id, AgentInboxItem.user_id == job.user_id,
+            AgentInboxItem.state.in_(("claimed", "settled")),
+            AgentInboxItem.claimed_at <= job.created_at,
+            type_coerce(AgentInboxItem.origin_ref, JSON)["task_id"].as_string() == task.id,
+            type_coerce(AgentInboxItem.origin_ref, JSON)["intent_revision"].as_integer() > 0,
+        )
+        trace = (job.request_data or {}).get(CONTEXT_KEY) or {}
+        if trace.get("run_id") and trace.get("generation"):
+            query = query.where(AgentInboxItem.run_id == trace["run_id"],
+                                AgentInboxItem.generation == trace["generation"])
+        source = await db.scalar(query.order_by(
+            AgentInboxItem.claimed_at.desc(), AgentInboxItem.id.desc()).limit(1))
+        ref = source.origin_ref if source is not None else {}
+        if ref.get("intent_revision") != task.intent_revision:
+            return None
+        return {"task_id": task.id, "intent_revision": ref["intent_revision"],
+                "source_refs": ref.get("source_refs", []), "video_job_id": job.id}
 
 
 async def _reclaim_stale_finalizing(job_id: str) -> bool:

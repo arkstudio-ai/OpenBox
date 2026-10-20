@@ -20,6 +20,7 @@ from typing import Any
 
 from core.identifier import ascending
 from core.log import create_logger
+from agent.latency import provider_chunks
 
 log = create_logger("agent.trajectory")
 
@@ -605,14 +606,14 @@ class RequestCapture:
         delays token delivery.
         """
         if self.context is None:
-            async for chunk in stream:
+            async for chunk in provider_chunks(stream):
                 yield chunk
             return
         from trajectory import record_stream
         from trajectory.types import now
         ended = False
         try:
-            async for chunk in stream:
+            async for chunk in provider_chunks(stream):
                 observed_at = now()
                 try:
                     blocks = block_builder(chunk)

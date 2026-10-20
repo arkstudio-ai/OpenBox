@@ -20,6 +20,35 @@ def scope_of(owner, workspace, main_id):
     return CallScope(user_id=owner, workspace_id=workspace, main_session_id=main_id, call_id="call-t")
 
 
+async def test_voice_and_assistant_read_current_model_catalogue_after_removal(monkeypatch):
+    from assistant.model_choices import catalogue
+    from core.config import OpenBoxConfig
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    config = OpenBoxConfig(model="openai/qwen3.8-flash", models=[
+        {"id": "openai/gpt-5.6-luna", "name": "GPT-5.6 Luna", "vision": True},
+        {"id": "openai/qwen3.8-flash", "name": "Qwen3.8 Flash", "vision": True}])
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    scope = scope_of(owner, workspace, main.id)
+    assert len((await tools.run("models_available", scope, "{}"))["chat"]) == 2
+    config.models = [row for row in config.models if row.id == config.model]
+    spoken = await tools.run("models_available", scope, "{}")
+    assert spoken["chat"] == catalogue()["chat"]
+    assert [row["id"] for row in spoken["chat"]] == [config.model]
+
+
+async def test_voice_summary_never_calls_a_removed_model(monkeypatch):
+    from core.config import OpenBoxConfig
+    config = OpenBoxConfig(model="openai/qwen3.8-flash", models=[{"id": "openai/qwen3.8-flash"}],
+                           voice={"summary_model": "openai/gpt-5.6-luna"})
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    async def complete(model, *args):
+        assert model == "openai/qwen3.8-flash"
+        return "聊了水果店的招聘海报。"
+    monkeypatch.setattr(summary, "complete", complete)
+    assert await summary.summarize("用户：这是水果店的招聘海报。") == "聊了水果店的招聘海报。"
+
+
 async def test_tasks_overview_reads_the_watch_list_the_assistant_reads():
     owner, workspace, main, accepted, lease, _ = await result_ready()
     await lease.release(session_status="idle")

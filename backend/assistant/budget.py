@@ -13,17 +13,19 @@ import time
 from sqlalchemy import func, select
 
 from assistant.policy import AssistantError
+from core.log import create_logger
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
 from session.agent_event_log import append_agent_event_locked, prepare_agent_event_write
 
 CODE = "ASSISTANT_TURN_BUDGET"
-PUBLIC_MESSAGE = "本轮助理处理已达到执行上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。"
+log = create_logger("assistant.budget")
+PUBLIC_MESSAGE = "个人助理本轮已达到处理上限，已停止。已完成的操作仍然保留；请先查看相关任务状态，再继续沟通。"
 MESSAGES = {
-    "time": "本轮助理处理已达到时间上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。",
-    "request": "本轮助理处理已达到模型请求上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。",
-    "tool": "本轮助理处理已达到工具调用上限，已停止。已完成的操作仍然保留；请缩小请求范围后继续。",
+    "time": "个人助理本轮回复超时，已停止。已完成的操作仍然保留；请先查看相关任务状态，再继续沟通。",
+    "request": "个人助理本轮达到模型请求次数上限，已停止。已完成的操作仍然保留；请先查看相关任务状态，再继续沟通。",
+    "tool": "个人助理本轮达到工具调用次数上限，已停止。已完成的操作仍然保留；请先查看相关任务状态，再继续沟通。",
 }
 current: ContextVar["TurnBudget | None"] = ContextVar("assistant_turn_budget", default=None)
 
@@ -42,10 +44,14 @@ class TurnBudget:
     limits: dict
     error: dict | None = None
     watcher: asyncio.Task | None = field(default=None, repr=False)
+    slowest_step_seconds: float = 0
+    receipt_reconciled: bool = False
+    exhausted_by: str = ""
 
     def exhaust(self, reason):
         if self.error is None:
             self.error = {"code": CODE, "message": MESSAGES[reason]}
+            self.exhausted_by = reason
         self.lease.abort.set()
         return AssistantBudgetExceeded(self.error["message"])
 
@@ -66,6 +72,36 @@ class TurnBudget:
             self.watcher.cancel()
             await asyncio.gather(self.watcher, return_exceptions=True)
             self.watcher = None
+
+    def needs_reply(self, step):
+        # Reserve a reply before starting another tool/model round. Slow
+        # providers need more than the old fixed 30-second final allowance.
+        reserve = max(min(30, self.limits["wall_time_seconds"] / 4),
+                      min(self.limits["wall_time_seconds"] * .65, self.slowest_step_seconds * 2 + 5))
+        return (step >= self.limits["model_requests"] - 1
+                or self.local_deadline - time.monotonic() <= reserve)
+
+    async def reconcile_error(self):
+        if not self.error or self.receipt_reconciled:
+            return
+        from assistant.receipts import describe, for_run
+        self.receipt_reconciled = True
+        try:
+            async with asyncio.timeout(3):
+                receipts = await for_run(self.lease.session_id, self.lease.user_id,
+                                         self.lease.run_id, self.lease.generation)
+        except Exception as exc:
+            # Missing proof must never prevent settlement of the original
+            # failure, or be treated as proof of acceptance.
+            log.warning("budget receipt unread run=%s error=%s",
+                        self.lease.run_id, type(exc).__name__)
+            return
+        if receipts:
+            reason = {"time": "回复超时", "request": "达到模型请求次数上限",
+                      "tool": "达到工具调用次数上限"}.get(self.exhausted_by, "达到处理上限")
+            self.error = {"code": CODE, "message": (
+                f"个人助理本轮{reason}，已停止；已提交的任务指令不会因此撤销。"
+                + describe(receipts) + "请先查看原任务状态，避免重复提交。")}
 
     async def admit(self, kind, identity):
         self.check()

@@ -59,7 +59,8 @@ async def direct(monkeypatch):
     await lease.release(session_status="idle")
 
 
-@pytest.mark.parametrize("code", ["asset_unavailable", "resource_preparation_unavailable"])
+@pytest.mark.parametrize("code", ["asset_unavailable", "resource_preparation_unavailable",
+                                 "SANDBOX_SUBSCRIPTION_REQUIRED"])
 async def test_direct_permanent_failure_closes_once_without_creating_inbox(direct, monkeypatch, code):
     lease, assets, parent = direct
     calls = []
@@ -71,6 +72,9 @@ async def test_direct_permanent_failure_closes_once_without_creating_inbox(direc
     monkeypatch.setattr(recovery, "_complete_recovered_child_outputs", complete_children)
     async def fail(*_args, **_kwargs):
         calls.append(True)
+        if code == "SANDBOX_SUBSCRIPTION_REQUIRED":
+            from sandbox.entitlement import SandboxSubscriptionRequired
+            raise SandboxSubscriptionRequired()
         raise AssetDeliveryError(expected_asset_ids=assets, missing_asset_ids=assets,
             retryable=False, code=code)
     monkeypatch.setattr("sandbox.assets.deliver_asset_ids", fail)

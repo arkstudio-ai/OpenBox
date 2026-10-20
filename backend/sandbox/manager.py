@@ -4,6 +4,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from core.log import create_logger
+from agent.latency import measured_span
 from models.container import ContainerStatus
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.provider import build_sandbox_name
@@ -55,6 +56,7 @@ class SandboxManager:
         # create duplicate containers; different tenants still start in parallel.
         self._acquire_locks: dict[str, asyncio.Lock] = {}
 
+    @measured_span("runtime_health")
     async def _verify_sandbox_alive(self, sandbox: SandboxInfo, key: str) -> bool:
         """Return True when the tracked sandbox still responds to /alive."""
         import httpx
@@ -173,6 +175,7 @@ class SandboxManager:
         project_id: str = "default",
         *,
         user_id: str,
+        prepare: bool = True,
     ) -> SandboxInfo:
         from sandbox.ownership import owner_for_session
 
@@ -186,8 +189,10 @@ class SandboxManager:
                 project_id,
                 user_id=user_id,
                 owner=owner,
+                prepare=prepare,
             )
 
+    @measured_span("runtime_acquire_locked")
     async def _acquire_for_user(
         self,
         session_id: str,
@@ -195,6 +200,7 @@ class SandboxManager:
         *,
         user_id: str,
         owner: str | None = None,
+        prepare: bool = True,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
         from sandbox.privacy import require_shared_runtime
@@ -206,6 +212,11 @@ class SandboxManager:
         key = _map_key(owner)
 
         from sandbox import provider
+        # Externally managed runtimes have no local start/recreate lifecycle.
+        # Conversation preparation needs their scoped catalogue, not a health
+        # round trip or a filesystem mutation. Actual tool dispatch prepares
+        # the directory later. Owned containers retain their existing lifecycle.
+        prepare = prepare or getattr(provider, "owns_containers", True) is not False
 
         # Per-desktop routing is database-authoritative on every acquisition.
         # This makes a revoke or credential rotation invalidate a cached route
@@ -244,7 +255,7 @@ class SandboxManager:
         # per-user acquire lock already serializes this tenant; holding the
         # global map lock here would make one slow desktop block every user.
         if sandbox:
-            if await self._verify_sandbox_alive(sandbox, key):
+            if not prepare or await self._verify_sandbox_alive(sandbox, key):
                 if client is None:
                     client = SandboxClient(
                         host=sandbox.host,
@@ -268,7 +279,8 @@ class SandboxManager:
                         f"Reusing sandbox {sandbox.container_id} for session {session_id} "
                         f"(user {user_id})"
                     )
-                    await self._ensure_session_dir(client, session_id)
+                    if prepare:
+                        await self._ensure_session_dir(client, session_id)
                     return sandbox
             else:
                 await self._cleanup_stale_sandbox(sandbox, key, session_id)
@@ -337,7 +349,8 @@ class SandboxManager:
                 self._session_project[session_id] = key
                 self._clients[key] = client
 
-            await self._ensure_session_dir(client, session_id)
+            if prepare:
+                await self._ensure_session_dir(client, session_id)
 
             log.info(f"Created sandbox {info.id} for user {user_id}, session {session_id}")
             return sandbox
@@ -349,6 +362,7 @@ class SandboxManager:
             )
             raise
 
+    @measured_span("runtime_directory")
     async def _ensure_session_dir(self, client: SandboxClient, session_id: str) -> None:
         """Create the directory this session will run in.
 
@@ -458,7 +472,7 @@ class SandboxManager:
             if client is not None:
                 await client.aclose()
 
-    async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
+    async def get_client(self, session_id: str, *, user_id: str, prepare: bool = True) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
         from agent.driver import _current_lease
         lease = _current_lease.get()
@@ -471,7 +485,7 @@ class SandboxManager:
         # Acquire is also the health-checked, per-user serialized fast path.
         # Using it unconditionally keeps map reads and provider lifecycle in one
         # ownership protocol instead of racing a separate probe here.
-        await self.acquire(session_id, user_id=user_id)
+        await self.acquire(session_id, user_id=user_id, prepare=prepare)
         async with self._lock:
             key = self._session_project.get(session_id)
             if key is not None and key != expected_key:

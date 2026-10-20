@@ -16,7 +16,7 @@
     "done": "知道了",
     "retry": "立即重试",
     "subscriptionRequired": "付费套餐专享无影云",
-    "subscriptionHint": "Free 用户可以继续普通 LLM 对话。订购付费套餐后会自动开通 sandbox；套餐到期后原机器保留，续费后恢复使用（以云端机器仍存在为前提）。",
+    "subscriptionHint": "当前没有有效会员，积分余额不能代替云桌面使用权限。请开通或续费会员；到账后系统会自动恢复原云桌面的使用权限，保留其中的数据（云端机器仍存在时）。普通文字对话可继续使用。",
     "subscribe": "查看套餐",
     "steps": {
       "paid": "付款已确认",
@@ -101,6 +101,7 @@
     "provisionFailed": "云电脑创建失败",
     "provisionRetry": "重新创建",
     "connected": "已连接",
+    "subscriptionRequired": "会员待开通或续费",
     "closed": "连接已断开",
     "error": "无法连接云桌面",
     "unavailable": "云桌面暂不可用",

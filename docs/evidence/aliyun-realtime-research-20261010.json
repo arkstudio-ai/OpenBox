@@ -1,0 +1,3250 @@
+{
+  "date": "2026-10-10",
+  "timezone": "Asia/Shanghai",
+  "reviewed_at": "2026-10-10T10:51:39.317183+08:00",
+  "models": {
+    "omni": "qwen3.8-omni-flash-realtime",
+    "audio": "qwen-audio-3.1-realtime-plus",
+    "tts": "qwen3-tts-instruct-flash-realtime"
+  },
+  "endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+  "media": "Synthetic test audio only. No microphone or personal recordings.",
+  "raw_output_directory": "test-results/aliyun-realtime-20261010",
+  "cases": {
+    "omni_basic": {
+      "configuration": {
+        "id": "sess_IQR5bZTq32IadWwABBrV6",
+        "object": "realtime.session",
+        "model": "qwen3.8-omni-flash-realtime",
+        "modalities": [
+          "text"
+        ],
+        "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+        "voice": "Tina",
+        "input_audio_format": "pcm",
+        "output_audio_format": "pcm",
+        "input_audio_transcription": {
+          "model": "gummy-realtime-v1"
+        }
+      },
+      "memory_item": {
+        "id": "item_NPaoCaPILngnqVFlfAo7c",
+        "object": "realtime.item",
+        "type": "message",
+        "status": "completed",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "请记住本次测试口令是青竹4826，稍后我要询问。"
+          }
+        ]
+      },
+      "recall": {
+        "status": "completed",
+        "response_id": "resp_C5S34xOfgwBkvM6TpENJL",
+        "text": "青竹4826",
+        "usage": {
+          "total_tokens": 73,
+          "input_tokens": 66,
+          "output_tokens": 7,
+          "input_tokens_details": {
+            "text_tokens": 66
+          },
+          "output_tokens_details": {
+            "text_tokens": 7
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.311,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 3,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "retrieve": {
+        "event_id": "event_TnpNnu2WeC1YMnk5GLtvA",
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "code": "invalid_value",
+          "message": "Invalid value: 'conversation.item.retrieve'.",
+          "param": "type"
+        }
+      },
+      "delete": {
+        "event_id": "event_YcaLrALmR8Uo7fsN7WsDM",
+        "type": "conversation.item.deleted",
+        "item_id": "item_NPaoCaPILngnqVFlfAo7c"
+      },
+      "instructions_update_echo": "无论用户说什么，只回答：配置已更新。",
+      "after_instructions_update": {
+        "status": "completed",
+        "response_id": "resp_ScvwMlXN7yWVNaI3TkSFx",
+        "text": "配置已更新。",
+        "usage": {
+          "total_tokens": 59,
+          "input_tokens": 54,
+          "output_tokens": 5,
+          "input_tokens_details": {
+            "text_tokens": 54
+          },
+          "output_tokens_details": {
+            "text_tokens": 5
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.372,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 2,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "audio_basic": {
+      "configuration": {
+        "id": "sess_UWbbfKWsskNixjSdJqv2f",
+        "object": "realtime.session",
+        "model": "qwen-audio-3.1-realtime-plus",
+        "modalities": [
+          "text"
+        ],
+        "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+        "voice": "longanqian_v3.1",
+        "input_audio_format": "pcm16",
+        "output_audio_format": "pcm",
+        "input_audio_transcription": {
+          "model": "gummy-realtime-v1"
+        },
+        "max_history_turns": 5
+      },
+      "memory_item": {
+        "id": "probe_memory",
+        "object": "realtime.item",
+        "type": "message",
+        "status": "completed",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "请记住本次测试口令是青竹4826，稍后我要询问。"
+          }
+        ]
+      },
+      "recall": {
+        "status": "completed",
+        "response_id": "resp_UWbbWu51LjTnUJzuEOyZd",
+        "text": "青竹4826",
+        "usage": {
+          "total_tokens": 69,
+          "input_tokens": 61,
+          "output_tokens": 8,
+          "input_tokens_details": {
+            "text_tokens": 61
+          },
+          "output_tokens_details": {
+            "text_tokens": 7
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.243,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 6,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "retrieve": {
+        "type": "conversation.item.retrieved",
+        "event_id": "event_UWbbPqxqHco3MVS2HXueF",
+        "item": {
+          "id": "probe_memory",
+          "object": "realtime.item",
+          "type": "message",
+          "status": "completed",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "请记住本次测试口令是青竹4826，稍后我要询问。"
+            }
+          ]
+        }
+      },
+      "delete": {
+        "event_id": "event_ZqHhVNy7I6Ibz2DYCwwWq",
+        "type": "conversation.item.deleted",
+        "item_id": "probe_memory"
+      },
+      "instructions_update_echo": "无论用户说什么，只回答：配置已更新。",
+      "after_instructions_update": {
+        "status": "completed",
+        "response_id": "resp_UWbbJjNNxWhDy4vELOz2i",
+        "text": "配置已更新。",
+        "usage": {
+          "total_tokens": 60,
+          "input_tokens": 54,
+          "output_tokens": 6,
+          "input_tokens_details": {
+            "text_tokens": 54
+          },
+          "output_tokens_details": {
+            "text_tokens": 5
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.162,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 4,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_tools": {
+      "initial": {
+        "status": "completed",
+        "response_id": "resp_XzBSHtIcC62b23k3ta1Vj",
+        "text": "",
+        "usage": {
+          "total_tokens": 353,
+          "input_tokens": 315,
+          "output_tokens": 38,
+          "input_tokens_details": {
+            "text_tokens": 315
+          },
+          "output_tokens_details": {
+            "text_tokens": 38
+          }
+        },
+        "tool_calls": [
+          {
+            "event_id": "event_H6Va7nMMWRWkxVZhsbtZh",
+            "type": "response.function_call_arguments.done",
+            "response_id": "resp_XzBSHtIcC62b23k3ta1Vj",
+            "item_id": "item_LX3UjdSs28WfZdxQbY158",
+            "output_index": 0,
+            "name": "add_numbers",
+            "call_id": "call_18fe6593217141c59dc87c32",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        ],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.504,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.function_call_arguments.delta": 5,
+          "response.function_call_arguments.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "executions": [
+        {
+          "call_id": "call_18fe6593217141c59dc87c32",
+          "arguments": {
+            "a": 17,
+            "b": 25
+          },
+          "output": {
+            "sum": 42,
+            "source": "local_test_function"
+          }
+        }
+      ],
+      "followup": {
+        "status": "completed",
+        "response_id": "resp_LA2RvyTNdPzdi6omOEZUn",
+        "text": "17加25等于42。",
+        "usage": {
+          "total_tokens": 395,
+          "input_tokens": 385,
+          "output_tokens": 10,
+          "input_tokens_details": {
+            "text_tokens": 385
+          },
+          "output_tokens_details": {
+            "text_tokens": 10
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.4,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 3,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "audio_tools": {
+      "initial": {
+        "status": "completed",
+        "response_id": "resp_ZaifKxPKkLPzEcrKoXXtV",
+        "text": "",
+        "usage": {
+          "total_tokens": 359,
+          "input_tokens": 320,
+          "output_tokens": 39,
+          "input_tokens_details": {
+            "text_tokens": 320
+          },
+          "output_tokens_details": {
+            "text_tokens": 38
+          }
+        },
+        "tool_calls": [
+          {
+            "event_id": "event_Py3t4ndEF3jdg1NzCeAr4",
+            "type": "response.function_call_arguments.done",
+            "response_id": "resp_ZaifKxPKkLPzEcrKoXXtV",
+            "item_id": "item_ZaifDe4pBCbZkAcykDSKj",
+            "output_index": 0,
+            "name": "add_numbers",
+            "call_id": "call_3f677c09c37b46749f16abc2",
+            "arguments": "{\"a\": 17, \"b\": 25}"
+          }
+        ],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.914,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.function_call_arguments.delta": 7,
+          "response.function_call_arguments.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "executions": [
+        {
+          "call_id": "call_3f677c09c37b46749f16abc2",
+          "arguments": {
+            "a": 17,
+            "b": 25
+          },
+          "output": {
+            "sum": 42,
+            "source": "local_test_function"
+          }
+        }
+      ],
+      "followup": {
+        "status": "completed",
+        "response_id": "resp_ZaifLugzZc5IthUsmDKQP",
+        "text": "17加25的结果是42。",
+        "usage": {
+          "total_tokens": 446,
+          "input_tokens": 390,
+          "output_tokens": 56,
+          "input_tokens_details": {
+            "text_tokens": 390
+          },
+          "output_tokens_details": {
+            "text_tokens": 11,
+            "audio_tokens": 44
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 3.52,
+        "audio_file": "audio_tools-00.wav",
+        "first_audio_ms": 1048,
+        "elapsed_seconds": 1.23,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 10,
+          "response.audio.delta": 9,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_voice_normal": {
+      "voice": "Tina",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_AVF27kKXWrohZSQ3PNtgo",
+      "text": "好，那我们就按这个节奏来。先处理重要的工作，再给自己留点休息时间，一步一步推进就好。",
+      "usage": {
+        "total_tokens": 867,
+        "input_tokens": 738,
+        "output_tokens": 129,
+        "input_tokens_details": {
+          "text_tokens": 738
+        },
+        "output_tokens_details": {
+          "text_tokens": 26,
+          "audio_tokens": 103
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 8.24,
+      "audio_file": "omni_voice_Tina_normal-00.wav",
+      "first_audio_ms": 719,
+      "elapsed_seconds": 1.792,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 12,
+        "response.audio.delta": 26,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_voice_slow": {
+      "voice": "Tina",
+      "style": "slow",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_JtvfE8FO5gsnjRQfjJ5kP",
+      "text": "好的，我们一步一步来。先完成重要的工作，再留时间休息，这样安排很合理。",
+      "usage": {
+        "total_tokens": 863,
+        "input_tokens": 744,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 744
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 96
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.68,
+      "audio_file": "omni_voice_Tina_slow-00.wav",
+      "first_audio_ms": 549,
+      "elapsed_seconds": 1.593,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 9,
+        "response.audio.delta": 24,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_voice_fast": {
+      "voice": "Tina",
+      "style": "fast",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_ZpVGaUgKNf7x5I6FB9f2i",
+      "text": "好，那我们就按这个节奏来。先处理重要的工作，再留出休息时间，一步一步推进就好。",
+      "usage": {
+        "total_tokens": 865,
+        "input_tokens": 741,
+        "output_tokens": 124,
+        "input_tokens_details": {
+          "text_tokens": 741
+        },
+        "output_tokens_details": {
+          "text_tokens": 24,
+          "audio_tokens": 100
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 8.0,
+      "audio_file": "omni_voice_Tina_fast-00.wav",
+      "first_audio_ms": 597,
+      "elapsed_seconds": 1.672,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 12,
+        "response.audio.delta": 25,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_voice_alternate": {
+      "voice": "Andre",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_PpEdG9CeiZbRkfrvdZMI1",
+      "text": "好的，我们一步一步来。先完成重要的工作，再留时间休息。",
+      "usage": {
+        "total_tokens": 829,
+        "input_tokens": 738,
+        "output_tokens": 91,
+        "input_tokens_details": {
+          "text_tokens": 738
+        },
+        "output_tokens_details": {
+          "text_tokens": 18,
+          "audio_tokens": 73
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 5.84,
+      "audio_file": "omni_voice_Andre_normal-00.wav",
+      "first_audio_ms": 578,
+      "elapsed_seconds": 1.318,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 6,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_sample": {
+      "voice": "Tina",
+      "style": "sample",
+      "requested_text": "你好，这是一次合成语音测试。今天阳光很好，我们可以慢慢整理计划，先完成最重要的事情，再留一点时间休息。希望你每天都有好心情。",
+      "status": "completed",
+      "response_id": "resp_Db4yd1h5xz3k8p4vjTqmI",
+      "text": "你好，这是一次合成语音测试。今天阳光很好，我们可以慢慢整理计划，先完成最重要的事情，再留一点时间休息。希望你每天都有好心情。",
+      "usage": {
+        "total_tokens": 933,
+        "input_tokens": 747,
+        "output_tokens": 186,
+        "input_tokens_details": {
+          "text_tokens": 747
+        },
+        "output_tokens_details": {
+          "text_tokens": 34,
+          "audio_tokens": 152
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 12.16,
+      "audio_file": "omni_voice_Tina_sample-00.wav",
+      "first_audio_ms": 548,
+      "elapsed_seconds": 2.461,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 10,
+        "response.audio.delta": 38,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_vad_fixture": {
+      "voice": "Tina",
+      "style": "normal",
+      "requested_text": "你好，请问你能听见我说话吗？",
+      "status": "completed",
+      "response_id": "resp_VhJMxlUOksbO8y4lNH1NN",
+      "text": "你好，请问你能听见我说话吗？",
+      "usage": {
+        "total_tokens": 798,
+        "input_tokens": 755,
+        "output_tokens": 43,
+        "input_tokens_details": {
+          "text_tokens": 755
+        },
+        "output_tokens_details": {
+          "text_tokens": 10,
+          "audio_tokens": 33
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 2.64,
+      "audio_file": "omni_voice_Tina_normal_2c4339b0-00.wav",
+      "first_audio_ms": 634,
+      "elapsed_seconds": 0.993,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 3,
+        "response.audio.delta": 9,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_interrupt_fixture": {
+      "voice": "Tina",
+      "style": "normal",
+      "requested_text": "请停一下，我现在想换个话题。",
+      "status": "completed",
+      "response_id": "resp_YgijUxiYZ6YOQhwBW62g7",
+      "text": "请停一下，我现在想换个话题。",
+      "usage": {
+        "total_tokens": 809,
+        "input_tokens": 755,
+        "output_tokens": 54,
+        "input_tokens_details": {
+          "text_tokens": 755
+        },
+        "output_tokens_details": {
+          "text_tokens": 10,
+          "audio_tokens": 44
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 3.52,
+      "audio_file": "omni_voice_Tina_normal_a162348b-00.wav",
+      "first_audio_ms": 733,
+      "elapsed_seconds": 1.045,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 3,
+        "response.audio.delta": 11,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_voice_normal": {
+      "voice": "longanqian_v3.1",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_TK5CHhZrzZl4UTS4tiY7L",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 186,
+        "input_tokens": 67,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 67
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_normal-00.wav",
+      "first_audio_ms": 886,
+      "elapsed_seconds": 1.44,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_voice_slow": {
+      "voice": "longanqian_v3.1",
+      "style": "slow",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_HZSSKZvHCrpkeiUVpzrcS",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 192,
+        "input_tokens": 73,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 73
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_slow-00.wav",
+      "first_audio_ms": 417,
+      "elapsed_seconds": 1.064,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_voice_fast": {
+      "voice": "longanqian_v3.1",
+      "style": "fast",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_NKU5VRTDTFl9kEXwLYMXE",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 189,
+        "input_tokens": 70,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 70
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_fast-00.wav",
+      "first_audio_ms": 403,
+      "elapsed_seconds": 1.096,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_voice_alternate": {
+      "voice": "longanhuan_v3.1",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_NZssILSz9IiKXU3VhvRzd",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 189,
+        "input_tokens": 67,
+        "output_tokens": 122,
+        "input_tokens_details": {
+          "text_tokens": 67
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 98
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.84,
+      "audio_file": "audio_voice_longanhuan_v3.1_normal-00.wav",
+      "first_audio_ms": 406,
+      "elapsed_seconds": 1.155,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 20,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_explicit_normal": {
+      "voice": "Tina",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_Hm5Amg4dohWZyvsdYyB4G",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 876,
+        "input_tokens": 768,
+        "output_tokens": 108,
+        "input_tokens_details": {
+          "text_tokens": 768
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 85
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 6.8,
+      "audio_file": "omni_voice_Tina_normal_b31ebd76-00.wav",
+      "first_audio_ms": 671,
+      "elapsed_seconds": 1.741,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 7,
+        "response.audio.delta": 22,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_explicit_slow": {
+      "voice": "Tina",
+      "style": "slow",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_IKtCQIZEJAzlbEQm4mUQl",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 910,
+        "input_tokens": 780,
+        "output_tokens": 130,
+        "input_tokens_details": {
+          "text_tokens": 780
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 107
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 8.56,
+      "audio_file": "omni_voice_Tina_slow_b31ebd76-00.wav",
+      "first_audio_ms": 651,
+      "elapsed_seconds": 1.93,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 6,
+        "response.audio.delta": 27,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_explicit_fast": {
+      "voice": "Tina",
+      "style": "fast",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_YUSq7GQl6w9F8SidJkRCk",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 883,
+        "input_tokens": 774,
+        "output_tokens": 109,
+        "input_tokens_details": {
+          "text_tokens": 774
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 86
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 6.88,
+      "audio_file": "omni_voice_Tina_fast_b31ebd76-00.wav",
+      "first_audio_ms": 641,
+      "elapsed_seconds": 1.592,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 7,
+        "response.audio.delta": 22,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_explicit_normal": {
+      "voice": "longanqian_v3.1",
+      "style": "normal",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_UfTqQhjNkluAz32iQ1kqF",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 216,
+        "input_tokens": 97,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 97
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_normal_b31ebd76-00.wav",
+      "first_audio_ms": 723,
+      "elapsed_seconds": 1.361,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_explicit_slow": {
+      "voice": "longanqian_v3.1",
+      "style": "slow",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_BjeUKgsFPk6RFRulzLSOU",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 228,
+        "input_tokens": 109,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 109
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_slow_b31ebd76-00.wav",
+      "first_audio_ms": 690,
+      "elapsed_seconds": 1.576,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "audio_explicit_fast": {
+      "voice": "longanqian_v3.1",
+      "style": "fast",
+      "requested_text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "status": "completed",
+      "response_id": "resp_Lt9bHLmJRd5lvuTn2hRdf",
+      "text": "你好，今天我们一起把事情安排好。先完成重要的工作，再留一些时间休息，一步一步来就好。",
+      "usage": {
+        "total_tokens": 222,
+        "input_tokens": 103,
+        "output_tokens": 119,
+        "input_tokens_details": {
+          "text_tokens": 103
+        },
+        "output_tokens_details": {
+          "text_tokens": 23,
+          "audio_tokens": 95
+        }
+      },
+      "tool_calls": [],
+      "audio_seconds": 7.6,
+      "audio_file": "audio_voice_longanqian_v3.1_fast_b31ebd76-00.wav",
+      "first_audio_ms": 676,
+      "elapsed_seconds": 1.648,
+      "event_counts": {
+        "response.created": 1,
+        "response.output_item.added": 1,
+        "conversation.item.created": 1,
+        "response.content_part.added": 1,
+        "response.audio_transcript.delta": 22,
+        "response.audio.delta": 19,
+        "response.audio_transcript.done": 1,
+        "response.audio.done": 1,
+        "response.content_part.done": 1,
+        "response.output_item.done": 1,
+        "response.done": 1
+      },
+      "pass": true
+    },
+    "omni_vad_server_vad": {
+      "mode": "server_vad",
+      "interruption": false,
+      "speech_events": [
+        {
+          "seconds": 0.9856,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_AiCekesMA4gFh8Cb7YSPX",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 0,
+            "item_id": "item_OtaPjSgJ9oseGSMVfa7ii"
+          }
+        },
+        {
+          "seconds": 3.3824,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_ZA5OPgCPdlvvkCIPhzKHf",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 2520,
+            "item_id": "item_OtaPjSgJ9oseGSMVfa7ii"
+          }
+        }
+      ],
+      "response_statuses": [
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_KR6aLLYMuiDdlcJfeYHl8",
+        "text": "你好，收到测试。",
+        "usage": {
+          "total_tokens": 772,
+          "input_tokens": 741,
+          "output_tokens": 31,
+          "input_tokens_details": {
+            "text_tokens": 720,
+            "audio_tokens": 21
+          },
+          "output_tokens_details": {
+            "text_tokens": 7,
+            "audio_tokens": 24
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.92,
+        "audio_file": "omni_vad_server_vad-00.wav",
+        "first_audio_ms": 3583,
+        "elapsed_seconds": 5.153,
+        "event_counts": {
+          "input_audio_buffer.speech_started": 1,
+          "conversation.item.created": 2,
+          "conversation.item.input_audio_transcription.delta": 13,
+          "input_audio_buffer.speech_stopped": 1,
+          "input_audio_buffer.committed": 1,
+          "conversation.item.input_audio_transcription.completed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 2,
+          "response.audio.delta": 6,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_vad_semantic_vad": {
+      "mode": "semantic_vad",
+      "interruption": false,
+      "speech_events": [
+        {
+          "seconds": 1.159,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_YiYqTbZp63xxcCnhe924P",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 0,
+            "item_id": "item_LYy8aZ5PR6hkebr3ZDMMK"
+          }
+        },
+        {
+          "seconds": 3.3715,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_SnnxFSq7fn5iUl3yNEERg",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 2800,
+            "item_id": "item_LYy8aZ5PR6hkebr3ZDMMK"
+          }
+        }
+      ],
+      "response_statuses": [
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_NaIvVmRcRm2zSQcB1ji53",
+        "text": "你好，收到测试。",
+        "usage": {
+          "total_tokens": 772,
+          "input_tokens": 741,
+          "output_tokens": 31,
+          "input_tokens_details": {
+            "text_tokens": 720,
+            "audio_tokens": 21
+          },
+          "output_tokens_details": {
+            "text_tokens": 7,
+            "audio_tokens": 24
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.92,
+        "audio_file": "omni_vad_semantic_vad-00.wav",
+        "first_audio_ms": 3396,
+        "elapsed_seconds": 5.038,
+        "event_counts": {
+          "input_audio_buffer.speech_started": 1,
+          "conversation.item.created": 2,
+          "conversation.item.input_audio_transcription.delta": 13,
+          "input_audio_buffer.speech_stopped": 1,
+          "input_audio_buffer.committed": 1,
+          "conversation.item.input_audio_transcription.completed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 3,
+          "response.audio.delta": 6,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_interrupt": {
+      "mode": "semantic_vad",
+      "interruption": true,
+      "audio_triggered_initial_response": true,
+      "speech_events": [
+        {
+          "seconds": 6.1396,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_SlpqFElpAnbp2hhnAaK2f",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 4800,
+            "item_id": "item_OHmzm2F7MRVjADPGumZDt"
+          }
+        },
+        {
+          "seconds": 6.9795,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_Bb8xVqMGNpT78GpO4WCcV",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 6400,
+            "item_id": "item_OHmzm2F7MRVjADPGumZDt"
+          }
+        },
+        {
+          "seconds": 7.7145,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_X8Ntslsx1svmT7sqCxBiQ",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 6400,
+            "item_id": "item_Lj4n6KemLS8VOng8N4CYp"
+          }
+        },
+        {
+          "seconds": 9.2844,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_RzM29Yg4EQLk3ivc41BL4",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 8600,
+            "item_id": "item_Lj4n6KemLS8VOng8N4CYp"
+          }
+        }
+      ],
+      "response_statuses": [
+        "cancelled",
+        "cancelled",
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_FWU5ybRUB4JvRRStwm8yQ",
+        "text": "可以，你想聊什么？",
+        "usage": {
+          "total_tokens": 1094,
+          "input_tokens": 1061,
+          "output_tokens": 33,
+          "input_tokens_details": {
+            "text_tokens": 998,
+            "audio_tokens": 63
+          },
+          "output_tokens_details": {
+            "text_tokens": 8,
+            "audio_tokens": 25
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 2.0,
+        "audio_file": "omni_vad_semantic_vad_interrupt-00.wav",
+        "first_audio_ms": 4593,
+        "elapsed_seconds": 5.954,
+        "event_counts": {
+          "response.audio_transcript.delta": 57,
+          "response.audio.delta": 26,
+          "response.audio_transcript.done": 3,
+          "response.audio.done": 3,
+          "response.content_part.done": 3,
+          "response.output_item.done": 3,
+          "response.done": 3,
+          "input_audio_buffer.speech_started": 2,
+          "conversation.item.created": 4,
+          "conversation.item.input_audio_transcription.delta": 12,
+          "input_audio_buffer.speech_stopped": 2,
+          "input_audio_buffer.committed": 2,
+          "conversation.item.input_audio_transcription.completed": 2,
+          "response.created": 2,
+          "response.output_item.added": 2,
+          "response.content_part.added": 2
+        }
+      },
+      "pass": true
+    },
+    "audio_vad_server_vad": {
+      "mode": "server_vad",
+      "interruption": false,
+      "speech_events": [
+        {
+          "seconds": 0.9869,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_TS6oZwFLhyii6JxO6mkDL",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 0,
+            "item_id": "item_AfvmSO6w4btV8yXIPCJuU"
+          }
+        },
+        {
+          "seconds": 3.438,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_ZyHUFg9YFuTXKZVE82qVA",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 2520,
+            "item_id": "item_AfvmSO6w4btV8yXIPCJuU"
+          }
+        }
+      ],
+      "response_statuses": [
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_AfvmH2jMdg6LLzzJp4F8c",
+        "text": "你好，收到测试。",
+        "usage": {
+          "total_tokens": 107,
+          "input_tokens": 78,
+          "output_tokens": 29,
+          "input_tokens_details": {
+            "text_tokens": 47,
+            "audio_tokens": 31
+          },
+          "output_tokens_details": {
+            "text_tokens": 6,
+            "audio_tokens": 22
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.76,
+        "audio_file": "audio_vad_server_vad-00.wav",
+        "first_audio_ms": 3475,
+        "elapsed_seconds": 5.084,
+        "event_counts": {
+          "input_audio_buffer.speech_started": 1,
+          "conversation.item.input_audio_transcription.delta": 3,
+          "input_audio_buffer.speech_stopped": 1,
+          "input_audio_buffer.committed": 1,
+          "conversation.item.created": 2,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 5,
+          "conversation.item.input_audio_transcription.completed": 1,
+          "response.audio.delta": 5,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "audio_vad_smart_turn": {
+      "mode": "smart_turn",
+      "interruption": false,
+      "speech_events": [
+        {
+          "seconds": 1.2722,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_Ln2ZwAwMLRx2fxrj5nHtq",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 0,
+            "item_id": "item_WtMoWuAWRFovsctSSug53"
+          }
+        },
+        {
+          "seconds": 3.3009,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_HChNDJ4xOmRSdMM2Ofsw3",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 3000,
+            "item_id": "item_WtMoWuAWRFovsctSSug53"
+          }
+        }
+      ],
+      "response_statuses": [
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_UZhfybB6WIuogGiycLDWU",
+        "text": "你好，收到测试。",
+        "usage": {
+          "total_tokens": 108,
+          "input_tokens": 79,
+          "output_tokens": 29,
+          "input_tokens_details": {
+            "text_tokens": 47,
+            "audio_tokens": 32
+          },
+          "output_tokens_details": {
+            "text_tokens": 6,
+            "audio_tokens": 22
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.76,
+        "audio_file": "audio_vad_smart_turn-00.wav",
+        "first_audio_ms": 3121,
+        "elapsed_seconds": 5.044,
+        "event_counts": {
+          "input_audio_buffer.speech_started": 1,
+          "conversation.item.input_audio_transcription.delta": 3,
+          "input_audio_buffer.speech_stopped": 1,
+          "input_audio_buffer.committed": 1,
+          "conversation.item.created": 2,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 5,
+          "response.audio.delta": 5,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "audio_interrupt": {
+      "mode": "smart_turn",
+      "interruption": true,
+      "speech_events": [
+        {
+          "seconds": 2.6602,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_H9t3IKDGz99DW4FNERbnh",
+            "type": "input_audio_buffer.speech_started",
+            "audio_start_ms": 0,
+            "item_id": "item_MbAqHEP2avGrNlITmvAUI"
+          }
+        },
+        {
+          "seconds": 4.8864,
+          "direction": "recv",
+          "event": {
+            "event_id": "event_GzoF4CUTNeSxXmgvZyVpD",
+            "type": "input_audio_buffer.speech_stopped",
+            "audio_end_ms": 4000,
+            "item_id": "item_MbAqHEP2avGrNlITmvAUI"
+          }
+        }
+      ],
+      "response_statuses": [
+        "cancelled",
+        "completed"
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_FT1XIWqHRt7wNHVh6vjLx",
+        "text": "好的，已停止。",
+        "usage": {
+          "total_tokens": 298,
+          "input_tokens": 265,
+          "output_tokens": 33,
+          "input_tokens_details": {
+            "text_tokens": 220,
+            "audio_tokens": 45
+          },
+          "output_tokens_details": {
+            "text_tokens": 6,
+            "audio_tokens": 26
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 2.08,
+        "audio_file": "audio_vad_smart_turn_interrupt-00.wav",
+        "first_audio_ms": 4186,
+        "elapsed_seconds": 5.95,
+        "event_counts": {
+          "response.audio_transcript.delta": 130,
+          "conversation.item.input_audio_transcription.delta": 5,
+          "response.audio.delta": 25,
+          "response.audio_transcript.done": 2,
+          "response.audio.done": 2,
+          "response.content_part.done": 2,
+          "response.output_item.done": 2,
+          "response.done": 2,
+          "input_audio_buffer.speech_started": 1,
+          "input_audio_buffer.speech_stopped": 1,
+          "input_audio_buffer.committed": 1,
+          "conversation.item.created": 2,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "conversation.item.input_audio_transcription.completed": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_clone": {
+      "creation": {
+        "output": {
+          "target_model": "qwen3.8-omni-flash-realtime",
+          "voice": "qwen-omni-vc-openbox_probe-voice-20261010104110101-815a"
+        },
+        "usage": {
+          "count": 1
+        },
+        "request_id": "3fbc2c22-d3c8-9116-b098-06acc3742d83"
+      },
+      "source": "synthetic Tina sample generated by this probe",
+      "voice_retained": true,
+      "list_http_status": 200,
+      "found_in_first_page": true,
+      "synthesis": {
+        "voice": "qwen-omni-vc-openbox_probe-voice-20261010104110101-815a",
+        "style": "normal",
+        "requested_text": "你好，这是合成测试音频创建的复刻音色，接口验证已经完成。",
+        "status": "completed",
+        "response_id": "resp_XewIGaMDeHB4jMZncL3ob",
+        "text": "好的，接口验证完成。",
+        "usage": {
+          "total_tokens": 766,
+          "input_tokens": 730,
+          "output_tokens": 36,
+          "input_tokens_details": {
+            "text_tokens": 730
+          },
+          "output_tokens_details": {
+            "text_tokens": 8,
+            "audio_tokens": 28
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 2.24,
+        "audio_file": "omni_voice_qwen-omni-vc-openbox_probe-voice-20261010104110101-815a_normal_38814090-00.wav",
+        "first_audio_ms": 868,
+        "elapsed_seconds": 1.014,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 4,
+          "response.audio.delta": 7,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        },
+        "pass": true
+      },
+      "pass": true
+    },
+    "omni_context_prune_restore": {
+      "before_pruning": {
+        "status": "completed",
+        "response_id": "resp_PtpRxfUZO2rkCNaJq3xo5",
+        "text": "你喜欢的颜色是青色，项目代号是海棠73。",
+        "usage": {
+          "total_tokens": 77,
+          "input_tokens": 63,
+          "output_tokens": 14,
+          "input_tokens_details": {
+            "text_tokens": 63
+          },
+          "output_tokens_details": {
+            "text_tokens": 14
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.337,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 4,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "removed": [
+        {
+          "event_id": "event_YrPiUH8R9HKd6WE4ZjshM",
+          "type": "conversation.item.deleted",
+          "item_id": "item_OEHH2kww7VGLzVbYBLAYr"
+        },
+        {
+          "event_id": "event_MuOaXU5KZIN7DXHMHnXYW",
+          "type": "conversation.item.deleted",
+          "item_id": "item_MzUR8JdtbeNsjAhTBnh2J"
+        },
+        {
+          "event_id": "event_OSwD9Bp3fhcIq8IhbxGyr",
+          "type": "conversation.item.deleted",
+          "item_id": "item_SdOqcKSpHFV4Dh8jVex1M"
+        }
+      ],
+      "after_pruning": {
+        "status": "completed",
+        "response_id": "resp_PaAcaJBHB41HLkDBxUrYF",
+        "text": "不知道",
+        "usage": {
+          "total_tokens": 52,
+          "input_tokens": 50,
+          "output_tokens": 2,
+          "input_tokens_details": {
+            "text_tokens": 50
+          },
+          "output_tokens_details": {
+            "text_tokens": 2
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.267,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 1,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "new_session_with_summary": {
+        "status": "completed",
+        "response_id": "resp_BFV9kVOb5YskEV2cKDlTq",
+        "text": "你喜欢青色，项目代号是海棠73。",
+        "usage": {
+          "total_tokens": 77,
+          "input_tokens": 66,
+          "output_tokens": 11,
+          "input_tokens_details": {
+            "text_tokens": 66
+          },
+          "output_tokens_details": {
+            "text_tokens": 11
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.314,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 4,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_manual_audio": {
+      "configuration": {
+        "id": "sess_Kw6AJYkjgJd31OLYWyH4n",
+        "object": "realtime.session",
+        "model": "qwen3.8-omni-flash-realtime",
+        "modalities": [
+          "text",
+          "audio"
+        ],
+        "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+        "voice": "Tina",
+        "input_audio_format": "pcm",
+        "output_audio_format": "pcm",
+        "input_audio_transcription": {
+          "model": "qwen3-asr-flash-realtime"
+        }
+      },
+      "transcripts": [
+        {
+          "event_id": "event_LapwHjXYPQrqsrOSHEGwX",
+          "type": "conversation.item.input_audio_transcription.completed",
+          "item_id": "item_FwHc93FCz7MEuJRWfg5Zc",
+          "content_index": 0,
+          "transcript": "你好，请问你能听见我说话吗？",
+          "language": "zh",
+          "emotion": "neutral"
+        }
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_WMRrXfRs5lZrkKtfAZDIi",
+        "text": "我能听见你说话。",
+        "usage": {
+          "total_tokens": 759,
+          "input_tokens": 731,
+          "output_tokens": 28,
+          "input_tokens_details": {
+            "text_tokens": 710,
+            "audio_tokens": 21
+          },
+          "output_tokens_details": {
+            "text_tokens": 7,
+            "audio_tokens": 21
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.68,
+        "audio_file": "omni_manual_audio-00.wav",
+        "first_audio_ms": 597,
+        "elapsed_seconds": 0.742,
+        "event_counts": {
+          "conversation.item.created": 2,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 3,
+          "conversation.item.input_audio_transcription.delta": 9,
+          "conversation.item.input_audio_transcription.completed": 1,
+          "response.audio.delta": 6,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "omni_cancel_truncate": {
+      "cancel": {
+        "id": "resp_T6XYJ4o2FXcAZYKtbXqqc",
+        "object": "realtime.response",
+        "conversation_id": "conv_YDmRZ16qmzXPDlYbJJpFC",
+        "status": "cancelled",
+        "status_details": {
+          "type": "cancelled",
+          "reason": "client_cancelled"
+        },
+        "modalities": [
+          "text",
+          "audio"
+        ],
+        "voice": "Tina",
+        "output_audio_format": "pcm",
+        "output": [
+          {
+            "id": "item_FelDldmoP8dO1QWBjStMg",
+            "object": "realtime.item",
+            "type": "message",
+            "status": "incomplete",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "audio",
+                "transcript": "好的，我会慢慢来。一、二、三、四、五、六、七、八、九、十、十一、十二、十三、十四、十五、十六、十七、十八、十九、二十、二十一、二十二、二十三、二十四、二十五、二十六、二十七、二十八、二十九、三十"
+              }
+            ]
+          }
+        ]
+      },
+      "cancel_verified": true,
+      "truncate": {
+        "sent": true,
+        "acknowledgement_observed": false,
+        "error_observed": false,
+        "observation_window_seconds": 8,
+        "support": "unverified"
+      },
+      "explanation": "Original combined probe timed out only while waiting for truncate; preceding cancel completed."
+    },
+    "omni_config_boundaries": {
+      "first": {
+        "status": "completed",
+        "response_id": "resp_Gw7V2DxIolm4aQYKrexDW",
+        "text": "你好。",
+        "usage": {
+          "total_tokens": 726,
+          "input_tokens": 710,
+          "output_tokens": 16,
+          "input_tokens_details": {
+            "text_tokens": 710
+          },
+          "output_tokens_details": {
+            "text_tokens": 4,
+            "audio_tokens": 12
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.96,
+        "audio_file": "omni_config_boundaries-00.wav",
+        "first_audio_ms": 463,
+        "elapsed_seconds": 0.499,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 2,
+          "response.audio.delta": 3,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "voice_update": {
+        "event_id": "event_ZEvlidV1D2zUWil995XPN",
+        "type": "session.updated",
+        "session": {
+          "id": "sess_A8PB1WQUDjjwaye3GRfLS",
+          "object": "realtime.session",
+          "model": "qwen3.8-omni-flash-realtime",
+          "modalities": [
+            "text",
+            "audio"
+          ],
+          "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+          "voice": "Andre",
+          "input_audio_format": "pcm",
+          "output_audio_format": "pcm",
+          "input_audio_transcription": {
+            "model": "gummy-realtime-v1"
+          }
+        }
+      },
+      "second": {
+        "status": "completed",
+        "response_id": "resp_QX1w5AhiwPzzJNrMw8rZ6",
+        "text": "第二次测试",
+        "usage": {
+          "total_tokens": 747,
+          "input_tokens": 727,
+          "output_tokens": 20,
+          "input_tokens_details": {
+            "text_tokens": 727
+          },
+          "output_tokens_details": {
+            "text_tokens": 4,
+            "audio_tokens": 16
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.28,
+        "audio_file": "omni_config_boundaries-01.wav",
+        "first_audio_ms": 525,
+        "elapsed_seconds": 0.562,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 2,
+          "response.audio.delta": 4,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "tools_and_search_configuration": {
+        "event_id": "event_WnK5iil7NX4274rMLCFO8",
+        "type": "session.updated",
+        "session": {
+          "id": "sess_A8PB1WQUDjjwaye3GRfLS",
+          "object": "realtime.session",
+          "model": "qwen3.8-omni-flash-realtime",
+          "modalities": [
+            "text",
+            "audio"
+          ],
+          "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+          "voice": "Andre",
+          "input_audio_format": "pcm",
+          "output_audio_format": "pcm",
+          "input_audio_transcription": {
+            "model": "gummy-realtime-v1"
+          },
+          "tools": [
+            {
+              "function": {
+                "name": "noop",
+                "parameters": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "type": "function"
+            }
+          ],
+          "enable_search": true
+        }
+      },
+      "note": "A session.updated echo alone does not prove acoustic or combined tool/search support."
+    },
+    "omni_web_search": {
+      "result": {
+        "status": "completed",
+        "response_id": "resp_Fa9DjijhVMqjSuJr3Pl8k",
+        "text": "https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides",
+        "usage": {
+          "total_tokens": 1792,
+          "input_tokens": 1733,
+          "output_tokens": 59,
+          "input_tokens_details": {
+            "text_tokens": 1733
+          },
+          "output_tokens_details": {
+            "text_tokens": 59
+          },
+          "plugins": {
+            "search": {
+              "count": 1,
+              "strategy": "agent"
+            }
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 2.658,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 6,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "search_events": {
+        "search_results": [
+          {
+            "title": "实时语音对话（Qwen-Audio-Realtime） - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides",
+            "index": 1
+          },
+          {
+            "title": "实时（Qwen-Omni-Realtime） - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/realtime",
+            "index": 2
+          },
+          {
+            "title": "Qwen Audio：打造专属AI 语音助手-阿里云技术解决方案",
+            "url": "https://www.aliyun.com/solution/tech-solution/qwen-audio/",
+            "index": 3
+          },
+          {
+            "title": "WebSocket 接入指南 - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/fun-audiochat-realtime-websocket-api",
+            "index": 4
+          },
+          {
+            "title": "实时语音合成-大模型服务平台百炼(Model Studio) - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/realtime-tts-user-guide",
+            "index": 5
+          },
+          {
+            "title": "qwen-tts实时语音合成交互流程与两种模式-大模型服务平台百炼",
+            "url": "https://help.aliyun.com/zh/model-studio/interactive-process-of-qwen-tts-realtime-synthesis",
+            "index": 6
+          },
+          {
+            "title": "Qwen-Audio-Realtime-大模型服务平台百炼(Model Studio)",
+            "url": "https://help.aliyun.com/zh/model-studio/real-time-voice-conversation-api-references/",
+            "index": 7
+          },
+          {
+            "title": "实时语音识别 - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide",
+            "index": 8
+          },
+          {
+            "title": "实时语音对话- 大模型服务平台百炼- 阿里云",
+            "url": "https://www.alibabacloud.com/help/zh/model-studio/realtime-websocket-dialogue/",
+            "index": 9
+          },
+          {
+            "title": "非实时语音合成 - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/non-realtime-tts-user-guide",
+            "index": 10
+          }
+        ]
+      },
+      "search_evidence": true,
+      "note": "Verified from response.done.search_info and response.done.usage.plugins.search.count.",
+      "search_count": 1
+    },
+    "omni_mcp": {
+      "initial": {
+        "status": "completed",
+        "response_id": "resp_YQtFzkLWHMBSyp9nOXLEj",
+        "text": "",
+        "usage": {
+          "total_tokens": 673,
+          "input_tokens": 610,
+          "output_tokens": 63,
+          "input_tokens_details": {
+            "text_tokens": 610
+          },
+          "output_tokens_details": {
+            "text_tokens": 63
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 3.706,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.mcp_call_arguments.delta": 5,
+          "response.mcp_call_arguments.done": 1,
+          "response.mcp_call.in_progress": 1,
+          "response.mcp_call.completed": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "followup": {
+        "status": "completed",
+        "response_id": "resp_N1JLzUP8LlCxEZAJwgtpR",
+        "text": "Workers是Cloudflare开发者平台上用于创建、开发、部署和管理无服务器应用的服务。",
+        "usage": {
+          "total_tokens": 3968,
+          "input_tokens": 3949,
+          "output_tokens": 19,
+          "input_tokens_details": {
+            "text_tokens": 3949
+          },
+          "output_tokens_details": {
+            "text_tokens": 19
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.785,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 8,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true,
+      "discovered_tools": [
+        "search_cloudflare_documentation",
+        "migrate_pages_to_workers_guide"
+      ],
+      "mcp_event_types": [
+        "response.mcp_call_arguments.delta",
+        "response.mcp_call_arguments.done",
+        "response.mcp_call.in_progress",
+        "response.mcp_call.completed"
+      ]
+    },
+    "audio_context_prune_restore": {
+      "before_pruning": {
+        "status": "completed",
+        "response_id": "resp_XSPYXKqdzmhQVPHfpAYfj",
+        "text": "你喜欢青色，项目代号是海棠 73。",
+        "usage": {
+          "total_tokens": 71,
+          "input_tokens": 58,
+          "output_tokens": 13,
+          "input_tokens_details": {
+            "text_tokens": 58
+          },
+          "output_tokens_details": {
+            "text_tokens": 12
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.273,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 11,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "removed": [
+        {
+          "event_id": "event_HjPMx7Nm11QJrRzsBpPlw",
+          "type": "conversation.item.deleted",
+          "item_id": "item_XSPYVnrcOvG6ciAlzTmU5"
+        },
+        {
+          "event_id": "event_LuJUpKOv3tgdgkvpwoDfc",
+          "type": "conversation.item.deleted",
+          "item_id": "item_XSPYTtgcOfVK83bRni6eX"
+        },
+        {
+          "event_id": "event_Mf6IhjliEVCBGVSNIQ5jy",
+          "type": "conversation.item.deleted",
+          "item_id": "item_XSPYJuLvEQZSSCXX4Bh7D"
+        }
+      ],
+      "after_pruning": {
+        "status": "completed",
+        "response_id": "resp_XSPYLKd2MkeJGvOMUnPfF",
+        "text": "不知道。",
+        "usage": {
+          "total_tokens": 54,
+          "input_tokens": 50,
+          "output_tokens": 4,
+          "input_tokens_details": {
+            "text_tokens": 50
+          },
+          "output_tokens_details": {
+            "text_tokens": 3
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.141,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 2,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "new_session_with_summary": {
+        "status": "completed",
+        "response_id": "resp_OvzCHhOoGcxz5zCDFgt9o",
+        "text": "您喜欢青色，项目代号是海棠 73。",
+        "usage": {
+          "total_tokens": 80,
+          "input_tokens": 66,
+          "output_tokens": 14,
+          "input_tokens_details": {
+            "text_tokens": 66
+          },
+          "output_tokens_details": {
+            "text_tokens": 13
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 0.369,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 12,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true,
+      "validation_note": "Normalize insignificant spaces in 海棠 73; original raw string assertion was too strict."
+    },
+    "audio_manual_audio": {
+      "configuration": {
+        "id": "sess_DQ1cZbchUdxStIXvBeRxe",
+        "object": "realtime.session",
+        "model": "qwen-audio-3.1-realtime-plus",
+        "modalities": [
+          "text",
+          "audio"
+        ],
+        "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+        "voice": "longanqian_v3.1",
+        "input_audio_format": "pcm16",
+        "output_audio_format": "pcm",
+        "input_audio_transcription": {
+          "model": "gummy-realtime-v1",
+          "language": "zh"
+        },
+        "output_audio": {
+          "language": "zh"
+        },
+        "enable_speech_emotion": true
+      },
+      "transcripts": [
+        {
+          "event_id": "event_NnvIOGWO25kbXQBvOHtxa",
+          "type": "conversation.item.input_audio_transcription.completed",
+          "item_id": "item_DQ1cQjOKugWUzp8I13ZGg",
+          "content_index": 0,
+          "transcript": "你好，请问你能听见我说话吗？"
+        }
+      ],
+      "result": {
+        "status": "completed",
+        "response_id": "resp_DQ1cSzsWtJayjdtD6WsH3",
+        "text": "你好！作为一个人工智能助手，我无法直接听到你的声音。我只能通过文字与你交流。你可以将你想说的话输入成文字，我会尽力为你解答。",
+        "usage": {
+          "total_tokens": 247,
+          "input_tokens": 70,
+          "output_tokens": 177,
+          "input_tokens_details": {
+            "text_tokens": 37,
+            "audio_tokens": 33
+          },
+          "output_tokens_details": {
+            "text_tokens": 34,
+            "audio_tokens": 142
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 11.36,
+        "audio_file": "audio_manual_audio-00.wav",
+        "first_audio_ms": 533,
+        "elapsed_seconds": 2.458,
+        "event_counts": {
+          "conversation.item.created": 2,
+          "conversation.item.input_audio_transcription.delta": 3,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 33,
+          "conversation.item.input_audio_transcription.completed": 1,
+          "response.audio.delta": 29,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "pass": true
+    },
+    "audio_cancel_truncate": {
+      "cancel": {
+        "id": "resp_Nx4rJl5OfVuQmOdHxBRE2",
+        "object": "realtime.response",
+        "status": "cancelled",
+        "status_details": {
+          "type": "cancelled",
+          "reason": "client_cancelled"
+        },
+        "modalities": [
+          "text",
+          "audio"
+        ],
+        "voice": "longanqian_v3.1",
+        "output_audio_format": "pcm",
+        "output": [
+          {
+            "id": "item_Nx4rJjrrn1BWWu8Mb5dvf",
+            "object": "realtime.item",
+            "type": "message",
+            "status": "incomplete",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "audio",
+                "transcript": "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2"
+              }
+            ]
+          }
+        ]
+      },
+      "cancel_verified": true,
+      "truncate": {
+        "sent": true,
+        "acknowledgement_observed": false,
+        "error_observed": false,
+        "observation_window_seconds": 8,
+        "support": "unverified"
+      },
+      "explanation": "Original combined probe timed out only while waiting for truncate; preceding cancel completed."
+    },
+    "audio_config_boundaries": {
+      "first": {
+        "status": "completed",
+        "response_id": "resp_U3MFI77sm22ea97FPjuqG",
+        "text": "你好。",
+        "usage": {
+          "total_tokens": 54,
+          "input_tokens": 39,
+          "output_tokens": 15,
+          "input_tokens_details": {
+            "text_tokens": 39
+          },
+          "output_tokens_details": {
+            "text_tokens": 3,
+            "audio_tokens": 11
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.88,
+        "audio_file": "audio_config_boundaries-00.wav",
+        "first_audio_ms": 595,
+        "elapsed_seconds": 0.765,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 2,
+          "response.audio.delta": 3,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "voice_update": {
+        "event_id": "event_ZFOQhQOggoKicfdBvJuSU",
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "code": "invalid_value",
+          "message": "Cannot update 'voice' after session has started processing audio.",
+          "param": "session.update"
+        }
+      },
+      "second": {
+        "status": "completed",
+        "response_id": "resp_U3MFPTdt1qOYM8D7cPviR",
+        "text": "第二次测试。",
+        "usage": {
+          "total_tokens": 83,
+          "input_tokens": 56,
+          "output_tokens": 27,
+          "input_tokens_details": {
+            "text_tokens": 56
+          },
+          "output_tokens_details": {
+            "text_tokens": 4,
+            "audio_tokens": 22
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 1.76,
+        "audio_file": "audio_config_boundaries-01.wav",
+        "first_audio_ms": 625,
+        "elapsed_seconds": 0.785,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 3,
+          "response.audio.delta": 5,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "tools_and_search_configuration": {
+        "event_id": "event_BLjhBzEDU3l6xktjrMkXE",
+        "type": "session.updated",
+        "session": {
+          "id": "sess_U3MFFIwTEyw7jqiW2ww6d",
+          "object": "realtime.session",
+          "model": "qwen-audio-3.1-realtime-plus",
+          "modalities": [
+            "text",
+            "audio"
+          ],
+          "instructions": "你是接口测试助手。遵守用户要求，回答简短准确，不编造信息。",
+          "voice": "longanqian_v3.1",
+          "input_audio_format": "pcm16",
+          "output_audio_format": "pcm",
+          "input_audio_transcription": {
+            "model": "gummy-realtime-v1"
+          },
+          "tools": [
+            {
+              "function": {
+                "name": "noop",
+                "parameters": {
+                  "properties": {},
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ],
+          "enable_search": true
+        }
+      },
+      "note": "A session.updated echo alone does not prove acoustic or combined tool/search support."
+    },
+    "audio_web_search": {
+      "result": {
+        "status": "completed",
+        "response_id": "resp_MuY2QmTIIxVyMyWsHXEPk",
+        "text": "https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides",
+        "usage": {
+          "total_tokens": 1820,
+          "input_tokens": 1756,
+          "output_tokens": 64,
+          "input_tokens_details": {
+            "text_tokens": 1756
+          },
+          "output_tokens_details": {
+            "text_tokens": 62
+          },
+          "plugins": {
+            "search": {
+              "count": 1,
+              "strategy": "agent"
+            }
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 0.0,
+        "audio_file": null,
+        "first_audio_ms": null,
+        "elapsed_seconds": 3.185,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.text.delta": 20,
+          "response.text.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "search_events": {
+        "search_results": [
+          {
+            "title": "实时语音对话（Qwen-Audio-Realtime） - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides",
+            "index": 1
+          },
+          {
+            "title": "实时（Qwen-Omni-Realtime） - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/realtime",
+            "index": 2
+          },
+          {
+            "title": "Qwen Audio：打造专属AI 语音助手-阿里云技术解决方案",
+            "url": "https://www.aliyun.com/solution/tech-solution/qwen-audio/",
+            "index": 3
+          },
+          {
+            "title": "非实时语音合成 - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/non-realtime-tts-user-guide",
+            "index": 4
+          },
+          {
+            "title": "实时语音识别 - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide",
+            "index": 5
+          },
+          {
+            "title": "qwen-tts实时语音合成交互流程与两种模式-大模型服务平台百炼",
+            "url": "https://help.aliyun.com/zh/model-studio/interactive-process-of-qwen-tts-realtime-synthesis",
+            "index": 6
+          },
+          {
+            "title": "实时语音识别（Qwen-ASR-Realtime）Java SDK-API参考",
+            "url": "https://www.alibabacloud.com/help/zh/model-studio/qwen-asr-realtime-java-sdk",
+            "index": 7
+          },
+          {
+            "title": "Qwen-Audio-Realtime-大模型服务平台百炼(Model Studio)",
+            "url": "https://help.aliyun.com/zh/model-studio/real-time-voice-conversation-api-references/",
+            "index": 8
+          },
+          {
+            "title": "实时语音合成-大模型服务平台百炼(Model Studio) - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/realtime-tts-user-guide",
+            "index": 9
+          },
+          {
+            "title": "Qwen-ASR-Realtime - 阿里云文档",
+            "url": "https://help.aliyun.com/zh/model-studio/qwen-asr-realtime-api/",
+            "index": 10
+          }
+        ]
+      },
+      "search_evidence": true,
+      "note": "Verified from response.done.search_info and response.done.usage.plugins.search.count.",
+      "search_count": 1
+    },
+    "omni_long_request_fixture": {
+      "configuration": {
+        "id": "sess_Uk42ouFgtm6gRtQsXaBaE",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "language_type": "chinese"
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000
+      },
+      "requested_text": "请从一数到一百，把每个数字都念出来。",
+      "result": {
+        "status": "completed",
+        "response_id": "resp_ZTu1uugij4wyOJUsuycdR",
+        "text": "",
+        "usage": {
+          "characters": 34,
+          "total_tokens": 55,
+          "input_tokens": 15,
+          "output_tokens": 40,
+          "input_tokens_details": {
+            "text_tokens": 15
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 40
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 3.2,
+        "audio_file": "audio_tts_long_request_fixture-00.wav",
+        "first_audio_ms": 292,
+        "elapsed_seconds": 1.029,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 10,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_DI4bTtE3RXQVlRtEpxBSZ",
+        "type": "session.finished"
+      },
+      "pass": true
+    },
+    "audio_clone": {
+      "creation": {
+        "output": {
+          "preview_audio": {},
+          "voice_id": "qwen-audio-3.1-realtime-plus-obprobe-4a6020cae38e4abdaa948c7c917e3f5b"
+        },
+        "usage": {
+          "count": 1
+        },
+        "request_id": "060c4356-a2ae-92d4-b719-147114a90ffa",
+        "reference_object_key": "research/aliyun-realtime/20261010/9556e8e5c26ad47aa697/synthetic-reference.wav"
+      },
+      "query": {
+        "output": {
+          "gmt_create": "2026-10-10 10:47:58",
+          "gmt_modified": "2026-10-10 10:48:05",
+          "status": "OK",
+          "target_model": "qwen-audio-3.1-realtime-plus",
+          "voice_id": "qwen-audio-3.1-realtime-plus-obprobe-4a6020cae38e4abdaa948c7c917e3f5b"
+        },
+        "usage": {
+          "count": 1
+        },
+        "request_id": "588bf82f-7b9c-9948-b691-60162e50270a"
+      },
+      "synthesis": {
+        "voice": "qwen-audio-3.1-realtime-plus-obprobe-4a6020cae38e4abdaa948c7c917e3f5b",
+        "style": "normal",
+        "requested_text": "你好，这是合成测试素材创建的语音对话音色。",
+        "status": "completed",
+        "response_id": "resp_BnUwOeHbKkfYrWoLir2bq",
+        "text": "你好，这是合成测试素材创建的语音对话音色。",
+        "usage": {
+          "total_tokens": 99,
+          "input_tokens": 86,
+          "output_tokens": 13,
+          "input_tokens_details": {
+            "text_tokens": 86
+          },
+          "output_tokens_details": {
+            "text_tokens": 12
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 4.4,
+        "audio_file": "audio_voice_qwen-audio-3.1-realtime-plus-obprobe-4a6020cae38e4abdaa948c7c917e3f5b_normal_7a652d6c-00.wav",
+        "first_audio_ms": 1018,
+        "elapsed_seconds": 1.372,
+        "event_counts": {
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "conversation.item.created": 1,
+          "response.content_part.added": 1,
+          "response.audio_transcript.delta": 11,
+          "response.audio.delta": 11,
+          "response.audio_transcript.done": 1,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        },
+        "pass": true
+      },
+      "source": "synthetic Tina sample; a single OSS reference object is retained",
+      "voice_retained": true,
+      "pass": true
+    },
+    "tts_normal": {
+      "configuration": {
+        "id": "sess_Ex7MBSjUZh7iPczhvUcyH",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 1.0,
+        "language_type": "chinese"
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 1.0
+      },
+      "result": {
+        "status": "completed",
+        "response_id": "resp_HpNgTrMc1VMtUCu4Dlzcr",
+        "text": "",
+        "usage": {
+          "characters": 79,
+          "total_tokens": 120,
+          "input_tokens": 25,
+          "output_tokens": 95,
+          "input_tokens_details": {
+            "text_tokens": 25
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 95
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 7.6,
+        "audio_file": "tts/audio_tts_normal-00.wav",
+        "first_audio_ms": 323,
+        "elapsed_seconds": 2.142,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 22,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_Q1ghARQkaSKWTbActuJjj",
+        "type": "session.finished"
+      },
+      "pass": true
+    },
+    "tts_slow": {
+      "configuration": {
+        "id": "sess_MIoiI4kpwp1PLl6EoiiUd",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 0.7,
+        "language_type": "chinese"
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 0.7
+      },
+      "result": {
+        "status": "completed",
+        "response_id": "resp_L51c4kBBMhq43raWiFtXz",
+        "text": "",
+        "usage": {
+          "characters": 79,
+          "total_tokens": 142,
+          "input_tokens": 25,
+          "output_tokens": 117,
+          "input_tokens_details": {
+            "text_tokens": 25
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 117
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 13.31,
+        "audio_file": "tts/audio_tts_slow-00.wav",
+        "first_audio_ms": 286,
+        "elapsed_seconds": 2.623,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 25,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_Ny5d1A5C9YWAIVg2X3T6v",
+        "type": "session.finished"
+      },
+      "pass": true
+    },
+    "tts_fast": {
+      "configuration": {
+        "id": "sess_Fly2DZVrphrHFOJRFzNJ3",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 1.3,
+        "language_type": "chinese"
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "speech_rate": 1.3
+      },
+      "result": {
+        "status": "completed",
+        "response_id": "resp_XNwYvMqBDeKrgFEkClCdO",
+        "text": "",
+        "usage": {
+          "characters": 79,
+          "total_tokens": 129,
+          "input_tokens": 25,
+          "output_tokens": 104,
+          "input_tokens_details": {
+            "text_tokens": 25
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 104
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 6.366,
+        "audio_file": "tts/audio_tts_fast-00.wav",
+        "first_audio_ms": 344,
+        "elapsed_seconds": 2.34,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 23,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_KluSBGuV1r8rObYB79qq9",
+        "type": "session.finished"
+      },
+      "pass": true
+    },
+    "tts_pitch_volume": {
+      "configuration": {
+        "id": "sess_N9s2E2D6BTivNCqqxxEij",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "volume": 30,
+        "pitch_rate": 0.8,
+        "language_type": "chinese"
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "pitch_rate": 0.8,
+        "volume": 30
+      },
+      "result": {
+        "status": "completed",
+        "response_id": "resp_ZkG3q52vcZrlH88TJlYwS",
+        "text": "",
+        "usage": {
+          "characters": 79,
+          "total_tokens": 138,
+          "input_tokens": 25,
+          "output_tokens": 113,
+          "input_tokens_details": {
+            "text_tokens": 25
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 113
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 14.013,
+        "audio_file": "tts/audio_tts_pitch_volume-00.wav",
+        "first_audio_ms": 350,
+        "elapsed_seconds": 2.544,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 25,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_Fya4Dy5tYOoyxKgTUWX9D",
+        "type": "session.finished"
+      },
+      "pass": true
+    },
+    "tts_emotion": {
+      "configuration": {
+        "id": "sess_JhUKhBU1ouXBcEYBUu1wl",
+        "object": "realtime.session",
+        "model": "qwen3-tts-instruct-flash-realtime",
+        "instructions": "语气开心活泼，带有明显笑意。",
+        "voice": "Cherry",
+        "mode": "commit",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "language_type": "chinese",
+        "optimize_instructions": true
+      },
+      "requested": {
+        "voice": "Cherry",
+        "mode": "commit",
+        "language_type": "Chinese",
+        "response_format": "pcm",
+        "sample_rate": 24000,
+        "instructions": "语气开心活泼，带有明显笑意。",
+        "optimize_instructions": true
+      },
+      "result": {
+        "status": "completed",
+        "response_id": "resp_Ond4mTugc4cJ5S4Zcehhq",
+        "text": "",
+        "usage": {
+          "characters": 79,
+          "total_tokens": 120,
+          "input_tokens": 25,
+          "output_tokens": 95,
+          "input_tokens_details": {
+            "text_tokens": 25
+          },
+          "output_tokens_details": {
+            "text_tokens": 0,
+            "audio_tokens": 95
+          }
+        },
+        "tool_calls": [],
+        "audio_seconds": 7.6,
+        "audio_file": "tts/audio_tts_emotion-00.wav",
+        "first_audio_ms": 2227,
+        "elapsed_seconds": 4.073,
+        "event_counts": {
+          "input_text_buffer.committed": 1,
+          "response.created": 1,
+          "response.output_item.added": 1,
+          "response.content_part.added": 1,
+          "response.audio.delta": 22,
+          "response.audio.done": 1,
+          "response.content_part.done": 1,
+          "response.output_item.done": 1,
+          "response.done": 1
+        }
+      },
+      "finished": {
+        "event_id": "event_YEw3TQ8bc5zrCHFQuVQjU",
+        "type": "session.finished"
+      },
+      "pass": true
+    }
+  },
+  "vad_stop_to_first_audio_ms_single_trial": {
+    "omni_vad_server_vad": 467,
+    "omni_vad_semantic_vad": 365,
+    "audio_vad_server_vad": 380,
+    "audio_vad_smart_turn": 34
+  },
+  "limitations": [
+    "WebSocket API tests only; no browser speaker/microphone or AEC validation.",
+    "No speaker-similarity, emotion or pitch perceptual evaluation.",
+    "No 120-minute session or maximum-history pressure test.",
+    "No robust noise/backchannel discrimination benchmark.",
+    "Raw results retain diagnostic timeouts; cancel and search outcomes above were reviewed from their original event traces."
+  ],
+  "prior_attempts": [
+    {
+      "case": "omni_clone",
+      "result": {
+        "pass": false,
+        "error_type": "TimeoutError",
+        "error": "timed out during opening handshake"
+      }
+    },
+    {
+      "case": "omni_long_request_fixture",
+      "result": {
+        "pass": false,
+        "error_type": "TimeoutError",
+        "error": ""
+      }
+    },
+    {
+      "case": "omni_interrupt",
+      "result": {
+        "pass": false,
+        "error_type": "ProviderError",
+        "error": "{\"code\": \"COMMON_ERROR\", \"message\": \"<50002> InternalError.Algo.ModelServingError: Internal Error calling model processing.\"}"
+      }
+    },
+    {
+      "case": "audio_explicit_normal",
+      "result": {
+        "pass": false,
+        "error_type": "TimeoutError",
+        "error": "timed out during opening handshake"
+      }
+    },
+    {
+      "case": "audio_manual_audio",
+      "result": {
+        "pass": false,
+        "error_type": "TimeoutError",
+        "error": "timed out during opening handshake"
+      }
+    }
+  ],
+  "trace_index": [
+    {
+      "path": "audio_basic.events.json",
+      "sha256": "84d67012969ffec88f0cd7f1c21bde887fb3412c8639313206e33470ffae685e"
+    },
+    {
+      "path": "audio_cancel.events.json",
+      "sha256": "f43358fe2cf1954cb6eed201c5616e3dc08a6b46f42f8c105cc6ae82687a6782"
+    },
+    {
+      "path": "audio_config_boundaries.events.json",
+      "sha256": "c73119584e61b624d5e0f933077e84d1773d45505b69ba023fa9da67146c3006"
+    },
+    {
+      "path": "audio_context_prune.events.json",
+      "sha256": "6a23bdfac267559808df8a9367d37cae44da01c0bd7abcadcab5f66707a8954c"
+    },
+    {
+      "path": "audio_context_restore.events.json",
+      "sha256": "5d7d5bc6fbddf5fa3efd2d5bd3ec937f96e644d231073809530d094e27198e1a"
+    },
+    {
+      "path": "audio_manual_audio.events.json",
+      "sha256": "0515611344572dff016efbfea70f8435e3c7613e5df7113fd751fc666de75f83"
+    },
+    {
+      "path": "audio_tools.events.json",
+      "sha256": "bc75ea38ac9806c2148f175d7622d1e35f5e075433ff411421344193ab4bad15"
+    },
+    {
+      "path": "audio_tts_long_request_fixture.events.json",
+      "sha256": "d426456610700ae2f10fb7d7b401ad949b84b0930f1d406e008259dba5f72c4c"
+    },
+    {
+      "path": "audio_vad_server_vad.events.json",
+      "sha256": "9ebdb674c7f19580d65823219542d106e4a8a56271b19b6659abd84f55801e8a"
+    },
+    {
+      "path": "audio_vad_smart_turn.events.json",
+      "sha256": "35200cc0f629410c5358052275b6a744716d9b4595d85f872a79d1c0cad2deef"
+    },
+    {
+      "path": "audio_vad_smart_turn_interrupt.events.json",
+      "sha256": "ae30d9985d6bbff53fa9d5dcc22b5b4780ae3844822c8fa6887debfb839d2464"
+    },
+    {
+      "path": "audio_voice_longanhuan_v3.1_normal.events.json",
+      "sha256": "7239275b461c8dc5bba50c8f9ba0bee96a4fa8717367a6a3be3f6370e483c768"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_fast.events.json",
+      "sha256": "40f495f8a3a29563439ae6072d6e271e1790ba2ed6a6162b891a8c05b1368895"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_fast_b31ebd76.events.json",
+      "sha256": "a71cc47fea94679d6291f9fb7f0d788a9b0ae508e0d26f907e273bfb263f4dc2"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_normal.events.json",
+      "sha256": "ebe37cefd457294ed1bcb29fefd053d71e121267f196185ace709ed9da6af31b"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_normal_b31ebd76.events.json",
+      "sha256": "cab398ec61c486671ea6431d5259930ef988eb11d845f21dc6d2442966100cf8"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_slow.events.json",
+      "sha256": "93c38fcf005d83cdd397e5af955a1b01b83377bd4f92f8916cb7534e7ddf9f05"
+    },
+    {
+      "path": "audio_voice_longanqian_v3.1_slow_b31ebd76.events.json",
+      "sha256": "c7ab05146344d38b2ca1a730eb78d8dc209f5ac2d5d578f15c772a7ba167c0f4"
+    },
+    {
+      "path": "audio_voice_qwen-audio-3.1-realtime-plus-obprobe-4a6020cae38e4abdaa948c7c917e3f5b_normal_7a652d6c.events.json",
+      "sha256": "a9286133e238b057b6f5409b9bbf060d0ac58880c9fdd19536ae7b85e6382ee5"
+    },
+    {
+      "path": "audio_web_search.events.json",
+      "sha256": "23813ee37cd7e20e7f989b29d411aa54841e83a9b1016c35b66ee1a02d75f294"
+    },
+    {
+      "path": "omni_basic.events.json",
+      "sha256": "63dab368ed357ba3a1f79568fc444386299de9b07237a2ae2d288f876ac91ffc"
+    },
+    {
+      "path": "omni_cancel.events.json",
+      "sha256": "d4a4b0e9bbdc3caac39aaaabc912d6768f0272ed1ee1e600b0a7ba022891471d"
+    },
+    {
+      "path": "omni_config_boundaries.events.json",
+      "sha256": "c111a4c2b9389f0317df0e0164865a280e2fe7ffb3066d076e9ba7946b8d13a1"
+    },
+    {
+      "path": "omni_context_prune.events.json",
+      "sha256": "c6894337a6b887dd188bf23ab86049a68c2c67d4f94a184afaed07379bdd5db0"
+    },
+    {
+      "path": "omni_context_restore.events.json",
+      "sha256": "c5af2d942151b513f49c24efa707d305d2e4d06bcc613092777e50ce9624aac7"
+    },
+    {
+      "path": "omni_manual_audio.events.json",
+      "sha256": "f50a4847cd01048b3324fdf24b5a6181f0ba3d1fa31f32ab18c919640e58a57d"
+    },
+    {
+      "path": "omni_mcp.events.json",
+      "sha256": "9bf593b4178fad35877e839d6670b86c2e09e3ccfadb21c31cda12d454fcfa6e"
+    },
+    {
+      "path": "omni_tools.events.json",
+      "sha256": "ff7b51909edd214cae98323f41fbe75e98af3d2e2ffaaf9cd73f41ac3196e121"
+    },
+    {
+      "path": "omni_vad_semantic_vad.events.json",
+      "sha256": "8983c9ff37f0b4258b8ae45f596c748da3b76c473b86e3a96008b2e6e4e106cd"
+    },
+    {
+      "path": "omni_vad_semantic_vad_interrupt.879ca5f3.events.json",
+      "sha256": "40fed055d4ccacd6b1a9931f306c714ab94bba00a3e690226973aecbb438113b"
+    },
+    {
+      "path": "omni_vad_semantic_vad_interrupt.events.json",
+      "sha256": "d28df9f646951f58f15b326dea02439bcba4ffaef9158708d64a1a5eff89d076"
+    },
+    {
+      "path": "omni_vad_server_vad.events.json",
+      "sha256": "993d79170f1be3a889a283df08c2f1f8bc6c77f10beae41428e83d516753a02d"
+    },
+    {
+      "path": "omni_voice_Andre_normal.events.json",
+      "sha256": "c8a231a3ffc36cf3e60277a0b4ab7ffad570cebb2f00a9f0183f96de7b79ca54"
+    },
+    {
+      "path": "omni_voice_Tina_fast.events.json",
+      "sha256": "3c68618be664173e0ebf28df48b212e00d319a037ef8873e746bdbc7ecd988cc"
+    },
+    {
+      "path": "omni_voice_Tina_fast_b31ebd76.events.json",
+      "sha256": "b15f7dbad3b6351485a3e7091db47e658a3c98e1ffb72baad3e78431d266bbc3"
+    },
+    {
+      "path": "omni_voice_Tina_normal.events.json",
+      "sha256": "da158088b9cc0f14e363c56ea0a10846ab8146a54c2fd7dc1b7174b1688dfa15"
+    },
+    {
+      "path": "omni_voice_Tina_normal_0357277f.events.json",
+      "sha256": "b429a0f1fec9211dc92b6c4c9d52ef40cae4dc406d0f66f0869aa424e9a8fe8e"
+    },
+    {
+      "path": "omni_voice_Tina_normal_2c4339b0.events.json",
+      "sha256": "8ba71493d19dd1c0aea08272d06b0afaff071d0f536be7038a536d593a328944"
+    },
+    {
+      "path": "omni_voice_Tina_normal_a162348b.events.json",
+      "sha256": "9c08d4ee213a8ef7e9532b47a6969ac866ade3442e93a7b840bbfe5c7451c6ee"
+    },
+    {
+      "path": "omni_voice_Tina_normal_b31ebd76.events.json",
+      "sha256": "3ac15f9651c0fa4f81aa53715769f3fd3927c038a4ddc748782d1d808f8d8f17"
+    },
+    {
+      "path": "omni_voice_Tina_sample.events.json",
+      "sha256": "0e5e99f984ae63ecb1603b701e30ee88741329779e7cf0de376cdbe860f4c4d0"
+    },
+    {
+      "path": "omni_voice_Tina_slow.events.json",
+      "sha256": "eb27ac197347239aa8b58e0797eb7a73584bc05bb9bcbce463189b82687f5d31"
+    },
+    {
+      "path": "omni_voice_Tina_slow_b31ebd76.events.json",
+      "sha256": "4672aae309ecd694e5847a45b5f9ec2dc55ee098b746592e0fbf8877af9b3973"
+    },
+    {
+      "path": "omni_voice_qwen-omni-vc-openbox_probe-voice-20261010104110101-815a_normal_38814090.events.json",
+      "sha256": "1a8beb7e249a765543e2aa970aabd446bf27b32aa3613d875dc036469281a1b3"
+    },
+    {
+      "path": "omni_web_search.events.json",
+      "sha256": "c60cafe7dfcb7b981699d365fa63622e1c782a78244457c86f9756087159fac9"
+    },
+    {
+      "path": "tts/audio_tts_emotion.events.json",
+      "sha256": "7e2c06d9a080c4859793e3463cd6ef04b70a5f97f7788770af88c9a0353cb3a7"
+    },
+    {
+      "path": "tts/audio_tts_fast.events.json",
+      "sha256": "a4ab63675822f0527a9c6707444d6923c2acfed9ceb914fd182c932680b3142e"
+    },
+    {
+      "path": "tts/audio_tts_normal.events.json",
+      "sha256": "5e592b1ac88d7534388f59eabd1253fdc0b24d23225557201f384d43caba1289"
+    },
+    {
+      "path": "tts/audio_tts_pitch_volume.events.json",
+      "sha256": "c9794ddaa5e75cbd5f2ebfefbbfc607ef2f2744e170043cc8a1e2dce78ac2806"
+    },
+    {
+      "path": "tts/audio_tts_slow.events.json",
+      "sha256": "f38ce97aaeee66d20ac57a0ce3f18d71681a4cbc5e1b40e9416378dfc6b5e666"
+    }
+  ]
+}

@@ -189,7 +189,8 @@ async def test_manager_health_uses_cached_pool_and_shutdown_closes_it(action_ser
     provider.delete_container.assert_not_called()
 
 
-async def test_manager_rotation_closes_old_pool_before_using_new_credentials(monkeypatch):
+@pytest.mark.parametrize("prepare", [True, False])
+async def test_manager_rotation_closes_old_pool_before_using_new_credentials(monkeypatch, prepare):
     manager = SandboxManager()
     key = _map_key("alice")
     old = SandboxClient("127.0.0.1", 9000, "old-key", reuse_connections=True)
@@ -199,16 +200,37 @@ async def test_manager_rotation_closes_old_pool_before_using_new_credentials(mon
     manager._clients[key] = old
     manager._session_project["session-a"] = key
     provider = MagicMock()
+    provider.owns_containers = False
     provider.routes_per_user = True
     provider.resolve_user_container = AsyncMock(return_value=SimpleNamespace(
         id="desktop-a", host="127.0.0.1", port=9001, api_key="new-key", status=ContainerStatus.RUNNING))
     provider.client_base_url = None
     monkeypatch.setattr("sandbox.provider", provider)
     monkeypatch.setattr(manager, "_ensure_session_dir", AsyncMock())
-    await manager._acquire_for_user("session-a", "default", user_id="alice", owner="alice")
+    await manager._acquire_for_user("session-a", "default", user_id="alice", owner="alice", prepare=prepare)
     with pytest.raises(RuntimeError, match="closed"):
         await old.execute("true")
     new = manager._clients[key]
     assert new.api_key == "new-key" and new.base_url.endswith(":9001")
     assert new._reuse_connections
     await manager.release_all(destroy=False)
+
+
+async def test_network_timing_excludes_authorization_and_body_consumer(action_server, monkeypatch):
+    from agent import latency
+    from tests.unit.test_agent_latency import Clock
+    clock = Clock()
+    timing = latency.RunTiming(clock)
+    token = latency.current.set(timing)
+    client = sandbox_for(action_server)
+    async def authorize(request):
+        clock.advance(2)
+    monkeypatch.setattr(client, "_authorize_request", authorize)
+    try:
+        await client.execute("true")
+        clock.advance(3)
+        assert timing.network_snapshot()["internal_ms"] == 5000
+        assert timing.network_snapshot()["runtime_network_wait_ms"] == 0
+    finally:
+        await client.aclose()
+        latency.current.reset(token)

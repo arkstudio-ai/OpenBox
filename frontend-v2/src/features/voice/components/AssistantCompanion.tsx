@@ -42,7 +42,9 @@ export function AssistantCompanion({ children, settings: Settings }: Props) {
   const [page, setPage] = useState<"chat" | "settings">("chat")
   const open = opened || (call.status !== "idle" && call.expanded)
   const quickMute = call.status === "connected" && !open
-  const orb = useFloatingPosition(`bossip:companion:${userId}:orb`, { width: 72, height: quickMute ? 148 : 96 })
+  // Keep the launcher clear of send/stop and attachment controls, including
+  // narrow desktop windows where the composer reaches the viewport edge.
+  const orb = useFloatingPosition(`bossip:companion:${userId}:orb`, { width: 72, height: quickMute ? 148 : 96 }, 160)
   const panel = useFloatingPosition(`bossip:companion:${userId}:panel`, { width: 424, height: 660 })
   const windowRef = useRef<HTMLDivElement>(null)
   const launcherRef = useRef<HTMLButtonElement>(null)

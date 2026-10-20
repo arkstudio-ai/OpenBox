@@ -146,6 +146,26 @@ async def test_unresponsive_external_sandbox_preserves_warm_client_projection(
     manager._ensure_session_dir.assert_not_awaited()
 
 
+async def test_catalogue_acquire_skips_preparation_but_still_checks_route(manager, sandbox_info):
+    key = _map_key("user1")
+    manager._project_map[key] = sandbox_info
+    client = manager._clients[key] = MagicMock(spec=SandboxClient)
+    manager._verify_sandbox_alive = AsyncMock(return_value=True)
+    manager._ensure_session_dir = AsyncMock()
+    provider = MagicMock(owns_containers=False, routes_per_user=True)
+    provider.resolve_user_container = AsyncMock(return_value=MagicMock(
+        id=sandbox_info.container_id, host=sandbox_info.host, port=sandbox_info.port,
+        api_key=sandbox_info.api_key))
+    with patch("sandbox.provider", provider):
+        assert await manager.get_client("sess1", user_id="user1", prepare=False) is client
+        manager._verify_sandbox_alive.assert_not_awaited()
+        manager._ensure_session_dir.assert_not_awaited()
+        provider.resolve_user_container.side_effect = PermissionError("revoked")
+        with pytest.raises(PermissionError):
+            await manager.get_client("sess1", user_id="user1", prepare=False)
+    assert provider.resolve_user_container.await_count == 2
+
+
 # ── acquire() with dead container ──
 
 @pytest.mark.asyncio

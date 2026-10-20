@@ -36,6 +36,7 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "tasks.submit": "question",
     "assets.attach": "question",
     "requests.answer": "question",
+    "requests.revise": "question",
     "projects.delete": "question",
     "sessions.delete": "question",
     "tasks.delete": "question",
@@ -343,7 +344,7 @@ async def _owned_request(request_id: str, user_id: str) -> QuestionCheckpoint:
 
 
 def _check_pending(row: QuestionCheckpoint, execution: SessionExecution) -> None:
-    if row.generation != execution.generation:
+    if row.generation != execution.generation and not row.detached:
         raise QuestionGone("superseded")
     if row.status != "pending":
         raise QuestionGone(row.status)
@@ -395,7 +396,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
 
 
 async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user",
-                         placement_project_name=None):
+                         placement_project_name=None, enqueue_detached=True):
     """Shared question mutation; caller owns the Session transaction."""
     status = "rejected" if answers is None else "answered"
     questions = [Question(**q) for q in row.questions]
@@ -409,7 +410,11 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
         if (not placement or new_project_option(placement) is None
                 or clean != [[new_project_option(placement)]] or not name or len(name) > MAX_NAME):
             raise ValueError("Invalid project name or placement option")
-    if row.generation != execution.generation:
+    if row.detached:
+        from assistant.pending import detachable
+        if not detachable(row, session):
+            raise QuestionGone("superseded")
+    if row.generation != execution.generation and not row.detached:
         raise QuestionGone("superseded")
     if row.status in ("answered", "rejected"):
         if (row.status != status or row.answers != clean
@@ -434,6 +439,11 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
                             {"answers": clean, "attachments": files, "decision": status, "source_kind": source_kind})
     from notifications.events import cancel_event
     await cancel_event(db, row.user_id, f"question:{row.id}")
+    if row.detached:
+        from assistant.pending import finish_locked
+        await finish_locked(db, session, execution, row, enqueue=enqueue_detached)
+        await db.flush()
+        return True
     execution.resume_pending = True
     execution.resume_error = None
     execution.next_attempt_at = None
@@ -480,7 +490,7 @@ async def list_pending(user_id: str) -> list[QuestionRequest]:
             .where(QuestionCheckpoint.user_id == user_id, Session.user_id == user_id,
                    Session.is_deleted == False,  # noqa: E712
                    QuestionCheckpoint.status == "pending",
-                   QuestionCheckpoint.generation == SessionExecution.generation)
+                   (QuestionCheckpoint.generation == SessionExecution.generation) | QuestionCheckpoint.detached.is_(True))
             .order_by(QuestionCheckpoint.created_at))).all()
         from assistant.requests import validate_question_read
         from assistant.policy import AssistantError

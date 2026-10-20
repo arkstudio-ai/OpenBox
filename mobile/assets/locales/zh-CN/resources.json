@@ -42,7 +42,7 @@
   },
   "list": {
     "title": "资源中心",
-    "searchPlaceholder": "搜索资源名称",
+    "searchPlaceholder": "搜索资源名称或描述",
     "empty": "这里还没有资源",
     "emptyHint": "上传文件，或让模型把产出交回给你。",
     "allLoaded_one": "已加载全部 {{count}} 个资源",
@@ -75,5 +75,19 @@
   "toast": {
     "deleted_one": "已删除 {{count}} 个资源",
     "deleted_other": "已删除 {{count}} 个资源"
+  },
+  "description": {
+    "label": "素材描述",
+    "placeholder": "例如：穿着香蕉皮的黄色小猫，透明背景；或视频中出现的人物、场景。",
+    "hint": "文字和语音助手都可以按这段描述查找素材。",
+    "save": "保存描述",
+    "saving": "保存中…",
+    "error": "描述保存失败，请重试。",
+    "recognizing": "AI 正在识别图片，完成后会自动填写描述。你也可以先手动填写。",
+    "recognized": "AI 已填写描述，可按需要修改。",
+    "recognitionFailed": "图片识别暂未成功，可重试或手动填写描述。",
+    "unsupported": "自动识别支持 10 MB 以内的 JPG、PNG 和 WebP 图片，请为此素材手动填写描述。",
+    "autoHint": "上传图片会自动识别；手动填写的描述优先保留。",
+    "recognize": "AI 识别描述"
   }
 }

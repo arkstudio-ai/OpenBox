@@ -76,7 +76,7 @@ class ImageGenArgs(BaseModel):
     )
     background: Literal["auto", "opaque", "transparent"] | None = Field(
         default=None,
-        description="Background mode. Configured gpt-image-2 does not support native transparent output.",
+        description="Background mode. Native transparency depends on the configured image model's capabilities.",
     )
     filename: str | None = Field(
         default=None,

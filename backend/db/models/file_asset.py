@@ -8,7 +8,7 @@ and whether a person or the agent produced it, which is what the two-level
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, String, text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -27,6 +27,11 @@ class FileAsset(Base):
     #: at upload time), which the UI shows in its own bucket.
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
+    description_updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    description_state: Mapped[str] = mapped_column(String(16), nullable=False, default="none", server_default="none")
+    description_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    description_lease_until: Mapped[datetime | None] = mapped_column(nullable=True)
     #: Object key inside the asset bucket (assets/{user}/{asset}/{name}).
     oss_key: Mapped[str] = mapped_column(String(512), nullable=False)
     mime: Mapped[str] = mapped_column(String(128), nullable=False, default="application/octet-stream")
@@ -50,4 +55,5 @@ class FileAsset(Base):
         Index("ix_file_assets_user_created", "user_id", "created_at"),
         Index("ix_file_assets_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_file_assets_user_project", "user_id", "project_id", "created_at"),
+        Index("ix_file_assets_description_work", "description_state", "description_lease_until"),
     )

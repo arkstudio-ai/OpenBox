@@ -1,7 +1,9 @@
 """OpenBox unified server: sandbox management + AI agent platform."""
 import asyncio
+import importlib
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -151,6 +153,14 @@ async def lifespan(app: FastAPI):
     from core.config import get_config
     config = get_config()
 
+    # LiteLLM's first import is expensive and may fetch its price map. Do it
+    # before accepting requests, off the event loop, using the same local-map
+    # default as the production image. No model request or billing occurs.
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    warmup_started = time.monotonic()
+    await asyncio.to_thread(importlib.import_module, "litellm")
+    log.info("Model runtime ready warmup_ms=%.1f", (time.monotonic() - warmup_started) * 1000)
+
     _init_infrastructure(config)
     _init_agent()
 
@@ -255,6 +265,9 @@ async def lifespan(app: FastAPI):
     memory_wiki_worker.start()
     wiki_organization_worker.start()
     memory_document_worker.start()
+    from assets.descriptions import DescriptionWorker
+    asset_description_worker = DescriptionWorker()
+    asset_description_worker.start()
 
     from notifications.providers import PushProviders
     from notifications.runtime import PushWorker
@@ -282,6 +295,7 @@ async def lifespan(app: FastAPI):
     await memory_wiki_worker.stop()
     await wiki_organization_worker.stop()
     await memory_document_worker.stop()
+    await asset_description_worker.stop()
     await memory_index_worker.stop()
     await memory_extraction_worker.stop()
     await inbox_janitor.stop()
@@ -319,6 +333,9 @@ async def lifespan(app: FastAPI):
 
     # Execution leases recover interrupted runs. Never mark every busy
     # session as failed here: other workers may still be executing them.
+
+    from agent.gateway import close_clients
+    await close_clients()
 
     # Close Redis event bus
     from tool.registry import shutdown_platform_plugins

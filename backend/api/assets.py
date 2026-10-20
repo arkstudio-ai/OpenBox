@@ -16,13 +16,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import or_, select
 
 from api.asset_kinds import KINDS, kind_of
 from auth.jwt import decode_asset_download_token
 from auth.middleware import get_current_user, get_optional_current_user
 from auth.workspace import get_workspace
+from bus import bus
+from bus.events import ASSET_UPDATED
 from core.config import get_config
 from core.identifier import ascending
 from core.log import create_logger
@@ -48,15 +50,29 @@ class CreateAssetBody(BaseModel):
     session_id: str | None = None
     #: Explicit filing; when absent the session's project is used.
     project_id: str | None = None
+    description: str = Field(default="", max_length=2000)
 
 
 class RenameAssetBody(BaseModel):
-    name: str
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def has_change(self):
+        if self.name is None and self.description is None:
+            raise ValueError("Provide a name or description")
+        return self
 
 
 def _clean_name(name: str) -> str:
     cleaned = re.sub(r"[^\w.一-鿿-]", "_", name or "file").strip("._") or "file"
     return cleaned[:200]
+
+
+def _updated(row: FileAsset) -> None:
+    """Publish only after commit; listeners recheck their own SQL scope."""
+    bus.publish(ASSET_UPDATED, {"userId": row.user_id, "workspaceId": row.workspace_id,
+                               "assetId": row.id})
 
 
 def _oss_or_503():
@@ -126,6 +142,7 @@ async def create_asset(
                 session_id=body.session_id,
                 project_id=project_id,
                 name=name,
+                description=body.description.strip(),
                 oss_key=key,
                 mime=mime,
                 size=body.size,
@@ -148,7 +165,7 @@ async def create_asset(
 
 
 async def _owned_asset(
-    db, asset_id: str, user_id: str, workspace_id: str | None = None
+    db, asset_id: str, user_id: str, workspace_id: str | None = None, *, for_update=False
 ) -> FileAsset:
     from session.policy import asset_audience
     conditions = [
@@ -159,11 +176,8 @@ async def _owned_asset(
     ]
     if workspace_id:
         conditions.append(FileAsset.workspace_id == workspace_id)
-    row = (
-        await db.execute(
-            select(FileAsset).where(*conditions)
-        )
-    ).scalar_one_or_none()
+    stmt = select(FileAsset).where(*conditions)
+    row = (await db.execute(stmt.with_for_update() if for_update else stmt)).scalar_one_or_none()
     if not row:
         raise HTTPException(404, detail="Asset not found")
     return row
@@ -178,6 +192,8 @@ def _to_item(row: FileAsset, oss) -> dict:
     return {
         "id": row.id,
         "name": row.name,
+        "description": row.description or "",
+        "descriptionState": row.description_state,
         "mime": row.mime,
         "size": row.size,
         "kind": kind_of(row.mime, row.name),
@@ -217,7 +233,8 @@ async def list_assets(
         stmt = stmt.where(FileAsset.source == source)
     needle = q.strip()
     if needle:
-        stmt = stmt.where(FileAsset.name.ilike(f"%{needle}%"))
+        stmt = stmt.where(or_(FileAsset.name.icontains(needle, autoescape=True),
+                              FileAsset.description.icontains(needle, autoescape=True)))
 
     order = {
         "name": FileAsset.name.asc(),
@@ -288,7 +305,7 @@ async def complete_asset(
     async with get_db_session() as db:
         # Recheck access and deletion after the remote check, before committing.
         row = await _owned_asset(
-            db, asset_id, current_user["user_id"], current_user["workspace_id"])
+            db, asset_id, current_user["user_id"], current_user["workspace_id"], for_update=True)
         # Never trust the size declared when the ticket was opened: a caller
         # can PUT a larger object to the same signed key. Enforce the ceiling
         # against the object OSS actually received.
@@ -305,6 +322,8 @@ async def complete_asset(
             raise HTTPException(413, detail="File too large (max 1 GB)")
         row.size = actual_size or row.size
         row.status = "ready"
+        from assets.descriptions import queue
+        queue(row)
         if row.session_id:
             from trajectory.producers import activity_context, paused_in_tx
             from trajectory.artifacts import capture_asset_in_tx
@@ -314,6 +333,23 @@ async def complete_asset(
             if trace is not None and not await paused_in_tx(db, trace):
                 await capture_asset_in_tx(db, trace, row, role="input")
         await db.commit()
+        _updated(row)
+        return _to_item(row, oss)
+
+
+@router.post("/{asset_id}/describe")
+async def describe_asset(asset_id: str, current_user: dict = Depends(get_current_user),
+                         _workspace: dict = Depends(get_workspace)):
+    """Retry recognition without replacing a user's existing description."""
+    from assets.descriptions import queue
+    oss = _oss_or_503()
+    async with get_db_session() as db:
+        row = await _owned_asset(db, asset_id, current_user["user_id"], current_user["workspace_id"], for_update=True)
+        if row.description.strip():
+            raise HTTPException(409, detail="A description already exists")
+        queue(row, retry=True)
+        await db.commit()
+        _updated(row)
         return _to_item(row, oss)
 
 
@@ -427,13 +463,18 @@ async def rename_asset(
 ):
     """Rename the resource. The OSS key is immutable — only the label moves."""
     oss = _oss_or_503()
-    name = _clean_name(body.name)
     async with get_db_session() as db:
         row = await _owned_asset(
             db, asset_id, current_user["user_id"], current_user["workspace_id"]
         )
-        row.name = name
+        if body.name is not None:
+            row.name = _clean_name(body.name)
+        if body.description is not None:
+            row.description = body.description.strip()
+            row.description_updated_at = datetime.now(timezone.utc)
+            row.description_state, row.description_lease_until = "manual", None
         await db.commit()
+        _updated(row)
         return _to_item(row, oss)
 
 
@@ -459,6 +500,7 @@ async def delete_asset(
         from trajectory.artifacts import revoke_asset_in_tx
         revoke_asset_in_tx(db, row.id, user_id=row.user_id, deleted_at=row.deleted_at)
         await db.commit()
+        _updated(row)
     try:
         await oss.delete(key)
     except Exception as e:

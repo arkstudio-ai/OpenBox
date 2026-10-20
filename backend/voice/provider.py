@@ -148,6 +148,10 @@ def translate(event: dict, key: str = "") -> ProviderEvent | None:
             return None
         return ProviderEvent("audio", response_id=event.get("response_id"), audio=audio,
                              event_id=str(event.get("event_id") or ""))
+    if kind in ("response.audio_transcript.delta", "response.text.delta"):
+        text = str(event.get("delta") or "")
+        return ProviderEvent("assistant_transcribing", response_id=event.get("response_id"),
+                             text=text, item_id=str(event.get("item_id") or "")) if text else None
     if kind in ("response.audio_transcript.done", "response.text.done"):
         # Text-only sessions (tests, probes) report the reply as text instead of a transcript.
         return ProviderEvent("assistant_transcript", response_id=event.get("response_id"),
@@ -276,7 +280,7 @@ class RealtimeProvider:
             "modalities": ["text", "audio"],
             "voice": voices.resolve(None, config.voice, config.model), "instructions": instructions,
             "input_audio_format": "pcm", "output_audio_format": "pcm",
-            "tools": TOOLS,
+            "tools": TOOLS,  # native conversation and scoped reads; explicit assistant_ask hands off work
         }
         if is_audio(config.model):
             # Smart turn can defer speech_started until the whole utterance

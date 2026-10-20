@@ -43,6 +43,7 @@ export function CompanionCallControls() {
           <VoiceOrb status={view.status} phase={view.phase} muted={view.muted} size="sm" />
           <span role="status" aria-live="polite" className="min-w-0 flex-1 text-sm">
             {t(view.statusKey, { ns: "voice" })}
+            {view.noteKey && <span className="text-n600 block text-xs">{t(view.noteKey, { ns: "voice" })}</span>}
           </span>
           {view.clock && <span className="text-n700 text-xs tabular-nums">{view.clock}</span>}
         </div>

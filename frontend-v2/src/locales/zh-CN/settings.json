@@ -214,7 +214,7 @@
     "nameLabel": "名字",
     "placeholder": "比如 Mary、小七（留空用默认的「个人助理」）",
     "addressLabel": "它怎么称呼你",
-    "addressPlaceholder": "比如 老王、Andrew（留空就不加称呼）",
+    "addressPlaceholder": "比如 老王、Andrew（留空默认称呼“老板”）",
     "toneLabel": "说话风格",
     "tone": {
       "warm": "温和",

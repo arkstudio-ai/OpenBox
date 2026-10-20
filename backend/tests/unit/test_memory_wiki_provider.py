@@ -18,6 +18,7 @@ class FakeClient:
     async def post(self, _url, *, json, headers, timeout):
         self.calls += 1
         self.deadline = timeout
+        self.request = json
         return httpx.Response(200, json=self.payload)
 
 
@@ -75,3 +76,22 @@ async def test_exact_json_fence_is_supported_without_relaxing_the_contract(wiki_
     client = FakeClient(response("```json\n" + json.dumps(value) + "\n```"))
     result, usage = await ConfiguredWikiModel(client=client).generate(wiki_request)
     assert result == value and usage["input_tokens"] == 25
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [False, True])
+async def test_reconciliation_explicitly_requests_json_on_both_transports(wiki_request, monkeypatch, responses):
+    from memory.reconciliation import SYSTEM
+
+    monkeypatch.setattr("agent.llm._needs_responses_api", lambda _model: responses)
+    value = {"revisions": [], "separate": []}
+    payload = ({"status": "completed", "output_text": json.dumps(value)} if responses
+               else response(json.dumps(value)))
+    client = FakeClient(payload)
+    actual, _ = await ConfiguredWikiModel(client=client).generate_data(
+        model=wiki_request.policy.model, system=SYSTEM,
+        data={"existing_memories": [], "proposals": [], "new_user_sources": []}, sources=[])
+    instruction = client.request["instructions"] if responses else client.request["messages"][0]["content"]
+    assert instruction.startswith(SYSTEM.rstrip())
+    assert "json" in instruction.lower()
+    assert actual == value

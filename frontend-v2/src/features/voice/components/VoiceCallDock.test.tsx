@@ -6,6 +6,12 @@ import { initialCall } from "../lib/reducer"
 import type { CallEnd, CallState } from "../lib/types"
 import { useVoiceStore } from "../store"
 import { VoiceCallDock } from "./VoiceCallDock"
+import { CompanionCallControls } from "./CompanionCallControls"
+
+vi.mock("../api/voice", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/voice")>()),
+  useVoiceEnabled: () => true,
+}))
 
 vi.mock("react-i18next", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-i18next")>()),
@@ -106,6 +112,16 @@ describe("VoiceCallDock", () => {
     expect(screen.getByRole("status").textContent).toBe("state.speakingstate.working")
     connected({ phase: "working", working: true, late: true })
     rerender(<VoiceCallDock />)
+    expect(screen.getByRole("status").textContent).toBe("state.late")
+  })
+
+  it("keeps pending reply feedback visible in companion controls and the collapsed pill", () => {
+    connected({ phase: "listening", working: true })
+    const { unmount } = render(<CompanionCallControls />)
+    expect(screen.getByRole("status").textContent).toContain("state.working")
+    unmount()
+    connected({ phase: "listening", working: true, late: true }, { expanded: false })
+    render(<VoiceCallDock />)
     expect(screen.getByRole("status").textContent).toBe("state.late")
   })
 

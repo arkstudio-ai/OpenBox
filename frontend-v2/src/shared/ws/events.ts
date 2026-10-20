@@ -43,6 +43,7 @@ export interface WsEventMap extends WsLifecycleEvents {
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
   /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
   "inbox.updated": { userId: string }
+  "asset.updated": { userId: string; workspaceId: string; assetId: string }
   /** How the user wants their assistant changed (Settings, the phone, or the assistant itself in chat). */
   "assistant.profile.updated": { userId: string; profile: AssistantProfile & { decided?: unknown; intro?: unknown } }
 

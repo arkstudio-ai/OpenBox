@@ -38,6 +38,25 @@ from session.fork import fork_session
 from session.session import create_assistant_message, update_message_info
 
 
+async def test_terminal_notification_during_read_does_not_wait_for_poll(monkeypatch):
+    from types import SimpleNamespace
+    reads = 0
+    async def racing_read(item_id, *, user_id):
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            # The transaction settled after this read's snapshot, but before
+            # it returned. The waiter must not erase that commit's wake-up.
+            inbox._notify((item_id,))
+            return SimpleNamespace(state="claimed")
+        return SimpleNamespace(state="settled")
+    monkeypatch.setattr(inbox, "get_inbox_item", racing_read)
+    monkeypatch.setattr(inbox, "WAIT_POLL_SECONDS", 60)
+    result = await asyncio.wait_for(inbox.wait_for_inbox_terminal("race", user_id="u"), .5)
+    assert result.state == "settled" and reads == 2
+    assert "race" not in inbox._item_events
+
+
 async def _seed(*, second_user: bool = False) -> tuple[str, str, str, str | None]:
     suffix = uuid.uuid4().hex[:12]
     user_id = f"inbox-user-{suffix}"
@@ -1096,7 +1115,9 @@ async def test_deleted_after_claim_settles_delivery_error_without_provider(monke
             )
         ).scalar_one()
     assert assistant.finish == "error"
-    assert assistant.error == inbox.DELIVERY_TERMINAL_ERROR
+    assert assistant.error.items() >= inbox.DELIVERY_TERMINAL_ERROR.items()
+    assert assistant.error["reason_code"] == "asset_unavailable"
+    assert assistant.error["retryable"] is False
     assert status == "error"
     state = await get_driver_state(session_id)
     assert state is not None and state.phase == "idle"

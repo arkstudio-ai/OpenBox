@@ -266,7 +266,11 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final message = _message;
+    final budgetStopped = widget.error['code'] == 'ASSISTANT_TURN_BUDGET';
+    final serverMessage = widget.error['message'];
+    final message = budgetStopped
+        ? (serverMessage is String ? serverMessage.trim() : '')
+        : _message;
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
@@ -287,7 +291,11 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  i18n.t('chat:meta.errorTitle'),
+                  i18n.t(
+                    budgetStopped
+                        ? 'chat:assistant.replyIncomplete'
+                        : 'chat:meta.errorTitle',
+                  ),
                   style: TextStyle(
                     fontSize: FontSizes.md,
                     fontWeight: FontWeight.w500,
@@ -296,14 +304,18 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  i18n.t('chat:assistant.continueAfterError'),
+                  budgetStopped
+                      ? (message.isNotEmpty
+                            ? message
+                            : i18n.t('errors:ASSISTANT_TURN_BUDGET'))
+                      : i18n.t('chat:assistant.continueAfterError'),
                   style: TextStyle(
                     fontSize: FontSizes.sm,
                     height: 1.5,
                     color: t.n700,
                   ),
                 ),
-                if (message.isNotEmpty) ...[
+                if (message.isNotEmpty && !budgetStopped) ...[
                   GestureDetector(
                     onTap: () => setState(() => _details = !_details),
                     child: Padding(

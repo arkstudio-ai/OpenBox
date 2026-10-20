@@ -75,6 +75,24 @@ async def asset(owner, workspace, main, name="主播.png", user=None):
     return asset_id
 
 
+async def test_answered_card_returns_current_state_without_answering_or_resuming_twice():
+    owner, _, workspace, main = await assistant()
+    session = await conversation(owner, workspace, main, "御尚喜宴5段口播视频制作", visibility="private")
+    request_id = await ask(session, owner, requires_confirmation=False)
+    ctx, lease, human = await main_turn(owner, workspace, main, "不需要，直接生成")
+    try:
+        args = {"request_id": request_id, "answers": [["不需要，直接生成"]], "source_message_ids": [human]}
+        first, _ = await tool_call(ctx, "requests.answer", args)
+        assert first["state"] == "answered"
+        saved = await card(request_id)
+        repeat, _ = await tool_call(ctx, "requests.answer", {**args, "answers": [["上传人物照片"]]})
+        assert repeat["state"] == "answered" and repeat["this_call_applied"] is False
+        again = await card(request_id)
+        assert again.answers == saved.answers and again.updated_at == saved.updated_at
+    finally:
+        await lease.release(session_status="idle")
+
+
 async def test_multifield_spoken_choices_and_dictation_fill_the_exact_form_with_human_attribution():
     from tests.unit.test_voice_cards import FORM
     owner, _, workspace, main = await assistant()

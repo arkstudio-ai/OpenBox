@@ -47,7 +47,7 @@ def test_rate_limit_config_defaults():
 
 def test_image_generation_config_defaults():
     config = OpenBoxConfig()
-    assert config.image_generation.model == "gpt-image-2"
+    assert (config.image_generation.provider, config.image_generation.model) == ("runninghub", "seedream-v5-pro")
     assert config.image_generation.default_size == "auto"
     assert config.image_generation.default_quality == "medium"
     assert config.image_generation.output_format == "png"
@@ -63,6 +63,15 @@ def test_example_images_use_a_runninghub_model_that_runs_on_the_cn_site():
     assert (settings.provider, settings.model) == ("runninghub", "seedream-v5-pro")
     assert settings.model in MODELS
     assert config.provider["runninghub"].base_url == "https://www.runninghub.cn"
+
+
+def test_example_offers_no_retired_gpt_model_or_background_route():
+    config = OpenBoxConfig(**_load_json(Path(__file__).parents[2] / "openbox.jsonc.example"))
+    models = [config.model, config.mcp_filter_model, config.image_generation.model,
+              config.asset_description.model, config.voice.model, config.voice.summary_model,
+              config.voice.turn_model or "", *[row.id for row in config.models]]
+    assert not any("gpt" in model.lower() for model in models)
+    assert config.asset_description.model in {row.id for row in config.models}
 
 
 def test_video_generation_defaults_to_wan_3_at_720p():

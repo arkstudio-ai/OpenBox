@@ -268,17 +268,45 @@ class _CatalogueLoad:
     snapshot: dict
 
 
+class _MeasuredResponseStream(httpx.AsyncByteStream):
+    def __init__(self, stream):
+        self.stream = stream
+
+    async def __aiter__(self):
+        from agent.latency import network_wait
+        iterator = aiter(self.stream)
+        while True:
+            try:
+                with network_wait():
+                    chunk = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            yield chunk
+
+    async def aclose(self):
+        from agent.latency import network_wait
+        with network_wait():
+            await self.stream.aclose()
+
+
 class _BorrowedTransport(httpx.AsyncBaseTransport):
     """Keep an operation's client from closing its owner's connection pool."""
 
-    def __init__(self, transport: httpx.AsyncBaseTransport):
+    def __init__(self, transport: httpx.AsyncBaseTransport, *, close_owned: bool = False):
         self.transport = transport
+        self.close_owned = close_owned
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        return await self.transport.handle_async_request(request)
+        from agent.latency import network_wait
+        with network_wait():
+            response = await self.transport.handle_async_request(request)
+        response.stream = _MeasuredResponseStream(response.stream)
+        return response
 
     async def aclose(self) -> None:
-        pass  # SandboxClient closes the pool after the last operation exits.
+        if self.close_owned:
+            await self.transport.aclose()
+        # Otherwise SandboxClient closes its pool after the last operation.
 
 
 class SandboxClient:
@@ -563,6 +591,8 @@ print(json.dumps(out))
                                        keepalive_expiry=60.0),
                 )
             transport = _BorrowedTransport(self._transport)
+        else:
+            transport = _BorrowedTransport(httpx.AsyncHTTPTransport(trust_env=False), close_owned=True)
         self._transport_users += 1
         from sandbox.resource_operation import client_started, client_finished
         resource_scope = client_started()

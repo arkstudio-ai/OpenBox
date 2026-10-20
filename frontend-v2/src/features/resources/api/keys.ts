@@ -3,10 +3,11 @@ import type { ResourceQuery } from "@/features/resources/types"
 
 export const resourceKeys = {
   all: (userId: string) => ["resources", userId] as const,
-  list: (userId: string, query: ResourceQuery) =>
+  list: (userId: string, query: ResourceQuery, workspaceId: string | null = null) =>
     [
       "resources",
       userId,
+      workspaceId,
       query.project,
       query.source,
       query.kind,

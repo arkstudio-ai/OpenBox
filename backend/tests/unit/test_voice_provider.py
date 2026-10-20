@@ -56,6 +56,13 @@ def test_items_are_translated_with_the_providers_own_ids():
     assert (typed.kind, typed.item_id, typed.text) == ("assistant_transcript", "item_A", "你好呀")
 
 
+@pytest.mark.parametrize("kind", ["response.audio_transcript.delta", "response.text.delta"])
+def test_spoken_output_deltas_keep_response_identity_for_card_invalidation(kind):
+    value = translate({"type": kind, "response_id": "reply-1", "item_id": "spoken-1", "delta": "花店开业"})
+    assert (value.kind, value.response_id, value.item_id, value.text) == (
+        "assistant_transcribing", "reply-1", "spoken-1", "花店开业")
+
+
 @pytest.mark.parametrize("message, reason", [
     ("Conversation already has an active response", "active_response"),
     ("Duplicate function call output for call_id", "duplicate_output"),
@@ -157,10 +164,7 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
     assert update["type"] == "session.update" and session["voice"] == "Serena"
     assert session["turn_detection"] == {"type": "semantic_vad", "threshold": 0.5, "silence_duration_ms": 700}
     assert session["smooth_output"] is True  # the official switch for a conversational, not written, style
-    assert [tool["function"]["name"] for tool in session["tools"]] == [
-        "assistant_ask", "task_question_answer", "resources_list", "platforms_status", "models_available", "tasks_overview", "memory_search", "schedules_list", "projects_list", "credits",
-        "cards_pending", "cards_answer"]
-    assert next(tool["function"] for tool in session["tools"] if tool["function"]["name"] == "memory_search")["parameters"]["required"] == ["query"]
+    assert session["tools"] == provider_module.TOOLS  # native reads and explicit handover
     assert "enable_search" not in session
     await provider.create_response("只说这一句")
     await provider.create_response()

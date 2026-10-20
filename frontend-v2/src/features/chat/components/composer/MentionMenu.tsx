@@ -73,6 +73,8 @@ export function MentionMenu({ sections, activeIndex, onActiveIndexChange, onSele
                 <p className="text-2xs text-n600 px-2.5 py-1.5">{t("composer.mention.needSandbox")}</p>
               ) : section.loading ? (
                 <p className="text-2xs text-n600 px-2.5 py-1.5">{t("composer.mention.loading")}</p>
+              ) : section.error ? (
+                <p className="text-2xs text-n600 px-2.5 py-1.5">{t("question.resourceUnavailable")}</p>
               ) : section.items.length === 0 ? (
                 <p className="text-2xs text-n600 px-2.5 py-1.5">{t("composer.mention.empty")}</p>
               ) : (
@@ -113,7 +115,10 @@ export function MentionMenu({ sections, activeIndex, onActiveIndexChange, onSele
                           ) : (
                             <Layers className="text-n500 size-4 flex-none" strokeWidth={1.8} />
                           )}
-                          <span className="text-ink min-w-0 flex-1 truncate text-xs">{item.label}</span>
+                          <span className="text-ink min-w-0 flex-1 text-xs">
+                            <span className="block truncate">{item.label}</span>
+                            {item.description && <span className="text-2xs text-n600 block truncate">{item.description}</span>}
+                          </span>
                           <span className="text-2xs text-n600 flex-none">
                             {formatBytes(item.resource.size)}
                           </span>

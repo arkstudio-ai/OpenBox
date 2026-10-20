@@ -4,8 +4,8 @@
 
 - ECS `openbox-gw3` `i-uf60y6abkxu135z3p7sp`，cn-shanghai-b，`ecs.u1-c1m8.xlarge` 4c32g（与 gw2 同规格），100G ESSD PL1，20Mbps 按流量。
   包年包月 ¥336/月，自动续费（首期到期 2026-11-19，订单 2006293012670294）。
-- 公网 `47.116.171.3`（**当前入口：`http://47.116.171.3`，无域名**），内网 `10.100.1.91`（bossip-gw-vpc / vsw-uf6urpiz14jtl0ii58hpj）。
-- 安全组 `openbox-gw3-sg` sg-uf63rekaltpmc45705wr：80/443 全网（IP 直连入口；443 留给日后 HTTPS），2222 全网（桌面反向隧道，仅公钥），**无 22**——运维只走云助手
+- 公网 `47.116.171.3`（源站，80 只放 Windows nginx 114.132.87.58），内网 `10.100.1.91`（bossip-gw-vpc / vsw-uf6urpiz14jtl0ii58hpj）。
+- 安全组 `openbox-gw3-sg` sg-uf63rekaltpmc45705wr：80 只放 114.132.87.58（2026-10-20 收紧，IP 直连已关），2222 全网（桌面反向隧道，仅公钥），**无 22**——运维只走云助手
   `aliyun ecs RunCommand --RegionId cn-shanghai --InstanceId.1 i-uf60y6abkxu135z3p7sp`（脚本 `#!/bin/bash` 开头，同一台不要并发两条）。
 - bossip-newapi 安全组 sg-uf61yit0irjcov15390u 已放行 10.100.1.91 → 3000。
 
@@ -28,7 +28,7 @@
 ## 账号
 
 - `obx-ops`（admin），密码在机上 `/opt/openbox/secrets/accounts.txt`（root 600）。2026-10-19 用它跑通注册→登录→建会话→一轮聊天（10.5s 回「收到」）。
-- Logto 登录暂不可用：要在 Logto（auth.bossipai.com.cn）应用回调白名单加 `http://47.116.171.3/callback`，或等域名下来后改成域名。
+- `bbdwxh`（admin）已绑定 Logto 用户 `bbdwxh_admin`（sub ga5qt2bdsjet）；SSO 首登误建的 `bbdwxh_admin-retired` 已停用。
 
 ## 备份
 
@@ -45,7 +45,10 @@
 - 云监控插件 CmsGoAgent 用 OOS 模板 `ACS-ECS-ConfigureCloudMonitorAgent` 装（exec-64591ed5be904a94bccb），开机自启已验证。
 - 公网站点监控在本账号 ExceedingQuota，未建；探测不覆盖公网链路。
 
-## 域名接入（待用户给域名）
+## 域名（2026-10-20 上线）
 
-照 gaode：DNS A → lighthouse 106.52.167.53，lighthouse `/opt/nginx/conf.d/<name>.conf` 加 80(ACME+301)/443 反代到 `http://47.116.171.3`（Host 写 IP），certbot 签证书 + 续期 timer；
-然后把 backend.env 的 `PUBLIC_BASE_URL`、`PAYMENT_PUBLIC_BASE_URL`、`LOGTO_*` 和 docker-compose.yml 的两项改成域名，`docker compose up -d backend`；安全组 80 收紧为只放 lighthouse。
+- `https://ai.kuayetong.cn` 门户、`https://app.kuayetong.cn` 工作台、`https://home.kuayetong.cn` 备用占位。DNS 都指向对方公司的 Windows 服务器 114.132.87.58，上面的 nginx 做 TLS 并反代到 `http://47.116.171.3`（回源 Host 写 IP）。
+- 证书是 TrustAsia DV，2027-01-17 到期，**不会自动续期**，到期前要在对方 Windows nginx 上换证书（`conf\cert\`）。配置模板：kuayetong.conf + kuayetong_proxy.conf（ai 上 /app|login|register|callback|invite 302 到 app；app 上 / → /app）。
+- gw3 的 `PUBLIC_BASE_URL`、`PAYMENT_PUBLIC_BASE_URL`、`LOGTO_REDIRECT_URI`、`LOGTO_POST_LOGOUT_REDIRECT_URI`（含 docker-compose.yml 两项）= `https://app.kuayetong.cn`。
+- Logto（bossip 共用，auth.bossipai.com.cn）bossip-web 应用回调白名单已加 `https://app.kuayetong.cn/callback`、`http://47.116.171.3/callback` 及对应退出跳转（直接改 RDS logto 库 applications.oidc_client_metadata，备份在 bossip-gw-1 /root/logto-backups/）。gw3 用户与 gw2 共用 Logto 账号池，但业务数据互不相通。
+- **HTTP 下前端不可用的坑**：SSO 的 PKCE、已有会话发送的去重指纹（`pending-send.ts`）用 `crypto.subtle`，多处用 `crypto.randomUUID`，非安全上下文没有 → SSO 退回本地表单、已有会话追问静默发不出去。只能走 HTTPS 域名。

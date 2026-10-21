@@ -1,0 +1,232 @@
+{
+  "pr": "https://github.com/arkstudio-ai/OpenBox/pull/94",
+  "commit": "131cb413dd72c7376fb86be80a0b2523a11213cb",
+  "activation": {
+    "tag": "20261021-voice-address-131cb413",
+    "old_image": "openbox-backend:20261021-voice-handoff-c77f2e5b",
+    "new_image": "openbox-backend:20261021-voice-address-131cb413",
+    "image_id": "sha256:8e8d75838f3f10513e10c01b0b148e18732acf64b00f0e94ab447ef5207a6e35",
+    "backup": "/opt/openbox/backups/20261021-voice-address-131cb413/activation-20261021T063740Z",
+    "unchanged_services": {
+      "frontend": "1e325c52580272a9b8e8e8abbc3fc1b09ef67bb2969b18db1b36c20f591a8d4f",
+      "trajectory-worker": "cc763009ee7b93adafa17688d200859d089e5266d69d073a49a8c9040750df05",
+      "postgres": "745a495da1be35416ba9d59023fe20ac5a0f458ee7234ea25d38380a60fc79a2",
+      "redis": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f",
+      "qdrant-memory": "f1bdfc91b4850f170b1f2216c493652fd6f8119489bff22441278a88fcc6ddf7"
+    },
+    "source_hashes": {
+      "voice/prompt.py": "cdc35886200d35c0d240d5560603bbb89a38769fe6a1a9ba2ae9d0b477e6d887",
+      "voice/phrases.py": "73b9df8976630e3becc8717d2a0757d694bb80018c9c31e89a1dd13a39789f52"
+    },
+    "gates_after": "0|0|0|0",
+    "restart_count": "0",
+    "completed_at": "2026-10-21T06:38:53.618058+00:00"
+  },
+  "probes": [
+    {
+      "at": "2026-10-21T06:38:16.339422+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:16.526412+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:18.687210+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:18.865841+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:21.098689+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:21.359802+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:23.545591+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:23.698083+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:25.869115+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:26.034048+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:28.208820+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:28.381303+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:30.572393+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:30.752450+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:32.924870+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:33.105620+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:35.259448+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:35.430210+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:37.600428+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:37.773868+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:39.942210+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:40.109253+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:42.290199+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:42.451055+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:44.614108+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:44.787256+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:46.951907+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:47.123308+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:49.299402+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:49.539566+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:51.742864+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:38:51.943057+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    }
+  ],
+  "tests": "23 passed (voice phrases and chat identity)",
+  "external_readback": {
+    "/": 200,
+    "/api/environment": 200,
+    "/api/auth/logto/config": 200,
+    "/api/assistant/voice/voices": 401
+  },
+  "limitations": [
+    "Prompt guidance verified; no real voice conversation acceptance",
+    "Previously unhealthy trajectory-worker unchanged"
+  ],
+  "temporary_oss_object_removed": true,
+  "aoci": "Tools unavailable; index unchanged"
+}

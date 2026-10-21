@@ -21,6 +21,7 @@ import type { KeyboardEvent, RefObject } from "react"
 import { resolveTrigger, replaceTrigger } from "../lib/mention"
 import { useCommands, useFileSearch, useSkills } from "../api/mention"
 import type { AttachableResource } from "../lib/resource-ref"
+import { useResourceSearch } from "./useResourceSearch"
 
 export type MentionItemKind = "resource" | "file" | "skill" | "command"
 
@@ -40,6 +41,7 @@ export interface MentionItem {
 export interface MentionSection {
   kind: MentionItemKind
   loading: boolean
+  error?: boolean
   needSandbox?: boolean
   items: MentionItem[]
 }
@@ -53,6 +55,7 @@ export interface MentionScope {
   setSource: (source: "all" | "user" | "agent") => void
   items: AttachableResource[]
   loading: boolean
+  search?: (query: string, signal?: AbortSignal) => Promise<AttachableResource[]>
 }
 
 interface Args {
@@ -103,20 +106,21 @@ export function useMentionMenu({
   const fileSearch = useFileSearch(containerId, debouncedQuery.trim(), fileEnabled)
   const skills = useSkills(assistant)
   const commands = useCommands()
+  const resources = useResourceSearch(scope, query, trigger !== null && dismissed !== triggerKey)
 
   const resourceItems = useMemo<MentionItem[]>(
     () =>
-      (scope?.items ?? [])
-        .filter((r) => matches(query, r.name))
+      resources.items
         .slice(0, 40)
         .map((r) => ({
           id: `resource:${r.id}`,
           kind: "resource" as const,
           label: r.name,
+          description: r.description,
           insert: "",
           resource: r,
         })),
-    [scope?.items, query],
+    [resources.items],
   )
 
   const fileItems = useMemo<MentionItem[]>(
@@ -165,7 +169,7 @@ export function useMentionMenu({
     // already has beats searching the sandbox for one, and it is the only
     // source that survives the container being recycled.
     const resourceSection: MentionSection[] = scope
-      ? [{ kind: "resource", loading: scope.loading, items: resourceItems }]
+      ? [{ kind: "resource", loading: resources.loading, error: resources.error, items: resourceItems }]
       : []
     if (kind === "at") {
       return [
@@ -191,6 +195,8 @@ export function useMentionMenu({
     kind,
     scope,
     resourceItems,
+    resources.loading,
+    resources.error,
     fileEnabled,
     fileSearch.isFetching,
     containerId,

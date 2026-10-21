@@ -25,6 +25,8 @@ type QuestionStateKey = "question.superseded" | "question.cancelled" | "question
 /** Where the question stands, when that is worth a line of its own. */
 export function questionStateKey(part: ToolPart): QuestionStateKey | null {
   switch (part.metadata?.question_status) {
+    case "pending":
+      return "question.waiting"
     case "superseded":
       return "question.superseded"
     case "cancelled":
@@ -62,7 +64,11 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
   return (
     <div className="flex flex-col gap-2">
       {stateLabel && <span className="text-n600 text-xs">{stateLabel}</span>}
-      {answeredByAssistant(part) && <span className="text-n600 text-xs">{t("question.answeredByAssistant", { name: assistantName })}</span>}
+      {answeredByAssistant(part) && (
+        <span className="text-n600 text-xs">
+          {t("question.answeredByAssistant", { name: assistantName })}
+        </span>
+      )}
       {takeover && (
         <span className="text-a800 text-xs">
           {t("takeover.record", {
@@ -75,11 +81,11 @@ export function QuestionAnswered({ part }: { part: ToolPart }) {
         <div key={question} className="flex flex-col gap-0.5">
           <span className="text-n600 text-xs">{question}</span>
           <span className="text-ink text-sm">
-            {answer.length > 0 ? answer.join("、") : (
-              Array.isArray(attachments[index]) && attachments[index].length > 0
+            {answer.length > 0
+              ? answer.join("、")
+              : Array.isArray(attachments[index]) && attachments[index].length > 0
                 ? t("question.resourcesProvided", { count: attachments[index].length })
-                : t("question.unanswered")
-            )}
+                : t("question.unanswered")}
           </span>
         </div>
       ))}

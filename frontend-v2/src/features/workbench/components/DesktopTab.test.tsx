@@ -152,6 +152,23 @@ describe("DesktopTab", () => {
     expect(screen.getByText("activation.subscriptionRequired")).toBeTruthy()
   })
 
+  it("reconnects the retained desktop after renewal without reloading the page", async () => {
+    vi.useFakeTimers()
+    vi.mocked(http.get).mockResolvedValue({
+      state: "subscription_required", entitled: false, retained: true, mode: "per_user",
+    })
+    await act(async () => { render(<DesktopTab />) })
+    expect(screen.getByText("activation.subscriptionRequired")).toBeTruthy()
+    expect(createSession).not.toHaveBeenCalled()
+    vi.mocked(http.get).mockImplementation(async (path) => path.endsWith("/status")
+      ? { state: "running", entitled: true, retained: true, mode: "per_user", desktopId: "ecd-retained" }
+      : { ticket: "renewed-ticket", desktopId: "ecd-retained", regionId: "cn-hangzhou" })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(createSession).toHaveBeenCalledOnce()
+    expect(screen.queryByText("activation.subscriptionRequired")).toBeNull()
+    expect(screen.getByRole("checkbox", { name: "desktop.allowControl" })).toBeTruthy()
+  })
+
   it("uses an untransformed iframe and the official mouse and IME settings", async () => {
     render(<DesktopTab />)
 

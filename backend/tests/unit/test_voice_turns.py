@@ -87,6 +87,61 @@ async def test_assistant_ask_is_acknowledged_at_once_and_reports_working(call):
     assert states(outbox(bridge)) == ["working"]
 
 
+async def test_native_conversation_keeps_answering_while_main_work_is_pending(call):
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await asked(bridge)
+    clock.advance(1)
+    outbox(bridge)
+    await replay(bridge, event("user_started", item_id="hello"),
+                 event("user_transcript", item_id="hello", text="你好，能听到我说话吗？"),
+                 started("native-hello"), audio("native-hello"), done("native-hello"))
+    assert any(isinstance(value, bytes) for value in outbox(bridge))
+    assert len(link.started) == 1 and bridge.pending_calls  # no main inbox for a greeting
+    assert not bridge.unified and bridge.state == "idle"
+    assert any(line.item_id == "hello" for line in bridge.spoken.lines)
+
+
+async def test_handover_cannot_acknowledge_before_durable_acceptance(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    saved_start = link.start
+    reached, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_start(ref):
+        reached.set()
+        await release.wait()
+        await saved_start(ref)
+
+    link.start = slow_start
+    await replay(bridge, event("user_transcript", text="帮我做一份开业计划"), started("request"))
+    dispatch = asyncio.create_task(bridge.on_provider_event(tool_call("durable", response_id="request")))
+    await reached.wait()
+    assert not provider.commands("output") and not of_type(outbox(bridge), "turn")
+    release.set()
+    await dispatch
+    assert link.started[0].inbox_id
+    assert provider.commands("output")[-1][2]["status"] == "accepted"
+
+
+async def test_sharing_live_context_does_not_block_native_audio_or_wake_main(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    stored, release = [], asyncio.Event()
+    async def slow_sink(lines):
+        await release.wait()
+        stored.append(lines)
+    bridge.context_sink = slow_sink
+    await replay(bridge, event("user_started", item_id="park"), event("user_stopped"),
+                 event("user_transcript", text="周末想去青桐公园走走", item_id="park"),
+                 started("chat"), audio("chat"), done("chat"))
+    assert not link.started and not stored
+    assert any(isinstance(value, bytes) for value in outbox(bridge))
+    release.set()
+    await drain()
+    assert stored[-1][-1].text == "周末想去青桐公园走走"
+
+
 async def test_a_result_is_a_note_told_once_in_the_front_desks_own_words(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
@@ -192,7 +247,7 @@ async def test_failed_acceptance_and_unknown_tools_are_answered(call):
     assert provider.commands("output") == [("output", "call-x", {"status": "unknown_tool"})]
     link.fail_start = True
     await replay(bridge, event("user_transcript", text="帮我看看贪吃蛇进展"), started("ack-2"), audio("ack-2"), tool_call("call-1"), done("ack-2"))
-    assert provider.commands("output")[-1][2]["status"] == "accepted"  # acknowledged before the handover failed
+    assert provider.commands("output")[-1][2]["status"] == "unavailable"  # never claim acceptance before the durable write
     [(_, note)] = provider.commands("note")
     assert note_results(note)[0]["status"] == "unavailable"
     assert states(outbox(bridge)) == ["failed"]
@@ -368,7 +423,7 @@ async def test_progress_is_one_line_per_request_after_twenty_quiet_seconds_and_a
     await bridge.fill_idle()
     assert not provider.response_purposes()
     # The session prompt says what is still being done, never the step: answers to new requests wandered into it.
-    assert [text for _, text in provider.commands("instructions")] == ["BASE\n还在办：“帮我看看贪吃蛇进展”。"]
+    assert [text for _, text in provider.commands("instructions")] == ["BASE\n已交给个人助理等待结果（不代表任务已开始执行）：“帮我看看贪吃蛇进展”。"]
     clock.advance(1)
     await bridge.fill_idle()
     assert provider.response_purposes() == [("create", phrases.progress_instructions("在翻任务列表", "zh"))]
@@ -404,12 +459,12 @@ async def test_the_prompt_only_says_what_is_still_being_done(call):
     link.started[0].message_id = "m1"  # the run took the first one
     clock.advance(3)
     await bridge.fill_idle()
-    assert provider.commands("instructions")[-1][1] == "BASE\n还在办：“帮我看看贪吃蛇进展”、“再建一个五子棋项目”。"
+    assert provider.commands("instructions")[-1][1] == "BASE\n已交给个人助理等待结果（不代表任务已开始执行）：“帮我看看贪吃蛇进展”、“再建一个五子棋项目”。"
     await finished(bridge, provider, link, call_id="call-1")
     await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
     clock.advance(3)
     await bridge.fill_idle()
-    assert provider.commands("instructions")[-1][1] == "BASE\n还在办：“再建一个五子棋项目”。"
+    assert provider.commands("instructions")[-1][1] == "BASE\n已交给个人助理等待结果（不代表任务已开始执行）：“再建一个五子棋项目”。"
     remember = VoiceTurnRef(id="t-9", provider_call_id="remember:r9", text="记住用户长期偏好",
                             transcript="我对花生过敏", requested=clock(), lane="remember")
     assert bridge.progress.section([remember]) == ""  # nothing the user waits for
@@ -492,7 +547,8 @@ async def test_a_quiet_remember_is_closed_without_a_word(call):
                        transcript="我对花生过敏，以后点外卖别推花生", requested=clock(), lane="remember")
     bridge.pending_calls[ref.provider_call_id] = ref
     bridge.refs.append(ref)
-    bridge._spawn(bridge._run_turn(ref))
+    await link.start(ref)
+    bridge._spawn(bridge._observe_transcript(ref))
     await drain()
     clock.advance(60)
     await bridge.fill_idle()

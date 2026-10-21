@@ -2,7 +2,7 @@
 business they run, and how it behaves on the phone.
 
 One account preference (``user_preferences.extra["assistant_profile"]``) read by the web and mobile
-apps, the assistant's prompt (``prompt_section``) and the phone front desk (voice/prompt.py). The user
+apps, task chats, the assistant's prompt (``prompt_section``) and the phone front desk (voice/prompt.py). The user
 sets it in Settings → 个人助理, answers it when they first meet the assistant (the intro, below), or
 tells the assistant ("以后叫你小七", "以后叫我老王", "以后回答简短点"), which calls the
 ``assistant.preferences`` tool. A name has to hold every time, in the sidebar, the page title, the
@@ -10,7 +10,7 @@ replies and the greeting; a memory is recalled only sometimes, so names live her
 named the assistant are retired when it changes (``retire_naming_memories``).
 
 Set or not is a decision, not a value: ``extra["assistant_decided"]`` records, per field, when the
-user decided it and where (settings, chat, intro). Choosing the default ("就叫个人助理", "不用称呼") is a
+user decided it and where (settings, chat, intro). Choosing the default ("就叫个人助理", "就叫老板") is a
 decision too; skipping a question is not, so that part may still be asked about once or learned.
 ``extra["assistant_intro"]`` is where the first meeting got to (new → started → done, or dismissed
 with "以后再说", or bypassed by going straight to work), which questions were answered or skipped,
@@ -53,7 +53,7 @@ _FORBIDDEN = re.compile(r"[<>{}\[\]\\]")
 @dataclass(frozen=True)
 class Profile:
     name: str = ""            # the assistant's name; "" is the default the UI translates (个人助理)
-    address: str = ""         # how the assistant addresses the user; "" uses none
+    address: str = ""         # how the assistant addresses the user; "" uses the product default 老板
     tone: str = "warm"
     length: str = "balanced"
     emoji: bool = False
@@ -350,12 +350,17 @@ async def set_preferences(*, user_id, workspace_id, main_id, source=None, **fiel
 
 
 async def user_section(user_id: str, workspace_id: str | None) -> str:
-    """The assistant's "This user" section, read fresh for each prompt; "" when there is nothing to add."""
+    """The assistant's "This user" section, read fresh for each prompt."""
     import asyncio
     from assistant import followups, style
-    profile, card, due = await asyncio.gather(load(user_id), style.style_card(user_id, workspace_id),
+    current, card, due = await asyncio.gather(load(user_id), style.style_card(user_id, workspace_id),
                                               followups.due(user_id, workspace_id))
-    return prompt_section(profile, card.lines(), [summary for _, summary in due])
+    return prompt_section(current, card.lines(), [summary for _, summary in due])
+
+
+async def settings_section(user_id: str) -> str:
+    """Task chats read current settings, without loading private assistant follow-ups or style memories."""
+    return prompt_section(await load(user_id))
 
 
 _LENGTH_TEXT = {
@@ -369,17 +374,13 @@ _TONE_TEXT = {
 
 
 def prompt_section(profile: Profile, learned: list[str] = (), followups: list[str] = ()) -> str:
-    """What the assistant's system prompt adds for this user; "" when there is nothing of theirs to add.
+    """The current identity (including defaults), preferences and learned context.
 
     ``learned``: how they like to be helped, from their own words and feedback (assistant/style.py);
     ``followups``: plans of theirs that just passed, to ask about once if it fits.
     """
-    lines = []
-    if profile.name:
-        lines.append(f"- Your name is「{profile.name}」. Use it when you introduce yourself or are asked who you are; "
-                     "a memory that names you otherwise is out of date.")
-    if profile.address:
-        lines.append(f"- Address the user as「{profile.address}」. A memory naming them otherwise is out of date.")
+    from assistant.identity import identity_lines
+    lines = identity_lines(profile.name, profile.address)
     if profile.business:
         lines.append(f"- Their business: {BUSINESS_TEXT.get(profile.business, profile.business)}. Keep examples and "
                      "suggestions to it when nothing else is said.")

@@ -81,13 +81,15 @@ async def answerable(db, row: QuestionCheckpoint, session: Session, answers=None
 
 
 
-async def _target(db, ctx, request_id: str):
+async def _target(db, ctx, request_id: str, *, allow_handled=False):
     row = await db.get(QuestionCheckpoint, request_id)
     session = await db.get(Session, row.session_id) if row is not None else None
     if (row is None or session is None or row.user_id != ctx.user_id or session.user_id != ctx.user_id
             or session.workspace_id != ctx.workspace_id or session.is_deleted or session.kind == "assistant"
             or session.id == ctx.session_id):
         raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Question is unavailable")
+    if allow_handled and row.status in {"answered", "rejected", "superseded"}:
+        return row, session
     execution = await db.get(SessionExecution, row.session_id)
     if row.status != "pending" or execution is None or row.generation != execution.generation:
         raise AssistantError(410, "ASSISTANT_REQUEST_UNAVAILABLE", "The question is no longer waiting for an answer")
@@ -123,7 +125,13 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
     async with get_db_session() as db:
         await begin_session_write(db)
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-        row, session = await _target(db, ctx, request_id)
+        row, session = await _target(db, ctx, request_id, allow_handled=True)
+        if row.status != "pending":
+            # A concurrent voice/manual decision already owns the outcome.
+            # This is an observation, never a second answer or fresh consent.
+            return {"request_id": row.id, "state": row.status, "this_call_applied": False,
+                    "session_id": session.id, "link": link(session.id),
+                    "note": "这张卡片已处理，没有再次提交。请读取原任务的当前状态，不重复确认或重做。"}
         reason, high_risk = await answerable(db, row, session, answers)
         if reason:
             raise human_only(session.id, reason)

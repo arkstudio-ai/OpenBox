@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent.driver import LeaseLostError
+from billing.plan_quote import PlanItem
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -105,16 +106,21 @@ class VideoInputRef(BaseModel):
     asset_id: str = Field(max_length=512)
     #: Omitted: inferred from the mime type. Audio must say its role.
     role: VideoRefRole | None = Field(default=None, description=(
-        "The asset's purpose in this shot, determined from the person's request and context, "
-        "not upload order. first_frame/last_frame are the actual starting/ending composition; "
-        "reference_image is a subject/style reference, not automatically a frame. "
-        "RunningHub Turbo requires explicit frame roles even for one image."
+        "Use the person's intent, never upload count/order: first_frame animates the starting "
+        "image; last_frame pins the ending; reference_image supplies subject/style, not an endpoint. "
+        "RunningHub Turbo requires explicit frame roles, even for one image."
     ))
 
 
 class VideoGenerateArgs(BaseModel):
-    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch", "attach"]
+    action: Literal["models", "estimate", "quote_plan", "submit", "status", "wait", "cancel", "fetch", "attach"]
     job_id: str | None = Field(default=None, max_length=96)
+    #: For action="quote_plan": every paid step of the plan about to go on the
+    #: shots + price card. Priced server-side and registered on the session.
+    plan_items: list[PlanItem] | None = Field(default=None, max_length=64, description=(
+        "quote_plan: one generation (model/resolution/seconds) and transcribe item per shot, "
+        "plus compose when using video_compose. Server-priced at billing rates; claimed credits "
+        "are compared, never trusted."))
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     # ── describe the shot directly ──
     #: Describe the shot. Supplying it means an open generation.
@@ -124,18 +130,15 @@ class VideoGenerateArgs(BaseModel):
         default=None,
         max_length=160,
         description=(
-            "An id from action=models. If person_selected_model is present, that "
-            "composer choice is authoritative: omit this field or pass the exact "
-            "same id. Never silently substitute another model."
+            "ID from action=models. person_selected_model is authoritative: omit or repeat it exactly. "
+            "Never silently substitute; only the person may change the composer model."
         ),
     )
     resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
         default=None,
         description=(
-            "A resolution tier supported by action=models (including MiniMax 512p/768p/2k). "
-            "If the person selected a resolution in the composer, "
-            "omit this field or pass that exact value; changing it requires the person "
-            "to update the composer selection first."
+            "Tier supported by action=models. If selected in the composer, omit or repeat exactly; "
+            "the person must update that selection before changing tiers."
         ),
     )
     ratio: str | None = Field(default=None, max_length=16, description=(
@@ -156,14 +159,10 @@ class VideoGenerateArgs(BaseModel):
     #: finished second "第 2 段" no matter which shot it actually is.
     shot: int | None = Field(default=None, ge=1, le=200)
     input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8, description=(
-        "Assets explicitly needed for this shot from the conversation. Include an image when "
-        "the person asks to animate it; do not attach unrelated earlier images. RunningHub "
-        "Turbo routes no assets to text-to-video and explicitly selected first_frame/last_frame "
-        "assets to image-to-video. Do not infer roles from count or upload order. If the person "
-        "wants each image animated separately, use one first_frame per separate shot; if they "
-        "want several subjects/styles combined, these are reference images, not first/last frames. "
-        "Clarify ambiguous intent before submitting. Never drop requested references to bypass "
-        "model limits; Turbo cannot use generic image, video or audio references."
+        "Actual asset IDs relevant to this shot. Animate images separately: one first_frame per "
+        "shot, estimate the total. Combined subjects/styles: reference_image. RunningHub Turbo: "
+        "no assets for text-to-video, explicit first_frame/last_frame for image-to-video; no generic "
+        "image/video/audio references."
     ))
     #: Pay twice for a second take of a request already in flight.
     allow_duplicate: bool = False
@@ -188,6 +187,10 @@ class VideoGenerateArgs(BaseModel):
         if self.action == "estimate":
             if not self.prompt:
                 raise ValueError("estimate requires prompt")
+            return self
+        if self.action == "quote_plan":
+            if not self.plan_items:
+                raise ValueError("quote_plan requires plan_items")
             return self
         if self.action == "submit":
             if not self.idempotency_key:
@@ -2021,7 +2024,10 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
     """
     settings = config.video_generation
     lines = [f"default_model={settings.model}", ""]
+    from tool.video_providers import effective_reference_support
+
     for entry in settings.models:
+        reference_support = effective_reference_support(entry)
         parts = [f"id={entry.id}"]
         if entry.name:
             parts.append(f"name={entry.name}")
@@ -2040,10 +2046,10 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
             name
             for name, on in (
                 ("seed", entry.supports_seed),
-                ("first/last frame", entry.supports_first_last_frame),
-                ("reference audio", entry.supports_reference_audio),
-                ("frame image" if entry.channel == "runninghub" else "reference image", entry.supports_reference_image),
-                ("reference video", entry.supports_reference_video),
+                ("first/last frame", reference_support["frames"]),
+                ("reference audio", reference_support["audio"]),
+                ("frame image" if entry.channel == "runninghub" else "reference image", reference_support["image"]),
+                ("reference video", reference_support["video"]),
             )
             if on
         ]
@@ -2053,6 +2059,8 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
             parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
         if entry.channel == "dashscope":
             parts.append("routing=first_frame plus optional last_frame OR reference_image/video/audio; never mix frame roles with reference roles; last_frame requires first_frame; image<=10, video<=5, audio<=5; total reference video/audio duration each<=15s; input+output video duration<=30s; prompt<=20000 characters; output=30fps")
+        if entry.channel == "sd2" and not reference_support["video"] and entry.supports_reference_video:
+            parts.append("routing=this configured adapter cannot carry video references; do not infer native vendor capabilities or silently extract/rebuild frames")
         if unavailable and entry.id in unavailable:
             parts.append(f"availability={_availability_text(unavailable[entry.id])}")
         lines.append("  " + "  ".join(parts))
@@ -2436,11 +2444,80 @@ def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = Fa
     )
 
 
+async def _execute_quote_plan(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Price the whole plan on the server and register it for the card-2 gate."""
+    from billing import credit_cap as _credit_cap
+    from billing import plan_quote
+    from billing.media import billing_status_lines
+
+    try:
+        plan = await plan_quote.register(ctx.session_id, list(args.plan_items or []))
+    except plan_quote.PlanUnpriced as exc:
+        return ToolResult(
+            title="Plan cannot be priced",
+            output="\n".join([
+                "plan_registered=false",
+                *[f"unpriced={reason}" for reason in exc.reasons],
+                "Nothing was registered. Fix the item (model, resolution, seconds) or drop it; a plan with an unpriced "
+                "step must not be put on the card as a number.",
+            ]),
+            metadata={"plan_registered": False, "unpriced": list(exc.reasons)},
+        )
+    if plan is None:
+        return ToolResult(title="Plan cannot be registered", output="plan_registered=false\nThis call needs a session.",
+                          metadata={"plan_registered": False})
+    lines = ["plan_registered=true", f"plan_total={plan['total']}", f"plan_items={len(plan['items'])}"]
+    corrections = []
+    for row in plan["items"]:
+        where = f"shot={row['shot']} " if row.get("shot") else ""
+        what = " ".join(str(v) for v in (row.get("model"), row.get("resolution")) if v)
+        lines.append(f"item: {where}{row['kind']} {what} {row['seconds']}s credits={row['credits']}".replace("  ", " "))
+        if row.get("claimed_credits") is not None:
+            corrections.append(f"{where}{row['kind']}: you said {row['claimed_credits']}, the server prices {row['credits']}")
+    lines += [f"corrected={text}" for text in corrections]
+    lines += billing_status_lines()
+    if plan["available"] is not None:
+        lines.append(f"balance_available={plan['available']}  balance_sufficient={str(plan['balance_sufficient']).lower()}"
+                     f"  shortfall={plan['shortfall']}")
+    lines += await _credit_cap.estimate_lines(ctx.session_id)
+    if plan["credit_cap"] is not None:
+        lines.append(f"exceeds_cap={str(plan['exceeds_cap']).lower()}")
+    blocked = []
+    if not plan["balance_sufficient"]:
+        blocked.append(f"the balance ({plan['available']}) does not cover the plan ({plan['total']}); short {plan['shortfall']}")
+    if plan["exceeds_cap"]:
+        blocked.append(f"the plan ({plan['total']}) plus what this request already spent exceeds max_credits "
+                       f"({plan['credit_cap']['max_credits']}, remaining {plan['credit_cap']['remaining']})")
+    if blocked:
+        lines += [f"plan_blocked=true  reason={'; '.join(blocked)}",
+                  "Do not raise card 2 as it stands: the confirming answer would be refused. Tell the person the plan's "
+                  "total and the shortfall, and offer fewer shots / shorter shots, a lower tier, a top-up, or (for an API "
+                  "request) a higher max_credits on the next message."]
+    else:
+        lines.append("plan_blocked=false")
+    lines += [
+        "",
+        "Registered as this session's plan estimate (planned shots + transcription + compose; retakes are quoted "
+        "separately before they are resubmitted). Write plan_total into card 2's question text, give that question "
+        f"kind=\"{plan_quote.PLAN_CONFIRM_KIND}\" and set estimated_credits=\"{plan['total']}\" on its 「可以」 option; "
+        "the server re-checks the balance and max_credits against the whole plan when it is answered. Nothing was submitted.",
+    ]
+    return ToolResult(
+        title=f"Plan priced at {plan['total']} credits" + (" — blocked" if blocked else ""),
+        output="\n".join(lines),
+        metadata={"plan_registered": True, "plan_total": plan["total"], "items": plan["items"],
+                  "exceeds_cap": plan["exceeds_cap"], "balance_sufficient": plan["balance_sufficient"],
+                  "shortfall": plan["shortfall"], "plan_blocked": bool(blocked)},
+    )
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
     if args.action == "estimate":
         return await _execute_estimate(args, ctx)
+    if args.action == "quote_plan":
+        return await _execute_quote_plan(args, ctx)
     if args.action == "fetch":
         return await _execute_fetch(args, ctx)
     if args.action == "attach":
@@ -3390,31 +3467,17 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
     )
 
 
+# Keep shared rules here and parameter-specific rules on their fields: both
+# are sent on every request, so repeating the workflow inflates the schema.
 VIDEO_GENERATE_DESCRIPTION = """\
-Generate video (the only way to create one): describe the shot in `prompt`, optionally naming model, resolution, ratio, \
-duration, audio, seed and reference assets, and pass an idempotency_key. \
-Use action="models" to read what each model accepts. A returned `person_selected_model` and the person's \
-composer resolution are authoritative: omit those fields or repeat them \
-exactly, and never silently choose another model or tier. Resolve image intent \
-from the request and relevant conversation before building input_assets: an \
-image to animate is a first_frame; an explicitly described ending is a \
-last_frame; several subject/product/style references are reference_image, \
-not automatically first/last frames. Use actual asset IDs, never upload \
-count/order as evidence of purpose. To animate each image separately, create one shot per \
-first_frame and estimate the total cost. If the intended selection or use is ambiguous, ask one focused question \
-before any paid call. RunningHub Turbo only supports explicit frames, not \
-generic/multiple reference images; explain this and request a compatible \
-composer model or an explicit change of intent. Never omit requested images \
-or relabel them as endpoints to pass validation. \
-Use action="estimate" \
-to validate a request for free \
-before paying. A finished video lands in OSS and, when a sandbox is present, \
-in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
-video asset there. action="attach" re-sends an owned asset to the user as a card (no sandbox); \
-never write a link to it. \
-Distinct jobs may run together; never parallelize two mutations of one job. \
-A paid submit is never replaced after an ambiguous result — reconcile the \
-same job or key."""
+Generate video only through this tool. models lists capabilities; estimate validates a shot for free before paying; \
+quote_plan registers a server-priced whole plan before the shots + price card. submit requires prompt and idempotency_key. \
+Before paying, clarify ambiguous asset selection or purpose. If a model cannot use requested references, \
+explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
+Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \
+fetch re-delivers an owned video to the workspace; attach shows an owned asset card without a sandbox; never write an asset link. \
+Different jobs may run together; never parallelize mutations of one job. \
+After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
 Transcribe speech from any audio asset you own: pass asset_id and an \

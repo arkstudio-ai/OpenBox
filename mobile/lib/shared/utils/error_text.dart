@@ -10,13 +10,17 @@ String errorText(I18nState i18n, Object error) {
   final apiError = error is DioException ? ApiError.fromDio(error) : error;
   if (apiError is ApiError) {
     if (apiError.code == 'NETWORK') return i18n.t('errors:network');
+    if (apiError.code == 'ASSISTANT_TURN_BUDGET' &&
+        apiError.message.trim().isNotEmpty) {
+      return apiError.message.trim();
+    }
     // A quota refusal carries its two numbers; interpolate them so the copy
     // says how far over the line the person is rather than that a limit
     // exists somewhere.
-    final mapped = i18n.t('errors:${apiError.code}', vars: {
-      'used': apiError.meta['used'],
-      'limit': apiError.meta['limit'],
-    });
+    final mapped = i18n.t(
+      'errors:${apiError.code}',
+      vars: {'used': apiError.meta['used'], 'limit': apiError.meta['limit']},
+    );
     if (mapped != 'errors:${apiError.code}') return mapped;
     final byStatus = i18n.t('errors:HTTP_${apiError.status}');
     if (byStatus != 'errors:HTTP_${apiError.status}') return byStatus;
@@ -36,11 +40,18 @@ String errorText(I18nState i18n, Object error) {
 /// someone what to fix.
 String runFailureText(I18nState i18n, Map<String, dynamic>? error) {
   final code = error?['code'];
+  final message = error?['message'];
+  // This message carries the durable submission receipt. Replacing it with
+  // generic limit copy hides that the task was already accepted.
+  if (code == 'ASSISTANT_TURN_BUDGET' &&
+      message is String &&
+      message.trim().isNotEmpty) {
+    return message.trim();
+  }
   if (code is String && code.isNotEmpty) {
     final byCode = i18n.t('errors:$code');
     if (byCode != 'errors:$code') return byCode;
   }
-  final message = error?['message'];
   if (message is String && message.trim().isNotEmpty) return message.trim();
   return i18n.t('errors:runFailed');
 }

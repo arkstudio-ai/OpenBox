@@ -52,9 +52,13 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
             attachments=attachments, client_id=key, agent="assistant", model=chosen_model, variant=chosen_variant,
             video_model=video, video_resolution=resolution,
             origin="human", origin_ref=origin_ref)
-        return {"inbox_id": receipt.id, "assistant_session_id": main_id, "client_id": client_id,
-                "inbox_client_id": key, "state": receipt.state, "delivery": "followup",
-                "message_id": receipt.message_id, "run_id": receipt.run_id, "generation": receipt.generation}
+    if receipt.created:
+        from bus import bus
+        from bus.events import AGENT_INBOX_UPDATED
+        bus.publish(AGENT_INBOX_UPDATED, {"userId": user_id, "sessionId": main_id})
+    return {"inbox_id": receipt.id, "assistant_session_id": main_id, "client_id": client_id,
+            "inbox_client_id": key, "state": receipt.state, "delivery": "followup",
+            "message_id": receipt.message_id, "run_id": receipt.run_id, "generation": receipt.generation}
 
 
 async def accept_session_input(session, *, user_id, text, client_id, delivery=None,

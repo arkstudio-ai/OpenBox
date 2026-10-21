@@ -186,8 +186,8 @@ class ImageGenerationConfig(BaseModel):
     duplicating secrets.
     """
 
-    provider: str = ""  # empty = provider prefix of the default chat model
-    model: str = "gpt-image-2"
+    provider: str = "runninghub"  # empty = provider prefix of the default chat model
+    model: str = "seedream-v5-pro"
     # The user picks a channel, never a provider credential or arbitrary model.
     # Administrators choose one concrete RunningHub model for every user.
     runninghub_provider: str = "runninghub"
@@ -454,6 +454,12 @@ class HotTrendsConfig(BaseModel):
     page_timeout_seconds: int = Field(default=40, ge=10, le=120)
     #: How long a resolved direct media link is trusted before re-resolving.
     media_link_ttl_hours: int = Field(default=6, ge=1, le=72)
+
+
+class AssetDescriptionConfig(BaseModel):
+    """Short upload captions use an independent, currently offered vision model."""
+
+    model: str = "openai/qwen3.8-flash"
 
 
 class VideoAnalysisConfig(BaseModel):
@@ -869,6 +875,7 @@ class OpenBoxConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool_exposure: ToolExposureConfig = ToolExposureConfig()
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
+    asset_description: AssetDescriptionConfig = Field(default_factory=AssetDescriptionConfig)
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

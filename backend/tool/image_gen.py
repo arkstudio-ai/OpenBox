@@ -76,7 +76,7 @@ class ImageGenArgs(BaseModel):
     )
     background: Literal["auto", "opaque", "transparent"] | None = Field(
         default=None,
-        description="Background mode. Configured gpt-image-2 does not support native transparent output.",
+        description="Background mode. Native transparency depends on the configured image model's capabilities.",
     )
     filename: str | None = Field(
         default=None,
@@ -897,6 +897,7 @@ async def _reserve_image_outputs(
     requested_name: str | None,
     output_format: str,
     count: int,
+    allow_extend: bool = False,
 ) -> tuple[list[Any], bool]:
     """Reserve deterministic asset/OSS identities before the paid POST."""
     from datetime import datetime, timezone
@@ -927,15 +928,21 @@ async def _reserve_image_outputs(
                 ).scalars()
             )
             if existing:
-                if len(existing) != count:
+                if len(existing) != count and not allow_extend:
                     raise RuntimeError("image operation reservation is incomplete")
                 by_id = {row.id: row for row in existing}
-                return [by_id[asset_id] for asset_id in ids], False
+                if len(existing) == count:
+                    return [by_id[asset_id] for asset_id in ids], False
+            else:
+                by_id = {}
             project_id = ctx.project_id or await _session_project(
                 db, ctx.session_id, ctx.user_id
             )
             rows = []
             for index, asset_id in enumerate(ids, start=1):
+                if asset_id in by_id:
+                    rows.append(by_id[asset_id])
+                    continue
                 name = _safe_filename(
                     requested_name,
                     asset_id,
@@ -1414,7 +1421,7 @@ def _rejected_result(mode: str, failure: _ProviderFailure, *, operation_key: str
     )
 
 
-async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
+async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
     ctx._trajectory_image_request_id = None
@@ -1562,6 +1569,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         },
                     )
         operation_key = _image_operation_key(ctx, fingerprint)
+        ctx._image_notification_key = operation_key
         effect_prepared = None
         effect_claim = None
         if ctx.run_fence is not None:
@@ -1588,6 +1596,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     "mode": mode,
                     "model": target.model,
                     "output_count": args.n,
+                    "billing_key": f"image:{ctx.part_id}",
                     "output_format": output_format,
                     **(_runninghub_effect_context(target, planned) if planned is not None else {}),
                 },
@@ -1599,6 +1608,16 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             output_format=output_format,
             count=args.n,
         )
+        if effect_prepared is not None:
+            receipt = effect_prepared.snapshot.provider_receipt or {}
+            received_count = receipt.get("output_count")
+            received_ids = receipt.get("asset_ids")
+            if (isinstance(received_count, int) and 0 < received_count <= 16
+                    and received_ids == [_reserved_image_id(operation_key, i) for i in range(1, received_count + 1)]):
+                reservations, _ = await _reserve_image_outputs(
+                    ctx, operation_key=operation_key, requested_name=args.filename,
+                    output_format=output_format, count=received_count, allow_extend=True,
+                )
         stored: list[StoredImage] = []
         provider_called = False
         task_receipt: dict[str, Any] = {}
@@ -1736,6 +1755,16 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             )
             try:
                 await _assert_image_current(ctx)
+                async def bounded_provider():
+                    # The provider deadline expires before the outer tool's
+                    # cleanup/delivery budget, including SDK close and tracing.
+                    if planned is not None:
+                        # RunningHub's adapter persists the taskId and owns its
+                        # poll deadline, returning ImageTaskPending for recovery.
+                        return await provider_operation
+                    async with asyncio.timeout(target.timeout_seconds):
+                        return await provider_operation
+
                 if effect_claim is not None:
                     from agent.effect_ledger import (
                         assert_effect_dispatchable,
@@ -1769,10 +1798,10 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
                     payloads = await run_with_effect_claim_heartbeat(
                         effect_claim,
-                        provider_operation,
+                        bounded_provider(),
                     )
                 else:
-                    payloads = await provider_operation
+                    payloads = await bounded_provider()
                 await _assert_image_current(ctx)
             except Exception as exc:
                 from agent.driver import LeaseLostError
@@ -1925,6 +1954,22 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         "do_not_retry": True,
                     },
                 )
+            if len(payloads) > len(reservations):
+                reservations, _ = await _reserve_image_outputs(
+                    ctx, operation_key=operation_key, requested_name=args.filename,
+                    output_format=output_format, count=len(payloads), allow_extend=True,
+                )
+                await _set_reserved_image_status(reservations, "generating", ctx=ctx, expected={"pending"})
+            if len(payloads) < len(reservations):
+                await _set_reserved_image_status(reservations[len(payloads):], "rejected", ctx=None,
+                                                  expected={"generating"})
+                reservations = reservations[:len(payloads)]
+            if not payloads:
+                if effect_claim is not None:
+                    from agent.effect_ledger import settle_effect
+                    await settle_effect(effect_claim, state="failed", error={"code": "image_provider_response_incomplete"})
+                return ToolResult(title="Image provider returned no images", output="No images were returned or charged. No automatic paid retry was attempted.",
+                                  metadata={"error": True, "failure_code": "image_provider_response_incomplete", "do_not_retry": True})
             if effect_claim is not None and planned is None:
                 # RunningHub recorded its taskId receipt at submit time.
                 import hashlib as _receipt_hashlib
@@ -1970,25 +2015,6 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             "do_not_retry": True,
                         },
                     )
-            if len(payloads) != len(reservations):
-                await _set_reserved_image_status(
-                    reservations,
-                    "transfer_failed",
-                    ctx=None,
-                    expected={"generating"},
-                )
-                return ToolResult(
-                    title="Image provider response incomplete",
-                    output="The provider returned a different number of images than were reserved; no paid retry was attempted.",
-                    metadata={
-                        "error": True,
-                        "failure_code": "image_provider_response_incomplete",
-                        "operation_key": operation_key,
-                        "asset_ids": [row.id for row in reservations],
-                        "manual_review": True,
-                        "do_not_retry": True,
-                    },
-                )
             await ctx.update_output("Uploading generated image to OSS…")
             try:
                 for index, (payload, reservation) in enumerate(
@@ -2013,13 +2039,14 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         len(payloads),
                         reserved_asset=reservation,
                     )
-                    if effect_claim is not None:
-                        stored_image = await run_with_effect_claim_heartbeat(
-                            effect_claim,
-                            store_operation,
-                        )
-                    else:
-                        stored_image = await store_operation
+                    async with asyncio.timeout(240):
+                        if effect_claim is not None:
+                            stored_image = await run_with_effect_claim_heartbeat(
+                                effect_claim,
+                                store_operation,
+                            )
+                        else:
+                            stored_image = await store_operation
                     stored.append(stored_image)
                 if effect_claim is not None:
                     from agent.effect_ledger import settle_effect
@@ -2027,7 +2054,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     effect_claim = await renew_effect_claim(effect_claim)
                     await settle_effect(
                         effect_claim,
-                        state="succeeded",
+                        state="failed" if len(stored) < args.n else "succeeded",
+                        error={"code": "image_provider_response_incomplete"} if len(stored) < args.n else None,
                         projection={
                             "asset_ids": [item.asset_id for item in stored],
                             "output_count": len(stored),
@@ -2035,6 +2063,12 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         evidence={"projection": "file_assets_ready"},
                     )
             except Exception as exc:
+                if effect_claim is not None:
+                    from agent.effect_ledger import EffectLeaseLostError, record_effect_outcome_unknown
+                    try:
+                        await record_effect_outcome_unknown(effect_claim, error={"code": "image_delivery_failed"})
+                    except EffectLeaseLostError:
+                        pass
                 await _set_reserved_image_status(
                     reservations,
                     "transfer_failed",
@@ -2061,6 +2095,25 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         "do_not_retry": True,
                     },
                 )
+    except asyncio.CancelledError:
+        # CancelledError bypasses Exception. Preserve the paid-send boundary
+        # even after run revocation; these writes only close owned reservations
+        # and never turn ready assets back into failures or reopen dispatch.
+        rows = locals().get("reservations") or []
+        claim = locals().get("effect_claim")
+        if claim is not None:
+            from agent.effect_ledger import EffectLeaseLostError, record_effect_outcome_unknown, abandon_effect_before_dispatch
+            try:
+                if locals().get("provider_called"):
+                    await record_effect_outcome_unknown(claim, error={"code": "image_interrupted_after_send"})
+                else:
+                    await abandon_effect_before_dispatch(claim, reason="image_cancelled_before_send")
+            except EffectLeaseLostError:
+                pass
+        if rows:
+            await _set_reserved_image_status(rows, "outcome_unknown" if locals().get("provider_called") else "rejected",
+                                             ctx=None, expected={"pending", "generating", "uploading"})
+        raise
     except Exception as exc:
         from agent.driver import LeaseLostError
 
@@ -2090,7 +2143,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
         credits = await settle_image(
             key=billing_key, workspace_id=ctx.workspace_id, user_id=ctx.user_id,
-            session_id=ctx.session_id, model_id=target.model, count=len(stored),
+            session_id=ctx.session_id, model_id=target.model, count=min(args.n, len(stored)),
             # RunningHub prices by resolution tier, as its price-preview does.
             **({"tier": planned.tier} if planned is not None else {}),
         )
@@ -2137,6 +2190,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         lines.append(f"credits={format(credits.normalize(), 'f')}")
         lines += billing_status_lines()
     lines += notes
+    if len(stored) != args.n:
+        lines.append(f"Requested {args.n}, received and saved {len(stored)}. Missing outputs were not retried; unexpected extra outputs are not charged.")
     lines.append("Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.")
     return ToolResult(
         title=f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''}",
@@ -2151,9 +2206,53 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             "requested_size": requested_size,
             "quality": quality,
             "credits": format(credits.normalize(), "f") if credits is not None else None,
+            "requested_count": args.n,
+            "received_count": len(stored),
+            **({"error": True, "failure_code": "image_provider_response_incomplete", "do_not_retry": True,
+                "missing_count": args.n - len(stored)} if len(stored) < args.n else {}),
             **({"provider_task_id": task_receipt["task_id"]} if task_receipt.get("task_id") else {}),
         },
     )
+
+
+async def _notify_image_failure(ctx: ToolContext) -> None:
+    """Durable feedback independent of a later model response, deduped per call."""
+    if not ctx.user_id or not ctx.session_id or not ctx.part_id:
+        return
+    try:
+        from db.base import get_db_session
+        from db.models.session import Session
+        from notifications.events import emit
+        async with get_db_session() as db:
+            session = await db.get(Session, ctx.session_id)
+            if session is None or session.user_id != ctx.user_id or session.is_deleted:
+                return
+            await emit(db, user_id=ctx.user_id, workspace_id=session.workspace_id,
+                       session_id=ctx.session_id, kind="task_failed",
+                       event_key=f"image:{getattr(ctx, '_image_notification_key', None) or ctx.part_id}:failed",
+                       name="图片处理")
+    except Exception:
+        log.warning("image failure notification could not be persisted", exc_info=True)
+
+
+async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
+    ctx._image_notification_key = None
+    try:
+        result = await _execute(args, ctx)
+    except asyncio.CancelledError:
+        await _notify_image_failure(ctx)
+        raise
+    if not result.metadata.get("asset_ids") and not result.metadata.get("asset_id"):
+        result.metadata.setdefault("error", True)
+    if result.metadata.get("error") and result.metadata.get("failure_code") != "image_task_pending":
+        await _notify_image_failure(ctx)
+    return result
+
+
+def _image_body_timeout(_args: dict, _ctx: ToolContext) -> float:
+    from core.config import get_config
+    # Preflight, provider wait, upload and terminal cleanup are separate phases.
+    return float(get_config().image_generation.timeout_seconds) + 180.0 + 4 * 240.0
 
 
 IMAGE_GEN_DESCRIPTION = """\
@@ -2182,8 +2281,15 @@ class _ImageEffectReconciler:
         from sqlalchemy import select
 
         raw_ids = effect.safe_context.get("asset_ids")
+        receipt = effect.provider_receipt or {}
+        received_ids = receipt.get("asset_ids")
+        if (isinstance(received_ids, list) and received_ids
+                and len(received_ids) <= 16
+                and received_ids == [_reserved_image_id(effect.idempotency_key, i)
+                                     for i in range(1, len(received_ids) + 1)]):
+            raw_ids = received_ids
         asset_ids = [str(item) for item in raw_ids] if isinstance(raw_ids, list) else []
-        expected = int(effect.safe_context.get("output_count") or len(asset_ids) or 0)
+        expected = len(received_ids) if raw_ids is received_ids else int(effect.safe_context.get("output_count") or len(asset_ids))
         if not asset_ids or len(asset_ids) != expected:
             return ReconcileDecision(
                 state="manual_review",
@@ -2202,12 +2308,39 @@ class _ImageEffectReconciler:
                 ).scalars()
             )
         by_id = {row.id: row for row in rows}
+        hashes = receipt.get("output_sha256")
+        if (len(by_id) == len(asset_ids) and isinstance(hashes, list)
+                and len(hashes) == len(asset_ids)):
+            # Recover an upload that succeeded before its DB commit. Only
+            # digest-verified bytes at this operation's owned keys qualify.
+            from core.oss import get_oss
+            from sqlalchemy import update
+            for asset_id, digest in zip(asset_ids, hashes):
+                row = by_id[asset_id]
+                if row.status == "ready" or row.status not in {"generating", "uploading", "transfer_failed", "outcome_unknown"}:
+                    continue
+                if not row.oss_key.startswith(f"assets/{effect.tenant_id}/{asset_id}/"):
+                    continue
+                try:
+                    data = await get_oss().get_object(row.oss_key, timeout=20)
+                except Exception:
+                    continue
+                if not data or len(data) > _MAX_OUTPUT_BYTES or hashlib.sha256(data).hexdigest() != digest:
+                    continue
+                mime, _ = _detect_output(data, str(effect.safe_context.get("output_format") or "png"))
+                async with get_db_session() as db:
+                    result = await db.execute(update(FileAsset).where(FileAsset.id == asset_id,
+                        FileAsset.user_id == effect.tenant_id, FileAsset.status == row.status,
+                        FileAsset.is_deleted.is_(False)).values(status="ready", size=len(data), mime=mime))
+                    if result.rowcount == 1:
+                        row.status, row.size = "ready", len(data)
         if len(by_id) == len(asset_ids) and all(
             by_id[asset_id].status == "ready" and by_id[asset_id].size > 0
             for asset_id in asset_ids
         ):
+            await _settle_reconciled_image_charge(effect, rows)
             return ReconcileDecision(
-                state="succeeded",
+                state="failed" if len(asset_ids) < int(effect.safe_context.get("output_count") or 0) else "succeeded",
                 receipt=effect.provider_receipt,
                 projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
                 evidence={"projection": "file_assets_ready"},
@@ -2226,6 +2359,13 @@ class _ImageEffectReconciler:
             and len(by_id) == len(asset_ids)
         ):
             return await _reconcile_runninghub_task(effect, [by_id[asset_id] for asset_id in asset_ids])
+        if rows:
+            await _set_reserved_image_status(rows, "manual_review", ctx=None,
+                                             expected={"pending", "generating", "uploading", "outcome_unknown", "transfer_failed"})
+            notice_ctx = ToolContext(user_id=effect.tenant_id, session_id=effect.session_id,
+                                     part_id=effect.effect_id, workspace_id=rows[0].workspace_id or "")
+            notice_ctx._image_notification_key = effect.idempotency_key
+            await _notify_image_failure(notice_ctx)
         return ReconcileDecision(
             state="manual_review",
             receipt=effect.provider_receipt,
@@ -2277,7 +2417,7 @@ async def _reconcile_runninghub_task(effect, rows: list[Any]):
     try:
         from billing.media import settle_image
 
-        await settle_image(key=f"image:effect:{effect.effect_id}", workspace_id=rows[0].workspace_id,
+        await settle_image(key=context.get("billing_key") or f"image:effect:{effect.effect_id}", workspace_id=rows[0].workspace_id,
                            user_id=effect.tenant_id, session_id=effect.session_id,
                            model_id=str(context.get("model") or ""), count=len(rows),
                            tier=context.get("billing_tier"))
@@ -2289,6 +2429,21 @@ async def _reconcile_runninghub_task(effect, rows: list[Any]):
         projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
         evidence={"projection": "file_assets_ready", "reconciled_from": "runninghub_query"},
     )
+
+
+async def _settle_reconciled_image_charge(effect, rows: list[Any]) -> None:
+    key = effect.safe_context.get("billing_key")
+    if not rows or not isinstance(key, str) or not key.startswith("image:"):
+        return  # Legacy effects lack proof of the original settlement key.
+    try:
+        from billing.media import settle_image
+        await settle_image(key=key, workspace_id=rows[0].workspace_id,
+                           user_id=effect.tenant_id, session_id=effect.session_id,
+                           model_id=str(effect.safe_context.get("model") or ""),
+                           count=min(len(rows), int(effect.safe_context.get("output_count") or len(rows))),
+                           **({"tier": effect.safe_context["billing_tier"]} if effect.safe_context.get("billing_tier") else {}))
+    except Exception:
+        log.warning("reconciled image settlement failed", exc_info=True)
 
 
 async def _project_reconciled_images(rows: list[Any], payloads: list[bytes], fallback_format: str) -> None:
@@ -2336,4 +2491,6 @@ image_gen_tool = define_tool(
     execute=execute,
     sandbox_required=False,
     parallel_safe=False,
+    batch_serial_safe=True,
+    body_timeout=_image_body_timeout,
 )

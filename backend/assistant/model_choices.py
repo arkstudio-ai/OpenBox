@@ -98,7 +98,7 @@ async def prepare(ctx, source, arguments):
         await _tool_source_locked(db, main, source, "task_create")
         rows = (await db.scalars(select(QuestionCheckpoint).where(
             QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.user_id == main.user_id,
-            QuestionCheckpoint.status == "answered").order_by(QuestionCheckpoint.updated_at.desc()).limit(100))).all()
+            QuestionCheckpoint.status.in_(("answered", "pending"))).order_by(QuestionCheckpoint.updated_at.desc()).limit(100))).all()
     for field in ("model", "work_type", "video_model"):
         if field == "model" and values.get("model_confirmed") and values.get("model"):
             continue
@@ -111,6 +111,9 @@ async def prepare(ctx, source, arguments):
         digest = command_digest({"input": original, "resolved": values, "field": field})
         answered = next((row for row in rows if ((row.continuation or {}).get(KIND) or {}).get("digest") == digest), None)
         if answered:
+            if answered.status == "pending":
+                raise AssistantError(409, "ASSISTANT_SETUP_PENDING",
+                    f"This exact task is still awaiting a choice. Use cards.list and cards.answer for {answered.id}; do not create another request.")
             card = answered.continuation[KIND]
             selected = (answered.answers or [[]])[0]
             if len(selected) != 1 or selected[0] not in card["choices"]:
@@ -135,7 +138,9 @@ async def prepare(ctx, source, arguments):
             descriptions = {}
             for item in items:
                 price = item["credits_per_second"].get(item["resolution"])
-                descriptions[item["name"]] = "；".join(filter(None, [item["description"], item["resolution"],
+                model_name = next((video["name"] for video in inventory["video"]
+                                   if video["id"] == item["model"]), item["model"])
+                descriptions[item["name"]] = "；".join(filter(None, [model_name, item["description"], item["resolution"],
                     f"参考每秒 {price} 积分，完整方案另行报价" if price is not None else "费用待核实，不预先承诺价格"]))
             title = "视频档次"
             question = values.get("video_model_question") or "这条片子更看重日常出片还是画面细节？可以先了解各档的实际费用和素材要求，再决定。"
@@ -187,6 +192,8 @@ def result(card, answers):
     return {"title": "已取消" if cancelled else "已记录选择",
             "output": ("The user cancelled. Do not create work." if cancelled else
                 "The user's selection was recorded. No conversation or task has been created. "
-                "Call tasks.submit again with exactly these original arguments; saved choices will be applied: "
+                + "Selected option and resolved settings: " + json.dumps({"answers": answers,
+                    "settings": card["choices"].get(choice[0]) if len(choice) == 1 else None}, ensure_ascii=False) + ". "
+                + "Call tasks.submit again with exactly these original arguments; saved choices will be applied: "
                 + json.dumps(card["input"], ensure_ascii=False)),
             "metadata": {"task_setup": "cancelled" if cancelled else "selected"}}

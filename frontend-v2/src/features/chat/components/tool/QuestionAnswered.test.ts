@@ -13,9 +13,7 @@ function part(metadata: Record<string, unknown> | null, overrides: Partial<ToolP
 
 describe("reading a question tool's record", () => {
   it("pairs each question with its answer", () => {
-    expect(
-      questionPairs(part({ questions: ["Cache?", "TTL?"], answers: [["Redis"], ["15m"]] })),
-    ).toEqual([
+    expect(questionPairs(part({ questions: ["Cache?", "TTL?"], answers: [["Redis"], ["15m"]] }))).toEqual([
       { question: "Cache?", answer: ["Redis"] },
       { question: "TTL?", answer: ["15m"] },
     ])
@@ -53,6 +51,9 @@ describe("whether a question part has a record to show", () => {
 
   it("does while it waits, and after it was closed unanswered", () => {
     expect(hasQuestionRecord(part({}, { status: "waiting_input" }))).toBe(true)
+    expect(questionStateKey(part({ question_status: "pending" }, { status: "completed" }))).toBe(
+      "question.waiting",
+    )
     expect(questionStateKey(part({ question_status: "superseded" }))).toBe("question.superseded")
     expect(hasQuestionRecord(part({ question_status: "expired" }))).toBe(true)
   })
@@ -66,7 +67,9 @@ describe("whether a question part has a record to show", () => {
 
 describe("who answered", () => {
   it("marks an answer the personal assistant gave for the user", () => {
-    expect(answeredByAssistant(part({ questions: ["Color?"], answers: [["Dark"]], answered_by: "assistant" }))).toBe(true)
+    expect(
+      answeredByAssistant(part({ questions: ["Color?"], answers: [["Dark"]], answered_by: "assistant" })),
+    ).toBe(true)
     expect(answeredByAssistant(part({ questions: ["Color?"], answers: [["Dark"]] }))).toBe(false)
   })
 })

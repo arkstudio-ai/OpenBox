@@ -49,7 +49,7 @@ async def test_the_greeting_is_free_words_from_facts_and_its_audio_reaches_the_c
     await bridge.start()
     [(_, instructions)] = provider.commands("create")
     assert instructions == phrases.greeting_instructions("zh")
-    assert "上次通话" in instructions and "不推测" in instructions  # a goal, never a sentence to repeat
+    assert "只作一句接通问候" in instructions and "不主动提任务" in instructions  # a goal, never a sentence to repeat
     assert "嗨，我在" not in instructions and "只说这一句" not in instructions
     await replay(bridge, started("greet"), audio("greet", 4800), done("greet"))
     items = outbox(bridge)

@@ -1,4 +1,5 @@
 """/ws/assistant/voice end to end with a scripted provider: handshake, refusals, a turn, hang-up."""
+import asyncio
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from starlette.testclient import TestClient
 
 from voice import phrases
 from voice.models import AUDIO_MODEL, OMNI_MODEL
-from tests.support.voice_fakes import ASK_MARKER, CUT_MARKER, DROP_MARKER, ScriptedProvider, wait_until
+from tests.support.voice_fakes import ASK_MARKER, CHAT_MARKER, CUT_MARKER, DROP_MARKER, ScriptedProvider, wait_until
 
 os.environ["JWT_SECRET"] = "test-voice-secret-32bytes-long!!"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
@@ -206,6 +207,27 @@ async def test_refusals_carry_the_contract_close_codes(http, providers, app, mon
     assert not providers.made
 
 
+async def test_slow_report_read_does_not_block_server_heartbeat(http, providers, app, monkeypatch):
+    from api import voice as voice_socket
+    from voice.reports import ReportWatcher
+    from voice import updates
+    async def slow_read(self):
+        await asyncio.sleep(10)
+        return []
+    monkeypatch.setattr(ReportWatcher, "poll", slow_read)
+    monkeypatch.setattr(voice_socket, "HEARTBEAT_SECONDS", .01)
+    monkeypatch.setattr(updates, "READ_TIMEOUT_SECONDS", 2)
+    headers = await account(http)
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        assert socket.receive_json()["type"] == "ready"
+        # No client ping: this is the independent server heartbeat. A blocked
+        # polling/timer pump could not emit it until the slow read finished.
+        seen = read_until(socket, lambda item: item["type"] == "heartbeat")
+        assert seen[-1]["type"] == "heartbeat" and seen[-1]["elapsed_seconds"] < 2
+        socket.send_json({"type": "stop"})
+        assert "ended" in kinds(read_until(socket, lambda item: False))
+
+
 async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, providers, app):
     from db.base import get_db_session
     from db.models.voice import VoiceCall
@@ -220,7 +242,7 @@ async def test_a_call_greets_answers_ping_and_hangs_up_with_its_cost(http, provi
         assert kinds(greeting) == ["phase", "phrase", "<audio>", "cost", "phase"]
         assert greeting[0]["value"] == "greeting" and greeting[1] == {"type": "phrase", "key": "greeting"}
         from voice.phrases import greeting_instructions
-        assert providers.made[0].response_purposes()[0][1] == greeting_instructions("zh", first_call=True)  # first contact, not every call
+        assert providers.made[0].response_purposes()[0][1] == greeting_instructions("zh", first_call=True)
         assert "你是用户的专属运营语音助理" in providers.made[0].instructions
         assert "现在是 " in providers.made[0].instructions
         socket.send_bytes(FRAME)
@@ -257,7 +279,28 @@ async def test_a_turn_reaches_the_main_session_and_hang_up_reports_it_pending(ht
         item = await db.get(AgentInboxItem, accepted["inbox_id"])
         turn = await db.scalar(select(VoiceTurn).where(VoiceTurn.id == accepted["turn_id"]))
     assert item.prompt == "帮我看看贪吃蛇进展" and item.origin_ref["entrypoint"] == "assistant_voice"
-    assert (turn.outcome, turn.inbox_id, turn.provider_call_id) == ("late", item.id, "call-2")
+    assert (turn.outcome, turn.inbox_id) == ("late", item.id)
+    assert turn.provider_call_id.startswith("call-")  # only the explicit native handover is persisted
+
+
+async def test_native_chat_while_handover_waits_does_not_enqueue_a_second_main_turn(http, providers, app):
+    from db.base import get_db_session
+    from db.models.voice import VoiceTurn
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, await account(http))}") as socket:
+        ready = socket.receive_json()
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
+        heard_greeting()
+        socket.send_bytes(ASK_MARKER + FRAME[4:])
+        read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "accepted")
+        read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "working")
+        socket.send_bytes(CHAT_MARKER + FRAME[4:])
+        received = read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "speaking")
+        assert "<audio>" in kinds(received) and "turn" not in kinds(received)
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda item: item["type"] == "ended")
+    async with get_db_session() as db:
+        turns = (await db.scalars(select(VoiceTurn).where(VoiceTurn.call_id == ready["call_id"]))).all()
+    assert len(turns) == 1 and turns[0].transcript == "帮我看看贪吃蛇进展"
 
 
 async def test_a_request_reaches_the_assistant_planned_with_the_users_words_and_the_call(http, providers, app,
@@ -360,7 +403,8 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
         provider = providers.made[0]
         assert accepted["state"] == "accepted"
-        # The front desk's call is answered before the assistant has done anything.
+        # Only the explicit native handover queues business work; ASR itself
+        # stays in the realtime conversation.
         [(_, tool_id, output)] = provider.commands("output")
         assert tool_id == "call-2" and output["status"] == "accepted"
         assert output["operation_state"] == "received" and not output["execution_confirmed"]

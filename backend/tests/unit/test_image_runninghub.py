@@ -311,7 +311,7 @@ async def test_a_task_still_running_at_the_deadline_is_finished_by_its_task_id(r
     assert all(row.status == "ready" and row.size == len(RESULT) for row in assets.values())
     assert len(runninghub.submits) == 1
     [charge] = runninghub.settled
-    assert charge["key"] == f"image:effect:{effect.id}" and charge["tier"] == "2k"
+    assert charge["key"] == "image:part-late" and charge["tier"] == "2k"
 
 
 async def test_a_failed_task_found_by_reconciliation_is_final(runninghub, monkeypatch):

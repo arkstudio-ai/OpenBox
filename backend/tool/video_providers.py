@@ -212,6 +212,32 @@ def _wire_shape(route: Any, declared: Any | None) -> str | None:
     return shape
 
 
+def effective_reference_support(entry: Any) -> dict[str, bool]:
+    """Intersect registry declarations with what this adapter can encode.
+
+    This is a menu projection, not a replacement for validate_request. A
+    vendor's multimodal model on another route cannot expand this wire body.
+    """
+    support = {
+        "image": bool(entry.supports_reference_image),
+        "video": bool(entry.supports_reference_video),
+        "audio": bool(getattr(entry, "supports_reference_audio", False)),
+        "frames": bool(getattr(entry, "supports_first_last_frame", False)),
+    }
+    channel = getattr(entry, "channel", "ark")
+    if channel == "runninghub":
+        support.update(video=False, audio=False)
+    elif channel == "sd2":
+        shape = getattr(entry, "wire_shape", None)
+        if shape == "size" or (shape is None and entry.id.lower() == "minimax-h3"):
+            support.update(video=False, audio=False, frames=False)
+        elif sd2_native_resolution(entry.id) is not None or shape == "flat":
+            support.update(audio=False, frames=False)
+            if canonicalize_sd2_model_name(entry.id) == "video-sd-720p-proⅠ":
+                support["video"] = False
+    return support
+
+
 def _validate_size_shape(resolution: str, ratio: str) -> None:
     # This adapter encodes portrait/landscape only. Refuse unsupported shapes
     # rather than silently turning a square/adaptive request into landscape.

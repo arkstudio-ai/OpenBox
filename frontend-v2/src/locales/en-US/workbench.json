@@ -16,7 +16,7 @@
     "done": "Got it",
     "retry": "Retry now",
     "subscriptionRequired": "Cloud desktops require a paid plan",
-    "subscriptionHint": "Free users can continue ordinary LLM conversations. A paid plan automatically enables the sandbox. After expiry, your desktop is retained and reused on renewal if it still exists in the cloud.",
+    "subscriptionHint": "An active membership is required; a credit balance does not grant cloud desktop access. Subscribe or renew in Billing. Once payment is confirmed, access to your retained desktop and its data is restored automatically, if the desktop still exists. Ordinary text chat remains available.",
     "subscribe": "View plans",
     "steps": {
       "paid": "Payment confirmed",
@@ -101,6 +101,7 @@
     "provisionFailed": "Cloud computer setup failed",
     "provisionRetry": "Try again",
     "connected": "Connected",
+    "subscriptionRequired": "Subscribe or renew to connect",
     "closed": "Connection closed",
     "error": "Unable to connect",
     "unavailable": "Cloud desktop is unavailable",

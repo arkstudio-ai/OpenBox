@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
+from agent.latency import ProviderStream, provider_wait
 from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
 from agent.trajectory import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
@@ -1271,9 +1272,10 @@ async def _stream_responses_api(
         )
         await _assert_dispatch_allowed(trace_ctx)
         async with httpx.AsyncClient(timeout=request_timeout()) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+            async with ProviderStream(client.stream("POST", url, headers=headers, json=payload)) as resp:
                 if resp.status_code != 200:
-                    body = await resp.aread()
+                    with provider_wait():
+                        body = await resp.aread()
                     body_text = body.decode("utf-8", errors="replace")
                     await capture.finish("failed", reason=f"http_{resp.status_code}", error=RuntimeError(body_text))
                     if native_plan is not None:
@@ -1572,6 +1574,8 @@ async def _stream_responses_api(
             raise RuntimeError("Compaction response ended before response.completed")
         if native_normalizer is not None:
             native_normalizer.finalize()
+        if not response_completed:
+            raise RuntimeError("模型回复传输中断，未收到完整结束标记。请重试；已收到的片段不作为最终答复。")
         if native_plan is not None and native_record_capability is not None:
             try:
                 await native_record_capability("supported", "request_completed")
@@ -1780,7 +1784,8 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
         capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
                                              payload=kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(ctx)
-        response = await litellm.acompletion(**kwargs)
+        with provider_wait():
+            response = await litellm.acompletion(**kwargs)
         await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
@@ -1934,7 +1939,9 @@ async def _stream_litellm_direct(
     Tool execution is the caller's responsibility (loop.py handles it with
     the correct part_id for SSE events).
     """
-    capture = None
+    from agent.gateway import Observation, close_stream, sdk_client
+    capture = response = observation = None
+    outcome, gateway_error = "cancelled", None
     try:
         import litellm
 
@@ -2019,13 +2026,20 @@ async def _stream_litellm_direct(
         capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(trace_ctx)
-        response = await litellm.acompletion(**call_kwargs)
+        observation = Observation(model_id, purpose)
+        if provider == "openai" and "client" not in call_kwargs:
+            client = sdk_client(provider_kwargs, call_kwargs["timeout"])
+            if client is not None:
+                call_kwargs["client"] = client
+        with provider_wait():
+            response = await observation.dispatch(lambda: litellm.acompletion(**call_kwargs))
 
         tool_calls = []
         stream_usage: dict = {}  # Captured from the final chunk(s)
         provider_finish_reason = None
 
-        async with aclosing(capture.stream_chunks(response, litellm_chunk_blocks)) as chunks:
+        async with aclosing(observation.chunks(response)) as observed, aclosing(
+                capture.stream_chunks(observed, litellm_chunk_blocks)) as chunks:
             async for chunk in chunks:
                 # Capture usage from any chunk that carries it (typically the final one).
                 # With stream_options={"include_usage": True}, the provider sends a
@@ -2097,11 +2111,23 @@ async def _stream_litellm_direct(
         if stream_usage:
             await capture.capture_usage(stream_usage)
             yield {"type": "usage", "usage": dict(stream_usage)}
+        # CustomStreamWrapper fabricates a final "stop" when the upstream
+        # closes without a terminal chunk. For OpenAI-compatible streams its
+        # received_finish_reason is the upstream evidence; the emitted chunk
+        # alone cannot prove that even a short filename arrived in full.
+        from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
+        if provider == "openai" and isinstance(response, CustomStreamWrapper):
+            provider_finish_reason = response.received_finish_reason
         if purpose in {"compaction", "compaction_chunk"} and provider_finish_reason != "stop":
             raise RuntimeError(
                 f"Compaction response did not finish normally: {provider_finish_reason or 'missing finish'}"
             )
-        await capture.finish("completed", reason="tool_calls" if tool_calls else "stop")
+        if provider_finish_reason not in {"stop", "tool_calls", "function_call"}:
+            if not provider_finish_reason:
+                raise RuntimeError("模型回复传输中断，未收到完整结束标记。请重试；已收到的片段不作为最终答复。")
+            raise RuntimeError(f"模型回复未完整结束（{provider_finish_reason}）。请重试；已收到的片段不作为最终答复。")
+        await capture.finish("completed", reason=provider_finish_reason)
+        outcome = "completed"
 
         # Yield tool calls for the caller to execute
         if tool_calls:
@@ -2131,6 +2157,7 @@ async def _stream_litellm_direct(
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        outcome, gateway_error = "failed", e
         from question.runtime import RunRevoked
         if isinstance(e, RunRevoked):
             raise
@@ -2139,6 +2166,13 @@ async def _stream_litellm_direct(
         log.error(f"LiteLLM error: {e}")
         yield {"type": "error", "error": e}
     finally:
+        try:
+            await close_stream(response)
+        except Exception as close_error:
+            log.warning("Model stream close failed error=%s", type(close_error).__name__)
+        finally:
+            if observation is not None:
+                observation.finish(outcome, gateway_error)
         if capture is not None and not capture.finished:
             await capture.finish("cancelled", reason="stream_closed")
 

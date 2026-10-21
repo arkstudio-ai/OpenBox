@@ -13,8 +13,8 @@
     "mutedShort": "已静音",
     "thinking": "想一下…",
     "speaking": "在说话",
-    "working": "在办，稍等…",
-    "late": "还在办…",
+    "working": "已收到，正在处理…",
+    "late": "回复还在处理中…",
     "ending": "正在挂断…",
     "reconnecting": "正在重新连接…",
     "paused": "通话已暂停"

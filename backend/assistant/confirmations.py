@@ -133,7 +133,7 @@ def confirmation_card(continuation: dict | None) -> dict | None:
     return next((continuation[kind] for kind in KINDS if continuation.get(kind)), None)
 
 
-async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[dict]:
+async def pending_cards(user_id: str, workspace_id: str, main_id: str, *, message_id: str | None = None) -> list[dict]:
     """Cards in the main session waiting for the user, oldest first.
 
     For a call to read them aloud (docs/ASSISTANT_VOICE_FIX_PLAN.md 1.3): the
@@ -148,8 +148,11 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
         rows = list((await db.scalars(select(QuestionCheckpoint).join(
             SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id).where(
             QuestionCheckpoint.session_id == main_id, QuestionCheckpoint.user_id == user_id,
-            QuestionCheckpoint.status == "pending", QuestionCheckpoint.generation == SessionExecution.generation)
+            QuestionCheckpoint.status == "pending",
+            (QuestionCheckpoint.generation == SessionExecution.generation) | QuestionCheckpoint.detached.is_(True))
             .order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id))).all())
+    if message_id is not None:
+        rows = [row for row in rows if row.message_id == message_id]
     now, cards = runtime.now(), []
     for row in rows:
         if not row.questions or (row.expires_at and runtime.utc(row.expires_at) <= now):
@@ -173,7 +176,8 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str) -> list[d
         if kind == "assistant_placement":
             from assistant.placement import new_project_option
             placement_fields["new_project_option"] = new_project_option(card)
-        cards.append({"card_id": row.id, "kind": kind, "action": action,
+        from assistant.requests import question_version
+        cards.append({"card_id": row.id, "kind": kind, "action": action, "question_version": question_version(row),
                       **({"task_title": card["input"].get("title", ""),
                           "task_instructions": card["input"].get("instructions", "")}
                          if kind in {"assistant_task_setup", "assistant_placement"} else {}),
@@ -205,4 +209,4 @@ async def card_status(user_id: str, workspace_id: str, main_id: str, card_id: st
         if row.expires_at and runtime.utc(row.expires_at) <= runtime.now():
             return "expired"
         execution = await db.get(SessionExecution, main_id)
-        return "superseded" if execution is None or row.generation != execution.generation else "conflict"
+        return "superseded" if execution is None or (row.generation != execution.generation and not row.detached) else "conflict"

@@ -85,8 +85,9 @@ async def test_cards_pending_reads_main_cards_with_handles_and_task_questions(mo
     assert shown["card"] == "1" and shown["high_risk"]
     assert shown["version"] and shown["what"] == "删除项目「测试A」。"
     assert shown["options"] == [{"id": "option_1", "label": "确认"}, {"id": "option_2", "label": "取消"}]
-    assert [item["answer_how"] for item in value["task_questions"]] == [
-        "用户明确回答全部问题后，用 task_question_answer 提交对应答案和选中资源；含糊或尚有疑问时先解释，不替用户补选", "要用户自己在屏幕上处理"]
+    assert "mode=revise" in value["task_questions"][0]["answer_how"]
+    assert "task_question_answer" in value["task_questions"][0]["answer_how"]
+    assert value["task_questions"][1]["answer_how"] == "要用户自己在屏幕上处理"
     assert desk.card_id("1") == "q-del" and desk.open() == ["q-del"]
     assert (await cards.pending(scope, {}))["cards"][0]["card"] == "1"  # the same card keeps its handle
 
@@ -100,12 +101,98 @@ async def test_nothing_waiting(monkeypatch):
     assert await cards.pending(scoped(Heard())[1], {}) == {"status": "none"}
 
 
+@pytest.mark.parametrize("arguments", [{"request_id": "q-del"}, {"query": "测试A"}])
+async def test_targeted_card_read_keeps_unrelated_cards_out_of_the_observation(monkeypatch, arguments):
+    other = {**CARD, "card_id": "other", "prompt": "另一个任务"}
+    async def waiting(scope):
+        return [CARD, other], []
+    monkeypatch.setattr(cards, "waiting", waiting)
+    desk, scope = scoped(Heard())
+    desk.show(other)
+    result = await cards.pending(scope, arguments)
+    assert [desk.card_id(c["card"]) for c in result["cards"]] == ["q-del"]
+    assert "other" in desk.open()  # filtering does not mark unrelated cards as answered
+
+
+@pytest.mark.parametrize("stage", ["requested", "speaking", "buffered"])
+@pytest.mark.parametrize("related", [False, True])
+async def test_native_card_read_interrupts_only_the_observed_card(call, monkeypatch, stage, related):
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, clock = call
+    await greeted(bridge, provider)
+    other = {**CARD, "card_id": "other", "prompt": "另一个任务"}
+    async def waiting(scope):
+        return [CARD, other], []
+    monkeypatch.setattr(cards, "waiting", waiting)
+    bridge.seed_waiting_cards([CARD, other], [])
+    await replay(bridge, event("user_started"), event("user_stopped"),
+                 transcript("测试A那张卡片是什么意思？"), started("lookup"),
+                 tool_call("read", name="cards_pending", arguments='{"request_id":"q-del"}'), done("lookup"))
+    clock.advance(4)
+    await bridge.fill_idle()
+    if stage != "requested":
+        await replay(bridge, started("explain"), audio("explain", size=480000))
+        if stage == "buffered":
+            await replay(bridge, done("explain"))
+    outbox(bridge)
+    before = len(provider.commands("cancel"))
+    await bridge.waiting_cards([other] if related else [CARD], [])
+    if stage == "requested":
+        await replay(bridge, started("explain"))
+    if stage != "buffered":
+        await replay(bridge, audio("explain"))
+    assert (len(provider.commands("cancel")) > before or any(v.get("type") == "playback.clear"
+            for v in outbox(bridge) if isinstance(v, dict))) == related
 
 
 
 
 
 
+
+
+
+
+@pytest.mark.parametrize("buffered", [False, True])
+@pytest.mark.parametrize("clicked_first", [False, True])
+async def test_cached_card_explanation_tracks_spoken_output_without_a_tool_read(call, buffered, clicked_first):
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    card = {**CARD, "task_title": "花店开业促销方案策划", "options": ["新建项目「花店开业活动」", "取消"]}
+    bridge.seed_waiting_cards([card], [])
+    await replay(bridge, started("explain"), audio("explain", size=480000))
+    if buffered:
+        await replay(bridge, done("explain"))
+    outbox(bridge)
+    if clicked_first:
+        await bridge.waiting_cards([], [])
+    await replay(bridge, event("assistant_transcribing", response_id="explain", text="这里的花店开业"),
+                 event("assistant_transcribing", response_id="explain", text="促销方案策划放在新项目里。"))
+    if not clicked_first:
+        await bridge.waiting_cards([], [])
+    assert any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
+
+
+async def test_user_mention_and_unrelated_assistant_speech_do_not_bind_card_playback(call):
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    card = {**CARD, "task_title": "花店开业促销方案策划"}
+    bridge.seed_waiting_cards([card], [])
+    await replay(bridge, transcript("先不说花店开业促销方案策划，聊聊公园吧"), started("chat"),
+                 event("assistant_transcribing", response_id="chat", text="公园看小说很放松。"),
+                 audio("chat", size=480000), done("chat"))
+    outbox(bridge)
+    await bridge.waiting_cards([], [])
+    assert not any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
+
+
+def test_shared_model_labels_do_not_choose_one_of_several_cards():
+    from voice.spoken_cards import mentioned, snapshot
+    sources = snapshot([{**CARD, "card_id": identity, "options": ["Qwen3.8 Flash", "取消"]}
+                        for identity in ("a", "b")], [])
+    assert mentioned("Qwen 3.8 Flash 适合写文案。确认就行。", sources) == {}
 
 
 # -- inside a call --
@@ -316,6 +403,66 @@ async def test_second_form_waits_for_answer_and_confirmation_cards_take_priority
     assert len(provider.commands("note")) == 1  # do not switch cards before the user has answered
     await bridge.waiting_cards([CARD], [FORM, other])
     assert len(provider.commands("note")) == 2 and "删除项目" in provider.commands("note")[-1][1]
+
+
+@pytest.mark.parametrize("started_already", [False, True])
+async def test_manual_click_withdraws_even_a_requested_or_playing_reminder(call, started_already):
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    await bridge.waiting_cards([], [FORM])
+    note = provider.commands("note")[-1][1]
+    if started_already:
+        await replay(bridge, item("note-manual", text=note), started("reminder"), audio("reminder"))
+    outbox(bridge)
+    await bridge.waiting_cards([], [])  # SQL no longer contains the manually answered question
+    assert not bridge.deliveries and not bridge.desk.questions
+    if not started_already:
+        await replay(bridge, item("note-manual", text=note), started("reminder"))
+    await replay(bridge, audio("reminder"), done("reminder", status="cancelled"))
+    assert provider.commands("cancel")
+    assert not any(isinstance(value, bytes) for value in outbox(bridge))
+    assert not bridge.deliveries
+    assert '"task_questions": []' in bridge._instructions()
+
+
+async def test_answering_one_of_two_cards_does_not_repeat_the_answered_one(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    second = {**CARD, "card_id": "another-card", "prompt": "确认下一步", "action": "task_submit"}
+    from voice.assistant_link import VoiceTurnRef
+    ref = VoiceTurnRef(id="multi", provider_call_id="multi", text="", transcript="", requested=0,
+                      report="", status="ok", cards=[CARD, second], delivery="queued")
+    bridge.deliveries.append(ref)
+    # Suppress delivery while the user is speaking, then resolve just the first card.
+    await replay(bridge, event("user_started"))
+    await bridge.waiting_cards([second], [])
+    assert ref not in bridge.deliveries
+    assert all(CARD not in (notice.cards or []) for notice in bridge.deliveries)
+
+
+@pytest.mark.parametrize("already_playing", [False, True])
+async def test_manual_choice_invalidates_plain_explanation_based_on_old_card_state(call, already_playing):
+    from tests.support.voice_fakes import outbox
+    from voice.assistant_link import VoiceTurnRef
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    bridge.seed_waiting_cards([CARD], [])
+    ref = VoiceTurnRef(id="explanation", provider_call_id="question-about-card", text="那张卡片问什么？",
+        transcript="那张卡片问什么？", requested=0, decision_versions={CARD["card_id"]: cards.version(CARD)})
+    if already_playing:
+        await bridge._settle(ref, {"status": "ok", "speech": "卡片在询问你是否确认。"})
+        await replay(bridge, started("explanation"), audio("explanation"))
+    outbox(bridge)
+    await bridge.waiting_cards([], [])
+    if already_playing:
+        assert provider.commands("cancel")
+        await replay(bridge, audio("explanation"), done("explanation", status="cancelled"))
+    else:
+        await bridge._settle(ref, {"status": "ok", "speech": "你还需要点确认。"})
+        assert not provider.commands("note")
+    assert not any(isinstance(value, bytes) for value in outbox(bridge))
+    assert ref.delivery == "superseded" and not bridge.deliveries
 
 
 async def test_native_request_retains_complete_form_and_human_words(call):

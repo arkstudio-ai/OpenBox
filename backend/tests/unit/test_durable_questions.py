@@ -60,16 +60,21 @@ async def state(tmp_path, monkeypatch):
             "db.migrations.versions.f6a8c0e2b4d6_session_trajectories")
         retirement = importlib.import_module(
             "db.migrations.versions.d3b5f7a9c1e2_retire_session_trajectories")
+        shared_context = importlib.import_module(
+            "db.migrations.versions.ph62e3f4a5b6_assistant_shared_context")
         with Operations.context(MigrationContext.configure(connection)):
             # Reconstruct the pre-trajectory cron table before exercising the
             # additive migration. No fixture rows have been inserted yet.
             from alembic import op
             op.drop_column("cron_runs", "trace_context")
+            op.drop_column("file_assets", "description_updated_at")
+            op.drop_column("file_assets", "description")
             migration.upgrade()
             trajectory_migration.upgrade()
             # The business schema keeps the identity columns; the trajectory
             # tables themselves are retired to their legacy names.
             retirement.upgrade()
+            shared_context.upgrade()
         for model in (QuestionCheckpoint, SessionExecution):
             assert {c["name"] for c in inspect(connection).get_columns(model.__tablename__)} == set(model.__table__.columns.keys())
     async with engine.begin() as connection:

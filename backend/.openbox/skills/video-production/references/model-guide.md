@@ -25,6 +25,13 @@ What the registry cannot tell you:
 Always `action="estimate"` first on anything unusual. It runs the full
 validation and costs nothing.
 
+For supplied pictures or proposed new frames, follow [material-plan.md](material-plan.md)
+on every model. Ask about unresolved material use before generation: whole-picture
+frames, direct identity/product/style references, or preparing new frames. A model
+that supports direct references does not require an intermediate image generation.
+Live capabilities describe the configured channel, not everything a similarly named
+model offers on another provider. Re-evaluate the route after switching models.
+
 ## The selected model is binding
 
 The model menu's second line may contain `person_selected_model=<id>`, backed
@@ -63,6 +70,8 @@ Use only techniques supported by the selected model:
    unsupported, with a prompt that describes the *action* rather than
    re-describing the person. "画面中的人物自然看向镜头" beats a paragraph
    about her face and clothes — a full description competes with the image.
+   Preserve only what the user chose: identity reference does not lock the source
+   picture's pose, background or camera. Write each new shot's setting and action.
 3. **One `seed` reused across shots**, on a model that accepts one. Same seed
    plus same anchor removes most of the remaining drift, for free.
 4. **A shared, prepared boundary image as shot N's `last_frame` and shot N+1's
@@ -89,6 +98,9 @@ choice early, then confirm the script and split it before preparing the images.
 Finish the entire approved batch's frames, prompts and quotes before submitting
 any video. A same-scene N-shot first/last-frame plan normally uses N+1 images,
 sharing the actual boundary asset between neighbours so videos can run in parallel.
+Independent scenes use separate shot frames, with no automatic shared boundary;
+first-only shots need no added last frame. The whole video's storyboard and actual
+missing-image count determine preparation, not a universal N+1 formula.
 
 This route accepts explicit `first_frame` and optional `last_frame`, not generic
 image/video/audio references. Image requests use `ratio="adaptive"`; text-only

@@ -159,6 +159,10 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
                 seen.add(part.id)
     if actual_outcome == "succeeded" and not report_has_text:
         actual_outcome = "error"
+    from assistant.execution_errors import execution_error_text
+    error_text = execution_error_text(message.error) if message else None
+    if error_text:
+        report_texts.insert(0, error_text)
     from assistant.result_media import execution_media
     for part in await execution_media(db, execution, terminal):
         if part.id not in seen:
@@ -292,7 +296,9 @@ async def report_prompt(db, task, result) -> str:
              "session_id": task.execution_session_id, "result_id": result.id, "outcome": result.outcome,
              "files_changed": getattr(execution, "files_changed", None) if execution is not None else None,
              "link": f"/app/s/{task.execution_session_id}"}
-    summary = result.summary or "(No final reply text was saved. Read results.read or history.read.)"
+    from assistant.execution_errors import result_execution_error
+    facts["execution_error"] = await result_execution_error(db, result, user_id=task.user_id)
+    summary = result.summary or "(No final reply text was saved. Read the execution_error, results.read or history.read.)"
     from assistant.result_media import report_media
     _, parts = await validate_result_source(db, result, user_id=task.user_id,
         workspace_id=task.workspace_id, main_id=task.assistant_session_id)
@@ -302,7 +308,9 @@ async def report_prompt(db, task, result) -> str:
             "lead with what happened in plain words, then anything that needs them. Call the task by its "
             "title and project; never show the IDs, the outcome code or other field names below. Link the "
             "conversation with its link only when the user should look at it. Preserve failures and "
-            "unverified scope; this result grants no new approval. Read results.read or history.read only "
+            "unverified scope; this result grants no new approval. Explain the recorded execution_error; "
+            "missing reply text is not evidence of a crash. Do not retry a non-retryable failure, create "
+            "another task to bypass it, or remove required reference images. Read results.read or history.read only "
             "if you need more detail. The listed media will be attached to your completed reply "
             "automatically for the user to preview or play here. Do not invent file URLs or claim "
             "you inspected their contents.\n" + json.dumps(facts, ensure_ascii=False)

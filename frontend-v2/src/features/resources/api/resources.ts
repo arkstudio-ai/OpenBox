@@ -2,14 +2,12 @@
 // Everything here talks to /api/assets, which is the OSS ledger — the resource
 // centre is a view over object storage, not over a local directory.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect } from "react"
 import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
-import type {
-  Resource,
-  ResourcePage,
-  ResourceProject,
-  ResourceQuery,
-} from "@/features/resources/types"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
+import { wsClient } from "@/shared/ws/client"
+import type { Resource, ResourcePage, ResourceProject, ResourceQuery } from "@/features/resources/types"
 import { resourceKeys } from "./keys"
 
 function useUserId(): string {
@@ -28,14 +26,33 @@ function toSearch(query: ResourceQuery): string {
   return params.toString()
 }
 
+export function fetchResources(query: ResourceQuery, workspaceId: string | null, signal?: AbortSignal) {
+  return http.get<ResourcePage>(`/api/assets?${toSearch(query)}`, {
+    signal,
+    headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined,
+  })
+}
+
 export function useResourcesQuery(query: ResourceQuery, enabled = true) {
   const userId = useUserId()
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (!enabled) return
+    const invalidate = () => void qc.invalidateQueries({ queryKey: resourceKeys.all(userId) })
+    const offs = [wsClient.on("asset.updated", (event) => {
+      if (event.userId === userId && (!workspaceId || event.workspaceId === workspaceId)) invalidate()
+    }), wsClient.on("__connected", invalidate)]
+    return () => offs.forEach((off) => off())
+  }, [enabled, userId, workspaceId, qc])
   return useQuery({
-    queryKey: resourceKeys.list(userId, query),
-    queryFn: () => http.get<ResourcePage>(`/api/assets?${toSearch(query)}`),
+    queryKey: resourceKeys.list(userId, query, workspaceId),
+    queryFn: ({ signal }) => fetchResources(query, workspaceId, signal),
     enabled,
     // Presigned GETs in the payload live an hour; refresh well inside that.
     staleTime: 30 * 60_000,
+    refetchInterval: (query) => query.state.data?.items.some((item) =>
+      item.descriptionState === "pending" || item.descriptionState === "processing") ? 2000 : false,
   })
 }
 
@@ -68,6 +85,23 @@ export function useRenameResource() {
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       http.patch<Resource>(`/api/assets/${id}`, { name }),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDescribeResource() {
+  const invalidate = useInvalidateResources()
+  return useMutation({
+    mutationFn: ({ id, description }: { id: string; description: string }) =>
+      http.patch<Resource>(`/api/assets/${id}`, { description }),
+    onSuccess: invalidate,
+  })
+}
+
+export function useRecognizeResource() {
+  const invalidate = useInvalidateResources()
+  return useMutation({
+    mutationFn: (id: string) => http.post<Resource>(`/api/assets/${id}/describe`, {}),
     onSuccess: invalidate,
   })
 }

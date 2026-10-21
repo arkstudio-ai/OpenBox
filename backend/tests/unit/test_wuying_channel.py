@@ -247,7 +247,10 @@ async def test_install_can_rotate_action_key(monkeypatch):
     second_key = decrypt_action_key(rotated["action_api_key_ciphertext"], KEY_A)
     assert first_key != second_key
     assert rotated["action_api_key_hash"] == action_key_hash(second_key)
-    assert len(commands) == 2
+    service_commands = [command for command in commands if "systemctl restart openbox-action-server" in command]
+    assert len(service_commands) == 2
+    assert "video_skill_verified" in "\n".join(commands)
+    assert commands.index(service_commands[0]) > 0  # Bundle is installed before exposing the channel.
 
 
 async def test_probe_uses_action_server_system_info_endpoint(monkeypatch):

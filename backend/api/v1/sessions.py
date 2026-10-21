@@ -188,11 +188,12 @@ async def get_session(
     session_id: str,
     identity: dict = Depends(require_scope("sessions:read")),
 ):
-    from billing import credit_cap
+    from billing import credit_cap, plan_quote
 
     row = await load_session_row(session_id, identity, write=False)
     activity = await session_activity(row.id)
-    return session_view(row, await credits_used(row.id), busy=activity.busy, credit_cap=await credit_cap.status(row))
+    return session_view(row, await credits_used(row.id), busy=activity.busy, credit_cap=await credit_cap.status(row),
+                        estimate=await plan_quote.view(row))
 
 
 @router.post("/{session_id}/abort")

@@ -8,6 +8,7 @@ import pytest
 
 import agent.llm as llm
 from agent.llm import _inline_refs, _tool_parameters_schema
+from agent.tool_payload import build_tool_definitions
 from tool.registry import get_tool, register_builtin_tools
 
 
@@ -20,7 +21,7 @@ PERMANENT_MEDIA_TOOLS = (
 
 EXPECTED_ACTIONS = {
     "video_generate": {
-        "models", "estimate", "submit", "status", "wait", "cancel", "fetch", "attach",
+        "models", "estimate", "quote_plan", "submit", "status", "wait", "cancel", "fetch", "attach",
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {
@@ -129,6 +130,13 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
 
     assert sum(sizes.values()) <= 10_000, sizes
 
+    # Also budget the real provider envelopes, including their function wrappers.
+    tools = {name: get_tool(name) for name in PERMANENT_MEDIA_TOOLS}
+    for dialect in ("responses", "litellm"):
+        wire = json.dumps(build_tool_definitions(tools, dialect),
+                          ensure_ascii=False, separators=(",", ":"))
+        assert len(wire) <= 10_000, (dialect, len(wire))
+
     for name, actions in EXPECTED_ACTIONS.items():
         assert schemas[name]["required"] == ["action"]
         assert set(schemas[name]["properties"]["action"]["enum"]) == actions
@@ -142,6 +150,15 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     assert (generate["duration"]["minimum"], generate["duration"]["maximum"]) == (-1, 300)
     assert generate["input_assets"]["maxItems"] == 8
     assert generate["seed"]["minimum"] == 0
+
+    plan = generate["plan_items"]
+    assert plan["type"] == "array"
+    assert plan["maxItems"] == 64
+    assert plan["items"]["required"] == ["kind", "seconds"]
+    plan_fields = plan["items"]["properties"]
+    assert set(plan_fields["kind"]["enum"]) == {"generation", "transcribe", "compose"}
+    assert plan_fields["seconds"]["exclusiveMinimum"] == 0
+    assert plan_fields["seconds"]["maximum"] == 3600
 
     for name in ("video_generate", "video_transcribe"):
         properties = schemas[name]["properties"]
@@ -248,6 +265,7 @@ async def test_responses_payload_uses_stable_normalized_schemas(monkeypatch):
             return False
 
         async def aiter_lines(self):
+            yield 'data: {"type":"response.completed","response":{"id":"schema-probe","output":[]}}'
             yield "data: [DONE]"
 
     class FakeClient:
@@ -296,11 +314,17 @@ async def test_litellm_payload_uses_stable_normalized_schemas(monkeypatch):
     class EmptyStream:
         _hidden_params = {}
         usage = None
+        sent = False
 
         def __aiter__(self):
             return self
 
         async def __anext__(self):
+            if not self.sent:
+                from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+                self.sent = True
+                return ModelResponseStream(choices=[StreamingChoices(
+                    index=0, delta=Delta(), finish_reason="stop")])
             raise StopAsyncIteration
 
     async def fake_completion(**kwargs):

@@ -267,6 +267,35 @@ async def test_the_silent_reply_is_invisible_billed_and_deleted():
     assert len(provider.commands("keepalive")) == 2
 
 
+@pytest.mark.parametrize("name", ["cards_pending", "assistant_ask", "task_question_answer"])
+@pytest.mark.parametrize("late", [False, True])
+async def test_silent_keepalive_tools_cannot_repeat_old_requests_or_start_audible_followups(name, late, monkeypatch):
+    from voice import tools
+    bridge, provider, link, clock = kept_call(AUDIO_MODEL)
+    bridge.scope = tools.CallScope(user_id="u1", workspace_id="w1", main_session_id="main-1", call_id="call-x")
+    reads = []
+
+    async def run(*args):
+        reads.append(args)
+        return {"status": "none"}
+
+    monkeypatch.setattr(tools, "run", run)
+    await exchange(bridge, 1)
+    clock.advance(120)
+    await bridge.fill_idle()
+    outbox(bridge)
+    await replay(bridge, started("keep"))
+    if late:
+        await replay(bridge, done("keep"))
+    await replay(bridge, tool_call("unexpected-keep-tool", name=name, arguments="{}", response_id="keep"))
+    if not late:
+        await replay(bridge, done("keep"))
+    assert not reads and not link.started and not bridge.followup_due
+    assert not provider.commands("create")
+    assert provider.commands("output")[-1][2]["status"] == "not_user_request"
+    assert not outbox(bridge)
+
+
 async def test_any_reply_restarts_the_clock_and_none_is_sent_while_something_is_going_on():
     bridge, provider, _, clock = kept_call(AUDIO_MODEL)
     await exchange(bridge, 1)

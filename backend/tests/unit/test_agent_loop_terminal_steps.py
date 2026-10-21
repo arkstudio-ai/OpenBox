@@ -47,6 +47,39 @@ def _loop_config():
     return config
 
 
+@pytest.mark.parametrize("uses_tools", [False, True])
+async def test_runtime_and_snapshots_are_lazy_and_step_start_is_durable(
+    ensure_test_db, monkeypatch, uses_tools,
+):
+    from unittest.mock import AsyncMock
+    config = _loop_config()
+    user_id, _, session_id, _, lease = await _seed_session(model=config.model, output_format=None)
+    async def reply(**kwargs):
+        if uses_tools:
+            await kwargs["before_tools"]()
+            await kwargs["before_tools"]()  # re-entry cannot duplicate the preparation
+        from models.message import TextPart
+        await loop.save_part(TextPart(text="done", session_id=session_id,
+            message_id=kwargs["assistant_info"].id), is_new=True, user_id=user_id,
+            run_fence=(session_id, lease.run_id, lease.generation))
+        return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="stop", text="done", duration=0.1)
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=reply)
+    prepare = AsyncMock()
+    track = AsyncMock(return_value="snapshot-terminal")
+    monkeypatch.setattr("sandbox.sandbox_manager._ensure_session_dir", prepare)
+    monkeypatch.setattr(loop.snapshot, "track", track)
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock())
+    result = await loop.run_loop(session_id, user_id=user_id, lease=lease)
+    assert result is not None
+    assert prepare.await_count == int(uses_tools)
+    assert track.await_count == 2 * int(uses_tools)
+    messages = await get_messages(session_id, user_id=user_id)
+    assert messages[-1].finish == "stop"
+    starts = [part for msg in messages for part in msg.parts if part.type == "step-start"]
+    assert len(starts) == 1
+    assert starts[0].snapshot == ("snapshot-terminal" if uses_tools else None)
+
+
 async def _seed_session(*, model: str, output_format: dict | None):
     suffix = uuid.uuid4().hex[:12]
     user_id = f"terminal-user-{suffix}"

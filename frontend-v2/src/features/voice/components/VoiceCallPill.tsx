@@ -12,7 +12,7 @@ export interface VoiceCallPillProps {
 /** The collapsed window: anywhere on it opens the card again, except hang-up. */
 export function VoiceCallPill({ view, controls }: VoiceCallPillProps) {
   const { t } = useTranslation("voice")
-  const status = t(view.statusKey)
+  const status = t(view.phase === "listening" && view.noteKey ? view.noteKey : view.statusKey)
   const dialling = view.status === "requesting_mic" || view.status === "connecting"
   return (
     <div className="bg-card border-hair shadow-pop flex h-11 items-center gap-1 rounded-full border p-1.5">

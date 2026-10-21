@@ -29,6 +29,7 @@ import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
 import '../features/workspace/invite_screen.dart';
+import '../features/workspace/state/active_workspace_store.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
@@ -37,6 +38,7 @@ import 'admin_route.dart';
 import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
 import 'auth_redirect.dart';
+import 'chat_location.dart';
 import 'knowledge_routes.dart';
 import 'workspace_shell.dart';
 
@@ -45,6 +47,15 @@ import 'workspace_shell.dart';
 class _AuthRefresh extends ChangeNotifier {
   _AuthRefresh(Ref ref) {
     ref.listen<AuthState>(authProvider, (_, _) => notifyListeners());
+    ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (
+      before,
+      after,
+    ) {
+      // A cold launch may be waiting behind the workspace error/retry gate.
+      if (after.hasValue && before?.valueOrNull != after.valueOrNull) {
+        notifyListeners();
+      }
+    });
   }
 }
 
@@ -52,16 +63,47 @@ final routerProvider = Provider<GoRouter>((ref) {
   final refresh = _AuthRefresh(ref);
   ref.onDispose(refresh.dispose);
   return GoRouter(
-    // Every launch starts here; [authRedirect] moves a signed-in account on to
-    // the chat home and a first install to the intro.
+    // Explicit deep links keep their destination. A normal launch restores
+    // the account's last chat once its workspace membership is known.
     initialLocation: Paths.landing,
     refreshListenable: refresh,
-    redirect: (context, state) => authRedirect(
-      auth: ref.read(authProvider),
-      location: state.matchedLocation,
-      uri: state.uri,
-      introSeen: () => ref.read(introSeenProvider),
-    ),
+    redirect: (context, state) async {
+      final auth = ref.read(authProvider);
+      final redirect = authRedirect(
+        auth: auth,
+        location: state.matchedLocation,
+        uri: state.uri,
+        introSeen: () => ref.read(introSeenProvider),
+      );
+      final returningHome =
+          state.matchedLocation == Paths.landing ||
+          state.matchedLocation == Paths.intro ||
+          ((state.matchedLocation == Paths.login ||
+                  state.matchedLocation == Paths.register) &&
+              !state.uri.queryParameters.containsKey('redirect'));
+      if (redirect != Paths.app || !returningHome || !auth.isAuthenticated) {
+        return redirect;
+      }
+      if (!ref.read(chatLocationStoreProvider).hasSavedChat(auth.userId)) {
+        return redirect;
+      }
+      try {
+        final workspace = await ref.read(activeWorkspaceProvider.future);
+        if (ref.read(authProvider).userId != auth.userId) return null;
+        final workspaceId = workspace.currentId;
+        if (workspaceId != null) {
+          return ref.read(chatLocationStoreProvider).read((
+                userId: auth.userId,
+                workspaceId: workspaceId,
+              )) ??
+              redirect;
+        }
+      } catch (_) {
+        // WorkspaceBootstrap owns the offline/error gate and its retry.
+        return null;
+      }
+      return redirect;
+    },
     routes: [
       GoRoute(
         path: Paths.legal,
@@ -234,8 +276,13 @@ class _ChatRoute extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) => AssistantSessionEntry(
     sessionId: sessionId,
-    builder: (_) =>
-        ChatScreen(sessionId: sessionId, resources: composerResourceSlot(ref)),
+    builder: (_) => RememberChatLocation(
+      location: Paths.chat(sessionId),
+      child: ChatScreen(
+        sessionId: sessionId,
+        resources: composerResourceSlot(ref),
+      ),
+    ),
   );
 }
 
@@ -258,13 +305,16 @@ class _AssistantRoute extends ConsumerWidget {
       ],
       child: scope == null
           ? const Center(child: CircularProgressIndicator())
-          : AssistantScreen(
-              key: ValueKey(scope),
-              scope: scope,
-              taskId: taskId,
-              resultId: resultId,
-              intro: intro,
-              resources: composerResourceSlot(ref),
+          : RememberChatLocation(
+              location: Paths.assistant,
+              child: AssistantScreen(
+                key: ValueKey(scope),
+                scope: scope,
+                taskId: taskId,
+                resultId: resultId,
+                intro: intro,
+                resources: composerResourceSlot(ref),
+              ),
             ),
     );
   }
@@ -281,10 +331,13 @@ class _EmptyChatRoute extends ConsumerWidget {
     final workspace = ref.watch(workspaceProvider).valueOrNull;
     final project = workspace?.projectById(projectId);
     return WorkspaceShell(
-      child: EmptyChatScreen(
-        projectId: projectId,
-        projectName: project?.name,
-        resources: composerResourceSlot(ref),
+      child: RememberChatLocation(
+        location: Paths.app,
+        child: EmptyChatScreen(
+          projectId: projectId,
+          projectName: project?.name,
+          resources: composerResourceSlot(ref),
+        ),
       ),
     );
   }

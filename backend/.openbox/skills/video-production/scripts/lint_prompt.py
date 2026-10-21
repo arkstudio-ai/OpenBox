@@ -4,7 +4,7 @@
 Ported from the server-side gate that used to REFUSE a submit. Here it advises:
 run it, read what it says, then decide. The rules encode what was measured to
 matter for this kind of video — the exact line after 口播台词：, one consistent
-visual base, a locked camera, a stated tone, and "no subtitles" so captions
+visual anchor, an explicit camera design, a stated tone, and "no subtitles" so captions
 stay a post step — but a shot that breaks one on purpose is allowed to.
 
     lint_prompt.py --script "本段台词" --prompt-file seg1.txt --anchor "画面基底"
@@ -79,7 +79,7 @@ PROMPT_LINT_RULES = {
         "accepted_examples": ["口播台词：<本段逐字台词>"],
     },
     "visual_continuity": {
-        "requirement": "Declare one consistent visual base/anchor for the whole video.",
+        "requirement": "Declare the user-confirmed invariants, such as identity; scenes and cameras may vary by shot.",
         "accepted_examples": [
             "全片一致的画面基底：同一人物、服装、场景、光线和产品",
             (
@@ -90,17 +90,19 @@ PROMPT_LINT_RULES = {
         ],
     },
     "fixed_camera": {
-        "requirement": "Explicitly use a fixed/locked shot.",
+        "requirement": "Explicitly describe this shot's camera, fixed or moving as the storyboard requires.",
         "accepted_examples": [
             "固定镜头",
             "固定机位",
             "Fixed shot",
             "Fixed camera",
             "Locked-off camera",
+            "镜头环绕人物",
+            "镜头设计：跟随人物走进门店",
         ],
     },
     "framing": {
-        "requirement": "Specify medium, half-body, or close-up framing.",
+        "requirement": "Specify the shot's intended framing; wide shots and close-ups are both valid.",
         "accepted_examples": ["中景", "半身", "近景", "Medium shot", "Half-body", "Close-up"],
     },
     "natural_action": {
@@ -263,9 +265,20 @@ def lint_prompt(
             "static camera",
             "tracking shot",
             "camera follows",
+            "镜头环绕",
+            "环绕镜头",
+            "镜头推进",
+            "镜头拉远",
+            "镜头后拉",
+            "镜头平移",
+            "orbit",
+            "dolly",
+            "pan shot",
+            "push in",
+            "pull back",
         ),
-    ):
-        fail("fixed_camera", "prompt 必须显式声明固定镜头")
+    ) and not re.search(r"(?:镜头设计|camera design)\s*[:：]\s*\S+", prompt, re.IGNORECASE):
+        fail("fixed_camera", "prompt 必须说明本段镜头设计，固定或运动按已确认分镜选择")
     if speech and not contains_any(
         prompt,
         (
@@ -279,9 +292,15 @@ def lint_prompt(
             "close-up",
             "close up",
             "medium close-up",
+            "全景",
+            "远景",
+            "特写",
+            "wide shot",
+            "long shot",
+            "extreme close-up",
         ),
     ):
-        fail("framing", "prompt 缺少中景/半身/近景构图")
+        fail("framing", "prompt 缺少本段景别或构图")
     if speech and not contains_any(
         prompt,
         (
@@ -299,6 +318,11 @@ def lint_prompt(
             "托住",
             "放回",
             "指向",
+            "走动",
+            "走进",
+            "推门",
+            "转身",
+            "walking",
             "natural gesture",
             "natural movement",
             "hand gesture",

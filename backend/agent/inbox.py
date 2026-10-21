@@ -600,6 +600,9 @@ async def wait_for_inbox_terminal(
     waiters = _acquire_item_waiter(item_id)
     try:
         while True:
+            # A settlement racing this SQL read must remain visible to the
+            # subsequent wait, even if the read returns its older snapshot.
+            waiters.event.clear()
             receipt = await get_inbox_item(item_id, user_id=user_id)
             if receipt is None:
                 raise LookupError("inbox item not found")
@@ -608,7 +611,6 @@ async def wait_for_inbox_terminal(
             remaining = None if deadline is None else deadline - loop.time()
             if remaining is not None and remaining <= 0:
                 raise TimeoutError("inbox item did not settle before the deadline")
-            waiters.event.clear()
             wait_for = (
                 WAIT_POLL_SECONDS
                 if remaining is None
@@ -1167,6 +1169,10 @@ async def settle_claimed_inbox_items(
                 inbox_rows=rows,
             )
     _notify(settled)
+    if settled:
+        from bus import bus
+        from bus.events import AGENT_INBOX_UPDATED
+        bus.publish(AGENT_INBOX_UPDATED, {"userId": lease.user_id, "sessionId": lease.session_id})
     if assistant_result is not None:
         from assistant.results import on_execution_result_committed
         await on_execution_result_committed(assistant_result.id)
@@ -1398,6 +1404,11 @@ def _safe_delivery_failure(
 ) -> dict:
     """Return bounded, non-secret evidence suitable for SQL and AgentEvent."""
     from sandbox.assets import AssetDeliveryError
+    from sandbox.entitlement import SandboxSubscriptionRequired
+
+    if isinstance(error, SandboxSubscriptionRequired):
+        return {"code": error.code, "message": error.detail,
+                "retryable": False, "missing_asset_ids": []}
 
     if isinstance(error, AssetDeliveryError):
         code = (
@@ -1431,6 +1442,21 @@ def _safe_delivery_failure(
         "retryable": retryable,
         "missing_asset_ids": missing,
     }
+
+
+def delivery_terminal_error(failure: dict | None, *, attempts: int = 0) -> dict:
+    """Preserve the safe cause in the closing message, including no-Part failures."""
+    failure = failure or {}
+    error = {**DELIVERY_TERMINAL_ERROR, "delivery_attempts": attempts}
+    if failure:
+        error.update(reason_code=failure.get("code"), retryable=failure.get("retryable"),
+                     last_error=dict(failure))
+    from sandbox.entitlement import SandboxSubscriptionRequired
+    if failure.get("code") == SandboxSubscriptionRequired.code:
+        error.update(code=SandboxSubscriptionRequired.code,
+                     message=SandboxSubscriptionRequired.detail
+                     + " 本次请求尚未发送给模型，原请求和参考附件已保留；新建会话不会解除此限制。")
+    return error
 
 
 async def _record_delivery_failure(
@@ -1620,9 +1646,8 @@ class NeverRan:
 
 
 DELIVERY_FAILED = NeverRan("delivery_error", "inbox_delivery_error", DELIVERY_TERMINAL_ERROR,
-    lambda row: {**DELIVERY_TERMINAL_ERROR, "delivery_attempts": int(row.delivery_attempts or 0),
-                 "last_error": (dict(row.delivery_last_error)
-                                if isinstance(row.delivery_last_error, dict) else None)})
+    lambda row: delivery_terminal_error(row.delivery_last_error,
+                                       attempts=int(row.delivery_attempts or 0)))
 WAITING_INPUT = NeverRan("not_run", "inbox_waiting_input", WAITING_INPUT_ERROR,
                          lambda row: dict(WAITING_INPUT_ERROR))
 
@@ -1646,8 +1671,14 @@ async def close_never_ran_locked(db, owner, rows: Sequence[AgentInboxItem], *, f
     if close_turn and rows:
         identity = SimpleNamespace(session_id=owner.id, user_id=owner.user_id,
                                    run_id=run_id, generation=generation)
+        closing_error = why.closing_error
+        if why is DELIVERY_FAILED:
+            failures = [row.delivery_last_error or {} for row in rows]
+            if len({failure.get("code") for failure in failures}) == 1:
+                closing_error = delivery_terminal_error(failures[-1],
+                    attempts=max(int(row.delivery_attempts or 0) for row in rows))
         closing = await create_delivery_error_locked(db, owner, lease=identity,
-            parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id, error=why.closing_error, now=now)
+            parent_id=rows[-1].message_id, turn_id=rows[-1].turn_id, error=closing_error, now=now)
         now = closing.created_at
     settled: list[str] = []
     for row in rows:

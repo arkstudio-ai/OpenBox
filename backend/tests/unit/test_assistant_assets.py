@@ -50,6 +50,47 @@ async def asset_for(user, workspace, **changes):
     return row
 
 
+async def test_descriptions_are_searchable_shared_and_still_owner_scoped():
+    from types import SimpleNamespace
+    from tests.unit.test_assistant_sessions_v2 import assistant
+    from voice.shared_context import SharedContextWatcher
+    owner, other, workspace, main = await assistant()
+    own = await asset_for(owner, workspace, name="IMG_001.png", description="蓝色方块，开业参考图")
+    await asset_for(other, workspace, name="IMG_002.png", description="蓝色方块，另一个用户的图片")
+    result = await list_assets(user_id=owner, workspace_id=workspace, main_id=main.id, query="开业参考图")
+    assert [row["id"] for row in result["items"]] == [own.id]
+    watcher = SharedContextWatcher(SimpleNamespace(user_id=owner, workspace_id=workspace,
+        main_session_id=main.id, call_id="local-test"))
+    first = await watcher.poll()
+    assert "开业参考图" in first and "另一个用户" not in first
+    assert await watcher.poll() is None
+    async with get_db_session() as db:
+        row = await db.get(FileAsset, own.id)
+        row.description, row.description_updated_at = "蓝色方块，修订后的参考图", datetime.now(timezone.utc)
+    changed = await watcher.poll()
+    assert "修订后的参考图" in changed and "开业参考图" not in changed
+
+
+async def test_open_call_sees_manual_sessions_and_renames_without_other_owners():
+    from types import SimpleNamespace
+    from session.session import create_session
+    from tests.unit.test_assistant_sessions_v2 import assistant
+    from voice.shared_context import SharedContextWatcher
+    owner, other, workspace, main = await assistant()
+    watcher = SharedContextWatcher(SimpleNamespace(user_id=owner, workspace_id=workspace,
+        main_session_id=main.id, call_id="call"))
+    await watcher.poll()
+    own = await create_session(user_id=owner, workspace_id=workspace, title="蛋糕店开业")
+    await create_session(user_id=other, workspace_id=workspace, title="他人的私人安排")
+    value = await watcher.poll()
+    assert "蛋糕店开业" in value and "他人的私人安排" not in value
+    async with get_db_session() as db:
+        row = await db.get(Session, own.id)
+        row.title, row.status = "甜橙开业海报", "busy"
+    changed = await watcher.poll()
+    assert "甜橙开业海报" in changed and '"status": "busy"' in changed
+
+
 async def ready_task():
     user, workspace, main, original, lease, _ = await result_ready()
     await lease.release(session_status="idle")
@@ -307,9 +348,14 @@ async def test_filing_and_rename_show_in_the_next_read_without_rewriting_the_obs
         current = await list_assets(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
                                     project_id=ctx.project_id)
         assert [(item["name"], item["session_id"]) for item in current["items"]] == [("Renamed filename.txt", ctx.session_id)]
-        # This run's observation is used as read, not refreshed or rejected.
+        # The recorded observation is immutable; the new shared inventory is current.
         wire = json.dumps(await consume_context(ctx))
-        assert "Original filename.txt" in wire and "Renamed filename.txt" not in wire
+        assert "Original filename.txt" in wire and "Renamed filename.txt" in wire
+        async with get_db_session() as db:
+            from db.models.part import Part
+            saved = await db.get(Part, part.id)
+            assert "Original filename.txt" in saved.data["output"]
+            assert "Renamed filename.txt" not in saved.data["output"]
     finally:
         await lease.release(session_status="idle")
 

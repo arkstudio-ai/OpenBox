@@ -10,7 +10,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from assistant.commands import _authority, _project, _tool_source_locked, command_digest, tool_command_key
-from assistant.confirmations import ANSWER_VALID_FOR, CANCEL, EXPIRES_AFTER
+from assistant.confirmations import ANSWER_VALID_FOR, CANCEL
 from assistant.policy import AssistantError
 from assistant.project_tools import _clean, existing_project
 from core.identifier import generate_id
@@ -57,12 +57,16 @@ async def require_placement(ctx, source, values: dict, *, destination_confirmed:
             return None
         rows = (await db.scalars(select(QuestionCheckpoint).where(
             QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.user_id == ctx.user_id,
-            QuestionCheckpoint.status == "answered")
+            QuestionCheckpoint.status.in_(("answered", "pending")))
             .order_by(QuestionCheckpoint.updated_at.desc()).limit(50))).all()
         for row in rows:
             card = (row.continuation or {}).get(KIND) or {}
+            if card.get("digest") == digest and row.status == "pending" and (
+                    row.expires_at is None or runtime.utc(row.expires_at) > runtime.now()):
+                raise AssistantError(409, "ASSISTANT_PLACEMENT_PENDING",
+                    f"This exact task is still awaiting a destination. Use cards.list and cards.answer for {row.id}; do not create another request.")
             if card.get("digest") == digest and (card.get("receipt") or
-                    runtime.utc(row.updated_at) >= runtime.now() - ANSWER_VALID_FOR):
+                    row.status == "answered" and runtime.utc(row.updated_at) >= runtime.now() - ANSWER_VALID_FOR):
                 return row.id
         # The model resolves destination intent from conversation, while the server
         # checks authentic human provenance and the owned project. No text patterns.
@@ -89,7 +93,7 @@ async def require_placement(ctx, source, values: dict, *, destination_confirmed:
         tool={"callID": ctx.part_id, "messageID": ctx.message_id}, user_id=ctx.user_id,
         continuation={"kind": "question", KIND: {"digest": digest, "input": values,
             "project_name": name, "options": options, "new_project_option": new_option}},
-        expires_at=runtime.now() + EXPIRES_AFTER)
+        expires_at=None)
     return None
 
 

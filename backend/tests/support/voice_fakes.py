@@ -14,6 +14,7 @@ TEXT_USAGE = {"input_tokens": 1300, "output_tokens": 2,
               "output_tokens_details": {"text_tokens": 2, "audio_tokens": 0}}
 # An audio frame starting with this makes the scripted provider hear a request for the assistant.
 ASK_MARKER = b"ASK!"
+CHAT_MARKER = b"CHAT"
 # ... makes the provider close the session (as after 180 s without a response); with CUT the user was speaking.
 DROP_MARKER, CUT_MARKER = b"DRP!", b"CUT!"
 IDLE_CLOSE = "Your session was closed because no response was generated for 180 seconds."
@@ -112,6 +113,12 @@ class ScriptedProvider:
             response_id, call_id = f"resp-{self.count}", f"call-{self.count}"
             self.push(event("user_started"), event("user_stopped"), transcript("帮我看看贪吃蛇进展", f"item-{call_id}"),
                       started(response_id), audio(response_id), tool_call(call_id), done(response_id))
+        elif self.auto_reply and pcm.startswith(CHAT_MARKER):
+            self.count += 1
+            response_id = f"resp-{self.count}"
+            self.push(event("user_started", item_id="chat-item"),
+                      transcript("你好，能听到我说话吗？", "chat-item"),
+                      started(response_id), audio(response_id), done(response_id))
         elif self.auto_reply and pcm.startswith(CUT_MARKER):
             self.push(event("user_started"))
             self.drop()
@@ -209,10 +216,13 @@ class FakeLink:
     async def cards(self):
         return list(self.waiting_cards)
 
-    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None, running=None):
+    def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None, running=None,
+               decision_versions=None, speech_stale=False):
         future = self.results.setdefault(call_id, asyncio.get_running_loop().create_future())
         future.set_result({"status": status, "speech": speech, **({"cards": cards} if cards else {}),
-                           **({"running": running} if running else {})})
+                           **({"running": running} if running else {}),
+                           **({"decision_versions": decision_versions, "speech_stale": speech_stale}
+                              if decision_versions is not None else {})})
 
     async def record(self, ref, **fields):
         self.records.append((ref.id, fields))

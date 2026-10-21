@@ -1,5 +1,6 @@
 """The creator_context tool: identity from ToolContext, proposal card branches."""
 from datetime import datetime, timezone
+import json
 from uuid import uuid4
 
 import pytest
@@ -81,6 +82,49 @@ async def test_identity_comes_only_from_tool_context():
     assert len(rows) == 1
     with pytest.raises(MemoryAccessDenied):
         await memory_service.search_memories(user_id="someone_else")
+
+
+@pytest.mark.asyncio
+async def test_legacy_candidate_is_not_reported_as_shared_memory(monkeypatch):
+    monkeypatch.setattr("memory.jobs.automatic_saving", lambda _user: False)
+    ctx = await _make_ctx()
+    result = await execute_creator_context(CreatorContextArgs(
+        action="write_memory", value={"summary": "包装图案偏好紫色风车"}, owner="USER_CONFIRMED"), ctx)
+    value = json.loads(result.output)
+    assert value["state"] == "candidate_pending" and value["saved"] is False
+    assert value["confirmation_required"] is True
+    assert "propose_memory" in value["instruction"] and "Do not say" in value["instruction"]
+    assert result.metadata["memory"]["confirmation_status"] == "PENDING"
+    assert await memory_service.list_active_memories(user_id=ctx.user_id, project_id=ctx.project_id) == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_write_reuses_a_confirmed_memory_without_another_card(monkeypatch):
+    monkeypatch.setattr("memory.jobs.automatic_saving", lambda _user: False)
+    ctx = await _make_ctx()
+    summary = "包装图案偏好橙色灯塔"
+    original = await memory_service.create_note(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+        project_id=ctx.project_id, summary=summary)
+    result = await execute_creator_context(CreatorContextArgs(
+        action="write_memory", value={"summary": summary}), ctx)
+    value = json.loads(result.output)
+    assert value["state"] == "remembered" and value["saved"] is True
+    assert value["confirmation_required"] is False
+    assert value["memory"]["id"] == original["id"]
+
+
+@pytest.mark.asyncio
+async def test_suppressed_legacy_write_never_claims_saved_or_requests_confirmation(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("memory.jobs.automatic_saving", lambda _user: False)
+    monkeypatch.setattr(memory_service, "write_memory", AsyncMock(return_value={
+        "status": "SUPPRESSED", "confirmation_status": "REJECTED", "value": {}}))
+    result = await execute_creator_context(CreatorContextArgs(
+        action="write_memory", value={"summary": "已拒绝的测试记录"}), await _make_ctx())
+    value = json.loads(result.output)
+    assert value["state"] == "not_saved" and value["saved"] is False
+    assert value["confirmation_required"] is False
+    assert "Nothing was saved" in value["instruction"]
 
 
 @pytest.mark.asyncio

@@ -155,6 +155,31 @@ async def test_question_turn_closes_only_when_its_continuation_finishes(continua
         await lease.release(session_status="idle")
 
 
+@pytest.mark.parametrize("mismatch", [None, "result", "input"])
+async def test_orphaned_reply_settlement_keeps_only_its_exact_pending_card_valid(mismatch):
+    from agent.inbox import settle_orphaned_claims
+    scope, created, request, binding = await pending()
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, created["inbox_id"])
+        item.claim_expires_at = runtime.now() - timedelta(minutes=2)
+    assert await settle_orphaned_claims() == 1
+    async with get_db_session() as db:
+        item = await db.get(AgentInboxItem, created["inbox_id"])
+        row = await db.get(QuestionCheckpoint, request.id)
+        assert item.outcome == "recovered" and item.generation > request.assistant["generation"]
+        assert item.result_message_id == row.message_id
+        if mismatch == "result":
+            item.result_message_id = item.message_id
+        if mismatch == "input":
+            item.message_id = row.message_id
+    if mismatch:
+        with pytest.raises(q.QuestionGone):
+            await q.reply(request.id, [["Blue"]], scope["user_id"], **binding)
+    else:
+        receipt = await q.reply(request.id, [["Blue"]], scope["user_id"], **binding)
+        assert receipt["status"] == "answered"
+
+
 @pytest.mark.parametrize("change", ["options", "expiry", "driver", "turn", "canceled", "hash", "revision"])
 async def test_stale_cards_never_save_an_answer(change):
     scope, created, request, binding = await pending()

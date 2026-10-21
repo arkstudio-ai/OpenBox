@@ -74,3 +74,7 @@ backend/.openbox/trajectory.db*
 !.harness/retro/
 !.harness/retro/**
 !.harness/config.json
+
+# AOCI agent host integration (machine-bound; do not commit)
+.codex/config.toml
+.codex/config.toml.backup.*

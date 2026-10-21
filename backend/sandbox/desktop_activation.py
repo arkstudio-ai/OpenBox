@@ -21,7 +21,8 @@ from db.models.billing import BillingSubscription, PaymentOrder
 from db.models.cloud_desktop import CloudDesktop
 from db.models.desktop_activation import DesktopActivation
 from db.repository.cloud_desktop_repo import cloud_desktop_repo as desktops
-from sandbox.entitlement import SandboxSubscriptionRequired, require_sandbox_subscription, subscription_sandbox_enabled
+from sandbox.entitlement import (SandboxSubscriptionRequired, require_sandbox_subscription,
+                                 sandbox_access_status, subscription_sandbox_enabled)
 from sandbox.channel import ChannelVerificationStopped
 
 log = create_logger("sandbox.activation")
@@ -69,13 +70,14 @@ async def enqueue_subscription_activation(db, sub: BillingSubscription, user_id:
         row.state = "queued"
         row.step = "queued"
         row.error = None
+        row.attempts = 0
 
 
 async def activation_status(workspace_id: str) -> dict:
     """Read-only: opening a page must never buy/start/adopt a desktop."""
     async with get_db_session() as db:
-        sub = await active_subscription(db, workspace_id, now())
-        entitled = sub is not None and sub.plan_id != "free"
+        access = await sandbox_access_status(db, workspace_id)
+        entitled = access["allowed"]
         job = await db.get(DesktopActivation, workspace_id)
         record = await db.scalar(select(CloudDesktop).where(
             CloudDesktop.workspace_id == workspace_id, CloudDesktop.is_deleted.is_(False),
@@ -93,7 +95,8 @@ async def activation_status(workspace_id: str) -> dict:
                 state = job.step if job.step in {"assigning", "creating", "starting", "connecting"} else "queued"
         return {
             "mode": "per_user", "state": state, "entitled": entitled,
-            "subscription_ends_at": utc(sub.ends_at).isoformat() if entitled else None,
+            "subscription_ends_at": access["expires_at"],
+            "execution_access": access,
             "retained": record is not None,
             "desktopId": record.desktop_id if record else None,
             "channel": {"state": record.tunnel_state if record else "pending"},
@@ -367,14 +370,16 @@ class DesktopActivationService:
                 info = await attempt.call(ecd.describe_desktop, desktop_id)
                 if info and info["status"] != "Running":
                     # Never start a free user's machine merely to remove access.
-                    await suspend_save(state="suspended", step="suspending", error=None,
+                    await suspend_save(state="suspended", step="suspending", error=None, attempts=0,
                         next_run_at=now() + timedelta(seconds=30))
                     return
                 if info:
                     end_user = await attempt.call(ecd.verify_ownership, desktop_id, workspace_id)
                     await attempt.call(ecd.modify_entitlement, desktop_id, [])
                     await attempt.call(ecd.disconnect_desktop_sessions, desktop_id, end_user)
-            await suspend_save(state="suspended", step="suspended", error=None,
+            # Healthy expiry checks are not activation failures. A retained
+            # desktop can stay suspended for months before the next payment.
+            await suspend_save(state="suspended", step="suspended", error=None, attempts=0,
                 next_run_at=now() + timedelta(seconds=30))
             return
 
@@ -524,7 +529,7 @@ class DesktopActivationService:
                 DesktopActivation.workspace_id == workspace_id,
                 DesktopActivation.lease_owner == token,
                 DesktopActivation.lease_until > now(),
-            ).values(state="ready", step="ready", error=None, updated_at=now(),
+            ).values(state="ready", step="ready", error=None, attempts=0, updated_at=now(),
                 next_run_at=min(utc(sub.ends_at), now() + timedelta(seconds=30))))
             if result.rowcount != 1:
                 raise LeaseLost(workspace_id)

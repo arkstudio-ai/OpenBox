@@ -50,6 +50,7 @@ When you recognize that a task matches one of the available skills, use this too
 Usage:
 - Use the skill name as the parameter (e.g., "dev-browser")
 - Skills can accept optional arguments via the args parameter
+- At the start of a new user request continuing a skill's workflow, reload that skill: an earlier turn's instructions may precede an application update. Reuse the loaded instructions within the current request.
 - When a user references a "slash command" or "/<something>", it may map to a skill — use this tool to load it
 - The skill content will be returned in the tool output for you to follow"""
 

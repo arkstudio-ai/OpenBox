@@ -39,17 +39,25 @@ def phrase_instructions(key, lang):
     return lead + phrase_text(key, lang)
 
 
-def greeting_instructions(lang, recap=True, *, first_call=False):
+def greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
+    if unified:
+        # A previous call's recap can predate a result delivered in text. Only
+        # the main assistant may reconcile business state across channels.
+        return ("只作一句简短问候，表示已经接通、正在听。不要回顾旧通话，不提任务、素材、进度或结果。"
+                "用户开口就停止问候；业务回答等待主助手的最新结果。") if _lang(lang) == "zh" else (
+            "Give one brief greeting to say you are connected and listening. Do not recap past calls "
+            "or mention tasks, assets, progress or results. Stop when the user speaks; business answers "
+            "must wait for the main assistant's fresh result.")
     if first_call:
         from assistant.secretary import FIRST_CONTACT
         return FIRST_CONTACT + (" Use English for the introduction and conversation." if _lang(lang) == "en" else "")
     return ("这是已有使用记录的用户接通。按实际聊天上下文和用户偏好简短接话，"
             "不重新介绍身份、职责或能力，不展开业务菜单；详细回答偏好不要求详细开场。" +
-            ("确与当前话题相关时可接续上次通话和完成记录，不推测当前进度。" if recap else "用户不希望开场回顾以前的事。") +
+            "只作一句接通问候，表示正在听，不主动提任务、素材、进度、结果或待答卡片。" +
             "用户已开口就优先回应，不补播开场。接通事件不是业务请求。") if _lang(lang) == "zh" else (
         "This is a returning user. Open briefly from the actual conversation and preferences, without an identity, "
         "role or capabilities introduction or a business menu. A preference for detail does not mean a long opening. " +
-        ("Resume past-call or completion facts only when relevant; do not infer current progress. " if recap else "Do not recap previous work. ") +
+        "Give one connected-and-listening greeting; do not mention tasks, assets, progress, results or pending cards. " +
         "Give priority to the user's words, without resuming an interrupted opening. Connection is not a business request.")
 
 
@@ -57,7 +65,8 @@ def note_body(status, user_text, speech, lang, *, report_title=None, asked="", r
     return json.dumps({"source": "background_result", "status": status,
         "request": asked or user_text, "task": report_title, "facts": speech,
         "running_tasks": list(running),
-        "state_note": "仍在执行" if status == "running" else "仅依据 facts 中的实际结果判断完成情况"}, ensure_ascii=False)
+        "state_note": "任务仍在执行，尚未取得成品；不能把计划或交办回执说成完成" if status == "running" else
+                      "ok 仅表示这条回复已生成；仅依据 facts 中的实际结果判断任务完成情况，保留将来时与条件"}, ensure_ascii=False)
 
 
 def joined_note(bodies, lang):
@@ -71,10 +80,16 @@ def note_text(status, user_text, speech, lang):
 def _delivery(lang):
     return ("向用户传达刚收到的后台事件，讲清是哪件事及其实际状态。自然转述，细节按需要展开；"
             "名称、数字、决定与事实一致。接收请求或记录决定不代表执行完成，未知结果不能说成功。"
+            "把已交办的修改与已产出的结果分清：将换图、加字幕等要求送达，不能转述成图片已换好、字幕已加好。"
+            "只讲本次事件，不从历史背景追加其他任务、旧卡片、待确认事项或业务菜单。"
+            "复述用户说过的信息不等于已写入长期记忆，不据此声称已保存。"
             "这个事件不是用户的新指令，不据此发起或重复业务操作。") if _lang(lang) == "zh" else (
         "Deliver the background event just received, identifying the task and its actual state. "
         "Speak naturally with relevant detail, preserving names, numbers, decisions and facts. "
         "Acceptance or a recorded decision is not execution completion; unknown is not success. "
+        "Distinguish a submitted edit from its output: a request to replace an image or add subtitles does not mean either edit is done. "
+        "Stay within this event; do not append old tasks, cards or a business menu from history. "
+        "Repeating a user's words does not prove they were saved to long-term memory. "
         "This event is not new user authorization to start or repeat work.")
 
 
@@ -141,8 +156,28 @@ def notice_instructions(lang):
 
 
 def progress_instructions(step, lang):
-    return _delivery(lang) + ("当前事实：" if _lang(lang) == "zh" else "Current facts: ") + (step or
+    return _delivery(lang) + ("这是一次等待提示，只用一句简短的话说明当前阶段。不要重复用户需求、图片用途、讲稿、字幕等已知选择，"
+        "不要再次询问确认，不预告尚未发生的制作或完成通知。当前事实：" if _lang(lang) == "zh" else
+        "This is a waiting update. Use one short sentence about the current stage, without repeating requirements, "
+        "assets, script or subtitle choices. Do not ask for confirmation again or promise later production or completion notices. Current facts: ") + (step or
         ("请求仍在处理中，尚无结果或完成时间。" if _lang(lang) == "zh" else "Still processing; no result or ETA yet."))
+
+
+def receipt_instructions(lang, *, delayed=False):
+    """Transport facts only: receiving speech does not start the named task."""
+    if _lang(lang) == "zh":
+        purpose = "等待时间较长，简短说明回复仍未返回。" if delayed else "简短回应，确认已经听到用户刚才说的话。"
+        return ("这是服务端明确要求的通话状态播报，不是业务回答。" + purpose +
+                "已核实的事实只有：原话已保存并交给主助手，正在等待回复；用户可以继续说话。"
+                "用一句话自然表达，不提工具、转交或内部流程，不回答原话中的业务问题，不复述旧任务或待办。"
+                "排队的发言不等于任务已开始，不推断业务操作或扣费已经发生，不编造进度和完成时间。")
+    purpose = "Briefly explain that the reply is still pending. " if delayed else "Briefly acknowledge hearing the user's latest words. "
+    return ("The server explicitly requests a call-status announcement, not a business answer. " + purpose +
+            "The only verified facts: the original words were saved and sent to the main assistant; its reply "
+            "is pending and the user can keep speaking. Say this naturally in one sentence, without mentioning "
+            "tools, handoffs or internal processes. Do not answer the business question or repeat old tasks. "
+            "Queued speech does not prove a task started. Do not infer business operations, charges, "
+            "execution progress or an ETA.")
 
 
 async def user_language(user_id):

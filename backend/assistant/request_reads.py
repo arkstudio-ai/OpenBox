@@ -25,7 +25,30 @@ async def get_request(*, user_id, workspace_id, main_id, kind, request_id, db=No
             except question.QuestionGone:
                 raise AssistantError(410, "ASSISTANT_REQUEST_UNAVAILABLE", "The original request is unavailable") from None
             if linked is None:
-                raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Request is not linked to this assistant")
+                # requests.list includes owned ordinary conversations. Reading
+                # that exact card must not require linking or resuming its task.
+                from assistant.session_tools import owned_session
+                from assistant.request_answers import answerable
+                session = await owned_session(db, user_id=user_id, workspace_id=workspace_id,
+                                              session_id=row.session_id)
+                request = question._request(row)
+                project = await db.get(Project, session.project_id)
+                state = row.status
+                if state == "pending":
+                    execution = await db.get(SessionExecution, session.id)
+                    try:
+                        if execution is None:
+                            raise question.QuestionGone("unavailable")
+                        question._check_pending(row, execution)
+                    except question.QuestionGone:
+                        state = "unavailable"
+                reason, high_risk = await answerable(db, row, session)
+                return {"kind": kind, "id": row.id, "task_id": None, "task_title": session.title,
+                        "version": questions.question_version(row), "project_id": session.project_id,
+                        "project_name": project.name, "session_id": session.id, "assistant": None,
+                        "expires_at": request.expires_at, "request": {"questions": request.model_dump()["questions"]},
+                        "state": state, "receipt": None, "assistant_may_answer": reason is None,
+                        "high_risk": high_risk, "link": f"/app/s/{session.id}"}
             task, _ = linked
             binding = row.continuation["assistant_request"]
             if binding["request_revision"] != questions._revision(row, binding):
@@ -62,6 +85,7 @@ async def get_request(*, user_id, workspace_id, main_id, kind, request_id, db=No
             raise AssistantError(404, "ASSISTANT_REQUEST_UNAVAILABLE", "Request is unavailable")
         project = await db.get(Project, task.project_id)
         return {"kind": kind, "id": request.id, "task_id": task.id,
+            **({"version": questions.question_version(row)} if kind == "question" else {}),
             "task_title": task.title, "project_id": task.project_id, "project_name": project.name,
             "session_id": task.execution_session_id, "assistant": deepcopy(binding),
             "expires_at": request.expires_at, "request": body,

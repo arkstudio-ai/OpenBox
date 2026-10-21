@@ -16,6 +16,7 @@ from assistant.work_context import conversation_background
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.file_asset import FileAsset
 from db.models.project import Project
+from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from memory.redaction import redact_credentials
@@ -76,7 +77,19 @@ async def overview(scope, arguments, *, limit=12):
             relaxed = True
             rows = (await db.execute(candidates.order_by(activity.desc(), Session.id).limit(limit + 1))).all()
         selected = rows[:limit]
+        from assistant.execution_errors import result_execution_errors
+        errors = await result_execution_errors(db, [row[3] for row in selected], user_id=scope.user_id)
         context = await conversation_background(db, [row[0].id for row in selected], user_id=scope.user_id)
+        pending = {}
+        for question in (await db.scalars(select(QuestionCheckpoint).join(SessionExecution,
+                SessionExecution.session_id == QuestionCheckpoint.session_id).where(
+                QuestionCheckpoint.session_id.in_([row[0].id for row in selected]),
+                QuestionCheckpoint.user_id == scope.user_id, QuestionCheckpoint.status == "pending",
+                QuestionCheckpoint.generation == SessionExecution.generation,
+                QuestionCheckpoint.detached.is_(False),
+                or_(QuestionCheckpoint.expires_at.is_(None), QuestionCheckpoint.expires_at > func.now()))
+                .order_by(QuestionCheckpoint.created_at.desc(), QuestionCheckpoint.id.desc()))).all():
+            pending.setdefault(question.session_id, question)
         items = []
         for session, project, task, result, job, asset, observed_activity in selected:
             available = bool(job and job.status == "completed" and asset and asset.status == "ready")
@@ -89,9 +102,21 @@ async def overview(scope, arguments, *, limit=12):
                 "state": state, "state_source": "assistant_task" if task else "video_job" if job else "conversation",
                 "conversation_state": session.status, "created_at": _iso(session.created_at),
                 "updated_at": _iso(observed_activity), "url": f"/app/s/{session.id}"}
+            if question := pending.get(session.id):
+                # A fresh pending decision is more useful than a stale task
+                # summary. It is not an unfinished calculation or a result.
+                item["state"] = "waiting_input"
+                item["waiting_for_user"] = True
+                item["pending_request"] = {"request_id": question.id,
+                    "questions": [{"header": redact_credentials(str(q.get("header") or ""))[:80],
+                                   "question": redact_credentials(str(q.get("question") or ""))[:300]}
+                                  for q in question.questions[:2]],
+                    "next": "Read cards_pending with this request_id before explaining options or answering."}
             if result:
                 item["latest"] = redact_credentials(result.summary or "")[:300]
                 item["latest_at"] = _iso(result.created_at)
+                if error := errors.get(result.id):
+                    item["execution_error"] = error
             if job:
                 item["video"] = {"job_id": job.id, "status": job.status, "kind": job.kind,
                     "created_at": _iso(job.created_at), "completed_at": _iso(job.completed_at),

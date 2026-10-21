@@ -33,6 +33,9 @@ function useRunFailureMessage() {
   const { t } = useTranslation("errors")
   return useCallback(
     (error?: { message?: string; code?: string }): string => {
+      // One legacy code covers time, model/tool limits and committed task
+      // receipts. Keep the server's precise reason instead of hiding it.
+      if (error?.code === "ASSISTANT_TURN_BUDGET" && error.message?.trim()) return error.message.trim()
       if (error?.code) {
         const byCode = t(error.code, { defaultValue: "" })
         if (byCode) return byCode

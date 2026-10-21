@@ -36,6 +36,7 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "tasks.submit": "question",
     "assets.attach": "question",
     "requests.answer": "question",
+    "requests.revise": "question",
     "projects.delete": "question",
     "sessions.delete": "question",
     "tasks.delete": "question",
@@ -47,6 +48,10 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
 class QuestionOption(BaseModel):
     label: str
     description: str = ""
+    #: Credits this choice commits to, as a decimal string from a server
+    #: quote. Shown to API callers; on a ``plan_confirm`` question it also
+    #: marks the option whose answer is gated by billing/plan_quote.py.
+    estimated_credits: str | None = None
 
 
 class Question(BaseModel):
@@ -57,6 +62,9 @@ class Question(BaseModel):
     custom: bool = True
     allow_attachments: bool = False
     requires_confirmation: bool = False
+    #: ``plan_confirm``: the shots + price card of a registered plan; its
+    #: confirming answer is checked against the balance and the credit cap.
+    kind: str | None = None
     detail: dict[str, Any] | None = None
 
 
@@ -336,7 +344,7 @@ async def _owned_request(request_id: str, user_id: str) -> QuestionCheckpoint:
 
 
 def _check_pending(row: QuestionCheckpoint, execution: SessionExecution) -> None:
-    if row.generation != execution.generation:
+    if row.generation != execution.generation and not row.detached:
         raise QuestionGone("superseded")
     if row.status != "pending":
         raise QuestionGone(row.status)
@@ -363,6 +371,12 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
     owned = await _owned_request(request_id, user_id)
     if placement_project_name is not None and not (owned.continuation or {}).get("assistant_placement"):
         raise ValueError("A project name only belongs to a placement choice")
+    if answers is not None:
+        # Confirming a priced plan the workspace cannot pay for (or that
+        # overruns the request's max_credits) is refused before anything is
+        # scheduled; the refusal reaches the caller as its own error.
+        from billing.plan_quote import gate_answer
+        await gate_answer(owned.session_id, owned.questions, answers)
     from assistant.requests import maybe_reply, question_task
     receipt = await maybe_reply(owned, answers=answers, attachments=attachments, **reply_binding)
     if receipt is not None:
@@ -382,7 +396,7 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
 
 
 async def resolve_locked(db, session, execution, row, *, answers, attachments=None, source_kind="user",
-                         placement_project_name=None):
+                         placement_project_name=None, enqueue_detached=True):
     """Shared question mutation; caller owns the Session transaction."""
     status = "rejected" if answers is None else "answered"
     questions = [Question(**q) for q in row.questions]
@@ -396,7 +410,11 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
         if (not placement or new_project_option(placement) is None
                 or clean != [[new_project_option(placement)]] or not name or len(name) > MAX_NAME):
             raise ValueError("Invalid project name or placement option")
-    if row.generation != execution.generation:
+    if row.detached:
+        from assistant.pending import detachable
+        if not detachable(row, session):
+            raise QuestionGone("superseded")
+    if row.generation != execution.generation and not row.detached:
         raise QuestionGone("superseded")
     if row.status in ("answered", "rejected"):
         if (row.status != status or row.answers != clean
@@ -414,10 +432,18 @@ async def resolve_locked(db, session, execution, row, *, answers, attachments=No
     if any(files):
         row.continuation = {**row.continuation, "answer_attachments": files}
     row.status, row.answers, row.updated_at = status, clean, runtime.now()
+    if status == "answered":
+        from billing.plan_quote import mark_confirmed
+        mark_confirmed(session, row.questions, clean)
     await record_checkpoint(db, row, execution, "question.resolved",
                             {"answers": clean, "attachments": files, "decision": status, "source_kind": source_kind})
     from notifications.events import cancel_event
     await cancel_event(db, row.user_id, f"question:{row.id}")
+    if row.detached:
+        from assistant.pending import finish_locked
+        await finish_locked(db, session, execution, row, enqueue=enqueue_detached)
+        await db.flush()
+        return True
     execution.resume_pending = True
     execution.resume_error = None
     execution.next_attempt_at = None
@@ -464,7 +490,7 @@ async def list_pending(user_id: str) -> list[QuestionRequest]:
             .where(QuestionCheckpoint.user_id == user_id, Session.user_id == user_id,
                    Session.is_deleted == False,  # noqa: E712
                    QuestionCheckpoint.status == "pending",
-                   QuestionCheckpoint.generation == SessionExecution.generation)
+                   (QuestionCheckpoint.generation == SessionExecution.generation) | QuestionCheckpoint.detached.is_(True))
             .order_by(QuestionCheckpoint.created_at))).all()
         from assistant.requests import validate_question_read
         from assistant.policy import AssistantError

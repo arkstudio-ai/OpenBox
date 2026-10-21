@@ -116,8 +116,8 @@ class Progress:
         if not asked:
             return ""
         if self.lang == "en":
-            return "Still being done: " + ", ".join(f"\"{_short(ref.text)}\"" for ref in asked) + "."
-        return "还在办：" + "、".join(f"“{_short(ref.text)}”" for ref in asked) + "。"
+            return "Handed to the personal assistant; awaiting results (not proof of execution): " + ", ".join(f"\"{_short(ref.text)}\"" for ref in asked) + "."
+        return "已交给个人助理等待结果（不代表任务已开始执行）：" + "、".join(f"“{_short(ref.text)}”" for ref in asked) + "。"
 
 
 def _short(text: str) -> str:

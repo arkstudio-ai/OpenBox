@@ -188,7 +188,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                      "assistant_preferences": "assistant.preferences",
                      "project_create": "projects.create", "project_delete": "projects.delete",
                      "session_delete": "sessions.delete", "task_delete": "tasks.delete",
-                     "request_answer": "requests.answer"}[action]
+                     "request_answer": "requests.answer", "task_revise": "requests.revise",
+                     "main_card_answer": "cards.answer"}[action]
     if source.coordination_inbox_id and action == "task_input":
         expected_tool = "tasks.next_step"
     if (part is None or part.data.get("status") not in {"pending", "running"}
@@ -292,7 +293,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               expected_run: dict | None = None, command_action: str | None = None,
                               continuation: dict | None = None, placement_id: str | None = None,
                               placement: dict | None = None, workflow: str | None = None,
-                              setup_id: str | None = None) -> dict:
+                              setup_id: str | None = None, revision_request: dict | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -310,6 +311,15 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             raise ValueError("Only direct human input can carry a client message identity")
         idempotency_key = (inbox_key("assistant-coordinate-command", source.coordination_inbox_id)
             if source.coordination_inbox_id else tool_command_key(main_id, source.part_id))
+    if revision_request is not None:
+        from assistant.revisions import RevisionTarget
+        revision_request = RevisionTarget.model_validate(revision_request).model_dump()
+        if (source is None or source.coordination_inbox_id or task_id or project_id or setup_id
+                or placement_id or placement or continuation or workflow or command_action or delivery != "followup"
+                or title or model is not None or variant is not None or variant_explicit
+                or video_model is not None or video_resolution is not None or expected_revision is not None):
+            raise ValueError("A pending-task revision requires an original human request and its exact card")
+        idempotency_key = inbox_key("question-revision", revision_request["request_id"], revision_request["version"])
     if setup_id:
         if source is None or task_id or source.coordination_inbox_id:
             raise ValueError("Model setup belongs only to an assistant's new task")
@@ -337,13 +347,16 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if expected_run is not None:
         from assistant.steering import ExpectedRun
         expected_run = ExpectedRun.model_validate(expected_run).model_dump()
-    action = command_action or ("task_input" if task_id else "task_create")
+    action = "task_revise" if revision_request else command_action or ("task_input" if task_id else "task_create")
     digest = command_digest({"action": action, "target": task_id, "project_id": project_id,
         "prompt": prompt, "title": title, "attachments": list(attachments), "model": model,
         "variant": variant, "expected_revision": expected_revision, "delivery": delivery,
         "source": ({"coordination_inbox_id": source.coordination_inbox_id} if source and source.coordination_inbox_id
-            else {"part_id": placement_id or setup_id or source.part_id, "source_message_ids": list(source.source_message_ids)}
+            else {"part_id": ("revision:" + revision_request["request_id"]) if revision_request else placement_id or setup_id or source.part_id,
+                  "source_message_ids": list(source.source_message_ids)}
             if source else {"origin": "human"})})
+    if revision_request:
+        digest = command_digest({"base": digest, "revision_request": revision_request})
     if continuation is not None:
         digest = command_digest({"base": digest, "continuation": continuation})
     if placement is not None:
@@ -393,6 +406,14 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         await db.flush()  # The unique command is claimed before any creation.
         source_ref = (await _tool_source_locked(db, main, source, action) if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        if attachments:
+            # Fail before creating a task/session or changing a pending card.
+            # The delivery boundary checks again if a term expires after admission.
+            from sandbox.entitlement import sandbox_access_status
+            access = await sandbox_access_status(db, workspace_id)
+            if not access["allowed"]:
+                raise AssistantError(403, access["code"], access["message"]
+                    + " 附件未提交执行。请保留参考图，不要改成无图生成或反复新建任务。")
         if setup_id:
             from db.models.question import QuestionCheckpoint
             from assistant.model_choices import KIND
@@ -414,6 +435,13 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         if client_message_id is not None:
             source_ref["client_message_id"] = client_message_id
         command.source_ref = source_ref
+        if revision_request:
+            from assistant.revisions import prepare_locked
+            task, execution = await prepare_locked(db, main, revision_request, command, now)
+            task_id, expected_revision = task.id, task.control_revision
+            command.target_id = task.id
+            source_ref["revision_request"] = revision_request
+            command.source_ref = dict(source_ref)
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                                 main_id=main_id, task_id=task_id, lock=True)
@@ -492,6 +520,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                    "execution_session_id": execution.id, "submission_id": submission_id,
                    "inbox_id": accepted.id, "task_revision": task.control_revision,
                    "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery}
+        if revision_request:
+            receipt["superseded_request_id"] = revision_request["request_id"]
         if placement_row is not None:
             project = await _project(db, task.project_id, user_id, workspace_id)
             receipt["placement"] = {"question_id": placement_row.id,

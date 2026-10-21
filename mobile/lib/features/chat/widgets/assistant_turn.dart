@@ -9,6 +9,7 @@ import '../utils/compaction_view.dart';
 import '../utils/content_view.dart';
 import '../utils/turn_view.dart';
 import 'ai_disclosure.dart';
+import 'assistant_persona_turn.dart' show AssistantErrorNotice;
 import 'cards/inline_error_card.dart';
 import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
@@ -162,9 +163,7 @@ class AssistantTurn extends ConsumerWidget {
         ],
         if (content.incomplete && turn.error == null) const _IncompleteNotice(),
         if (turn.error != null && !streaming && immutableHistory)
-          Text(
-            '${_errorMessage(i18n, turn.error!)}\n${i18n.t('chat:assistant.continueAfterError')}',
-          ),
+          AssistantErrorNotice(error: turn.error!),
         if (turn.error != null && !streaming && !immutableHistory)
           InlineErrorCard(
             message: _errorMessage(i18n, turn.error!),

@@ -42,7 +42,7 @@
   },
   "list": {
     "title": "Resources",
-    "searchPlaceholder": "Search by name",
+    "searchPlaceholder": "Search by name or description",
     "empty": "Nothing here yet",
     "emptyHint": "Upload a file, or have the model hand its output back.",
     "allLoaded_one": "All {{count}} resource loaded",
@@ -75,5 +75,19 @@
   "toast": {
     "deleted_one": "Deleted {{count}} resource",
     "deleted_other": "Deleted {{count}} resources"
+  },
+  "description": {
+    "label": "Resource description",
+    "placeholder": "For example: a yellow cat in a banana peel on a transparent background, or the people and scenes in a video.",
+    "hint": "Both text and voice can find this resource using its description.",
+    "save": "Save description",
+    "saving": "Saving…",
+    "error": "Could not save the description. Please retry.",
+    "recognizing": "AI is describing this image. You can also enter your own description.",
+    "recognized": "AI added this description. You can edit it.",
+    "recognitionFailed": "Image recognition failed. Retry or enter a description.",
+    "unsupported": "Automatic descriptions support JPG, PNG and WebP images up to 10 MB. Please describe this asset manually.",
+    "autoHint": "New images are described automatically. Your own descriptions take priority.",
+    "recognize": "Describe with AI"
   }
 }

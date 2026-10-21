@@ -19,6 +19,8 @@ export type ProjectFilter = string
 export interface Resource {
   id: string
   name: string
+  description?: string
+  descriptionState?: "none" | "pending" | "processing" | "ready" | "manual" | "failed" | "unsupported"
   mime: string
   size: number
   kind: ResourceKind

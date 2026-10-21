@@ -155,6 +155,77 @@ async def test_new_process_resumes_without_status_request_and_reuses_on_renewal(
     ecd.modify_entitlement.assert_awaited_with(before["desktop_id"], list(ecd.ensure_end_user.return_value[:1]))
 
 
+async def test_expired_member_with_credits_renews_original_fleet_desktop(account):
+    """jm's condition: retained Running machine, positive balance, expired plan."""
+    from decimal import Decimal
+    from db.models.billing import CreditBalance
+
+    await order_for(account)
+    worker = DesktopActivationService()
+    assert await worker.process(account.workspace_id)
+    original = await activation.desktops.get_for_workspace(account.workspace_id)
+    account.clock[0] += timedelta(days=32)
+    # The fleet's prepaid period is independent of the app membership.
+    account.remote["desktop"]["expired_time"] = (account.clock[0] + timedelta(days=31)).isoformat()
+    async with get_db_session() as db:
+        (await db.get(CreditBalance, account.workspace_id)).balance = Decimal("2091")
+        (await db.get(DesktopActivation, account.workspace_id)).attempts = 22758
+    assert await worker.process(account.workspace_id)
+    assert (await job_for(account)).attempts == 0
+    status = await activation_status(account.workspace_id)
+    assert not status["entitled"] and status["retained"]
+    assert status["execution_access"]["code"] == "SANDBOX_SUBSCRIPTION_REQUIRED"
+    with pytest.raises(SandboxSubscriptionRequired):
+        await wuying_desktop_service.resolve_ticket_target(account.workspace_id)
+
+    receipt = await order_for(account)
+    assert (await job_for(account)).request_id == receipt.order_id
+    assert (await job_for(account)).attempts == 0
+    # A transient cloud reauthorization error must not inherit years of
+    # successful suspension checks as a maximum-delay retry history.
+    ecd.modify_entitlement.side_effect = TimeoutError("cloud temporarily unavailable")
+    assert not await worker.process(account.workspace_id)
+    job = await job_for(account)
+    assert job.state == "retrying" and job.attempts == 1
+    assert (subscriptions.utc(job.next_run_at) - account.clock[0]).total_seconds() == 10
+    ecd.modify_entitlement.side_effect = None
+    await make_due(account)
+    assert await DesktopActivationService().process(account.workspace_id)
+    after = await activation.desktops.get_for_workspace(account.workspace_id)
+    assert (after["id"], after["desktop_id"], after["end_user_id"]) == (
+        original["id"], original["desktop_id"], original["end_user_id"])
+    assert (await activation_status(account.workspace_id))["state"] == "running"
+    assert await wuying_desktop_service.resolve_ticket_target(account.workspace_id) == (
+        original["desktop_id"], original["end_user_id"])
+    ecd.modify_entitlement.assert_awaited_with(original["desktop_id"], [original["end_user_id"]])
+    ecd.create_desktop.assert_awaited_once()
+    ecd.renew_desktop.assert_not_called()  # Retained cloud capacity is still paid.
+    assert (await job_for(account)).attempts == 0
+    assert (await payments.settle_payment("test", receipt))["duplicate"]
+    assert (await activation_status(account.workspace_id))["state"] == "running"
+
+
+async def test_renewal_during_expiry_revocation_recovers_without_manual_retry(account):
+    await order_for(account)
+    worker = DesktopActivationService()
+    assert await worker.process(account.workspace_id)
+    original = await activation.desktops.get_for_workspace(account.workspace_id)
+    account.clock[0] += timedelta(days=32)
+    account.remote["desktop"]["expired_time"] = (account.clock[0] + timedelta(days=31)).isoformat()
+    async def renew_during_revoke(desktop_id, end_users):
+        assert desktop_id == original["desktop_id"] and end_users == []
+        await order_for(account)
+    ecd.modify_entitlement.side_effect = renew_during_revoke
+    assert not await worker.process(account.workspace_id)  # Old suspension loses authority.
+    ecd.modify_entitlement.side_effect = None
+    assert account.workspace_id in await worker.due()
+    assert await DesktopActivationService().process(account.workspace_id)
+    assert (await activation_status(account.workspace_id))["state"] == "running"
+    ecd.modify_entitlement.assert_awaited_with(original["desktop_id"], [original["end_user_id"]])
+    ecd.create_desktop.assert_awaited_once()
+    ecd.renew_desktop.assert_not_called()
+
+
 async def test_crash_after_cloud_creation_recovers_tags_without_rebuy(account, monkeypatch):
     await order_for(account)
     original_create = ecd.create_desktop.side_effect

@@ -45,6 +45,38 @@ def block_ids(messages):
     return [message.id for message in messages if str(message.id).startswith("assistant:")]
 
 
+async def test_live_call_context_is_cut_at_the_human_input_and_absent_from_card_resumption(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from assistant.service import ensure_main_session
+    from cache.memory_cache import MemoryCache
+    from tests.unit.test_assistant_foundation import accounts
+    from voice import calls, live_context
+    from voice.tools import CallScope
+    from voice.transcript import CallTranscript
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    cache = MemoryCache()
+    monkeypatch.setattr(calls, "_cache", lambda: cache)
+    identity = await calls.create_call(user_id=owner, workspace_id=workspace, main_session_id=main.id,
+                                 client="web", model="qwen3.8-omni-flash-realtime", voice="Serena")
+    before = datetime.now(timezone.utc) - timedelta(seconds=10)
+    spoken = CallTranscript(now=lambda: before)
+    spoken.add("user", "我想去公园看小说")
+    ctx, lease, _, _ = await claimed(owner, workspace, main, client_id="typed-live", text="我刚才想做什么", voice=False)
+    spoken.now = lambda: datetime.now(timezone.utc) + timedelta(seconds=10)
+    spoken.add("user", "后来才问到奶茶店")
+    await live_context.publish(CallScope(owner, workspace, main.id, identity), spoken.lines)
+    try:
+        [block] = [value for value in await projected(ctx) if value.id == "assistant:live-call"]
+        assert "公园看小说" in block.parts[0]["text"] and "奶茶店" not in block.parts[0]["text"]
+        async with get_db_session() as db:
+            item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.run_id == ctx.run_id))
+            item.origin_ref = {**item.origin_ref, "entrypoint": "assistant_card_answer"}
+        assert "assistant:live-call" not in block_ids(await projected(ctx))
+    finally:
+        await lease.release(session_status="idle")
+
+
 async def test_voice_turn_gets_the_spoken_reply_block_and_typed_turns_do_not():
     from tests.unit.test_assistant_foundation import accounts
     from assistant.service import ensure_main_session

@@ -34,9 +34,11 @@ async def summarize(transcript: str, previous: str = "", *, final: bool = False,
                     timeout: float | None = None) -> str:
     """The summary text (≤300 characters), or "" when the model is unavailable or says nothing."""
     from core.config import get_config
+    from agent.model_resolve import resolve
     if not transcript.strip():
         return previous
-    model = model or get_config().voice.summary_model
+    config = get_config()
+    model, _ = resolve(model or config.voice.summary_model, config, context="voice summary")
     body = (f"已有备忘：{previous}\n\n" if previous else "") + "通话记录：\n" + transcript
     try:
         text = await complete(model, CALL if final else SO_FAR, body,
@@ -68,8 +70,16 @@ async def complete(model: str, system: str, text: str, timeout: float) -> str:
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}]}
         if effort:
             payload["reasoning_effort"] = effort  # flat, as the qwen route expects it
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
+    from agent.gateway import Observation
+    observation = Observation(model, "voice_summary")
+    try:
+        async with asyncio.timeout(timeout), httpx.AsyncClient(timeout=timeout, follow_redirects=False,
+                event_hooks={"request": [observation.on_request]}) as client:
+            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
+    except BaseException as exc:
+        observation.finish("cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", exc)
+        raise
+    observation.finish("completed" if response.status_code < 400 else "failed")
     if response.status_code >= 400:
         raise RuntimeError(f"provider_http_{response.status_code}")
     data = response.json()

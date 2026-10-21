@@ -35,20 +35,24 @@ def tiers(monkeypatch):
     return value
 
 
-async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(tiers):
+@pytest.mark.parametrize("question_field", ["video_model_question", "video_tier_question"])
+async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(tiers, question_field):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "默认空间里用Task AI做咖啡口播，先解释档次")
     args = {"project_id": main.project_id, "title": "档次样片", "instructions": "咖啡口播",
             "source_message_ids": [human], "destination_confirmed": True, "work_type": "spoken_video",
-            "model": "test/model", "model_confirmed": True}
+            "model": "test/model", "model_confirmed": True,
+            question_field: "这条咖啡口播视频想用哪个档次？"}
     try:
         before = await counts(owner)
         result, _ = await tool_call(ctx, "tasks.submit", args)
         pending = await card(result["suspended"])
         assert pending.questions[0]["header"] == "视频档次"
+        assert pending.questions[0]["question"] == "这条咖啡口播视频想用哪个档次？"
+        assert "video_tier_question" not in pending.continuation[KIND]["input"]
         option = pending.questions[0]["options"][0]
         assert option["label"] == "快速档" and "0.77" in option["description"]
-        assert "MiniMax" not in json.dumps(pending.questions)
+        assert "MiniMax Turbo" in option["description"] and "768p" in option["description"]
         assert await counts(owner) == before
         await q.reply(pending.id, [["快速档"]], owner)
         receipt, _ = await tool_call(ctx, "tasks.submit", args)
@@ -122,6 +126,18 @@ async def test_models_are_selected_before_creation_and_spoken_skill_is_preserved
             assert row.continuation[KIND]["field"] == field
             assert await counts(owner) == before
             await q.reply(row.id, [[row.questions[0]["options"][choice_index]["label"]]], owner)
+            if field == "model":
+                from assistant.shared_context import recent_decisions
+                from assistant.projection import project_main_messages
+                from assistant.model_choices import result as setup_result
+                async with get_db_session() as db:
+                    decisions = await recent_decisions(db, owner, workspace)
+                assert decisions[0]["answers"] == [["Task AI"]]
+                assert decisions[0]["selected_settings"] == {"model": "test/model", "model_confirmed": True}
+                assert decisions[0]["task_title"] == "口播样片" and not decisions[0]["execution_confirmed"]
+                assert "Task AI" in setup_result(row.continuation[KIND], [["Task AI"]])["output"]
+                projected = await project_main_messages([], ctx=ctx)
+                assert any(m.id == "assistant:answered-decisions" and "test/model" in str(m.parts) for m in projected)
         receipt, _ = await tool_call(ctx, "tasks.submit", args)
         assert receipt["state"] == "accepted"
         async with get_db_session() as db:
@@ -280,7 +296,29 @@ async def test_flat_attachments_never_guess_between_multiple_material_questions(
     assert (await card(request_id)).status == "pending"
 
 
-async def test_picture_description_reads_owned_pixels_and_refuses_foreign_assets(monkeypatch):
+async def test_new_picture_on_script_only_card_routes_revision_without_answering_old_plan():
+    owner, other, workspace, main, request_id, heard, scope, _ = await voice_form()
+    image = await asset(owner, workspace, main)
+    foreign = await asset(owner, workspace, main, user=other)
+    async with get_db_session() as db:
+        saved = await db.get(QuestionCheckpoint, request_id)
+        saved.questions = [{**question, "allow_attachments": False} for question in saved.questions]
+    [fresh] = await list_waiting(user_id=owner, workspace_id=workspace, main_id=main.id)
+    heard.say("讲稿可以，但改用这张图重新做")
+    scope.desk.show_question(fresh, "zh")  # A revision may precede the card read.
+    args = {"request_id": request_id, "version": fresh["version"], "conversation": fresh["session_title"],
+            "answers": [["直接使用"], ["中文"]], "attachments": [[image], []]}
+    result = await run("task_question_answer", scope, json.dumps(args))
+    assert result["status"] == "revision_required" and not result["this_call_applied"]
+    assert result["attachment_ids"] == [image]
+    assert (await card(request_id)).status == "pending"
+    args["attachments"] = [[foreign], []]
+    assert (await run("task_question_answer", scope, json.dumps(args)))["status"] == "invalid_arguments"
+    assert (await card(request_id)).status == "pending"
+
+
+@pytest.mark.parametrize("finish", [None, "length", "stop"])
+async def test_picture_description_reads_owned_pixels_and_refuses_foreign_assets(monkeypatch, finish):
     from assistant.asset_vision import describe
     from assistant.policy import AssistantError
     owner, other, workspace, main = await assistant()
@@ -292,34 +330,48 @@ async def test_picture_description_reads_owned_pixels_and_refuses_foreign_assets
     async def llm(*args, **kwargs):
         assert args[2][0]["_images"] == ["data:image/png;base64,YWN0dWFsLXBpY3R1cmU="]
         yield {"type": "text_delta", "text": "画面中是一只白色咖啡杯。"}
+        if finish:
+            yield {"type": "finish", "reason": finish}
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(get_object_chunks=chunks))
     monkeypatch.setattr("agent.vision.supports_vision", lambda _: True)
     monkeypatch.setattr("agent.llm.stream_llm", llm)
-    assert "白色咖啡杯" in (await describe(ctx, asset_id=image, question="是什么样的图片？"))["description"]
+    if finish == "stop":
+        assert "白色咖啡杯" in (await describe(ctx, asset_id=image, question="是什么样的图片？"))["description"]
+    else:
+        with pytest.raises(AssistantError):
+            await describe(ctx, asset_id=image, question="是什么样的图片？")
     with pytest.raises(AssistantError):
         await describe(ctx, asset_id=foreign, question="是什么图片？")
 
 
-async def test_frame_comparison_uses_one_request_and_the_selected_model(monkeypatch):
+@pytest.mark.parametrize("retired", [False, True])
+async def test_frame_comparison_uses_one_request_and_the_selected_model(monkeypatch, retired):
     from assistant.asset_vision import describe
     from datetime import datetime, timezone
     from core.identifier import generate_id
     from db.models.message import Message
+    selected = "openai/gpt-5.6-luna" if retired else "openai/gemini-3.8-flash-high"
+    if retired:
+        from core.config import OpenBoxConfig
+        config = OpenBoxConfig(model="openai/qwen3.8-flash", models=[{"id": "openai/qwen3.8-flash"}])
+        monkeypatch.setattr("core.config.get_config", lambda: config)
     owner, _, workspace, main = await assistant()
     first, last = await asset(owner, workspace, main), await asset(owner, workspace, main)
     message_id = generate_id()
     async with get_db_session() as db:
         (await db.get(Session, main.id)).model = "test/another-default"
         db.add(Message(id=message_id, session_id=main.id, user_id=owner, role="assistant",
-            model_id="openai/gemini-3.8-flash-high", created_at=datetime.now(timezone.utc)))
+            model_id=selected, created_at=datetime.now(timezone.utc)))
     calls = []
     closed = []
     async def chunks(key, **kwargs):
         yield b"actual-image"
     async def llm(*args, **kwargs):
         calls.append(args)
+        assert kwargs["variant"] == ("none" if retired else "low")
         try:
             yield {"type": "text_delta", "text": "第一张双手放下，第二张举起右手。"}
+            yield {"type": "finish", "reason": "stop"}
         finally:
             closed.append(True)
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(get_object_chunks=chunks))
@@ -328,7 +380,7 @@ async def test_frame_comparison_uses_one_request_and_the_selected_model(monkeypa
     ctx = SimpleNamespace(user_id=owner, workspace_id=workspace, session_id=main.id, message_id=message_id)
     result = await describe(ctx, asset_ids=[first, last], question="两张有什么区别？")
     assert len(calls) == 1 and len(calls[0][2][0]["_images"]) == 2
-    assert calls[0][4] == "openai/gemini-3.8-flash-high"
+    assert calls[0][4] == ("openai/qwen3.8-flash" if retired else selected)
     assert [x["asset_id"] for x in result["images"]] == [first, last]
     assert closed == [True]
 

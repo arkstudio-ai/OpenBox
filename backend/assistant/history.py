@@ -35,7 +35,7 @@ def _encode_cursor(value: dict) -> str:
     return base64.urlsafe_b64encode(signature + raw).decode().rstrip("=")
 
 
-def _decode_cursor(value: str, scope: str) -> dict:
+def _decode_cursor(value: str, scope: str, legacy_scope: str | None = None) -> dict:
     try:
         if len(value) > 12000:
             raise ValueError()
@@ -43,11 +43,13 @@ def _decode_cursor(value: str, scope: str) -> dict:
         raw = data[32:]
         expected = hmac.new(_cursor_key(), b"assistant-history-v1:" + raw, sha256).digest()
         payload = json.loads(raw)
-        if not hmac.compare_digest(data[:32], expected) or payload["scope"] != scope:
+        if not hmac.compare_digest(data[:32], expected) or payload["scope"] not in {scope, legacy_scope}:
             raise ValueError()
         return payload
     except (ValueError, KeyError, TypeError, UnicodeError):
-        raise AssistantError(409, "ASSISTANT_HISTORY_CURSOR", "Cursor does not match this history selection") from None
+        raise AssistantError(409, "ASSISTANT_HISTORY_CURSOR",
+            "Copy next_cursor in full without shortening it; keep the same session and message selection. "
+            "If unavailable, omit cursor and read the conversation again.") from None
 
 
 # Memory and knowledge text is read fresh, never replayed from history: a
@@ -71,7 +73,7 @@ def visible_part_text(part: Part) -> str | None:
     return redact_credentials(text)
 
 
-async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=None, **_ignored):
+async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=None, include_tools=True, **_ignored):
     messages = list((await db.scalars(select(Message).where(Message.id.in_(ids),
         Message.session_id == session_id, Message.user_id == user_id).order_by(Message.id))).all())
     if len(messages) != len(ids):
@@ -91,8 +93,21 @@ async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=N
         parts = [part for part in window_parts if part.message_id == message.id
                  and (part.type != "file" or part.data.get("asset_id") in ready)]
         span = spans.get(message.id, (None, None))
-        version.append({"id": message.id, "finish": message.finish, "error": bool(message.error)})
+        from assistant.execution_errors import execution_error_view, execution_error_text
+        error = execution_error_view(message.error)
+        version.append({"id": message.id, "finish": message.finish, "error": error})
+        if error and allowed_parts is None:
+            text = execution_error_text(message.error)
+            digest = command_digest(error)
+            entries.append({"message_id": message.id, "role": message.role, "type": "error",
+                "origin": "execution_error", "source_ref": {"session_id": session_id,
+                    "message_id": message.id, "part_id": None, "content_hash": digest,
+                    "origin": "execution_error"},
+                "content_hash": digest, "event_span": list(span), "text": text,
+                "total_chars": len(text), "untrusted_data": True})
         for part in parts:
+            if part.type == "tool" and not include_tools:
+                continue
             if allowed_parts is not None and part.id not in allowed_parts:
                 continue
             text = visible_part_text(part)
@@ -109,7 +124,8 @@ async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=N
 
 async def read_history(*, user_id: str, workspace_id: str, main_id: str, session_id: str,
                        message_ids: list[str] | None = None, cursor: str | None = None,
-                       limit: int = 20, max_chars: int = 8000, ctx=None, record: bool = True) -> dict:
+                       limit: int = 20, max_chars: int = 8000, include_tools: bool = True,
+                       ctx=None, record: bool = True) -> dict:
     if (type(limit) is not int or not 1 <= limit <= 50 or type(max_chars) is not int
             or not 1 <= max_chars <= 16000 or (message_ids is not None and not 1 <= len(message_ids) <= 20)):
         raise ValueError("Invalid history selection or character budget")
@@ -147,10 +163,12 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             bound = await db.get(AssistantTask, result.task_id)
             if bound is None or session_id not in {bound.execution_session_id, main.id}:
                 raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "History is outside this result's task session")
-        scope = command_digest({"actor": user_id, "workspace": workspace_id, "main": main_id,
-            "session": session_id, "selector": selected_ids, "limit": limit,
+        selection = {"actor": user_id, "workspace": workspace_id, "main": main_id,
+            "session": session_id, "selector": selected_ids,
             "report": [report.result.id, report.result.report_attempt] if report else None,
-            **({"coordination": binding_ref(coordination)} if coordination else {})})
+            **({"coordination": binding_ref(coordination)} if coordination else {})}
+        scope = command_digest({**selection, "include_tools": include_tools})
+        legacy_scope = command_digest({**selection, "limit": limit}) if include_tools else None
         base = select(Message.id).where(Message.session_id == session_id, Message.user_id == user_id)
         if ctx is not None:
             base = base.where(Message.id != ctx.message_id)
@@ -158,15 +176,20 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             base = base.where(Message.id.in_(selected_ids))
             if await db.scalar(select(func.count()).select_from(base.subquery())) != len(selected_ids):
                 raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "A selected message is unavailable")
-        state = _decode_cursor(cursor, scope) if cursor else None
+        state = _decode_cursor(cursor, scope, legacy_scope) if cursor else None
+        # Page size is transport, not authority. Continue the frozen window
+        # even when a model changes limit while copying a valid next_cursor.
+        if state:
+            limit = state.get("page_size", limit)
         if state:
             entries, version = await _window(db, ids=state["ids"], session_id=session_id, user_id=user_id,
-                main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts, strict=bool(message_ids))
+                main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts,
+                include_tools=include_tools, strict=bool(message_ids))
             if version != state["version"]:
                 raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_CHANGED", "History changed during pagination")
         else:
             ceiling = await db.scalar(base.order_by(Message.id.desc()).limit(1))
-            state = {"scope": scope, "ceiling": ceiling, "after": "", "index": 0, "offset": 0}
+            state = {"scope": scope, "ceiling": ceiling, "after": "", "index": 0, "offset": 0, "page_size": limit}
         if not cursor or (state["index"] >= len(entries) and state.get("more")):
             candidates = list((await db.scalars(base.where(Message.id > state["after"],
                 Message.id <= (state["ceiling"] or "")).order_by(Message.id).limit(limit + 1))).all())
@@ -174,7 +197,8 @@ async def read_history(*, user_id: str, workspace_id: str, main_id: str, session
             if not cursor and selected_ids and len(ids) < min(limit, len(selected_ids)):
                 raise AssistantError(410, "ASSISTANT_HISTORY_SOURCE_GONE", "A selected message is unavailable")
             entries, version = await _window(db, ids=ids, session_id=session_id, user_id=user_id,
-                main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts, strict=bool(message_ids))
+                main_id=main_id, workspace_id=workspace_id, allowed_parts=allowed_parts,
+                include_tools=include_tools, strict=bool(message_ids))
             state.update(ids=ids, version=version, index=0, offset=0, more=len(candidates) > limit,
                          after=ids[-1] if ids else state["after"])
         # Leave room for IDs, source refs and the signed cursor under the

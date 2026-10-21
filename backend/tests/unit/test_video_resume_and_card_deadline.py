@@ -8,11 +8,15 @@ import pytest
 from video import job_recovery
 
 
-async def test_resume_conversation_accepts_a_system_followup(monkeypatch):
+@pytest.mark.parametrize("phase", ["idle", "running"])
+async def test_resume_conversation_accepts_a_system_followup(monkeypatch, phase):
     calls = {}
 
-    async def resume_reference(job):
-        return {}
+    async def driver_state(session_id):
+        return SimpleNamespace(run_id=None if phase == "idle" else "run_live", phase=phase)
+
+    async def reference(job):
+        return {"task_id": "task_1", "intent_revision": 2}
 
     async def accept(**kwargs):
         calls["accept"] = kwargs
@@ -22,25 +26,27 @@ async def test_resume_conversation_accepts_a_system_followup(monkeypatch):
         calls["wake"] = (session_id, user_id)
         return "run_1"
 
-    monkeypatch.setattr(job_recovery, "_resume_reference", resume_reference)
+    monkeypatch.setattr("agent.driver.get_driver_state", driver_state)
+    monkeypatch.setattr(job_recovery, "_resume_reference", reference)
     monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
     monkeypatch.setattr("agent.inbox.wake_inbox_session", wake)
     job = SimpleNamespace(id="video_1", session_id="session_1", user_id="u1")
     assert await job_recovery.resume_conversation(job) is True
     assert calls["accept"]["client_id"] == "vjob:video_1"
     assert calls["accept"]["system"] is True and calls["accept"]["delivery"] == "followup"
+    assert calls["accept"]["origin_ref"] == {"task_id": "task_1", "intent_revision": 2}
     assert "video_1" in calls["accept"]["prompt"]
     assert calls["wake"] == ("session_1", "u1")
 
 
-async def test_resume_conversation_leaves_a_held_task_alone(monkeypatch):
-    async def resume_reference(job):
+async def test_resume_conversation_leaves_revoked_or_missing_context_alone(monkeypatch):
+    async def reference(job):
         return None
 
     async def accept(**kwargs):
-        raise AssertionError("must not queue while a task is held")
+        raise AssertionError("must not queue a revoked goal")
 
-    monkeypatch.setattr(job_recovery, "_resume_reference", resume_reference)
+    monkeypatch.setattr(job_recovery, "_resume_reference", reference)
     monkeypatch.setattr("agent.inbox.accept_inbox_item", accept)
     assert await job_recovery.resume_conversation(SimpleNamespace(id="v", session_id="s", user_id="u")) is False
     assert await job_recovery.resume_conversation(SimpleNamespace(id="v", session_id=None, user_id="u")) is False

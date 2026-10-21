@@ -15,6 +15,10 @@ MESSAGE_CREATED = "message.created"
 MESSAGE_UPDATED = "message.updated"
 MESSAGE_TEXT_DELTA = "message.text_delta"
 
+# Post-commit invalidation hints, without message text or private asset URLs.
+AGENT_INBOX_UPDATED = "agent.inbox.updated"
+ASSET_UPDATED = "asset.updated"
+
 # Part events
 PART_CREATED = "part.created"
 PART_UPDATED = "part.updated"

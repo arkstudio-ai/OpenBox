@@ -564,6 +564,7 @@
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
     "continueAfterError": "直接再发一条消息就能继续；任务汇报没成功的，可以在任务卡片的“更多”里重新汇报。",
+    "replyIncomplete": "这轮回复未完成",
     "link": {
       "title": "跟进一个已有对话",
       "description": "选一个你之前的对话交给我跟进：聊天记录都会保留，我不会自动开始做事，之后你可以让我在里面继续。团队成员能看到的对话，我发消息前会先让你确认。",
@@ -722,7 +723,7 @@
       "address": {
         "question": "我该怎么称呼你？",
         "useAccount": "叫我 {{name}}",
-        "none": "不用称呼",
+        "none": "就叫老板",
         "placeholder": "比如 老王、Andrew"
       },
       "name": {

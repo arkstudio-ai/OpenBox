@@ -6,6 +6,7 @@ import { formatBytes } from "@/shared/lib/format"
 import { toast } from "@/shared/ui/Toast"
 import { useAttachments } from "../hooks/useAttachments"
 import type { MentionScope } from "../hooks/useMentionMenu"
+import { useResourceSearch } from "../hooks/useResourceSearch"
 import { AttachmentRow } from "./composer/AttachmentRow"
 import { MentionScopeBar } from "./composer/MentionScopeBar"
 
@@ -53,6 +54,7 @@ export function QuestionResources({ sessionId, selected, disabled, scope, onChan
   const fileRef = useRef<HTMLInputElement>(null)
   const [browsing, setBrowsing] = useState(false)
   const [query, setQuery] = useState("")
+  const resources = useResourceSearch(scope, query, browsing)
   const blocked = uploads.items.some((item) => item.status !== "done")
   useEffect(() => { onTransferBlocked(blocked) }, [blocked, onTransferBlocked])
   useEffect(() => () => onTransferBlocked(false), [onTransferBlocked])
@@ -83,7 +85,6 @@ export function QuestionResources({ sessionId, selected, disabled, scope, onChan
     else onChange([...selected, id])
   }
 
-  const resources = scope?.items.filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase())) ?? []
   return (
     <div className="border-hair mt-2 space-y-2 rounded-xl border p-3">
       <p className="text-n600 text-xs">{t("question.resourcesHint")}</p>
@@ -113,15 +114,19 @@ export function QuestionResources({ sessionId, selected, disabled, scope, onChan
             aria-label={t("question.searchResources")} placeholder={t("question.searchResources")}
             className="border-hair bg-bg text-ink my-2 w-full rounded-lg border px-2 py-1.5 text-xs outline-none" />
           <div className="scr max-h-52 space-y-1 overflow-auto">
-            {scope.loading ? <p className="text-n600 p-2 text-xs">{t("composer.mention.loading")}</p>
-              : resources.length === 0 ? <p className="text-n600 p-2 text-xs">{t("composer.mention.empty")}</p>
-                : resources.map((resource) => (
+            {resources.loading ? <p className="text-n600 p-2 text-xs">{t("composer.mention.loading")}</p>
+              : resources.error ? <p className="text-n600 p-2 text-xs">{t("question.resourceUnavailable")}</p>
+                : resources.items.length === 0 ? <p className="text-n600 p-2 text-xs">{t("composer.mention.empty")}</p>
+                  : resources.items.map((resource) => (
                   <button key={resource.id} type="button" disabled={disabled}
                     aria-pressed={selected.includes(resource.id)} onClick={() => toggleResource(resource.id)}
                     className="hover:bg-hairsoft text-ink flex w-full items-center gap-2 rounded-lg p-2 text-start text-xs">
                     {resource.kind === "image" ? <img src={resource.url} alt="" loading="lazy" className="size-8 rounded object-cover" />
                       : <FileText className="text-n500 size-5" aria-hidden />}
-                    <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{resource.name}</span>
+                      {resource.description && <span className="text-n600 block truncate">{resource.description}</span>}
+                    </span>
                     <span className="text-n600 shrink-0">{formatBytes(resource.size)}</span>
                     {selected.includes(resource.id) && <Check className="text-accent size-4 shrink-0" aria-hidden />}
                   </button>

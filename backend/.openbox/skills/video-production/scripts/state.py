@@ -92,8 +92,28 @@ def shot_hashes(data: dict) -> dict[str, str]:
     }
 
 
+def material_plan(data: dict) -> dict | None:
+    value = data.get("material_plan")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError("material_plan 必须是 JSON 对象")
+    return value
+
+
+def materials_hash(data: dict) -> str:
+    try:
+        plan = material_plan(data)
+    except ValueError:
+        plan = data.get("material_plan")
+    return _hash({"plan": plan, "model": data.get("model", ""),
+                  "resolution": data.get("resolution", "")})
+
+
 def shots_snapshot(data: dict) -> dict:
-    return {
+    snapshot = {
         "model": data.get("model", ""),
         "resolution": data.get("resolution", ""),
         "shots": [
@@ -101,6 +121,10 @@ def shots_snapshot(data: dict) -> dict:
             for shot in sorted(data.get("shots", []), key=lambda item: int(item["index"]))
         ],
     }
+    # Preserve legacy paid-plan hashes until a new material plan is recorded.
+    if "material_plan" in data:
+        snapshot["materials_hash"] = materials_hash(data)
+    return snapshot
 
 
 def shots_hash(data: dict) -> str:
@@ -110,7 +134,8 @@ def shots_hash(data: dict) -> str:
 def confirm(data: dict, kind: str, note: str = "") -> dict:
     """Record an advisory snapshot of what the user confirmed."""
     recorded = {
-        "hash": script_hash(data) if kind == "script" else shots_hash(data),
+        "hash": (script_hash(data) if kind == "script" else
+                 materials_hash(data) if kind == "materials" else shots_hash(data)),
         "note": note,
         "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -127,6 +152,8 @@ def confirm(data: dict, kind: str, note: str = "") -> dict:
                 "includes_spend": True,
             }
         )
+        if "material_plan" in data:
+            recorded["materials_hash"] = materials_hash(data)
     data.setdefault("confirmations", {})[kind] = recorded
     return recorded
 
@@ -186,12 +213,96 @@ def _changed_shots(data: dict, confirmation: dict) -> list[int]:
     global_plan_changed = (
         confirmation.get("model", "") != data.get("model", "")
         or confirmation.get("resolution", "") != data.get("resolution", "")
+        or ("material_plan" in data and
+            confirmation.get("materials_hash") != materials_hash(data))
     )
     if global_plan_changed or (
         confirmation.get("script_hash") != script_hash(data) and not changed
     ):
         changed.update(int(index) for index in set(previous) | set(current))
     return sorted(changed)
+
+
+def _check_materials(data: dict, add: Callable) -> None:
+    """Observe the recorded decision and actual bindings, never grant approval."""
+    if "material_plan" not in data:
+        return  # Existing paid work can still resume without a new schema.
+    try:
+        plan = material_plan(data)
+    except ValueError as exc:
+        add("materials_invalid", str(exc))
+        return
+    if plan is None:
+        add("materials_invalid", "material_plan 必须是 JSON 对象")
+        return
+    mode = plan.get("mode")
+    if not isinstance(mode, str) or mode not in {"existing_frames", "reference", "prepare_frames", "text"}:
+        add("materials_mode_invalid", "素材方式尚未明确，请依据用户决定记录")
+        return
+    count = plan.get("new_image_count", 0)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        add("materials_count_invalid", "新增图片数量必须为非负整数")
+    uses = plan.get("source_uses", [])
+    if not isinstance(uses, list) or any(
+        not isinstance(use, dict) or not use.get("asset_id") or not use.get("purpose")
+        for use in uses
+    ):
+        add("materials_sources_invalid", "逐张记录真实源素材及用户确认的用途")
+    decision = data.get("confirmations", {}).get("materials")
+    if not decision:
+        add("materials_unconfirmed", "素材用途尚无用户决定记录；上传图片不代表确认用途")
+    elif decision.get("hash") != materials_hash(data):
+        add("materials_drift", "素材用途、准备范围或模型已变化，请确认变化后的方案")
+    for key in ("model", "resolution"):
+        if data.get(key) and plan.get(key) != data[key]:
+            add("materials_model_mismatch", f"素材方案的 {key} 与当前选择不同，请重新评估能力")
+    if mode in {"reference", "existing_frames", "text"} and plan.get("new_image_count", 0) != 0:
+        add("materials_unapproved_preparation", "当前直接使用方式包含新增图片，请先确认制作新画面的范围")
+
+    bindings: dict[int, list] = {}
+    for shot in data.get("shots", []):
+        index = int(shot["index"])
+        value = shot.get("assets", {})
+        try:
+            value = json.loads(value) if isinstance(value, str) else value
+            refs = value.get("input_assets", [])
+            if not isinstance(refs, list) or any(not isinstance(ref, dict) for ref in refs):
+                raise ValueError("input_assets 必须是列表")
+        except (ValueError, AttributeError):
+            add("materials_bindings_invalid", f"第 {index} 段素材绑定不是有效 JSON 对象", index)
+            continue
+        bindings[index] = refs
+        if any(not isinstance(ref.get("role", "reference_image"), str) for ref in refs):
+            add("materials_bindings_invalid", f"第 {index} 段素材角色必须是字符串", index)
+            continue
+        roles = {ref.get("role", "reference_image") for ref in refs}
+        frames = roles & {"first_frame", "last_frame"}
+        references = roles & {"reference_image", "reference_video", "reference_audio"}
+        if ((mode == "reference" and frames) or
+                (mode in {"existing_frames", "prepare_frames"} and references) or
+                (mode == "text" and refs)):
+            add("materials_role_mismatch", f"第 {index} 段实际素材角色与确认用途不一致", index)
+        if mode in {"existing_frames", "prepare_frames"} and "first_frame" not in roles:
+            add("materials_first_missing", f"第 {index} 段未绑定首帧，不能只提供尾帧", index)
+
+    joins = plan.get("joins", [])
+    if not isinstance(joins, list):
+        add("materials_joins_invalid", "衔接方案必须是列表")
+        return
+    for join in joins:
+        if not isinstance(join, dict) or join.get("kind") not in {"shared_frame", "cut"}:
+            add("materials_joins_invalid", "每个接点应明确共享边界或独立剪辑")
+            continue
+        if join["kind"] != "shared_frame":
+            continue
+        left, right = join.get("left"), join.get("right")
+        if not isinstance(left, int) or not isinstance(right, int) or right != left + 1:
+            add("materials_joins_invalid", "共享边界必须连接相邻片段")
+            continue
+        tails = [ref.get("asset_id") for ref in bindings.get(left, []) if ref.get("role") == "last_frame"]
+        heads = [ref.get("asset_id") for ref in bindings.get(right, []) if ref.get("role") == "first_frame"]
+        if len(tails) != 1 or len(heads) != 1 or not tails[0] or tails != heads:
+            add("materials_boundary_mismatch", f"第 {left}/{right} 段必须共享同一个尾帧/首帧资产")
 
 
 def check_state(
@@ -210,6 +321,7 @@ def check_state(
         issues.append(item)
 
     confirmations = data.get("confirmations", {})
+    _check_materials(data, add)
     script_confirmation = confirmations.get("script")
     shots_confirmation = confirmations.get("shots")
     if not script_confirmation:
@@ -311,7 +423,7 @@ def main() -> int:
         elif name == "shot":
             _shot_parser(command)
         elif name == "confirm":
-            command.add_argument("--kind", choices=("script", "shots"), required=True)
+            command.add_argument("--kind", choices=("script", "shots", "materials"), required=True)
             command.add_argument("--note", default="")
         elif name == "check":
             command.add_argument("--final", default="")

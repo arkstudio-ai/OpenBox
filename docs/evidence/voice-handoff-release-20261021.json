@@ -1,0 +1,242 @@
+{
+  "pull_request": "https://github.com/arkstudio-ai/OpenBox/pull/92",
+  "commit": "c77f2e5b3160a651a402f8615d076bc1f33f0e09",
+  "activation": {
+    "tag": "20261021-voice-handoff-c77f2e5b",
+    "old_image": "openbox-backend:20261021-assistant-be75d22d",
+    "new_image": "openbox-backend:20261021-voice-handoff-c77f2e5b",
+    "image_id": "sha256:59949e9334de5f5f6a0543f51f24d53b02dfdfa56fe8f87a2803bfc8ad06e35a",
+    "backup": "/opt/openbox/backups/20261021-voice-handoff-c77f2e5b/activation-20261021T062452Z",
+    "unchanged_services": {
+      "frontend": "1e325c52580272a9b8e8e8abbc3fc1b09ef67bb2969b18db1b36c20f591a8d4f",
+      "trajectory-worker": "cc763009ee7b93adafa17688d200859d089e5266d69d073a49a8c9040750df05",
+      "postgres": "745a495da1be35416ba9d59023fe20ac5a0f458ee7234ea25d38380a60fc79a2",
+      "redis": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f",
+      "qdrant-memory": "f1bdfc91b4850f170b1f2216c493652fd6f8119489bff22441278a88fcc6ddf7"
+    },
+    "source_hashes": {
+      "api/voice.py": "47510adcb9576ecf9b023cfaf0b67bce22922782680ac2668a2cf82020d528d6",
+      "voice/bridge.py": "1001dfa1eda39dee77c84440e36fb6d6b5a74b8b9dc2aafaea993969611f14f5",
+      "voice/turns.py": "658da387e0c653a9ea3b888d4adf8ffd60ad4db86fc1364c58c3082ccb88a324",
+      "voice/prompt.py": "b24e09a77a730a3002250387dd659052f5667a4b73a30615c0d8edced2b439cf",
+      "voice/phrases.py": "959e5af830bda3625a93c0aa4d9dd9b1f76617923a1880f8a5b6e188c836cc54",
+      "voice/tools.py": "294b738bf4d66bddf18b000fa785922cb2cdf0238e0e361866ae9a7bb8188d46",
+      "voice/handoff.py": "3c3198bbef648689287e5f42fab11959d84c767142f7df893713f74246be9248"
+    },
+    "gates_after": "0|0|0|0",
+    "restart_count": "0",
+    "completed_at": "2026-10-21T06:26:43.422128+00:00"
+  },
+  "probes": [
+    {
+      "at": "2026-10-21T06:26:07.276938+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:07.454919+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:09.624467+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:09.815427+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:11.990560+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:12.168086+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:14.328979+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:14.520906+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:16.698025+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:16.865438+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:19.049211+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:19.227252+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:21.404768+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:21.592193+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:23.753181+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:23.920939+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:26.080375+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:26.237470+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:28.424627+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:28.593383+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:30.771097+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:30.951276+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:33.130900+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:33.302170+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:35.481590+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:35.652066+00:00",
+      "path": "/api/environment",
+      "status": "502",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:37.841844+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:38.013848+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:40.183324+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:40.346473+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:42.526539+00:00",
+      "path": "/",
+      "status": "200",
+      "exit": 0
+    },
+    {
+      "at": "2026-10-21T06:26:42.688116+00:00",
+      "path": "/api/environment",
+      "status": "200",
+      "exit": 0
+    }
+  ],
+  "tests": {
+    "related_tests_passed": 244,
+    "initial_run": "204 passed, 2 failures from stale greeting assertions also present on main",
+    "rerun": "27 passed after aligning greeting assertions; includes unified guard isolation regression",
+    "additional_run": "38 passed"
+  },
+  "external_readback": {
+    "/": 200,
+    "/api/environment": 200,
+    "/api/auth/logto/config": 200,
+    "/api/assistant/voice/voices": 401
+  },
+  "limitations": [
+    "No real voice conversation or paid model calls performed",
+    "trajectory-worker was unhealthy before release (health check timeout) and unchanged"
+  ],
+  "first_activation": "Stopped before configuration mutation: backend and worker share old image tag. Scoped backend service replacement used on retry.",
+  "aoci": "AOCI tools and project MCP command unavailable in this session; no index entries changed."
+}

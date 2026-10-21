@@ -1,6 +1,6 @@
-# 语音漏转交保护（本地待发布）
+# 语音漏转交保护（2026-10-21 已发布）
 
-用户已要求暂不发布。本改动未部署，也未进行线上真实语音验收。
+用户随后授权检查冲突、提 PR、合并并发布。PR [#92](https://github.com/arkstudio-ai/OpenBox/pull/92) 已合并，合并提交 `c77f2e5b`；北京时间 2026-10-21 14:26 发布至 `ai.bossipai.com.cn`。尚未进行线上真实语音验收。
 
 ## 问题与处理
 
@@ -18,4 +18,14 @@
 - 20 项语音 WebSocket 集成测试通过，包含只口头承诺时触发补促、仍未调用时明确失败且不创建任务的回放。
 - 语义检查和实时提供商均使用替身；未产生真实视频或调用付费模型。两项现有 Pydantic 弃用警告不影响通过。
 
-发布需等待用户另行通知，之后仍需真实语音验收。
+## 合并与生产验证
+
+与当前 main 合并时解决 6 处冲突，保留 main 的持久接收、同一发言去重与上下文同步。统一转录路径禁用漏转交补促，避免双重提交；现行原生工具路径启用保护。相关测试合计 244 项通过；初跑两项 main 原有开场断言失败，按当前不回顾旧任务的行为修正后相关 27 项重跑通过。
+
+生产采用 `openbox-backend:20261021-voice-handoff-c77f2e5b`，基于实际线上 `20261021-assistant-be75d22d` 镜像，仅替换 7 个语音模块，均与合并提交哈希一致。无迁移，配置和两库备份在 `/opt/openbox/backups/20261021-voice-handoff-c77f2e5b/activation-20261021T062452Z/`，两份 dump 均可读取目录。
+
+首次激活因 backend 与 worker 共用旧标签而在变更前停止；随后限定只替换 backend 服务块。租约、Driver、在途视频、活跃通话全部为 0 时切换，健康后 reload 前端 Nginx。前端、worker、数据库、Redis 和 Qdrant 容器 ID 不变，其他配置哈希不变。后端 healthy、重启 0；首页、environment、Logto 配置均 200，语音音色接口匿名 401。切换期间 environment 约 28 秒返回 502，随后恢复。
+
+轨迹 worker 发布前已 unhealthy（健康检查超时），本次保持原状。真实语音交办和播报效果仍需实际使用验收。AOCI 工具及项目 MCP 命令在本会话不可用，未更改认知索引。
+
+证据见 [发布记录](evidence/voice-handoff-release-20261021.json)。回滚时只恢复 backend 的旧镜像引用，`docker compose up -d --no-deps backend`，健康后 reload 前端 Nginx；无库回滚。OSS 临时源码包已清理。

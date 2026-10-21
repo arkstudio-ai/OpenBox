@@ -5,7 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云后端：2026-10-20 17:18 `20261020-video-completion-da0bef1d`（视频完成自动续接）
+## 当前阿里云后端：2026-10-21 14:26 `20261021-voice-handoff-c77f2e5b`（语音漏转交保护）
+
+- PR [#92](https://github.com/arkstudio-ai/OpenBox/pull/92) 合并至 `main@c77f2e5b`，解决 6 处冲突，保留当前持久接收和重复发言提交保护。统一语音状态与模型选择口径，禁止口播内部编号与具体视频模型名；旧工具路径增加限时漏转交检查与一次补促，统一转录路径不重复补交。
+- 以实际线上 `20261021-assistant-be75d22d` 为基础仅替换 7 个语音模块，生产哈希与合并提交一致。无迁移，其他配置、前端、worker 和基础设施容器 ID 不变。备份 `backups/20261021-voice-handoff-c77f2e5b/activation-20261021T062452Z/` 含配置与两库 dump，均已验证可读。
+- 相关 244 项测试通过。空闲门禁后只切换 backend，healthy 后 reload Nginx。后端 healthy、重启 0，首页 / environment / Logto 配置均 200，语音音色匿名 401。切换期间 API 约 28 秒 502 后恢复；未调用付费模型或进行真实语音验收。
+- 轨迹 worker 发布前已 unhealthy（健康检查超时），保持原状。回滚仅将 backend 镜像恢复为 `20261021-assistant-be75d22d`，健康后 reload Nginx，无库回滚。详见 [修复与发布记录](VOICE_HANDOFF_GUARD_20261021.md)、[证据](evidence/voice-handoff-release-20261021.json)。AWS 与高德环境未发布。
+
+## 历史阿里云后端：2026-10-20 17:18 `20261020-video-completion-da0bef1d`（视频完成自动续接）
 
 - 修复视频后台完成时 Agent 仍忙而跳过唤醒、随后永不补发的竞态；完成事件持久排入下一轮收件箱，并用完成记录中的待投递标记补偿入队失败。续接继承提交视频时的任务意图与来源证据，使结果能正常进入个人助理汇报队列。
 - 基于实际线上 `20261016-video-material-cae33477-r2` 镜像，仅替换 `video/job_recovery.py` 与视频工具中的完成标记一行；保留当前生产的其他修复。无迁移。前端、worker 和基础设施容器 ID 不变。

@@ -55,12 +55,22 @@ class TurnsMixin:
         if event.name in {"cards_answer", "task_question_answer"} and (event.response_id or self.active_response):
             self._unverified_replies.add(event.response_id or self.active_response)
         self._tool_sources[event.call_id] = self._answering.get(event.response_id or self.active_response or "", self._last_user_item)
+        response_kind = (self.handoff.responses.get(event.response_id or self.active_response, self.response_kind)
+                         if self.handoff is not None else self.response_kind)
+        handoff_retry = bool(response_kind and response_kind.startswith("handoff_retry:"))
         if (event.name in (tools.ASSISTANT_ASK, "cards_answer", "task_question_answer")
-                and self.response_kind not in (None, "model", "followup")):
+                and response_kind not in (None, "model", "followup") and not handoff_retry):
             await self._command("send_tool_output", event.call_id, {
                 "status": "not_user_request", "this_call_applied": False,
                 "note": "当前是系统事件播报，没有新的用户业务指令。"})
             return
+        if handoff_retry and (self.handoff is None or not self.handoff.current(self._tool_sources[event.call_id])):
+            await self._command("send_tool_output", event.call_id, {
+                "status": "stale_request", "this_call_applied": False,
+                "note": "用户已继续发言，不能重放上一条交办；以用户当前完整意思为准。"})
+            return
+        if self.handoff is not None and event.name in ("cards_answer", "task_question_answer"):
+            self.handoff.attempted.add(self._tool_sources[event.call_id])
         if event.name == tools.ASSISTANT_ASK:
             await self._ask(event)
         elif event.name in tools.DIRECT:
@@ -71,6 +81,16 @@ class TurnsMixin:
 
     async def _ask(self, event, *, waited: bool = False) -> None:
         source_item = self._tool_sources.get(event.call_id, "")
+        kind = (self.handoff.responses.get(event.response_id or self.active_response, self.response_kind)
+                if self.handoff is not None else self.response_kind)
+        if (self.handoff is not None and kind
+                and kind.startswith("handoff_retry:") and source_item in self.handoff.refs):
+            existing = self.handoff.refs[source_item]
+            await self._command("send_tool_output", event.call_id, {
+                "status": "accepted" if existing.inbox_id else "received", "operation_state": "received", "request_id": existing.id,
+                "execution_confirmed": False, "execution_result": None,
+                "note": "这条要求正在核对转交结果，不重复提交；处理进度以实际结果为准。"})
+            return
         words = next((line.text for line in reversed(self.spoken.lines)
                       if line.role == "user" and line.item_id == source_item), "") if source_item else self.utterance
         if not words:
@@ -109,9 +129,9 @@ class TurnsMixin:
                            lane="remember" if arguments.mode == "remember" else "assistant")
         self._asked = None
         await self._command("send_tool_output", event.call_id, {
-            "status": "accepted", "request_id": ref.id, "request": arguments.request, "operation_state": "queued",
+            "status": "accepted", "request_id": ref.id, "request": arguments.request, "operation_state": "received",
             "execution_confirmed": False, "execution_result": None,
-            "note": "请求已接收，尚未取得执行结果；后台结果会关联此 request_id 返回。"})
+            "note": "请求已接收，尚未取得执行结果；这不表示任务在排队，进度以后台实际结果为准。"})
         if event.response_id and event.response_id != self.active_response:
             # Handed over after its reply had ended (the answer's words came late): acknowledged only if that
             # reply said nothing and no result comes soon.
@@ -123,6 +143,9 @@ class TurnsMixin:
             self.progress.reset()  # a step from an earlier run is not this request's
         self.pending_calls[event.call_id] = ref
         self.refs.append(ref)
+        if self.handoff is not None and source_item:
+            self.handoff.attempted.add(source_item)
+            self.handoff.refs.setdefault(source_item, ref)
         self._spawn(self._run_turn(ref))
         self._update_phase()
 
@@ -181,6 +204,8 @@ class TurnsMixin:
                  round((self.clock() - started) * 1000))
         if self.closing:
             return
+        if self.handoff is not None and decision and result.get("this_call_applied") is True:
+            self.handoff.fulfilled.add(source)
         while self.desk.answers:  # a card confirmed: the turn it resumes is followed like any other
             answer = self.desk.answers.pop(0)
             if not answer["declined"]:  # declined: nothing happens, and the model has said so

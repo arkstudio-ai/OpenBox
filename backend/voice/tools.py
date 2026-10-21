@@ -130,14 +130,14 @@ def first_sentence(text: str | None, limit: int = LINE_CHARS) -> str:
     return sentence if len(sentence) <= limit else sentence[:limit - 1] + "…"
 
 
-STATES = {"queued": "排队中", "running": "进行中", "waiting_input": "等你回复", "idle": "停着", "completed": "已完成",
+STATES = {"queued": "等待处理", "running": "处理中", "waiting_input": "等你回复", "idle": "停着", "completed": "已完成",
           "succeeded": "已完成", "failed": "失败了", "paused": "已暂停", "pausing": "正在暂停",
           "canceling": "正在取消", "canceled": "已取消", "cancelled": "已取消", "effect_unknown": "结果待确认",
           "resume_blocked": "恢复受阻", "input_not_applied": "补充没送达"}
 
 
 def state_label(state: str | None, lang: str) -> str:
-    return STATES.get(state or "", state or "") if lang != "en" else (state or "")
+    return STATES.get(state or "", state or "") if lang != "en" else ("waiting to start" if state == "queued" else (state or ""))
 
 
 async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
@@ -250,7 +250,7 @@ DIRECT: dict[str, DirectTool] = {
     "platforms_status": DirectTool(
         "查询当前工作空间授权中心的历史记录。当前登录状态未知，不能由无记录推断未连接，也不能由有记录保证已连接；要核验需执行任务查看实际页面。", platforms_status),
     "models_available": DirectTool(
-        "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频优先讲档次，用户追问才讲具体型号。结合用户需求自然解释，回答差异和参数问题；不要把默认值当成用户本次选择。", models_available),
+        "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频选择只讲业务档次、规格、素材支持和费用，具体型号留在内部用于准确选路，不口播。结合用户需求自然解释，不要把默认值当成用户本次选择。", models_available),
     "tasks_overview": DirectTool(
         "查用户做过的工作、最近任务和视频：包括用户自行创建的项目对话及助理关注任务，按最近活动排序，"
         "返回真实视频生成和成片状态、时间、会话链接与近期内容。query仅筛标题，不是语义全文搜索；"

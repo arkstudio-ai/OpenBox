@@ -174,9 +174,11 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             await fresh.close()
             raise
         return fresh
+    from voice.handoff import required as handoff_required
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
+                    handoff_checker=handoff_required,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
                     recap=facts.recap, tell_reports=facts.reports,

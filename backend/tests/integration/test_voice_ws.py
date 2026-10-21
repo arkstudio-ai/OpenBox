@@ -51,6 +51,9 @@ def providers(app, monkeypatch):
     # An old deployment must not override the product's Audio default for users.
     monkeypatch.setattr(get_config(), "voice", VoiceConfig(enabled=True, api_key="test-only", model=OMNI_MODEL, voice="Tina"))
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
+    async def no_missed_handoff(*_):
+        return False
+    monkeypatch.setattr("voice.handoff.required", no_missed_handoff)
     made = []
 
     def factory(config, *, debug=False):
@@ -59,6 +62,34 @@ def providers(app, monkeypatch):
     monkeypatch.setattr(voice_socket, "provider_factory", factory)
     factory.made = made
     return factory
+
+
+async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers, app, monkeypatch):
+    from tests.support.voice_fakes import done, event, item, started, transcript
+    checked = []
+    async def missed(words, context):
+        checked.append(words)
+        return True
+    monkeypatch.setattr("voice.handoff.required", missed)
+    headers = await account(http)
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        read_until(socket, lambda value: value["type"] == "phase" and value["value"] == "listening")
+        heard_greeting()
+        provider = providers.made[-1]
+        provider.push(item("modify"), transcript("每种海鲜独立砂锅，结尾加全家福，现在提交修改", "modify"),
+                      started("promise"), event("assistant_transcript", response_id="promise", text="我这就安排"), done("promise"))
+        assert wait_until(lambda: any("尚未确认提交成功" in str(row) for row in provider.commands("create")))
+        assert checked == ["每种海鲜独立砂锅，结尾加全家福，现在提交修改"]
+        socket.send_json({"type": "stop"})
+        assert "ended" in kinds(read_until(socket, lambda value: False))
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.voice import VoiceCall
+    async with get_db_session() as db:
+        call = await db.get(VoiceCall, ready["call_id"])
+        assert not list((await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == call.main_session_id))).all())
 
 
 @pytest.fixture
@@ -332,7 +363,7 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         # The front desk's call is answered before the assistant has done anything.
         [(_, tool_id, output)] = provider.commands("output")
         assert tool_id == "call-2" and output["status"] == "accepted"
-        assert output["operation_state"] == "queued" and not output["execution_confirmed"]
+        assert output["operation_state"] == "received" and not output["execution_confirmed"]
         await settle_turn(accepted["inbox_id"], "[贪吃蛇](/app/s/x) 的收尾自检做完了，一切正常。")
         told = read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "delivered")
         assert told[-1]["turn_id"] == accepted["turn_id"] and "<audio>" in kinds(told)

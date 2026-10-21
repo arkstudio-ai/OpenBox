@@ -59,7 +59,7 @@ class Bridge(TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opening_instructions: str | None = None,
-                 opener=None, summarizer=None, wall_clock=None, rates=None, price_date=None,
+                 opener=None, summarizer=None, handoff_checker=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
                  context_sink=None):
@@ -131,6 +131,8 @@ class Bridge(TurnsMixin):
         self._idle = asyncio.Lock()             # one decision about the next reply at a time
         self._phase = None
         self._init_turns()
+        from voice.handoff import HandoffGuard
+        self.handoff = HandoffGuard(self, handoff_checker) if handoff_checker is not None and not unified else None
 
     def emit(self, item) -> None:
         """Queue for the client; after hang-up the socket sends only the final events itself."""
@@ -286,6 +288,8 @@ class Bridge(TurnsMixin):
             if event.item_id:
                 self._user_utterances[event.item_id] = self.heard_count
             self.keeper.user_turn()
+            if self.handoff is not None:
+                self.handoff.heard(event.item_id)
             if self.unified and event.text.strip():
                 await self._forward_transcript(event)
 
@@ -390,6 +394,8 @@ class Bridge(TurnsMixin):
             await self._keepalive_started(event)
             return
         self.active_response, self.response_kind, self.awaiting_since = event.response_id, kind, None
+        if self.handoff is not None and kind.startswith(("handoff_retry:", "handoff_failed:")) and event.response_id:
+            self.handoff.responses[event.response_id] = kind
         self.audio_sent, self.audio_bytes, self.first_audio_at = False, 0, None
         self.started_at = self.quiet_since = self.clock()
         self.started_seq = self.seq
@@ -427,6 +433,8 @@ class Bridge(TurnsMixin):
         if kind in ("model", "followup") and event.response_id:
             self._answering[event.response_id] = self._last_user_item
             self._ack_at = None  # the model speaks anyway, with every tool output in view
+        elif kind.startswith("handoff_retry:") and event.response_id:
+            self._answering[event.response_id] = kind.split(":", 1)[1]
         if kind == "model" and not self._direct:
             self.followup_due = False  # the tool outputs are in the conversation: this reply answers them
             self._tool_receipts.clear()
@@ -495,6 +503,9 @@ class Bridge(TurnsMixin):
                 self._ack_at = self.clock() + ACK_WAIT_SECONDS
         self._replies.pop(event.response_id or "", None)
         self._unverified_replies.discard(event.response_id or "")
+        if self.handoff is not None:
+            self.handoff.response_done(self._answering.get(event.response_id or "", ""), kind,
+                                       event.status == "completed")
         self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
@@ -527,6 +538,8 @@ class Bridge(TurnsMixin):
         if self.requested is None:
             return
         kind, self.requested = self.requested, None
+        if self.handoff is not None:
+            self.handoff.refused(kind)
         if kind == "phrase:greeting":
             self._greeting_over()
         elif kind == "keepalive" and event.reason == "no_input":
@@ -586,6 +599,8 @@ class Bridge(TurnsMixin):
         # Do not insert an unrelated task note into that answer's context.
         if self._direct:
             return None
+        if self.handoff is not None and (retry := self.handoff.next_reply()) is not None:
+            return retry
         if self.followup_due:
             return self._say_followup
         if (ref := self._next_delivery()) is not None:
@@ -703,6 +718,8 @@ class Bridge(TurnsMixin):
     async def _unanswered(self) -> None:
         """Neither started nor refused in time: given up (a result is told again later, three times at most)."""
         kind, self.requested = self.requested, None
+        if self.handoff is not None:
+            self.handoff.refused(kind)
         log.info("voice call=%s request unanswered kind=%s", self.call_id, kind)
         if kind == "phrase:greeting":
             self._greeting_over()

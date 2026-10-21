@@ -42,4 +42,5 @@ def test_preferences_and_capabilities_do_not_force_sentence_counts_or_an_emotion
 def test_terminal_notices_are_status_facts_and_backgrounds_are_not_user_requests(lang):
     assert phrases.phrase_text("credits_exhausted", lang) in phrases.phrase_instructions("credits_exhausted", lang)
     assert phrases.delivery_instructions("anything", lang) == phrases.notice_instructions(lang)
-    assert phrases.greeting_instructions(lang, False) != phrases.greeting_instructions(lang, True)
+    # Reconnecting never recaps stale business state, regardless of the recap preference.
+    assert phrases.greeting_instructions(lang, False) == phrases.greeting_instructions(lang, True)

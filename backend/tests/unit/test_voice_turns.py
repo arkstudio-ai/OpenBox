@@ -74,7 +74,7 @@ async def test_assistant_ask_is_acknowledged_at_once_and_reports_working(call):
     await greeted(bridge, provider)
     await asked(bridge)
     assert provider.commands("output")[0][:2] == ("output", "call-1")
-    assert provider.commands("output")[0][2]["operation_state"] == "queued"
+    assert provider.commands("output")[0][2]["operation_state"] == "received"
     assert not provider.commands("output")[0][2]["execution_confirmed"]
     [ref] = link.started
     assert (ref.text, ref.provider_call_id, ref.transcript) == ("帮我看看贪吃蛇进展", "call-1", "帮我看看贪吃蛇进展")

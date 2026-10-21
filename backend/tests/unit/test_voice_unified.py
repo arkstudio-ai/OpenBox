@@ -26,7 +26,10 @@ async def test_reconnect_greeting_cannot_claim_stale_business_status():
 
 async def test_every_final_transcript_is_submitted_once_without_tool_routing():
     provider, link, clock = ScriptedProvider(), FakeLink(), FakeClock()
-    bridge = Bridge(provider, link, lang="zh", clock=clock, unified=True)
+    async def unexpected_check(*args):
+        raise AssertionError("durable transcript handoff must not get a second dispatcher")
+    bridge = Bridge(provider, link, lang="zh", clock=clock, unified=True, handoff_checker=unexpected_check)
+    assert bridge.handoff is None
     await greeted(bridge, provider)
     try:
         await replay(bridge, transcript("先看看刚才的图片", "asr-1"), transcript("先看看刚才的图片", "asr-1"))

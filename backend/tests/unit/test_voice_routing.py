@@ -153,7 +153,7 @@ async def test_contextual_short_requests_are_not_blocked_or_rewritten(words, bri
     [ref] = link.started
     assert (ref.text, ref.transcript) == (brief, words)
     receipt = provider.commands("output")[0][2]
-    assert receipt["request_id"] == ref.id and receipt["operation_state"] == "queued"
+    assert receipt["request_id"] == ref.id and receipt["operation_state"] == "received"
     assert not receipt["execution_confirmed"] and "task_id" not in receipt
     await replay(bridge, tool_call("call-1", text=brief, response_id="r1"))
     assert len(link.started) == len(provider.commands("output")) == 1

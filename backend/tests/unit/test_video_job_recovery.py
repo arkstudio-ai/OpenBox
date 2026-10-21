@@ -641,3 +641,4 @@ async def test_recovery_settles_a_paid_job_with_no_production_attached(monkeypat
     assert job.status == "completed"
     assert job.output_asset_id
     assert job.production_id is None and job.segment_id is None
+    assert job.result_data["completion_delivery_pending"] is True

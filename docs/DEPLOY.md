@@ -5,7 +5,15 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云：2026-10-14 13:44 `20261014-companion-63dcb411`（PC 静音控制与安卓 1.0.35）
+## 当前阿里云后端：2026-10-20 17:18 `20261020-video-completion-da0bef1d`（视频完成自动续接）
+
+- 修复视频后台完成时 Agent 仍忙而跳过唤醒、随后永不补发的竞态；完成事件持久排入下一轮收件箱，并用完成记录中的待投递标记补偿入队失败。续接继承提交视频时的任务意图与来源证据，使结果能正常进入个人助理汇报队列。
+- 基于实际线上 `20261016-video-material-cae33477-r2` 镜像，仅替换 `video/job_recovery.py` 与视频工具中的完成标记一行；保留当前生产的其他修复。无迁移。前端、worker 和基础设施容器 ID 不变。
+- 配置与两库备份：`backups/20261020-video-completion-da0bef1d/activation-20261020T091411Z/`。在执行租约、Driver、在途视频、活跃通话均为 0 时，只执行后端 `up -d --no-deps`，healthy 后 reload 前端 Nginx。
+- 验证：本地 98 项测试通过；生产两模块哈希一致、后端 healthy、重启 0，首页 / environment / Logto 配置最终 200。environment 切换采样约 28 秒 502，随后恢复。未调用付费模型，真实出片和语音通话待实际使用验收。
+- 详情：[修复与发布说明](VIDEO_COMPLETION_DELIVERY_FIX_20261020.md)、[发布证据](evidence/video-completion-release-20261020.json)。回滚恢复上述备份中的 override，只切换 backend，healthy 后 reload Nginx；无库回滚。
+
+## 历史阿里云：2026-10-14 13:44 `20261014-companion-63dcb411`（PC 静音控制与安卓 1.0.35）
 
 - 源码 `main@63dcb4112dc22832eb192070e21386af35b75227`，从干净归档构建 linux/amd64 镜像和正式签名安卓 APK `1.0.35（46）`。包含 PC 悬浮助手、快捷设置、自定义形象、展开与收起状态静音、紧凑输入框和安卓 AI 提示布局；移动端悬浮窗口尚未实现。
 - 配置与两库备份 `/opt/openbox/backups/20261014-companion-63dcb411/activation-20261014T054254Z`；租约、进行中视频、活跃通话均为 0 后，依次 worker → backend → frontend 切换。三应用容器使用同一标签，基础设施容器保持原 ID。

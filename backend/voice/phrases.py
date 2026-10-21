@@ -43,21 +43,22 @@ def greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
     if unified:
         # A previous call's recap can predate a result delivered in text. Only
         # the main assistant may reconcile business state across channels.
-        return ("只作一句简短问候，表示已经接通、正在听。不要回顾旧通话，不提任务、素材、进度或结果。"
+        return ("只作一句简短问候，使用一次用户的当前称呼，表示已经接通、正在听。不要回顾旧通话，不提任务、素材、进度或结果。"
                 "用户开口就停止问候；业务回答等待主助手的最新结果。") if _lang(lang) == "zh" else (
-            "Give one brief greeting to say you are connected and listening. Do not recap past calls "
+            "Give one brief greeting using the user's current form of address once, to say you are connected and listening. Do not recap past calls "
             "or mention tasks, assets, progress or results. Stop when the user speaks; business answers "
             "must wait for the main assistant's fresh result.")
     if first_call:
         from assistant.secretary import FIRST_CONTACT
-        return FIRST_CONTACT + (" Use English for the introduction and conversation." if _lang(lang) == "en" else "")
+        return FIRST_CONTACT + (" Use the user's current form of address once in this opening only; do not repeat it in subsequent replies. Use English for the introduction and conversation." if _lang(lang) == "en" else
+                                "接通时使用一次用户的当前称呼，后续自然交流，不重复称呼。")
     return ("这是已有使用记录的用户接通。按实际聊天上下文和用户偏好简短接话，"
             "不重新介绍身份、职责或能力，不展开业务菜单；详细回答偏好不要求详细开场。" +
-            "只作一句接通问候，表示正在听，不主动提任务、素材、进度、结果或待答卡片。" +
+            "只作一句接通问候，使用一次用户的当前称呼，表示正在听，不主动提任务、素材、进度、结果或待答卡片。" +
             "用户已开口就优先回应，不补播开场。接通事件不是业务请求。") if _lang(lang) == "zh" else (
         "This is a returning user. Open briefly from the actual conversation and preferences, without an identity, "
         "role or capabilities introduction or a business menu. A preference for detail does not mean a long opening. " +
-        "Give one connected-and-listening greeting; do not mention tasks, assets, progress, results or pending cards. " +
+        "Give one connected-and-listening greeting using the user's current form of address once; do not mention tasks, assets, progress, results or pending cards. " +
         "Give priority to the user's words, without resuming an interrupted opening. Connection is not a business request.")
 
 

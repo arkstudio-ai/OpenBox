@@ -5,7 +5,13 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云后端：2026-10-21 14:26 `20261021-voice-handoff-c77f2e5b`（语音漏转交保护）
+## 当前阿里云后端：2026-10-21 14:38 `20261021-voice-address-131cb413`（称呼仅接通一次）
+
+- PR [#94](https://github.com/arkstudio-ai/OpenBox/pull/94) 无冲突合并至 `main@131cb413`。语音仅在接通问候时使用一次当前称呼；后续结果、确认、插话和连接恢复自然接话，不重复称呼。用户先开口时不补叫。覆盖中英文和首次问候，用户称呼设置及文字助手规则不变。
+- 23 项话术和身份测试通过。基于线上 `20261021-voice-handoff-c77f2e5b` 仅替换 `voice/prompt.py`、`voice/phrases.py`，哈希均与合并提交一致；无迁移。配置和两库备份：`backups/20261021-voice-address-131cb413/activation-20261021T063740Z/`，dump 目录可读。空闲门禁全部为 0 后只切 backend，healthy 后 reload Nginx。其他配置哈希与其余服务容器 ID 不变。
+- 后端 healthy、重启 0；首页 / environment / Logto 配置 200，音色接口匿名 401。切换期间 API 约 31 秒 502 后恢复；未进行真实语音验收。原有轨迹 worker unhealthy 保持原状。OSS 临时脚本已清理。回滚仅恢复 backend 到 `20261021-voice-handoff-c77f2e5b` 并健康后 reload Nginx，无库回滚。AWS 与高德未发布。详见 [发布证据](evidence/voice-address-release-20261021.json)。
+
+## 历史阿里云后端：2026-10-21 14:26 `20261021-voice-handoff-c77f2e5b`（语音漏转交保护）
 
 - PR [#92](https://github.com/arkstudio-ai/OpenBox/pull/92) 合并至 `main@c77f2e5b`，解决 6 处冲突，保留当前持久接收和重复发言提交保护。统一语音状态与模型选择口径，禁止口播内部编号与具体视频模型名；旧工具路径增加限时漏转交检查与一次补促，统一转录路径不重复补交。
 - 以实际线上 `20261021-assistant-be75d22d` 为基础仅替换 7 个语音模块，生产哈希与合并提交一致。无迁移，其他配置、前端、worker 和基础设施容器 ID 不变。备份 `backups/20261021-voice-handoff-c77f2e5b/activation-20261021T062452Z/` 含配置与两库 dump，均已验证可读。

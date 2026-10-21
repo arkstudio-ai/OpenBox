@@ -1,0 +1,49 @@
+{
+  "source_commit": "d0c0e9568321ec6a21826b2e8165955f0533aae1",
+  "source_sha256": "2935c4d4fb0af87be6db1ac38766c55405977ffd4c54e6ff3e60c7d9dd80d5b0",
+  "activation": {
+    "completed_at": "2026-10-21T12:47:11Z",
+    "tag": "20261021-desktop-input-d0c0e956",
+    "base_image": "openbox-frontend-v2:20261021-assistant-be75d22d",
+    "new_image": "openbox-frontend-v2:20261021-desktop-input-d0c0e956",
+    "image_id": "sha256:0cf9ba7dda49ba03add4c7b821fda6fa295442aa9ae8bda0acd7d0cea9b1e43e",
+    "frontend_container": "a7fd16218e4f",
+    "index_sha256": "84de5c3ffe338068e1c0422459408c80008adfb4f46ac6a6896f1055934da140",
+    "archive_sha256": "4f65baa6016ade8c0f18472573f023ce0f73f949fddaabb5cefdcddc187e6a01",
+    "config_backup": "/opt/openbox/backups/20261021-desktop-input-d0c0e956/activation-20261021T124649Z",
+    "pre_activation_gates": "0|0|0|0",
+    "database_changed": false,
+    "unchanged_services": {
+      "backend": "9e6bfb80fc02",
+      "trajectory-worker": "cc763009ee7b",
+      "postgres": "745a495da1be",
+      "redis": "4c1a6fb5613a",
+      "qdrant-memory": "f1bdfc91b485"
+    }
+  },
+  "validation": {
+    "targeted_tests_passed": 6,
+    "typescript_app_and_node_passed": true,
+    "vite_build_passed": true,
+    "full_suite_run": false,
+    "frontend_health": "healthy",
+    "frontend_restart_count": 0,
+    "nginx_config_test_passed": true,
+    "public_environment_http_status": 200,
+    "public_and_browser_build_id_match": true,
+    "browser_reloaded_without_temporary_overrides": true,
+    "mouse_tab_switch_verified": true,
+    "keyboard_123_verified": true,
+    "readonly_mouse_and_keyboard_blocked": true
+  },
+  "desktop_reboot": {
+    "explicitly_authorized": true,
+    "desktop_id": "ecd-4y9s9igraz7hc58ea",
+    "request_id": "01A15E53-3812-5692-B1BA-5AD0807EE4A7",
+    "snapshot_requested": true,
+    "os_update_requested": false,
+    "guest_boot_time_cst": "2026-10-21 19:58:31",
+    "old_frontend_still_failed_after_reboot": true,
+    "image_reset_or_file_deletion_performed": false
+  }
+}

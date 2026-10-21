@@ -5,6 +5,13 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云前端：2026-10-21 20:47 `20261021-desktop-input-d0c0e956`（远程桌面输入开关）
+
+- 修复“允许操控”已勾选但键鼠无响应：固定版本的无影 SDK 中，`enableInput` 控制 live engine，`setInputEnabled` 修改 local config，两者不是新旧替代 API。开关和重连时同步更新两者，保留默认只读、键盘/IME、触屏与 Client 鼠标模式。
+- 6 项桌面组件定向测试、两份 TypeScript 配置检查和 Vite 生产构建通过。源码 `d0c0e956`；此前 `main` 的前端与实际生产基底 `be75d22d` 无差异。基于生产前端镜像覆盖新构建静态文件，保留已有 Nginx 配置与旧哈希资源，其他服务未重建。无数据库变更。
+- 配置备份 `backups/20261021-desktop-input-d0c0e956/activation-20261021T124649Z/`；空闲门禁全为 0 后只切 frontend，healthy、重启 0，Nginx 检查通过，公网 build-id 匹配、environment 200。
+- 已在 andrewwang 网页账号重载新版本，实测勾选后鼠标切换标签页、键盘输入 `123`，取消勾选后鼠标和键盘均不生效，重新勾选恢复。此前按用户明确授权重启其云电脑，未重置镜像或删除文件；旧网页在重启后仍复现，最终通过 SDK 开关修复。详见 [修复说明](DESKTOP_INPUT_FIX_20261021.md) 与 [证据](evidence/desktop-input-release-20261021.json)。回滚仅恢复 frontend 到 `20261021-assistant-be75d22d`。
+
 ## 当前阿里云后端：2026-10-21 18:36 `20261021-question-anchor-27dfeb87`（问答续接轮次修复）
 
 - 问答续接从模型实际可见的 canonical user 选择轮次锚点，避免将等待确认时被拒绝的 SQL user 当作触发消息，导致 `Assistant parent crosses its logical turn` 并持续阻塞恢复。保留严格跨轮校验。相关 96 项定向测试通过。

@@ -5,7 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云后端：2026-10-21 14:38 `20261021-voice-address-131cb413`（称呼仅接通一次）
+## 当前阿里云后端：2026-10-21 18:36 `20261021-question-anchor-27dfeb87`（问答续接轮次修复）
+
+- 问答续接从模型实际可见的 canonical user 选择轮次锚点，避免将等待确认时被拒绝的 SQL user 当作触发消息，导致 `Assistant parent crosses its logical turn` 并持续阻塞恢复。保留严格跨轮校验。相关 96 项定向测试通过。
+- 基于实际线上 `20261021-voice-address-131cb413` 镜像，仅替换 `agent/loop.py`，源码提交 `27dfeb87`，生产哈希一致。配置与两库备份在 `backups/20261021-question-anchor-27dfeb87/activation-20261021T102640Z/`，两份 dump 已验证可读。空闲门禁后只切 backend，healthy 后 reload Nginx；无迁移，其余服务容器不变。
+- 已对命中的历史会话进行精确恢复：归档一个没有内容和模型消耗的坏尾部回复，追加审计事件，保留原事件与视频素材；取消三个已被新意图取代的排队请求，只恢复最新请求。该请求已成功生成新方案和费用确认卡，当前为正常的 `waiting_input`，尚未确认新一轮付费制作。
+- 生产 backend healthy、重启 0，`/api/environment` 200；未对切换期间做连续可用性采样。原有 trajectory-worker unhealthy 未处理。回滚仅恢复 backend 到上述基底镜像并健康后 reload Nginx，不回滚已继续推进的业务数据库。详见 [修复说明](QUESTION_TURN_ANCHOR_FIX_20261021.md) 与 [发布证据](evidence/question-anchor-release-20261021.json)。
+
+## 历史阿里云后端：2026-10-21 14:38 `20261021-voice-address-131cb413`（称呼仅接通一次）
 
 - PR [#94](https://github.com/arkstudio-ai/OpenBox/pull/94) 无冲突合并至 `main@131cb413`。语音仅在接通问候时使用一次当前称呼；后续结果、确认、插话和连接恢复自然接话，不重复称呼。用户先开口时不补叫。覆盖中英文和首次问候，用户称呼设置及文字助手规则不变。
 - 23 项话术和身份测试通过。基于线上 `20261021-voice-handoff-c77f2e5b` 仅替换 `voice/prompt.py`、`voice/phrases.py`，哈希均与合并提交一致；无迁移。配置和两库备份：`backups/20261021-voice-address-131cb413/activation-20261021T063740Z/`，dump 目录可读。空闲门禁全部为 0 后只切 backend，healthy 后 reload Nginx。其他配置哈希与其余服务容器 ID 不变。

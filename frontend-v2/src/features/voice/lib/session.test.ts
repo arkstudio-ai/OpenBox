@@ -284,6 +284,80 @@ describe("close codes", () => {
 })
 
 describe("in the call", () => {
+  it("negotiates playback acknowledgements only when the server supports them", async () => {
+    const call = harness()
+    call.session.start()
+    await settle()
+    sockets[0].open()
+    sockets[0].receive({ ...READY, playback_ack: true } as ServerEvent)
+    expect(sockets[0].messages).toContainEqual({ type: "capabilities", playback_ack: true })
+  })
+
+  it.each([true, false])("acknowledges once after generation and actual playback finish (end first: %s)", async (endFirst) => {
+    const call = await connectedCall()
+    const idle = vi.mocked(call.deps.createPlayer).mock.calls[0][2]
+    sockets[0].receive({ type: "playback.started", response_id: "0:reply" })
+    call.player.busy = true
+    sockets[0].receive(new ArrayBuffer(4800))
+    if (endFirst) {
+      sockets[0].receive({ type: "playback.finished", response_id: "0:reply" })
+      expect(sockets[0].messages).toEqual([])
+      call.player.busy = false
+      idle()
+    } else {
+      call.player.busy = false
+      idle()
+      expect(sockets[0].messages).toEqual([])
+      sockets[0].receive({ type: "playback.finished", response_id: "0:reply" })
+    }
+    idle()
+    sockets[0].receive({ type: "playback.finished", response_id: "0:reply" })
+    expect(sockets[0].messages).toEqual([{ type: "playback.completed", response_id: "0:reply" }])
+  })
+
+  it.each(["clear", "hangup", "rejected_audio"])("does not acknowledge audio after %s", async (cause) => {
+    const call = await connectedCall()
+    const idle = vi.mocked(call.deps.createPlayer).mock.calls[0][2]
+    sockets[0].receive({ type: "playback.started", response_id: "0:cut" })
+    call.player.busy = true
+    if (cause === "rejected_audio") call.player.enqueue.mockReturnValue(null)
+    sockets[0].receive(new ArrayBuffer(4800))
+    if (cause === "clear") sockets[0].receive({ type: "playback.clear" })
+    if (cause === "hangup") call.session.hangUp()
+    call.player.busy = false
+    idle()
+    sockets[0].receive({ type: "playback.finished", response_id: "0:cut" })
+    expect(sockets[0].messages).not.toContainEqual({ type: "playback.completed", response_id: "0:cut" })
+  })
+
+  it("does not acknowledge a reply if a later audio frame fails to enqueue", async () => {
+    const call = await connectedCall()
+    sockets[0].receive({ type: "playback.started", response_id: "0:partial" })
+    sockets[0].receive(new ArrayBuffer(4800))
+    call.player.enqueue.mockReturnValue(null)
+    sockets[0].receive(new ArrayBuffer(4800))
+    sockets[0].receive({ type: "playback.finished", response_id: "0:partial" })
+    vi.mocked(call.deps.createPlayer).mock.calls[0][2]()
+    expect(sockets[0].messages).toEqual([])
+  })
+
+  it("retains both response boundaries when native replies overlap the playback queue", async () => {
+    const call = await connectedCall()
+    call.player.busy = true
+    for (const id of ["0:one", "0:two"]) {
+      sockets[0].receive({ type: "playback.started", response_id: id })
+      sockets[0].receive(new ArrayBuffer(4800))
+      sockets[0].receive({ type: "playback.finished", response_id: id })
+    }
+    expect(sockets[0].messages).toEqual([])
+    call.player.busy = false
+    vi.mocked(call.deps.createPlayer).mock.calls[0][2]()
+    expect(sockets[0].messages).toEqual([
+      { type: "playback.completed", response_id: "0:one" },
+      { type: "playback.completed", response_id: "0:two" },
+    ])
+  })
+
   it("plays model audio, cuts it on `playback.clear`, and marks the timings", async () => {
     const call = await connectedCall()
     sockets[0].receive(new ArrayBuffer(4800))

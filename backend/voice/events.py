@@ -34,7 +34,8 @@ def _member(value, allowed, name):
 def ready(call_id: str, model: str, price_date: str) -> dict:
     # Keep the nullable wire field for installed clients; no duration cap applies.
     return {"type": "ready", "call_id": call_id, "model": model, "input_sample_rate": INPUT_SAMPLE_RATE,
-            "output_sample_rate": OUTPUT_SAMPLE_RATE, "max_seconds": None, "price_date": price_date}
+            "output_sample_rate": OUTPUT_SAMPLE_RATE, "max_seconds": None, "price_date": price_date,
+            "playback_ack": True}
 
 
 def phase(value: str, *, working: bool, late: bool) -> dict:

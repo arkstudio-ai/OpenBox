@@ -132,6 +132,7 @@ def first_sentence(text: str | None, limit: int = LINE_CHARS) -> str:
 
 
 STATES = {"queued": "等待处理", "running": "处理中", "waiting_input": "等你回复", "idle": "停着", "completed": "已完成",
+          "resuming": "已确认，等待恢复", "decision_recorded": "已确认，执行状态待更新",
           "succeeded": "已完成", "failed": "失败了", "paused": "已暂停", "pausing": "正在暂停",
           "canceling": "正在取消", "canceled": "已取消", "cancelled": "已取消", "effect_unknown": "结果待确认",
           "resume_blocked": "恢复受阻", "input_not_applied": "补充没送达"}
@@ -155,6 +156,8 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
                                          "query_relaxed", "needs_assistant", "untrusted_data", "grants_authority")},
             "schedules": jobs.get("schedules") or [],
             "note": "包含用户自建项目对话和助理关注任务，按最近活动排序。idle只表示对话没运行，不表示工作完成；"
+                    "state和state_summary是当前状态；waiting_for_user=false时不得要求用户重复确认。"
+                    "resuming、decision_recorded、resume_blocked都表示用户已确认；恢复受阻是后台问题。"
                     "waiting_input表示任务在等用户决定，不是后台还在计算；pending_request是当前待确认内容，"
                     "用它的request_id查询cards_pending核对选项，不能沿用旧汇报或说报价还没出来。"
                     "video.output_available=true才证实已有可用成片。more=true时继续翻页。query_relaxed=true表示标题没匹配，"

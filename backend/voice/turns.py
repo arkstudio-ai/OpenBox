@@ -64,11 +64,18 @@ class TurnsMixin:
         self._ack_at: float | None = None     # a silent handover is acknowledged then, unless its result came
         self._heard_replies: deque[str] = deque(maxlen=16)  # the latest replies the user heard words of
         self._silent_responses: deque[str] = deque(maxlen=32)  # keepalive tools may arrive after response.done
+        self._delivery_sources: dict[str, VoiceTurnRef] = {}
+        self._report_batch = 0
 
     async def _on_tool_call(self, event) -> None:
         if not event.call_id or event.call_id in self._seen_calls:
             return
         self._seen_calls.add(event.call_id)
+        if event.response_id and event.response_id in self._stale_responses:
+            await self._command("send_tool_output", event.call_id, {
+                "status": "stale_response", "this_call_applied": False,
+                "note": "This response was superseded before speech. Read current state in the new response."})
+            return
         if (self.response_kind == "keepalive"
                 or event.response_id and event.response_id in self._silent_responses):
             # A silent transport response must not read cards and trigger an
@@ -338,6 +345,19 @@ class TurnsMixin:
             else:
                 self._native_pending.update(observed)
                 self._native_read_epoch = self._cards_epoch
+        if event.name == "tasks_overview" and result.get("status") == "ok":
+            tasks = result.get("tasks") or []
+            observed = {row["session_id"]: row["version"] for row in tasks if row.get("version")}
+            decisions = {row["pending_request"]["request_id"]: row["pending_request"]["version"]
+                         for row in tasks if row.get("pending_request", {}).get("version")}
+            if self._work_changed(observed) or (self._cards_epoch != cards_epoch and any(
+                    self._waiting_versions.get(k) != v for k, v in decisions.items())):
+                result = {"status": "stale", "next": "tasks_overview", "note": "任务状态已变化，请重新查询。"}
+            else:
+                self._native_work_pending.update(observed)
+                # tasks_overview reads question_version; cards_pending can use
+                # a different spoken-card version, so retain these separately.
+                self._native_work_decisions.update(decisions)
         if event.name in {"cards_answer", "task_question_answer", "platforms_status"}:
             self._tool_receipts.append({"tool": event.name, **result})
             self._tool_receipts = self._tool_receipts[-5:]
@@ -416,6 +436,17 @@ class TurnsMixin:
         if ref.lane == "remember" and not ref.cards:
             await self._kept_quietly(ref)
             return
+        if not self._claim_delivery(ref):
+            # A report observer may win the race. The requesting VoiceTurn
+            # still needs the real playback outcome, not a false cancellation.
+            owner = ref.duplicate_of
+            ref.delivery = "shared"
+            owner.asked = owner.asked or ref.transcript or ref.text
+            owner.listeners = [*(owner.listeners or []), ref]
+            if owner.finished is not None:
+                await self._finish_listeners(owner, owner.heard)
+            self._update_phase()
+            return
         if ref.status != "ok":
             self._turn(ref, ref.status)
         ref.delivery = "queued"
@@ -441,6 +472,13 @@ class TurnsMixin:
         Results waiting together (a report nobody asked for, the user's own
         turn) ride along in the same note and reply, told one after another.
         """
+        if not await self._read_current_context():
+            # A failed read is not evidence that an old status is still true.
+            # Keep the result queued for the next tick; never spin or replay it.
+            return
+        if ref not in self.deliveries or not self._can_inject():
+            return
+        self._withdrawn_deliveries.discard(f"delivery:{ref.id}")
         if ref.cards or ref.questions or ref.decision_versions:
             self._decision_deliveries[ref.id] = ref
             self._playing_decision = ref.id
@@ -465,6 +503,7 @@ class TurnsMixin:
             else:
                 ref.note = phrases.joined_note([self._note_body(item) for item in (ref, *ref.riders)], self.lang)
             ref.note_pending, ref.note_at = True, None
+            self._withdrawn_notes.discard(ref.note)
             await self._command("create_note", ref.note)
             if ref.attempts == 1:
                 self._said("note", ref.note)
@@ -485,6 +524,9 @@ class TurnsMixin:
                 [item.speech for item in group], self.lang)
         else:
             instructions = phrases.delivery_instructions(ref.speech, self.lang)
+        if any(item.interrupted for item in group):
+            instructions += ("\n上次汇报被打断，没有确认完整播放。结合用户刚才的话和当前结果简短接续，"
+                "不要重复称呼、问候、‘好的老板’或开场白；不要假定上次整段已听完。")
         await self._create(instructions)
 
     def _riders(self, ref: VoiceTurnRef) -> list:
@@ -506,7 +548,36 @@ class TurnsMixin:
             body["answer_context"] = questions
         return json.dumps(body, ensure_ascii=False)
 
-    async def report(self, title: str, text: str, key: str, task_id: str = "", *, running=None, decision_versions=None) -> None:
+    def _claim_delivery(self, ref):
+        if ref.status != "ok":
+            return True  # a timeout/failure must not consume the eventual result
+        keys = (["inbox:" + ref.inbox_id] if ref.inbox_id else [])
+        if ref.result_id:
+            keys.append("result:" + ref.result_id)
+        previous = next((self._delivery_sources[key] for key in keys if key in self._delivery_sources), None)
+        if previous is not None and previous is not ref:
+            ref.duplicate_of = previous
+            log.info("voice duplicate suppressed call=%s turn=%s existing=%s", self.call_id, ref.id, previous.id)
+            return False
+        self._delivery_sources.update({key: ref for key in keys})
+        return True
+
+    async def report_batch(self, reports):
+        if not reports:
+            return
+        fresh = await self._read_current_context()
+        self._report_batch += 1
+        try:
+            for report in reports:
+                await self.report(report.title, report.text, report.inbox_id, report.task_id,
+                    running=report.running, decision_versions=report.decision_versions,
+                    result_id=report.result_id, task_revision=report.task_revision, _fresh=fresh)
+        finally:
+            self._report_batch -= 1
+        await self.fill_idle()
+
+    async def report(self, title: str, text: str, key: str, task_id: str = "", *, running=None,
+                     decision_versions=None, result_id="", task_revision=None, _fresh=None) -> None:
         """A task's result the assistant reported while the call is on (voice/reports.py): told unasked, after
         the answer to any request still being done and with it (voice/bridge.py ``_next_delivery``), or, for a
         request of this call that was passed to the task, as its answer."""
@@ -514,18 +585,28 @@ class TurnsMixin:
         speech = clean(text, self.lang)
         if not speech or self.closing:
             return
-        asked = self._passed_on.pop(task_id, "")
+        asked = self._passed_on.get(task_id, "")
         if not asked and not self.tell_reports:
             log.info("voice report kept for the conversation call=%s", self.call_id)  # the user turned these off
             return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"report:{key}"[:64], text=title, transcript="",
-                           requested=self.clock(), report=title, asked=asked)
+                           requested=self.clock(), report=title, asked=asked, inbox_id=key,
+                           task_id=task_id, task_revision=task_revision, result_id=result_id)
         ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "running" if running else "ok", self.clock()
         ref.running, ref.decision_versions = running, decision_versions
+        # Report and context watchers race. A previously cached result ID is
+        # not evidence that this newly committed report is obsolete. If the
+        # read fails, queue it until _deliver can verify the current snapshot.
+        if _fresh is None:
+            _fresh = await self._read_current_context()
+        if (_fresh and self._stale_work(ref)) or not self._claim_delivery(ref):
+            return
+        self._passed_on.pop(task_id, None)
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
-        await self.fill_idle()
+        if not self._report_batch:
+            await self.fill_idle()
 
     def seed_waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
         """A connection is not a request to replay pre-existing decisions.
@@ -568,6 +649,13 @@ class TurnsMixin:
         self._card_sources = spoken_cards.snapshot(main_cards, questions)
         self._waiting_versions = {**{c["card_id"]: c.get("question_version") or cards.version(c)
                                     for c in main_cards}, **question_versions}
+        if any(self._waiting_versions.get(k) != v for k, v in self._native_work_decisions.items()):
+            self._native_work_decisions.clear()
+            self._native_context_changed = True
+            self._native_work_stale = True
+            if self._native_response and (self.active_response == self._native_response or self.playback_left() > 0):
+                self.followup_due = True
+                await self._interrupt_playback(source="decision_changed")
         self.decision_context = ("当前待决定事项（最新状态覆盖旧提醒；不在此列表中的旧卡片已不再等待，"
             "不要再次询问或代答，也不要据此声称业务完成）：\n" + json.dumps({
                 "cards": list(card_versions), "task_questions": list(question_versions)}, ensure_ascii=False))
@@ -666,23 +754,33 @@ class TurnsMixin:
             return
         ref.covered_by = None
         riders, ref.riders = ref.riders or [], None
-        if not heard and ref.attempts < DELIVERY_ATTEMPTS and not self.closing:
-            # Nobody heard it: take the note out so no other reply reads it, and tell it again later.
-            ref.delivery = "queued"
-            for rider in riders:
-                rider.delivery = "queued"
+        if not heard and (ref.paused_by_user or ref.attempts < DELIVERY_ATTEMPTS) and not self.closing:
+            # Partial speech is not delivery. An interrupted unsolicited report
+            # yields to the user's new turn instead of automatically repeating
+            # after that turn answers using the same task facts.
+            for item in (ref, *riders):
+                item.delivery = "paused" if item.paused_by_user else "queued"
+                item.interrupted = item.interrupted or ref.interrupted
             if ref.note_item is not None:
                 await self._delete(ref.note_item)
                 ref.note_item, ref.note_at = None, None
+            if ref.note:
+                self._withdrawn_notes.add(ref.note)
+            ref.note_pending = False
             return
         self.keeper.note_delivered(ref.note_item)
         for item in (ref, *riders):
             await self._told(item, heard)
     async def _told(self, ref: VoiceTurnRef, heard: bool) -> None:
+        if ref not in self.deliveries:
+            return
         self.deliveries.remove(ref)
-        ref.delivery, ref.finished = "done", self.clock()
+        ref.delivery, ref.finished, ref.heard = "done", self.clock(), heard
+        if not heard:
+            self._delivery_sources = {key: value for key, value in self._delivery_sources.items() if value is not ref}
         if heard and any(q.get("assistant_may_answer") for q in ref.questions or []):
             self._asked = (self.heard_count, ref)
+        await self._finish_listeners(ref, heard)
         if not ref.recorded:  # a report or an added record: no voice turn of this call to record
             log.info("voice %s told call=%s heard=%s", "report" if ref.report is not None else "recall",
                      self.call_id, heard)
@@ -691,6 +789,14 @@ class TurnsMixin:
             self._turn(ref, "delivered")
         # A hang-up right after the result cancels the provider pump; the turn's record still lands.
         await asyncio.shield(self.link.done(ref, _outcome(ref, heard=heard), delivered=heard))
+
+    async def _finish_listeners(self, ref, heard):
+        listeners, ref.listeners = ref.listeners or [], None
+        for listener in listeners:
+            listener.delivery, listener.finished, listener.heard = "done", self.clock(), heard
+            if heard and listener.status == "ok":
+                self._turn(listener, "delivered")
+            await asyncio.shield(self.link.done(listener, _outcome(listener, heard=heard), delivered=heard))
 
     async def _refused(self, ref: VoiceTurnRef, reason: str) -> None:
         """Our delivery request was refused (or never answered): retried after the reply that won, or given up."""
@@ -707,6 +813,9 @@ class TurnsMixin:
         for item in (ref, *riders):  # refused for another reason: say the result is in the text
             self.deliveries.remove(item)
             item.delivery, item.status = "done", "failed" if item.status == "ok" else item.status
+            item.finished = self.clock()
+            await self._finish_listeners(item, False)
+            self._delivery_sources = {key: value for key, value in self._delivery_sources.items() if value is not item}
             if item.recorded:
                 self._turn(item, "failed")
                 await asyncio.shield(self.link.done(item, _outcome(item)))

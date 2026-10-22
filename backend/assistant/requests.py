@@ -231,9 +231,13 @@ async def maybe_reply(row, *, answers, attachments=None, reply_id=None,
 
 def question_version(row) -> str:
     """Identity of the exact task form shown to a voice caller."""
+    drafts = row.draft or []
     return command_digest({"id": row.id, "session": row.session_id, "user": row.user_id,
         "generation": row.generation, "questions": row.questions,
-        "draft_attachments": [answer.get("attachments") or [] for answer in row.draft or []],
+        # Opening/selecting a form materializes empty draft slots. That is not
+        # a new question to announce; actual attachment changes still fence answers.
+        "draft_attachments": [(drafts[index].get("attachments") or []) if index < len(drafts) else []
+                              for index in range(len(row.questions))],
         "kind": (row.continuation or {}).get("kind"),
         "expires": runtime.utc(row.expires_at).isoformat() if row.expires_at else None})
 

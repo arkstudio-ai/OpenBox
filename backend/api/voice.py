@@ -177,6 +177,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         return fresh
     from voice.handoff import required as handoff_required
     from voice.live_context import publish as publish_context
+    from voice.shared_context import SharedContextWatcher
+    shared_context = SharedContextWatcher(scope)
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
@@ -186,15 +188,12 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail, first_call=facts.first_call,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
-                    reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines))
-    from voice.shared_context import SharedContextWatcher
-    shared_context = SharedContextWatcher(scope)
+                    reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines),
+                    context_reader=shared_context.read)
     updates = CallUpdates(scope)
 
     async def deliver_reports(found):
-        for report in found:
-            await bridge.report(report.title, report.text, report.inbox_id, report.task_id,
-                                running=report.running, decision_versions=report.decision_versions)
+        await bridge.report_batch(found)
 
     async def deliver_context(fresh):
         if fresh:
@@ -238,7 +237,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     await bridge.feed_audio(frame)
                 continue
             try:
-                kind = json.loads(message.get("text") or "").get("type")
+                payload = json.loads(message.get("text") or "")
+                kind = payload.get("type")
             except (ValueError, AttributeError):
                 continue
             if kind == "stop":
@@ -247,6 +247,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("hangup")
             if kind == "ping":
                 bridge.emit(events.heartbeat(time.monotonic() - started))
+            elif kind == "capabilities" and payload.get("playback_ack") is True:
+                bridge.playback_ack = True
+            elif kind == "playback.completed" and isinstance(payload.get("response_id"), str):
+                await bridge.playback_completed(payload["response_id"])
 
     async def provider_to_bridge():
         while True:  # a long call moves to a fresh provider session; follow it

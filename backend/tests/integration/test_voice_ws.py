@@ -387,8 +387,9 @@ async def settle_turn(inbox_id, text):
         await lease.release(session_status="idle")
 
 
+@pytest.mark.parametrize("playback_ack", [False, True])
 async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_note(http, providers, app,
-                                                                                   monkeypatch):
+                                                                               monkeypatch, playback_ack):
     from db.base import get_db_session
     from db.models.voice import VoiceTurn
     from voice import phrases
@@ -399,6 +400,8 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         heard_greeting()
+        if playback_ack:
+            socket.send_json({"type": "capabilities", "playback_ack": True})
         socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
         accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
         provider = providers.made[0]
@@ -409,7 +412,17 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         assert tool_id == "call-2" and output["status"] == "accepted"
         assert output["operation_state"] == "received" and not output["execution_confirmed"]
         await settle_turn(accepted["inbox_id"], "[贪吃蛇](/app/s/x) 的收尾自检做完了，一切正常。")
-        told = read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "delivered")
+        told = []
+        for _ in range(5):
+            seen = read_until(socket, lambda item: item["type"] == "playback.finished"
+                or item["type"] == "turn" and item["state"] == "delivered")
+            told.extend(seen)
+            if seen[-1]["type"] != "playback.finished":
+                break
+            async with get_db_session() as db:
+                turn = await db.get(VoiceTurn, accepted["turn_id"])
+                assert turn.delivered_at is None  # generated PCM alone is not delivery
+            socket.send_json({"type": "playback.completed", "response_id": seen[-1]["response_id"]})
         assert told[-1]["turn_id"] == accepted["turn_id"] and "<audio>" in kinds(told)
         socket.send_json({"type": "stop"})
         ended = read_until(socket, lambda item: item["type"] == "ended")[-1]

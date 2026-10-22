@@ -235,7 +235,10 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
         await handed(owner, main, "another-run", "别的回合派的")                     # not this turn's
     waiting = asyncio.create_task(link.wait(ref))
     await answer(owner, main, [("已经帮你安排去查了，正在后台检索。", "final")], during=run)
-    assert await waiting == {"status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
+    value = await waiting
+    assert all(task["intent_revision"] == 1 and task["task_version"] for task in value["running"])
+    assert {**value, "running": [{key: task[key] for key in ("task_id", "title")} for task in value["running"]]} == {
+        "status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
         {"task_id": made["searching"], "title": "查询OpenAI最新技术发展"},
         {"task_id": made["more"], "title": "继续整理资料"},
         {"task_id": made["revision"], "title": "改用新照片重新规划"}]}
@@ -273,7 +276,9 @@ async def test_a_task_waiting_on_a_card_is_never_told_as_still_at_it():
         await waiting_on_card(owner, made["blocked"])
     waiting = asyncio.create_task(link.wait(ref))
     await answer(owner, main, [("「抓取订单」在等你完成云桌面验证。", "final")], during=run)
-    assert (await waiting)["running"] == [{"task_id": made["working"], "title": "整理订单"}]
+    running = (await waiting)["running"]
+    assert [{key: task[key] for key in ("task_id", "title")} for task in running] == [
+        {"task_id": made["working"], "title": "整理订单"}]
 
 
 async def test_reply_text_prefers_final_parts_and_never_reads_narration():

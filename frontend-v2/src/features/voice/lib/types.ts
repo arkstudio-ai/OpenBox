@@ -48,6 +48,7 @@ export interface ReadyEvent {
   output_sample_rate: number
   max_seconds: number | null
   price_date: string
+  playback_ack?: boolean
 }
 
 export interface TurnEvent {
@@ -77,6 +78,7 @@ export type ServerEvent =
   | ReadyEvent
   | { type: "phase"; value: Phase; working?: boolean; late?: boolean }
   | { type: "playback.clear" }
+  | { type: "playback.started" | "playback.finished"; response_id: string }
   | { type: "phrase"; key: PhraseKey }
   | TurnEvent
   | ({ type: "cost" } & CostSnapshot)

@@ -136,13 +136,15 @@ async def test_transcript_arriving_after_the_reply_is_checked_once():
     await bridge.close()
 
 
-async def test_check_failure_does_not_silently_claim_submission():
+async def test_check_failure_does_not_reopen_an_answered_question_or_infer_a_handoff():
     async def unavailable(*args):
         raise TimeoutError("check unavailable")
     bridge, provider, link = guarded(unavailable)
     await greeted(bridge, provider)
-    await utterance(bridge, "尽快提交修改", "我这就安排")
-    assert bridge.requested == "handoff_failed:u-1" and not link.started
+    await utterance(bridge, "现在任务进展怎么样了？", "分镜图片已生成，视频还在制作。")
+    assert not bridge.requested and not link.started and not provider.commands("create")
+    await bridge.fill_idle()
+    assert not provider.commands("create")
     await bridge.close()
 
 
@@ -154,7 +156,7 @@ async def test_slow_checker_is_bounded_and_does_not_dispatch(monkeypatch):
     await greeted(bridge, provider)
     await utterance(bridge, "尽快提交修改", "我这就安排")
     await asyncio.sleep(0.03)
-    assert bridge.requested == "handoff_failed:u-1" and not link.started
+    assert not bridge.requested and not link.started and not provider.commands("create")
     await bridge.close()
 
 

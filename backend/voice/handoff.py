@@ -82,8 +82,10 @@ class HandoffGuard:
             needed = await asyncio.wait_for(self.checker(words, context), TIMEOUT_SECONDS)
         except Exception as exc:
             log.warning("handoff check unavailable call=%s error=%s", self.bridge.call_id, type(exc).__name__)
-            if self.current(source) and source not in self.attempted:
-                self.pending = (source, "failed")
+            # A failed intent check is not evidence that the user requested a
+            # handoff. Reopening an already answered status question here can
+            # replay it verbatim, or falsely claim their request failed.
+            # Actual attempted handoffs retain their own failure receipts.
         else:
             if needed and self.current(source) and source not in self.attempted:
                 self.pending = (source, "retry")

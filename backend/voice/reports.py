@@ -29,6 +29,8 @@ class Report:
     task_id: str = ""  # the task reporting: a request of the call passed to it is answered by this
     running: list[dict] | None = None
     decision_versions: dict[str, str] | None = None
+    result_id: str = ""
+    task_revision: int | None = None
 
 
 class ReportWatcher:
@@ -54,11 +56,19 @@ class ReportWatcher:
                  if row.state == "settled" and row.id not in self._seen]
         reports = []
         for row in sorted(fresh, key=lambda row: row.id):
-            # This call already observes its own input by durable inbox ID.
-            # Other-channel replies (including another call) must reach it too.
-            if self.call_id and (row.origin_ref or {}).get("voice_call_id") == self.call_id:
+            # Typed answers belong to the page and shared context. Replaying
+            # them as unsolicited speech races the native answer to a user's
+            # follow-up question. This call's own late voice results still need
+            # the durable observer, as do task results and card continuations.
+            if row.origin == "human" and (not self.call_id
+                    or (row.origin_ref or {}).get("voice_call_id") != self.call_id):
                 continue
+            # The bridge owns delivery deduplication across both observers.
+            # Keep this path even for this call: its waiter may have timed out.
             if row.outcome != "succeeded" or not row.result_message_id:
+                continue
+            evidence = await self._result(row)
+            if evidence is None:
                 continue
             from voice.assistant_link import reply_text, running_tasks
             text = await reply_text(self.main_session_id, row.result_message_id, self.user_id)
@@ -71,7 +81,7 @@ class ReportWatcher:
                     continue  # a manual click already superseded this typed reply's card explanation
                 running = await running_tasks(self.main_session_id, self.user_id, row.id)
                 reports.append(Report(row.id, await self._title(row), text, (row.origin_ref or {}).get("task_id") or "",
-                                      running or None, versions or None))
+                                      running or None, versions or None, **evidence))
                 if settled := getattr(row, "settled_at", None):
                     delay = datetime.now(timezone.utc) - settled.replace(tzinfo=settled.tzinfo or timezone.utc)
                     log.info("voice report observed call=%s inbox=%s settlement_to_observed_ms=%.1f",
@@ -82,6 +92,26 @@ class ReportWatcher:
         if reports:
             log.info("voice reports session=%s count=%s", self.main_session_id, len(reports))
         return reports
+
+    async def _result(self, row):
+        """Retry inboxes share a result ID; late old revisions never become new facts."""
+        result_id = (row.origin_ref or {}).get("result_id")
+        if not result_id:
+            return {}
+        from db.base import get_db_session
+        from db.models.assistant import AssistantTask, TaskResult
+        async with get_db_session() as db:
+            pair = (await db.execute(select(TaskResult, AssistantTask).join(
+                AssistantTask, AssistantTask.id == TaskResult.task_id).where(
+                TaskResult.id == result_id, AssistantTask.id == (row.origin_ref or {}).get("task_id"),
+                AssistantTask.user_id == self.user_id, AssistantTask.assistant_session_id == self.main_session_id,
+                AssistantTask.workspace_id == self.workspace_id, AssistantTask.archived_at.is_(None)))).first()
+            if not pair:
+                return None
+            result, task = pair
+            if task.latest_result_id != result.id or task.intent_revision != result.observed_intent_revision:
+                return None
+            return {"result_id": result.id, "task_revision": result.observed_intent_revision}
 
     async def _recent(self):
         from db.base import get_db_session

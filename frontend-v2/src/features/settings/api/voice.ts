@@ -25,6 +25,7 @@ export interface AssistantVoices {
   voices: AssistantVoice[]
   default: string
   selected: string
+  voice_source?: "user" | "appearance" | "model_default"
 }
 
 function useUserId(): string {
@@ -35,7 +36,7 @@ export function useAssistantVoices() {
   const userId = useUserId()
   return useQuery({
     queryKey: settingsKeys.voices(userId),
-    queryFn: () => http.get<AssistantVoices>("/api/assistant/voice/voices"),
+    queryFn: ({ signal }) => http.get<AssistantVoices>("/api/assistant/voice/voices", { signal }),
     staleTime: 60_000,
   })
 }
@@ -44,10 +45,16 @@ export function useChooseVoice() {
   const userId = useUserId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (choice: { model?: string; voice?: string }) =>
-      http.put<AssistantVoices>("/api/assistant/voice/voice", choice),
+    scope: { id: `assistant-preferences:${userId}` },
+    mutationFn: (choice: { model?: string; voice?: string }) => {
+      if (useAuthStore.getState().user?.id !== userId) throw new Error("accountChanged")
+      return http.put<AssistantVoices>("/api/assistant/voice/voice", choice)
+    },
     onMutate: () => qc.cancelQueries({ queryKey: settingsKeys.voices(userId) }),
-    onSuccess: (data) => qc.setQueryData(settingsKeys.voices(userId), data),
+    onSuccess: async (data) => {
+      await qc.cancelQueries({ queryKey: settingsKeys.voices(userId) })
+      qc.setQueryData(settingsKeys.voices(userId), data)
+    },
   })
 }
 

@@ -20,6 +20,7 @@ const initial: AssistantVoices = {
   ],
   default: "Serena",
   selected: "Serena",
+  voice_source: "user",
   voices: [
     {
       id: "Tina",
@@ -95,6 +96,19 @@ afterEach(() => {
 })
 
 describe("VoicePage", () => {
+  it("records an explicit choice even when it is already the automatically matched voice", () => {
+    data = { ...initial, voice_source: "appearance" }
+    const view = render(<VoicePage />)
+    expect(screen.getByText("voice.followsAppearance")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: /^苏瑶/ }))
+    expect(mutate).toHaveBeenCalledWith({ voice: "Serena", model: OMNI }, expect.anything())
+    data = { ...data, voice_source: "user" }
+    view.rerender(<VoicePage />)
+    expect(screen.getByText("voice.userChoice")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: /^苏瑶/ }))
+    expect(mutate).toHaveBeenCalledTimes(1)
+  })
+
   it("groups the voices, marks the current and default one, and saves a pick", () => {
     render(<VoicePage />)
     expect(screen.getByText("voice.group.zhFemale")).toBeTruthy()

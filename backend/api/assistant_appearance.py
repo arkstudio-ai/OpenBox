@@ -2,8 +2,7 @@
 import hashlib
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict
-from typing import Literal
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from assistant import appearance
 from auth.middleware import get_current_user
@@ -15,7 +14,14 @@ router = APIRouter(prefix="/api/assistant/appearance", tags=["assistant"])
 class AppearanceBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool | None = None
-    preset: Literal["orb", "sprout", "cat", "custom"] | None = None
+    preset: str | None = None
+
+    @field_validator("preset")
+    @classmethod
+    def known_preset(cls, value: str | None) -> str | None:
+        if value is not None and value not in appearance.PRESETS:
+            raise ValueError("ASSISTANT_AVATAR_INVALID")
+        return value
 
 
 @router.get("")

@@ -550,6 +550,40 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
     assert providers.made[-1].config.voice == "longanqian_v3.1"
 
 
+async def test_appearance_defaults_reach_the_next_call_and_manual_choices_win(http, providers, app):
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    headers = await account(http)
+    appearance_endpoint, voice_endpoint = "/api/assistant/appearance", "/api/assistant/voice/voices"
+    male = await http.put(appearance_endpoint, json={"preset": "ip-11"}, headers=headers)
+    assert male.status_code == 200
+    assert (await http.get(voice_endpoint, headers=headers)).json()["selected"] == "longanlufeng"
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        assert providers.made[-1].config.voice == "longanlufeng"
+        assert providers.made[-1].config.model == AUDIO_MODEL
+        assert (await http.put(appearance_endpoint, json={"preset": "ip-10"}, headers=headers)).status_code == 200
+        assert (await http.get(voice_endpoint, headers=headers)).json()["selected"] == "longanqian_v3.1"
+        assert providers.made[-1].config.voice == "longanlufeng"  # no mid-call voice change
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    async with get_db_session() as db:
+        assert (await db.get(VoiceCall, ready["call_id"])).voice == "longanlufeng"
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        socket.receive_json()
+        assert providers.made[-1].config.voice == "longanqian_v3.1"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    chosen = await http.put("/api/assistant/voice/voice", json={"voice": "longanqian_v3.1"}, headers=headers)
+    assert chosen.json()["voice_source"] == "user"
+    assert (await http.put(appearance_endpoint, json={"preset": "ip-04"}, headers=headers)).status_code == 200
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        socket.receive_json()
+        assert providers.made[-1].config.voice == "longanqian_v3.1"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+
+
 async def test_previews_are_served_for_listed_voices_only(http, providers):
     sample = await http.get("/api/assistant/voice/samples/Liora Mira")
     assert sample.status_code == 200 and sample.headers["content-type"] == "audio/mp4" and len(sample.content) > 5000

@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { Upload } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { CompanionAvatar } from "@/shared/appearance/CompanionAvatar"
@@ -10,6 +10,7 @@ import {
   useUploadCompanionImage,
   type CompanionPreset,
 } from "@/shared/appearance/companion"
+import { resolveCompanionPreset } from "@/shared/appearance/companion-presets"
 import { cn } from "@/shared/lib/cn"
 import { toast } from "@/shared/ui/Toast"
 import { Switch } from "./controls"
@@ -17,18 +18,25 @@ import { Switch } from "./controls"
 interface Props {
   compact?: boolean
 }
+const CATEGORIES = ["all", "female", "male", "pets"] as const
 export function CompanionAppearanceSettings({ compact = false }: Props) {
   const { t } = useTranslation("companion")
   const query = useCompanionAppearance()
   const save = useSaveCompanionAppearance()
   const upload = useUploadCompanionImage()
   const input = useRef<HTMLInputElement>(null)
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("all")
   const appearance = query.data ?? DEFAULT_COMPANION
+  const selected = resolveCompanionPreset(appearance.preset)
   const busy = save.isPending || upload.isPending || !query.data
   const choices: CompanionPreset[] = [
     ...COMPANION_PRESETS,
     ...(appearance.has_image ? ["custom" as const] : []),
   ]
+  const details = new Map(appearance.presets?.map((option) => [option.id, option]))
+  const visible = choices.filter(
+    (preset) => category === "all" || (preset !== "custom" && details.get(preset)?.category === category),
+  )
   const feedback = {
     onSuccess: () => toast("success", t("settings.saved")),
     onError: () => toast("error", t("settings.saveFailed")),
@@ -39,6 +47,7 @@ export function CompanionAppearanceSettings({ compact = false }: Props) {
       <div>
         <h3 className="text-ink text-sm font-medium">{t("appearance.title")}</h3>
         {!compact && <p className="text-n700 mt-1 text-xs leading-5">{t("appearance.hint")}</p>}
+        <p className="text-n700 mt-1 text-xs leading-5">{t("appearance.voiceHint")}</p>
       </div>
       {query.isError && (
         <div role="alert" className="text-danger-ink text-xs">
@@ -48,27 +57,63 @@ export function CompanionAppearanceSettings({ compact = false }: Props) {
           </button>
         </div>
       )}
-      <div className="flex flex-wrap gap-2" role="group" aria-label={t("appearance.title")}>
-        {choices.map((preset) => (
+      <div className="border-hair bg-surface flex items-center gap-3 rounded-2xl border p-3">
+        <CompanionAvatar appearance={appearance} className={compact ? "size-14" : "size-18"} />
+        <p className="text-n700 text-sm">{t("appearance.selected", { name: t(`appearance.${selected}`) })}</p>
+      </div>
+      <div className="flex flex-wrap gap-2" role="group" aria-label={t("appearance.categories")}>
+        {CATEGORIES.map((item) => (
+          <button
+            key={item}
+            type="button"
+            disabled={item !== "all" && !appearance.presets}
+            aria-pressed={category === item}
+            onClick={() => setCategory(item)}
+            className={cn(
+              "min-h-9 rounded-full border px-3 text-xs transition-colors",
+              category === item ? "border-ink bg-ink text-bg" : "border-hair hover:bg-hairsoft text-n700",
+            )}
+          >
+            {t(`appearance.category.${item}`)}
+          </button>
+        ))}
+      </div>
+      <div
+        className={cn(
+          "scr grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2 overflow-y-auto overscroll-contain p-1",
+          compact ? "max-h-72" : "max-h-96",
+        )}
+        role="group"
+        aria-label={t("appearance.title")}
+      >
+        {visible.map((preset) => (
           <button
             key={preset}
             type="button"
             disabled={busy}
-            aria-pressed={appearance.preset === preset}
+            aria-label={t(`appearance.${preset}`)}
+            aria-pressed={selected === preset}
             onClick={() => save.mutate({ preset }, feedback)}
             className={cn(
-              "flex flex-col items-center gap-1 rounded-2xl border px-2 py-2.5 text-xs transition-colors disabled:opacity-50",
-              compact ? "w-18" : "w-20",
-              appearance.preset === preset
-                ? "border-ink bg-surface"
-                : "border-hair bg-card hover:bg-hairsoft",
+              "flex min-w-0 flex-col items-center gap-1 rounded-2xl border px-2 py-2.5 text-xs transition-colors disabled:opacity-50",
+              selected === preset ? "border-ink bg-surface" : "border-hair bg-card hover:bg-hairsoft",
             )}
           >
             <CompanionAvatar
               appearance={{ ...appearance, preset }}
-              className={compact ? "size-10" : "size-12"}
+              className={compact ? "size-14" : "size-18"}
+              loading="lazy"
             />
-            {t(`appearance.${preset}`)}
+            <span className="flex min-h-8 items-center text-center leading-4">
+              {t(`appearance.${preset}`)}
+            </span>
+            {(preset === "custom" || details.has(preset)) && (
+              <span className="text-n700 text-2xs">
+                {t(
+                  `appearance.voiceGender.${preset === "custom" ? "female" : details.get(preset)!.voice_gender}`,
+                )}
+              </span>
+            )}
           </button>
         ))}
       </div>

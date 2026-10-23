@@ -29,7 +29,7 @@ function QuickVoiceSettings({ inCall }: Pick<Props, "inCall">) {
     () => () => {
       audio.current?.pause()
     },
-    [],
+    [voices.data?.model, voices.data?.selected],
   )
   useEffect(() => {
     if (inCall) audio.current?.pause()
@@ -67,6 +67,8 @@ function QuickVoiceSettings({ inCall }: Pick<Props, "inCall">) {
       toast("error", t("settings.previewFailed"))
     })
   }
+  const automatic = !!voices.data?.voice_source && voices.data.voice_source !== "user"
+  const selectedVoice = voices.data?.voices.find((voice) => voice.id === voices.data?.selected)
   return (
     <section className="space-y-4" aria-label={t("settings.voiceTitle")}>
       <h3 className="text-sm font-medium">{t("settings.voiceTitle")}</h3>
@@ -103,11 +105,18 @@ function QuickVoiceSettings({ inCall }: Pick<Props, "inCall">) {
                 <select
                   id={id}
                   className={selectClass}
-                  value={voices.data?.selected ?? ""}
+                  value={automatic ? "" : (voices.data?.selected ?? "")}
                   disabled={!voices.data || choose.isPending}
                   onChange={(event) => save({ voice: event.target.value, model: voices.data?.model })}
                 >
                   {!voices.data && <option value="">{t("loading")}</option>}
+                  {automatic && (
+                    <option value="" disabled>
+                      {t("settings.autoVoice", {
+                        name: i18n.language.startsWith("en") ? selectedVoice?.id : selectedVoice?.name,
+                      })}
+                    </option>
+                  )}
                   {voices.data?.voices.map((voice) => (
                     <option key={voice.id} value={voice.id}>
                       {i18n.language.startsWith("en") ? voice.id : voice.name}

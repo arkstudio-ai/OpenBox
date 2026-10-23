@@ -16,6 +16,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from assistant.appearance import KEY as APPEARANCE_KEY, voice_gender
 from voice.models import AUDIO_MODEL, OMNI_MODEL, is_audio
 
 PREFERENCE_KEY = "assistant_voice"
@@ -123,11 +124,18 @@ def selection(extra: dict, config) -> dict:
     model = extra.get(MODEL_KEY) if extra.get(MODEL_ROLLOUT_KEY) == MODEL_ROLLOUT else None
     if not isinstance(model, str) or model not in MODEL_IDS:
         model = default_model
-    default = resolve(None, config.voice, model)
+    appearance = extra.get(APPEARANCE_KEY)
+    preset = appearance.get("preset") if isinstance(appearance, dict) else None
+    if is_audio(model):
+        default = "longanlufeng" if voice_gender(preset) == "male" else "longanqian_v3.1"
+    else:
+        default = resolve(None, config.voice, model)
     chosen = extra.get(VOICE_KEYS[model], extra.get(PREFERENCE_KEY))
+    explicit = isinstance(chosen, str) and chosen in _by_id(model)
     return {"model": model, "models": list(MODEL_OPTIONS), "default_model": default_model,
             "voices": catalog(model), "default": default,
-            "selected": resolve(chosen if isinstance(chosen, str) else None, default, model)}
+            "selected": resolve(chosen if explicit else None, default, model),
+            "voice_source": "user" if explicit else "appearance" if is_audio(model) else "model_default"}
 
 
 async def user_selection(user_id: str, config) -> dict:
@@ -167,6 +175,10 @@ async def save_choice(user_id: str, config, *, model: str | None, voice: str | N
                 raise ValueError("Pick a voice from this model")
             extra[VOICE_KEYS[state["model"]]] = voice
             state = selection(extra, config)
-        extra[PREFERENCE_KEY] = state["selected"]
+        # A model-only save must not freeze an automatically matched voice.
+        # Preserve all existing choices conservatively; old records cannot tell
+        # whether a default was explicitly selected before this feature existed.
+        if state["voice_source"] == "user":
+            extra[PREFERENCE_KEY] = state["selected"]
         row.extra = extra
         return state

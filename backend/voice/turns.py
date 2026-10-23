@@ -25,6 +25,35 @@ TRANSCRIPT_WAIT_SECONDS = 2.5
 
 
 class TurnsMixin:
+    async def _recover_handoff(self, source: str, words: str) -> None:
+        from assistant.identities import inbox_key
+        async with self._business_lock:
+            guard = self.handoff
+            if (guard is None or not guard.current(source) or source in guard.attempted
+                    or source in self._spoken_actions):
+                return
+            guard.attempted.add(source)
+            context = self._call_context(words, source_item=source)
+            context.update(spoken_input_id=source, handover_source="missed_handoff")
+            key = inbox_key("voice-handoff", self.call_id, self.session, source)
+            ref = VoiceTurnRef(id=key, provider_call_id=key, text=words, transcript=words,
+                               requested=self.clock(), context=context)
+            try:
+                await self.link.start(ref)
+            except Exception as exc:
+                log.warning("voice recovery acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
+                guard.pending = (source, "failed")
+                return
+            guard.refs[source] = ref
+            self._remember_spoken_action(source, {"status": "accepted", "request_id": ref.id,
+                "operation_state": "received", "execution_confirmed": False,
+                "note": "用户原话已经接收，请勿重复提交；任务是否创建以后台结果为准。"})
+            self.pending_calls[key] = ref
+            self.refs.append(ref)
+            self._turn(ref, "accepted")
+            self._spawn(self._observe_transcript(ref))
+            self._update_phase()
+
     def _init_turns(self) -> None:
         self.followup_due = False   # tool outputs no reply has answered yet
         self._direct: set[str] = set()  # direct reads still running

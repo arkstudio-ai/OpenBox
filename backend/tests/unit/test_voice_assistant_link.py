@@ -327,3 +327,16 @@ async def test_main_session_lookup_distinguishes_missing_entry_and_missing_acces
     assert await main_session(owner, None) == (workspace, main.id)  # single-user mode: default workspace
     stranger, _, _ = await accounts()
     assert await main_session(stranger, workspace) == (None, None)
+
+
+def test_working_brief_fits_handoff_with_original_utterance_and_card_identity():
+    from voice.assistant_link import bounded_context
+    from voice.summary import WORKING_LIMIT
+    context = {'spoken_input_id': 'utterance-1', 'handover_source': 'missed_handoff',
+        'request': '按照刚才确认的方案开始', 'summary': '已确认的任务要求。' * (WORKING_LIMIT // 9),
+        'task_questions': [{'request_id': 'q-1', 'session_id': 's-1', 'questions': ['内容' * 1000]}],
+        'call': ['用户：按照刚才确认的方案开始']}
+    bounded = bounded_context(context)
+    assert bounded['summary'] == context['summary']
+    assert bounded['request'] == context['request']
+    assert bounded['task_questions'][0]['request_id'] == 'q-1'

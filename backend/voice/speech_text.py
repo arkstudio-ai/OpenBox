@@ -38,6 +38,8 @@ _CJK = re.compile(r"[　-〿㐀-鿿＀-￯]")
 def clean(text: str | None, lang: str = "zh", limit: int = LIMIT) -> str:
     if not text or not text.strip():
         return ""
+    from voice.model_names import public_model_names
+    text = public_model_names(text)
     text = _FENCE.sub("", text)
     text = _IMAGE.sub(r"\1", text)
     text = _LINK.sub(r"\1", text)

@@ -33,7 +33,9 @@ async def test_voice_and_assistant_read_current_model_catalogue_after_removal(mo
     assert len((await tools.run("models_available", scope, "{}"))["chat"]) == 2
     config.models = [row for row in config.models if row.id == config.model]
     spoken = await tools.run("models_available", scope, "{}")
-    assert spoken["chat"] == catalogue()["chat"]
+    assert [{k: v for k, v in row.items() if k != "name"} for row in spoken["chat"]] == [
+        {k: v for k, v in row.items() if k != "name"} for row in catalogue()["chat"]]
+    assert spoken["chat"][0]["name"] == "其他任务档位"
     assert [row["id"] for row in spoken["chat"]] == [config.model]
 
 

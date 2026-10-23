@@ -63,8 +63,10 @@ def greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
 
 
 def note_body(status, user_text, speech, lang, *, report_title=None, asked="", running=()):
+    from voice.model_names import public_model_names
     return json.dumps({"source": "background_result", "status": status,
-        "request": asked or user_text, "task": report_title, "facts": speech,
+        "request": public_model_names(asked or user_text),
+        "task": public_model_names(report_title) if report_title else report_title, "facts": public_model_names(speech),
         "running_tasks": list(running),
         "state_note": "任务仍在执行，尚未取得成品；不能把计划或交办回执说成完成" if status == "running" else
                       "ok 仅表示这条回复已生成；仅依据 facts 中的实际结果判断任务完成情况，保留将来时与条件"}, ensure_ascii=False)

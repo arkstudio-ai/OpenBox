@@ -80,7 +80,8 @@ async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers,
         provider = providers.made[-1]
         provider.push(item("modify"), transcript("每种海鲜独立砂锅，结尾加全家福，现在提交修改", "modify"),
                       started("promise"), event("assistant_transcript", response_id="promise", text="我这就安排"), done("promise"))
-        assert wait_until(lambda: any("尚未确认提交成功" in str(row) for row in provider.commands("create")))
+        read_until(socket, lambda value: value["type"] == "turn" and value["state"] == "accepted")
+        assert not any("尚未确认提交成功" in str(row) for row in provider.commands("create"))
         assert checked == ["每种海鲜独立砂锅，结尾加全家福，现在提交修改"]
         socket.send_json({"type": "stop"})
         assert "ended" in kinds(read_until(socket, lambda value: False))
@@ -89,8 +90,11 @@ async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers,
     from db.models.voice import VoiceCall
     async with get_db_session() as db:
         call = await db.get(VoiceCall, ready["call_id"])
-        assert not list((await db.scalars(select(AgentInboxItem).where(
+        items = list((await db.scalars(select(AgentInboxItem).where(
             AgentInboxItem.session_id == call.main_session_id))).all())
+        assert len(items) == 1
+        assert items[0].prompt == checked[0]
+        assert items[0].origin_ref["voice_context"]["handover_source"] == "missed_handoff"
 
 
 @pytest.fixture

@@ -1,4 +1,8 @@
-"""Detect missed handoffs from human intent; never execute from spoken promises."""
+"""Recover missed handoffs by durably forwarding the human's words to the main assistant.
+
+The semantic check never creates tasks or approves cards. The ordinary main
+assistant still interprets the request and enforces every business boundary.
+"""
 import asyncio
 import json
 
@@ -39,7 +43,8 @@ class HandoffGuard:
 
     def current(self, source: str) -> bool:
         b = self.bridge
-        return bool(source and source == b._last_user_item and not b.closing and not b.limit_reason)
+        return bool(source and source == b._last_user_item and b.state != "user_speaking"
+                    and not b.closing and not b.limit_reason)
 
     def heard(self, source: str) -> None:
         if len(self.finished | self.attempted | self.checked) > 128:
@@ -88,8 +93,11 @@ class HandoffGuard:
             # Actual attempted handoffs retain their own failure receipts.
         else:
             if needed and self.current(source) and source not in self.attempted:
-                self.pending = (source, "retry")
                 log.info("missed handoff call=%s source=%s", self.bridge.call_id, source)
+                # Another spoken reminder can itself omit the tool, be held by
+                # playback or get interrupted. Persist the original human input
+                # now, using the native handoff's lock and utterance identity.
+                await self.bridge._recover_handoff(source, words)
         await self.bridge.fill_idle()
 
     def next_reply(self):

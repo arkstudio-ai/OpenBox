@@ -1,4 +1,4 @@
-"""Missed handoffs are repaired once, from the exact human utterance."""
+"""Missed handoffs persist the original human input once without a second voice-model turn."""
 import asyncio
 
 import pytest
@@ -24,33 +24,29 @@ async def test_reading_old_status_does_not_satisfy_a_modification(monkeypatch):
         return {"status": "ok", "tasks": [{"title": "海鲜视频", "state": "completed"}]}
     monkeypatch.setattr("voice.tools.run", overview)
     await greeted(bridge, provider)
-    await replay(bridge, item("u1"), transcript("每样海鲜分开砂锅，最后加全家福，尽快提交", "u1"),
-                 started("r1"), tool_call("read", name="tasks_overview", arguments="{}", response_id="r1"),
-                 said("旧视频已经完成，我这就安排修改，还有什么补充吗？", "r1"), audio("r1"), done("r1"))
-    if bridge.requested == "followup":  # the read can finish before the async intent check
+    words = "每样海鲜分开砂锅，最后加全家福，尽快提交"
+    await replay(bridge, item("u1"), transcript(words, "u1"), started("r1"),
+                 tool_call("read", name="tasks_overview", arguments="{}", response_id="r1"),
+                 said("旧视频已完成，我这就安排修改", "r1"), audio("r1"), done("r1"))
+    if bridge.requested == "followup":
         await replay(bridge, started("read-answer"), said("旧任务已经完成", "read-answer"), done("read-answer"))
-    assert bridge.requested == "handoff_retry:u1"
-    assert "不要只查旧任务" in provider.commands("create")[-1][1]
-    assert not link.started  # the check itself cannot dispatch business work
-    await replay(bridge, started("retry"), tool_call("handoff", text="按要求修改海鲜视频", response_id="retry"), done("retry"))
     assert len(link.started) == 1
-    assert link.started[0].transcript == "每样海鲜分开砂锅，最后加全家福，尽快提交"
+    assert link.started[0].text == link.started[0].transcript == words
+    assert link.started[0].context["handover_source"] == "missed_handoff"
+    assert bridge.requested != "handoff_retry:u1"
     await bridge.close()
-
 
 async def test_one_repair_and_duplicate_tool_calls_share_the_same_request():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)
     await utterance(bridge, "按刚才的新方案修改视频并提交", "我这就安排")
-    assert bridge.requested == "handoff_retry:u-1"
-    await replay(bridge, started("retry"), tool_call("a", response_id="retry"),
-                 tool_call("b", response_id="retry"), done("retry"))
+    assert len(link.started) == 1
+    await replay(bridge, started("late-native"), tool_call("a", response_id="late-native"),
+                 tool_call("b", response_id="late-native"), done("late-native"))
     assert len(link.started) == 1
     assert provider.commands("output")[-1][2]["request_id"] == link.started[0].id
-    await bridge.fill_idle()
-    assert len(provider.commands("create")) == 1
+    assert provider.commands("output")[-1][2]["duplicate"] is True
     await bridge.close()
-
 
 async def test_native_handoff_does_not_run_a_second_semantic_check():
     async def should_not_check(*args):
@@ -78,26 +74,26 @@ async def test_conversation_and_read_requests_are_not_turned_into_execution(word
 
 async def test_failed_repair_reports_unsubmitted_without_looping_or_dispatching():
     bridge, provider, link = guarded(needs_handoff)
+    link.fail_start = True
     await greeted(bridge, provider)
     await utterance(bridge, "立即按新方案重做", "我这就安排")
-    await replay(bridge, started("retry"), said("我这就安排", "retry"), audio("retry"), done("retry"))
     assert bridge.requested == "handoff_failed:u-1"
     assert "尚未确认提交成功" in provider.commands("create")[-1][1]
     await replay(bridge, started("failed"), tool_call("bad", response_id="failed"), done("failed"))
     assert provider.commands("output")[-1][2]["status"] == "not_user_request"
-    assert len(provider.commands("create")) == 2 and not link.started
+    assert len(provider.commands("create")) == 1 and not link.started
     await bridge.close()
 
-
-async def test_invalid_repair_arguments_also_report_unsubmitted():
+async def test_recovery_preserves_the_original_requirements_in_context():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)
-    await utterance(bridge, "按新方案修改", "我这就安排")
-    await replay(bridge, started("retry"), tool_call("bad", arguments="{}", response_id="retry"), done("retry"))
-    assert provider.commands("output")[-1][2]["status"] == "invalid_arguments"
-    assert bridge.requested == "handoff_failed:u-1" and not link.started
+    await replay(bridge, item("u0"), transcript("分两段各15秒，中文，无背景音乐，快速档", "u0"))
+    await replay(bridge, item("u1"), transcript("按刚才方案立即开始", "u1"), started("reply"),
+                 said("好的", "reply"), audio("reply"), done("reply"))
+    assert len(link.started) == 1
+    assert "分两段各15秒" in str(link.started[0].context["call"])
+    assert link.started[0].text == "按刚才方案立即开始"
     await bridge.close()
-
 
 async def test_new_human_speech_supersedes_a_slow_check():
     release = asyncio.Event()
@@ -114,27 +110,29 @@ async def test_new_human_speech_supersedes_a_slow_check():
     await bridge.close()
 
 
-async def test_new_speech_also_blocks_an_already_requested_old_retry():
+async def test_new_speech_blocks_recovery_waiting_for_the_business_lock():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)
-    await utterance(bridge, "马上提交", "好的")
-    await replay(bridge, started("retry"), event("user_started", item_id="u2"), item("u2"),
-                 transcript("改成先别提交", "u2"), tool_call("old", response_id="retry"), done("retry"))
-    assert provider.commands("output")[-1][2]["status"] == "stale_request" and not link.started
+    await bridge._business_lock.acquire()
+    try:
+        await utterance(bridge, "马上提交", "好的")
+        await replay(bridge, event("user_started", item_id="u2"), item("u2"), transcript("先别提交", "u2"))
+    finally:
+        bridge._business_lock.release()
+    await drain()
+    assert not link.started
     await bridge.close()
-
 
 async def test_transcript_arriving_after_the_reply_is_checked_once():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)
     await replay(bridge, item("u1"), started("r1"), said("我这就安排", "r1"), audio("r1"), done("r1"))
-    assert not provider.commands("create")
+    assert not link.started
     await replay(bridge, transcript("按刚才方案立即修改", "u1"))
-    assert bridge.requested == "handoff_retry:u1" and not link.started
+    assert len(link.started) == 1
     await replay(bridge, transcript("按刚才方案立即修改", "u1"))
-    assert len(provider.commands("create")) == 1
+    assert len(link.started) == 1 and not provider.commands("create")
     await bridge.close()
-
 
 async def test_check_failure_does_not_reopen_an_answered_question_or_infer_a_handoff():
     async def unavailable(*args):
@@ -160,17 +158,16 @@ async def test_slow_checker_is_bounded_and_does_not_dispatch(monkeypatch):
     await bridge.close()
 
 
-async def test_refused_retry_is_not_repeated_as_a_second_handoff():
-    from tests.support.voice_fakes import provider_error
+async def test_recovery_does_not_wait_for_spoken_playback_or_another_provider_reply():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)
-    await utterance(bridge, "尽快提交修改", "我这就安排")
-    await replay(bridge, provider_error("active_response"))
+    await replay(bridge, item("u1"), transcript("尽快提交修改", "u1"), started("r1"))
+    bridge._playbacks["blocked"] = {"until": bridge.clock() + 900, "ack": True, "refs": []}
+    await replay(bridge, said("我这就安排", "r1"), audio("r1"), done("r1"))
+    assert len(link.started) == 1 and not provider.commands("create")
     await bridge.fill_idle()
-    assert bridge.requested == "handoff_failed:u-1" and not link.started
-    assert len(provider.commands("create")) == 2
+    assert len(link.started) == 1
     await bridge.close()
-
 
 async def test_semantic_check_uses_human_words_not_the_assistants_promise(monkeypatch):
     seen = []
@@ -180,3 +177,18 @@ async def test_semantic_check_uses_human_words_not_the_assistants_promise(monkey
     monkeypatch.setattr("voice.summary.complete", complete)
     assert not await required("先讨论，不要执行", "assistant: 我已经提交了")
     assert "先讨论，不要执行" in seen[0][1] and "前台承诺不是授权" in seen[0][0]
+
+
+async def test_speech_started_without_an_item_id_supersedes_a_slow_check():
+    release = asyncio.Event()
+    async def slow(*args):
+        await release.wait()
+        return True
+    bridge, provider, link = guarded(slow)
+    await greeted(bridge, provider)
+    await utterance(bridge, '马上提交', '好的')
+    await replay(bridge, event('user_started'))
+    release.set()
+    await drain()
+    assert not link.started
+    await bridge.close()

@@ -188,18 +188,11 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
 
 BATCH_DESCRIPTION = """\
 Run 1-25 independent tool calls concurrently. Ordering is not guaranteed;
-one failure does not stop others.
-
-Without a parallel-safety declaration, tools run sequentially in list order.
-Image generation/editing explicitly supports serial batch children, each with
-its own operation and billing identity. Completed children are saved immediately.
-Generation and editing share a configured per-batch limit (default 5 calls,
-each producing 1-4 images); over-limit batches are rejected before any dispatch.
-Call memory/task reads directly to retain temporary evidence checks.
-
-Do not nest `batch`, include dependent calls, or parallelize ordered/overlapping
-mutations. `computer` is stateful and rejected; use `computer(action='batch', ...)`
-for ordered desktop actions needing no intermediate screenshot."""
+failures are independent. Unmarked tools run serially.
+Image generation/editing runs serially, saves each result, and shares a limit
+of 5 calls by default (1-4 images each); excess rejects the whole batch before dispatch.
+Call memory/task reads directly. No nesting, dependent calls or overlapping mutations.
+`computer` is rejected; use computer(action='batch', ...) for ordered desktop actions."""
 
 def _batch_body_timeout(args: dict, ctx: ToolContext) -> float:
     from tool.tool import tool_body_timeout

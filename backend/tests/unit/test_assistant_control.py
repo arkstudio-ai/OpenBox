@@ -235,6 +235,66 @@ async def test_pause_and_resume_never_rerun_already_completed_task():
     assert (await recover_controls(task_id=args['task_id'], launch=False))[1] == []
 
 
+async def test_explicit_resume_of_canceled_task_waits_for_new_input_and_never_replays_pause(monkeypatch):
+    args, created, lease, _, _, state = await paused(monkeypatch)
+    canceled = await accept_control_command(**control(args, 'cancel',
+        expected_revision=state['task']['control_revision'], expected_run=None))
+    assert canceled['observed_state'] == 'canceled'
+    request = control(args, 'resume', expected_revision=canceled['task_revision'], expected_run=None)
+    resumed = await accept_control_command(**request)
+    assert resumed['execution_session_id'] == created['execution_session_id']
+    assert resumed['desired_state'] == 'running' and resumed['observed_state'] == 'idle'
+    assert resumed['requires_followup'] is True
+    assert (await recover_controls(task_id=args['task_id'], launch=False))[1] == []
+    assert await accept_control_command(**request) == resumed
+    async with get_db_session() as db:
+        assert (await db.get(AssistantCommand, resumed['command_id'])).state == 'applied'
+        assert await db.scalar(select(func.count()).select_from(TaskSubmission).where(
+            TaskSubmission.task_id == args['task_id'])) == 1
+        assert (await db.get(AgentInboxItem, created['inbox_id'])).state == 'settled'
+    new_input = await accept_task_command(**{**args, 'delivery': 'followup', 'expected_run': None,
+        'expected_revision': resumed['task_revision'], 'prompt': 'Use my new shop photo; show the plan first'})
+    assert new_input['task_id'] == created['task_id']
+    new_lease = await reserve_run(lease.session_id, lease.user_id)
+    try:
+        batch = await inbox.claim_inbox_boundary(new_lease, step=1, include_next_turn=True)
+        assert [item.id for item in batch.receipts] == [new_input['inbox_id']]
+    finally:
+        await new_lease.release()
+
+
+async def test_canceled_resume_cannot_race_a_still_running_driver():
+    args, _, lease, _ = await running()
+    try:
+        canceled = await accept_control_command(**control(args, 'cancel'))
+        with pytest.raises(AssistantError) as blocked:
+            await accept_control_command(**control(args, 'resume', expected_revision=canceled['task_revision']))
+        assert blocked.value.code == 'ASSISTANT_STILL_STOPPING'
+        assert (await view(args))['task']['desired_state'] == 'canceled'
+    finally:
+        await lease.release()
+
+
+async def test_canceled_resume_preserves_revoked_continuation_and_unknown_effect_gate(monkeypatch):
+    import assistant.control as controls
+    args, _, _, _, _, state = await paused(monkeypatch)
+    canceled = await accept_control_command(**control(args, 'cancel',
+        expected_revision=state['task']['control_revision'], expected_run=None))
+    async with get_db_session() as db:
+        task = await db.get(AssistantTask, args['task_id'])
+        task.continuation_policy = {'state': 'revoked', 'reason': 'task_canceled'}
+    original = controls.unresolved_effect_locked
+    async def unresolved(*_): return True
+    monkeypatch.setattr(controls, 'unresolved_effect_locked', unresolved)
+    with pytest.raises(AssistantError) as blocked:
+        await accept_control_command(**control(args, 'resume', expected_revision=canceled['task_revision'], expected_run=None))
+    assert blocked.value.code == 'ASSISTANT_EFFECT_UNRESOLVED'
+    monkeypatch.setattr(controls, 'unresolved_effect_locked', original)
+    await accept_control_command(**control(args, 'resume', expected_revision=canceled['task_revision'], expected_run=None))
+    async with get_db_session() as db:
+        assert (await db.get(AssistantTask, args['task_id'])).continuation_policy['state'] == 'revoked'
+
+
 @pytest.mark.parametrize('metadata', [
     {'outcome_unknown': True}, {'recovery_code': 'tool_outcome_unknown'}, {'execution_outcome': 'unknown'},
 ])

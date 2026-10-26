@@ -342,7 +342,8 @@ async def authorized_wiki_documents(db, scope, config, *, only=None) -> list[Doc
             continue
         # Enrich legacy manifests at read time from the same authorized SQL
         # snapshots, without changing the immutable approval envelope.
-        source_refs = tuple([{**reference, "occurred_at": await _occurred_at(db, scope, sources[reference["id"]]),
+        source_refs = tuple([{**reference, "origin_kind": sources[reference["id"]].source_kind,
+            "occurred_at": await _occurred_at(db, scope, sources[reference["id"]]),
             **({"document_id": sources[reference["id"]].source_metadata["document_id"], "origin_kind": "document_chunk"}
                 if sources[reference["id"]].source_kind == "document_chunk" else {})}
                              for reference in page.source_manifest])

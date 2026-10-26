@@ -1,8 +1,9 @@
 """Native realtime tool calls and event-driven delivery of background results.
 
-Only function calls dispatch work or answer cards. Speech is conversation, never
-an executable command. Provider VAD, playback, call IDs and result delivery are
-transport state, independent of the user's language or phrasing.
+Native function calls dispatch work or answer cards. A verified, missed human
+handoff may also deliver the exact input once through the normal acceptance
+path; assistant speech never grants authority. Provider VAD, playback, call IDs
+and result delivery are transport state, independent of language or phrasing.
 """
 import asyncio
 import json
@@ -25,16 +26,32 @@ TRANSCRIPT_WAIT_SECONDS = 2.5
 
 
 class TurnsMixin:
-    async def _recover_handoff(self, source: str, words: str) -> None:
+    async def _recover_handoff(self, source: str) -> bool:
+        """Persist verified human input once, independent of spoken playback."""
         from assistant.identities import inbox_key
+        guard = self.handoff
+        if guard is None or source not in guard.required or not guard.current(source):
+            return False
+        words = next((line.text for line in reversed(self.spoken.lines)
+                      if line.role == "user" and line.item_id == source), "")
+        if not words:
+            return False
+        try:
+            tools.AskArguments(request=words)
+        except ValueError:
+            return False
         async with self._business_lock:
-            guard = self.handoff
-            if (guard is None or not guard.current(source) or source in guard.attempted
-                    or source in self._spoken_actions):
-                return
+            if not guard.current(source):
+                return False
+            if source in self._spoken_actions or source in guard.refs or source in guard.fulfilled:
+                return True
+            if source in guard.attempted:
+                return False
             guard.attempted.add(source)
-            context = self._call_context(words, source_item=source)
-            context.update(spoken_input_id=source, handover_source="missed_handoff")
+            # Visible tasks are hints; acceptance still resolves the target and
+            # retains every confirmation gate. Assistant speech grants no consent.
+            context = {**self._call_context(words, source_item=source), "spoken_input_id": source,
+                       "handover_source": "verified_missing_handoff"}
             key = inbox_key("voice-handoff", self.call_id, self.session, source)
             ref = VoiceTurnRef(id=key, provider_call_id=key, text=words, transcript=words,
                                requested=self.clock(), context=context)
@@ -43,7 +60,7 @@ class TurnsMixin:
             except Exception as exc:
                 log.warning("voice recovery acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
                 guard.pending = (source, "failed")
-                return
+                return False
             guard.refs[source] = ref
             self._remember_spoken_action(source, {"status": "accepted", "request_id": ref.id,
                 "operation_state": "received", "execution_confirmed": False,
@@ -51,8 +68,11 @@ class TurnsMixin:
             self.pending_calls[key] = ref
             self.refs.append(ref)
             self._turn(ref, "accepted")
+            if self._ack_at is None:
+                self._ack_at = self.clock() + ACK_WAIT_SECONDS
             self._spawn(self._observe_transcript(ref))
             self._update_phase()
+            return True
 
     def _init_turns(self) -> None:
         self.followup_due = False   # tool outputs no reply has answered yet
@@ -70,6 +90,7 @@ class TurnsMixin:
         self._answering: dict[str, str] = {}  # the model's own reply → the user audio item it answers
         self._last_user_item = ""
         self._tool_sources: dict[str, str] = {}
+        self._memory_tool_scopes = {}
         self._user_utterances: dict[str, int] = {}  # original audio item → transcript sequence
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
@@ -139,6 +160,7 @@ class TurnsMixin:
         if event.name == tools.ASSISTANT_ASK:
             await self._ask(event)
         elif event.name in tools.DIRECT:
+            self._memory_tool_scopes[event.call_id] = (self._memory_generation, self.memory_turn, self.memory_budget)
             self._direct.add(event.call_id)
             self._spawn(self._direct_call(event))
         else:
@@ -172,6 +194,9 @@ class TurnsMixin:
         except ValueError:
             await self._command("send_tool_output", event.call_id, {"status": "invalid_arguments", "this_call_applied": False})
             self.followup_due = True
+            return
+        if arguments.mode == "remember" and getattr(self.link, "native_memory_enabled", False):
+            await self._native_remember(event, source_item, words)
             return
         identity = arguments.question_id
         if arguments.mode == "revise" and not identity:
@@ -248,6 +273,27 @@ class TurnsMixin:
         self._spawn(self._observe_transcript(ref))
         self._update_phase()
 
+    async def _native_remember(self, event, source_item, words):
+        from voice.memory_capture import unavailable_status
+        session, generation = self.session, self._memory_generation
+        if not source_item or source_item != self._last_user_item:
+            result = unavailable_status()
+        else:
+            if self.handoff is not None:
+                # This semantic mode has been handled, even when paused or
+                # unavailable. Handoff completion is not a memory-save claim.
+                self.handoff.attempted.add(source_item)
+                self.handoff.fulfilled.add(source_item)
+            result = await self.link.remember_current(item_id=source_item, text=words, provider_session=session)
+        if self.closing or session != self.session or generation != self._memory_generation:
+            return
+        # Do not register a business action: a real request/revision in the
+        # same utterance may still need its ordinary handover.
+        self._tool_receipts.append({"tool": event.name, "mode": "remember", **result})
+        self._tool_receipts = self._tool_receipts[-5:]
+        if await self._command("send_tool_output", event.call_id, result):
+            self.followup_due = True
+
     async def _wait_transcript(self, event) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + TRANSCRIPT_WAIT_SECONDS
@@ -266,6 +312,7 @@ class TurnsMixin:
             await self._complete_direct_call(event)
         finally:
             self._direct.discard(event.call_id)
+            self._memory_tool_scopes.pop(event.call_id, None)
         await self.fill_idle()
 
     async def _repeat_spoken_action(self, event, key):
@@ -292,6 +339,10 @@ class TurnsMixin:
 
     async def _complete_direct_call(self, event) -> None:
         started, session, cards_epoch = self.clock(), self.session, self._cards_epoch
+        generation, memory_turn, memory_budget = self._memory_tool_scopes.get(
+            event.call_id, (self._memory_generation, self.memory_turn, self.memory_budget))
+        if self.prepare_memory is not None and generation != self._memory_generation:
+            return
         source = self._tool_sources.get(event.call_id, "")
         words = self.utterance
         sequence = self.heard_count
@@ -303,7 +354,7 @@ class TurnsMixin:
                           if line.role == "user" and line.item_id == source), "") if source else self.utterance
             sequence = self._user_utterances.get(source, 0) if source else self.heard_count
         scope = replace(self.scope, transcript=words, utterance_index=sequence,
-                        desk=self.desk) if self.scope else None
+                        desk=self.desk, memory_turn=memory_turn, memory_budget=memory_budget) if self.scope else None
         decision = event.name in {"cards_answer", "task_question_answer"}
         if event.name == "task_question_answer":
             try:
@@ -355,16 +406,27 @@ class TurnsMixin:
         # What was really read, never its content: "did it check before it answered?" is in the log.
         log.info("voice tool call=%s tool=%s status=%s ms=%d", self.call_id, event.name, result.get("status"),
                  round((self.clock() - started) * 1000))
+        if event.name == "cards_pending":
+            log.info("voice card receipts call=%s read_ids=%s later_ids=%s", self.call_id,
+                [r["request_id"] for r in result.get("handled_decisions", [])],
+                [r["request_id"] for r in result.get("later_decisions_in_same_conversation", [])])
         if self.closing:
             return
         if self.handoff is not None and decision and result.get("this_call_applied") is True:
             self.handoff.fulfilled.add(source)
+        if self.handoff is not None and not decision and source:
+            # A read (including its failure) has its own answer path. This is
+            # not fulfillment of a mixed read-and-execute request: a positive
+            # handoff check can still repair a missing action.
+            self.handoff.read_observed.add(source)
         while self.desk.answers:  # a card confirmed: the turn it resumes is followed like any other
             answer = self.desk.answers.pop(0)
             if not answer["declined"]:  # declined: nothing happens, and the model has said so
                 self._follow(event.call_id, answer)
         if session != self.session:
             return  # its call was the dropped session's: the fresh one never saw it (the user is asked again)
+        if self.prepare_memory is not None and generation != self._memory_generation:
+            return  # a read for interrupted speech cannot answer a newer utterance
         if event.name == "cards_pending" and result.get("status") == "ok":
             observed = {self.desk.card_id(c["card"]): c["version"] for c in result.get("cards", [])}
             observed.update({q["request_id"]: q["version"] for q in result.get("task_questions", [])})
@@ -375,6 +437,7 @@ class TurnsMixin:
                 self._native_pending.update(observed)
                 self._native_read_epoch = self._cards_epoch
         if event.name == "tasks_overview" and result.get("status") == "ok":
+            self._native_work_read = True
             tasks = result.get("tasks") or []
             observed = {row["session_id"]: row["version"] for row in tasks if row.get("version")}
             decisions = {row["pending_request"]["request_id"]: row["pending_request"]["version"]
@@ -387,7 +450,9 @@ class TurnsMixin:
                 # tasks_overview reads question_version; cards_pending can use
                 # a different spoken-card version, so retain these separately.
                 self._native_work_decisions.update(decisions)
-        if event.name in {"cards_answer", "task_question_answer", "platforms_status"}:
+        if (event.name in {"cards_answer", "task_question_answer", "platforms_status"}
+                or not decision and (result.get("checked") is False
+                    or result.get("status") in {"unavailable", "restricted"})):
             self._tool_receipts.append({"tool": event.name, **result})
             self._tool_receipts = self._tool_receipts[-5:]
         if await self._command("send_tool_output", event.call_id, result) and not exhausted:
@@ -395,7 +460,7 @@ class TurnsMixin:
 
     def _call_context(self, words: str, *, question_id: str = "", source_item: str = "") -> dict:
         """What the assistant gets besides the request: the user's own words and the call's last lines."""
-        lines = [line for line in self.spoken.lines if line.role in ("user", "assistant")]
+        lines = [line for line in self.spoken.context_lines if line.role in ("user", "assistant")]
         if source_item:
             end = next((index + 1 for index, line in enumerate(lines) if line.item_id == source_item), len(lines))
             lines = lines[:end]
@@ -410,6 +475,10 @@ class TurnsMixin:
             context["detail"] = "detailed"  # the user wants fuller answers on the phone (voice/prompt.py)
         if questions := self.desk.question_context(question_id):
             context["task_questions"] = questions
+        packet = getattr(self, "memory_packet", None) or {}
+        if packet.get("route", {}).get("read_policy") == "allowed" and packet.get("viewed_task"):
+            context["viewed_task"] = {key: packet["viewed_task"][key]
+                for key in ("session_id", "title", "pending_request_ids")}
         return context
 
     def _follow(self, call_id: str, answer: dict) -> None:
@@ -525,7 +594,7 @@ class TurnsMixin:
                 rider.delivery = "riding"
             if ref.cards:  # handles are issued as the card's content goes to the model
                 shown = [cards.spoken_card(card, self.desk.show(card), self.lang) for card in ref.cards]
-                ref.note = phrases.card_note(ref.transcript or ref.text, ref.speech, shown, self.lang)
+                ref.note = phrases.card_note(ref.transcript or ref.text, self._note_speech(ref), shown, self.lang)
             elif ref.questions:
                 shown = [self.desk.show_question(question, self.lang) for question in ref.questions]
                 ref.note = phrases.question_note(shown, self.lang)
@@ -568,8 +637,13 @@ class TurnsMixin:
                 and not other.note_pending and not other.cards and not other.questions and not other.decision_versions and other.status == "ok"
                 and other.reason not in ("ask", "recall", "running")][:TOLD_TOGETHER - 1]
 
+    def _note_speech(self, ref: VoiceTurnRef) -> str:
+        from voice.speech_text import without_salutation
+        settings = (getattr(self, "memory_packet", None) or {}).get("settings", {})
+        return without_salutation(ref.speech, settings.get("address"))
+
     def _note_body(self, ref: VoiceTurnRef) -> str:
-        body = json.loads(phrases.note_body(ref.reason, ref.transcript or ref.text, ref.speech, self.lang,
+        body = json.loads(phrases.note_body(ref.reason, ref.transcript or ref.text, self._note_speech(ref), self.lang,
                           report_title=ref.report, asked=ref.asked,
                           running=[task["title"] for task in ref.running or []]))
         body["request_id"] = ref.id

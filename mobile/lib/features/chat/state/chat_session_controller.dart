@@ -235,6 +235,9 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
       case 'question.replied' || 'question.rejected' || 'question.cancelled':
         unawaited(_refetch());
       case 'session.status':
+        // __connected owns the history refresh; the stream store still
+        // applies the snapshot's generation and status independently.
+        if (event.data['recovery'] == true) return;
         // Decided from the frame, not the store, which may not have applied
         // it yet: the first chat opened after launch subscribes before the
         // store exists, and read the end of every run as still busy.
@@ -641,9 +644,11 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     if (_stopping) return;
     _stopping = true;
     final session = state.session;
-    final managed = session?.kind != 'assistant' && session?.assistantManaged == true;
+    final managed =
+        session?.kind != 'assistant' && session?.assistantManaged == true;
     final scope = managed ? ref.read(assistantScopeProvider) : null;
-    bool current() => !_disposed && (!managed || ref.read(assistantScopeProvider) == scope);
+    bool current() =>
+        !_disposed && (!managed || ref.read(assistantScopeProvider) == scope);
     final oldQuestions = ref
         .read(pendingProvider)
         .questionsOf(_sessionId)
@@ -652,17 +657,20 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     try {
       if (managed) {
         if (scope == null) throw StateError('Assistant scope unavailable');
-        await stopAssistantExecution(session: session!,
-          api: ref.read(assistantApiProvider(scope)), prefs: ref.read(prefsProvider),
-          isCurrent: current);
+        await stopAssistantExecution(
+          session: session!,
+          api: ref.read(assistantApiProvider(scope)),
+          prefs: ref.read(prefsProvider),
+          isCurrent: current,
+        );
       } else {
         await ref.read(chatApiProvider).abort(_sessionId);
       }
       if (!current()) return;
       if (!managed) {
         ref
-          .read(chatStreamProvider.notifier)
-          .setStatus(_sessionId, SessionStatus.idle);
+            .read(chatStreamProvider.notifier)
+            .setStatus(_sessionId, SessionStatus.idle);
       }
       final pending = ref.read(pendingProvider.notifier);
       if (!managed) {

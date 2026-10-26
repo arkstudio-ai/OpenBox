@@ -8,16 +8,19 @@ document or a recalled greeting stays immutable evidence, including placeholders
 DEFAULT_ADDRESS = "老板"
 
 
-def identity_lines(name: str, address: str, *, language: str = "en") -> list[str]:
+def identity_lines(name: str, address: str, *, language: str = "en", greeting_only: bool = False) -> list[str]:
     # Empty and explicitly cleared settings share the product default. Keep the
     # stored value empty so choosing a default is not mistaken for a custom name.
     custom_address = bool(address)
     address = address or DEFAULT_ADDRESS
     if language == "zh":
+        voice_address = (f"- 仅在通话开场称呼用户「{address}」。这是保存的称呼，不是每轮回复的前缀。"
+                         "通话中的回答、提问和后台结果播报直接说内容，不重复称呼；用户询问其设置时可说明。"
+                         + ("当前自定义称呼为空或已清空，使用默认值；不要恢复历史称呼。" if not custom_address else ""))
         return [
             (f"- 用户给你取的名字是「{name}」：介绍自己或被问身份时使用。"
              if name else "- 当前没有自定义助手名字，用用户语言中的通用助手称谓，不恢复历史名字。"),
-            (f"- 称呼用户「{address}」。实际问候从这个称呼开始，不再套用旧话术中的其他称谓。"
+            voice_address if greeting_only else (f"- 称呼用户「{address}」。实际问候从这个称呼开始，不再套用旧话术中的其他称谓。"
              if custom_address else
              f"- 称呼用户「{address}」。当前自定义称呼为空或已清空，所以使用默认称呼「{address}」；"
              "历史对话中用过的自定义称呼已经不适用，不要恢复或再次确认它们。"),
@@ -33,7 +36,11 @@ def identity_lines(name: str, address: str, *, language: str = "en") -> list[str
         (f"- Your name is「{name}」. Use it when introducing yourself or asked who you are."
          if name else "- No custom assistant name is set. Use a generic assistant role in the user's language; "
          "do not revive a historical name."),
-        (f"- Address the user as「{address}」. Use this form of address in greetings; "
+        (f"- Use「{address}」only in the opening greeting of the call. This saved setting is not a "
+         "prefix for ongoing answers, questions or background reports. State it when the user asks "
+         "about the setting, but otherwise start directly with the content. "
+         + ("The custom setting is empty or cleared; this is the default, not a historical name." if not custom_address else ""))
+        if greeting_only else (f"- Address the user as「{address}」. Use this form of address in greetings; "
          "do not prepend a different title from an old template." if custom_address else
          f"- Address the user as「{address}」. The custom form of address is currently empty or cleared, "
          f"so the effective default for this turn is「{address}」. Older custom names in conversation "

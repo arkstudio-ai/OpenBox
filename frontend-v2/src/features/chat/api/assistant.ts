@@ -264,7 +264,9 @@ function useAssistantUnread(enabled: boolean) {
     const visible = () => { if (document.visibilityState === "visible") refresh() }
     // Any run that settles may have answered on the main session. This light
     // read cannot tell that session apart, and it is cheap.
-    const settled = (data: { status: SessionStatus }) => { if (data.status === "idle" || data.status === "error") refresh() }
+    const settled = (data: { status: SessionStatus; recovery?: boolean }) => {
+      if (!data.recovery && (data.status === "idle" || data.status === "error")) refresh()
+    }
     const off = [wsClient.on("session.status", settled), wsClient.on("__connected", refresh)]
     document.addEventListener("visibilitychange", visible)
     return () => {
@@ -409,7 +411,7 @@ export function useAssistantEvents(mainId?: string, enabled = true) {
       // received during a read schedules one fresh pass afterward; it must
       // neither cancel that read repeatedly nor disappear behind it. Socket
       // hints carry the latency; the interval is only a fallback.
-      const off = [wsClient.on("session.status", changed), wsClient.on("message.updated", schedule),
+      const off = [wsClient.on("session.status", (data) => { if (!data.recovery) changed(data) }), wsClient.on("message.updated", schedule),
         wsClient.on("tool.completed", schedule), wsClient.on("__connected", refresh)]
       const poll = setInterval(schedule, 15_000)
       schedule()

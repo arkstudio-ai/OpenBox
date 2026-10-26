@@ -40,13 +40,13 @@ class QdrantMemoryIndex:
         self.fingerprint = config_hash(config)
 
     async def _request(self, method: str, path: str, body=None, *, missing_ok=False):
-        client = self.client or shared_client(self.config.provider_timeout_seconds)
+        client = self.client or shared_client(trust_env=self.config.provider_trust_env)
         headers = {}
         if os.getenv("QDRANT_API_KEY"):
             headers["api-key"] = os.environ["QDRANT_API_KEY"]
         try:
             response = await client.request(method, self.config.qdrant_url.rstrip("/") + path,
-                                            headers=headers, json=body)
+                                            headers=headers, json=body, timeout=self.config.provider_timeout_seconds)
             if missing_ok and response.status_code == 404:
                 return None
             data = response_json(response)

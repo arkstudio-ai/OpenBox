@@ -44,7 +44,10 @@ beforeEach(() => {
     const data = body as { draft: QuestionRequest["draft"]; revision: number }
     return { ...request, draft: data.draft, draft_revision: data.revision + 1 } as never
   })
-  vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() })
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = vi.fn(() => "blob:test")
+    static revokeObjectURL = vi.fn()
+  })
   vi.mocked(createAsset).mockResolvedValue({ id: "asset-a", name: "portrait.png", sandboxPath: "/workspace/portrait.png", putUrl: "https://assets.example/put", headers: {} })
   vi.mocked(completeAsset).mockResolvedValue({ id: "asset-a", name: "portrait.png", sandboxPath: "/workspace/portrait.png", mime: "image/png", size: 100, url: "https://assets.example/portrait.png" })
   vi.mocked(putToOss).mockResolvedValue(undefined)

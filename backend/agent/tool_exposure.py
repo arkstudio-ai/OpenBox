@@ -39,14 +39,14 @@ BUILD_RESIDENT_IDS = frozenset({
     "question",
     "task",
     "capability_search",
-    "memory_search", "memory_read_sources", "current_task_state", "memory_forget",
+    "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state", "memory_forget",
 })
 
 AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({
     "build": BUILD_RESIDENT_IDS,
-    "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit", "memory_search", "memory_read_sources", "current_task_state"}),
+    "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"}),
     "explore": frozenset({"bash", "read", "glob", "grep"}),
-    "general": frozenset({"bash", "read", "glob", "grep", "skill", "skill_search", "memory_search", "memory_read_sources", "current_task_state"}),
+    "general": frozenset({"bash", "read", "glob", "grep", "skill", "skill_search", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"}),
 })
 
 INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
@@ -204,15 +204,14 @@ def build_eligible_catalog(tools: Mapping[str, ToolInfo]) -> EligibleCatalog:
             separators=(",", ":"),
         )
         schema_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
-        schema_chars = len(json.dumps(
-            {
-                "name": provider_name,
-                "description": description,
-                "parameters": schema,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ))
+        # Budget the actual provider envelope, including function wrappers and
+        # array punctuation. Summing singleton arrays is a conservative bound
+        # for the combined array, independent of the selected provider dialect.
+        from agent.tool_payload import build_tool_definitions
+        schema_chars = max(len(json.dumps(
+            build_tool_definitions({provider_name: tool}, dialect),
+            ensure_ascii=False, separators=(",", ":"),
+        )) for dialect in ("litellm", "responses"))
         explicit_hint = str(getattr(tool, "discovery_hint", "") or "")
         hint = _clean_hint(
             explicit_hint or description,
@@ -394,6 +393,7 @@ def portable_plan(
     agent_name: str,
     signals: ExposureSignals = ExposureSignals(),
     revealed_ids: Iterable[str] = (),
+    requested_ids: Iterable[str] = (),
     editor_id: str | None = None,
 ) -> ExposurePlan:
     """Plan direct/deferred definitions without performing any I/O."""
@@ -406,7 +406,7 @@ def portable_plan(
     # permission pass allowed them.  Keep them resident for config-defined
     # agents too: a name-based resident table must not make an explicitly
     # allowlisted custom agent unable to discover its own deferred tools.
-    for tool_id in ("capability_search", "skill_search", "memory_search", "memory_read_sources", "current_task_state"):
+    for tool_id in ("capability_search", "skill_search", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"):
         if tool_id in eligible:
             direct.add(tool_id)
             reasons[tool_id] = "resident"
@@ -443,6 +443,15 @@ def portable_plan(
             direct.add(tool_id)
             if reasons.get(tool_id) not in {"resident", "model_editor"}:
                 reasons[tool_id] = f"product:{pack_name}"
+
+    # A discovery request from the immediately preceding step takes priority
+    # over speculative intent packs. It is still intersected with the current
+    # eligible catalogue and constrained by the provider's hard wire budget.
+    for tool_id in requested_ids:
+        if tool_id in eligible:
+            direct.add(tool_id)
+            if reasons.get(tool_id) not in {"resident", "model_editor"} and not reasons.get(tool_id, "").startswith("product:"):
+                reasons[tool_id] = "requested"
 
     direct_ids = tuple(sorted(direct))
     deferred_ids = tuple(sorted(eligible - direct))

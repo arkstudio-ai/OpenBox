@@ -170,6 +170,25 @@ afterEach(() => {
 })
 
 describe("dialling", () => {
+  it("sends the current view after ready, follows navigation, and stops on hangup", async () => {
+    const call = harness()
+    call.session.setViewedSession("first")
+    call.session.start()
+    await settle()
+    sockets[0].open()
+    call.session.setViewedSession("current")
+    expect(sockets[0].messages).toEqual([])
+    sockets[0].receive(READY)
+    expect(sockets[0].messages).toEqual([{ type: "view", session_id: "current" }])
+    call.session.setViewedSession("current")
+    call.session.setViewedSession(null)
+    expect(sockets[0].messages).toHaveLength(2)
+    expect(sockets[0].messages[1]).toEqual({ type: "view", session_id: null })
+    call.session.hangUp()
+    call.session.setViewedSession("late")
+    expect(sockets[0].messages).toHaveLength(3)
+    expect(sockets[0].messages[2]).toEqual({ type: "stop" })
+  })
   it("asks for the microphone, then a voice ticket, then dials — and sends no audio before `ready`", async () => {
     const call = harness()
     call.session.start()

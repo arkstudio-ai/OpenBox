@@ -16,11 +16,10 @@ import '../shared/appearance/type_scale.dart';
 import '../shared/events/bus.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/router/paths.dart';
-import '../shared/ws/ws_client.dart';
 
 /// The workspace shell (web `WorkspaceLayout` + `Topbar`), mobile re-flow:
 /// the sidebar becomes a drawer, the right panel a routed screen. Hosts the
-/// app-global WS connection while signed in.
+/// route-specific navigation; WorkspaceBootstrap owns the shared connection.
 class WorkspaceShell extends ConsumerStatefulWidget {
   const WorkspaceShell({
     super.key,
@@ -50,7 +49,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(wsClientProvider).connect();
       ref.read(onboardingProvider.notifier).ensureLoaded();
       if (widget.sessionId != null) unawaited(_panelEntryGuide());
       // Cross-feature: chat "审阅 →" emits workbench.open (web D.6).

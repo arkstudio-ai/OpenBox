@@ -78,6 +78,7 @@ Future<_FakeApi> _section(
     ProviderScope(
       overrides: [
         await zhI18n(tester),
+        assistantProfileOwnerProvider.overrideWithValue('u1'),
         assistantProfileApiProvider.overrideWithValue(api),
         wsClientProvider.overrideWithValue(ws ?? _Ws()),
       ],

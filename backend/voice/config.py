@@ -1,7 +1,7 @@
 """Voice-call settings for one call: enablement, key, endpoint and proxy plan."""
 import os
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from core.config import VoiceConfig, get_config
 
@@ -11,8 +11,13 @@ def voice_config() -> VoiceConfig:
 
 
 def api_key(config: VoiceConfig) -> str:
-    """The configured key, else DASHSCOPE_API_KEY, the same variable the memory providers read."""
-    return config.api_key or os.getenv("DASHSCOPE_API_KEY", "")
+    """Custom gateways require an explicit key; never leak the official fallback."""
+    if config.api_key:
+        return config.api_key
+    host = (urlsplit(config.endpoint).hostname or "").lower()
+    if host == "dashscope.aliyuncs.com" or host.endswith(".maas.aliyuncs.com"):
+        return os.getenv("DASHSCOPE_API_KEY", "")
+    return ""
 
 
 def enabled(config: VoiceConfig | None = None) -> bool:
@@ -24,6 +29,9 @@ def enabled(config: VoiceConfig | None = None) -> bool:
 def realtime_url(config: VoiceConfig) -> str:
     endpoint = config.endpoint
     if config.workspace_id:
+        host = (urlsplit(endpoint).hostname or "").lower()
+        if not (host == "dashscope.aliyuncs.com" or host.endswith(".maas.aliyuncs.com")):
+            raise ValueError("voice.workspace_id must be empty when using a gateway")
         # A configuration value, but it becomes a host name: refuse anything else.
         if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", config.workspace_id):
             raise ValueError("voice.workspace_id must be a business-space ID")

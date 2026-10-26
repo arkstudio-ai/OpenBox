@@ -15,7 +15,8 @@
     "overview": "All",
     "memories": "Memories",
     "topics": "Topics",
-    "files": "Files"
+    "files": "Files",
+    "experiences": "Experience"
   },
   "seeAll": "See all",
   "loadMore": "Load more",
@@ -216,5 +217,37 @@
     "clearAction": "Clear all",
     "clearing": "Clearing…",
     "cleared": "Cleared {{count}} memories."
+  },
+  "experience": {
+    "hint": "Reusable procedures start as candidates. Test them, record the observed result, then enable your private skill. Edits require a new review.",
+    "empty": "No candidates yet. The assistant can organize reusable methods after a task has a clear outcome.",
+    "unavailable": "Original evidence is unavailable; this procedure is disabled",
+    "version": "Version {{version}}",
+    "state": {
+      "candidate": "Needs validation",
+      "validated": "Validated, not enabled",
+      "enabled": "Enabled",
+      "retired": "Disabled",
+      "needs_review": "Evidence unavailable"
+    },
+    "field": {
+      "title": "Name",
+      "conditions": "Applicable conditions",
+      "steps": "Steps (one per line when editing)",
+      "expected_result": "Expected result",
+      "failure_boundaries": "When to stop or avoid this procedure",
+      "test_plan": "Validation method"
+    },
+    "editHint": "Saving pauses this procedure. Later tasks use the revised version only after you validate and enable it.",
+    "saveDraft": "Save for revalidation",
+    "lastReview": "Last review",
+    "reviewNotes": "Test steps and observed result",
+    "reviewPlaceholder": "Describe what you tested, the actual result and any incomplete checks (at least 10 characters).",
+    "reviewPassed": "I tested this and the result met the expectation",
+    "recordReview": "Record test result",
+    "cancelEdit": "Cancel edit",
+    "edit": "Edit steps",
+    "enable": "Enable private skill",
+    "retire": "Stop using"
   }
 }

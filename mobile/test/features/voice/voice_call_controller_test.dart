@@ -48,6 +48,31 @@ class _Call {
 }
 
 void main() {
+  testWidgets('view follows navigation only after ready and stops on hangup', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    call.controller.setViewedSession('first');
+    await call.dial(tester);
+    call.controller.setViewedSession('current');
+    expect(call.socket.jsonSent, isEmpty);
+    call.socket.sendReady();
+    await tester.pump();
+    expect(call.socket.jsonSent, [
+      {'type': 'view', 'session_id': 'current'},
+    ]);
+    call.controller.clearViewedSession('first');
+    expect(call.socket.jsonSent.length, 1);
+    call.controller.clearViewedSession('current');
+    expect(call.socket.jsonSent.last, {'type': 'view', 'session_id': null});
+    call.controller.setViewedSession('next');
+    await call.controller.hangUp();
+    final count = call.socket.jsonSent.length;
+    call.controller.setViewedSession('late');
+    expect(call.socket.jsonSent.length, count);
+    call.dispose();
+    await tester.pump();
+  });
   testWidgets('dials in order and sends no audio before ready', (tester) async {
     final call = _Call(VoiceRig());
     await call.dial(tester);
@@ -96,6 +121,36 @@ void main() {
     expect(call.rig.audio.clears, 1);
     expect(call.state.phase, VoicePhase.listening);
     expect(call.state.working, isTrue);
+    call.dispose();
+  });
+
+  testWidgets('new server playback capability keeps the legacy mobile path', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.dial(tester);
+    call.socket.event({
+      'type': 'ready',
+      'call_id': 'call-1',
+      'model': 'qwen-audio-3.1-realtime-plus',
+      'input_sample_rate': 16000,
+      'output_sample_rate': 24000,
+      'max_seconds': null,
+      'playback_ack': true,
+    });
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.connected);
+    // This client does not advertise exact playback completion. The server
+    // must retain its estimated playback fallback, rather than wait for ACK.
+    expect(call.socket.jsonSent, isEmpty);
+    call.socket
+      ..audio([1, 0, 2, 0])
+      ..event({'type': 'phase', 'value': 'listening', 'working': false});
+    await tester.pump();
+    expect(call.rig.audio.played.single, [1, 0, 2, 0]);
+    expect(call.state.phase, VoicePhase.listening);
+    await call.controller.hangUp();
+    expect(call.socket.jsonSent.last, {'type': 'stop'});
     call.dispose();
   });
 
@@ -396,6 +451,45 @@ void main() {
     expect(call.state.end!.detailKey, 'voice:errors.backgroundStart');
     expect(rig.audios, isEmpty);
     expect(rig.systemCall.ends, 1);
+    call.dispose();
+  });
+
+  testWidgets('system startup rejection stays ended despite late callback', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    call.controller.setExpanded(true);
+    await call.dial(tester);
+    rig.systemCall.events.add(SystemVoiceAction.startFailed);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(call.state.end?.detailKey, 'voice:errors.backgroundStart');
+    expect(call.state.expanded, isTrue);
+    rig.systemCall.startGate!.completeError(StateError('CallKit cancelled'));
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(rig.audios, isEmpty);
+    expect(rig.systemCall.ends, 1);
+    call.dispose();
+  });
+
+  testWidgets('system cancellation during dial leaves a visible end state', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    call.controller.setExpanded(true);
+    await call.dial(tester);
+    rig.systemCall.events.add(SystemVoiceAction.end);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(call.state.end?.reason, VoiceEndReason.hangup);
+    rig.systemCall.startGate!.complete();
+    await tester.pump();
+    expect(rig.audios, isEmpty);
     call.dispose();
   });
 

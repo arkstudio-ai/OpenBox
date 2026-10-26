@@ -14,6 +14,47 @@ const _receipt =
     '请先查看原任务状态，避免重复提交。';
 
 void main() {
+  for (final code in ['SANDBOX_NOT_READY', 'SANDBOX_SUBSCRIPTION_REQUIRED']) {
+    testWidgets(
+      '$code shows the retained request cause without resend advice',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
+        final prefs = await SharedPreferences.getInstance();
+        final bundle = (await tester.runAsync(I18nBundle.load))!;
+        final i18n = I18nState(language: 'zh-CN', bundle: bundle);
+        const message = '原请求和参考附件已保留；恢复后继续原任务，无需重新上传。';
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+            ],
+            child: MaterialApp(
+              theme: ThemeData(
+                extensions: [
+                  BossipTokens.resolve(
+                    BossipThemeName.default_,
+                    Brightness.light,
+                  ),
+                ],
+              ),
+              home: Scaffold(
+                body: AssistantErrorNotice(
+                  error: {'code': code, 'message': message},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(message), findsOneWidget);
+        expect(
+          find.text(i18n.t('chat:assistant.continueAfterError')),
+          findsNothing,
+        );
+        expect(find.text(i18n.t('chat:meta.errorDetails')), findsNothing);
+      },
+    );
+  }
   testWidgets('budget receipt stays visible without generic resend advice', (
     tester,
   ) async {

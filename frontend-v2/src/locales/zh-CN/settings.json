@@ -259,6 +259,9 @@
       "removeFailed": "没能删掉，请再试一次。",
       "reactions": "最近 30 天点踩时选的原因",
       "reaction": "{{reason}} {{count}} 次"
-    }
+    },
+    "languageLabel": "交谈语言",
+    "languageHint": "用于新对话和语音通话；留空则跟随你本次说话的语言。",
+    "languagePlaceholder": "例如：英语、普通话"
   }
 }

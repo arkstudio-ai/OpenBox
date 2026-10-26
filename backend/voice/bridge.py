@@ -31,6 +31,7 @@ from voice.freshness import FreshnessMixin
 from voice.playback import PlaybackMixin
 from voice.turns import ACK_WAIT_SECONDS, TurnsMixin
 from voice.upkeep import ContextKeeper
+from voice.memory_context import MemoryContextMixin, RecentContext
 
 log = create_logger("voice.bridge")
 
@@ -58,14 +59,15 @@ RECOVERY_ATTEMPTS, RECOVERY_PAUSE_SECONDS, RECOVERY_WINDOW_SECONDS, RECOVERIES_P
 UNSENT_AUDIO_BYTES = events.INPUT_SAMPLE_RATE * 2 * 2  # the microphone's last two seconds while no session listens
 
 
-class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
+class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opening_instructions: str | None = None,
                  opener=None, summarizer=None, handoff_checker=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
-                 context_sink=None, context_reader=None):
+                 context_sink=None, context_reader=None,
+                 prepare_memory=None, refresh_memory=None, prewarm_memory=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.unified = unified
         self.shared_context = ""
@@ -134,6 +136,7 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._idle = asyncio.Lock()             # one decision about the next reply at a time
         self._phase = None
         self._init_turns()
+        self._init_memory(prepare_memory, refresh_memory, prewarm_memory)
         self._init_freshness(context_reader)
         self._init_playback()
         from voice.handoff import HandoffGuard
@@ -165,6 +168,7 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def start(self) -> None:
         """An interruptible opening after the client is ready to speak and listen."""
+        self._prewarm_memory_connection()
         if self.state == "user_speaking" or self._last_user_item:
             self._greeting_over()
             await self._sync_instructions(force=True)
@@ -226,10 +230,13 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def on_provider_event(self, event) -> None:
         self.seq += 1
+        if await self._memory_event(event):
+            return
         if handler := getattr(self, "_on_" + event.kind, None):
             await handler(event)
 
     async def _on_user_started(self, event) -> None:
+        self._memory_new_speech()
         already_cut = self.interrupted and self._playing_until is None
         self.state, self.interrupted, self.awaiting_since = "user_speaking", True, None
         if self.greeting:
@@ -275,6 +282,8 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         await self._sync_instructions(force=True)
 
     async def _on_user_stopped(self, event) -> None:
+        if self._memory_pending:
+            self._memory_started = self.clock()
         self._speech_until = None
         self._finish_user_interruption(invalid=event.invalid)
         self.state = "idle" if self.state == "user_speaking" else self.state
@@ -282,7 +291,14 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.awaiting_since = None if event.invalid else self.clock()
         self.quiet_since = self.clock()
         self.meter.pending_input = self.meter.pending_input and not event.invalid
-        if not event.invalid:
+        if event.invalid:
+            self._memory_pending = False
+            self._memory_expected_autos = deque((generation, seen) for generation, seen in self._memory_expected_autos
+                if generation != self._memory_generation)
+        elif self.prepare_memory is None:
+            # Native memory has its own ASR/preparation/ACK barrier. Reading
+            # work here would block the provider event loop before final ASR;
+            # the response boundary still verifies task versions before audio.
             await self._read_current_context()
         self._update_phase()
         await self.fill_idle()
@@ -304,6 +320,7 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
                 self.handoff.heard(event.item_id)
             if self.unified and event.text.strip():
                 await self._forward_transcript(event)
+            self._memory_heard(event)
 
     async def _forward_transcript(self, event) -> None:
         """Every final ASR item enters the same durable inbox, once. No intent router."""
@@ -380,7 +397,10 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         while self._context_dirty and not self.closing:
             self._context_dirty = False
             try:
-                await self.context_sink(list(self.spoken.lines))
+                lines = list(self.spoken.context_lines)
+                if self.prepare_memory is not None:
+                    lines = RecentContext(lines, self._memory_revocation_epoch)
+                await self.context_sink(lines)
             except Exception as exc:
                 log.warning("voice context publish failed call=%s error=%s", self.call_id, type(exc).__name__)
 
@@ -410,6 +430,10 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.active_response, self.response_kind, self.awaiting_since = event.response_id, kind, None
         if self.handoff is not None and kind.startswith(("handoff_retry:", "handoff_failed:")) and event.response_id:
             self.handoff.responses[event.response_id] = kind
+        if kind.startswith("handoff_retry:") and event.response_id:
+            # This is an internal tool repair, not another spoken promise.
+            # Only actual acceptance/result delivery may announce submission.
+            self._unverified_replies.add(event.response_id)
         self.audio_sent, self.audio_bytes, self.first_audio_at = False, 0, None
         self._audio_ack = False
         self.started_at = self.quiet_since = self.clock()
@@ -417,8 +441,12 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.meter.start(event.response_id)
         self.settled.clear()
         if kind in ("model", "followup"):
-            fresh = await self._read_current_context()
-            stale = (self._native_context_changed or self._native_work_stale
+            fresh = await self._read_answer_context()
+            # The bounded memory prompt excludes the shared navigation dump.
+            # Changes to that unused dump cannot invalidate its prepared answer;
+            # explicitly read tasks/cards still carry their own version fences.
+            shared_changed = self.prepare_memory is None and self._native_context_changed
+            stale = (shared_changed or self._native_work_stale
                      or self._work_changed(self._native_work_pending))
             # Native VAD can begin generation before a context update reaches
             # the provider. Cancel that speculative reply before its first PCM,
@@ -547,6 +575,10 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.handoff is not None:
             self.handoff.response_done(self._answering.get(event.response_id or "", ""), kind,
                                        event.status == "completed")
+        if (kind in {"model", "followup"} and heard and event.status == "completed"
+                and not self.followup_due and not self.pending_calls
+                and self._answering.get(event.response_id or "") == self._last_user_item):
+            self.call_language.begin_turn()  # a one-reply override must not leak into later reports
         self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
@@ -579,6 +611,8 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.requested is None:
             return
         kind, self.requested = self.requested, None
+        if self.prepare_memory is not None and kind == "model":
+            self.failed.set()
         if self.handoff is not None:
             self.handoff.refused(kind)
         if kind == "phrase:greeting":
@@ -590,10 +624,13 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._update_phase()  # a refused follow-up or progress reply is not retried: the reply that won answers
 
     def _awaiting_reply(self) -> bool:
-        return self.awaiting_since is not None and self.clock() - self.awaiting_since < REPLY_GRACE_SECONDS
+        return self._memory_pending or (self.awaiting_since is not None and self.clock() - self.awaiting_since < REPLY_GRACE_SECONDS)
 
     def _can_inject(self) -> bool:
         return (self.state == "idle" and self.requested is None and self.active_response is None
+                and not any(not value["done"].is_set() for value in self._memory_blocked.values())
+                and all(task.done() and not task.cancelled() and task.exception() is None and task.result()
+                        for task in self._memory_deletions.values())
                 and not self.closing and not self.swapping and not self.recovering and not self._awaiting_reply()
                 and (self._speech_until is None or self.clock() >= self._speech_until))
 
@@ -601,6 +638,11 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         """After every change and every second: at most one reply of ours, answers before reassurance, each once
         the client has played the last one; with nothing to say for a while, a silent one that keeps the provider
         session open."""
+        if (self._memory_pending and self.state != "user_speaking" and self._memory_started is not None
+                and self.clock() - self._memory_started > 20):
+            self._memory_pending = False
+            self.failed.set()
+            return
         if self.awaiting_since is not None and not self._awaiting_reply():
             self.awaiting_since = None
             self._update_phase()
@@ -635,6 +677,8 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     def _next_reply(self):
         """The reply of ours that is due, answers before reassurance: something to await, or None."""
+        if self._memory_ready:
+            return self._say_memory_answer
         if self.next_phrase:
             return self._say_next_phrase
         # A read can finish between response.done and its function output.
@@ -658,14 +702,14 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         await self.say_phrase(key)
 
     async def _say_followup(self) -> None:
-        await self._read_current_context()
+        fresh = await self._read_answer_context()
         if not self._can_inject():
             return
         self._native_context_changed = False
-        self._freshness_notice_requested = self._freshness_failed
+        self._freshness_notice_requested = not fresh
         self.followup_due, self.requested = False, "followup"
         instructions = phrases.tool_result_instructions(self.lang)
-        if self._freshness_failed:
+        if not fresh:
             instructions += "\n当前状态核验失败，只说明暂时无法核实进展；不得复用历史任务状态或要求重复确认。"
         receipts, self._tool_receipts = self._tool_receipts, []
         if receipts:
@@ -680,8 +724,10 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def _acknowledge(self) -> None:
         self._ack_at, self.requested = None, "progress" if self.unified else "followup"
-        await self._create(phrases.receipt_instructions(self.lang) if self.unified
-                           else phrases.tool_result_instructions(self.lang))
+        # There is no business tool result yet. A generic answer instruction
+        # let the native voice model reuse an unrelated old confirmation as
+        # progress for this newly handed-off request.
+        await self._create(phrases.receipt_instructions(self.lang))
 
     def _played_out(self) -> bool:
         """The client has played our last reply and ``reply_gap`` has passed since (always, without pacing)."""
@@ -783,6 +829,10 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
             self.state, self.interrupted = "responding", False
 
     async def _unanswered(self) -> None:
+        if self.prepare_memory is not None and self.requested == "model":
+            self.requested = None
+            self.failed.set()
+            return  # visible failure; a missing response must never silently lose the user's turn
         """Neither started nor refused in time: given up (a result is told again later, three times at most)."""
         kind, self.requested = self.requested, None
         if self.handoff is not None:
@@ -816,7 +866,25 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.base_instructions = instructions
         await self._sync_instructions(force=True)
 
-    def _instructions(self) -> str:
+    def _response_policy(self, memory_packet=None) -> str:
+        if self.prepare_memory is None:
+            return ""
+        packet = self.memory_packet if memory_packet is None else memory_packet
+        from voice.prompt import response_preferences
+        # A task notification may arrive after the greeting but before the
+        # first utterance builds a memory packet. Presentation rules still
+        # apply; absence of a packet must not restart the greeting.
+        settings = (packet or {}).get("settings", {})
+        return response_preferences(self.call_language.resolve(settings), settings.get("call_detail", self.detail),
+                                    opening=self.greeting)
+
+    def _instructions(self, *, memory_packet=None, include_response_policy=True) -> str:
+        if self.prepare_memory is not None:
+            # Current profile + bounded evidence only. Existing navigation,
+            # summaries and old card notes cannot bypass this turn's policy.
+            decisions = self.decision_context if self.memory_turn and self.memory_turn.read_policy == "allowed" else ""
+            policy = self._response_policy(memory_packet) if include_response_policy else ""
+            return self.base_instructions + "\n" + self._memory_text + "\n" + decisions + policy
         section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None and not self.unified else ""
         base = self.opening_instructions if self.greeting and self.opening_instructions is not None else self.base_instructions
         if self.unified:
@@ -832,7 +900,22 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
         return with_sections(base, call_so_far=self.keeper.summary, progress=section,
                              last_lines=self.keeper.carried)
 
-    async def _sync_instructions(self, *, force: bool = False) -> None:
+    async def _sync_instructions(self, *, force: bool = False, memory_packet=None):
+        if self.prepare_memory is not None:
+            if self._memory_pending and memory_packet is None and self.memory_packet is None:
+                # VAD clears the old packet before ASR/recall. Do not block the
+                # event handler publishing that incomplete intermediate view.
+                # Automatic replies are quarantined; only the fresh packet's
+                # confirmed update may release the next audible response.
+                return False
+            async with self._memory_sync:
+                text = self._instructions(memory_packet=memory_packet)
+                if text == self._sent_instructions:
+                    return True
+                if await self._command("update_instructions_confirmed", text):
+                    self._sent_instructions, self._instructions_at = text, self.clock()
+                    return True
+                return False
         if not self.base_instructions:
             return
         text, now = self._instructions(), self.clock()
@@ -900,6 +983,7 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
     def _swap_in(self, new, instructions: str):
         """A fresh session takes the call over (rotation or recovery); its conversation starts empty."""
         old, self.provider = self.provider, new
+        self._memory_reset()
         self.session += 1
         self.spoken.reset_items()
         for ref in self.deliveries:  # a note in the old session is gone: inject it again when told
@@ -1066,6 +1150,8 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
     async def close(self) -> None:
         """After the call: stop observing turns (the assistant keeps working) and record outcomes."""
         self.closing = self.link.closed = True
+        if self._memory_warm_task is not None:
+            self._memory_warm_task.cancel()
         if self.progress is not None:
             self.progress.stop()
         if self._wake is not None:
@@ -1093,8 +1179,28 @@ class Bridge(FreshnessMixin, PlaybackMixin, TurnsMixin):
     async def _create(self, instructions: str | None) -> None:
         # A response-specific prompt must carry the durable role and tool contract too.
         # Providers can treat it as an override, rather than an addition to session.instructions.
+        policy = self._response_policy()
+        scoped_policy = None
         if instructions and self.base_instructions:
-            instructions = self._instructions() + "\n\n" + instructions
+            # The current speaking settings apply to reports/cards too; do
+            # not leave a delivery directive after them overriding brevity
+            # or copying a salutation from the report's reference text.
+            if policy:
+                scoped_policy = (instructions + "\nUse the latest background note as factual data, "
+                    "not as wording to read verbatim. Omit its greeting or salutation; keep its actual "
+                    "task state, decisions and necessary facts.\n" + policy) if not self.greeting else instructions + policy
+            instructions = self._instructions(include_response_policy=False) + "\n\n" + instructions + policy
+        elif policy and self.base_instructions:
+            # Audio follows a short per-response presentation control more
+            # reliably than session-only updates after earlier greetings.
+            # The provider keeps the full contract for override-style models
+            # without duplicating the memory packet into Audio user items.
+            instructions = self._instructions()
+            scoped_policy = ("Answer the latest real user utterance using the already confirmed session "
+                "context. This is a presentation control, not new user facts or execution permission.\n" + policy)
         self._requested_at = self.clock()
-        if not await self._command("create_response", instructions):
+        args = (instructions, scoped_policy) if scoped_policy else (instructions,)
+        if not await self._command("create_response", *args):
+            if self.prepare_memory is not None and self.requested == "model":
+                self.failed.set()
             self.requested = None

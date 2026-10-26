@@ -92,30 +92,31 @@ async def instruction_system() -> list[str]:
     return results
 
 
-async def instruction_system_with_config(config) -> list[str]:
+async def instruction_system_with_config(config, *, discover_local: bool = True) -> list[str]:
     """Load instruction files using a pre-loaded config object."""
     paths: set[str] = set()
     results: list[str] = []
 
-    cwd = Path.cwd()
-    project_root = _find_project_root(cwd)
-
-    for filename in INSTRUCTION_FILES:
-        found = _find_up(filename, cwd, project_root)
-        if found:
-            paths.update(found)
-            break
-
-    config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    global_candidates = [
-        os.path.join(config_home, "openbox", "AGENTS.md"),
-        os.path.join(config_home, "openagent", "AGENTS.md"),
-        os.path.expanduser("~/.claude/CLAUDE.md"),
-    ]
-    for p in global_candidates:
-        if os.path.isfile(p) and p not in paths:
-            paths.add(p)
-            break
+    # A server checkout and its operator's home are not the end user's remote
+    # workspace. Explicit deployment policy remains applicable in either mode.
+    if discover_local:
+        cwd = Path.cwd()
+        project_root = _find_project_root(cwd)
+        for filename in INSTRUCTION_FILES:
+            found = _find_up(filename, cwd, project_root)
+            if found:
+                paths.update(found)
+                break
+        config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        global_candidates = [
+            os.path.join(config_home, "openbox", "AGENTS.md"),
+            os.path.join(config_home, "openagent", "AGENTS.md"),
+            os.path.expanduser("~/.claude/CLAUDE.md"),
+        ]
+        for p in global_candidates:
+            if os.path.isfile(p) and p not in paths:
+                paths.add(p)
+                break
 
     if config and config.instructions:
         for instruction in config.instructions:

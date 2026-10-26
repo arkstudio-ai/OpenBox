@@ -20,6 +20,7 @@ export function ThinkingTrace({ text, streaming }: Props) {
       title={streaming ? t("trace.think.titleActive") : t("trace.think.titleDone")}
       subtitle={streaming ? t("trace.think.subtitleActive") : t("trace.think.subtitleDone")}
       streaming={streaming}
+      unmountOnClose
     >
       <div className="max-w-165">
         <Suspense fallback={<span className="text-n700 text-md whitespace-pre-wrap">{text}</span>}>

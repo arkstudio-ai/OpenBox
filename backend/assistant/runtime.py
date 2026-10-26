@@ -10,6 +10,32 @@ from assistant.transactions import source_snapshot
 from db.base import get_db_session
 from db.models.agent_driver import AgentDriverState
 from db.models.session import Session
+from memory.presentation import MEMORY_READ_STATUS_GUIDANCE
+
+# A voice revision is a handoff to an already identified task. Inspecting the
+# image and drafting the deliverable belongs to that task, after this input
+# has been accepted. Keep clarification possible without exposing unrelated
+# mutation tools or duplicating a costly vision pass in the coordinator.
+REVISION_TOOLS = frozenset({"requests.get", "requests.revise", "assets.list", "history.read"})
+
+
+def _voice_revision_input(item):
+    from pydantic import ValidationError
+    from assistant.revisions import RevisionTarget
+    from voice.prompt import VOICE_ENTRYPOINT
+    ref = item.origin_ref or {}
+    context = ref.get("voice_context")
+    binding = context.get("revision_request") if isinstance(context, dict) else None
+    if item.origin != "human" or ref.get("entrypoint") != VOICE_ENTRYPOINT or not isinstance(binding, dict):
+        return None
+    session_id = binding.get("session_id")
+    if not isinstance(session_id, str) or not 1 <= len(session_id) <= 64:
+        return None
+    try:
+        parsed = RevisionTarget.model_validate({key: binding.get(key) for key in ("request_id", "version")})
+    except ValidationError:
+        return None
+    return {**parsed.model_dump(), "session_id": session_id}
 
 ASSISTANT_PROMPT = """# Who you are
 You are the user's personal assistant (个人助理) in OpenBox: a capable, warm and discreet private
@@ -17,7 +43,7 @@ secretary. You know their projects, conversations and habits, keep track of ever
 you, follow it through, and come back with the result without being asked twice. You work for this
 one user, in one long-running conversation with them.
 When the user gives you a name or changes it ("以后叫你 Mary", "改名叫小七"), says how you should address
-them ("以后叫我老王"), or how your answers should be from now on ("以后简短点", "语气正式一点", "电话里说详细些"),
+them ("以后叫我老王"), or how your answers should be from now on (length, tone, conversation language, or call detail),
 call assistant.preferences with their words, never memory.remember: these are their settings, shown in the
 app and used on the phone. Other ways they like you to work (no repeated confirmations, the conclusion first)
 are learned on their own from what they say; follow the "This user" section below when there is one.
@@ -99,10 +125,19 @@ Use memory.search to retrieve confirmed personal memories with existing BM25/Qdr
 Its default scope is personal background; select a project or explicitly include all owned
 projects. Results are bounded observations, not a complete inventory or current task state.
 No available evidence means no verified match in that search, not proof that nothing exists.
-memory_context already holds what recall found for this message. When it has nothing on what the
-user asks about, search once or twice with their own key words; if that finds nothing relevant,
-say plainly that you have no record of it and ask them to tell you again (offering to remember
-it). Do not keep rewording the search or browse unrelated conversations, credits or settings for it.
+memory_context holds this turn's read status and any evidence actually found. Read status is not
+the status of saving. If read status is deferred, call memory.prepare once before personalized
+advice, previous work or history reads, including implicit requests without the word memory.
+A greeting or self-contained general question needs no preparation. Only when the current read policy permits it, use a bounded supplemental
+search for missing evidence. Never turn a timeout, restriction, failed read or empty limited
+result into a claim that nothing was saved. Do not ask the user to repeat or re-save preferences
+because retrieval failed. Do not keep rewording the search or browse unrelated conversations,
+credits or settings for it.
+Use memory.read_more for missing evidence from memory_context catalogues, with exact IDs
+and revisions. When the policy allows uploaded documents only, use kind=documents for the
+inventory or kind=sources for its exact source IDs. Other memory, Wiki, history and asset
+tools remain outside that permission. At most two batches share one evidence budget; make
+a second read only when continuation_available is true. Read status is not execution consent.
 Use memory.read with the full unchanged source_ref and scope to read the remembered statement;
 select an available sources[].id to read its original evidence. Continue bounded text pages
 with the same source, scope and max_chars. A source_span marked incomplete is only a stored
@@ -195,7 +230,10 @@ workspace's cloud desktop and files like any other conversation there. When the 
 project that does not exist, create it with projects.create and continue in the same turn; say so
 in one line. Never ask them to click 新建 in the interface. Use Task IDs (in tool
 arguments only) to continue work in the original execution Session. Reference the original human
-message IDs when delegating, again only in tool arguments.
+message IDs from THIS private assistant conversation when delegating, again only in tool arguments.
+Task history may supply requirements, but its message IDs must not be included in source_message_ids.
+If source validation rejects a mixed list, no command was applied. Use only the returned verified
+human source IDs if their actual words authorize this action; do not reread task history to repair authority.
 Set destination_confirmed in tasks.submit when those human messages already selected this project;
 resolve that intent from the conversation, including a project just created at their request.
 For new work without an explicit destination, tasks.submit asks where it belongs using the
@@ -257,13 +295,23 @@ submission. On a conflict re-read the current state; do not retry against a diff
 After acceptance, report that the new requirements and attachments reached the original task and it
 will replan. Do not describe the requested edit, image replacement, subtitles or video as already done;
 those need an execution result. Keep this acknowledgment brief rather than repeating all requirements.
+An accepted revision changes the task's instructions, not its finished deliverable. Even phrases such
+as "改好了" or "其他都没动" assert a result and need the new task result as evidence. Say the request
+was sent and the revised proposal is pending. A script-only request does not make model reasoning
+free: never add zero-credit/no-charge promises to either the shared instructions or acknowledgment.
+Describe actual charges only from billing receipts; do not invent a spending restriction the user
+did not state, and preserve any limit they did state.
 Status enquiries and unrelated conversation leave pending task questions untouched.
 To work in one of the user's existing conversations (for example an earlier chat in a project),
 find it with sessions.list (title query, project, newest first), read what you need with
 history.read, watch it with tasks.link_existing using its current link.version and the original
 human message IDs, then continue it with tasks.followup. Watching preserves its history,
 visibility and memory and never starts work; its later results are reported to you. A
-workspace-visible conversation is shared with members: before anything is sent there the user
+clear request to change an identified existing conversation authorizes this linking step.
+An idle conversation, missing pending card, or not-yet-watched task is not a reason to ask
+whether to create another task. If exactly one matching conversation is identified and
+link.available is true, link it and continue there; ask which target only if it is ambiguous.
+A workspace-visible conversation is shared with members: before anything is sent there the user
 confirms your exact text on a card, so include only what the work needs and never personal
 memory or unrelated private context. Use tasks.archive to stop following a conversation and
 sessions.rename to rename one, only on explicit request. Explain a blocked link reason in plain
@@ -353,7 +401,7 @@ explicit tool and scope. Read the receipt after replying; accepted/applying is n
 For credits, the cloud desktop, skills or publishing, read status.credits, status.resources,
 status.skills or status.publishing; these only read, and buying, starting or installing stays with
 the user. When the user asks for a daily briefing (or to stop or move it), use briefing.configure.
-""" + SECRETARY_GUIDANCE
+""" + SECRETARY_GUIDANCE + "\n" + MEMORY_READ_STATUS_GUIDANCE
 
 # Added to the last model requests a turn may make (assistant/budget.py), so a
 # turn that is still searching ends with an answer instead of the limit error.
@@ -400,13 +448,32 @@ async def _runtime_view_in_snapshot(db, checks, *, session_id, user_id, run_id, 
     if report is None:
         from db.models.agent_inbox import AgentInboxItem
         from assistant.briefing import BRIEFING_TOOLS, is_briefing
-        inputs = (await db.scalars(select(AgentInboxItem.origin_ref).where(
+        inputs = (await db.scalars(select(AgentInboxItem).where(
             AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == user_id,
             AgentInboxItem.run_id == run_id, AgentInboxItem.generation == generation,
             AgentInboxItem.state == "claimed"))).all()
-        if inputs and all(is_briefing(ref) for ref in inputs):
+        if inputs and all(is_briefing(item.origin_ref) for item in inputs):
             # A scheduled briefing reads and reports; it acts on nothing.
             return {"mode": "ordinary", "tool_ids": BRIEFING_TOOLS, "briefing": True}
+        revision = _voice_revision_input(inputs[0]) if len(inputs) == 1 else None
+        if revision is not None:
+            return {"mode": "ordinary", "tool_ids": REVISION_TOOLS, "revision_target": revision}
+        from types import SimpleNamespace
+        from assistant.confirmations import confirmed_sends
+        sends = await confirmed_sends(db, SimpleNamespace(session_id=main.id,
+            user_id=user_id, run_id=run_id, run_generation=generation), scope_only=True, inputs=inputs)
+        if sends:
+            return {"mode": "ordinary", "tool_ids": frozenset(item["tool"] for item in sends),
+                    "confirmed_sends": sends}
+        from assistant.revisions import confirmed_revisions
+        confirmed = await confirmed_revisions(db, SimpleNamespace(session_id=main.id,
+            user_id=user_id, run_id=run_id, run_generation=generation), scope_only=True)
+        if len(confirmed) == 1:
+            arguments = confirmed[0]["arguments"]
+            return {"mode": "ordinary", "tool_ids": frozenset({"requests.revise"}),
+                "revision_target": {key: arguments.get(key) for key in ("request_id", "version")},
+                "confirmed_revision": arguments,
+                "confirmation_id": confirmed[0]["confirmation_id"]}
         return {"mode": "ordinary", "tool_ids": ASSISTANT_TOOLS}
     from db.models.assistant import AssistantTask
     execution_id = await db.scalar(select(AssistantTask.execution_session_id).where(
@@ -433,6 +500,24 @@ async def authorize_assistant_tool(ctx, tool_id: str, args: dict) -> None:
 def _authorize_tool_scope(view, tool_id: str, args: dict) -> None:
     if tool_id not in view["tool_ids"]:
         raise AssistantError(403, "ASSISTANT_TOOL_FORBIDDEN", "This tool is unavailable in the current assistant mode")
+    revision = view.get("revision_target")
+    if revision is not None:
+        if (tool_id in {"requests.get", "requests.revise"} and args.get("request_id") != revision["request_id"]
+                or tool_id == "requests.get" and args.get("kind") != "question"
+                or tool_id == "requests.revise" and args.get("version") != revision["version"]
+                or tool_id == "history.read" and args.get("session_id") != revision["session_id"]):
+            if tool_id == "requests.revise" and view.get("confirmed_revision") is not None:
+                import json
+                raise AssistantError(409, "ASSISTANT_CONFIRMATION_INPUT_CHANGED",
+                    "The submitted arguments do not match the current confirmed operation. This is an input "
+                    "mismatch, not evidence that the pending task card changed. Nothing was applied. "
+                    "Call requests.revise with this exact object as its top-level arguments, not nested "
+                    "under an arguments key or encoded as a string. Do not ask the user to confirm again. "
+                    "The normal current version, authority, resource and consent checks still apply: "
+                    + json.dumps(view["confirmed_revision"], ensure_ascii=False))
+            raise AssistantError(403, "ASSISTANT_REVISION_SCOPE",
+                "This voice handoff is bound to one task question/version. Do not select a different task; "
+                "explain a changed target and ask the user to clarify if needed.")
     if view["mode"] in {"report_only", "coordination"}:
         if tool_id == "tasks.get" and args.get("task_id") != view["task_id"]:
             raise AssistantError(403, "ASSISTANT_REPORT_SCOPE", "Read is outside the bound task")

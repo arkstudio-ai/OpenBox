@@ -18,7 +18,9 @@ export function useWorkspaceEvents(surface: "assistant" | "workspace" = "workspa
       void qc.invalidateQueries({ queryKey: ["billing", userId, workspaceId] })
     }
     const subs = [
-      wsClient.on("session.status", invalidate),
+      // __connected already refreshes these views. Hydrate stream status
+      // without refetching the whole list/balance once per historical chat.
+      wsClient.on("session.status", (data) => { if (!data.recovery) invalidate() }),
       wsClient.on("session.title", invalidate),
       wsClient.on("session.updated", invalidate),
       wsClient.on("__connected", invalidate),

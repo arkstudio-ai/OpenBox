@@ -154,3 +154,14 @@ class ContextKeeper:
     def cancel(self) -> None:
         if self.task is not None:
             self.task.cancel()
+
+    async def invalidate_context(self, preserve_item: str = "") -> None:
+        """Retire derived text when its memory authority has changed."""
+        self.transcript.invalidate_context(preserve_item)
+        task = self.task
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.summary = self.carried = ""
+        self.covered = self.transcript.context_start
+        self.turns_since = 0

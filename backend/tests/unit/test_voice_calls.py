@@ -69,6 +69,38 @@ async def test_live_conversation_context_is_scoped_and_never_creates_business_tu
         assert await live_context.read(db, main) is None
 
 
+async def test_revoked_live_context_is_hidden_before_socket_refresh_and_empty_publish_replaces_it(cache, monkeypatch):
+    from types import SimpleNamespace
+    from core.config import OpenBoxConfig
+    from memory import service
+    from voice import live_context
+    from voice.memory_context import RecentContext
+    from voice.tools import CallScope
+    from voice.transcript import CallTranscript
+    owner, identity = await new_call()
+    async with get_db_session() as db:
+        row = await db.get(VoiceCall, identity)
+        main = SimpleNamespace(id=row.main_session_id, user_id=owner, workspace_id=row.workspace_id)
+        scope = CallScope(owner, row.workspace_id, row.main_session_id, identity)
+    note = await service.create_note(user_id=owner, workspace_id=main.workspace_id, summary="周六读书")
+    transcript = CallTranscript()
+    transcript.add("assistant", "周六读书")
+    config = OpenBoxConfig(model="test/model", memory={"retrieval_v2": True})
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    await live_context.publish(scope, transcript.lines)
+    async with get_db_session() as db:
+        assert await live_context.read(db, main) is None  # pre-upgrade Redis text has no epoch
+    await live_context.publish(scope, RecentContext(transcript.lines, 0))
+    async with get_db_session() as db:
+        assert await live_context.read(db, main)
+    await service.delete_memory(user_id=owner, workspace_id=main.workspace_id, memory_id=note["id"])
+    async with get_db_session() as db:
+        assert await live_context.read(db, main) is None
+    assert (await cache.get(live_context.key(owner, main.workspace_id, main.id)))["lines"]
+    await live_context.publish(scope, RecentContext([], 1))
+    assert (await cache.get(live_context.key(owner, main.workspace_id, main.id)))["lines"] == []
+
+
 async def test_finish_records_the_ledger_and_turn_stamps():
     owner, call_id = await new_call()
     meter = CallMeter()

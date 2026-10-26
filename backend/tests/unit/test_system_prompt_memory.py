@@ -9,7 +9,8 @@ from agent.loop import _build_system_prompt
 
 @pytest.mark.asyncio
 async def test_environment_prompt_describes_wuying_without_docker_claims(monkeypatch):
-    async def no_instructions(_config):
+    async def no_instructions(_config, *, discover_local):
+        assert discover_local is False
         return []
 
     monkeypatch.setattr(

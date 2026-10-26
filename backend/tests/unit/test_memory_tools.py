@@ -142,7 +142,10 @@ async def test_memory_tools_are_resident_and_respect_explicit_allowlists(monkeyp
     from tool import registry
 
     seed = await seed_tools(monkeypatch)
-    definitions = {tool.id: tool for tool in (tools.memory_search_tool, tools.memory_read_sources_tool, tools.current_task_state_tool)}
+    config_module.get_config().memory.semantic_recall = True
+    config_module.get_config().memory.lazy_read_planning = True
+    definitions = {tool.id: tool for tool in (tools.memory_prepare_tool, tools.memory_search_tool,
+        tools.memory_read_sources_tool, tools.memory_read_more_tool, tools.current_task_state_tool)}
     monkeypatch.setattr(registry, "_tools", definitions)
     resolved = await resolve_step_tools(get_agent("build"), None, [], user_id=seed[0], project_id=seed[2])
     assert tools.MEMORY_TOOL_IDS <= resolved.keys()

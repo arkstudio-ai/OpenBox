@@ -51,7 +51,8 @@ export function InlineErrorCard({ error, sessionId, messageId, streaming }: Prop
   const message = extractErrorMessage(error)
   const budgetStopped = error.code === "ASSISTANT_TURN_BUDGET"
   const subscriptionBlocked = error.code === "SANDBOX_SUBSCRIPTION_REQUIRED"
-  const showGuidance = preserveEvidence && !budgetStopped && !subscriptionBlocked
+  const desktopUnavailable = error.code === "SANDBOX_NOT_READY"
+  const showGuidance = preserveEvidence && !budgetStopped && !subscriptionBlocked && !desktopUnavailable
   // One in flight disables both: the turn is being rewritten either way.
   const busy = isPending || dismissing
 

@@ -9,8 +9,10 @@ from db.models.agent_event import AgentEvent
 from models.message import TextPart
 from session.agent_event_log import (
     AgentEventProjectionError,
+    ensure_model_seed_locked,
     load_canonical_model_surface,
 )
+from session.internal_parts import lock_owned_session
 from session.session import (
     create_assistant_message,
     create_user_message,
@@ -28,7 +30,8 @@ def history_reads():
     def count(conn, cursor, statement, parameters, context, executemany):
         sql = " ".join(statement.lower().split())
         if ("from agent_events" in sql and "agent_events.payload" in sql
-                and "order by agent_events.sequence" in sql):
+                and "order by agent_events.sequence" in sql
+                and not sql.startswith("select agent_events.payload ")):
             queries.append(sql)
 
     engine = database._engine.sync_engine
@@ -47,6 +50,25 @@ async def closed_turn(text):
     answer.finish = "stop"
     await update_message_info(answer, user_id="u1")
     return answer
+
+
+async def test_existing_model_seed_uses_one_bounded_fresh_read(state):
+    await closed_turn("Seed already exists")
+    async with database.get_db_session() as db:
+        row = await lock_owned_session(db, session_id="s1", user_id="u1")
+        statements = []
+
+        def count(_conn, _cursor, statement, _parameters, _context, _executemany):
+            statements.append(" ".join(statement.lower().split()))
+
+        engine = database._engine.sync_engine
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            assert await ensure_model_seed_locked(db, row) is None
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+        assert len(statements) == 1
+        assert "agent_events.payload" in statements[0] and " limit " in statements[0]
 
 
 async def test_closed_history_is_fetched_once_and_later_commits_are_visible(state):

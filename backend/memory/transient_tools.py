@@ -8,7 +8,7 @@ projection share one definition.
 from collections.abc import Mapping
 from typing import Any
 
-TRANSIENT_TOOL_IDS = frozenset({"memory_search", "memory_read_sources", "current_task_state"})
+TRANSIENT_TOOL_IDS = frozenset({"memory_search", "memory_read_sources", "memory_read_more", "memory.read_more", "current_task_state"})
 #: creator_context's read actions return memory text as well; its saves do not.
 LEGACY_READ_ACTIONS = frozenset({"get_user_context", "search_memories", "list_active_memories"})
 

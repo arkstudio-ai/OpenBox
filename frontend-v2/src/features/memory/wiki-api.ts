@@ -69,6 +69,7 @@ export const wikiApi = {
   capabilities: () =>
     http.get<{
       enabled: boolean
+      experience_learning?: boolean
       automatic_knowledge: boolean
       model: string
       max_memories: number

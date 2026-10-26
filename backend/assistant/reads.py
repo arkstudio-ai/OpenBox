@@ -31,6 +31,13 @@ def _page(rows, limit, render):
             "untrusted_data": True}
 
 
+def execution_settings(session) -> dict:
+    """Current persisted choices, not permission to generate or spend."""
+    return {**{key: getattr(session, key) for key in (
+        "model", "variant", "video_model", "video_resolution", "quality")},
+        "scope": "future_submissions", "grants_execution": False}
+
+
 def task_view(task) -> dict:
     value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
         "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at")}
@@ -213,7 +220,8 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
                     state=item.state if item else None, error=item.error if item else None)
             driver = drivers.get(execution.id)
             value = {"task": task_view(task), "latest_result": result,
-                     "execution_session": {"id": execution.id, "status": execution.status},
+                     "execution_session": {"id": execution.id, "status": execution.status,
+                                           "current_settings": execution_settings(execution)},
                      "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                      "phase": driver.phase} if driver else None,
                      "latest_submission": submission_view,

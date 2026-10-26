@@ -529,6 +529,17 @@ async def get_owned_skill(
     identifier = _required_text(identifier, "identifier")
     async with get_db_session() as session:
         row = await _owned_row(session, user_id, identifier, workspace_id=workspace_id)
+        if row:
+            from db.models.memory_protocol import MemoryExperience
+            experience = await session.scalar(select(MemoryExperience).where(MemoryExperience.skill_id == row.id))
+            if experience is not None:
+                from memory.policy import resolve_access_scope
+                from memory.experiences import sources_current
+                scope = await resolve_access_scope(session, user_id=user_id, workspace_id=row.workspace_id,
+                    include_all_projects=True)
+                if (experience.state != "enabled" or row.archive_sha256 != experience.skill_hash
+                        or not await sources_current(session, scope, experience.source_refs)):
+                    return None
         return _snapshot_dict(row, include_archive=include_archive) if row else None
 
 
@@ -555,7 +566,21 @@ async def list_owned_skills(
                 )
             ).scalars()
         )
-    return [_snapshot_dict(row) for row in rows]
+    from db.models.memory_protocol import MemoryExperience
+    from memory.policy import resolve_access_scope
+    from memory.experiences import sources_current
+    result = []
+    async with get_db_session() as session:
+        for row in rows:
+            experience = await session.scalar(select(MemoryExperience).where(MemoryExperience.skill_id == row.id))
+            if experience is not None:
+                scope = await resolve_access_scope(session, user_id=user_id, workspace_id=row.workspace_id,
+                    include_all_projects=True)
+                if (experience.state != "enabled" or row.archive_sha256 != experience.skill_hash
+                        or not await sources_current(session, scope, experience.source_refs)):
+                    continue
+            result.append(_snapshot_dict(row))
+    return result
 
 
 def _listing_after_publish(

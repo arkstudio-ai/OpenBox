@@ -14,6 +14,10 @@ vi.mock("react-i18next", async (importOriginal) => ({
 }))
 vi.mock("./Markdown", () => ({ default: ({ text, streaming }: { text: string; streaming: boolean }) =>
   <p data-streaming={String(streaming)}>{text}</p> }))
+vi.mock("@/shared/appearance/companion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/appearance/companion")>()),
+  useCompanionAppearance: () => ({ data: undefined }),
+}))
 vi.mock("./meta/AssistantMeta", () => ({
   AssistantMeta: ({ messageId, content, createdAt, streaming, tokens, reaction }: {
     messageId: string; content: string; createdAt: string; streaming: boolean;

@@ -5,6 +5,7 @@ import '../i18n/i18n.dart';
 import '../models/json.dart';
 import '../ws/ws_client.dart';
 import 'providers.dart';
+import 'auth_store.dart';
 
 /// What the first meeting asks, in order (web `INTRO_STEPS`).
 const introStepNames = ['address', 'name', 'length', 'business'];
@@ -60,10 +61,12 @@ class IntroProgress {
 /// and [intro] is where their first meeting got to.
 class AssistantProfile {
   const AssistantProfile({
+    this.revision,
     this.name = '',
     this.address = '',
     this.tone = 'warm',
     this.length = 'balanced',
+    this.language = '',
     this.emoji = false,
     this.persona = '',
     this.callRecap = true,
@@ -80,11 +83,13 @@ class AssistantProfile {
 
   /// "" is the default name the UI translates (个人助理 / Personal assistant).
   final String name;
+  final int? revision;
 
   /// What it calls the person; "" for no name.
   final String address;
   final String tone;
   final String length;
+  final String language;
   final bool emoji;
 
   /// The person's own words on how it should be, up to 300 characters.
@@ -121,10 +126,12 @@ class AssistantProfile {
         v is String && choices.contains(v) ? v : fallback;
     const d = AssistantProfile();
     return AssistantProfile(
+      revision: value['revision'] is int ? value['revision'] as int : null,
       name: asString(value['name']) ?? '',
       address: asString(value['address']) ?? '',
       tone: oneOf(tones, value['tone'], d.tone),
       length: oneOf(lengths, value['length'], d.length),
+      language: asString(value['language']) ?? '',
       emoji: asBool(value['emoji']) ?? d.emoji,
       persona: asString(value['persona']) ?? '',
       callRecap: asBool(value['call_recap']) ?? d.callRecap,
@@ -144,6 +151,7 @@ class AssistantProfile {
     'address': address,
     'tone': tone,
     'length': length,
+    'language': language,
     'emoji': emoji,
     'persona': persona,
     'call_recap': callRecap,
@@ -275,13 +283,50 @@ final assistantProfileApiProvider = Provider<AssistantProfileApi>(
 /// was missed.
 const assistantProfileEvent = 'assistant.profile.updated';
 
+final assistantProfileOwnerProvider = Provider<String>(
+  (ref) => ref.watch(authProvider.select((auth) => auth.userId)),
+);
+
 class AssistantProfileNotifier extends AsyncNotifier<AssistantProfile> {
+  String? _owner;
+  AssistantProfile? _latest;
+  int _generation = 0;
+
+  AssistantProfile _newest(AssistantProfile incoming) {
+    final current = _latest;
+    if (current?.revision != null &&
+        incoming.revision != null &&
+        incoming.revision! < current!.revision!)
+      return current;
+    _latest = incoming;
+    return incoming;
+  }
+
+  bool _isCurrent(String owner, int generation) =>
+      _owner == owner &&
+      _generation == generation &&
+      ref.read(assistantProfileOwnerProvider) == owner;
+
   @override
   Future<AssistantProfile> build() {
+    final owner = ref.watch(assistantProfileOwnerProvider);
+    final generation = ++_generation;
+    if (_owner != owner) {
+      _owner = owner;
+      _latest = null;
+      // A different account's high revision is not a newer version of this
+      // account. Do not retain its visible value while the new GET is pending.
+      state = const AsyncLoading();
+    }
+    ref.onDispose(() => _generation++);
     try {
       final sub = ref.watch(wsClientProvider).events.listen((event) {
+        if (!_isCurrent(owner, generation)) return;
         if (event.type == assistantProfileEvent) {
-          state = AsyncData(AssistantProfile.fromJson(event.data['profile']));
+          if (event.data['userId'] != owner) return;
+          state = AsyncData(
+            _newest(AssistantProfile.fromJson(event.data['profile'])),
+          );
         } else if (event.type == '__connected') {
           ref.invalidateSelf();
         }
@@ -291,19 +336,37 @@ class AssistantProfileNotifier extends AsyncNotifier<AssistantProfile> {
       // No socket here (early startup, a test): the profile still loads; it
       // just does not follow a change made elsewhere until the next read.
     }
-    return ref.watch(assistantProfileApiProvider).get();
+    return ref.watch(assistantProfileApiProvider).get().then((incoming) {
+      if (!_isCurrent(owner, generation))
+        throw StateError('Profile account changed');
+      return _newest(incoming);
+    });
   }
 
   Future<AssistantProfile> save(Map<String, Object> patch) async {
-    final kept = await ref.read(assistantProfileApiProvider).save(patch);
-    state = AsyncData(kept);
-    return kept;
+    final owner = ref.read(assistantProfileOwnerProvider);
+    final generation = _generation;
+    final revision = state.asData?.value.revision;
+    final kept = await ref.read(assistantProfileApiProvider).save({
+      ...patch,
+      if (revision != null) 'expected_revision': revision,
+    });
+    if (!_isCurrent(owner, generation))
+      throw StateError('Profile account changed');
+    final latest = _newest(kept);
+    state = AsyncData(latest);
+    return latest;
   }
 
   /// Records a step of the first meeting; an answer is saved as the person's
   /// decision.
   Future<void> recordIntro(Map<String, Object> event) async {
-    state = AsyncData(await ref.read(assistantProfileApiProvider).intro(event));
+    final owner = ref.read(assistantProfileOwnerProvider);
+    final generation = _generation;
+    final incoming = await ref.read(assistantProfileApiProvider).intro(event);
+    if (!_isCurrent(owner, generation))
+      throw StateError('Profile account changed');
+    state = AsyncData(_newest(incoming));
   }
 }
 

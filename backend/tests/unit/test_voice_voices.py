@@ -74,6 +74,18 @@ def test_existing_users_and_old_deployment_overrides_get_audio_without_losing_vo
         assert extra == before
 
 
+def test_configured_clone_remains_available_until_user_selects_appearance_or_voice():
+    clone = AUDIO_MODEL + "-custom-123"
+    cfg = VoiceConfig(model=AUDIO_MODEL, voice=clone)
+    state = voices.selection({}, cfg)
+    assert state["selected"] == clone and state["voice_source"] == "model_default"
+    portrait = voices.selection({appearance.KEY: {"preset": "ip-11"}}, cfg)
+    assert portrait["selected"] == "longanlufeng" and portrait["voice_source"] == "appearance"
+    manual = voices.selection({appearance.KEY: {"preset": "ip-11"},
+        "assistant_voice_audio": "longanqian_v3.1"}, cfg)
+    assert manual["selected"] == "longanqian_v3.1" and manual["voice_source"] == "user"
+
+
 async def test_existing_model_choice_resets_once_and_later_explicit_choice_persists():
     from db.repository.preference_repo import PgPreferenceRepo
     cfg = VoiceConfig(model=OMNI_MODEL, voice="Tina")

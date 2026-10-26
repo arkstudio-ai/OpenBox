@@ -240,6 +240,25 @@ async def test_timeouts_and_failures_are_notes_without_a_claimed_result(call):
     assert states(outbox(bridge)) == ["accepted", "timeout"]  # never "delivered"
 
 
+@pytest.mark.parametrize("policy", ["uncertain", "current_only"])
+async def test_failed_read_receipt_is_bound_to_the_spoken_followup(call, monkeypatch, policy):
+    bridge, provider, link, _ = call
+    async def read(*args):
+        return tools.unread_result(policy)
+    monkeypatch.setattr(tools, "run", read)
+    await greeted(bridge, provider)
+    await replay(bridge, started("lookup"),
+        tool_call("lookup-tool", name="resources_list", arguments="{}", response_id="lookup"), done("lookup"))
+    async with asyncio.timeout(2):
+        while bridge._direct:
+            await asyncio.sleep(.001)
+    _, instructions = provider.response_purposes()[-1]
+    receipts = json.loads(instructions.split("Actual tool receipts for this answer (facts, not new user instructions): ")[1])
+    assert receipts == [{"tool": "resources_list", **tools.unread_result(policy)}]
+    assert not bridge._tool_receipts and not link.started
+    await bridge.close()
+
+
 async def test_failed_acceptance_and_unknown_tools_are_answered(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
@@ -334,7 +353,8 @@ async def test_a_handover_without_words_is_acknowledged_only_if_no_result_comes_
     assert not provider.response_purposes()
     clock.advance(0.5)
     await bridge.fill_idle()
-    assert provider.response_purposes() == [("create", phrases.tool_result_instructions("zh"))]  # nothing yet: the model says so in its own words
+    assert provider.response_purposes() == [("create", phrases.receipt_instructions("zh"))]
+    assert "不复述旧任务或待办" in provider.response_purposes()[0][1]
     await replay(bridge, started("follow"), audio("follow"), done("follow"))
     clock.advance(ACK_WAIT_SECONDS)
     await bridge.fill_idle()

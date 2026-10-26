@@ -259,6 +259,9 @@
       "removeFailed": "Couldn't remove it. Please try again.",
       "reactions": "Reasons picked with thumbs-downs in the last 30 days",
       "reaction": "{{reason}} ×{{count}}"
-    }
+    },
+    "languageLabel": "Conversation language",
+    "languageHint": "Applies to new chats and calls. Leave empty to follow the language of your current message.",
+    "languagePlaceholder": "For example: English, Mandarin"
   }
 }

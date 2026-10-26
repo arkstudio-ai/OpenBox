@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'pcm_capture.dart';
@@ -11,7 +11,15 @@ import 'pcm_capture.dart';
 /// Documents folder — played once in real time, then silence. A simulator on
 /// a Mac without a microphone can then place a whole call. Release builds
 /// never define it, so [FilePcmCapture] is never constructed there.
-const voiceFakeMic = bool.fromEnvironment('VOICE_FAKE_MIC');
+const voiceFakeMic = kDebugMode && bool.fromEnvironment('VOICE_FAKE_MIC');
+
+/// Explicit simulator-only acceptance mode on hosts with no audio input.
+/// Real PCM playback, ASR and server transport still run, but this cannot
+/// certify CallKit or physical microphone/background-call behavior.
+bool get voiceSimulatorAudioOnly =>
+    voiceFakeMic &&
+    Platform.isIOS &&
+    const bool.fromEnvironment('VOICE_SIMULATOR_AUDIO_ONLY');
 
 class FilePcmCapture extends PcmCapture {
   FilePcmCapture();

@@ -52,6 +52,17 @@ class _Client extends AgentWsClient {
   Future<String> fetchTicket() async => 'ticket';
 }
 
+class _PendingClient extends AgentWsClient {
+  _PendingClient(super.dio, {super.openChannel});
+  final tickets = <Completer<String>>[];
+  @override
+  Future<String> fetchTicket() {
+    final ticket = Completer<String>();
+    tickets.add(ticket);
+    return ticket.future;
+  }
+}
+
 /// A client whose sockets are [_Channel]s, and every event it emitted.
 class _Socket {
   _Socket() {
@@ -87,6 +98,35 @@ Future<_Socket> _open(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('scope changes during a ticket request start a fresh handshake', (
+    tester,
+  ) async {
+    final channels = <_Channel>[];
+    final client = _PendingClient(
+      Dio(),
+      openChannel: (_) {
+        final channel = _Channel();
+        channels.add(channel);
+        return channel;
+      },
+    );
+    unawaited(client.connect());
+    client.disconnect();
+    unawaited(client.connect());
+    expect(client.tickets, hasLength(2));
+    client.tickets.first.complete('old');
+    await tester.pump();
+    expect(channels, isEmpty);
+    // A completed old request must not clear the new in-flight handshake.
+    unawaited(client.connect());
+    expect(client.tickets, hasLength(2));
+    client.tickets.last.complete('new');
+    await tester.pump();
+    expect(client.connected, isTrue);
+    expect(channels, hasLength(1));
+    client.disconnect();
+  });
+
   testWidgets('a socket silent for a minute is dropped and opened again', (
     tester,
   ) async {

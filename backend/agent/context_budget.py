@@ -86,15 +86,17 @@ def measure_request(model_id: str, messages: list[dict], prefix: RequestPrefix,
                     *, max_output_tokens: int | None = None,
                     observed_tokens: int = 0) -> ContextBudget:
     from agent.compaction import get_model_context_limit
+    from agent.latency import span
     from agent.llm import request_output_tokens
 
-    output = request_output_tokens(model_id, prefix.variant, max_output_tokens)
-    return ContextBudget(
-        input_tokens=max(count_payload(request_payload(model_id, messages, prefix)), observed_tokens),
-        output_tokens=output,
-        context_limit=get_model_context_limit(model_id),
-        threshold=threshold_tokens(model_id, output_tokens=output),
-    )
+    with span("request.measure_context"):
+        output = request_output_tokens(model_id, prefix.variant, max_output_tokens)
+        return ContextBudget(
+            input_tokens=max(count_payload(request_payload(model_id, messages, prefix)), observed_tokens),
+            output_tokens=output,
+            context_limit=get_model_context_limit(model_id),
+            threshold=threshold_tokens(model_id, output_tokens=output),
+        )
 
 
 def summary_output_tokens(model_id: str, prefix: RequestPrefix) -> int:

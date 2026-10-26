@@ -73,7 +73,7 @@ export function useCompleteAuth() {
       useAuthStore.getState().setAuth(result.access_token, result.user)
       try {
         const prefs = await http.get<UserPreferences>("/api/auth/me/preferences")
-        useAppearanceStore.getState().hydrateFromServer(prefs)
+        useAppearanceStore.getState().hydrateFromServer(prefs, result.user.id)
       } catch {
         // Appearance is best-effort; a prefs failure must not block sign-in.
       }

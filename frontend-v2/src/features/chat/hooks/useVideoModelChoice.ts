@@ -53,7 +53,7 @@ export function useVideoModelChoice({
   useEffect(() => () => clear(key), [key, clear])
 
   const activeId = picked?.modelId ?? (sessionVideoModel || undefined) ?? fallback
-  const chosen = picked?.resolution ?? sessionVideoResolution ?? resolutionFallback
+  const chosen = picked?.resolution ?? (sessionVideoResolution || undefined) ?? resolutionFallback
   // A resolution belongs to the model it was picked with. Switching model can
   // strand it, and showing a tier the new model does not offer would promise
   // something the backend then refuses.

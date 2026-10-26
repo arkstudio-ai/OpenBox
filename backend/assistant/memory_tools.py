@@ -88,21 +88,19 @@ async def remember(ctx, *, summary: str, quote: str, project_id: str | None = No
         raise ValueError(f"A memory summary of 1 to {MAX_SUMMARY} characters is required")
     if await saving_paused(ctx.user_id, ctx.session_id):
         return {"state": "paused", "instruction": "The user turned memory saving off. Nothing was saved; say so."}
-    await _scope(ctx, quote, project_id)
+    message_id = await _scope(ctx, quote, project_id)
     scope = {"scope": "project" if project_id else "personal", "project_id": project_id}
-    if sensitive or soft_sensitive(summary):
-        try:
-            proposal = await service.propose_note(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
-                                                  project_id=project_id, summary=summary, session_id=None)
-        except service.MemorySensitiveContent as exc:
-            return _refused(exc.kind)
-        except service.MemoryDeclined:
-            return {"state": "declined_before", **scope,
-                    "instruction": "The user declined or forgot this before. Nothing was saved; do not propose it again."}
-        except (service.MemoryConflict, LookupError, ValueError) as exc:
-            raise _memory_error(exc) from exc
-        if proposal["status"] == "ACTIVE":
-            return {"state": "already_remembered", "memory_id": proposal["id"], **scope}
+    from memory.commands import write_proposal
+    try:
+        receipt = await write_proposal(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+            session_id=ctx.session_id, message_ids=[message_id], operation_id=f"assistant:{ctx.part_id}",
+            summary=summary, project_id=project_id, fact_key=fact_key, sensitive=sensitive or soft_sensitive(summary))
+    except service.MemorySensitiveContent as exc:
+        return _refused(exc.kind)
+    except (service.MemoryConflict, LookupError, ValueError) as exc:
+        raise _memory_error(exc) from exc
+    if receipt["state"] == "needs_confirmation":
+        proposal = {"id": receipt["memory_id"], "revision": receipt["revision"]}
         from question.question import Question, QuestionOption, ask
         await ask(ctx.session_id, [Question(question=f"要我记住这条吗？\n「{summary}」", header="记忆确认", custom=False,
             options=[QuestionOption(label="记住", description="确认保存为长期记忆"),
@@ -112,15 +110,8 @@ async def remember(ctx, *, summary: str, quote: str, project_id: str | None = No
             continuation={"kind": "memory_proposal", "memory_id": proposal["id"],
                           "workspace_id": proposal.get("workspace_id") or ctx.workspace_id,
                           "expected_revision": proposal["revision"]})
-    try:
-        row = await service.create_note(user_id=ctx.user_id, workspace_id=ctx.workspace_id, project_id=project_id,
-                                        summary=summary, request_id=f"assistant:{ctx.part_id}", fact_key=fact_key)
-    except service.MemorySensitiveContent as exc:
-        return _refused(exc.kind)
-    except (service.MemoryConflict, LookupError, ValueError) as exc:
-        raise _memory_error(exc) from exc
-    return {"state": "remembered", "memory_id": row["id"], "summary": row["summary"], "revision": row["revision"],
-            **scope, "undo": "The user can undo this from the chip under your answer."}
+    return {**receipt, "state": "remembered" if receipt["state"] == "saved" else receipt["state"],
+            **scope, "undo": "The user can undo a saved memory from the chip under your answer."}
 
 
 def _refused(kind):
@@ -134,18 +125,19 @@ async def update(ctx, *, memory_id: str, summary: str, quote: str, expected_revi
     summary = _normalized(summary)
     if not 1 <= len(summary) <= MAX_SUMMARY:
         raise ValueError(f"A memory summary of 1 to {MAX_SUMMARY} characters is required")
-    await _scope(ctx, quote, None)
+    message_id = await _scope(ctx, quote, None)
+    from memory.commands import write_proposal
     try:
-        row = await service.edit_note(user_id=ctx.user_id, workspace_id=ctx.workspace_id, memory_id=memory_id,
-                                      summary=summary, expected_revision=expected_revision,
-                                      request_id=f"assistant:{ctx.part_id}")
+        row = await write_proposal(user_id=ctx.user_id, workspace_id=ctx.workspace_id, session_id=ctx.session_id,
+            message_ids=[message_id], memory_id=memory_id, summary=summary, expected_revision=expected_revision,
+            operation_id=f"assistant:{ctx.part_id}")
     except service.MemorySensitiveContent as exc:
         return _refused(exc.kind)
     except (service.MemoryConflict, LookupError, ValueError) as exc:
         raise _memory_error(exc) from exc
     if row is None:
         raise _memory_error(LookupError(memory_id))
-    return {"state": "updated", "memory_id": row["id"], "summary": row["summary"], "revision": row["revision"]}
+    return {**row, "state": "updated" if row["state"] == "saved" else row["state"]}
 
 
 async def forget(ctx, *, memory_id: str, quote: str) -> dict:

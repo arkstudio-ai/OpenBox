@@ -189,14 +189,25 @@ def test_selecting_an_option_does_not_create_a_new_spoken_question_version():
 
 
 @pytest.mark.parametrize("read_tool", ["tasks_overview", "cards_pending"])
-async def test_manual_confirmation_cancels_prepared_native_answer_from_either_reader(read_tool):
+@pytest.mark.parametrize("native_memory", [False, True])
+async def test_manual_confirmation_cancels_prepared_native_answer_from_either_reader(read_tool, native_memory):
     from tests.unit.test_assistant_requests_v2 import ask_in
     owner, _, workspace, main = await assistant()
     session = await conversation(owner, workspace, main, "图片任务", visibility="private")
     question_id, _ = await ask_in(session, owner, question="是否继续生成图片？", options=[{"label": "继续"}])
     scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id, call_id="card-call")
-    provider = ScriptedProvider()
-    bridge = Bridge(provider, FakeLink(), scope=scope, clock=FakeClock(), instructions="Test")
+    from tests.unit.test_voice_memory_context import Provider, packet
+    from memory.packet import ReadBudget, TurnContext
+    async def prepare(*_):
+        raise AssertionError("This test starts from an already prepared utterance")
+    provider = Provider()
+    bridge = Bridge(provider, FakeLink(), scope=scope, clock=FakeClock(), instructions="Test",
+                    prepare_memory=prepare if native_memory else None)
+    if native_memory:
+        bridge.memory_packet = packet("刚才的图片任务呢")
+        bridge.memory_turn = TurnContext(owner, workspace, "刚才的图片任务呢", session_id=main.id,
+                                        read_policy="allowed", entry="voice")
+        bridge.memory_budget = ReadBudget()
     bridge.greeting, bridge.state = False, "user_speaking"
     arguments = {"request_id": question_id} if read_tool == "cards_pending" else {}
     await bridge._complete_direct_call(event("tool_call", name=read_tool, call_id="read-current",
@@ -211,3 +222,4 @@ async def test_manual_confirmation_cancels_prepared_native_answer_from_either_re
     await bridge.on_provider_event(audio("old-answer"))
     assert not any(isinstance(value, bytes) for value in bridge.outbox._queue)
     assert provider.commands("cancel")
+    await bridge.close()

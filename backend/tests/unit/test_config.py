@@ -127,9 +127,10 @@ def test_video_transcription_config_defaults():
     assert config.video_transcription.similarity_threshold == 0.90
 
 
-def test_tool_exposure_config_defaults_are_migration_safe():
+def test_tool_exposure_defaults_to_portable_with_explicit_legacy_rollback():
     config = OpenBoxConfig().tool_exposure
-    assert config.mode == "legacy_eager"
+    assert config.mode == "portable"
+    assert ToolExposureConfig(mode="legacy_eager").mode == "legacy_eager"
     assert config.resident_hard_chars == 24_000
     assert config.active_hard_chars == 32_000
     assert config.native_wire_hard_chars == 128_000

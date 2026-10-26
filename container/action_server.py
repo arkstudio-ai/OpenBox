@@ -1012,6 +1012,7 @@ async def execute_stream(req: ExecuteRequest, request: Request):
             tasks = {}
             wait_task = asyncio.create_task(process.wait())
             last_output_time = time.time()
+            drain_deadline = None
 
             while not (stdout_done and stderr_done):
                 if not stdout_done and "stdout" not in tasks:
@@ -1030,11 +1031,14 @@ async def execute_stream(req: ExecuteRequest, request: Request):
                 done, _ = await asyncio.wait(
                     waitables,
                     return_when=asyncio.FIRST_COMPLETED,
-                    timeout=idle_timeout_seconds,
+                    timeout=(max(0, drain_deadline - time.monotonic())
+                             if drain_deadline is not None else idle_timeout_seconds),
                 )
 
                 # Idle detection: no output for idle_timeout seconds
                 if not done:
+                    if process_exited:
+                        break
                     idle_secs = int(time.time() - last_output_time)
                     total_secs = int(time.time() - start_time)
                     yield {"event": "idle", "data": json_mod.dumps({
@@ -1045,6 +1049,7 @@ async def execute_stream(req: ExecuteRequest, request: Request):
 
                 if wait_task in done:
                     process_exited = True
+                    drain_deadline = time.monotonic() + 0.5
 
                 for name in list(tasks.keys()):
                     if tasks[name] in done:
@@ -1061,30 +1066,14 @@ async def execute_stream(req: ExecuteRequest, request: Request):
                                 "content": line.decode("utf-8", errors="replace"),
                             })}
 
-                # If process exited, drain remaining output with a short timeout
-                if process_exited and not (stdout_done and stderr_done):
-                    remaining = {k: v for k, v in tasks.items() if v not in done}
-                    if remaining:
-                        try:
-                            drain_done, drain_pending = await asyncio.wait(
-                                remaining.values(), timeout=0.5
-                            )
-                            for name in list(remaining.keys()):
-                                if remaining[name] in drain_done:
-                                    line = remaining[name].result()
-                                    if line:
-                                        yield {"event": "output", "data": json_mod.dumps({
-                                            "type": name,
-                                            "content": line.decode("utf-8", errors="replace"),
-                                        })}
-                            for t in drain_pending:
-                                t.cancel()
-                        except Exception:
-                            pass
-                    break
+                # Exit is not stdout EOF. Continue reading every buffered line
+                # within the existing grace period; the former one-read drain
+                # silently returned success with most short-command output lost.
 
-            if not wait_task.done():
-                wait_task.cancel()
+            pending = [task for task in [wait_task, *tasks.values()] if not task.done()]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
 
         try:
             async for event in reader():

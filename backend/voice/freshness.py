@@ -14,11 +14,20 @@ class FreshnessMixin:
         self._native_work_pending = {}
         self._native_work_playing = {}
         self._native_work_decisions = {}
+        self._native_work_read = False
         self._native_work_stale = False
         self._native_context_changed = False
         self._freshness_failed = False
         self._freshness_notice_requested = False
         self._stale_responses = []
+
+    async def _read_answer_context(self):
+        # Memory turns use their own bounded, acknowledged context. Only an
+        # actual work read needs the additional task snapshot barrier (even
+        # when that read returned an empty list). Legacy prompts include it all.
+        if self.prepare_memory is not None and not self._native_work_read:
+            return True
+        return await self._read_current_context()
 
     async def _read_current_context(self):
         if self.context_reader is None:

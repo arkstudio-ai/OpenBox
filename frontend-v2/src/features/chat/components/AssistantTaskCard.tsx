@@ -218,7 +218,8 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
   const status = cardStatus(value, watch, result)
   // A notification can point at an older run; say so rather than pass it off as the latest.
   const earlier = !!selectedResult && selectedResult.result_id !== value.latest_result?.result_id
-  const summary = selectedResult ? null : plainSummary(watch?.latest_result?.summary ?? "") || null
+  const summary = selectedResult || watch?.latest_result?.is_current === false
+    ? null : plainSummary(watch?.latest_result?.summary ?? "") || null
   return (
     <section aria-label={t("assistant.card.label", { title: task.title })}
       className={cn("border-hair bg-card my-2 rounded-2xl border p-4", className)}>

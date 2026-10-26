@@ -267,6 +267,10 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final budgetStopped = widget.error['code'] == 'ASSISTANT_TURN_BUDGET';
+    final showCause =
+        budgetStopped ||
+        widget.error['code'] == 'SANDBOX_NOT_READY' ||
+        widget.error['code'] == 'SANDBOX_SUBSCRIPTION_REQUIRED';
     final serverMessage = widget.error['message'];
     final message = budgetStopped
         ? (serverMessage is String ? serverMessage.trim() : '')
@@ -304,10 +308,14 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  budgetStopped
+                  showCause
                       ? (message.isNotEmpty
                             ? message
-                            : i18n.t('errors:ASSISTANT_TURN_BUDGET'))
+                            : i18n.t(
+                                budgetStopped
+                                    ? 'errors:ASSISTANT_TURN_BUDGET'
+                                    : 'chat:meta.errorTitle',
+                              ))
                       : i18n.t('chat:assistant.continueAfterError'),
                   style: TextStyle(
                     fontSize: FontSizes.sm,
@@ -315,7 +323,7 @@ class _AssistantErrorNoticeState extends ConsumerState<AssistantErrorNotice> {
                     color: t.n700,
                   ),
                 ),
-                if (message.isNotEmpty && !budgetStopped) ...[
+                if (message.isNotEmpty && !showCause) ...[
                   GestureDetector(
                     onTap: () => setState(() => _details = !_details),
                     child: Padding(

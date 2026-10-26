@@ -524,7 +524,7 @@ async def create_session(
     return session.model_dump()
 
 
-@router.get("/session")
+@router.get("/session", response_model=list[session_mod.Session])
 async def list_sessions(
     project_id: str | None = None,
     current_user: dict = Depends(get_current_user),
@@ -536,7 +536,10 @@ async def list_sessions(
         user_id=user_id,
         workspace_id=current_user["workspace_id"],
     )
-    return [s.model_dump() for s in sessions]
+    # The response model serializes these already validated instances once.
+    # Converting the whole sidebar to dicts first forces another validation
+    # pass over every conversation on each live refresh.
+    return sessions
 
 
 # Declared before /session/{session_id}, which would otherwise take "search" for an id.
@@ -1051,6 +1054,10 @@ async def regenerate_message(
     the history — which is exactly the state `run_loop` expects, so no new user
     message is created and the prompt is not duplicated.
 
+    A pre-model attachment failure instead preserves its error and creates one
+    idempotent retry input, because the failed input is excluded from model
+    context. Its strict delivery and task admission run again before inference.
+
     The common case is a turn that failed: the error is the only thing the user
     can see, and without this there is nothing to act on but retyping.
     """
@@ -1058,6 +1065,14 @@ async def regenerate_message(
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
     _preserve_assistant_evidence(session)
+
+    from api.attachment_retry import retry_body
+    retry = await retry_body(session, user_id, message_id, body)
+    if retry is not None:
+        # Never delete the failed delivery evidence or try to answer an input
+        # still excluded from the canonical model surface. Reuse normal Task
+        # admission and strict attachment delivery for this explicit retry.
+        return await send_message_async(session_id, retry, current_user)
 
     if session.status not in _ACTIVE_SESSION_STATUSES:
         await check_concurrent_agents(user_id, config)

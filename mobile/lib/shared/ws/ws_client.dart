@@ -70,7 +70,12 @@ class AgentWsClient {
   Future<void> connect() {
     _closed = false;
     if (_channel != null) return Future.value();
-    return _connecting ??= _doConnect().whenComplete(() => _connecting = null);
+    if (_connecting != null) return _connecting!;
+    late final Future<void> pending;
+    pending = _doConnect().whenComplete(() {
+      if (identical(_connecting, pending)) _connecting = null;
+    });
+    return _connecting = pending;
   }
 
   Future<void> _doConnect() async {
@@ -167,6 +172,9 @@ class AgentWsClient {
   void disconnect() {
     _closed = true;
     _generation += 1;
+    // An in-flight ticket belongs to the old account/workspace. A new scope
+    // must start its own handshake even before the old HTTP request returns.
+    _connecting = null;
     _reconnectTimer?.cancel();
     _watchdog?.cancel();
     _channel?.sink.close();
@@ -174,6 +182,8 @@ class AgentWsClient {
   }
 }
 
-final wsClientProvider = Provider<AgentWsClient>(
-  (ref) => AgentWsClient(ref.watch(apiDioProvider)),
-);
+final wsClientProvider = Provider<AgentWsClient>((ref) {
+  final client = AgentWsClient(ref.watch(apiDioProvider));
+  ref.onDispose(client.disconnect);
+  return client;
+});

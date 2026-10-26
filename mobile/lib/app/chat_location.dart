@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../features/chat/api/assistant_api.dart';
+import '../features/voice/state/voice_call_controller.dart';
 import '../shared/api/providers.dart';
 import '../shared/config/env.dart';
 import '../shared/router/paths.dart';
@@ -79,6 +80,8 @@ class RememberChatLocation extends ConsumerStatefulWidget {
 class _RememberChatLocationState extends ConsumerState<RememberChatLocation> {
   GoRouter? _router;
   AssistantScope? _scope;
+  VoiceCallController? _voice;
+  String? _viewedSessionId;
 
   @override
   void didChangeDependencies() {
@@ -92,11 +95,31 @@ class _RememberChatLocationState extends ConsumerState<RememberChatLocation> {
 
   void _schedule() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      if (!mounted) return;
       final scope = _scope;
       if (scope == null || ref.read(assistantScopeProvider) != scope) return;
-      final current = GoRouterState.of(context).uri.path;
-      if (current != widget.location) return;
+      // A first-run sheet or dialog can be on top when the authorized chat
+      // finishes loading. It must not suppress the bookmark. Compare the
+      // router's top destination so a chat underneath another page still
+      // cannot overwrite that page's saved position.
+      final current = _router?.state.uri.path;
+      final sessionId = Uri.parse(widget.location).pathSegments;
+      final viewed =
+          sessionId.length == 3 && sessionId[0] == 'app' && sessionId[1] == 's'
+          ? sessionId[2]
+          : null;
+      final voice = ref.read(voiceCallControllerProvider.notifier);
+      _voice = voice;
+      if (current != widget.location) {
+        // The full-screen call overlays the originating conversation. Other
+        // destinations clear only this page's hint, not a newer chat's hint.
+        if (current != Paths.voice && _viewedSessionId != null) {
+          voice.clearViewedSession(_viewedSessionId!);
+        }
+        return;
+      }
+      _viewedSessionId = viewed;
+      voice.setViewedSession(viewed);
       // Saving a navigation bookmark must never block the chat on disk errors.
       unawaited(
         ref
@@ -110,6 +133,7 @@ class _RememberChatLocationState extends ConsumerState<RememberChatLocation> {
   @override
   void dispose() {
     _router?.routerDelegate.removeListener(_schedule);
+    if (_viewedSessionId != null) _voice?.clearViewedSession(_viewedSessionId!);
     super.dispose();
   }
 

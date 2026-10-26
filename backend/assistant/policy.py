@@ -7,9 +7,10 @@ from session.policy import active_membership, readable_session
 
 
 class AssistantError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, *, details: dict | None = None):
         super().__init__(message)
         self.status, self.code = status, code
+        self.details = details
 
 
 async def lock_actor(db, user_id: str) -> None:

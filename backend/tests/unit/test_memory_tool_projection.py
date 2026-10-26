@@ -28,6 +28,66 @@ from tool.creator_context import CreatorContextArgs, execute_creator_context
 BODY = "temporary-only-memory-content-4823"
 
 
+def semantic_turn(seed, policy):
+    from memory.packet import TurnContext
+    return TurnContext(user_id=seed[0], workspace_id=seed[1], project_id=seed[2],
+        session_id=seed[3], query=BODY, read_policy=policy)
+
+
+@pytest.mark.parametrize("policy", ["uncertain", "current_only", "no_history"])
+@pytest.mark.parametrize("action", ["get_user_context", "search_memories", "list_active_memories"])
+async def test_creator_read_cannot_bypass_the_current_turn_restriction(monkeypatch, policy, action):
+    from memory.packet import ReadBudget
+    seed = await seed_tools(monkeypatch)
+    await manual_memory(seed, BODY)
+    config_module.get_config().memory.semantic_recall = True
+    ctx = tool_context(seed)
+    ctx.memory_turn, ctx.memory_read_budget = semantic_turn(seed, policy), ReadBudget()
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("Legacy creator read escaped the semantic read contract")
+
+    monkeypatch.setattr("memory.context.legacy_read", forbidden)
+    monkeypatch.setattr("memory.retrieval.search_memory", forbidden)
+    result = await execute_creator_context(CreatorContextArgs(action=action), ctx)
+    assert json.loads(result.output)["status"] == "restricted"
+    assert BODY not in result.output and result.metadata["transient_memory_refs"]["packet_read"]
+
+
+async def test_creator_read_uses_the_same_batch_budget_as_search(monkeypatch):
+    from memory.packet import ReadBudget
+    seed = await seed_tools(monkeypatch)
+    await manual_memory(seed, BODY)
+    config_module.get_config().memory.semantic_recall = True
+    ctx = tool_context(seed)
+    ctx.memory_turn, ctx.memory_read_budget = semantic_turn(seed, "allowed"), ReadBudget()
+    ctx.part_id = "creator-read"
+    first = await execute_creator_context(CreatorContextArgs(action="get_user_context"), ctx)
+    assert BODY in first.output
+    ctx.part_id = "repeat-search"
+    second = await tools.execute_memory_search(tools.MemorySearchArgs(query=BODY), ctx)
+    assert json.loads(second.output)["status"] == "budget_exhausted"
+    assert BODY not in second.output
+
+
+@pytest.mark.parametrize("policy", ["allowed", "uncertain", "no_history", "current_only"])
+async def test_pre_upgrade_creator_result_does_not_regain_a_broad_read_on_replay(monkeypatch, policy):
+    seed = await seed_tools(monkeypatch)
+    await manual_memory(seed, BODY)
+    lease, ctx, messages, part, _ = await tool_history(seed, "creator_context", CreatorContextArgs(action="get_user_context"))
+    try:
+        config_module.get_config().memory.semantic_recall = True
+        ctx.memory_turn = semantic_turn(seed, policy)
+        async def forbidden(*args, **kwargs):
+            pytest.fail("Replay performed the unbounded legacy read")
+        monkeypatch.setattr("memory.context.legacy_read", forbidden)
+        result = provider_input(await revalidate_memory_tool_messages(messages, ctx=ctx), verified=True)
+        assert BODY not in result
+        assert ("legacy_read_requires_bounded_packet" if policy == "allowed" else "turn_read_scope") in result
+    finally:
+        await lease.release(session_status="idle")
+
+
 def run_fence(lease):
     return lease.session_id, lease.run_id, lease.generation
 

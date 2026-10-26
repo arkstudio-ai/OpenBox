@@ -74,8 +74,9 @@ class _FakeApi extends ChatApi {
   @override
   Future<void> replyQuestion(
     String requestId,
-    List<List<String>> answers,
-  ) async {
+    List<List<String>> answers, {
+    List<List<String>>? attachments,
+  }) async {
     if (failure != null) throw _failure(failure!);
     replies[requestId] = answers;
     await gate?.future;
@@ -301,7 +302,12 @@ void main() {
       expect(requests.single.method, 'PUT');
       expect(requests.single.data, {
         'draft': [
-          {'selected': <String>[], 'custom': '30s', 'use_custom': true},
+          {
+            'selected': <String>[],
+            'custom': '30s',
+            'use_custom': true,
+            'attachments': <String>[],
+          },
         ],
         'revision': 4,
       });

@@ -75,6 +75,18 @@ def test_endpoint_business_space_and_proxy_plan():
     assert voice_settings.proxy_plan(VoiceConfig(proxy="none", connect_attempts=2)) == [None, None]
 
 
+def test_gateway_cannot_reuse_official_key_or_redirect_to_official_workspace(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "official-secret")
+    config = VoiceConfig(enabled=True, endpoint="ws://gateway:3000/v1/realtime", proxy="none")
+    assert not voice_settings.enabled(config)
+    config.api_key = "gateway-only"
+    assert voice_settings.enabled(config)
+    assert voice_settings.realtime_url(config).startswith("ws://gateway:3000/v1/realtime?model=")
+    config.workspace_id = "old-workspace"
+    with pytest.raises(ValueError, match="must be empty"):
+        voice_settings.realtime_url(config)
+
+
 async def test_clients_learn_whether_to_show_the_call_button(monkeypatch):
     cfg = OpenBoxConfig(model="openai/gpt-5")
     monkeypatch.setattr("core.config.get_config", lambda: cfg)

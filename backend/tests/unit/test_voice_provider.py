@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+from unittest.mock import ANY
 
 import pytest
 
@@ -176,7 +177,7 @@ async def test_connect_alternates_proxy_and_direct_and_configures_the_session(mo
     assert sockets[0].sent[-3:] == [
         {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
             {"type": "input_text", "text": "（后台备注，不是用户说的话）做完了。"}]}},
-        {"type": "conversation.item.delete", "item_id": "item_K"},
+        {"type": "conversation.item.delete", "event_id": ANY, "item_id": "item_K"},
         {"type": "session.update", "session": {"instructions": "新的提示词"}}]  # voice, VAD and tools stay
 
 
@@ -240,6 +241,28 @@ async def test_audio_session_uses_cloud_vad_for_prompt_interruption_and_a_compat
     assert session["tools"] == provider_module.TOOLS
 
 
+@pytest.mark.parametrize("audio", [True, False])
+async def test_response_policy_preserves_contract_without_duplicating_audio_memory(audio):
+    from voice.models import OMNI_MODEL
+    provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL if audio else OMNI_MODEL))
+    socket = provider._ws = FakeSocket([])
+    policy = "Answer briefly without another greeting."
+    full = "DURABLE ROLE AND VERIFIED MEMORY\n" + policy
+    await provider.create_response(full, policy)
+    if audio:
+        note, create = socket.sent
+        assert policy in note["item"]["content"][0]["text"]
+        assert "DURABLE ROLE AND VERIFIED MEMORY" not in note["item"]["content"][0]["text"]
+        assert create == {"type": "response.create"}
+        prompt_id = note["item"]["id"]
+        await provider._response_prompt_event({"type": "response.created", "response": {"id": "answer"}})
+        await provider._response_prompt_event({"type": "response.done", "response": {"id": "answer"}})
+        assert socket.sent[-1]["type"] == "conversation.item.delete"
+        assert socket.sent[-1]["item_id"] == prompt_id
+    else:
+        assert socket.sent == [{"type": "response.create", "response": {"instructions": full}}]
+
+
 @pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
 async def test_audio_one_response_prompt_does_not_leak_into_later_turns(status):
     provider = RealtimeProvider(VoiceConfig(model=AUDIO_MODEL))
@@ -263,7 +286,7 @@ async def test_audio_one_response_prompt_does_not_leak_into_later_turns(status):
         if event.kind == "user_transcript":
             break
     assert [event.kind for event in got] == ["response_started", "response_done", "user_transcript"]
-    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": item["id"]}
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "event_id": ANY, "item_id": item["id"]}
     assert not provider._pending_prompts and not provider._response_prompts and not provider._prompt_items
     # A tool-result continuation uses the result already in context, with its original call ID.
     await provider.send_tool_output("original-call", {"sum": 42})
@@ -282,7 +305,7 @@ async def test_audio_refused_prompt_is_removed_before_the_next_user_turn():
     event = await anext(provider.events())
     assert event.kind == "provider_error" and event.reason == "active_response"
     assert not provider._pending_prompts
-    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": item_id}
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "event_id": ANY, "item_id": item_id}
 
 
 @pytest.mark.parametrize("model", ["qwen3.8-omni-flash-realtime", AUDIO_MODEL])
@@ -314,7 +337,7 @@ async def test_an_audio_keepalive_on_an_empty_conversation_brings_its_own_prompt
         if event.kind == "user_started":
             break
     assert got == ["response_started", "response_done", "user_started"]
-    assert socket.sent[-1] == {"type": "conversation.item.delete", "item_id": prompt["item"]["id"]}
+    assert socket.sent[-1] == {"type": "conversation.item.delete", "event_id": ANY, "item_id": prompt["item"]["id"]}
     omni = RealtimeProvider(VoiceConfig(model="qwen3.8-omni-flash-realtime"))
     omni._ws = FakeSocket([])
     await omni.keepalive(empty=True)  # Omni takes instructions on an empty conversation
@@ -331,10 +354,11 @@ async def test_an_item_error_does_not_retire_a_prompt_whose_reply_is_still_comin
                      {"type": "response.created", "response": {"id": "deliver"}}]
     events = provider.events()
     assert (await anext(events)).reason == "item"
-    assert provider._pending_prompts == {item_id} and len(socket.sent) == 2  # nothing deleted
+    assert item_id in provider._prompt_items and len(socket.sent) == 2  # reader may already see response.created
     assert (await anext(events)).kind == "response_started"
     assert provider._response_prompts == {"deliver": {item_id}}
     await events.aclose()
+    await provider.close()
 
 
 async def test_mid_call_session_updates_carry_only_the_instructions():

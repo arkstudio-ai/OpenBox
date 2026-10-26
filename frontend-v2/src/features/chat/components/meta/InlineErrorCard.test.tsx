@@ -19,6 +19,15 @@ vi.mock("../../stores/model-choice", () => ({
 }))
 afterEach(() => { cleanup(); preserve.mockReturnValue(true) })
 
+it("keeps the disconnected desktop cause visible with the original request recovery guidance", () => {
+  const message = "云桌面尚未连接，附件暂时无法传入。原请求和参考附件已保留；恢复后继续原任务。"
+  const { container } = render(<InlineErrorCard sessionId="task" messageId="reply"
+    streaming={false} error={{ code: "SANDBOX_NOT_READY", message, retryable: true }} />)
+  expect(screen.getByText(message)).toBeTruthy()
+  expect(container.querySelector("details")).toBeNull()
+  expect(screen.queryByText("assistant.continueAfterError")).toBeNull()
+})
+
 it("shows committed submission facts without a collapsed detail or advice to resend", () => {
   const receipt = "个人助理本轮回复超时。御尚喜宴：指令已接收，正在等待原任务中的确认。"
   const { container } = render(<InlineErrorCard sessionId="main" messageId="reply"

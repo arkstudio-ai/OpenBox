@@ -53,7 +53,7 @@ def _replace_output(part: dict, value: dict, *, verified: bool, citations_only: 
     metadata["_memory_projection_verified"] = verified
     replacement["metadata"] = metadata
     state = replacement.get("state")
-    if citations_only and value.get("operation", part.get("tool")) == "memory_search":
+    if citations_only and value.get("operation", part.get("tool")) in {"memory_search", "memory_read_more", "memory.read_more"}:
         # A model may have copied a recalled phrase into its next search
         # query. Such arguments are temporary evidence too, not a back door
         # for old body text to enter a later turn or permanent summary.
@@ -63,7 +63,7 @@ def _replace_output(part: dict, value: dict, *, verified: bool, citations_only: 
         state["error"] = None
         prior_metadata = state.get("metadata") or {}
         state["metadata"] = {**(prior_metadata if isinstance(prior_metadata, dict) else {}), "_memory_projection_verified": verified}
-        if citations_only and value.get("operation", part.get("tool")) == "memory_search":
+        if citations_only and value.get("operation", part.get("tool")) in {"memory_search", "memory_read_more"}:
             state["input"] = replacement["input"]
     return replacement
 
@@ -162,9 +162,10 @@ async def revalidate_memory_tool_messages(messages: list, *, ctx=None, user_id: 
             if session is None or session.project_id != project_id:
                 raise MemoryAccessDenied("Projection identity is not available")
             from memory.session_policy import memory_isolated
-            if memory_isolated(session):
+            if memory_isolated(session) and not (session.kind == "assistant" and ctx is not None and ctx.memory_turn):
                 raise MemoryAccessDenied("Persistent memory isolation is enabled")
-            access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id)
+            access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id, project_id=project_id,
+                include_all_projects=bool(ctx and ctx.memory_turn and ctx.memory_turn.include_all_projects))
             if ctx is not None and getattr(ctx, "run_id", None):
                 driver = await db.get(AgentDriverState, session_id)
                 if (driver is None or driver.user_id != user_id or driver.run_id != ctx.run_id
@@ -188,14 +189,42 @@ async def revalidate_memory_tool_messages(messages: list, *, ctx=None, user_id: 
             marker["reason_code"] = "scope_unavailable"
             message.parts[index] = _replace_output(part, marker, verified=True, citations_only=True)
             continue
+        if settings.enabled("semantic_recall", user_id):
+            from memory.read_contract import permits
+            kind = "task_state" if operation == "current_task_state" else "search"
+            # Packet reads check each typed request below (including the
+            # narrow current-input/settings capabilities). Older results have
+            # no such grant and must not bypass this turn's read restriction.
+            if not metadata.get("packet_read") and not permits(getattr(ctx, "memory_turn", None), kind):
+                marker.update(status="restricted", reason_code="turn_read_scope")
+                message.parts[index] = _replace_output(part, marker, verified=True, citations_only=True)
+                continue
+            if legacy and not metadata.get("packet_read"):
+                marker["reason_code"] = "legacy_read_requires_bounded_packet"
+                message.parts[index] = _replace_output(part, marker, verified=True, citations_only=True)
+                continue
         refs = metadata.get("references")
         if (metadata.get("version") != 1 or metadata.get("session_id") != session_id
                 or operation != _trusted_operation(part) or not isinstance(refs, list)
-                or len(refs) > (100 if legacy else 12)):
+                or len(refs) > (100 if legacy else 36 if metadata.get("packet_read") else 12)):
             marker["reason_code"] = "unversioned_temporary_result"
             message.parts[index] = _replace_output(part, marker, verified=True, citations_only=True)
             continue
         same_turn = bool(logical_turn_id and metadata.get("logical_turn_id") == logical_turn_id)
+        if metadata.get("packet_read"):
+            if same_turn and not for_compaction and ctx is not None and ctx.memory_turn is not None:
+                from memory.readers import revalidate_result
+                saved = ctx.memory_read_budget.results.get(metadata.get("read_id")) if ctx.memory_read_budget else None
+                if saved:
+                    try:
+                        value = await revalidate_result(*saved, ctx.memory_turn, settings)
+                        message.parts[index] = _replace_output(part, value, verified=True)
+                        continue
+                    except (MemoryAccessDenied, SQLAlchemyError, ValueError):
+                        pass
+            marker["reason_code"] = "packet_read_requires_fresh_evidence"
+            message.parts[index] = _replace_output(part, marker, verified=True, citations_only=True)
+            continue
         references = []
         items = []
         try:

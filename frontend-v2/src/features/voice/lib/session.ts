@@ -51,6 +51,7 @@ export class VoiceCallSession {
   private limited = false
   private retried = false
   private muted = false
+  private viewedSessionId: string | null = null
   private heardAudio = false
   private playbacks = new Map<string, { finished: boolean; audio: boolean; failed: boolean }>()
   private activePlayback: string | null = null
@@ -108,6 +109,12 @@ export class VoiceCallSession {
   setMuted(muted: boolean): void {
     this.muted = muted
     this.capture?.setMuted(muted)
+  }
+
+  setViewedSession(sessionId: string | null): void {
+    if (this.done || this.stopping || this.viewedSessionId === sessionId) return
+    this.viewedSessionId = sessionId
+    if (this.ready) this.send({ type: "view", session_id: sessionId })
   }
 
   /** Leave at once (the page is going away, the account changed): a best-effort `stop`, no waiting. */
@@ -253,6 +260,7 @@ export class VoiceCallSession {
   private onReady(rate: number | undefined): void {
     if (!this.context) return
     this.ready = true
+    if (this.viewedSessionId) this.send({ type: "view", session_id: this.viewedSessionId })
     window.clearTimeout(this.connectTimer)
     this.sink.mark("ready")
     this.player = this.deps.createPlayer(this.context, rate || OUTPUT_RATE, this.handleIdle)

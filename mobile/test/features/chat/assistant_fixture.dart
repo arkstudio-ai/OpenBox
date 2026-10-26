@@ -352,6 +352,7 @@ class Fixture {
         prefsProvider.overrideWithValue(prefs),
         wsClientProvider.overrideWithValue(ws),
         assistantProfileApiProvider.overrideWithValue(profileApi),
+        assistantProfileOwnerProvider.overrideWithValue(scope.userId),
         assistantScopeProvider.overrideWithValue(scope),
         assistantApiProvider(scope).overrideWithValue(api),
         if (legacy != null) chatApiProvider.overrideWithValue(legacy),

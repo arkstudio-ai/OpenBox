@@ -75,33 +75,47 @@ def _merge_refs(existing, refs) -> list[dict]:
     return list(merged.values())
 
 
+def _debug_step(run_id, phase, status, *, data=None, usage=None, reason_code=None,
+                duration_ms=None, source_refs=None):
+    from core.config import get_config
+    limit = get_config().memory.debug_snapshot_max_chars
+    return MemoryDebugStep(id=ascending("memorystep"), run_id=run_id, phase=phase[:32], status=status[:24],
+        reason_code=reason_code[:64] if reason_code else None,
+        data=redact_value(data or {}, limit=limit), usage=redact_value(usage or {}, limit=limit),
+        duration_ms=duration_ms, created_at=_now())
+
+
 async def add_debug_step(run_id, phase, status, *, data=None, usage=None, reason_code=None, duration_ms=None,
                          source_refs=None):
     """A step and the sources its bodies came from are saved together, so no body
     is ever stored without what must be re-checked before showing it."""
     if run_id is None:
         return
-    from core.config import get_config
-    config = get_config().memory
     async with get_db_session() as db:
-        run = await db.get(MemoryDebugRun, run_id)
+        run = await db.scalar(select(MemoryDebugRun).where(MemoryDebugRun.id == run_id).with_for_update())
         if run is None:
             return
-        db.add(MemoryDebugStep(id=ascending("memorystep"), run_id=run_id, phase=phase[:32], status=status[:24],
-            reason_code=reason_code[:64] if reason_code else None,
-            data=redact_value(data or {}, limit=config.debug_snapshot_max_chars),
-            usage=redact_value(usage or {}, limit=config.debug_snapshot_max_chars),
-            duration_ms=duration_ms, created_at=_now()))
+        db.add(_debug_step(run_id, phase, status, data=data, usage=usage,
+                          reason_code=reason_code, duration_ms=duration_ms))
         if source_refs:
             run.source_refs = _merge_refs(run.source_refs, source_refs)
 
 
-async def finish_debug_run(run_id, status="SUCCEEDED", *, source_refs=None, usage=None):
+async def finish_debug_run(run_id, status="SUCCEEDED", *, source_refs=None, usage=None, steps=()):
+    """Commit completed diagnostics, evidence references and status atomically.
+
+    A prepared packet already has both its route and bundle diagnostics. Keep
+    those in one transaction instead of adding three serial database commits
+    before the primary model can start. Bodies never outlive their references.
+    """
     if run_id is None:
         return
     async with get_db_session() as db:
-        row = await db.get(MemoryDebugRun, run_id)
+        row = await db.scalar(select(MemoryDebugRun).where(MemoryDebugRun.id == run_id).with_for_update())
         if row:
+            for step in steps:
+                db.add(_debug_step(run_id, **step))
+                row.source_refs = _merge_refs(row.source_refs, step.get("source_refs"))
             row.status = status
             # A failure keeps whatever its saved steps already registered.
             row.source_refs = _merge_refs(row.source_refs, source_refs)

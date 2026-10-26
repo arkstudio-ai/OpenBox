@@ -1,0 +1,21 @@
+# Run on the internal model-gateway host, on the same private Docker network
+# as New API. This adapter must not have a published host port.
+# New API channel: type=1, base_url=http://bossip-bailian-realtime-compat:8080
+# Channel models: qwen-audio-3.1-realtime-plus,qwen3.8-omni-flash-realtime
+# Official credentials belong to the New API channel, not this compose file.
+services:
+  bailian-realtime-compat:
+    build: .
+    image: bossip/bailian-realtime-compat:${BAILIAN_COMPAT_TAG:-local}
+    container_name: bossip-bailian-realtime-compat
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    networks: [gateway]
+
+networks:
+  gateway:
+    external: true
+    name: ${GATEWAY_DOCKER_NETWORK:-bossip_default}

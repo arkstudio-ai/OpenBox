@@ -15,9 +15,10 @@ import '../../api/assistant_reply.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
+import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
-import 'video_approval_detail.dart';
 import 'question_resources.dart';
+import 'video_approval_detail.dart';
 
 /// Blocking question prompt at the end of the transcript (web `QuestionDock`):
 /// answers post as one label-array per question, in order.
@@ -81,8 +82,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         auth.userId == userId && workspace.currentId == workspaceId;
     final drafts = ref.read(questionDraftProvider.notifier);
     if (drafts.of(request.id, _count).submitting ||
-        drafts.of(request.id, _count).transferring)
+        drafts.of(request.id, _count).transferring) {
       return;
+    }
     drafts.setSubmitting(request.id, true);
     setState(() => _submitError = null);
     // Read before awaiting: a transcript row arriving mid-request destroys
@@ -411,14 +413,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 color: t.n500,
               ),
             ),
-          Text(
-            question.question,
-            style: TextStyle(
-              fontSize: FontSizes.base,
-              color: t.ink,
-              height: 1.5,
-            ),
-          ),
+          MarkdownView(question.question),
           VideoApprovalDetail(item: question),
           DesktopTakeoverDetail(
             item: question,
@@ -477,8 +472,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                               );
                           if (on &&
                               !question.multiple &&
-                              !question.allowAttachments)
+                              !question.allowAttachments) {
                             _completePage(index);
+                          }
                         },
                 ),
             ],

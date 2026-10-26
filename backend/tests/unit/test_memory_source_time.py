@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
 from core import config as config_module
 from db.base import get_db_session
@@ -12,6 +12,7 @@ from db.models.memory_pipeline import MemoryExtractionJob, MemoryTurnCompletion
 from db.models.memory_v2 import MemorySource, MemorySourceLink
 from db.models.message import Message
 from db.models.part import Part
+from db.models.session import Session
 from memory import jobs, service
 from memory.extraction import validate_proposals
 from memory.policy import resolve_access_scope
@@ -165,17 +166,22 @@ async def test_legacy_source_recovers_today_at_local_midnight_without_sql_or_job
     config = config_module.get_config().memory
     config.retrieval_v2 = config.rerank = config.wiki = False
 
-    async def time_context(_db, _user, query, _config):
-        return resolve_query_time(query, "Asia/Shanghai", now=OCCURRED + timedelta(minutes=1))
+    async def time_context(_db, _user, query, _config, *, intent=None):
+        return resolve_query_time(query, "Asia/Shanghai", now=OCCURRED + timedelta(minutes=1), intent=intent)
 
     monkeypatch.setattr("memory.retrieval.query_time_context", time_context)
     today = await search_memory(query="今天中文回复偏好", user_id=seed[0], workspace_id=seed[1],
+                                time_intent={"expression": "今天", "choice": "source_time", "confidence": .99},
                                 project_id=seed[2], config=config)
     yesterday = await search_memory(query="昨天中文回复偏好", user_id=seed[0], workspace_id=seed[1],
+                                    time_intent={"expression": "昨天", "choice": "source_time", "confidence": .99},
                                     project_id=seed[2], config=config)
     assert today["time_context"]["start_at"] == "2026-10-02T00:00:00+08:00"
-    assert len(today["items"]) == 1
-    recovered = next(reference for reference in today["items"][0]["sources"] if reference["id"] == source.id)
+    # Retrieval can also include the primary source. The temporal contract is
+    # that this specific memory survives with its recovered original timestamp.
+    memories = [item for item in today["items"] if item["kind"] == "memory"]
+    assert [item["id"] for item in memories] == [memory_id]
+    recovered = next(reference for reference in memories[0]["sources"] if reference["id"] == source.id)
     assert recovered["occurred_at"] == OCCURRED.isoformat()
     assert yesterday["items"] == []
     async with get_db_session() as db:
@@ -232,3 +238,45 @@ async def test_unknown_manual_time_never_uses_note_or_source_storage_time(monkey
             MemorySourceLink.source_id == MemorySource.id).where(MemorySourceLink.memory_id == note["id"]))
         assert source.created_at is not None and source.occurred_at is None
         assert await source_occurred_at(db, access=scope, source=source) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["part_owner", "session_deleted", "removed_statement"])
+async def test_batched_conversation_evidence_preserves_live_source_authority(monkeypatch, change):
+    seed, _ = await _dated_turn(monkeypatch)
+    _, source, _ = await _candidate_source(seed)
+    async with get_db_session() as db:
+        scope = await resolve_access_scope(db, user_id=seed[0], workspace_id=seed[1], project_id=seed[2])
+        assert await service.source_is_available(db, scope, source)
+        statements = []
+
+        def before(_conn, _cursor, statement, _parameters, _context, _executemany):
+            statements.append(statement)
+
+        event.listen(db.get_bind(), "before_cursor_execute", before)
+        try:
+            async with service.source_authority(db, scope):
+                await service.prefetch_source_facts(db, scope, [source])
+                assert await service.source_is_available(db, scope, source)
+            # All three independent predicates share a single round trip,
+            # rather than replacing any of them with a cached verdict.
+            reads = [sql for sql in statements if "FROM sessions" in sql]
+            assert len(reads) == 1
+            assert "FROM agent_events" in reads[0] and "FROM parts" in reads[0]
+        finally:
+            event.remove(db.get_bind(), "before_cursor_execute", before)
+
+    async with get_db_session() as db:
+        if change == "part_owner":
+            other = await _seed(monkeypatch)
+            await db.execute(update(Part).where(Part.id == source.part_id).values(user_id=other[0]))
+        elif change == "session_deleted":
+            await db.execute(update(Session).where(Session.id == source.session_id).values(is_deleted=True))
+        else:
+            owner = await prepare_agent_event_write(db, session_id=seed[3], user_id=seed[0], run_fence=None)
+            await append_surface_remove_locked(db, owner, message_ids=[source.message_id])
+    async with get_db_session() as db:
+        assert not await service.source_is_available(db, scope, source)
+        async with service.source_authority(db, scope):
+            await service.prefetch_source_facts(db, scope, [source])
+            assert not await service.source_is_available(db, scope, source)

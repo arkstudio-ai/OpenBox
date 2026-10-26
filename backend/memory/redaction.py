@@ -9,6 +9,16 @@ _SENSITIVE = re.compile(r"(?:password|passwd|secret|api.?key|authorization|crede
 _CREDENTIAL_ENV = re.compile(r"(?:_KEY$|_TOKEN$|^BAILIAN_KEY$|^JEV_KEY$)", re.I)
 
 
+class ReferenceId(str):
+    """An opaque ID projected from an authorized server object, not user text.
+
+    A digest can coincidentally contain a telephone-shaped digit run. Changing
+    it breaks exact reads. Only typed evidence projection creates this marker;
+    untrusted JSON strings do not acquire it by spelling an ID-like prefix.
+    Known credentials are still masked even in a marked reference.
+    """
+
+
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -154,6 +164,9 @@ def redact_value(value, *, limit: int = 1200, depth: int = 0, credentials: list[
     credentials = _runtime_credentials() if credentials is None else credentials
     if depth > 8:
         return "[depth limited]"
+    if isinstance(value, ReferenceId):
+        text = _mask_credentials(value, credentials=credentials)
+        return text[:limit] + ("…[truncated]" if len(text) > limit else "")
     if isinstance(value, str):
         return redact_text(value, limit, credentials=credentials)
     if isinstance(value, dict):

@@ -33,6 +33,16 @@ describe("useVideoModelChoice", () => {
     expect(result.current.activeId).toBe("deployment-default")
   })
 
+  it("keeps the deployment resolution when a saved session has no explicit pick", () => {
+    const { result } = renderHook(() =>
+      useVideoModelChoice({ sessionVideoModel: "", sessionVideoResolution: "", sessionKey: "saved",
+        fallback: "fast-model", resolutionFallback: "768p",
+        resolutionsByModel: { "fast-model": ["480p", "768p"] } }),
+    )
+    expect(result.current.activeResolution).toBe("768p")
+    expect(result.current.pendingResolution).toBeUndefined()
+  })
+
   it("only reports an actual pick as pending", () => {
     // What gets sent to the backend. Sending the resolved default would pin
     // every conversation to it, including ones that never chose.

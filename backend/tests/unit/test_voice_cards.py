@@ -128,6 +128,11 @@ async def test_native_card_read_interrupts_only_the_observed_card(call, monkeypa
     await replay(bridge, event("user_started"), event("user_stopped"),
                  transcript("测试A那张卡片是什么意思？"), started("lookup"),
                  tool_call("read", name="cards_pending", arguments='{"request_id":"q-del"}'), done("lookup"))
+    # The model can explain the result only after the SQL-backed read returns.
+    # Yielding a fixed number of event-loop turns does not await that I/O.
+    async with asyncio.timeout(2):
+        while bridge._direct:
+            await asyncio.sleep(.001)
     clock.advance(4)
     await bridge.fill_idle()
     if stage != "requested":

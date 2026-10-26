@@ -170,20 +170,27 @@ describe("VoicePage", () => {
   })
 
   it("saves each call habit at once; a call in progress follows it", async () => {
-    const put = vi.spyOn(http, "put").mockImplementation(async (_url, body) => ({
-      ...DEFAULT_ASSISTANT_PROFILE,
-      ...(body as object),
-    }))
+    useAppearanceStore.setState({ assistant: { ...DEFAULT_ASSISTANT_PROFILE, revision: 7 } })
+    const put = vi.spyOn(http, "put").mockImplementation(async (_url, body) => {
+      const { expected_revision, operation_id: _operation, ...patch } = body as Record<string, unknown>
+      expect(_operation).toEqual(expect.any(String))
+      return { ...useAppearanceStore.getState().assistant, ...patch, revision: Number(expected_revision) + 1 }
+    })
     render(<VoicePage />)
     const recap = screen.getByRole("switch", { name: /voice\.call\.recap/ })
     expect(recap.getAttribute("aria-checked")).toBe("true")
     fireEvent.click(recap)
-    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/assistant/profile", { call_recap: false }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/assistant/profile", {
+      call_recap: false, expected_revision: 7, operation_id: expect.any(String),
+    }))
     await waitFor(() => expect(useAppearanceStore.getState().assistant.call_recap).toBe(false))
     expect(toast).toHaveBeenCalledWith("success", "voice.call.saved")
     fireEvent.click(screen.getByRole("button", { name: "voice.call.detailOption.detailed" }))
     await waitFor(() =>
-      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { call_detail: "detailed" }),
+      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", {
+        call_detail: "detailed", expected_revision: 8, operation_id: expect.any(String),
+      }),
     )
+    expect(put.mock.calls[0]![1]).not.toEqual(put.mock.calls[1]![1])
   })
 })

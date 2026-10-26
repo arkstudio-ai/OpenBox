@@ -44,6 +44,7 @@ async def test_each_provider_request_reads_current_progress_without_invalidating
         [item] = before["items"]
         assert item["task_id"] == accepted["task_id"] and item["observed_state"] == "completed"
         assert item["latest_result"]["outcome"] == "succeeded"
+        assert item["latest_result"]["is_current"] is True
         assert "Browser verification is still untested" in item["latest_result"]["summary"]
         assert before["untrusted_data"] and not before["grants_authority"]
         await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,
@@ -52,6 +53,7 @@ async def test_each_provider_request_reads_current_progress_without_invalidating
         current = watch_list(await projected(ctx))["items"][0]
         assert current["revision"] == item["revision"] + 1 and current["observed_state"] == "queued"
         assert current["latest_result"]["result_id"] == item["latest_result"]["result_id"]
+        assert current["latest_result"]["is_current"] is False
         await consume_context(ctx)
         await finish(ctx, lease, answer, "A follow-up was accepted. The earlier result belongs to the earlier intent.")
         page = await read_history(user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id,

@@ -201,6 +201,7 @@ class PatchPart(BaseModel):
     type: Literal["patch"] = "patch"
     id: str = Field(default_factory=lambda: ascending("part"))
     files: list[PatchFile] = []
+    path_encoding: Literal["literal"] = "literal"
     # Snapshot range this patch describes, so the UI can fetch exactly this
     # step's line-level diff instead of the session's cumulative one.
     from_snapshot: str | None = None

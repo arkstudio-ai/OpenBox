@@ -129,8 +129,9 @@ final class VoiceCallBridge: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     guard action.callUUID == callID else { action.fulfill(); return }
+    let wasStarting = startResult != nil
     clear()
-    channel?.invokeMethod("end", arguments: nil)
+    channel?.invokeMethod(wasStarting ? "start_failed" : "end", arguments: nil)
     action.fulfill()
   }
 
@@ -142,9 +143,15 @@ final class VoiceCallBridge: NSObject, CXProviderDelegate {
   }
 
   func providerDidReset(_ provider: CXProvider) {
+    guard self.provider === provider else { return }
     let wasActive = callID != nil
+    let wasStarting = startResult != nil
     clear()
-    if wasActive { channel?.invokeMethod("end", arguments: nil) }
+    self.provider = nil
+    provider.invalidate()
+    if wasActive {
+      channel?.invokeMethod(wasStarting ? "start_failed" : "end", arguments: nil)
+    }
   }
 
   func didBecomeActive() {

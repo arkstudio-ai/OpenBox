@@ -61,6 +61,9 @@ class AssistantTurnLimits(BaseModel):
 
 
 class AssistantConfig(BaseModel):
+    # Proposal comparison includes edits, preserved constraints and actual
+    # image pixels. It is not the lightweight memory-intent classification.
+    revision_review_model: str = "openai/qwen3.8-max"
     ordinary: AssistantTurnLimits = Field(default_factory=AssistantTurnLimits)
     report_only: AssistantTurnLimits = Field(default_factory=lambda: AssistantTurnLimits(
         wall_time_seconds=120, model_requests=8, tool_calls=16))
@@ -83,6 +86,11 @@ class ModelConfig(BaseModel):
     # heuristic in agent.vision. Set it explicitly when a gateway exposes a
     # text-only variant of an otherwise multimodal family.
     vision: bool | None = None
+    # None uses chat defaults (30s first progress / 60s idle / 180s total
+    # provider wait); explicit reasoning and compaction get 90s / 60s / 600s.
+    first_progress_timeout_seconds: float | None = Field(default=None, gt=0, le=1800)
+    stream_idle_timeout_seconds: float | None = Field(default=None, gt=0, le=1800)
+    response_timeout_seconds: float | None = Field(default=None, gt=0, le=3600)
     subagent_capabilities: list[SubagentProviderCapability] | None = None
     subagent_reasoning_variants: list[str] | None = None
 
@@ -123,9 +131,9 @@ class SkillsConfig(BaseModel):
 class ToolExposureConfig(BaseModel):
     """Tool schema exposure and discovery budgets.
 
-    ``legacy_eager`` remains the safe migration default.  The other modes are
-    explicit so rollout never silently changes when a provider/model name is
-    edited elsewhere in the config.
+    The build agent discovers tools on demand by default. Existing explicit
+    legacy/shadow overrides remain available for rollout and rollback; other
+    agents retain their separate opt-in gate in effective_exposure_mode.
     """
 
     mode: Literal[
@@ -134,7 +142,7 @@ class ToolExposureConfig(BaseModel):
         "portable",
         "native_auto",
         "emergency_eager",
-    ] = "legacy_eager"
+    ] = "portable"
     resident_soft_chars: int = Field(default=20_000, ge=1_000, le=128_000)
     resident_hard_chars: int = Field(default=24_000, ge=1_000, le=128_000)
     active_soft_chars: int = Field(default=28_000, ge=1_000, le=128_000)
@@ -578,7 +586,33 @@ class MemoryConfig(BaseModel):
     auto_extract: bool = False
     index_sync: bool = False
     retrieval_v2: bool = False
+    # Historical flag name: gates semantic read planning for BOTH the native
+    # JEV adapter and configured_read (including Qwen). It does not choose JEV;
+    # read_router_model below selects the actual provider/model.
     route_jev: bool = False
+    semantic_recall: bool = False
+    # Text consumers can request the same bounded packet as a tool, only when
+    # their current task needs persistent evidence. Their typed proposal uses
+    # the same grounded read-scope validator without another model call. SQL
+    # authority remains independent. Voice keeps its ASR/ACK
+    # preparation protocol until the equivalent live-call path is verified.
+    lazy_read_planning: bool = False
+    # Resolve the model's explicit provider binding (Qwen: official Bailian;
+    # JEV uses its native typed protocol). Empty explicitly opts into
+    # the native JEV adapter, with one bounded independent fallback below.
+    read_router_model: str = "openai/qwen3.8-flash"
+    read_router_url: str = ""  # Optional explicit endpoint; requires MEMORY_READ_ROUTER_API_KEY.
+    read_router_timeout_seconds: float = Field(default=6.0, gt=0, le=10)
+    experience_learning: bool = False
+    # Retrieval deadline AFTER the read policy is resolved, including retrieval
+    # provider IO. The packet reports both stages and total wall-clock time.
+    recall_deadline_seconds: float = Field(default=1.0, gt=0, le=10)
+    read_more_deadline_seconds: float = Field(default=5.0, gt=0, le=20)
+    core_token_budget: int = Field(default=512, ge=128, le=1024)
+    recall_token_budget: int = Field(default=2048, ge=512, le=4096)
+    read_more_token_budget: int = Field(default=4096, ge=1024, le=8192)
+    merged_candidate_limit: int = Field(default=36, ge=8, le=80)
+    recall_item_limit: int = Field(default=8, ge=1, le=16)
     debug_view: bool = False
     debug_replay: bool = False
     rerank: bool = False
@@ -596,21 +630,37 @@ class MemoryConfig(BaseModel):
     policy_version: str = "personal-confirmed-v1"
     default_timezone: str = "Asia/Shanghai"
     extract_model: str = ""
+    # Durable account changes need independent subject/scope verification;
+    # keep this off the latency-sensitive read/voice routing path.
+    setting_verify_model: str = "openai/qwen3.8-max"
     qdrant_url: str = "http://127.0.0.1:6333"
     index_generation: str = "memory-v1"
+    # Explicit credential for embedding/rerank gateways. Official credentials
+    # remain a fallback only for Alibaba endpoints (never for a custom host).
+    api_key: str = ""
     embedding_model: str = "qwen3.7-text-embedding"
     embedding_dimensions: int = Field(default=1024, ge=64, le=4096)
     embedding_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
     embedding_batch_size: int = Field(default=10, ge=1, le=20)
     rerank_model: str = "qwen3.7-text-rerank"
     rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    rerank_protocol: Literal["dashscope", "standard"] = "dashscope"
+    # Explicit, verified gateway base URLs supporting strict JSON Schema.
+    # Preserve unknown providers' JSON-object contract.
+    json_schema_base_urls: list[str] = Field(default_factory=list)
     jev_model: str = "jev-1.13.0"
     jev_url: str = "https://api.typesafe.ai/v1/systemone"
     jev_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+    # Empty disables fallback. This resolves its own model/provider binding;
+    # it never reuses JEV/UEE credentials or the main conversation model.
+    jev_fallback_model: str = "openai/qwen3.8-flash"
+    jev_fallback_timeout_seconds: float = Field(default=4.0, gt=0, le=6)
     jev_memory_confidence: float = Field(default=0.65, ge=0, le=1)
     jev_task_confidence: float = Field(default=0.65, ge=0, le=1)
     provider_timeout_seconds: float = Field(default=20, gt=0, le=120)
+    provider_trust_env: bool = False
     extraction_timeout_seconds: float = Field(default=90, gt=0, le=300)
+    write_verify_timeout_seconds: float = Field(default=15, gt=0, le=60)
     compilation_timeout_seconds: float = Field(default=120, gt=0, le=600)
     wiki_organization_max_memories: int = Field(default=200, ge=1, le=2000)
     wiki_organization_max_concepts: int = Field(default=500, ge=1, le=5000)

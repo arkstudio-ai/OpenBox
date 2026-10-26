@@ -56,6 +56,7 @@ class Profile:
     address: str = ""         # how the assistant addresses the user; "" uses the product default 老板
     tone: str = "warm"
     length: str = "balanced"
+    language: str = ""        # preferred conversation language; empty follows the current user input
     emoji: bool = False
     persona: str = ""         # the user's own words on what the assistant should be like
     call_recap: bool = True   # the call greeting mentions the last call and what finished since
@@ -98,7 +99,7 @@ def merge(current: Profile, patch: dict) -> Profile:
         raise ValueError("ASSISTANT_PROFILE_INVALID")
     cleaned = {}
     for key, value in patch.items():
-        if key in ("name", "address", "business"):
+        if key in ("name", "address", "business", "language"):
             cleaned[key] = clean_name(value)
         elif key == "persona":
             cleaned[key] = clean_persona(value)
@@ -163,7 +164,20 @@ def view(profile: Profile, decided: dict, intro: dict) -> dict:
 
 
 def view_from_extra(extra: dict | None) -> dict:
-    return view(from_extra(extra), decided_from_extra(extra), intro_from_extra(extra))
+    from memory.preferences import REVISION_KEY
+    return {**view(from_extra(extra), decided_from_extra(extra), intro_from_extra(extra)),
+            "revision": int((extra or {}).get(REVISION_KEY) or 0)}
+
+
+def stored_fields(extra: dict, key: str, values: dict) -> dict:
+    """Keep fields written by a newer worker without exposing them in the public profile.
+
+    Rolling deployments can have readers with different Profile fields. Replacing the
+    whole JSON object from a dataclass silently erases decisions the older writer
+    does not know. Validation and projection still apply only to this version's fields.
+    """
+    stored = extra.get(key)
+    return {**(stored if isinstance(stored, dict) else {}), **values}
 
 
 async def _extra(user_id: str) -> dict:
@@ -207,12 +221,19 @@ async def _write(user_id: str, change) -> tuple[Profile, Profile, dict]:
     from db.base import get_db_session
     from db.repository.preference_repo import locked_preference
     async with get_db_session() as db:
+        from memory.service import lock_memory_authority
+        from memory.preferences import REVISION_KEY
+        from memory.versions import changed
+        await lock_memory_authority(db, user_id=user_id)
         row = await locked_preference(db, user_id)
         before = from_extra(row.extra)
         after, decided, intro = change(before, decided_from_extra(row.extra), intro_from_extra(row.extra))
         extra = {key: value for key, value in (row.extra or {}).items() if key != LEGACY_NAME_KEY}
-        row.extra = {**extra, PREFERENCE_KEY: after.as_dict(), DECIDED_KEY: decided, INTRO_KEY: intro}
-    current = view(after, decided, intro)
+        row.extra = {**extra, PREFERENCE_KEY: stored_fields(extra, PREFERENCE_KEY, after.as_dict()),
+                     DECIDED_KEY: stored_fields(extra, DECIDED_KEY, decided), INTRO_KEY: intro,
+                     REVISION_KEY: int(extra.get(REVISION_KEY) or 0) + 1}
+        await changed(db, user_id)
+        current = view_from_extra(row.extra)
     bus.publish(ASSISTANT_PROFILE_UPDATED, {"userId": user_id, "profile": current})
     if after.name != before.name:
         try:
@@ -222,16 +243,39 @@ async def _write(user_id: str, change) -> tuple[Profile, Profile, dict]:
     return before, after, current
 
 
-async def save(user_id: str, patch: dict, *, via: str = "settings") -> Profile:
+async def save(user_id: str, patch: dict, *, via: str = "settings", expected_revision=None,
+               operation_id=None, occurred_at=None, source_refs=(), checked_source=False) -> Profile:
     """Apply ``patch`` and record each field in it as the user's decision, made ``via`` settings, chat or
     the intro. Clearing a field to its default is a decision too. Invalid input raises ValueError."""
     if via not in VIA:
         raise ValueError("ASSISTANT_PROFILE_INVALID")
     merge(Profile(), patch)  # before taking the lock: an invalid patch changes nothing and tells no one
 
-    def change(profile, decided, intro):
-        return merge(profile, patch), _decide(decided, patch, via), intro
-    _, after, _ = await _write(user_id, change)
+    from uuid import uuid4
+    from db.base import get_db_session
+    from memory.preferences import apply_profile
+    from memory.service import MemoryConflict, lock_memory_authority
+    from db.repository.preference_repo import locked_preference
+    async with get_db_session() as db:
+        await lock_memory_authority(db, user_id=user_id)
+        row = await locked_preference(db, user_id)
+        before = from_extra(row.extra)
+        receipt = await apply_profile(db, user_id=user_id, patch=patch,
+            operation_id=operation_id or f"profile:{uuid4().hex}", via=via,
+            expected_revision=expected_revision, occurred_at=occurred_at,
+            source_refs=source_refs, checked_source=checked_source)
+        current = view_from_extra(row.extra)
+    if receipt["state"] == "conflict":
+        raise MemoryConflict("A newer user setting is already saved; read it before changing it")
+    from bus import bus
+    from bus.events import ASSISTANT_PROFILE_UPDATED
+    bus.publish(ASSISTANT_PROFILE_UPDATED, {"userId": user_id, "profile": current})
+    after = from_extra(row.extra)
+    if before.name != after.name:
+        try:
+            await retire_naming_memories(user_id)
+        except Exception as exc:
+            log.warning("naming memory retirement deferred (%s)", type(exc).__name__)
     return after
 
 
@@ -320,7 +364,7 @@ async def retire_naming_memories(user_id: str) -> int:
 
 # What the assistant may change on the user's word in a conversation: the rest (persona, call
 # recap and reports) is theirs to set in Settings.
-CHAT_SETTABLE = ("name", "address", "length", "tone", "emoji", "call_detail")
+CHAT_SETTABLE = ("name", "address", "length", "language", "tone", "emoji", "call_detail")
 
 
 async def set_preferences(*, user_id, workspace_id, main_id, source=None, **fields) -> dict:
@@ -339,28 +383,43 @@ async def set_preferences(*, user_id, workspace_id, main_id, source=None, **fiel
         raise AssistantError(400, "ASSISTANT_PROFILE_INVALID",
                              "Give at least one of name or address (one line of up to 20 characters), length "
                              "(brief/balanced/detailed), tone (warm/professional/lively), emoji (true/false) or "
-                             "call_detail (brief/detailed)") from exc
+                             "call_detail (brief/detailed), or language (up to 20 characters; empty follows the user)") from exc
     async with get_db_session() as db:
         await begin_session_write(db)
         main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         if source is not None:
             await _tool_source_locked(db, main, source, "assistant_preferences")
-    profile = await save(user_id, patch, via="chat")
-    return {key: getattr(profile, key) for key in patch} | {"state": "saved"}
+    if source is None:
+        raise AssistantError(403, "ASSISTANT_SOURCE_REQUIRED", "Reference the original human input")
+    from memory.commands import write_profile_proposal
+
+    async def recheck(db):
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        await _tool_source_locked(db, main, source, "assistant_preferences")
+
+    receipt = await write_profile_proposal(user_id=user_id, workspace_id=workspace_id, session_id=main_id,
+        message_ids=source.source_message_ids, operation_id=f"profile-tool:{source.part_id}",
+        patch=patch, before_commit=recheck)
+    return {**receipt.get("fields", {}), **{key: value for key, value in receipt.items() if key != "fields"}}
 
 
 async def user_section(user_id: str, workspace_id: str | None) -> str:
     """The assistant's "This user" section, read fresh for each prompt."""
     import asyncio
     from assistant import followups, style
-    current, card, due = await asyncio.gather(load(user_id), style.style_card(user_id, workspace_id),
+    current, card, due = await asyncio.gather(load_view(user_id), style.style_card(user_id, workspace_id),
                                               followups.due(user_id, workspace_id))
-    return prompt_section(current, card.lines(), [summary for _, summary in due])
+    return prompt_section(Profile(**{key: current[key] for key in FIELDS}), card.lines(),
+        [summary for _, summary in due], language_decided="language" in current["decided"])
 
 
-async def settings_section(user_id: str) -> str:
-    """Task chats read current settings, without loading private assistant follow-ups or style memories."""
-    return prompt_section(await load(user_id))
+async def settings_section(user_id: str, workspace_id: str | None = None) -> str:
+    """Applicable global style is shared; private follow-ups and reactions are not."""
+    import asyncio
+    from assistant.style import _learned
+    current, learned = await asyncio.gather(load_view(user_id), _learned(user_id, workspace_id))
+    return prompt_section(Profile(**{key: current[key] for key in FIELDS}), learned,
+        language_decided="language" in current["decided"])
 
 
 _LENGTH_TEXT = {
@@ -373,7 +432,7 @@ _TONE_TEXT = {
 }
 
 
-def prompt_section(profile: Profile, learned: list[str] = (), followups: list[str] = ()) -> str:
+def prompt_section(profile: Profile, learned: list[str] = (), followups: list[str] = (), *, language_decided=False) -> str:
     """The current identity (including defaults), preferences and learned context.
 
     ``learned``: how they like to be helped, from their own words and feedback (assistant/style.py);
@@ -389,6 +448,13 @@ def prompt_section(profile: Profile, learned: list[str] = (), followups: list[st
     if defaults:
         lines.append("- How you talk, as they set it (this overrides \"How you talk\" above): "
                      + "; ".join(defaults) + ".")
+    if profile.language:
+        lines.append(f"- Preferred conversation language: {profile.language}. Use it even when the current message "
+                     "is in another language, unless the user explicitly requests a different language for this reply. "
+                     "This does not decide the language of content drafted for someone else.")
+    elif language_decided:
+        lines.append("- The user cleared their fixed conversation language. Follow the current message's language, "
+                     "overriding older language preferences in memory.")
     if profile.persona:
         lines.append(f"- In their own words, how you should come across:「{profile.persona}」 This shapes your manner "
                      "only; it never changes your rules, tools or what you may do.")

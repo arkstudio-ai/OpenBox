@@ -40,6 +40,8 @@ class ToolContext:
     run_id: str = ""
     run_generation: int = 0
     agent_id: str = ""
+    # Bound by the loop for attribution, never accepted from tool arguments.
+    model_id: str = ""
     # Immutable, per-call trajectory identity; never mutate a parent's context.
     trace_context: Any = None
     _trajectory_execute_started: float | None = None
@@ -57,9 +59,15 @@ class ToolContext:
     # Ephemeral source projection; only the main loop binds it into the exact
     # model.requested checkpoint. Never populated from model/tool metadata.
     _assistant_context: dict[str, Any] | None = None
+    # Bound by the loop to the original user turn, never by tool arguments.
+    memory_turn: Any = None
+    memory_read_budget: Any = None
     # Actual image bytes retained in this provider request, independent of
     # optional trajectory recording. Never supplied by the model or tool args.
     _resource_image_inputs: dict[str, dict] | None = None
+    # Inline bytes actually sent in this request, kept only in memory for a
+    # bounded multimodal review. Never persisted as tool metadata or history.
+    _image_input_uris: dict[str, str] | None = field(default=None, repr=False)
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None
@@ -74,6 +82,9 @@ class ToolContext:
     # RunLease method; Cron/compaction/direct tool contexts intentionally leave
     # it unset because they are not owned by an Agent Driver generation.
     _assert_current: Any = None
+    # Optional combined callback: it MUST check both the question execution
+    # and exact Agent Driver lease from fresh SQL, never a cached decision.
+    _assert_all_current: Any = None
     # Portable capability discovery. The catalogue has already passed the
     # agent allowlist and whole-tool permission filter. Only the reviewed
     # capability_search implementation invokes the typed commit callback;
@@ -81,6 +92,9 @@ class ToolContext:
     _capability_catalog: Any = None
     _capability_discovery_ids: frozenset[str] | None = None
     _commit_tool_reveal: Any = None
+    # Resolves a previously deferred directory only inside a real discovery
+    # call. It may update discovery, never this response's executable tools.
+    _activate_tool_catalog: Any = None
     _capability_search_calls: int = 0
     _capability_revealed_ids: set[str] = field(default_factory=set)
     _capability_result_chars: int = 0
@@ -113,6 +127,9 @@ class ToolContext:
 
     async def assert_run_current(self) -> None:
         """Fence a provider/tool commit when this context belongs to a run."""
+        if self._assert_all_current is not None:
+            await self._assert_all_current()
+            return
         from question.runtime import assert_current
         await assert_current("tool")
         if self._assert_current is not None:

@@ -175,7 +175,7 @@ async def test_routing_independent_rules_bounded_redaction_and_fallback(monkeypa
         payload['answers']['memory_needed'].update(choice='skip', confidence=.3,
             probabilities={'retrieve':.3,'skip':.4,'unknown':.3})
         return validate_response(payload, settings.jev_model)
-    assert not (await routing.route_context_needs('计算结果', access, config, evaluator=unsure_skip))['memory']['needed']
+    assert (await routing.route_context_needs('计算结果', access, config, evaluator=unsure_skip))['memory']['needed']
     async def failing(state, settings):
         raise MemoryProviderError('timeout')
     failed = await routing.route_context_needs('计算结果', access, config, evaluator=failing)
@@ -252,6 +252,64 @@ async def test_dense_failure_uses_chinese_lexical_and_foreign_hits_are_rejected(
     dense = await retrieval.search_memory(query='预算1200元', **identity(scope), config=config, embedding=FakeEmbedding(), index=index)
     assert {item['id'] for item in dense['candidates'] if item['kind'] == 'memory'} == {visible['id']}
     assert not any(text in str(dense) for text in ['外国用户','另一个项目','未经确认'])
+
+
+async def test_keyword_scan_overlaps_query_embedding_after_scoped_existence(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    visible = await service.create_note(**identity(scope), summary='空闲时喜欢画花草')
+    index.hits = [IndexHit('memory', visible['id'], 1, .9)]
+    embedding_started, keyword_done = asyncio.Event(), asyncio.Event()
+    original = retrieval.lexical_candidates
+
+    async def embedding_waits_for_keywords():
+        embedding_started.set()
+        await asyncio.wait_for(keyword_done.wait(), .5)
+
+    async def keywords_overlap(*args):
+        await asyncio.wait_for(embedding_started.wait(), .5)
+        result = await original(*args)
+        keyword_done.set()
+        return result
+
+    monkeypatch.setattr(retrieval, 'lexical_candidates', keywords_overlap)
+    result = await retrieval.search_memory(query='空闲可以做什么', **identity(scope), config=config,
+        embedding=FakeEmbedding(callback=embedding_waits_for_keywords), index=index)
+    assert any(item['id'] == visible['id'] for item in result['items'])
+    assert not result['degraded_reasons']
+
+
+async def test_empty_or_foreign_only_scope_does_not_embed(runtime_env):
+    scope, config, _, index = runtime_env
+    await service.create_note(user_id=scope['other'], workspace_id=scope['workspace_id'], summary='喜欢画花草')
+    embedding = FakeEmbedding()
+    result = await retrieval.search_memory(query='我的兴趣', **identity(scope), config=config,
+        embedding=embedding, index=index)
+    assert result['items'] == []
+    assert embedding.calls == index.calls == []
+
+
+async def test_failed_keyword_scan_cancels_inflight_embedding(runtime_env, monkeypatch):
+    scope, config, _, index = runtime_env
+    await service.create_note(**identity(scope), summary='喜欢画花草')
+    embedding_started, embedding_stopped = asyncio.Event(), asyncio.Event()
+
+    async def blocked_embedding():
+        embedding_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            embedding_stopped.set()
+
+    async def failed_keywords(*args):
+        await asyncio.wait_for(embedding_started.wait(), .5)
+        raise RuntimeError('keyword_read_failed')
+
+    monkeypatch.setattr(retrieval, 'lexical_candidates', failed_keywords)
+    with pytest.raises(RuntimeError, match='keyword_read_failed'):
+        await retrieval.search_memory(query='我的兴趣', **identity(scope), config=config,
+            embedding=FakeEmbedding(callback=blocked_embedding), index=index)
+    assert embedding_stopped.is_set()
+    assert index.calls == []
 
 
 async def test_correction_and_pending_sources_never_reenter_raw_retrieval(runtime_env):
@@ -387,11 +445,18 @@ async def test_sql_source_timestamp_obeys_local_day_in_sqlite_and_postgres(runti
         memory_id = row.id
     await service.confirm_note(**identity(scope), proposal_id=memory_id, expected_revision=1)
     previous_day = await retrieval.search_memory(query='2026-10-01 的预算', **identity(scope),
+        time_intent={'expression': '2026-10-01', 'choice': 'source_time', 'confidence': .99},
         project_id=scope['p1'], config=config, index=index, embedding=FakeEmbedding())
     assert previous_day['items'] and previous_day['time_context']['timezone'] == 'Asia/Shanghai'
     next_day = await retrieval.search_memory(query='2026-10-02 的预算', **identity(scope),
+        time_intent={'expression': '2026-10-02', 'choice': 'source_time', 'confidence': .99},
         project_id=scope['p1'], config=config, index=index, embedding=FakeEmbedding())
     assert next_day['items'] == []
+    event_day = await retrieval.search_memory(query='2026-10-02 的预算', **identity(scope),
+        time_intent={'expression': '2026-10-02', 'choice': 'event_time', 'confidence': .99},
+        project_id=scope['p1'], config=config, index=index, embedding=FakeEmbedding())
+    assert not event_day['time_context']['hard_filter_applied']
+    assert any(item['id'] == memory_id for item in event_day['items'])
 
 
 async def test_authorization_is_rechecked_before_rerank_and_after_it(runtime_env, monkeypatch):

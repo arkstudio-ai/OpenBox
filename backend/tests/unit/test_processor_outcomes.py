@@ -125,7 +125,8 @@ async def test_text_only_or_interrupted_stream_never_prepares_runtime(monkeypatc
     prepare.assert_not_awaited()
 
 
-async def test_runtime_is_prepared_once_before_first_tool_in_batch(monkeypatch):
+@pytest.mark.parametrize("sandbox_required", [True, False])
+async def test_runtime_is_prepared_only_for_sandbox_tools(monkeypatch, sandbox_required):
     order = []
     async def prepare():
         order.append("snapshot")
@@ -142,12 +143,22 @@ async def test_runtime_is_prepared_once_before_first_tool_in_batch(monkeypatch):
     ]))
     result = await process_step(
         session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
-        system=[], llm_messages=[], tools={"read": SimpleNamespace(execute=execute)}, model_id="test/model",
+        system=[], llm_messages=[], tools={"read": SimpleNamespace(execute=execute, sandbox_required=sandbox_required)}, model_id="test/model",
         ctx=Ctx(), hooks=Hooks(), assistant_info=Info(), sandbox=None,
         abort=NotAborted(), doom_loop_history=[], before_tools=prepare,
     )
     assert result.outcome is StepOutcome.CONTINUE
-    assert order == ["snapshot", "a", "b"]
+    assert order == (["snapshot"] if sandbox_required else []) + ["a", "b"]
+
+
+@pytest.mark.parametrize("children,expected", [(["memory"], False), (["memory", "bash"], True),
+                                             (["unknown"], True), (["batch"], True)])
+def test_nested_batch_preparation_uses_each_frozen_tool_contract(children, expected):
+    lookup = {"memory": SimpleNamespace(id="memory_read_more", sandbox_required=False),
+              "bash": SimpleNamespace(id="bash", sandbox_required=True),
+              "batch": SimpleNamespace(id="batch", sandbox_required=False)}
+    assert P._needs_runtime_preparation(lookup["batch"],
+        {"invocations": [{"tool": name} for name in children]}, lookup) is expected
 
 
 # ── plain completion ──
@@ -193,6 +204,40 @@ async def test_streaming_parts_are_checkpointed_before_final_completion(monkeypa
     # progress; the last two writes are the ordinary final aggregates.
     assert ("reasoning", "think more", False) in saved[:-2]
     assert ("text", "hello world", False) in saved[:-1]
+
+
+async def test_slow_checkpoint_does_not_immediately_trigger_another_full_write(monkeypatch):
+    now, writes = [0.0], []
+    original_time = P.time.time
+    monkeypatch.setattr(P, "time", SimpleNamespace(time=original_time, monotonic=lambda: now[0]))
+    async def capture(part, *args, **kwargs):
+        writes.append((now[0], part.text))
+        now[0] += 1.1  # A slow transaction must not consume the next interval.
+    async def source(**kwargs):
+        for _ in range(20):
+            now[0] += .1
+            yield {"type": "text_delta", "text": "a"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+    monkeypatch.setattr(P, "save_part", capture)
+    # run() installs its own stream, so provide a stream factory returning our
+    # timed iterator rather than advancing all timestamps before consumption.
+    monkeypatch.setattr(__import__(__name__, fromlist=["fake_stream"]), "fake_stream", lambda **kwargs: source)
+    result = await run(monkeypatch)
+    assert result.text == "a" * 20 and writes[-1][1] == result.text
+    assert len(writes) <= 4  # First, bounded checkpoints, final; not 20 writes.
+
+
+async def test_deadline_keeps_partial_reasoning_and_does_not_retry(monkeypatch):
+    from agent.stream_deadline import ModelResponseDeadline
+    saved = []
+    async def capture(part, *args, **kwargs):
+        saved.append((part.type, part.text))
+    monkeypatch.setattr(P, "save_part", capture)
+    result = await run(monkeypatch, events=[
+        {"type": "reasoning_delta", "text": "first "},
+        {"type": "reasoning_delta", "text": "second"}], raises_after=ModelResponseDeadline("idle"))
+    assert result.outcome is StepOutcome.ERROR
+    assert saved[-1] == ("reasoning", "first second")
 
 
 async def test_empty_stream_still_returns_a_result(monkeypatch):

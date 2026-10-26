@@ -143,7 +143,8 @@ def _patch_real_loop_runtime(monkeypatch, *, config, process_step) -> None:
         return "/workspace/terminal-project"
 
     async def _tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={}, catalogue_availability="available")
+        from agent.tool_resolution import ResolvedStepTools
+        return ResolvedStepTools({}, "available")
 
     async def _signals(*_args, **_kwargs):
         return ExposureSignals()

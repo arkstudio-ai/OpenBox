@@ -40,6 +40,7 @@ export function ToolChainTrace({ tools, streaming }: Props) {
       title={streaming ? t("trace.tool.titleActive") : t("trace.tool.titleDone")}
       subtitle={subtitle}
       streaming={streaming}
+      unmountOnClose
     >
       <ToolRows tools={tools} />
     </TraceShell>

@@ -15,7 +15,8 @@
     "overview": "全部",
     "memories": "记忆",
     "topics": "主题",
-    "files": "文件"
+    "files": "文件",
+    "experiences": "经验"
   },
   "seeAll": "查看全部",
   "loadMore": "加载更多",
@@ -216,5 +217,37 @@
     "clearAction": "全部清空",
     "clearing": "正在清空…",
     "cleared": "已清空 {{count}} 条记忆。"
+  },
+  "experience": {
+    "hint": "可复用的方法会先成为候选。请实际验证后记录结果，再启用为你的个人技能。修改步骤后需要重新验证。",
+    "empty": "暂时没有经验候选。完成任务并明确结果后，助手会整理可复用的方法。",
+    "unavailable": "原始依据已失效，此经验已停止使用",
+    "version": "第 {{version}} 版",
+    "state": {
+      "candidate": "待验证",
+      "validated": "已验证，待启用",
+      "enabled": "已启用",
+      "retired": "已停用",
+      "needs_review": "依据失效，需重新整理"
+    },
+    "field": {
+      "title": "名称",
+      "conditions": "适用条件",
+      "steps": "操作步骤（编辑时每行一步）",
+      "expected_result": "预期结果",
+      "failure_boundaries": "不适用或应停止的情况",
+      "test_plan": "验证方法"
+    },
+    "editHint": "保存修改会暂停这项经验。重新验证并启用后，之后的任务才使用新版。",
+    "saveDraft": "保存修改并重新验证",
+    "lastReview": "上次验证记录",
+    "reviewNotes": "验证过程与实际结果",
+    "reviewPlaceholder": "说明你怎么验证、看到了什么结果，以及有没有未完成的部分（至少10字）。",
+    "reviewPassed": "我已实际验证，结果符合预期",
+    "recordReview": "记录验证结果",
+    "cancelEdit": "取消编辑",
+    "edit": "修改步骤",
+    "enable": "启用为个人技能",
+    "retire": "停止使用"
   }
 }

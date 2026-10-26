@@ -13,6 +13,29 @@ import '../shared/models/workspace.dart';
 import '../shared/utils/error_text.dart';
 import '../shared/ws/ws_client.dart';
 
+final workspaceEventScopeProvider =
+    Provider<({String userId, String workspaceId})?>((ref) {
+      final auth = ref.watch(authProvider);
+      if (!auth.isAuthenticated || auth.offline) return null;
+      final workspace = ref
+          .watch(activeWorkspaceProvider)
+          .valueOrNull
+          ?.currentId;
+      return workspace == null
+          ? null
+          : (userId: auth.userId, workspaceId: workspace);
+    });
+
+/// Settings, knowledge and deep links need the same event connection as chat.
+/// A scope change tears down the old handshake before opening the new one.
+final workspaceEventsProvider = Provider.autoDispose<void>((ref) {
+  final scope = ref.watch(workspaceEventScopeProvider);
+  if (scope == null) return;
+  final ws = ref.watch(wsClientProvider);
+  unawaited(ws.connect());
+  ref.onDispose(ws.disconnect);
+});
+
 /// Holds authenticated UI until workspace scope is known, matching the web
 /// WorkspaceLayout bootstrap. It also owns cross-feature cache reset whenever
 /// the active tenant changes.
@@ -27,6 +50,7 @@ class WorkspaceBootstrap extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(workspaceEventsProvider);
     final auth = ref.watch(authProvider);
     if (auth.offline) {
       return auth.isLoading
@@ -48,11 +72,6 @@ class WorkspaceBootstrap extends ConsumerWidget {
       if (after == null || before == after) return;
       ref.read(selectedProjectProvider.notifier).state = null;
       ref.invalidate(workspaceProvider);
-      if (before != null) {
-        final ws = ref.read(wsClientProvider);
-        ws.disconnect();
-        unawaited(ws.connect());
-      }
     });
 
     final workspaces = ref.watch(activeWorkspaceProvider);

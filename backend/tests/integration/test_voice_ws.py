@@ -94,7 +94,7 @@ async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers,
             AgentInboxItem.session_id == call.main_session_id))).all())
         assert len(items) == 1
         assert items[0].prompt == checked[0]
-        assert items[0].origin_ref["voice_context"]["handover_source"] == "missed_handoff"
+        assert items[0].origin_ref["voice_context"]["handover_source"] == "verified_missing_handoff"
 
 
 @pytest.fixture

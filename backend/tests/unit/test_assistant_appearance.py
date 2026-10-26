@@ -23,7 +23,9 @@ async def client_for(user_id):
 
 async def test_every_new_portrait_persists_without_overwriting_other_preferences():
     owner, other, _ = await accounts()
-    await PgPreferenceRepo().upsert(owner, extra={"assistant_voice": "Tina"})
+    saved = {"assistant_voice": "Tina", "assistant_profile": {"address": "林姐", "language": "English"},
+             "assistant_profile_revision": 7, "memory_preferences": {"enabled": True}}
+    await PgPreferenceRepo().upsert(owner, extra=saved)
     async with client_for(owner) as client:
         assert (await client.get("/api/assistant/appearance")).json()["preset"] == "ip-01"
         for number in range(1, 35):
@@ -35,7 +37,8 @@ async def test_every_new_portrait_persists_without_overwriting_other_preferences
             assert (await client.get("/api/assistant/appearance")).json() == response.json()
         response = await client.put("/api/assistant/appearance", json={"enabled": False})
         assert response.json()["preset"] == "ip-34" and response.json()["enabled"] is False
-    assert (await PgPreferenceRepo().get(owner))["extra"]["assistant_voice"] == "Tina"
+    after = (await PgPreferenceRepo().get(owner))["extra"]
+    assert all(after[key] == value for key, value in saved.items())
     assert (await appearance.view(other))["preset"] == "ip-01"
 
 

@@ -68,6 +68,7 @@ async def _call(operation):
 async def capabilities(user: dict = Depends(get_current_user)):
     memory = get_config().memory
     return {"enabled": memory.enabled("wiki", user["user_id"]), "publication_requires_approval": not memory.automatic_knowledge,
+            "experience_learning": memory.enabled("experience_learning", user["user_id"]),
             "automatic_knowledge": memory.automatic_knowledge,
             "model": memory.extract_model or get_config().model, "estimated_cost": None,
             "max_memories": 12, "max_sources": 12, "max_source_characters": 16000}

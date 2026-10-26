@@ -75,6 +75,8 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
         kept["handover_source"] = context["handover_source"]
     if context.get("revision_request"):
         kept["revision_request"] = context["revision_request"]
+    if context.get("viewed_task"):
+        kept["viewed_task"] = context["viewed_task"]
     if questions := context.get("task_questions"):
         kept["task_questions"] = [{"request_id": item["request_id"], "session_id": item["session_id"],
                                    "questions_omitted": True} for item in questions]
@@ -164,9 +166,39 @@ class AssistantLink:
         self.model, self.variant = model or None, variant or None
         self.count = 0
         self.closed = False  # set when the call ends; observers stop at their next step
+        # Only the authenticated provider pump fills this after SQL commits.
+        # Neither tool arguments nor client input can select a source identity.
+        self._native_sources: dict[str, tuple[str, str]] = {}
+
+    def bind_native_source(self, item_id: str, text: str, source_id: str) -> None:
+        from voice.memory_capture import forwarded_hash
+        self._native_sources[item_id] = (source_id, forwarded_hash(text))
+
+    @property
+    def native_memory_enabled(self) -> bool:
+        from core.config import get_config
+        return get_config().memory.enabled("semantic_recall", self.user_id)
+
+    async def remember_current(self, *, item_id: str, text: str, provider_session: int) -> dict:
+        """Observe the captured human source; model text can never select one."""
+        from voice.memory_capture import capture_status, forwarded_hash, unavailable_status
+        native = self._native_sources.get(item_id)
+        if (self.closed or not self.native_memory_enabled or native is None
+                or native[1] != forwarded_hash(text)):
+            return unavailable_status()
+        try:
+            async with asyncio.timeout(2):
+                return await capture_status(user_id=self.user_id, workspace_id=self.workspace_id,
+                    session_id=self.main_session_id, call_id=self.call_id, provider_session=provider_session,
+                    item_id=item_id, identity=native[0], text=text)
+        except Exception as exc:
+            log.warning("voice memory status unavailable call=%s error=%s", self.call_id, type(exc).__name__)
+            return unavailable_status()
 
     async def start(self, ref: VoiceTurnRef) -> None:
         """Accept the request as a main-session turn and record the voice turn."""
+        if ref.lane == "remember" and self.native_memory_enabled:
+            raise ValueError("Native memory status does not create an assistant turn")
         from agent.inbox import schedule_inbox_wake
         from assistant import inputs
         self.count += 1
@@ -174,6 +206,9 @@ class AssistantLink:
         words = " ".join((ref.transcript or "").split())
         text = words or ref.text  # the user's own words; a card's answer or a report has only the request
         context = dict(ref.context or {})
+        from voice.memory_capture import forwarded_hash
+        native = self._native_sources.get(context.get("spoken_input_id"))
+        native_ref = {"native_voice_source_id": native[0]} if native and native[1] == forwarded_hash(text) else {}
         if words and ref.text and " ".join(ref.text.split()) != words:
             context["request"] = ref.text
 
@@ -184,7 +219,8 @@ class AssistantLink:
                 client_id=inbox_key("voice-input", self.call_id,
                                     (context or {}).get("spoken_input_id") or ref.provider_call_id), text=text, model=self.model,
                 variant=self.variant, entrypoint=VOICE_ENTRYPOINT,
-                extra_ref={"voice_call_id": self.call_id, **({"voice_context": context} if context else {})})
+                extra_ref={"voice_call_id": self.call_id, **native_ref,
+                           **({"voice_context": context} if context else {})})
         try:
             try:
                 receipt = await accept(bounded_context(context) if context else None)

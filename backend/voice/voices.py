@@ -130,12 +130,19 @@ def selection(extra: dict, config) -> dict:
         default = "longanlufeng" if voice_gender(preset) == "male" else "longanqian_v3.1"
     else:
         default = resolve(None, config.voice, model)
+    voice_source = "appearance" if is_audio(model) else "model_default"
+    # Keep a deliberately configured clone usable for existing accounts that
+    # have never chosen an appearance. A saved appearance or explicit voice
+    # still owns the choice; an ordinary old deployment default does not.
+    if (is_audio(model) and APPEARANCE_KEY not in extra
+            and config.voice.startswith(AUDIO_MODEL + "-")):
+        default, voice_source = config.voice, "model_default"
     chosen = extra.get(VOICE_KEYS[model], extra.get(PREFERENCE_KEY))
     explicit = isinstance(chosen, str) and chosen in _by_id(model)
     return {"model": model, "models": list(MODEL_OPTIONS), "default_model": default_model,
             "voices": catalog(model), "default": default,
             "selected": resolve(chosen if explicit else None, default, model),
-            "voice_source": "user" if explicit else "appearance" if is_audio(model) else "model_default"}
+            "voice_source": "user" if explicit else voice_source}
 
 
 async def user_selection(user_id: str, config) -> dict:

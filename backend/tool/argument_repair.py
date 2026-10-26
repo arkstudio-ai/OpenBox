@@ -11,6 +11,8 @@ validation error names; anything else fails exactly as before.
 """
 import copy
 import json
+import ast
+import math
 
 from pydantic import BaseModel, ValidationError
 
@@ -23,6 +25,62 @@ _EXPECTED = {"model_attributes_type": dict, "model_type": dict, "dict_type": dic
              "list_type": list, "tuple_type": list, "set_type": list}
 
 
+def _container_text(value: str):
+    """Decode transport containers, including a gateway's Python-style repr.
+
+    No eval, names, calls, operators, tuples or sets. Bound parsing and accept
+    only the JSON data domain; the original Pydantic schema still validates
+    the result. A prose string at a string field is never sent here.
+    """
+    if len(value) > 65536:
+        raise ValueError("container text too large")
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        tree = ast.parse(value, mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > 4096:
+            raise ValueError("container text too complex")
+
+        def data(node, depth=0):
+            if depth > 32:
+                raise ValueError("container text too deep")
+            if isinstance(node, ast.Constant) and type(node.value) in {str, int, float, bool, type(None)}:
+                if isinstance(node.value, float) and not math.isfinite(node.value):
+                    raise ValueError("non-finite number")
+                return node.value
+            if isinstance(node, ast.List):
+                return [data(item, depth + 1) for item in node.elts]
+            if isinstance(node, ast.Dict):
+                keys = [data(key, depth + 1) for key in node.keys]
+                if not all(isinstance(key, str) for key in keys) or len(set(keys)) != len(keys):
+                    raise ValueError("invalid dictionary key")
+                return dict(zip(keys, (data(item, depth + 1) for item in node.values), strict=True))
+            if (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub)
+                    and isinstance(node.operand, ast.Constant) and type(node.operand.value) in {int, float}):
+                return -data(node.operand, depth + 1)
+            raise ValueError("not a JSON data literal")
+
+        parsed = data(tree.body)
+    remaining = 4096
+
+    def check(item, depth=0):
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > 32:
+            raise ValueError("container text too complex")
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("non-finite number")
+        if isinstance(item, dict):
+            for child in item.values():
+                check(child, depth + 1)
+        elif isinstance(item, list):
+            for child in item:
+                check(child, depth + 1)
+
+    check(parsed)
+    return parsed
+
+
 def validate(model: type[BaseModel], args, *, tool_id: str = ""):
     """``model.model_validate(args)``, once more with JSON strings decoded where containers were expected."""
     try:
@@ -31,7 +89,7 @@ def validate(model: type[BaseModel], args, *, tool_id: str = ""):
         repaired = decoded(args, exc)
         if repaired is None:
             raise
-        log.info("Tool %s arguments repaired: decoded JSON text where an object or list was expected", tool_id)
+        log.info("Tool %s arguments repaired: decoded container text where an object or list was expected", tool_id)
         return model.model_validate(repaired)
 
 
@@ -45,8 +103,8 @@ def decoded(args, exc: ValidationError):
         if expected is None or not isinstance(value, str):
             continue
         try:
-            parsed = json.loads(value)
-        except ValueError:
+            parsed = _container_text(value)
+        except (ValueError, SyntaxError, RecursionError):
             continue
         if isinstance(parsed, expected) and _replace(repaired, tuple(error.get("loc") or ()), value, parsed):
             changed = True

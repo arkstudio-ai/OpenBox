@@ -16,7 +16,7 @@ from db.models.session import Session
 from memory.policy import MemoryAccessDenied
 
 MEMORY_CAPABILITIES = frozenset({
-    "creator_context", "memory_search", "memory_read_sources", "current_task_state", "memory_forget",
+    "creator_context", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state", "memory_forget",
 })
 
 

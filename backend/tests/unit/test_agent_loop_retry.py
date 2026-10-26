@@ -22,6 +22,39 @@ from session.agent_event_log import (
 )
 
 
+@pytest.mark.parametrize("cancellable", [False, True])
+async def test_retry_wait_is_visible_without_hiding_it_as_network_time(cancellable):
+    from agent import latency
+    now = [0.0]
+    timing = latency.RunTiming(lambda: now[0])
+    token = latency.current.set(timing)
+    calls = 0
+
+    async def attempt():
+        nonlocal calls
+        calls += 1
+        with latency.provider_wait():
+            now[0] += 3
+        return StepResult(outcome=StepOutcome.RETRY if calls == 1 else StepOutcome.CONTINUE,
+                          finish_reason=None if calls == 1 else "stop")
+
+    async def checkpoint(*args):
+        now[0] += .2
+
+    async def sleep(delay):
+        now[0] += delay
+
+    try:
+        result, retries = await _run_provider_attempts(attempt, checkpoint, max_retries=1,
+            sleep=sleep, delay_for=lambda *_: 2, abort=asyncio.Event() if cancellable else None)
+        assert result.finish_reason == "stop" and retries == 1
+        assert timing.spans["provider.retry_backoff"]["internal_ms"] == pytest.approx(2000)
+        assert timing.spans["provider.retry_backoff"]["provider_wait_ms"] == 0
+        assert timing.network_snapshot()["internal_ms"] == pytest.approx(2200)
+    finally:
+        latency.current.reset(token)
+
+
 @pytest.mark.asyncio
 async def test_pre_stream_retries_reuse_one_logical_step_until_success():
     outcomes = [

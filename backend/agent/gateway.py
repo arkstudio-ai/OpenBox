@@ -11,10 +11,11 @@ import json
 import time
 import weakref
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 import httpx
 
-from agent.retry import RetryableError
+from agent.stream_deadline import ModelResponseDeadline
 from core.log import create_logger
 
 log = create_logger("agent.gateway")
@@ -25,24 +26,30 @@ _current = ContextVar("gateway_observation", default=None)
 _clients = weakref.WeakKeyDictionary()
 
 
-class GatewayTimeout(RetryableError):
-    def __init__(self, phase):
-        self.phase = phase
-        super().__init__(f"模型网关等待超时（{phase}），请稍后重试。")
+class GatewayTimeout(ModelResponseDeadline):
+    """A progress budget was spent, not a transient dispatch failure."""
+
+
+@dataclass(frozen=True)
+class PreDispatchFailure:
+    """Local transport evidence, never inferred from a provider error string."""
+    phase: str
 
 
 class Observation:
-    def __init__(self, model, purpose):
+    def __init__(self, model, purpose, *, first_seconds=None, idle_seconds=None):
         self.model, self.purpose = model, purpose
         self.started = time.monotonic()
-        self.first_seconds = (CAPTION_FIRST_PROGRESS_SECONDS if purpose == "asset_description"
-                              else FIRST_PROGRESS_SECONDS)
+        self.first_seconds = (first_seconds if first_seconds is not None else
+            CAPTION_FIRST_PROGRESS_SECONDS if purpose == "asset_description" else FIRST_PROGRESS_SECONDS)
+        self.idle_seconds = idle_seconds if idle_seconds is not None else IDLE_PROGRESS_SECONDS
         self.deadline = asyncio.get_running_loop().time() + self.first_seconds
         self.first_progress_ms = None
         self.spans, self.active = {}, {}
         self.phase, self.failure_phase, self.error = "dispatch", None, None
         self.proxy_tunnel, self.proxy_seen = False, False
         self.status = None
+        self.request_started = False
 
     async def on_request(self, request):
         request.extensions["trace"] = self.trace
@@ -55,6 +62,8 @@ class Observation:
         if action == "send_request_headers" and state == "started":
             self.proxy_tunnel = getattr(info.get("request"), "method", None) == b"CONNECT"
             self.proxy_seen |= self.proxy_tunnel
+            if not self.proxy_tunnel:
+                self.request_started = True
         phase = {"connect_tcp": "connect", "start_tls": "tls",
                  "send_request_headers": "send", "send_request_body": "send",
                  "receive_response_headers": "upstream_headers",
@@ -89,6 +98,14 @@ class Observation:
         finally:
             _current.reset(token)
 
+    def annotate_error(self, error):
+        # Only a proven TCP/TLS failure before upstream HTTP headers may use
+        # the short first retry. Missing traces, proxy HTTP errors and partial
+        # sends keep normal backoff; this never increases the retry count.
+        if (not self.request_started and self.status is None and self.first_progress_ms is None
+                and self.failure_phase in {"connect", "tls"}):
+            error._openbox_pre_dispatch = PreDispatchFailure(self.failure_phase)
+
     async def chunks(self, stream):
         iterator = stream.__aiter__()
         while True:
@@ -106,7 +123,7 @@ class Observation:
                     for field in ("content", "reasoning_content", "tool_calls", "function_call")) for c in choices):
                 if self.first_progress_ms is None:
                     self.first_progress_ms = (time.monotonic() - self.started) * 1000
-                self.deadline = asyncio.get_running_loop().time() + IDLE_PROGRESS_SECONDS
+                self.deadline = asyncio.get_running_loop().time() + self.idle_seconds
             handed_off = asyncio.get_running_loop().time()
             yield chunk
             # DB/trajectory/UI work by the consumer is not provider inactivity.
@@ -123,6 +140,7 @@ class Observation:
             "first_progress_ms": round(self.first_progress_ms, 1) if self.first_progress_ms is not None else None,
             "phase_ms": {name: round(value, 1) for name, value in spans.items()},
             "last_phase": self.failure_phase or self.phase, "proxy_tunnel": self.proxy_seen,
+            "request_started": self.request_started,
             # Closing an SSE iterator after [DONE] raises GeneratorExit inside
             # httpcore; it is normal teardown, not a failed model response.
             "status": self.status, "error": (type(error).__name__ if error else self.error)
@@ -141,11 +159,12 @@ def sdk_client(provider, timeout):
     if not provider.get("api_key") or not provider.get("api_base"):
         return None  # preserve SDK/environment resolution for unconfigured routes
     from openai import AsyncOpenAI
+    from agent.sse_transport import preserve_completed_sse
     loop = asyncio.get_running_loop()
     client = _clients.get(loop)
     if client is None or client.is_closed:
         client = _clients[loop] = httpx.AsyncClient(
-            timeout=timeout, event_hooks={"request": [_on_request]},
+            timeout=timeout, event_hooks={"request": [_on_request], "response": [preserve_completed_sse]},
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=30))
     return AsyncOpenAI(api_key=provider["api_key"], base_url=provider["api_base"],
                        organization=provider.get("organization"), http_client=client,

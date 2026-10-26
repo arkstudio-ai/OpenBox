@@ -20,7 +20,7 @@ from agent.compaction import (
 )
 from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
-from agent.latency import measured_run, phase as latency_phase, bind_run as bind_latency_run
+from agent.latency import measured_run, phase as latency_phase, bind_run as bind_latency_run, span as latency_span
 from agent.processor import StepOutcome, StepResult, process_step
 from agent.structured_output import (
     SYSTEM_PROMPT as STRUCTURED_OUTPUT_SYSTEM_PROMPT,
@@ -254,12 +254,14 @@ async def _prepare_checkpointed_provider_attempt(
     if max_prefix_rebuilds < 1:
         raise ValueError("max_prefix_rebuilds must be positive")
     for _rebuild in range(max_prefix_rebuilds):
-        candidate = await load_surface()
+        with latency_span("request.canonical_surface"):
+            candidate = await load_surface()
 
         # Everything below is owned by this attempt. No Todo, image, system,
         # tool-schema or Event read is allowed after the checkpoint succeeds.
         try:
-            built_messages = await build_messages(candidate)
+            with latency_span("request.project_messages"):
+                built_messages = await build_messages(candidate)
         except AgentEventPrefixDriftError:
             # Candidate sizing may prune persisted tool output. Reload that
             # exact Event prefix before rebuilding, within the same bound.
@@ -349,7 +351,8 @@ async def _prepare_checkpointed_provider_attempt(
             native_portable_system=frozen_portable_system,
         )
         try:
-            await checkpoint(candidate, tool_schema_digest, prompt_shape_digest)
+            with latency_span("request.checkpoint"):
+                await checkpoint(candidate, tool_schema_digest, prompt_shape_digest)
         except AgentEventPrefixDriftError:
             continue
         return prepared
@@ -431,31 +434,34 @@ async def _run_provider_attempts(
             return result, retries
         retries += 1
         await on_retry(retries, max_retries, delay, result)
-        if abort is None:
-            await sleep(delay)
-            continue
+        # Backoff is application-controlled waiting, not model/network IO.
+        # Keep it in internal_ms, but expose it separately from active work.
+        with latency_span("provider.retry_backoff"):
+            if abort is None:
+                await sleep(delay)
+                continue
 
-        # Stop must interrupt even a long server-supplied Retry-After. The
-        # next provider request is fenced again at the top of this loop, so a
-        # takeover that wins while sleeping cannot dispatch a stale request.
-        sleep_task = asyncio.create_task(sleep(delay))
-        abort_task = asyncio.create_task(abort.wait())
-        try:
-            done, _ = await asyncio.wait(
-                {sleep_task, abort_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if abort_task in done and abort.is_set():
-                return StepResult(
-                    outcome=StepOutcome.CONTINUE,
-                    finish_reason="aborted",
-                ), retries
-            await sleep_task
-        finally:
-            for task in (sleep_task, abort_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(sleep_task, abort_task, return_exceptions=True)
+            # Stop must interrupt even a long server-supplied Retry-After. The
+            # next provider request is fenced again at the top of this loop, so a
+            # takeover that wins while sleeping cannot dispatch a stale request.
+            sleep_task = asyncio.create_task(sleep(delay))
+            abort_task = asyncio.create_task(abort.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {sleep_task, abort_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if abort_task in done and abort.is_set():
+                    return StepResult(
+                        outcome=StepOutcome.CONTINUE,
+                        finish_reason="aborted",
+                    ), retries
+                await sleep_task
+            finally:
+                for task in (sleep_task, abort_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(sleep_task, abort_task, return_exceptions=True)
 
 
 async def _close_failed_provider_step(
@@ -1095,6 +1101,7 @@ async def run_loop(
 
         latency_phase("history")
         sandbox_directory_prepared = False
+        remote_catalogue_requested = False
         step = 0
         # (step, reminder): a reply that promised later work nothing will do gets one more step
         # (assistant/follow_through.py); the reminder follows that reply in the next request only.
@@ -1125,7 +1132,8 @@ async def run_loop(
             # A woken run may have started exactly this recall when it claimed the input.
             task = recall_ahead.adopt(session_id, user_message.id, inputs)
             if task is None:
-                task = asyncio.create_task(recall_ahead.recall(
+                from agent.latency import create_dependency_task
+                task = create_dependency_task(recall_ahead.recall(
                     inputs, session_id=session_id, turn_id=user_message.id, config=config.memory))
                 # A turn that ends before using it must not leave an unread failure.
                 task.add_done_callback(lambda done: done.cancelled() or done.exception())
@@ -1164,6 +1172,7 @@ async def run_loop(
                     raise
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
+        fresh_reveals: frozenset[str] = frozenset()
         finish_reason_prev = ""  # Previous step's finish reason
         context_stall = ContextStallDetector()
         for seen in await recent_step_input_tokens(session_id, context_stall.window):
@@ -1506,6 +1515,9 @@ async def run_loop(
                 include_discovery=exposure_mode
                 in {"shadow", "portable", "native_auto"},
                 return_catalogue_state=True,
+                defer_remote=(exposure_mode == "portable" and session.kind == "normal"
+                              and inherited_authority is None and not remote_catalogue_requested),
+                compact_skills=exposure_mode == "portable",
             )
             latency_phase("context")
             from agent.subagent_authority import (
@@ -1529,6 +1541,16 @@ async def run_loop(
                 from assistant.continuation import COORDINATION_TOOLS
                 eligible_tools = {name: tool for name, tool in eligible_tools.items()
                                   if tool.id not in ASSISTANT_TOOLS | COORDINATION_TOOLS}
+            from assistant.review_repair import repair_mode, permits_tool, instruction as repair_instruction
+            revision_repair = repair_mode(doom_loop_history)
+            if revision_repair:
+                eligible_tools = {name: tool for name, tool in eligible_tools.items()
+                                  if permits_tool(revision_repair, tool.id)}
+            from assistant.task_recovery import recovery_state, permits_tool as recovery_permits, instruction as recovery_instruction
+            task_recovery = recovery_state(doom_loop_history)
+            if task_recovery:
+                eligible_tools = {name: tool for name, tool in eligible_tools.items()
+                                  if recovery_permits(task_recovery, tool.id)}
             from memory.session_policy import MEMORY_CAPABILITIES, memory_isolated
             isolated_memory = memory_isolated(session)
             if isolated_memory:
@@ -1571,7 +1593,7 @@ async def run_loop(
                 exposure_config=config.tool_exposure,
             )
             revealed_ids: frozenset[str] = frozenset()
-            if exposure_mode in {"portable", "native_auto"}:
+            if exposure_mode in {"portable", "native_auto"} and not resolved_step_tools.deferred:
                 try:
                     from session.internal_parts import get_valid_revealed_ids
 
@@ -1600,6 +1622,7 @@ async def run_loop(
                     agent_name=agent_name,
                     signals=exposure_signals,
                     revealed_ids=revealed_ids,
+                    requested_ids=fresh_reveals & revealed_ids,
                     editor_id=editor_id,
                     synthetic_tools=synthetic_tools,
                     exposure_config=config.tool_exposure,
@@ -1626,11 +1649,13 @@ async def run_loop(
                 workspace_id=session.workspace_id,
                 project_id=session.project_id or "",
                 agent_id=agent_name,
+                model_id=model_id,
                 sandbox=sandbox,
                 sandbox_error=sandbox_error,
                 bus=bus,
                 abort=abort,
                 _assert_current=lease.assert_current,
+                _assert_all_current=getattr(lease, "assert_tool_current", None),
                 workdir=session_workdir,
                 available_tools=runtime.step_executable_ids,
                 _capability_catalog=runtime.eligible_catalog,
@@ -1669,6 +1694,35 @@ async def run_loop(
             )
             ctx._authorize_tool = hooks.authorize_tool
 
+            discovery_catalog = runtime.eligible_catalog
+            discovery_ids = frozenset(runtime.provider_plan.discovery_ids)
+
+            async def _activate_tool_catalog(resolved, call_ctx):
+                nonlocal remote_catalogue_requested, discovery_catalog, discovery_ids
+                nonlocal sandbox_catalogue_availability
+                remote_catalogue_requested = True
+                # Same static authority as initial resolution. Never add a
+                # newly found tool to this response's execution lookup.
+                permitted = restrict_tools(resolved.tools, inherited_authority)
+                permitted = {name: info for name, info in permitted.items()
+                             if info.id not in ASSISTANT_TOOLS | COORDINATION_TOOLS}
+                if isolated_memory:
+                    permitted = {name: info for name, info in permitted.items()
+                                 if name not in MEMORY_CAPABILITIES and info.id not in MEMORY_CAPABILITIES}
+                discovered = assemble_tool_runtime(permitted, mode=exposure_mode,
+                    agent_name=agent_name, signals=exposure_signals, editor_id=editor_id,
+                    synthetic_tools=synthetic_tools, exposure_config=config.tool_exposure)
+                if discovered.budget_result is not None and discovered.budget_result.catalogue_decision == "fail_closed":
+                    raise RuntimeError("Tool catalogue exceeds the configured provider ceiling")
+                discovery_catalog = discovered.eligible_catalog
+                discovery_ids = frozenset(discovery_catalog.entries) - runtime.step_executable_ids
+                sandbox_catalogue_availability = resolved.catalogue_availability
+                call_ctx._capability_catalog = discovery_catalog
+                call_ctx._capability_discovery_ids = discovery_ids
+
+            if resolved_step_tools.deferred:
+                ctx._activate_tool_catalog = _activate_tool_catalog
+
             async def _commit_reveals(
                 ids: tuple[str, ...],
                 generation: str,
@@ -1679,18 +1733,25 @@ async def run_loop(
                     # not persist its generation or replace last-known-good
                     # reveal evidence while the sandbox directory is unknown.
                     raise RuntimeError("sandbox catalogue is unavailable")
-                if generation != runtime.eligible_catalog.generation:
+                if generation != discovery_catalog.generation:
                     raise ValueError("stale capability catalogue generation")
-                discovery_ids = set(runtime.provider_plan.discovery_ids)
                 if any(tool_id not in discovery_ids for tool_id in ids):
                     raise ValueError("capability result is outside the discovery frontier")
+                next_runtime = assemble_tool_runtime(
+                    discovery_catalog.tools, mode=exposure_mode, agent_name=agent_name,
+                    signals=exposure_signals, revealed_ids=revealed_ids,
+                    requested_ids=ids, editor_id=editor_id, synthetic_tools=synthetic_tools,
+                    exposure_config=config.tool_exposure,
+                )
+                if not set(ids) <= next_runtime.step_executable_ids:
+                    raise ValueError("Requested tool schemas cannot fit the next step's definition budget; no tools were revealed. Narrow the capability request.")
                 from session.internal_parts import ToolRevealEvent, commit_tool_reveals
 
                 from agent.hooks import current_tool_context
                 call_origin = current_tool_context()
                 events = []
                 for stream_seq, tool_id in enumerate(ids):
-                    entry = runtime.eligible_catalog.entries.get(tool_id)
+                    entry = discovery_catalog.entries.get(tool_id)
                     if entry is None or digests.get(tool_id) != entry.schema_digest:
                         raise ValueError("capability schema digest changed")
                     events.append(
@@ -1732,46 +1793,73 @@ async def run_loop(
                 try:
                     from db.base import get_db_session
                     from memory.policy import resolve_access_scope
-                    from memory.orchestrator import run_memory_context
-                    async with get_db_session() as memory_db:
-                        memory_scope = await resolve_access_scope(memory_db, user_id=user_id,
-                            workspace_id=session.workspace_id,
-                            project_id=None if assistant_memory else session.project_id,
-                            include_all_projects=assistant_memory)
-                    if last_user.id not in memory_turn_contexts:
+                    first_recall = last_user.id not in memory_turn_contexts
+                    if first_recall:
                         prefetch = memory_prefetches.pop(last_user.id, None)
                         if prefetch is not None:
-                            memory_turn_contexts[last_user.id] = await prefetch
+                            from agent.latency import await_dependency
+                            memory_turn_contexts[last_user.id] = await await_dependency(prefetch)
                         else:
-                            utterance = _visible_text(last_user)
-                            memory_turn_contexts[last_user.id] = await run_memory_context(
-                                utterance, memory_scope, config.memory, session_id=session_id, turn_id=last_user.id,
-                                input_metadata={"run_id": run_id, "main_model": model_id},
-                                recent_context=_recent_exchange(msgs, last_user.id))
-                        # Once per turn: recall order prefers memories in recent use.
-                        recalled = memory_turn_contexts[last_user.id]
-                        used = [item["id"] for item in [*recalled.get("items", []),
-                                *recalled.get("stable_background", {}).get("items", [])]
-                                if item.get("kind") == "memory"]
-                        if used:
-                            from memory.service import record_hits
-                            try:
-                                await record_hits(list(dict.fromkeys(used)), user_id=user_id,
-                                    workspace_id=memory_scope.workspace_id, project_id=memory_scope.project_id,
-                                    include_all_projects=memory_scope.include_all_projects)
-                            except Exception as hit_exc:  # ranking only
-                                log.debug("memory hits not recorded (%s)", type(hit_exc).__name__)
-                        # What the reply can show it drew on (memory/recalls.py).
-                        from memory.recalls import record as record_recall
-                        try:
-                            await record_recall(user_id=user_id, workspace_id=memory_scope.workspace_id,
-                                                session_id=session_id, message_id=last_user.id, bundle=recalled)
-                        except Exception as recall_exc:  # display only
-                            log.debug("memory recall not recorded (%s)", type(recall_exc).__name__)
+                            from agent import recall_ahead
+                            inputs = recall_ahead.recall_inputs(session, last_user, msgs, user_id=user_id,
+                                assistant_scope=assistant_memory, run_id=run_id, model_id=model_id)
+                            memory_turn_contexts[last_user.id] = await recall_ahead.recall(
+                                inputs, session_id=session_id, turn_id=last_user.id, config=config.memory)
                     memory_bundle = memory_turn_contexts[last_user.id]
+                    # The trusted preparation result carries its resolved scope.
+                    # Every provider boundary still reauthorizes it using fresh SQL.
+                    memory_scope = memory_bundle.get("_access_scope")
+                    if memory_scope is None:
+                        async with get_db_session() as memory_db:
+                            memory_scope = await resolve_access_scope(memory_db, user_id=user_id,
+                                workspace_id=session.workspace_id,
+                                project_id=None if assistant_memory else session.project_id,
+                                include_all_projects=assistant_memory)
+                    if first_recall:
+                        # Once per turn, one transaction for ranking and reply references.
+                        recalled = memory_turn_contexts[last_user.id]
+                        from memory.recalls import record_usage
+                        try:
+                            await record_usage(user_id=user_id, workspace_id=memory_scope.workspace_id,
+                                project_id=memory_scope.project_id,
+                                include_all_projects=memory_scope.include_all_projects,
+                                session_id=session_id, message_id=last_user.id, bundle=recalled)
+                        except Exception as recall_exc:  # display/ranking only
+                            log.debug("memory usage not recorded (%s)", type(recall_exc).__name__)
                     ctx.memory_debug_run_id = memory_bundle.get("run_id")
+                    if memory_bundle.get("_semantic_packet"):
+                        from dataclasses import replace
+                        from memory.packet import ReadBudget
+                        ctx.memory_read_budget = memory_bundle.setdefault("_read_budget", ReadBudget())
+                        if memory_bundle["_turn"].deferred_read and ctx.memory_read_budget.prepared is not None:
+                            # Only the memory_prepare implementation can resolve
+                            # the entry-bound source. Tool result text/metadata
+                            # never supplies a permission or a memory packet.
+                            memory_bundle = {**ctx.memory_read_budget.prepared, "_read_budget": ctx.memory_read_budget}
+                            memory_turn_contexts[last_user.id] = memory_bundle
+                            ctx.memory_debug_run_id = memory_bundle.get("run_id")
+                            try:
+                                from memory.recalls import record as record_recall
+                                await record_recall(user_id=user_id, workspace_id=memory_scope.workspace_id,
+                                    session_id=session_id, message_id=last_user.id, bundle=memory_bundle)
+                            except Exception as recall_exc:
+                                log.debug("deferred recall display unavailable (%s)", type(recall_exc).__name__)
+                        ctx.memory_turn = replace(memory_bundle["_turn"], read_policy=memory_bundle["route"].get("read_policy", "uncertain"))
                 except Exception as memory_exc:
                     log.warning("Memory prefetch unavailable (%s)", type(memory_exc).__name__)
+                    if config.memory.enabled("semantic_recall", user_id):
+                        # Failure is not permission to fall back to unrestricted
+                        # learned profiles or historical assistant navigation.
+                        from memory.packet import TurnContext, ReadBudget
+                        ctx.memory_turn = TurnContext(user_id=user_id, workspace_id=session.workspace_id,
+                            project_id=None if assistant_memory else session.project_id,
+                            include_all_projects=assistant_memory, session_id=session_id,
+                            turn_id=last_user.id, query=_visible_text(last_user))
+                        ctx.memory_read_budget = ReadBudget()
+                        memory_bundle = {"_semantic_packet": True, "_turn": ctx.memory_turn,
+                            "route": {"read_policy": "uncertain", "memory_forbidden": True}, "status": "unavailable",
+                            "items": [], "stable_background": {"items": []}, "settings": {},
+                            "degraded_reasons": ["read_preparation_failed"], "budget": {}, "known_gaps": []}
             system = await _build_system_prompt(
                 agent_def,
                 model_id,
@@ -1783,7 +1871,12 @@ async def run_loop(
                 include_user_memory=not memory_v2_enabled and not isolated_memory,
                 memory_isolated=isolated_memory,
                 session_kind=session.kind,
+                memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
             )
+            if revision_repair:
+                system.append(repair_instruction(revision_repair))
+            if task_recovery:
+                system.append(recovery_instruction(task_recovery))
             if task_continuation is not None:
                 system.append("Platform control: the user explicitly resumed this original task after a pause. "
                     "Continue from its saved messages and completed work. This is a control event, not new human input. "
@@ -1993,6 +2086,10 @@ async def run_loop(
                 nonlocal memory_tool_context_present
                 nonlocal plan_review_context_present
                 projected_messages = list(frozen_surface.messages)
+                if (not for_compaction and memory_bundle and memory_bundle.get("_semantic_packet")
+                        and memory_bundle.get("route", {}).get("read_policy") in {"current_only", "no_history", "documents_only", "uncertain"}):
+                    start = next((i for i, message in enumerate(projected_messages) if message.id == last_user.id), None)
+                    projected_messages = projected_messages[start:] if start is not None else []
                 from assistant.plans import validate_context
                 plan_review_context_present = await validate_context(projected_messages, ctx)
                 from memory.tool_projection import revalidate_memory_tool_messages
@@ -2044,6 +2141,11 @@ async def run_loop(
                 # never sees it: a summary must not outlive a later forget.
                 if memory_fragment and not for_compaction:
                     result = _prepend_to_last_user(result, memory_fragment)
+                if not for_compaction:
+                    from assistant.review_guard import context_fragment as revision_context
+                    revision_fragment = await revision_context(last_user, ctx)
+                    if revision_fragment:
+                        result = _prepend_to_last_user(result, revision_fragment)
                 # Reminder persistence (plan transitions) happens before the
                 # final checkpoint on the sizing pass below. Re-running this
                 # builder against the checkpointed prefix is then read-only.
@@ -2080,9 +2182,10 @@ async def run_loop(
                 ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
                 ctx._trajectory_inline_media = {} if ctx._trajectory_media_sources is not None else None
                 ctx._resource_image_inputs = {} if isinstance(getattr(sandbox, "desktop_id", None), str) else None
+                ctx._image_input_uris = {}
                 result = await resolve_images(result, model_id,
                     media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media,
-                    resource_images=ctx._resource_image_inputs)
+                    resource_images=ctx._resource_image_inputs, image_inputs=ctx._image_input_uris)
                 if assistant_view is not None and not for_compaction:
                     from assistant.evidence import projection_digest
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
@@ -2325,6 +2428,8 @@ async def run_loop(
             if question_runtime.is_revoked(ticket.run_id):
                 abort.set()
                 break
+            step_start = StepStartPart(id=ascending("part"), step=step,
+                session_id=session_id, message_id="", snapshot=None)
             assistant_info = await create_assistant_message(
                 session_id=session_id,
                 parent_id=last_user.id,
@@ -2332,6 +2437,7 @@ async def run_loop(
                 agent=agent_name,
                 user_id=user_id,
                 run_fence=run_fence,
+                step_start=step_start,
             )
             run_message_ids.add(assistant_info.id)
             last_step_info = assistant_info
@@ -2341,19 +2447,6 @@ async def run_loop(
             start_snapshot = None
             runtime_prepared = False
             latency_phase("request_prepare")
-            step_start = StepStartPart(
-                id=ascending("part"),
-                step=step,
-                session_id=session_id,
-                message_id=assistant_info.id,
-                snapshot=start_snapshot,
-            )
-            await save_part(
-                step_start,
-                is_new=True,
-                user_id=user_id,
-                run_fence=run_fence,
-            )
 
             async def _prepare_step_runtime():
                 nonlocal start_snapshot, runtime_prepared, sandbox_directory_prepared
@@ -2410,27 +2503,30 @@ async def run_loop(
                             "assistant execution mode changed before provider dispatch")
                     raise RuntimeError("assistant execution mode changed before provider dispatch")
 
-            async def _prepare_provider_attempt() -> None:
+            async def _prepare_provider_attempt(*, refresh_memory: bool = True) -> None:
                 """Freeze the complete request, then CAS its Event prefix."""
                 nonlocal provider_attempt_number, prepared_attempt, candidate_compaction, candidate_error
-                nonlocal memory_bundle, memory_fragment
+                nonlocal memory_bundle, memory_fragment, system
                 from assistant.policy import AssistantError
                 prepared_attempt, candidate_compaction, candidate_error = None, False, None
                 if main_budget is not None:
                     main_budget.check()
                 await lease.assert_current()
                 await question_runtime.assert_current("request", progress=True)
-                if memory_bundle is not None and memory_scope is not None:
+                if refresh_memory and memory_bundle is not None and memory_scope is not None:
                     from memory.orchestrator import refresh_memory_context, render_memory_context
                     memory_bundle = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
                     memory_fragment = render_memory_context(memory_bundle)
+                from memory.orchestrator import apply_settings_system
+                system = apply_settings_system(system, memory_bundle)
                 provider_attempt_number += 1
                 request_id = f"{assistant_info.id}:{provider_attempt_number}"
                 admission_candidate = admission_messages = latest_messages = None
                 report_identity = None
 
                 async def _load_candidate():
-                    await lease.assert_current()
+                    # The canonical read checks the same lease under its SQL
+                    # lock; a separate transaction here adds no authority.
                     return await load_canonical_model_surface(
                         session_id,
                         user_id=user_id,
@@ -2496,8 +2592,8 @@ async def run_loop(
                     prompt_shape_digest: str,
                 ):
                     nonlocal admission_candidate, admission_messages
-                    await lease.assert_current()
                     if single_candidate and not request_admitted:
+                        await lease.assert_current()
                         # Pressure/pruning is resolved before spending a
                         # request. Compaction has its own durable admission.
                         await _admit_assistant_request()
@@ -2569,7 +2665,12 @@ async def run_loop(
                                 raise
                             candidate_error = {"code": exc.code, "message": str(exc)}
                             return
-                await _prepare_provider_attempt()
+                # This candidate is local sizing/checkpoint work (the Event
+                # stores digests, not recalled bodies). Every dispatch below
+                # still performs a fresh SQL evidence check, rebuilding the
+                # candidate if anything changed. Avoid validating the same
+                # full lineage both here and at that final boundary.
+                await _prepare_provider_attempt(refresh_memory=False)
 
             async def _attempt_provider_step():
                 if candidate_error is not None:
@@ -2581,7 +2682,8 @@ async def run_loop(
                 if memory_bundle is not None and memory_scope is not None:
                     from memory.orchestrator import refresh_memory_context, render_memory_context
                     from memory.observability import add_debug_step
-                    checked_memory = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
+                    with latency_span("request.memory_authorization"):
+                        checked_memory = await refresh_memory_context(memory_bundle, memory_scope, config.memory)
                     checked_fragment = render_memory_context(checked_memory)
                     if checked_fragment != memory_fragment:
                         await _prepare_provider_attempt()
@@ -2834,6 +2936,9 @@ async def run_loop(
             total_usage = result.usage
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
+            fresh_reveals = (fresh_reveals | frozenset(ctx._capability_revealed_ids)) - frozenset(
+                part.tool for part in result.completed_tool_parts if getattr(part, "tool", None)
+            )
             # Step finish with snapshot
             latency_phase("snapshot_after")
             end_snapshot = await snapshot.track(session_id, sandbox) if runtime_prepared else None
@@ -2910,8 +3015,28 @@ async def run_loop(
                     run_fence=run_fence,
                 )
 
+            # Decide a bounded follow-through before closing the deadline
+            # watcher. A corrective step is still part of the same turn.
+            continue_reply = False
+            if (finish_reason == "stop" and not structured_complete and not abort.is_set()
+                    and follow_through_nudge is None and collected_text.strip()
+                    and step < agent_def.max_steps
+                    and (main_budget is None or step + 1 < main_budget.limits["model_requests"])):
+                from assistant import follow_through
+                reminder = None
+                if assistant_view is not None and assistant_view["mode"] == "ordinary":
+                    reminder = await follow_through.unfinished_revision(ctx, run_message_ids)
+                if reminder is None and await follow_through.needs_another_step(
+                        session_kind=session.kind, text=collected_text, session_id=session_id,
+                        user_id=user_id, message_ids=run_message_ids):
+                    reminder = follow_through.REMINDER
+                if reminder is not None:
+                    follow_through_nudge = (step, reminder)
+                    continue_reply = True
+                    log.info("Session %s: incomplete follow-through; one corrective step", session_id)
+
             # Update assistant message metadata
-            if main_budget is not None and finish_reason in {"stop", "error", "aborted", "waiting_input"}:
+            if main_budget is not None and not continue_reply and finish_reason in {"stop", "error", "aborted", "waiting_input"}:
                 # Freeze the outcome before committing it; a deadline racing
                 # post-turn cleanup must not invalidate an already saved report.
                 if not abort.is_set():
@@ -2986,15 +3111,7 @@ async def run_loop(
                     created_at=id_to_iso(assistant_info.id),
                 )
                 from agent.inbox import has_pending_next_step
-                from assistant import follow_through
-
-                if (follow_through_nudge is None and completed and step < agent_def.max_steps
-                        and (main_budget is None or step + 1 < main_budget.limits["model_requests"])
-                        and await follow_through.needs_another_step(
-                            session_kind=session.kind, text=collected_text, session_id=session_id,
-                            user_id=user_id, message_ids=run_message_ids)):
-                    follow_through_nudge = (step, follow_through.REMINDER)
-                    log.info(f"Session {session_id}: the reply promised later work nothing will do; one more step")
+                if continue_reply and completed:
                     continue
                 if await has_pending_next_step(session_id, user_id=user_id):
                     continue
@@ -3390,6 +3507,7 @@ async def _build_system_prompt(
     include_user_memory: bool = True,
     memory_isolated: bool = False,
     session_kind: str | None = None,
+    memory_packet: bool = False,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -3404,7 +3522,7 @@ async def _build_system_prompt(
         from assistant.profile import user_section
         from assistant.runtime import ASSISTANT_PROMPT
         # Who this user is to their assistant: its name, how to address them, how they like to be helped.
-        section = await user_section(user_id, workspace_id) if user_id else ""
+        section = await user_section(user_id, workspace_id) if user_id and not memory_packet else ""
         return [ASSISTANT_PROMPT, *([section] if section else []), f"Today's date: {date.today().isoformat()}"]
 
     parts = []
@@ -3434,7 +3552,7 @@ async def _build_system_prompt(
         from session.instruction import instruction_system_with_config
         from core.config import get_config
         config = get_config()
-        instructions = await instruction_system_with_config(config)
+        instructions = await instruction_system_with_config(config, discover_local=False)
         parts.extend(instructions)
     except Exception as e:
         log.debug(f"Could not load instruction files: {e}")
@@ -3470,14 +3588,26 @@ async def _build_system_prompt(
         f"</env>"
     )
     parts.append(env_info)
+    if agent_def.name in ("build", "plan") and frozen_subagent is None:
+        parts.append(
+            "<task_execution>\n"
+            "Match the workflow to the user's deliverable. A workspace may contain ordinary documents, "
+            "tables or media and is not necessarily a code repository. Repository exploration, git status/log, "
+            "builds and code tests apply only when relevant to the requested software or version-control work. "
+            "Do not add them to ordinary file creation. Automatic change snapshots are managed by the platform. "
+            "Use known paths and prior tool receipts; search only for information actually missing. "
+            "After writing an artifact, verify its required content or behavior once with the appropriate tool. "
+            "When the result is verified, deliver it; repeat checks only after a change, failure or new uncertainty.\n"
+            "</task_execution>"
+        )
 
     # Account identity is authoritative even when memory recall is disabled or
     # carries an old greeting template. Frozen subagents and isolated sessions
     # retain their own explicit context; only the user's normal chat inherits it.
-    if (session_kind == "normal" and user_id and not memory_isolated
+    if (session_kind == "normal" and user_id and not memory_isolated and not memory_packet
             and agent_def.name in ("build", "plan") and frozen_subagent is None):
         from assistant.profile import settings_section
-        section = await settings_section(user_id)
+        section = await settings_section(user_id, workspace_id)
         if section:
             parts.append(section)
 
@@ -3537,7 +3667,10 @@ def _recent_exchange(messages, current_id: str) -> list[dict]:
         text = _visible_text(message).strip() if message.role in ("user", "assistant") else ""
         if text:
             recent.append({"role": message.role, "text": text[-400:]})
-    return recent[-2:]
+    # Tool/status assistant messages must not push the previous human request
+    # out of the reference window. Preserve at most two real exchanges.
+    indexes = [i for i, item in enumerate(recent) if item["role"] == "user"]
+    return recent[indexes[-2] if len(indexes) > 1 else indexes[-1]:][-4:] if indexes else recent[-2:]
 
 
 def _wire_by_canonical(provider_to_canonical: Mapping[str, str]) -> dict[str, str]:
@@ -3690,6 +3823,8 @@ def _to_llm_messages(
                   for part in parsed]
         from assistant.projection import guard_assistant_read
         parsed = [guard_assistant_read(part, allow_revalidated=assistant_projection_verified) for part in parsed]
+        from tool.read import project_text_read_part
+        parsed = [project_text_read_part(part) for part in parsed]
 
         if role == "user":
             text_parts = []
@@ -4055,7 +4190,8 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
 async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                          media_sources: dict[str, str] | None = None,
                          media_inputs: dict[str, dict] | None = None,
-                         resource_images: dict[str, dict] | None = None) -> list[dict]:
+                         resource_images: dict[str, dict] | None = None,
+                         image_inputs: dict[str, str] | None = None) -> list[dict]:
     """Turn image references into inline base64 data URIs.
 
     Deliberately NOT presigned URLs. Several providers (Vertex-backed Gemini
@@ -4080,6 +4216,8 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
 
     import httpx
 
+    if image_inputs is not None:
+        image_inputs.clear()
     if model_id:
         from agent.vision import describe_dropped, supports_vision
         if not supports_vision(model_id):
@@ -4138,6 +4276,9 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
             for ref in images
             if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE
         ]
+        if image_inputs is not None:
+            image_inputs.update({ref["asset_id"]: _IMAGE_CACHE[ref["asset_id"]]
+                for ref in images if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE})
         if media_sources is not None or media_inputs is not None or resource_images is not None:
             import hashlib
             for ref in images:

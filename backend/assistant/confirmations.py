@@ -16,6 +16,7 @@ and the next call asks again; a confirmation not used within half an hour
 private conversation needs no send card.
 """
 from datetime import timedelta
+import json
 
 from sqlalchemy import select
 
@@ -36,6 +37,72 @@ EXPIRES_AFTER = timedelta(minutes=10)
 #: A confirmation passes only this soon after the answer. Every other card of
 #: the same turn expires first, so the resumed call always falls within it.
 ANSWER_VALID_FOR = timedelta(minutes=30)
+SEND_TOOLS = frozenset({"tasks.followup", "assets.attach"})
+
+
+async def confirmed_sends(db, ctx, *, scope_only=False, inputs=None):
+    """Bind a card-only continuation to its persisted call, never its display text.
+
+    A new human input removes this binding. Consumed and expired receipts still
+    restrict the old continuation's scope; they do not grant execution consent.
+    """
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.part import Part
+    from question import runtime
+    if inputs is None:
+        inputs = list(await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == ctx.session_id, AgentInboxItem.user_id == ctx.user_id,
+            AgentInboxItem.run_id == ctx.run_id, AgentInboxItem.generation == ctx.run_generation,
+            AgentInboxItem.state == "claimed")))
+    if not inputs or any(item.origin != "system_recovery" or
+            (item.origin_ref or {}).get("entrypoint") != "question_answer" for item in inputs):
+        return []
+    generations = {(item.origin_ref or {}).get("generation") for item in inputs}
+    rows = await db.execute(select(QuestionCheckpoint, Part).join(
+        Part, Part.id == QuestionCheckpoint.part_id).where(
+        QuestionCheckpoint.session_id == ctx.session_id, QuestionCheckpoint.user_id == ctx.user_id,
+        QuestionCheckpoint.generation.in_(generations), QuestionCheckpoint.detached.is_(False),
+        QuestionCheckpoint.status == "answered", Part.session_id == ctx.session_id,
+        Part.user_id == ctx.user_id, Part.type == "tool"))
+    result = []
+    for row, part in rows:
+        card = (row.continuation or {}).get(KIND) or {}
+        tool = part.canonical_tool_id or (part.data or {}).get("tool")
+        saved = (part.data or {}).get("input") or {}
+        if (tool not in SEND_TOOLS or not card.get("task_id") or
+                (row.answers or [[]])[0] != [card.get("confirm", CONFIRM)] or
+                card.get("digest") != input_digest(saved.get("task_id"), saved.get("text"),
+                                                    saved.get("attachment_ids", []))):
+            continue
+        usable = not card.get("consumed") and runtime.utc(row.updated_at) >= runtime.now() - ANSWER_VALID_FOR
+        if usable or scope_only:
+            result.append({"confirmation_id": row.id, "tool": tool, "arguments": saved,
+                           "usable": usable})
+    return result
+
+
+async def check_send_replay(ctx, operation, arguments, parameters):
+    """Reject drift before asking a second card; do not substitute model input."""
+    from assistant.policy import AssistantError
+    async with get_db_session() as db:
+        confirmed = await confirmed_sends(db, ctx, scope_only=True)
+    if not confirmed:
+        return
+    matching = [item for item in confirmed if item["tool"] == operation]
+    for item in matching:
+        expected = parameters.model_validate(item["arguments"]).model_dump()
+        if expected == arguments:
+            if item["usable"]:
+                return
+            raise AssistantError(409, "ASSISTANT_CONFIRMATION_UNAVAILABLE",
+                "The original send confirmation was already used or expired. Do not ask again in this "
+                "card continuation or claim a new action. Report the existing action result, or that "
+                "the confirmation expired.")
+    raise AssistantError(409, "ASSISTANT_CONFIRMATION_INPUT_CHANGED",
+        "This continuation is bound to the exact send the user already confirmed. No new card was created. "
+        "Call the original tool with the original arguments below unchanged; the card's display labels "
+        "and attachment footer are not message text. Do not change the target, files or source IDs. "
+        + json.dumps(confirmed, ensure_ascii=False))
 
 
 def input_digest(task_id: str, text: str, attachments=()) -> str:

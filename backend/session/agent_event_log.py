@@ -452,17 +452,23 @@ async def prepare_agent_event_write(
             from agent.driver import LeaseLostError
 
             raise LeaseLostError("Agent event fence targets another session")
-        from agent.driver import assert_run_fence_locked
+        from agent.driver import _assert_owned_driver_fence_locked
+        from question import runtime
 
-        await assert_run_fence_locked(
+        # Load and lock the row once. Lock order remains Session -> Driver;
+        # execution revocation is checked afterwards while both locks hold.
+        session_row = await runtime.lock_for_write(db, session_id, user_id)
+        await _assert_owned_driver_fence_locked(
             db,
             session_id=session_id,
             user_id=user_id,
             run_id=run_id,
             generation=generation,
         )
-    # The fence above already locks this row, but loading it gives appenders a
-    # concrete owner object and keeps the no-run path equally serialized.
+        if runtime.bound_ticket(session_id) is not None:
+            execution = await runtime.execution_locked(db, session_id, user_id)
+            runtime.assert_current_locked(execution, session_id)
+        return session_row
     from session.internal_parts import _lock_fenced
     return await _lock_fenced(db, session_id, user_id)
 
@@ -719,19 +725,18 @@ async def ensure_model_seed_locked(
     session_row: Session,
 ) -> AgentEvent | None:
     """Append one private model seed for logs created before canonical serving."""
-    marker = (await db.execute(select(AgentEvent.id).where(
+    markers = (await db.execute(select(AgentEvent.payload).where(
         AgentEvent.session_id == session_row.id,
         AgentEvent.kind.in_(("surface.seed", "surface.model_seed")),
-    ).order_by(AgentEvent.sequence))).scalars().all()
-    if marker:
-        first = (await db.execute(select(AgentEvent).where(
-            AgentEvent.id == marker[0]
-        ))).scalar_one()
-        first_model = (first.payload or {}).get("model")
+    ).order_by(AgentEvent.sequence).limit(2))).scalars().all()
+    if markers:
+        # Only the first version and existence of a second marker matter.
+        # Read both under the existing session lock in one SQL snapshot.
+        first_model = (markers[0] or {}).get("model")
         if (
             isinstance(first_model, Mapping)
             and first_model.get("version") == MODEL_SURFACE_SCHEMA_VERSION
-        ) or len(marker) > 1:
+        ) or len(markers) > 1:
             return None
     await _sanitize_read_model_locked(db, session_row)
     model = await _model_snapshot_locked(db, session_row)
@@ -2698,6 +2703,13 @@ async def _repair_projected_tail_locked(
             operation="updated",
             run_fence=logical_fence,
         )
+        if terminal.parent_id in excluded_message_ids:
+            # Closing an audit-only failed input must not introduce an orphan
+            # Assistant into the model view after its old error was removed.
+            await append_agent_event_locked(db, session_row, kind="surface.model_exclusion",
+                payload={"message_ids": [terminal.id], "reason": "recovery_of_excluded_input"},
+                run_fence=logical_fence, message_id=terminal.id,
+                idempotency_key=f"recovery-exclusion:{terminal.id}")
         closed_messages += 1
 
     for users, assistants, logical in groups:

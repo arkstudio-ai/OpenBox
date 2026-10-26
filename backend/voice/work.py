@@ -11,6 +11,7 @@ from sqlalchemy import and_, case, func, or_, select
 
 from assistant.commands import _authority
 from assistant.history import _decode_cursor, _encode_cursor
+from assistant.reads import execution_settings
 from assistant.requests import question_version
 from assistant.transactions import begin_snapshot, read_session
 from assistant.work_context import conversation_background
@@ -136,6 +137,7 @@ async def overview(scope, arguments, *, limit=12, db=None):
                 "project": redact_credentials(project or "")[:100], "watched": task is not None,
                 "state": state, "state_source": "assistant_task" if task else "video_job" if job else "conversation",
                 "conversation_state": session.status, "created_at": _iso(session.created_at),
+                "current_settings": execution_settings(session),
                 "updated_at": _iso(observed_activity), "url": f"/app/s/{session.id}"}
             if question := pending.get(session.id):
                 # A fresh pending decision is more useful than a stale task
@@ -187,7 +189,8 @@ async def overview(scope, arguments, *, limit=12, db=None):
                 item["recent_messages"] = [{**entry, "text": entry["text"][:200],
                     "truncated": entry["truncated"] or len(entry["text"]) > 200} for entry in previews]
             item["version"] = sha256(json.dumps({key: item.get(key) for key in (
-                "task_version", "state", "pending_request", "last_decision", "video", "available_outputs")},
+                "task_version", "state", "pending_request", "last_decision", "video", "available_outputs",
+                "current_settings", "recent_messages")},
                 sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             items.append(item)
         next_cursor = (_encode_cursor({"scope": identity, "at": _iso(selected[-1][-1]), "id": selected[-1][0].id,

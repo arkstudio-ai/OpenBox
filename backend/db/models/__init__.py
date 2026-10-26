@@ -63,6 +63,7 @@ from db.models.partner import PartnerTariff, PartnerRebate
 from db.models.resource_control import ResourceControlLease
 from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
 from db.models.voice import VoiceCall, VoiceTurn
+from db.models.memory_protocol import MemoryChangeClock, MemoryWriteReceipt, MemoryExperience
 
 __all__ = [
     "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",

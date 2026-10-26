@@ -10,7 +10,7 @@ import os
 import asyncio
 
 import pytest
-from sqlalchemy import select, update, func
+from sqlalchemy import event, select, update, func
 
 from db.base import Base, close_engine, get_db_session, init_engine
 from db.models.user import User
@@ -86,6 +86,28 @@ async def test_candidate_owner_cannot_confirm_and_default_context_is_private(aut
     assert await service.list_active_memories(user_id=scope['other'], workspace_id=scope['workspace_id']) == []
     with pytest.raises(MemoryAccessDenied):
         await service.search_memories(**identity(scope), project_id=scope['foreign'])
+
+
+async def test_default_and_explicit_scope_share_live_identity_membership_snapshot(authority_scope):
+    scope = authority_scope
+    async with get_db_session() as db:
+        statements = []
+        def before(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+        event.listen(db.get_bind(), 'before_cursor_execute', before)
+        try:
+            default = await resolve_access_scope(db, user_id=scope['user_id'])
+            explicit = await resolve_access_scope(db, **identity(scope))
+        finally:
+            event.remove(db.get_bind(), 'before_cursor_execute', before)
+        assert default == explicit
+        assert default.workspace_id == scope['workspace_id']
+        assert len(statements) == 2
+    async with get_db_session() as db:
+        (await db.get(User, scope['user_id'])).is_active = False
+    async with get_db_session() as db:
+        with pytest.raises(MemoryAccessDenied):
+            await resolve_access_scope(db, **identity(scope))
 
 
 async def test_cas_history_source_versions_outbox_and_request_replay(authority_scope):

@@ -133,8 +133,14 @@ async def test_candidate_requires_approval_then_indexes_and_unchanged_sources_sk
         scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
         docs = await service.authorized_wiki_documents(db, scope, data[4])
         assert len(docs) == 1 and docs[0].sources[0]["revision"] == 1
+        from memory.presentation import document_item, model_item
+        assert docs[0].sources[0]["origin_kind"] == "manual"
+        assert model_item(document_item(docs[0]))["sources"][0]["origin"] == "added_by_user"
         assert docs[0].sources[0]["occurred_at"] == (occurred_at.isoformat() if occurred_at else None)
-        assert document_matches_time(docs[0], resolve_query_time("2026-09-30 的决定", "Asia/Shanghai")) == (occurred_at is not None)
+        time_scope = resolve_query_time("2026-09-30 的决定", "Asia/Shanghai", intent={
+            "expression": "2026-09-30", "choice": "source_time", "confidence": .99})
+        assert time_scope["hard_filter_applied"]
+        assert document_matches_time(docs[0], time_scope) == (occurred_at is not None)
         assert await db.scalar(select(MemoryOutbox.id).where(MemoryOutbox.object_kind == "wiki", MemoryOutbox.operation == "UPSERT"))
         assert await db.scalar(select(MemoryDebugRun.id).where(MemoryDebugRun.user_id == data[0], MemoryDebugRun.request_id == "wiki:" + candidate.job_id))
     unchanged = await service.schedule_compile(user_id=data[0], workspace_id=data[1], project_id=data[2],

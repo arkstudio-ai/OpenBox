@@ -43,7 +43,8 @@ MAX_RESPONSE_BYTES = 60000
 MAX_READ_CHARS = 16000
 CURSOR_TTL = 900
 CURSOR_DOMAIN = "assistant-memory-read-v1"
-SOURCE_KINDS = {"manual", "user_confirmation", "user_correction", "user_statement", "verified_memory_revision"}
+SOURCE_KINDS = {"manual", "user_confirmation", "user_correction", "user_statement", "verified_memory_revision",
+                "native_voice_utterance"}
 # Key of the actor's all-project scope among the per-project local scopes.
 _ALL_PROJECTS = ("all-projects",)
 
@@ -191,6 +192,10 @@ async def _current(db, scope, main_id, row, local_scopes):
                 return None
             if source.source_kind == "user_statement":
                 identity["original_human"] = await _human_identity(db, evidence, source)
+            elif source.source_kind == "native_voice_utterance":
+                # Dedicated call/receipt authority, never a kind-only trust grant.
+                from voice.memory_capture import human_identity
+                identity["original_human"] = await human_identity(db, evidence, source)
             elif source.session_id or source.message_id or source.part_id:
                 # Manual confirmations/corrections have their own persisted
                 # admission identity; do not turn an arbitrary chat into one.

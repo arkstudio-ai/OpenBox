@@ -37,10 +37,11 @@ const externalAndroidOutputs = {
 /// Android: voice-communication attributes, transient focus (music resumes
 /// after the call), the communication audio mode.
 class CallAudioSession {
-  CallAudioSession({this.systemManaged = false});
+  CallAudioSession({this.systemManaged = false, this.playbackOnly = false});
 
   /// CallKit activates/deactivates iOS call audio at system priority.
   final bool systemManaged;
+  final bool playbackOnly;
   static const _configuration = AudioSessionConfiguration(
     avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
     avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.allowBluetooth,
@@ -85,7 +86,14 @@ class CallAudioSession {
         _saved = null;
       }
     }
-    await session.configure(_configuration);
+    await session.configure(
+      playbackOnly
+          ? const AudioSessionConfiguration(
+              avAudioSessionCategory: AVAudioSessionCategory.playback,
+              avAudioSessionMode: AVAudioSessionMode.defaultMode,
+            )
+          : _configuration,
+    );
     if (Platform.isAndroid) {
       await AndroidAudioManager().setMode(
         AndroidAudioHardwareMode.inCommunication,
@@ -111,6 +119,7 @@ class CallAudioSession {
   /// microphone even when the device behind it is missing (a simulator on a
   /// Mac without one); the route is what the recorder will actually use.
   Future<bool> hasInput() async {
+    if (playbackOnly) return true; // QA PCM file supplies the input.
     try {
       if (Platform.isIOS) {
         return (await AVAudioSession().currentRoute).inputs.isNotEmpty;
@@ -144,6 +153,7 @@ class CallAudioSession {
   }
 
   Future<void> setSpeaker(bool on) async {
+    if (playbackOnly) return; // Playback uses the simulator's output device.
     if (Platform.isIOS) {
       await AVAudioSession().overrideOutputAudioPort(
         on

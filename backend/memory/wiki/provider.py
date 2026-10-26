@@ -5,7 +5,7 @@ import time
 
 import httpx
 
-from memory.providers.common import MemoryProviderError
+from memory.providers.common import MemoryProviderError, shared_client
 from memory.redaction import mask_sensitive
 from wiki_compiler.contracts import CompileRequest
 
@@ -35,11 +35,12 @@ class ConfiguredWikiModel:
             data={"title": request.title, "sources": [{"id": source.id, "text": source.text} for source in request.sources]},
             sources=request.sources, system=SYSTEM)
 
-    async def generate_data(self, *, model, data, sources, system) -> tuple[dict, dict]:
+    async def generate_data(self, *, model, data, sources, system, schema=None,
+                            schema_name="memory_result", images=()) -> tuple[dict, dict]:
         """Share transport/usage handling across compilation and concept extraction."""
         self.last_usage = None
         from core.config import get_config
-        from agent.llm import _get_provider_kwargs, _needs_responses_api
+        from agent.llm import _get_provider_kwargs, _needs_responses_api, _model_family
         config = get_config()
         memory = self.memory_config or config.memory
         provider = _get_provider_kwargs(model)
@@ -51,6 +52,13 @@ class ConfiguredWikiModel:
         # must not cost every other fact in it. Sources are part of ``data``.
         root = base if base.endswith("/v1") else base + "/v1"
         text = mask_sensitive(json.dumps(data, ensure_ascii=False))
+        # Callers bind these bytes to current authorized request attachments.
+        # Never let this adapter fetch model-supplied URLs or local paths.
+        if not isinstance(images, (list, tuple)) or len(images) > 4 or any(
+                not isinstance(uri, str) or not re.fullmatch(
+                    r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+", uri) for uri in images
+                ) or sum(len(uri) for uri in images) > 14_000_000:
+            raise MemoryProviderError("invalid_review_images")
         bare_model = model.split("/", 1)[-1]
         responses = _needs_responses_api(model)
         # JSON-mode providers require an explicit JSON instruction even when a
@@ -59,19 +67,29 @@ class ConfiguredWikiModel:
         system = system.rstrip() + "\nReturn a valid JSON object only."
         if responses:
             url = root + "/responses"
+            content = [{"type": "input_text", "text": text},
+                *({"type": "input_image", "image_url": uri} for uri in images)]
             payload = {"model": bare_model, "stream": False, "max_output_tokens": 3500,
-                       "instructions": system, "input": text, "text": {"format": {"type": "json_object"}}}
+                       "instructions": system, "input": [{"role": "user", "content": content}] if images else text,
+                       "text": {"format": {"type": "json_object"}}}
         else:
             url = root + "/chat/completions"
+            from memory.providers.structured_output import response_format
             payload = {"model": bare_model, "stream": False, "max_tokens": 3500,
-                       "response_format": {"type": "json_object"},
-                       "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}]}
+                       **({"reasoning_effort": "none"} if _model_family(model) == "qwen" else {}),
+                       "response_format": response_format(model, base, name=schema_name, schema=schema,
+                                                          verified_base_urls=memory.json_schema_base_urls)
+                           if schema is not None else {"type": "json_object"},
+                       "messages": [{"role": "system", "content": system}, {"role": "user", "content":
+                           [{"type": "text", "text": text}, *({"type": "image_url", "image_url": {"url": uri}}
+                               for uri in images)] if images else text}]}
         started = time.monotonic()
-        own_client = self.client is None
-        client = self.client or httpx.AsyncClient(follow_redirects=False)
+        client = self.client or shared_client(trust_env=memory.provider_trust_env)
         try:
-            result = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"},
-                                       timeout=memory.compilation_timeout_seconds)
+            from agent.latency import provider_wait
+            with provider_wait():
+                result = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"},
+                                           timeout=memory.compilation_timeout_seconds)
             if result.status_code >= 400:
                 raise MemoryProviderError(f"wiki_provider_http_{result.status_code}")
             data = result.json()
@@ -86,14 +104,14 @@ class ConfiguredWikiModel:
                      "billed_cost": None, "currency": None, "price_version": memory.price_version}
             self.last_usage = usage
             if responses:
-                if data.get("status") == "incomplete":
+                if data.get("status") != "completed" or data.get("error"):
                     raise MemoryProviderError("wiki_provider_incomplete")
                 body = data.get("output_text") or "".join(str(piece.get("text") or "")
                     for item in data.get("output", []) if item.get("type") == "message"
                     for piece in item.get("content", []) if piece.get("type") == "output_text")
             else:
                 choices = data.get("choices") or []
-                if not choices or choices[0].get("finish_reason") not in {"stop", None}:
+                if not choices or choices[0].get("finish_reason") != "stop" or data.get("error"):
                     raise MemoryProviderError("wiki_provider_incomplete")
                 body = choices[0].get("message", {}).get("content")
             if not isinstance(body, str) or len(body) > 24000:
@@ -110,6 +128,3 @@ class ConfiguredWikiModel:
             raise MemoryProviderError("wiki_provider_timeout") from exc
         except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
             raise MemoryProviderError("wiki_provider_invalid_response") from exc
-        finally:
-            if own_client:
-                await client.aclose()

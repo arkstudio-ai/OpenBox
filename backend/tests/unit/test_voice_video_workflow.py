@@ -36,11 +36,12 @@ def tiers(monkeypatch):
 
 
 @pytest.mark.parametrize("question_field", ["video_model_question", "video_tier_question"])
-async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(tiers, question_field):
+@pytest.mark.parametrize("work_type", ["spoken_video", "other_video"])
+async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(tiers, question_field, work_type):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "默认空间里用Task AI做咖啡口播，先解释档次")
     args = {"project_id": main.project_id, "title": "档次样片", "instructions": "咖啡口播",
-            "source_message_ids": [human], "destination_confirmed": True, "work_type": "spoken_video",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": work_type,
             "model": "test/model", "model_confirmed": True,
             question_field: "这条咖啡口播视频想用哪个档次？"}
     try:
@@ -62,6 +63,7 @@ async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(t
             inbound = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == saved.id))
             assert inbound.origin_ref["confirmed_setup"] == {"task_model": "test/model",
                 "video_model": "MiniMax-H3-Max-Turbo", "video_resolution": "768p"}
+            assert (inbound.origin_ref.get("workflow") == "video-production") == (work_type == "spoken_video")
             from agent.input_origin import provider_text
             rendered = provider_text(inbound.prompt, origin=inbound.origin, reference=inbound.origin_ref)
             assert "supersede older draft wording" in rendered and "neither paid" in rendered

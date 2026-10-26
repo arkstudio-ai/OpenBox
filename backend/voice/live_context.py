@@ -33,11 +33,14 @@ async def publish(scope, lines):
             break
         recent.append(value)
         size += length
-    if not recent:
-        return
+    # An empty suffix is a revocation too. Leaving the previous Redis value
+    # would expose forgotten spoken facts to text until another utterance.
+    value = {"call_id": scope.call_id, "lines": list(reversed(recent))}
+    if hasattr(lines, "epoch"):
+        value["revocation_epoch"] = lines.epoch
     async with asyncio.timeout(0.5):
         await calls._cache().set(key(scope.user_id, scope.workspace_id, scope.main_session_id),
-                                {"call_id": scope.call_id, "lines": list(reversed(recent))}, ttl=TTL_SECONDS)
+                                value, ttl=TTL_SECONDS)
 
 
 async def read(db, main, *, before=None):
@@ -47,6 +50,11 @@ async def read(db, main, *, before=None):
             value = await calls._cache().get(key(main.user_id, main.workspace_id, main.id))
         if not isinstance(value, dict) or not value.get("lines"):
             return None
+        from core.config import get_config
+        if "revocation_epoch" in value or get_config().memory.enabled("retrieval_v2", main.user_id):
+            from memory.versions import revocation_epoch
+            if value.get("revocation_epoch") != await revocation_epoch(db, main.user_id, main.workspace_id):
+                return None  # SQL wins even before the live socket's next refresh.
         if before is not None:
             before = before if before.tzinfo else before.replace(tzinfo=timezone.utc)
             lines = [line for line in value["lines"] if isinstance(line.get("at"), (int, float))

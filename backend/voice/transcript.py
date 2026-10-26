@@ -33,6 +33,18 @@ class CallTranscript:
     now: callable = field(default=None, repr=False)  # local wall clock; tests pass a fixed one
     lines: list[Line] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
+    # Raw lines remain an audit record. Only the suffix after an authority
+    # change may be reused as conversational context or a new summary.
+    context_start: int = 0
+
+    @property
+    def context_lines(self) -> list[Line]:
+        return self.lines[self.context_start:]
+
+    def invalidate_context(self, preserve_item: str = "") -> None:
+        start = next((i for i, line in enumerate(self.lines)
+                      if preserve_item and line.item_id == preserve_item), len(self.lines))
+        self.context_start = max(self.context_start, start)
 
     def add(self, role: str, text: str, item_id: str = "") -> bool:
         """Record one line; a second line for the same item (text and audio transcripts) is ignored."""
@@ -63,7 +75,7 @@ class CallTranscript:
 
     def render(self, start: int = 0, end: int | None = None) -> str:
         return "\n".join(f"{line.at:%H:%M} {ROLES[line.role]}：{_bounded(line.text)}"
-                         for line in self.lines[start:end])
+                         for line in self.lines[max(start, self.context_start):end])
 
     def _now(self) -> datetime:
         if self.now is not None:

@@ -69,7 +69,12 @@ async def task_context(db, main) -> dict:
                                   "question": redact_credentials(card["question"])}
         if result is not None:
             summary = result.summary or ""
+            # A previous terminal report remains readable as history, but it
+            # must not masquerade as the outcome of a resumed/queued task.
+            current_result = (task.observed_state not in {"queued", "running", "resuming", "idle", "waiting_input"}
+                              and result.observed_intent_revision == task.intent_revision)
             item["latest_result"] = {"result_id": result.id, "outcome": result.outcome,
+                "is_current": current_result,
                 "delivery_state": result.delivery_state, "created_at": _iso(result.created_at),
                 "summary": summary[:SUMMARY_PREVIEW] + ("…" if len(summary) > SUMMARY_PREVIEW else "")}
         items.append(item)

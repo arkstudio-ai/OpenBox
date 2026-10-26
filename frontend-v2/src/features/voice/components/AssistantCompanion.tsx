@@ -44,8 +44,18 @@ export function AssistantCompanion({ children, settings: Settings }: Props) {
   const quickMute = call.status === "connected" && !open
   // Keep the launcher clear of send/stop and attachment controls, including
   // narrow desktop windows where the composer reaches the viewport edge.
-  const orb = useFloatingPosition(`bossip:companion:${userId}:orb`, { width: 72, height: quickMute ? 148 : 96 }, 160)
-  const panel = useFloatingPosition(`bossip:companion:${userId}:panel`, { width: 424, height: 660 })
+  const orb = useFloatingPosition(
+    `bossip:companion:${userId}:orb`,
+    { width: 104, height: quickMute ? 180 : 128 },
+    160,
+    "top-right",
+  )
+  const panel = useFloatingPosition(
+    `bossip:companion:${userId}:panel`,
+    { width: 480, height: 700 },
+    0,
+    "top-right",
+  )
   const windowRef = useRef<HTMLDivElement>(null)
   const launcherRef = useRef<HTMLButtonElement>(null)
   const avatarRef = useRef<HTMLSpanElement>(null)
@@ -89,12 +99,12 @@ export function AssistantCompanion({ children, settings: Settings }: Props) {
             aria-controls={panelId}
             aria-describedby={`${panelId}-move`}
             title={t("launcherHint", { name })}
-            className="group focus-visible:ring-accent focus-visible:ring-offset-bg relative flex size-18 cursor-grab touch-none items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-offset-4 active:cursor-grabbing"
+            className="group focus-visible:ring-accent focus-visible:ring-offset-bg relative flex size-26 cursor-grab touch-none items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-offset-4 active:cursor-grabbing"
           >
             <span
               ref={avatarRef}
               className={cn(
-                "inline-flex size-16 drop-shadow-lg group-hover:scale-105 motion-safe:transition-transform motion-safe:duration-150",
+                "inline-flex size-24 drop-shadow-lg group-hover:scale-105 motion-safe:transition-transform motion-safe:duration-150",
                 inCall && "motion-safe:[transform:scale(calc(1_+_var(--level,0)*0.12))]",
               )}
             >

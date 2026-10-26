@@ -31,6 +31,7 @@ class AssistantSection extends ConsumerStatefulWidget {
 class _AssistantSectionState extends ConsumerState<AssistantSection> {
   final _name = TextEditingController();
   final _address = TextEditingController();
+  final _language = TextEditingController();
   final _persona = TextEditingController();
   final _business = TextEditingController();
 
@@ -50,6 +51,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
   void dispose() {
     _name.dispose();
     _address.dispose();
+    _language.dispose();
     _persona.dispose();
     _business.dispose();
     super.dispose();
@@ -58,6 +60,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
   void _fill(AssistantProfile stored) {
     _name.text = stored.name;
     _address.text = stored.address;
+    _language.text = stored.language;
     _persona.text = stored.persona;
     _business.text = businessKinds.contains(stored.business)
         ? ''
@@ -83,6 +86,8 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
   Map<String, Object> _patch(AssistantProfile stored) => {
     if (_name.text.trim() != stored.name) 'name': _name.text.trim(),
     if (_address.text.trim() != stored.address) 'address': _address.text.trim(),
+    if (_language.text.trim() != stored.language)
+      'language': _language.text.trim(),
     if (_persona.text.trim() != stored.persona) 'persona': _persona.text.trim(),
     if (_tone != null && _tone != stored.tone) 'tone': _tone!,
     if (_length != null && _length != stored.length) 'length': _length!,
@@ -130,6 +135,7 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
         filled == null ||
         (_name.text == filled.name &&
             _address.text == filled.address &&
+            _language.text == filled.language &&
             _persona.text == filled.persona &&
             _business.text ==
                 (businessKinds.contains(filled.business)
@@ -174,6 +180,16 @@ class _AssistantSectionState extends ConsumerState<AssistantSection> {
           hint: i18n.t('settings:assistant.addressPlaceholder'),
           onChanged: () => setState(() {}),
         ),
+        const SizedBox(height: 18),
+        label('settings:assistant.languageLabel'),
+        _Field(
+          fieldKey: const ValueKey('assistant-language'),
+          controller: _language,
+          maxLength: 20,
+          hint: i18n.t('settings:assistant.languagePlaceholder'),
+          onChanged: () => setState(() {}),
+        ),
+        Text(i18n.t('settings:assistant.languageHint')),
         const SizedBox(height: 18),
         label('settings:assistant.toneLabel'),
         _Choices(

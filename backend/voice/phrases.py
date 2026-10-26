@@ -83,6 +83,7 @@ def note_text(status, user_text, speech, lang):
 def _delivery(lang):
     return ("向用户传达刚收到的后台事件，讲清是哪件事及其实际状态。自然转述，细节按需要展开；"
             "名称、数字、决定与事实一致。接收请求或记录决定不代表执行完成，未知结果不能说成功。"
+            "失败或超时只说明本次未取得结果，不能猜测为用户说明不清、素材有问题或未保存；未知原因保持未知，不要求重复已经给出的信息。"
             "把已交办的修改与已产出的结果分清：将换图、加字幕等要求送达，不能转述成图片已换好、字幕已加好。"
             "只讲本次事件，不从历史背景追加其他任务、旧卡片、待确认事项或业务菜单。"
             "复述用户说过的信息不等于已写入长期记忆，不据此声称已保存。"
@@ -90,6 +91,7 @@ def _delivery(lang):
         "Deliver the background event just received, identifying the task and its actual state. "
         "Speak naturally with relevant detail, preserving names, numbers, decisions and facts. "
         "Acceptance or a recorded decision is not execution completion; unknown is not success. "
+        "Failure or timeout means this attempt returned no result. Do not blame unclear user descriptions, bad assets or unsaved data without evidence; keep unknown causes unknown and do not request information already provided. "
         "Distinguish a submitted edit from its output: a request to replace an image or add subtitles does not mean either edit is done. "
         "Stay within this event; do not append old tasks, cards or a business menu from history. "
         "Repeating a user's words does not prove they were saved to long-term memory. "
@@ -140,7 +142,10 @@ def tool_result_instructions(lang):
             "execution_confirmed=false 或 execution_result=null 时，业务执行结果尚未返回，不能说成已发出、已创建或已完成。"
             "invalid_arguments、conflict、target_mismatch、need_user_answer、unavailable 都不是成功，this_call_applied=false 时不能说已提交或已记录；"
             "按回执的 conversation 说明实际提交的任务，不能把一个任务的成功说成另一任务成功。"
+            "素材的ID仅供工具调用，不口述；用完整文件名和可区分的描述说明。人工描述已记录的选择直接按记录回答，不重复索要同一确认，也不把AI描述当用户授权。"
             "current_login_state=unknown 表示当前登录状态没有核验，明确说还无法判断是否连接；历史记录缺失不证明已断开。"
+            "查询回执 checked=false 或 unavailable 表示未核实，不能说已经查看、没有资料、同名无法区分或用户描述不明确。"
+            "只报告暂时未能完成查询，保留用户已给的信息，不因查询失败要求重选、重填或重复确认。restricted 按本轮读取限制说明，不当成系统故障。"
             "仅参数格式错误可保持同一用户决定校正参数，结果未知须先查询。retry_allowed=false 时停止调用，说明未提交并等用户下一步。"
             "按实际状态自然回应；需要的选择已明确就不重复确认。") if _lang(lang) == "zh" else (
         "Answer the tool receipt in conversation context. decision_recorded means only a recorded choice; "
@@ -148,7 +153,10 @@ def tool_result_instructions(lang):
         "no execution result is available; do not describe the operation as sent, created or complete. "
         "invalid_arguments, conflict, target_mismatch, need_user_answer and unavailable are failures; this_call_applied=false cannot be described as submitted or recorded. "
         "Name the actual conversation in the receipt; success on one task is not success on another. "
+        "Asset IDs are for tool calls only: speak full filenames and distinguishing descriptions. Answer an existing choice recorded in a manual description without requesting the same confirmation again; an AI description is not user authorization. "
         "current_login_state=unknown means live login was not checked: say it is not yet known whether connected; missing history is not evidence of disconnection. "
+        "A read receipt with checked=false or unavailable is unverified: never claim you checked, found no data, could not distinguish duplicate names or found the user's description unclear. "
+        "Report the incomplete lookup, retain information already provided, and do not ask the user to reselect, re-enter or reconfirm because the lookup failed. Describe restricted as this turn's read restriction, not a system failure. "
         "Correct a rejected argument shape while preserving the user's exact choice; query first when the outcome is unknown. "
         "When retry_allowed=false, stop calling tools, explain that nothing was submitted and wait for the user. "
         "Respond naturally to its actual state, without asking again for a clear decision.")

@@ -344,6 +344,19 @@ async def assert_run_fence_locked(
     ).scalar_one_or_none()
     if owned_session is None:
         raise LeaseLostError(f"agent transcript session fence lost for {session_id}")
+    await _assert_owned_driver_fence_locked(db, session_id=session_id, user_id=user_id,
+                                          run_id=run_id, generation=generation)
+
+
+async def _assert_owned_driver_fence_locked(
+    db, *, session_id: str, user_id: str, run_id: str, generation: int,
+) -> None:
+    """Caller holds the owned Session lock in this same write transaction.
+
+    The event writer already needs the full Session row for appending events.
+    Reuse that transaction lock, never a cached ownership result, and retain
+    the Driver lock until the caller commits its transcript change.
+    """
     database_now = _database_now(db)
     conditions = (
         AgentDriverState.session_id == session_id,
@@ -581,13 +594,71 @@ class RunLease:
         from assistant.scheduling import observe_task_hold
         return await observe_task_hold(self.session_id, self.user_id) is not None
 
-    async def assert_current(self) -> None:
+    async def assert_tool_current(self) -> None:
+        """Check both live fences in one fresh statement for Agent tools."""
+        from question import runtime
+        ticket = runtime.current_run.get()
+        if (ticket is not None and ticket.session_id == self.session_id
+                and ticket.user_id == self.user_id and ticket.run_id == self.run_id
+                and not self._lost and self._monitor is not None and not self._monitor.done()):
+            runtime.assert_not_revoked("tool", ticket)
+            await self.assert_current(question_ticket=ticket)
+        else:
+            # Auxiliary/legacy contexts and unmonitored renewal keep their
+            # original checks; no mismatched ticket can use the joint path.
+            await runtime.assert_current("tool")
+            await self.assert_current()
+
+    async def assert_current(self, *, question_ticket=None) -> None:
         """Fence an external side-effect boundary."""
         if self._lost:
             raise LeaseLostError(
                 f"agent lease lost for {self.session_id} generation {self.generation}"
             )
-        if not await self.renew():
+        # A dispatch checks ownership, but need not extend the deadline on
+        # every check. Renewal takes the cluster quota locks; doing that at
+        # every tool/Part boundary serializes otherwise independent replies.
+        # The monitor owns renewal. Read SQL on EVERY check (never a TTL
+        # cache), using its clock and all ownership fields. Near expiry, or
+        # without a running monitor, retain the quota-serialized renewal.
+        live = False
+        if self._monitor is not None and not self._monitor.done():
+            from question import runtime
+            from db.models.question import SessionExecution
+            moment = runtime.now()
+            async with get_db_session() as db:
+                statement = select(
+                    AgentDriverState.lease_expires_at, _database_now(db),
+                ).select_from(AgentDriverState).join(SessionRow, SessionRow.id == AgentDriverState.session_id).where(
+                    SessionRow.user_id == self.user_id,
+                    AgentDriverState.session_id == self.session_id,
+                    AgentDriverState.user_id == self.user_id,
+                    AgentDriverState.run_id == self.run_id,
+                    AgentDriverState.generation == self.generation,
+                    AgentDriverState.owner_id == self.owner_id,
+                    AgentDriverState.phase != "idle",
+                    AgentDriverState.lease_expires_at.is_not(None),
+                    AgentDriverState.lease_expires_at > _database_now(db),
+                )
+                if question_ticket is not None:
+                    statement = statement.add_columns(SessionExecution.session_id, SessionExecution.user_id,
+                        SessionExecution.generation, SessionExecution.run_id, SessionExecution.lease_until).outerjoin(SessionExecution,
+                        (SessionExecution.session_id == question_ticket.session_id)
+                        & (SessionExecution.user_id == question_ticket.user_id))
+                row = (await db.execute(statement)).one_or_none()
+            if row is not None:
+                if question_ticket is not None:
+                    runtime.assert_observed_run(question_ticket, row if row.session_id is not None else None, "tool", moment)
+                live = (_aware(row[0]) - _aware(row[1])).total_seconds() > 2 * HEARTBEAT_SECONDS
+                if not live:
+                    live = await self.renew()
+            elif question_ticket is not None:
+                # Preserve the ordinary revocation diagnosis on the failure
+                # path; successful boundaries never open a second transaction.
+                await runtime.assert_current("tool")
+        else:
+            live = await self.renew()
+        if not live:
             self._lost = True
             self.abort.set()
             raise LeaseLostError(

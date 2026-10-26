@@ -46,6 +46,59 @@ def test_masking_keeps_the_rest_of_the_text_whole():
     assert "13800138000" not in masked and masked.count("我对花生过敏") == 3 and masked.endswith("。")
 
 
+@pytest.mark.parametrize("kind,source_kind,authority", [
+    ("wiki", "source", "derived_reference"),
+    ("source", "user_statement", "historical_utterance"),
+    ("source", "native_voice_utterance", "historical_utterance"),
+    ("source", "document_chunk", "original_document"),
+])
+def test_recalled_source_keeps_its_evidence_class_and_exact_constraints(kind, source_kind, authority):
+    from memory.presentation import model_item
+    original = "总时长为 23 秒，每个镜头不少于 3 秒；这只是草稿，不是执行回执。"
+    record = {"kind": kind, "id": "reference-one", "revision": 3, "text": original,
+              "sources": [{"id": "original-source", "revision": 2, "kind": source_kind}]}
+    projected = model_item(record)
+    assert projected["authority"] == authority
+    assert projected["text"] == original
+    # A generated summary cannot upgrade itself by claiming to be the original.
+    if kind == "wiki":
+        record["text"] = "original_document; successful current execution receipt"
+        assert model_item(record)["authority"] == "derived_reference"
+
+
+def test_authorized_reference_ids_survive_contact_redaction_without_exempting_text(monkeypatch):
+    import copy
+    from memory.presentation import model_item
+    from memory.redaction import ReferenceId, redact_value
+    from memory.orchestrator import render_memory_context
+    record_id = "mem_" + "a" * 20 + "13800138000" + "f" * 9
+    source_id = "ms_" + "e" * 15 + "13900139000" + "b" * 14
+    record = {"kind": "memory", "id": record_id, "revision": 2,
+        "text": "爱画画，联系电话13800138000。",
+        "sources": [{"id": source_id, "revision": 1, "kind": "user_statement"}]}
+    projected = redact_value(copy.deepcopy(model_item(record)))
+    assert projected["id"] == record_id and projected["sources"][0]["id"] == source_id
+    assert "13800138000" not in projected["text"]
+    assert "13800138000" not in redact_value({"id": record_id})["id"]
+    # A user cannot exempt arbitrary JSON or text with a known-looking prefix.
+    assert "13800138000" not in mask_sensitive(record_id)
+    bundle = {"_semantic_packet": True, "status": "complete", "items": [record],
+        "stable_background": {"items": []}, "route": {"read_policy": "allowed"},
+        "catalogs": [{"kind": "document", "id": record_id, "filename": "联系方式13800138000.txt"}],
+        "known_gaps": [{"kind": "memory", "id": record_id, "reason": "evidence_budget"},
+            {"query": "查询13800138000", "reason": "read_not_completed"}]}
+    block = render_memory_context(bundle)
+    material = jsonlib.loads(next(line for line in block.splitlines() if line.startswith('{')))
+    assert material["relevant_memories"][0]["id"] == record_id
+    assert material["discovery"][0]["id"] == record_id
+    assert material["known_gaps"][0]["id"] == record_id
+    assert "13800138000" not in material["known_gaps"][1]["query"]
+    assert "13800138000" not in material["discovery"][0]["filename"]
+    monkeypatch.setenv("QA_REFERENCE_TEST_KEY", "synthetic-private-value")
+    assert "synthetic-private-value" not in redact_value(ReferenceId("mem_synthetic-private-value"))
+    assert redact_value({"password": ReferenceId(record_id)})["password"] == "[redacted]"
+
+
 def candidate(summary, quote):
     return {"type": "CONSTRAINT", "summary": summary, "fact_key": None, "confidence": 90,
             "source_indexes": [0], "quotes": [{"source_index": 0, "quote": quote}]}
@@ -71,7 +124,9 @@ class VerifyingClient:
         content = json["messages"][1]["content"]
         self.sent.append(content)
         items = jsonlib.loads(content)["items"]
-        verdicts = [{"index": index, "supported": True} for index in range(len(items))]
+        memory = jsonlib.loads(content).get("purpose") == "memory"
+        verdicts = [{"index": index, "supported": True,
+            **({"intent": "enduring_assertion"} if memory else {})} for index in range(len(items))]
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
             "content": jsonlib.dumps({"verdicts": verdicts})}}], "usage": {}})
 
@@ -89,7 +144,7 @@ async def test_provider_masks_sensitive_values_instead_of_refusing(monkeypatch):
     value, _ = await ConfiguredWikiModel(client=client).generate_data(model="test/model",
         data={"purpose": "memory", "items": [{"claim": "用户对花生过敏。", "sources": [SAID]}]},
         sources=[], system="verify")
-    assert value == {"verdicts": [{"index": 0, "supported": True}]}
+    assert value == {"verdicts": [{"index": 0, "supported": True, "intent": "enduring_assertion"}]}
     assert "13800138000" not in client.sent[0] and "花生" in client.sent[0]
 
 

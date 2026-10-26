@@ -169,3 +169,19 @@ def test_error_projection_keeps_known_cause_but_never_copies_private_debug_field
                                                "url": "https://private.invalid/?secret=value"}})
     assert result == {"code": "ATTACHMENT_DELIVERY_FAILED", "message": "Attachment transfer did not complete.",
                       "reason_code": "delivery_failed", "retryable": True}
+
+
+def test_disconnected_desktop_keeps_safe_cause_in_task_and_voice_projection():
+    from assistant.execution_errors import execution_error_view
+    from sandbox.wuying_desktop_service import DesktopNotReady
+    error = DesktopNotReady({"state": "channel_down", "api_key": "never-copy-this",
+                             "endpoint": "https://private.invalid"})
+    safe = inbox._safe_delivery_failure(error, expected_asset_ids=["reference-image"])
+    assert safe["code"] == "sandbox_not_ready" and safe["retryable"] is True
+    terminal = inbox.delivery_terminal_error(safe, attempts=3)
+    projected = execution_error_view(terminal)
+    assert projected["code"] == "SANDBOX_NOT_READY"
+    assert projected["reason_code"] == "sandbox_not_ready"
+    assert "原请求和参考附件已保留" in projected["message"]
+    assert "继续原任务" in projected["message"]
+    assert "never-copy-this" not in str(terminal) and "private.invalid" not in str(terminal)

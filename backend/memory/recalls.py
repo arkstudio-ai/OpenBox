@@ -32,14 +32,45 @@ async def record(*, user_id: str, workspace_id: str, session_id: str, message_id
     if not ids:
         return
     from db.base import get_db_session
-    from db.models.memory_v2 import MemoryRecall
     async with get_db_session() as db:
-        row = await db.get(MemoryRecall, message_id)
-        if row is None:
-            db.add(MemoryRecall(message_id=message_id, session_id=session_id, user_id=user_id,
-                                workspace_id=workspace_id, memory_ids=ids, created_at=datetime.now(timezone.utc)))
-        elif row.user_id == user_id:
-            row.memory_ids = ids
+        await _record_locked(db, user_id, workspace_id, session_id, message_id, ids)
+
+
+async def _record_locked(db, user_id, workspace_id, session_id, message_id, ids):
+    from db.models.memory_v2 import MemoryRecall
+    row = await db.get(MemoryRecall, message_id)
+    if row is None:
+        db.add(MemoryRecall(message_id=message_id, session_id=session_id, user_id=user_id,
+                            workspace_id=workspace_id, memory_ids=ids, created_at=datetime.now(timezone.utc)))
+    elif row.user_id == user_id and row.workspace_id == workspace_id and row.session_id == session_id:
+        row.memory_ids = ids
+
+
+async def record_usage(*, user_id, workspace_id, project_id, include_all_projects,
+                       session_id, message_id, bundle):
+    """Save ranking counters and the reply's memory references in one transaction.
+
+    These are display/ranking effects, not grants. Fresh membership and active
+    memory predicates still guard counters; for_session reauthorizes every body.
+    """
+    from sqlalchemy import update
+    from db.base import get_db_session
+    from db.models.memory import UserMemory
+    from memory.policy import active_memory_predicates, resolve_access_scope
+    used = list(dict.fromkeys(item["id"] for item in [*(bundle or {}).get("items", []),
+        *(bundle or {}).get("stable_background", {}).get("items", [])]
+        if item.get("kind") == "memory"))
+    if not used:
+        return
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id,
+            project_id=project_id, include_all_projects=include_all_projects)
+        await db.execute(update(UserMemory).where(UserMemory.id.in_(used), *access.predicates(UserMemory),
+            *active_memory_predicates()).values(hit_count=UserMemory.hit_count + 1,
+                                               last_hit_at=datetime.now(timezone.utc)))
+        ids = recalled_ids(bundle)
+        if ids:
+            await _record_locked(db, user_id, workspace_id, session_id, message_id, ids)
 
 
 async def for_session(*, user_id: str, workspace_id: str | None, session_id: str) -> dict[str, list[dict]] | None:

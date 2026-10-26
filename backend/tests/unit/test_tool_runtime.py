@@ -31,6 +31,16 @@ def _tool(name: str, **kwargs):
     )
 
 
+@pytest.mark.parametrize("dialect", ["litellm", "responses"])
+def test_exposure_budget_includes_the_real_provider_envelope(dialect):
+    runtime = assemble_tool_runtime(
+        {name: _tool(name, description="完整说明 " * 80) for name in ("read", "question", "image_gen")},
+        mode="portable", agent_name="build", signals=ExposureSignals(user_task_text="生成图片"),
+    )
+    actual = measure_tool_definitions(runtime.provider_tools, dialect)
+    assert actual.initial_model_visible_definition_chars <= runtime.provider_plan.schema_chars
+
+
 def test_legacy_runtime_keeps_provider_execution_and_eligible_equivalent():
     runtime = assemble_tool_runtime(
         {"read": _tool("read"), "image_gen": _tool("image_gen")},
@@ -74,6 +84,16 @@ def test_explicit_image_intent_materializes_the_pack_without_skill_loading():
     )
     assert "image_gen" in runtime.provider_tools
     assert "image_gen" in runtime.step_executable_ids
+
+
+def test_requested_tool_has_priority_but_does_not_grant_an_absent_capability():
+    tools = {name: _tool(name) for name in ("read", "capability_search", "video_generate")}
+    runtime = assemble_tool_runtime(tools, mode="portable", agent_name="build",
+        signals=ExposureSignals(user_task_text="生成视频"),
+        requested_ids={"video_generate", "revoked_tool"})
+    assert runtime.provider_plan.reasons["video_generate"] == "requested"
+    assert "video_generate" in runtime.step_executable_ids
+    assert "revoked_tool" not in runtime.execution_lookup
 
 
 def test_shadow_wire_is_eager_while_candidate_is_portable():

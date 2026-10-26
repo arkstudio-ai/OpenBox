@@ -32,6 +32,9 @@ class RecallInputs:
     include_all_projects: bool
     run_id: str
     model_id: str
+    # A validated same-turn proposal, not a cached packet or permission. Its
+    # identity participates in prefetch adoption just like the human input.
+    preparation: str | None = None
 
 
 @dataclass
@@ -47,27 +50,47 @@ _early: dict[tuple[str, str], _Early] = {}
 def recall_inputs(session, user_message, history, *, user_id: str, assistant_scope: bool,
                   run_id: str, model_id: str) -> RecallInputs:
     from agent.loop import _recent_exchange, _visible_text
+    from memory.dialogue_read import completed_plan
     return RecallInputs(
         query=_visible_text(user_message),
         recent=tuple((item["role"], item["text"]) for item in _recent_exchange(history, user_message.id)),
         user_id=user_id, workspace_id=session.workspace_id,
         project_id=None if assistant_scope else session.project_id,
         include_all_projects=assistant_scope, run_id=run_id, model_id=model_id,
+        preparation=completed_plan(history, session_id=session.id, turn_id=user_message.id),
     )
 
 
 async def recall(inputs: RecallInputs, *, session_id: str, turn_id: str, config) -> dict[str, Any]:
     """The turn's memory context for these inputs (the run's own recall uses this too)."""
+    if config.enabled("semantic_recall", inputs.user_id):
+        from memory.packet import TurnContext, ReadBudget, prepare_context, prepare_on_demand
+        # prepare_context validates identity, membership and the owned session
+        # in its first transaction. Do not perform the same preflight twice.
+        bundle = await prepare_context(TurnContext(user_id=inputs.user_id, workspace_id=inputs.workspace_id,
+            project_id=inputs.project_id, include_all_projects=inputs.include_all_projects,
+            query=inputs.query, entry="assistant" if inputs.include_all_projects else "chat",
+            session_id=session_id, turn_id=turn_id,
+            recent_context=tuple({"role": role, "text": text} for role, text in inputs.recent)), config)
+        if inputs.preparation is not None and bundle["_turn"].deferred_read:
+            from memory.dialogue_read import DialogueReadPlan
+            budget = ReadBudget()
+            prepared = await prepare_on_demand(bundle["_turn"], budget, config,
+                plan=DialogueReadPlan.model_validate_json(inputs.preparation), model=inputs.model_id)
+            return {**prepared, "_read_budget": budget}
+        return bundle
     from db.base import get_db_session
     from memory.orchestrator import run_memory_context
     from memory.policy import resolve_access_scope
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=inputs.user_id, workspace_id=inputs.workspace_id,
             project_id=inputs.project_id, include_all_projects=inputs.include_all_projects)
-    return await run_memory_context(
+    bundle = await run_memory_context(
         inputs.query, scope, config, session_id=session_id, turn_id=turn_id,
         input_metadata={"run_id": inputs.run_id, "main_model": inputs.model_id},
         recent_context=[{"role": role, "text": text} for role, text in inputs.recent])
+    bundle["_access_scope"] = scope
+    return bundle
 
 
 def start(lease, batch) -> None:
@@ -80,8 +103,9 @@ def start(lease, batch) -> None:
     if key in _early:
         return
     entry = _Early(started=time.monotonic())
-    entry.task = asyncio.create_task(_recall_claimed(entry, lease, message_ids[-1]),
-                                     name=f"recall-ahead:{lease.session_id}")
+    from agent.latency import create_dependency_task
+    entry.task = create_dependency_task(_recall_claimed(entry, lease, message_ids[-1]),
+                                        name=f"recall-ahead:{lease.session_id}")
     # Unused or failed, it must not leave an unread exception behind.
     entry.task.add_done_callback(lambda done: done.cancelled() or done.exception())
     _early[key] = entry

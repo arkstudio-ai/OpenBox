@@ -12,7 +12,7 @@
 //
 // Once answered it disappears — the exchange lives on in the conversation as
 // the question tool's own row, so nothing is lost by dismissing it here.
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Check, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -24,6 +24,8 @@ import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
 import type { MentionScope } from "../hooks/useMentionMenu"
 import { QuestionResources } from "./QuestionResources"
+
+const Markdown = lazy(() => import("./Markdown"))
 
 interface OneProps {
   item: QuestionItem
@@ -63,7 +65,11 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
         <span className="text-n600 flex items-center gap-1.5 text-xs">
           {item.header || t("question.title")}
         </span>
-        <span className="text-ink whitespace-pre-wrap text-base">{item.question}</span>
+        <div className="text-ink min-w-0 text-base">
+          <Suspense fallback={<p className="whitespace-pre-wrap">{item.question}</p>}>
+            <Markdown text={item.question} />
+          </Suspense>
+        </div>
       </div>
 
       <VideoApprovalDetail item={item} />

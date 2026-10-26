@@ -95,7 +95,10 @@ class DeviceCallAudio implements CallAudio {
            session ??
            CallAudioSession(
              systemManaged:
-                 !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS,
+                 !kIsWeb &&
+                 defaultTargetPlatform == TargetPlatform.iOS &&
+                 !voiceSimulatorAudioOnly,
+             playbackOnly: voiceSimulatorAudioOnly,
            ),
        _capture = capture ?? (voiceFakeMic ? FilePcmCapture() : PcmCapture()),
        _player = player ?? PcmPlayer();

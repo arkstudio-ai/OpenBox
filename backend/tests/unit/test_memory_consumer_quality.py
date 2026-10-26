@@ -54,6 +54,7 @@ async def test_recall_cost_does_not_grow_with_what_a_person_has_stored(authority
     scope = authority_scope
     config = MemoryConfig(retrieval_v2=False, allowed_user_ids=[scope["user_id"]])
     monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(memory=config))
+    await memories.create_note(**identity(scope), summary="我的业余爱好是画水彩。")
     counts = []
     for batch, start in ((20, 0), (100, 1000)):
         await reference_notes(scope, batch, start=start)
@@ -85,7 +86,9 @@ async def test_core_memories_keep_personal_facts_ahead_of_recent_trivia(authorit
     core = await orchestrator._stable_background(access, config)
     texts = [item["text"] for item in core["items"]]
     assert texts[0] == "我对花生过敏。"
-    assert len(texts) == orchestrator.CORE_ITEM_LIMIT and core["budget"]["characters"] <= config.stable_context_max_chars
+    # Reference notes are searchable, but do not fill unused personal slots.
+    assert texts == ["我对花生过敏。"]
+    assert core["budget"]["characters"] <= config.stable_context_max_chars
 
 
 def test_turn_context_rides_on_the_newest_user_message_only():
@@ -98,7 +101,7 @@ def test_turn_context_rides_on_the_newest_user_message_only():
     assert messages[2]["content"] == "帮我订会议室"
 
 
-def test_model_view_keeps_tool_references_but_never_storage_identities():
+def test_model_view_keeps_tool_and_project_references_but_never_tenant_identities():
     source = {"id": "src-1", "revision": 3, "content_hash": "c" * 64, "kind": "user_statement",
               "session_id": "sess-secret", "message_id": "msg-secret", "occurred_at": "2026-03-01T08:00:00+00:00"}
     memory = document_item(DocumentSnapshot("memory", "mem-1", 2, "我对花生过敏。", "user-secret", "ws-secret",
@@ -112,21 +115,30 @@ def test_model_view_keeps_tool_references_but_never_storage_identities():
         "items": [memory, chunk], "degraded_reasons": [], "time_context": {"hard_filter_applied": False}})
     material = json.loads(rendered.split("\n", 2)[2].split("\n</memory_context>")[0])
     assert material["core_memories"] == [{"kind": "memory", "id": "mem-1", "revision": 2, "text": "我对花生过敏。",
+        "project_id": "proj-secret",
         "category": "user_profile", "sources": [{"id": "src-1", "revision": 3, "origin": "chat", "date": "2026-03-01"}]}]
     assert material["relevant_memories"] == [{"kind": "source", "id": "chunk-1", "revision": 1, "text": "周三休馆。",
         "sources": [{"id": "chunk-1", "revision": 1, "origin": "uploaded_file", "file": "入场说明.pdf", "pages": [2]}]}]
-    for secret in ("user-secret", "ws-secret", "proj-secret", "sess-secret", "msg-secret", "doc-secret", "h" * 64, "c" * 64):
+    for secret in ("user-secret", "ws-secret", "sess-secret", "msg-secret", "doc-secret", "h" * 64, "c" * 64):
         assert secret not in rendered
     assert orchestrator.render_memory_context({"items": [], "stable_background": {"items": []}}) == ""
 
 
-def test_one_fact_becomes_one_item_whichever_form_ranked_first():
+def test_shared_lineage_does_not_erase_different_facts():
     memory = {"kind": "memory", "id": "m", "text": "A", "sources": [{"id": "s1"}, {"id": "s2"}], "rank": 3}
     raw = {"kind": "source", "id": "s1", "text": "原话", "sources": [{"id": "s1"}], "rank": 1}
     page = {"kind": "wiki", "id": "w", "text": "页", "sources": [{"id": "s1"}, {"id": "s2"}], "rank": 2}
     wider = {"kind": "wiki", "id": "w2", "text": "更多", "sources": [{"id": "s1"}, {"id": "s9"}], "rank": 4}
     kept = retrieval._without_repeated_lineage([raw, page, memory, wider])
-    assert [(item["id"], item["rank"]) for item in kept] == [("m", 1), ("w2", 2)]
+    assert [(item["id"], item["rank"]) for item in kept] == [("s1", 1), ("w", 2), ("m", 3), ("w2", 4)]
+
+
+def test_identical_content_keeps_best_rank_without_merging_project_scopes():
+    raw = {"kind": "source", "id": "s", "text": "同一条事实", "storage_scope": {"project_id": "p1"}, "rank": 1}
+    duplicate = {**raw, "kind": "wiki", "id": "w", "rank": 2}
+    other_project = {**raw, "id": "s2", "storage_scope": {"project_id": "p2"}, "rank": 3}
+    kept = retrieval._without_repeated_lineage([raw, duplicate, other_project])
+    assert [(item["id"], item["rank"]) for item in kept] == [("s", 1), ("s2", 2)]
 
 
 async def organize(data):

@@ -82,20 +82,23 @@ export function ViewTabs({
   view,
   counts,
   onChange,
+  experiences = false,
 }: {
   view: KnowledgeView
   counts: Partial<Record<KnowledgeView, string>>
   onChange: (view: KnowledgeView) => void
+  experiences?: boolean
 }) {
   const { t } = useTranslation("knowledge")
+  const views = KNOWLEDGE_VIEWS.filter((key) => key !== "experiences" || experiences)
   // One Tab stop for the row; arrow keys, Home and End move between views.
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    const index = KNOWLEDGE_VIEWS.indexOf(view)
-    const last = KNOWLEDGE_VIEWS.length - 1
+    const index = views.indexOf(view)
+    const last = views.length - 1
     const target = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: last }[event.key]
     if (target === undefined) return
     event.preventDefault()
-    const next = KNOWLEDGE_VIEWS[(target + last + 1) % (last + 1)]
+    const next = views[(target + last + 1) % (last + 1)]
     onChange(next)
     event.currentTarget.querySelector<HTMLElement>(`[data-view="${next}"]`)?.focus()
   }
@@ -106,7 +109,7 @@ export function ViewTabs({
       className="scr -mx-1 flex gap-1 overflow-x-auto px-1 pb-1"
       onKeyDown={move}
     >
-      {KNOWLEDGE_VIEWS.map((key) => {
+      {views.map((key) => {
         const active = view === key
         return (
           <button

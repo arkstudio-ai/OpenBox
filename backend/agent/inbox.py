@@ -508,6 +508,10 @@ async def accept_inbox_item_locked(
             workspace_id=owner.workspace_id,
         )
         now = await _database_utcnow(db)
+        # Server-only proposal binding is not part of the client's request
+        # digest: a replay must keep the first admitted baseline unchanged.
+        from assistant.review_baseline import bind_locked
+        origin_ref = await bind_locked(db, owner, origin, origin_ref)
         row = AgentInboxItem(
             id=ascending("inbox"),
             user_id=user_id,
@@ -1405,10 +1409,16 @@ def _safe_delivery_failure(
     """Return bounded, non-secret evidence suitable for SQL and AgentEvent."""
     from sandbox.assets import AssetDeliveryError
     from sandbox.entitlement import SandboxSubscriptionRequired
+    from sandbox.wuying_desktop_service import DesktopNotReady
 
     if isinstance(error, SandboxSubscriptionRequired):
         return {"code": error.code, "message": error.detail,
                 "retryable": False, "missing_asset_ids": []}
+    if isinstance(error, DesktopNotReady):
+        # Its status payload can contain instance credentials and endpoints.
+        # Keep the actionable cause, never serialize that payload or repr.
+        return {"code": "sandbox_not_ready", "message": "云桌面尚未连接，附件暂时无法传入。",
+                "retryable": True, "missing_asset_ids": []}
 
     if isinstance(error, AssetDeliveryError):
         code = (
@@ -1456,6 +1466,10 @@ def delivery_terminal_error(failure: dict | None, *, attempts: int = 0) -> dict:
         error.update(code=SandboxSubscriptionRequired.code,
                      message=SandboxSubscriptionRequired.detail
                      + " 本次请求尚未发送给模型，原请求和参考附件已保留；新建会话不会解除此限制。")
+    elif failure.get("code") == "sandbox_not_ready":
+        error.update(code="SANDBOX_NOT_READY",
+                     message="云桌面尚未连接，附件暂时无法传入。本次请求尚未发送给模型，原请求和参考附件已保留；"
+                     "请在云桌面连接恢复后继续原任务，无需重新上传或新建任务。")
     return error
 
 

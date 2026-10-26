@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from db.models.project import Project
 from db.models.user import User
@@ -72,31 +72,70 @@ class MemoryAccessScope:
 
 async def resolve_access_scope(db, *, user_id: str, workspace_id: str | None = None,
                                project_id: str | None = None,
-                               include_all_projects: bool = False) -> MemoryAccessScope:
-    user = await db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True), User.is_deleted.is_(False)))
-    workspace_id = workspace_id or (user.default_workspace_id if user else None)
-    if not user or not workspace_id:
-        raise MemoryAccessDenied("Memory identity and active workspace membership are required")
-    member = await db.scalar(select(WorkspaceMember).join(Workspace, Workspace.id == WorkspaceMember.workspace_id).where(
-        WorkspaceMember.user_id == user_id, WorkspaceMember.workspace_id == workspace_id,
+                               include_all_projects: bool = False,
+                               reading_session_id: str | None = None) -> MemoryAccessScope:
+    scope, _ = await read_access_snapshot(db, user_id=user_id, workspace_id=workspace_id,
+        project_id=project_id, include_all_projects=include_all_projects,
+        reading_session_id=reading_session_id)
+    return scope
+
+
+async def read_access_snapshot(db, *, user_id: str, workspace_id: str | None = None,
+                               project_id: str | None = None,
+                               include_all_projects: bool = False,
+                               reading_session_id: str | None = None, metadata=()):
+    """Read authority and optional scalar metadata in the same live statement.
+
+    Metadata is supplied by server adapters, never by a caller's remembered
+    scope. No row is returned unless all current authority predicates pass.
+    """
+    # Identity and membership must describe the same live snapshot. Joining
+    # them also avoids an extra SQL round trip in each post-provider recheck.
+    target_workspace = workspace_id or User.default_workspace_id
+    statement = select(WorkspaceMember)
+    if reading_session_id:
+        from db.models.session import Session
+        # Fresh SQL on every provider boundary; an identity-map Session from
+        # an earlier read must not conceal deletion or isolation changes.
+        statement = statement.where(select(Session.id).where(
+            Session.id == reading_session_id, Session.user_id == user_id,
+            Session.workspace_id == WorkspaceMember.workspace_id,
+            Session.is_deleted.is_(False),
+            or_(Session.kind == "assistant", and_(Session.kind != "assistant",
+                Session.memory_policy == "standard", Session.project_id == project_id)),
+        ).exists())
+    statement = (statement
+        .join(User, User.id == WorkspaceMember.user_id)
+        .join(Workspace, Workspace.id == WorkspaceMember.workspace_id).where(
+        User.id == user_id, User.is_active.is_(True), User.is_deleted.is_(False),
+        WorkspaceMember.user_id == user_id, WorkspaceMember.workspace_id == target_workspace,
         WorkspaceMember.status == "active", Workspace.is_deleted.is_(False),
     ))
-    if not member:
-        raise MemoryAccessDenied("Memory identity and active workspace membership are required")
     projects = ()
     if project_id or include_all_projects:
-        stmt = select(Project.id).where(Project.workspace_id == workspace_id, Project.user_id == user_id, Project.is_deleted.is_(False))
+        project_match = [Project.workspace_id == WorkspaceMember.workspace_id,
+                         Project.user_id == user_id, Project.is_deleted.is_(False)]
         if project_id:
-            stmt = stmt.where(Project.id == project_id)
-        projects = tuple((await db.scalars(stmt)).all())
-        if project_id and project_id not in projects:
-            raise MemoryAccessDenied("Memory project is not available in the authorized scope")
+            project_match.append(Project.id == project_id)
+        # Keep the membership even when no project matches, so an unavailable
+        # project cannot be mistaken for a personal-scope read.
+        statement = statement.add_columns(Project.id).outerjoin(Project, and_(*project_match)).order_by(Project.id)
+    rows = (await db.execute(statement.add_columns(*metadata) if metadata else statement)).all()
+    member = rows[0][0] if rows else None
+    if project_id or include_all_projects:
+        projects = tuple(row[1] for row in rows if row[1] is not None)
+    if not member:
+        raise MemoryAccessDenied("Memory identity and active workspace membership are required")
+    workspace_id = member.workspace_id
+    if project_id and project_id not in projects:
+        raise MemoryAccessDenied("Memory project is not available in the authorized scope")
     stamp = member.updated_at
     if stamp and stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     epoch_key = f"{workspace_id}:{user_id}:{member.role}:{stamp.isoformat() if stamp else ''}"
     epoch = max(1, int.from_bytes(sha256(epoch_key.encode()).digest()[:4], "big") & 0x7FFFFFFF)
-    return MemoryAccessScope(user_id, workspace_id, project_id, include_all_projects, projects, epoch)
+    scope = MemoryAccessScope(user_id, workspace_id, project_id, include_all_projects, projects, epoch)
+    return scope, tuple(rows[0][2 if project_id or include_all_projects else 1:])
 
 
 def active_memory_predicates(now: datetime | None = None) -> tuple:

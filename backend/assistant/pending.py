@@ -5,13 +5,14 @@ permission and memory checkpoints keep their original generation fences.
 Detached answers never run an old tool: they record a choice and give the
 current assistant the original tool arguments to continue through normal admission.
 """
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from assistant.commands import ToolSource, _authority, _tool_source_locked
 from assistant.policy import AssistantError
 from assistant.requests import question_version
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
+from db.models.agent_inbox import AgentInboxItem
 from db.models.part import Part
 from db.models.question import QuestionCheckpoint
 from question import runtime
@@ -99,6 +100,54 @@ async def context(db, main, *, request_id=None, limit=20):
             "result": part.data.get("output") if row.status != "pending" else None,
             "execution_confirmed": False})
     return {"items": items, "has_more": len(rows) > limit, "untrusted_data": True}
+
+
+async def current_answers(db, main, *, run_id, generation):
+    """Exact answered-card receipts for this claimed continuation, not recall.
+
+    Normal continuations bind the original execution generation; detached
+    preparation cards bind their exact ID. Never fall back to the pending
+    directory when either binding is absent. Reads do not execute the saved
+    tool or enlarge the permission granted by its original confirmation.
+    """
+    inputs = list(await db.scalars(select(AgentInboxItem).where(
+        AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
+        AgentInboxItem.run_id == run_id, AgentInboxItem.generation == generation,
+        AgentInboxItem.state == "claimed")))
+    if not inputs or any(item.origin != "system_recovery" for item in inputs):
+        return []
+    targets = []
+    for item in inputs:
+        ref = item.origin_ref or {}
+        if ref.get("entrypoint") == "assistant_card_answer":
+            identity = ref.get("question_id")
+            if isinstance(identity, str) and identity:
+                targets.append(and_(QuestionCheckpoint.id == identity,
+                                    QuestionCheckpoint.detached.is_(True)))
+        elif ref.get("entrypoint") == "question_answer":
+            original = ref.get("generation")
+            if type(original) is int and original >= 0:
+                targets.append(and_(QuestionCheckpoint.generation == original,
+                                    QuestionCheckpoint.detached.is_(False)))
+    if not targets:
+        return []
+    rows = list((await db.execute(select(QuestionCheckpoint, Part).join(
+        Part, Part.id == QuestionCheckpoint.part_id).where(
+        QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.user_id == main.user_id,
+        QuestionCheckpoint.status.in_(("answered", "rejected")), QuestionCheckpoint.applied.is_(True),
+        Part.session_id == main.id, Part.user_id == main.user_id, Part.type == "tool",
+        or_(*targets)).order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id))).all())
+    receipts = []
+    for row, part in rows:
+        data = part.data or {}
+        if data.get("status") != "completed" or (data.get("metadata") or {}).get("question_id") != row.id:
+            continue
+        receipts.append({"request_id": row.id, "state": row.status, "questions": row.questions,
+            "answers": row.answers, "original_call": {
+                "tool": part.canonical_tool_id or data.get("tool"), "arguments": data.get("input") or {}},
+            "result": data.get("output"), "decision_only": detachable(row, main),
+            **({"execution_confirmed": False} if detachable(row, main) else {})})
+    return receipts
 
 
 async def list_cards(*, user_id, workspace_id, main_id, request_id=None):

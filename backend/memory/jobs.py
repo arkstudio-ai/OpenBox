@@ -15,7 +15,7 @@ import random
 import re
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import JSON, and_, func, or_, select, type_coerce, update
 
 from core.log import create_logger
 from db.base import get_db_session
@@ -78,6 +78,7 @@ class ExtractionInput:
     existing_memories: tuple[dict, ...]
     base_revisions: tuple[tuple[str, int], ...]
     acl_hash: str
+    profile_revision: int | None = None
 
 
 def _hash(value: Any) -> str:
@@ -287,6 +288,8 @@ async def _create_completion_locked(db, session: Session, *, result_message_id: 
     boundaries = _user_sources(evidence, messages, message_ids=user_ids, turn_id=str(turn_id),
                                branch_id=branch_id, end_sequence=int(terminal.sequence),
                                excluded=frozenset(fold.excluded_message_ids))
+    from voice.memory_capture import exclude_forwarded_sources
+    boundaries = await exclude_forwarded_sources(db, session, boundaries, messages)
     existing = await db.scalar(select(MemoryTurnCompletion).where(
         MemoryTurnCompletion.session_id == session.id, MemoryTurnCompletion.branch_id == branch_id,
         MemoryTurnCompletion.logical_turn_id == turn_id,
@@ -319,6 +322,8 @@ async def enqueue_completion_locked(db, completion: MemoryTurnCompletion, *,
                                     pipeline_version: str | None = None,
                                     cancelled: str | None = None) -> MemoryExtractionJob:
     """Queue a turn for extraction; ``cancelled`` records one that must never be extracted."""
+    from voice.memory_capture import cancelled_reason
+    cancelled = cancelled or cancelled_reason(completion)
     version = pipeline_version or completion.pipeline_version
     existing = await db.scalar(select(MemoryExtractionJob).where(
         MemoryExtractionJob.completion_id == completion.id,
@@ -491,6 +496,18 @@ async def recover_extraction_jobs(*, limit: int = 100, include_inbox: bool = Tru
             memory_extraction_clause(),
             AgentInboxItem.state == "settled", AgentInboxItem.outcome.in_(("succeeded", "recovered")),
             AgentInboxItem.result_message_id.is_not(None), AgentInboxItem.turn_id.is_not(None),
+            # Settled Inbox rows include interrupted and ask-card outcomes.
+            # They are not successful logical turns. Filter by an actual
+            # canonical terminal before acquiring Session locks and replaying
+            # transcripts; the full source checks below still own admission.
+            select(AgentEvent.id).where(
+                AgentEvent.session_id == AgentInboxItem.session_id,
+                AgentEvent.user_id == AgentInboxItem.user_id,
+                AgentEvent.message_id == AgentInboxItem.result_message_id,
+                AgentEvent.kind == "turn.finished",
+                type_coerce(AgentEvent.payload, JSON)["finish"].as_string() == "stop",
+                type_coerce(AgentEvent.payload, JSON)["error"].as_string().is_(None),
+            ).exists(),
             _enrolled_before(PIPELINE_VERSION, AgentInboxItem.settled_at, Session.workspace_id),
             # Main-session turns settled while it was still isolated were said
             # under that promise: never imported after the fact.
@@ -661,6 +678,9 @@ async def _validate_sources_locked(db, job: MemoryExtractionJob, receipt: Memory
     acl_hash = await _acl_hash(db, session)
     if acl_hash != receipt.acl_hash:
         raise ExtractionSourceInvalid("source_acl_changed")
+    from voice.memory_capture import is_native_receipt, validate_sources
+    if is_native_receipt(receipt):
+        return await validate_sources(db, job, receipt, acl_hash)
     _fold, messages, _branch = await _canonical(db, session)
     # A later regenerate or dismissal starts a new branch without touching this
     # turn; only removing this turn's own messages abandons it (checked below).
@@ -803,19 +823,25 @@ async def read_extraction_input(lease: JobLease) -> ExtractionInput:
                    and await memory_sources_available(db, access, memory)]
         if not get_config().memory.automatic_knowledge:
             visible.extend(memory for memory in memories if memory.status == "CANDIDATE" and memory.deleted_at is None)
+        from memory.service import assertion_times
+        asserted_at = await assertion_times(db, visible)
         existing = tuple({"id": memory.id, "revision": memory.revision,
                           "project_id": memory.project_id,
-                          "asserted_at": _aware(memory.occurred_at if memory.owner == "SYSTEM_VERIFIED"
-                              and memory.occurred_at else memory.valid_from or memory.created_at).isoformat(),
+                          "asserted_at": asserted_at[memory.id].isoformat(),
                           "fact_key": memory.fact_key, "summary": (memory.value or {}).get("summary", ""),
                           "status": memory.status, "confirmation_status": memory.confirmation_status}
                          for memory in visible)[:100]
+        from db.models.preference import UserPreference
+        from memory.preferences import REVISION_KEY
+        extra = await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == job.user_id)) or {}
         return ExtractionInput(job.id, job.user_id, job.workspace_id, job.project_id, job.session_id,
-                               job.logical_turn_id, job.input_hash, tuple(sources), existing, base_revisions, acl_hash)
+                               job.logical_turn_id, job.input_hash, tuple(sources), existing, base_revisions, acl_hash,
+                               int(extra.get(REVISION_KEY) or 0))
 
 
 async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals: list[dict], *, usage: dict | None = None,
-                            grounding: dict | None = None, reconciliation: dict | None = None) -> list[str]:
+                            grounding: dict | None = None, reconciliation: dict | None = None,
+                            setting_proposals: list[dict] | None = None) -> list[str]:
     from core.config import get_config
     from wiki_compiler.hashing import canonical_hash
     from memory.policy import MemoryAccessDenied, is_personal_fact
@@ -843,6 +869,13 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                 db, access, frozen, proposals, grounding, reconciliation)
         for index, proposal in enumerate(proposals):
             if index in consumed:
+                continue
+            if (get_config().memory.automatic_knowledge and grounding
+                    and grounding.get("input_hash") == frozen.input_hash
+                    and canonical_hash(proposal) not in grounding.get("supported", [])):
+                # Independently rejected claims are not useful pending notes.
+                # Keep their original conversation/job evidence, not a new
+                # personal fact that a later worker might promote.
                 continue
             selected = [sources[source_index] for source_index in proposal["source_indexes"]]
             # A fact about the person is the same fact in every project: store
@@ -883,6 +916,19 @@ async def commit_extraction(lease: JobLease, frozen: ExtractionInput, proposals:
                                                     sources=selected, source_access=access)
                 if row is not None:
                     memory_ids.append(row.id)
+        if get_config().memory.enabled("experience_learning", frozen.user_id) and grounding:
+            from memory.experiences import propose_in_session
+            from memory.service import _store_source
+            for index, proposal in enumerate(proposals):
+                if proposal.get("experience") and canonical_hash(proposal) in grounding.get("supported", []):
+                    original = [await _store_source(db, access, sources[i]) for i in proposal["source_indexes"]]
+                    await propose_in_session(db, access, operation_id=f"experience:{job.id}:{index}",
+                        content=proposal["experience"], sources=original)
+        if setting_proposals:
+            from memory.preferences import apply_extracted_settings
+            setting_receipt = await apply_extracted_settings(db, frozen, setting_proposals, grounding,
+                expected_revision=frozen.profile_revision)
+            usage = {**(usage or {}), "settings_receipt": setting_receipt}
         now = await _now(db)
         # The job row remains write-locked from the first CAS; takeover cannot
         # commit between authority writes and the final generation check.
@@ -919,7 +965,18 @@ async def processing_status(*, user_id: str, workspace_id: str | None, project_i
             if session is None or session.is_deleted or session.user_id != user_id or receipt is None:
                 continue
             said = []
+            from voice.memory_capture import is_native_receipt
+            if is_native_receipt(receipt):
+                from db.models.memory_v2 import MemorySource
+                from memory.service import source_body_is_available
+                for boundary in receipt.source_boundaries or []:
+                    source = await db.get(MemorySource, boundary.get("id"))
+                    if (source is not None and source.body
+                            and await source_body_is_available(db, access, source)):
+                        said.append(source.body)
             for boundary in receipt.source_boundaries or []:
+                if not boundary.get("part_id"):
+                    continue
                 part = await db.get(Part, boundary.get("part_id"))
                 if part is not None and part.user_id == user_id and part.session_id == job.session_id:
                     said.append(str((part.data or {}).get("text") or "").strip())

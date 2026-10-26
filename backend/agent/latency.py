@@ -7,16 +7,19 @@ internal. Overlapping external waits count once. Other tool/service IO is not
 instrumented here; these are wall-clock measurements, not CPU time. Queue time
 before run_loop and browser/playback latency are outside this measurement.
 """
+import asyncio
 import time
 import json
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from functools import wraps
+from weakref import WeakKeyDictionary
 
 from core.log import create_logger
 
 log = create_logger("agent.latency")
 current: ContextVar["RunTiming | None"] = ContextVar("run_latency", default=None)
+_dependencies = WeakKeyDictionary()
 
 
 class RunTiming:
@@ -34,6 +37,40 @@ class RunTiming:
         self.network_seconds = self.external_seconds = 0.0
         self.network_active = self.external_active = 0
         self.network_started = self.external_started = None
+        self.wait_observers = []
+        self.sql = {}
+
+    def _notify_wait(self, kind, active):
+        for observer in tuple(self.wait_observers):
+            observer(kind, active)
+
+    @contextmanager
+    def forward_waits_to(self, parent):
+        """Attribute only external IO overlapping the caller's dependency wait.
+
+        Prefetch can start before a run or while the run does other work. Its
+        earlier IO must not be subtracted from the run's internal work. Relay
+        active and subsequent transport waits only while the run awaits it.
+        """
+        active = {}
+
+        def changed(kind, waiting):
+            if waiting and kind not in active:
+                scope = parent.provider_wait() if kind == "provider" else parent.network_wait()
+                active[kind] = scope
+                scope.__enter__()
+            elif not waiting and kind in active:
+                active.pop(kind).__exit__(None, None, None)
+
+        self.wait_observers.append(changed)
+        try:
+            changed("provider", bool(self.active))
+            changed("network", bool(self.network_active))
+            yield
+        finally:
+            self.wait_observers.remove(changed)
+            for kind in tuple(active):
+                changed(kind, False)
 
     def _elapsed(self, now=None):
         now = self.clock() if now is None else now
@@ -58,6 +95,14 @@ class RunTiming:
         self._add(self.phases, self.phase, self.phase_start, now)
         self.phase, self.phase_start = name, now
 
+    def record_sql(self, phase, started):
+        # Aggregate timings only: never log SQL text, parameters or credentials.
+        elapsed = max(0, (self.clock() - started) * 1000)
+        bucket = self.sql.setdefault(phase, {"count": 0, "total_ms": 0.0, "max_ms": 0.0})
+        bucket["count"] += 1
+        bucket["total_ms"] += elapsed
+        bucket["max_ms"] = max(bucket["max_ms"], elapsed)
+
     def breakdown(self, now=None):
         # Snapshot without closing the phase, so diagnostics never change timing.
         phases = {name: dict(values) for name, values in self.phases.items()}
@@ -70,6 +115,8 @@ class RunTiming:
         if not self.active:
             self.provider_started = self.clock()
         self.active += 1
+        if self.active == 1:
+            self._notify_wait("provider", True)
         try:
             with self._external_wait():
                 yield
@@ -78,6 +125,7 @@ class RunTiming:
             if not self.active:
                 self.provider_seconds += self.clock() - self.provider_started
                 self.provider_started = None
+                self._notify_wait("provider", False)
 
     @contextmanager
     def _external_wait(self):
@@ -97,6 +145,8 @@ class RunTiming:
         if not self.network_active:
             self.network_started = self.clock()
         self.network_active += 1
+        if self.network_active == 1:
+            self._notify_wait("network", True)
         try:
             with self._external_wait():
                 yield
@@ -105,6 +155,7 @@ class RunTiming:
             if not self.network_active:
                 self.network_seconds += self.clock() - self.network_started
                 self.network_started = None
+                self._notify_wait("network", False)
 
     def network_snapshot(self, now=None):
         now = self.clock() if now is None else now
@@ -176,6 +227,37 @@ def measured_span(name):
     return decorate
 
 
+@contextmanager
+def span(name):
+    """Measure a bounded block using the same union-of-waits clock as decorators."""
+    timing = current.get()
+    start = timing._elapsed() if timing else None
+    try:
+        yield
+    finally:
+        if timing:
+            timing._add(timing.spans, name, start, timing._elapsed())
+
+
+def create_dependency_task(coroutine, *, name=None):
+    """Isolate speculative work's timing until a run actually waits for it."""
+    parent = current.get()
+    timing = RunTiming(parent.clock if parent else time.monotonic)
+    context = copy_context()
+    context.run(current.set, timing)
+    task = asyncio.create_task(coroutine, name=name, context=context)
+    _dependencies[task] = timing
+    return task
+
+
+async def await_dependency(task):
+    parent, dependency = current.get(), _dependencies.get(task)
+    if parent is None or dependency is None or dependency is parent:
+        return await task
+    with span("memory.prefetch_wait"), dependency.forward_waits_to(parent):
+        return await task
+
+
 async def provider_chunks(stream):
     iterator = aiter(stream)
     while True:
@@ -225,4 +307,36 @@ def measured_run(function):
             log.info("agent internal latency session=%s run=%s measurements=%s",
                      session_id, timing.run_id or getattr(lease, "run_id", None),
                      json.dumps({key: round(value, 1) for key, value in network.items()}))
+            log.info("agent sql latency session=%s run=%s phases=%s",
+                     session_id, timing.run_id or getattr(lease, "run_id", None),
+                     json.dumps({phase: {key: round(value, 1) for key, value in stats.items()}
+                                 for phase, stats in timing.sql.items()}))
     return run
+
+
+def attach_sql_timing(engine):
+    """Observe database waits within a run without changing transaction behavior."""
+    from sqlalchemy import event
+
+    def before(conn, cursor, statement, parameters, context, executemany):
+        timing = current.get()
+        if timing is not None:
+            context._run_sql_timing = (timing, timing.phase, timing.clock())
+
+    def finish(context):
+        sample = getattr(context, "_run_sql_timing", None)
+        if sample is not None:
+            context._run_sql_timing = None
+            timing, phase, started = sample
+            timing.record_sql(phase, started)
+
+    def after(conn, cursor, statement, parameters, context, executemany):
+        finish(context)
+
+    def error(context):
+        if context.execution_context is not None:
+            finish(context.execution_context)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", before)
+    event.listen(engine.sync_engine, "after_cursor_execute", after)
+    event.listen(engine.sync_engine, "handle_error", error)

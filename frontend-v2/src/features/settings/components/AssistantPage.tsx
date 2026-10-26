@@ -17,9 +17,9 @@ import { CompanionAppearanceSettings } from "./CompanionAppearanceSettings"
 
 type Editable = Pick<
   AssistantProfile,
-  "name" | "address" | "tone" | "length" | "emoji" | "persona" | "business"
+  "name" | "address" | "tone" | "length" | "language" | "emoji" | "persona" | "business"
 >
-const TEXT_FIELDS = ["name", "address", "persona", "business"] as const
+const TEXT_FIELDS = ["name", "address", "language", "persona", "business"] as const
 const BUSINESS_CHOICES = [...BUSINESSES, "other"] as const
 
 /** Which choice a stored business is: one of the kinds, the person's own words ("other"), or none. */
@@ -104,6 +104,19 @@ export function AssistantPage() {
               maxLength={20}
               onChange={(event) => change({ address: event.target.value })}
               placeholder={t("assistant.addressPlaceholder")}
+              className={input + " h-10"}
+            />
+          )}
+        </Field>
+        <Field label={t("assistant.languageLabel")} hint={t("assistant.languageHint")}>
+          {(id) => (
+            <input
+              id={id}
+              type="text"
+              value={value.language ?? ""}
+              maxLength={20}
+              onChange={(event) => change({ language: event.target.value })}
+              placeholder={t("assistant.languagePlaceholder")}
               className={input + " h-10"}
             />
           )}

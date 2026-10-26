@@ -18,7 +18,14 @@ PRIVATE_TOOL_PART_FIELDS = frozenset({
 
 def public_part_data(data: dict) -> dict:
     """Drop reserved replay identity keys from public JSON projections."""
-    return {key: value for key, value in data.items() if key not in PRIVATE_TOOL_PART_FIELDS}
+    public = {key: value for key, value in data.items() if key not in PRIVATE_TOOL_PART_FIELDS}
+    if public.get("type") == "patch" and public.get("path_encoding") != "literal":
+        from core.git_path import unquote_git_path
+        public["files"] = [{**item, "path": unquote_git_path(item["path"])}
+            if isinstance(item, dict) and isinstance(item.get("path"), str) else item
+            for item in public.get("files", [])]
+        public["path_encoding"] = "literal"
+    return public
 
 
 class Part(Base):

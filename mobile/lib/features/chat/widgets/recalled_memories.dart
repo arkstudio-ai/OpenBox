@@ -33,6 +33,7 @@ class RecalledMemories extends ConsumerStatefulWidget {
 
 class _RecalledMemoriesState extends ConsumerState<RecalledMemories> {
   bool _open = false;
+  bool _refreshScheduled = false;
 
   ({AssistantScope scope, String sessionId}) get _key =>
       (scope: widget.scope, sessionId: widget.sessionId);
@@ -42,8 +43,17 @@ class _RecalledMemoriesState extends ConsumerState<RecalledMemories> {
     super.didUpdateWidget(oldWidget);
     // Recall is recorded as the reply starts; read again once it is done, so
     // a new reply shows its own.
-    if (oldWidget.streaming && !widget.streaming) {
-      ref.invalidate(recalledMemoriesProvider(_key));
+    if (oldWidget.streaming && !widget.streaming && !_refreshScheduled) {
+      // Other replies watch the same provider. Invalidating during their
+      // parent's rebuild can notify an already-building sibling, which
+      // causes setState-during-build when a voice/text reply finishes.
+      final key = _key;
+      _refreshScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _refreshScheduled = false;
+        if (!mounted || widget.streaming || _key != key) return;
+        ref.invalidate(recalledMemoriesProvider(key));
+      });
     }
   }
 

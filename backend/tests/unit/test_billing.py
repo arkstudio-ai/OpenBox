@@ -233,6 +233,31 @@ async def test_stream_cancellation_and_error_after_usage_are_metered(account, mo
         assert event.status == "shadow"
 
 
+async def test_stream_deadline_settles_observed_usage_once(account, monkeypatch):
+    import asyncio
+    from agent import llm
+    from agent.stream_deadline import StreamLimits, ModelResponseDeadline
+    user, session = account
+    stopped = asyncio.Event()
+    async def fake(*args, **kwargs):
+        try:
+            yield {"type": "usage", "usage": {"input": 10, "output": 2}}
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+    monkeypatch.setattr(llm, "_stream_responses_api", fake)
+    monkeypatch.setattr("agent.stream_deadline.limits_for", lambda *args: StreamLimits(.02, .02, .03))
+    ctx = ToolContext(session_id=session.id, user_id=user["id"], message_id="message-deadline")
+    with pytest.raises(ModelResponseDeadline):
+        async for _ in llm.stream_llm(None, [], [], {}, session.model, ctx):
+            pass
+    assert stopped.is_set()
+    async with get_db_session() as db:
+        event = (await db.scalars(select(UsageEvent).where(UsageEvent.message_id == ctx.message_id))).one()
+        assert event.total_tokens == 12 and event.credits == Decimal("0.0000044")
+        assert event.status == "shadow"
+
+
 async def test_historical_backfill_is_not_recharged(account):
     from billing.backfill import backfill_history
     user, session = account

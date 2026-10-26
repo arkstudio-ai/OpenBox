@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from agent import inbox, loop, processor
 from agent.agent import AgentDef
+from agent.tool_resolution import ResolvedStepTools
 from agent.driver import reserve_run
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.service import ensure_main_session
@@ -265,7 +266,7 @@ async def test_the_turn_resumed_after_a_card_still_sees_the_cards_tool_call_and_
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
@@ -513,7 +514,7 @@ async def test_report_turn_offers_no_memory_or_brief_tools_and_reports_from_the_
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, workspace, main, accepted, execution, _ = await result_ready()
@@ -550,7 +551,7 @@ async def test_report_turn_offers_no_memory_or_brief_tools_and_reports_from_the_
 
 # 5. Profile injection into an assistant turn ---------------------------------
 
-async def assistant_turn_with_memory(monkeypatch, prompt):
+async def assistant_turn_with_memory(monkeypatch, prompt, *, semantic_recall=None):
     """One real assistant main turn with retrieval_v2 enabled; returns the provider payloads."""
     owner, other, workspace = await accounts()
     config = _loop_config()
@@ -558,10 +559,13 @@ async def assistant_turn_with_memory(monkeypatch, prompt):
     config.compaction.auto = False
     config.memory = config.memory.model_copy(update={"allowed_user_ids": [owner, other], "retrieval_v2": True,
         "route_jev": False, "debug_view": False, "wiki": False, "automatic_knowledge": False})
+    if semantic_recall is not None:
+        config.memory.semantic_recall = semantic_recall
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        from agent.tool_resolution import ResolvedStepTools
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
@@ -598,7 +602,44 @@ async def test_assistant_turn_carries_the_users_profile_but_never_another_users_
     assert "FOREIGNCANARY" not in payload["messages"] + payload["system"]
 
 
+@pytest.mark.parametrize("semantic", [False, True])
+async def test_dispatch_rechecks_memory_changed_after_local_candidate_checkpoint(monkeypatch, semantic):
+    import session.agent_event_log as events
+    checkpoint = events.checkpoint_model_request
+    revoked = False
+
+    async def allowed(*args, **kwargs):
+        return {"attempt_id": "dispatch-race", "called": False, "reason_code": "test", "duration_ms": 0,
+            "read_policy": "allowed", "memory_forbidden": False, "needs": {},
+            "memory": {"needed": False}, "task": {"needed": False}, "usage": {}}
+
+    async def revoke_after_checkpoint(*args, **kwargs):
+        nonlocal revoked
+        result = await checkpoint(*args, **kwargs)
+        if not revoked:
+            async with get_db_session() as db:
+                rows = list(await db.scalars(select(UserMemory).where(UserMemory.user_id == kwargs["user_id"])))
+                target = next(row for row in rows if "PROFILECANARY" in row.value.get("summary", ""))
+                target.status = "DEPRECATED"
+                target.deleted_at = datetime.now(timezone.utc)
+            revoked = True
+        return result
+
+    monkeypatch.setattr("memory.read_routing.route", allowed)
+    monkeypatch.setattr(events, "checkpoint_model_request", revoke_after_checkpoint)
+    [payload] = await assistant_turn_with_memory(monkeypatch, "安排一下休息日。", semantic_recall=semantic)
+    assert revoked
+    assert "PROFILECANARY" not in payload["messages"] + payload["system"]
+    assert "FOREIGNCANARY" not in payload["messages"] + payload["system"]
+
+
 async def test_memories_sent_with_a_turn_count_as_used_for_recall_order(monkeypatch):
+    async def recall_needed(*args, **kwargs):
+        return {"attempt_id": "usage-route", "called": False, "reason_code": "test", "duration_ms": 0,
+                "memory": {"needed": True, "choice": "retrieve", "reason_code": "test"},
+                "task": {"needed": False, "choice": "skip", "reason_code": "test"}, "usage": {}}
+    # Project facts are retrieved on demand, never unconditional personal core.
+    monkeypatch.setattr("memory.orchestrator.route_context_needs", recall_needed)
     await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
     async with get_db_session() as db:
         rows = list((await db.scalars(select(UserMemory))).all())
@@ -642,7 +683,7 @@ async def test_memory_tool_receipt_is_kept_on_the_persisted_call(monkeypatch):
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
@@ -701,7 +742,7 @@ async def test_recall_starts_before_the_step_prepares_its_tools_and_runs_once(mo
 
     async def tools(*_args, **_kwargs):
         seen_when_tools_resolved.append(started.is_set())
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
@@ -752,7 +793,7 @@ async def _woken_assistant_turn(monkeypatch, prompt):
     monkeypatch.setattr(orchestrator, "run_memory_context", observed)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     payloads = []

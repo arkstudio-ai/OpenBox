@@ -20,6 +20,7 @@ import asyncio
 from dataclasses import dataclass
 
 from core.log import create_logger
+from core.git_path import unquote_git_path
 from project.workspace import SNAPSHOT_ROOT, project_directory, slug_for
 
 log = create_logger("snapshot")
@@ -242,7 +243,7 @@ async def diff(from_snapshot: str, to_snapshot: str, sandbox=None, session_id: s
     try:
         # Get diff stats between two tree objects
         result = await sandbox.execute(
-            store.git(f"diff-tree --numstat -r {from_snapshot} {to_snapshot}"),
+            store.git(f"diff-tree --no-renames --numstat -z -r {from_snapshot} {to_snapshot}"),
             workdir=store.workdir,
         )
         if result.exit_code != 0:
@@ -250,8 +251,8 @@ async def diff(from_snapshot: str, to_snapshot: str, sandbox=None, session_id: s
             return []
 
         diffs = []
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
+        for line in result.stdout.split("\0"):
+            if not line:
                 continue
             parts = line.split("\t", 2)
             if len(parts) < 3:
@@ -278,23 +279,16 @@ async def diff(from_snapshot: str, to_snapshot: str, sandbox=None, session_id: s
 
         # Also get file status (A/M/D) for more accurate status info
         status_result = await sandbox.execute(
-            store.git(f"diff-tree --name-status -r {from_snapshot} {to_snapshot}"),
+            store.git(f"diff-tree --no-renames --name-status -z -r {from_snapshot} {to_snapshot}"),
             workdir=store.workdir,
         )
         if status_result.exit_code == 0:
             status_map = {}
-            for line in status_result.stdout.strip().split("\n"):
-                if not line.strip():
-                    continue
-                parts = line.split("\t", 1)
-                if len(parts) == 2:
-                    status_char, path = parts
-                    if status_char.startswith("A"):
-                        status_map[path] = "added"
-                    elif status_char.startswith("D"):
-                        status_map[path] = "deleted"
-                    else:
-                        status_map[path] = "modified"
+            fields = status_result.stdout.split("\0")
+            for index in range(0, len(fields) - 1, 2):
+                status_char, path = fields[index:index + 2]
+                status_map[path] = ("added" if status_char.startswith("A") else
+                                    "deleted" if status_char.startswith("D") else "modified")
 
             for d in diffs:
                 if d.path in status_map:
@@ -334,7 +328,7 @@ async def diff_full(from_snapshot: str, to_snapshot: str, sandbox=None, session_
     try:
         # Get unified diff
         result = await sandbox.execute(
-            store.git(f"diff {from_snapshot} {to_snapshot} --unified=3"),
+            store.git(f"diff --no-renames {from_snapshot} {to_snapshot} --unified=3"),
             workdir=store.workdir,
         )
         if result.exit_code != 0:
@@ -379,12 +373,17 @@ def _parse_unified_diff(diff_text: str) -> list[dict]:
             continue
 
         # File path from --- / +++ lines
-        if line.startswith("+++ b/"):
-            current_entry["path"] = line[6:]
-        elif line.startswith("--- /dev/null"):
-            current_entry["status"] = "added"
-        elif line.startswith("+++ /dev/null"):
-            current_entry["status"] = "deleted"
+        if current_hunk is None and line.startswith(("--- ", "+++ ")):
+            # Git may append a tab separator after a path containing spaces;
+            # an actual tab in the filename itself is C-quoted as \\t.
+            marker, encoded = line[:3], line[4:].removesuffix("\t")
+            path = unquote_git_path(encoded)
+            if path == "/dev/null":
+                current_entry["status"] = "added" if marker == "---" else "deleted"
+            elif path.startswith(("a/", "b/")):
+                if marker == "+++" or not current_entry["path"]:
+                    current_entry["path"] = path[2:]
+            continue
 
         # Hunk header
         hunk_match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)

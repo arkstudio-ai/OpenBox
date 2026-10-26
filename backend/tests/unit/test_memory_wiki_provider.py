@@ -95,3 +95,57 @@ async def test_reconciliation_explicitly_requests_json_on_both_transports(wiki_r
     assert instruction.startswith(SYSTEM.rstrip())
     assert "json" in instruction.lower()
     assert actual == value
+
+
+@pytest.mark.parametrize("responses,terminal", [(False, None), (False, "length"), (True, None), (True, "failed"), (True, "in_progress")])
+async def test_unconfirmed_provider_completion_cannot_be_grounding_evidence(wiki_request, monkeypatch, responses, terminal):
+    monkeypatch.setattr("agent.llm._needs_responses_api", lambda _: responses)
+    body = '{"verdicts":[{"index":0,"supported":true}]}'
+    payload = {"status": terminal, "output_text": body} if responses else response(body, finish=terminal)
+    with pytest.raises(MemoryProviderError, match="wiki_provider_incomplete"):
+        await ConfiguredWikiModel(client=FakeClient(payload)).generate(wiki_request)
+
+
+@pytest.mark.parametrize("base,expected", [
+    ("https://dashscope.aliyuncs.com/compatible-mode/v1", "json_schema"),
+    ("https://proxy.invalid/v1", "json_object"),
+])
+async def test_grounding_requests_complete_contract_on_verified_official_route(wiki_request, monkeypatch, base, expected):
+    from memory.grounding import GroundingVerifier
+    monkeypatch.setattr("agent.llm._get_provider_kwargs", lambda _: {"api_key": "test-only", "api_base": base})
+    client = FakeClient(response(json.dumps({"verdicts": [
+        {"index": 0, "supported": True, "intent": "enduring_assertion"}]})))
+    result, _ = await GroundingVerifier(adapter=ConfiguredWikiModel(client=client)).verify(
+        [{"claim": "喜欢读书", "sources": ["我一直喜欢读书"]}], purpose="memory", model="aliyun/qwen3.8-flash")
+    assert result == [True] and client.request["response_format"]["type"] == expected
+    if expected == "json_schema":
+        schema = client.request["response_format"]["json_schema"]["schema"]
+        verdict = schema["properties"]["verdicts"]["items"]
+        assert set(verdict["required"]) == {"index", "supported", "intent"}
+        assert verdict["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("responses", [False, True])
+async def test_review_images_use_inline_pixels_on_both_transports(wiki_request, monkeypatch, responses):
+    monkeypatch.setattr("agent.llm._needs_responses_api", lambda _: responses)
+    uri = "data:image/png;base64,aW1hZ2U="
+    value = {"allowed": True, "violations": []}
+    payload = {"status": "completed", "output_text": json.dumps(value)} if responses else response(json.dumps(value))
+    client = FakeClient(payload)
+    actual, _ = await ConfiguredWikiModel(client=client).generate_data(
+        model=wiki_request.policy.model, system="Check this image", data={"image_number": 1}, sources=(), images=(uri,))
+    content = client.request["input"][0]["content"] if responses else client.request["messages"][1]["content"]
+    assert actual == value and len(content) == 2
+    assert content[1] == ({"type": "input_image", "image_url": uri} if responses
+                          else {"type": "image_url", "image_url": {"url": uri}})
+
+
+@pytest.mark.parametrize("images", [("https://private.invalid/image.png",), ("/local/image.png",),
+    (None,), "data:image/png;base64,YQ==", ("data:text/html;base64,YQ==",),
+    ("data:image/png;base64,YQ==",) * 5, ("data:image/png;base64," + "A" * 14_000_000,)])
+async def test_review_rejects_remote_or_unbounded_images_before_provider_call(wiki_request, images):
+    client = FakeClient(response("{}"))
+    with pytest.raises(MemoryProviderError, match="invalid_review_images"):
+        await ConfiguredWikiModel(client=client).generate_data(
+            model=wiki_request.policy.model, system="Check", data={}, sources=(), images=images)
+    assert client.calls == 0

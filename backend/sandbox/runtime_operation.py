@@ -185,6 +185,12 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
         return result
     except BaseException as exc:
         bound.closed = True
+        # Keep transport/adapter causes observable without logging commands,
+        # credentials, signed URLs or provider response bodies.
+        from core.log import create_logger
+        create_logger("sandbox.runtime_operation").warning(
+            "Preparation failed stage=%s session_id=%s effect_id=%s cause=%s submitted=%s",
+            stage, session_id, snapshot.effect_id, type(exc).__name__, bound.submitted)
         unsent = False
         try:
             await effects.abandon_effect_before_dispatch(claim, reason="runtime_preparation_not_sent")

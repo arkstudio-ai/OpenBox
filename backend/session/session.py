@@ -13,7 +13,7 @@ from db.base import get_db_session
 from db.models.session import Session as SessionORM
 from db.models.message import Message as MessageORM
 from db.models.part import Part as PartORM, PRIVATE_TOOL_PART_FIELDS, public_part_data
-from models.message import SessionStatus, TokenUsage, MessageWithParts, MessageInfo, MessagePart
+from models.message import SessionStatus, TokenUsage, MessageWithParts, MessageInfo, MessagePart, StepStartPart
 from core.identifier import descending, ascending
 from core.log import create_logger
 
@@ -1449,8 +1449,14 @@ async def create_assistant_message(
     user_id: str = "default",
     *,
     run_fence: RunFence | None = None,
+    step_start: StepStartPart | None = None,
 ) -> MessageInfo:
-    """Create an assistant message."""
+    """Create a message and optional initial step in one fenced transaction."""
+    if step_start is not None and (
+        not isinstance(step_start, StepStartPart)
+        or step_start.session_id != session_id or step_start.message_id
+    ):
+        raise ValueError("Initial step must belong to this session and no existing message")
     msg_id = ascending("message")
     now = datetime.now(timezone.utc)
 
@@ -1466,6 +1472,7 @@ async def create_assistant_message(
     async with get_db_session() as db:
         from session.agent_event_log import (
             append_message_events_locked,
+            append_part_event_locked,
             ensure_surface_seed_locked,
             prepare_agent_event_write,
         )
@@ -1499,6 +1506,18 @@ async def create_assistant_message(
             operation="created",
             run_fence=run_fence,
         )
+        if step_start is not None:
+            from session.agent_event_log import json_safe_copy, sanitize_public_part_data
+            step_start.message_id = msg_id
+            part_dict = json_safe_copy(sanitize_public_part_data(public_part_data(step_start.model_dump())))
+            part_row = PartORM(id=step_start.id, message_id=msg_id, session_id=session_id,
+                user_id=user_id, type=step_start.type, data=part_dict, created_at=now)
+            db.add(part_row)
+            await db.flush()
+            await append_part_event_locked(db, session_row, part_row, msg_row,
+                operation="created", run_fence=run_fence)
+            await record_projection_in_tx(db, session_id, user_id, "part.committed",
+                {"part": part_dict, "operation": "created"}, message_id=msg_id, part_id=step_start.id)
 
     # Publish MESSAGE_CREATED so frontend creates the message entry
     # before subsequent part.created / text_delta events arrive
@@ -1522,6 +1541,8 @@ async def create_assistant_message(
     if run_fence is not None:
         payload["generation"] = run_fence[2]
     bus.publish(MESSAGE_CREATED, payload)
+    if step_start is not None:
+        _publish_part(step_start, is_new=True, user_id=user_id, run_fence=run_fence)
 
     return info
 
@@ -1680,20 +1701,25 @@ async def save_part(
             run_fence=run_fence,
         )
         await ensure_surface_seed_locked(db, session_row)
-        message_row = (await db.execute(
-            select(MessageORM).where(
+        part_match = [PartORM.id == part.id]
+        if not is_new:
+            part_match.extend((PartORM.message_id == msg_id,
+                PartORM.session_id == session_id, PartORM.user_id == user_id))
+        # The same locked transaction needs both identities. Read them in one
+        # statement, retaining the global-ID collision check for creation and
+        # all owner/message predicates for updates.
+        found = (await db.execute(
+            select(MessageORM, PartORM).outerjoin(PartORM, and_(*part_match)).where(
                 MessageORM.id == msg_id,
                 MessageORM.session_id == session_id,
                 MessageORM.user_id == user_id,
             )
-        )).scalar_one_or_none()
-        if message_row is None:
+        )).one_or_none()
+        if found is None:
             raise LookupError("message not found")
+        message_row, row = found
         if is_new:
             created_now = False
-            row = (await db.execute(
-                select(PartORM).where(PartORM.id == part.id)
-            )).scalar_one_or_none()
             if row is None:
                 row = PartORM(
                     id=part.id,
@@ -1723,14 +1749,6 @@ async def save_part(
                 ):
                     raise ValueError("Part create idempotency conflict")
         else:
-            row = (await db.execute(
-                select(PartORM).where(
-                    PartORM.id == part.id,
-                    PartORM.message_id == msg_id,
-                    PartORM.session_id == session_id,
-                    PartORM.user_id == user_id,
-                )
-            )).scalar_one_or_none()
             if row is None:
                 raise LookupError("part not found")
             row.data = part_dict
@@ -1752,6 +1770,11 @@ async def save_part(
             {"part": part_dict, "operation": "created" if is_new else "updated"},
             message_id=msg_id, part_id=part.id)
 
+    _publish_part(part, is_new=is_new, user_id=user_id, run_fence=run_fence)
+
+
+def _publish_part(part: MessagePart, *, is_new: bool, user_id: str, run_fence: RunFence | None) -> None:
+    from session.agent_event_log import sanitize_public_part_data
     # Exclude internal fields from SSE event (frontend doesn't need them)
     sse_dict = sanitize_public_part_data(public_part_data(part.model_dump(exclude={
         "session_id",
@@ -1764,8 +1787,8 @@ async def save_part(
     event_type = PART_CREATED if is_new else PART_UPDATED
     payload = {
         "userId": user_id,
-        "sessionId": session_id,
-        "messageId": msg_id,
+        "sessionId": part.session_id,
+        "messageId": part.message_id,
         "part": sse_dict,
     }
     if run_fence is not None:

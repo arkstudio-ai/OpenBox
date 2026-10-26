@@ -86,7 +86,28 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
 # whole turn ended. Checkpoint append-only text at a bounded rate: frequent
 # enough for a near-current recovery snapshot, without a database write per
 # token.
-STREAM_CHECKPOINT_INTERVAL = 0.5
+# UI deltas remain immediate. Durable full-prefix snapshots are coalesced
+# between the first chunk and final/error flush, avoiding a SQL transaction
+# every half-second while a provider is streaming.
+STREAM_CHECKPOINT_INTERVAL = 1.0
+
+
+def _needs_runtime_preparation(tool_info, args, lookup) -> bool:
+    """Use the frozen tool contract, not the user's wording, to select snapshots."""
+    if getattr(tool_info, "sandbox_required", True) is not False:
+        return True
+    if getattr(tool_info, "id", None) != "batch":
+        return False
+    invocations = args.get("invocations") if isinstance(args, dict) else None
+    if not isinstance(invocations, list):
+        return True
+    for item in invocations:
+        child = lookup.get(item.get("tool")) if isinstance(item, dict) else None
+        # Unknown/recursive composite calls retain conservative preparation.
+        if (getattr(child, "id", None) == "batch"
+                or getattr(child, "sandbox_required", True) is not False):
+            return True
+    return False
 
 
 async def _run_parallel_safe_groups(
@@ -646,7 +667,7 @@ async def process_step(
                             user_id=user_id,
                             run_fence=run_fence,
                         )
-                        reasoning_checkpoint_at = now
+                        reasoning_checkpoint_at = time.monotonic()
 
             elif event_type == "text_delta":
                 text = event["text"]
@@ -682,7 +703,7 @@ async def process_step(
                             user_id=user_id,
                             run_fence=run_fence,
                         )
-                        text_checkpoint_at = now
+                        text_checkpoint_at = time.monotonic()
 
             elif event_type in {"native_search_started", "native_search_result"}:
                 if ctx._native_binding is None or ctx._native_capability_key is None:
@@ -982,7 +1003,10 @@ async def process_step(
         # RUNNING cards are prepared in model order. Only explicitly safe tool
         # bodies overlap; terminal SSE, ToolPart results and ToolContext state
         # commit through contiguous scheduler slots in model order.
-        if pending_tool_calls and before_tools is not None and not stop_requested():
+        if (before_tools is not None and not stop_requested()
+                and any(_needs_runtime_preparation(
+                    execution_tools.get(wire_to_canonical.get(call["tool"])),
+                    call["args"], execution_tools) for call in pending_tool_calls)):
             await assert_current()
             await before_tools()
         ctx.message_id = assistant_info.id
@@ -1105,6 +1129,28 @@ async def process_step(
 
                 # Validation and doom-loop guards are ordered preparation, not
                 # body work: later calls never overtake them into permission.
+                from assistant.review_repair import repair_mode, permits_tool, instruction, REPAIR_ONLY
+                review_mode = repair_mode([*doom_loop_history, *completed_tool_parts])
+                if not permits_tool(review_mode, canonical_tool_id):
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.title = "Proposal correction is bounded"
+                    tool_part.error = instruction("reply")
+                    tool_part.metadata = {"blocked": True, "failure_code": REPAIR_ONLY}
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part,
+                        direct_result=ToolResult(title=tool_part.title, output=tool_part.error,
+                            metadata={**tool_part.metadata, "error": REPAIR_ONLY}),
+                        track_completed=True))
+                from assistant.task_recovery import recovery_state, permits_tool as recovery_permits, instruction as recovery_instruction, RECOVERY_ONLY
+                recovery = recovery_state([*doom_loop_history, *completed_tool_parts])
+                if not recovery_permits(recovery, canonical_tool_id, tool_args):
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.title = "Continue the original task"
+                    tool_part.error = recovery_instruction(recovery)
+                    tool_part.metadata = {"blocked": True, "failure_code": RECOVERY_ONLY}
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part,
+                        direct_result=ToolResult(title=tool_part.title, output=tool_part.error,
+                            metadata={**tool_part.metadata, "error": RECOVERY_ONLY}),
+                        track_completed=True))
                 prior_failure = unchanged_validation_failure(
                     [*doom_loop_history, *completed_tool_parts],
                     tool_name,
@@ -1387,6 +1433,14 @@ async def process_step(
     except Exception as e:
         if isinstance(e, RunRevoked):
             raise
+        if reasoning_part_id and collected_reasoning:
+            try:
+                await persist_part(ReasoningPart(id=reasoning_part_id, text=collected_reasoning,
+                    session_id=session_id, message_id=assistant_info.id), user_id=user_id, run_fence=run_fence)
+            except Exception as checkpoint_error:
+                if isinstance(checkpoint_error, RunRevoked):
+                    raise
+                log.warning("Could not checkpoint partial reasoning after LLM failure", exc_info=True)
         # Preserve partial prose as process narration before returning early;
         # the normal final-save block below is skipped by both retry and error
         # outcomes, and leaving channel unset makes a legacy client guess.

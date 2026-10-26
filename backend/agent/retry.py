@@ -134,7 +134,8 @@ RETRYABLE_PATTERNS: list[tuple[str, re.Pattern]] = [
 
 def is_retryable(error: Exception) -> str | None:
     """Check if an error is retryable. Returns a display message or None."""
-    if isinstance(error, ContextOverflowError):
+    from agent.stream_deadline import ModelResponseDeadline
+    if isinstance(error, (ContextOverflowError, ModelResponseDeadline)):
         return None
 
     # httpx commonly raises these with an empty message. Classify the transport
@@ -201,6 +202,14 @@ def retry_delay(attempt: int, error: Exception | None = None, rand: float | None
                 RETRY_INITIAL_DELAY * (RETRY_BACKOFF_FACTOR ** (attempt - 1)),
                 rand,
             )
+
+    # An observed connection/TLS failure before sending the model request
+    # has no upstream rate-limit or processing pressure to back off from.
+    # Only the first retry is shortened; an ongoing outage uses normal backoff.
+    from agent.gateway import PreDispatchFailure
+    if (attempt == 1 and not headers and isinstance(
+            getattr(error, "_openbox_pre_dispatch", None), PreDispatchFailure)):
+        return 0.1 + 0.15 * max(0.0, min(1.0, rand))
 
     # No headers, exponential backoff with cap
     return _jitter(

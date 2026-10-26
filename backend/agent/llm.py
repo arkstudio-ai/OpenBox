@@ -32,14 +32,14 @@ OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 RESPONSES_API_VERSION = "2025-03-01-preview"
 
 
-def request_timeout():
+def request_timeout(*, read_seconds: float = 60):
     """Bound stalled transport phases; streaming progress may continue normally.
 
     LiteLLM otherwise defaults to ten minutes, longer than an entire assistant
     turn. The durable loop owns retries, so adapters must not retry invisibly.
     """
     import httpx
-    return httpx.Timeout(connect=10.0, write=30.0, read=60.0, pool=10.0)
+    return httpx.Timeout(connect=10.0, write=30.0, read=read_seconds, pool=10.0)
 
 
 @dataclass(frozen=True)
@@ -439,7 +439,9 @@ def resolved_subagent_provider_binding(model_id: str, config: Any) -> dict[str, 
 def _get_provider_kwargs(model_id: str) -> dict:
     """Extract provider-specific kwargs (api_key, api_base) from config.
 
-    Matches provider by model_id prefix (e.g., "openai/gpt-4o" -> "openai").
+    Uses ModelConfig.provider first, with the model-id prefix as legacy default.
+    For example, openai/qwen3.8-flash can bind official Bailian credentials.
+    Credential resolution does not establish a model's protocol compatibility.
     LiteLLM accepts api_key and api_base as kwargs to acompletion().
     """
     try:
@@ -562,12 +564,46 @@ def _inline_refs(schema: dict) -> dict:
 
 def _tool_parameters_schema(tool_info: ToolInfo) -> dict:
     """Return the exact, provider-compatible schema advertised for a tool."""
+    # Built-in parameter models are reused across budgeting, catalogue and
+    # provider serialization. Rebuilding their Pydantic schema at each of those
+    # boundaries costs more than serializing the resulting request. Cache only
+    # that immutable model generation; runtime/raw/plugin schemas stay live.
+    if getattr(tool_info, "source", None) == "builtin" and tool_info.raw_schema is None:
+        return _builtin_parameters_schema(tool_info.parameters)
     source = (
         tool_info.raw_schema
         if tool_info.raw_schema is not None
         else tool_info.parameters.model_json_schema()
     )
     return _inline_refs(source)
+
+
+from collections import OrderedDict as _SchemaOrderedDict
+_parameter_schemas = _SchemaOrderedDict()
+
+
+def _builtin_parameters_schema(model) -> dict:
+    from copy import deepcopy
+    # model_rebuild() replaces the core schema. Config participates as well so
+    # changing schema annotations cannot reuse an older advertised contract.
+    if callable(model.model_config.get("json_schema_extra")):
+        return _inline_refs(model.model_json_schema())
+    core = model.__pydantic_core_schema__
+    config = repr(model.model_config)
+    entry = _parameter_schemas.get(model)
+    if entry is None or entry[0] is not core or entry[1] != config:
+        cached = _inline_refs(model.model_json_schema())
+        # Retain the actual core object: an old object's recycled id must not
+        # identify a new model generation after repeated model_rebuild().
+        _parameter_schemas[model] = (core, config, cached)
+        if len(_parameter_schemas) > 256:
+            _parameter_schemas.popitem(last=False)
+    else:
+        cached = entry[2]
+        _parameter_schemas.move_to_end(model)
+    # Provider adapters may annotate their own copy; no request can mutate
+    # another request's contract through the cache.
+    return deepcopy(cached)
 
 
 def _strip_titles(obj: Any) -> Any:
@@ -1271,7 +1307,10 @@ async def _stream_responses_api(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
         await _assert_dispatch_allowed(trace_ctx)
-        async with httpx.AsyncClient(timeout=request_timeout()) as client:
+        from agent.stream_deadline import limits_for
+        progress_limits = limits_for(model_id, variant, purpose)
+        async with httpx.AsyncClient(timeout=request_timeout(
+                read_seconds=max(progress_limits.first_progress, progress_limits.idle))) as client:
             async with ProviderStream(client.stream("POST", url, headers=headers, json=payload)) as resp:
                 if resp.status_code != 200:
                     with provider_wait():
@@ -1704,6 +1743,8 @@ async def stream_llm(
     # Title and suggestions work is bound to its turn instead of the lease.
     await assert_current("request")
     await _assert_dispatch_allowed(ctx)
+    from agent.stream_deadline import bounded_stream, limits_for
+    limits = limits_for(model_id, variant, billing_kind)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1730,6 +1771,7 @@ async def stream_llm(
         )
     else:
         stream = _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice, trace_ctx=ctx, purpose=billing_kind, cache_key=cache_key, max_output_tokens=max_output_tokens)
+    stream = bounded_stream(stream, limits)
     try:
         async for event in stream:
             trace = getattr(ctx, "_trajectory_active_request", None)
@@ -1990,6 +2032,11 @@ async def _stream_litellm_direct(
             # Native providers (Anthropic, etc.): use top-level params
             direct_kwargs = variant_kwargs
 
+        from agent.stream_deadline import limits_for
+        # The image-caption path retains its separate 30-second operational
+        # deadline. Chat transport and gateway observation share the model's
+        # configured limits instead of silently overriding one another.
+        progress_limits = limits_for(model_id, variant, purpose) if purpose != "asset_description" else None
         call_kwargs = {
             "model": model_id,
             "messages": llm_messages,
@@ -1999,7 +2046,8 @@ async def _stream_litellm_direct(
             "max_tokens": request_output_tokens(model_id, variant, max_output_tokens),
             **provider_kwargs,
             **direct_kwargs,
-            "timeout": request_timeout(),
+            "timeout": request_timeout(read_seconds=max(progress_limits.first_progress, progress_limits.idle)
+                                       if progress_limits else 60),
             "num_retries": 0,
         }
         if extra_body:
@@ -2026,7 +2074,9 @@ async def _stream_litellm_direct(
         capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(trace_ctx)
-        observation = Observation(model_id, purpose)
+        observation = Observation(model_id, purpose,
+            first_seconds=progress_limits.first_progress if progress_limits else None,
+            idle_seconds=progress_limits.idle if progress_limits else None)
         if provider == "openai" and "client" not in call_kwargs:
             client = sdk_client(provider_kwargs, call_kwargs["timeout"])
             if client is not None:
@@ -2158,6 +2208,8 @@ async def _stream_litellm_direct(
 
     except Exception as e:
         outcome, gateway_error = "failed", e
+        if observation is not None:
+            observation.annotate_error(e)
         from question.runtime import RunRevoked
         if isinstance(e, RunRevoked):
             raise

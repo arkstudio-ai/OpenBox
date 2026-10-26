@@ -31,7 +31,9 @@ REASON_TEXT = {"too_long": "回答太长", "too_short": "回答太简略", "off_
 REACTION_DAYS, REACTION_MIN = 30, 2  # a reason given at least twice in a month is a pattern
 # Style facts Settings has a field for, and the field: their value is the setting, never a card line.
 SETTABLE_STYLE = {"personal.style.length": "length", "personal.style.tone": "tone",
-                  "personal.style.emoji": "emoji", "personal.style.call_detail": "call_detail"}
+                  "personal.style.language": "language",
+                  "personal.style.emoji": "emoji", "personal.style.call_detail": "call_detail",
+                  "personal.address": "address", "personal.assistant_name": "name"}
 
 
 def settable_field(fact_key: str | None) -> str | None:
@@ -50,6 +52,12 @@ _SETTING_WORDS = {
 def setting_claim(fact_key: str | None, value) -> str:
     """What a settable style fact would set, for the verifier to check against the user's words."""
     field = settable_field(fact_key)
+    if field in {"name", "address", "language"} and isinstance(value, str):
+        subject = {"name": "the assistant's name", "address": "the user's preferred form of address",
+                   "language": "the user's preferred conversation language"}[field]
+        if field == "language" and not value:
+            return " (durable account setting: follow the current message's language instead of a fixed conversation language)"
+        return f" (durable account setting: {subject} becomes {value!r})"
     words = _SETTING_WORDS.get(field, {}).get(value) if field else None
     return f" (setting: {words})" if words else ""
 
@@ -59,7 +67,7 @@ def setting_patch(fact_key: str | None, value) -> dict | None:
     Emoji is said as "on"/"off"."""
     from assistant.profile import Profile, merge
     field = settable_field(fact_key)
-    if field is None:
+    if field is None or not isinstance(value, str):
         return None
     if field == "emoji":
         value = {"on": True, "off": False}.get(value)
@@ -105,13 +113,10 @@ async def apply_settings(*, user_id: str, session_id: str, input_hash: str, prop
             patch.update(change)
     if not patch:
         return {}
-    async with get_db_session() as db:
-        kind = await db.scalar(select(Session.kind).where(Session.id == session_id))
-    if kind != "assistant":
-        return {}
-    await profile.save(user_id, patch, via="chat")
-    log.info("style feedback set user=%s fields=%s", user_id, ",".join(sorted(patch)))
-    return patch
+    # Retained for old callers, but an input hash alone cannot prove original
+    # messages, event order or a committed extraction lease. The worker now
+    # applies settings atomically through memory.preferences inside its commit.
+    raise ValueError("Use the source-bound extraction transaction to apply settings")
 
 
 async def style_card(user_id: str, workspace_id: str | None) -> Card:
@@ -137,21 +142,29 @@ async def _learned_rows(user_id: str, workspace_id: str) -> list:
     from sqlalchemy import select
     from db.base import get_db_session
     from db.models.memory import UserMemory
+    from db.models.preference import UserPreference
+    from assistant.profile import decided_from_extra
     from memory.policy import active_memory_predicates, resolve_access_scope
     async with get_db_session() as db:
         access = await resolve_access_scope(db, user_id=user_id, workspace_id=workspace_id)
+        extra = await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == user_id))
+        language_decided = "language" in decided_from_extra(extra)
         rows = (await db.scalars(select(UserMemory).where(
             *access.predicates(UserMemory), *active_memory_predicates(),
             UserMemory.fact_key.like(STYLE_PREFIX + "%")).order_by(
             UserMemory.updated_at.desc(), UserMemory.id).limit(LEARNED_LIMIT * 3))).all()
-    # Learned before the setting took them over: the setting holds that aspect now.
-    return [row for row in rows if settable_field(row.fact_key) is None][:LEARNED_LIMIT]
+        from memory.service import memory_sources_available
+        # Pre-upgrade language cards remain usable until a newer account
+        # decision (including clearing the default) supersedes them.
+        return [row for row in rows if (settable_field(row.fact_key) is None
+                or settable_field(row.fact_key) == "language" and not language_decided)
+                and await memory_sources_available(db, access, row)][:LEARNED_LIMIT]
 
 
 async def _learned(user_id: str, workspace_id: str) -> tuple[str, ...]:
     items, used = [], 0
     for row in await _learned_rows(user_id, workspace_id):
-        text = _bounded(str((row.value or {}).get("summary") or ""), ITEM_CHARS)
+        text = str((row.value or {}).get("summary") or "").strip()
         if not text or text in items or used + len(text) > LEARNED_CHARS:
             continue
         items.append(text)

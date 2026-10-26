@@ -103,6 +103,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   VoiceCallDeps? _depsForCall;
   int _generation = 0;
   AssistantScope? _scope;
+  String? _viewedSessionId;
   CallAudio? _audio;
   VoiceSocket? _socket;
   StreamSubscription<CallAudioEvent>? _audioEvents;
@@ -135,12 +136,24 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     // Signing out or switching workspace ends the call: it belongs to the
     // user and workspace it was dialled in.
     ref.listen<AssistantScope?>(assistantScopeProvider, (_, next) {
+      _viewedSessionId = null;
       if (state.active && next != _scope) unawaited(hangUp());
     });
     return const VoiceCallState();
   }
 
   bool _current(int generation) => generation == _generation;
+
+  /// Current authorized UI location only; the server rechecks its ownership.
+  void setViewedSession(String? sessionId) {
+    if (_viewedSessionId == sessionId) return;
+    _viewedSessionId = sessionId;
+    if (state.status == VoiceCallStatus.connected) _socket?.sendView(sessionId);
+  }
+
+  void clearViewedSession(String sessionId) {
+    if (_viewedSessionId == sessionId) setViewedSession(null);
+  }
 
   /// Dials. The call page calls this when it opens on no call.
   Future<void> start() async {
@@ -190,7 +203,18 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       if (!_current(generation)) return;
       switch (action) {
         case SystemVoiceAction.end:
-          unawaited(hangUp());
+          if (state.dialling) {
+            // An external cancel has no page button to navigate back. Keep
+            // an ended state so the open page never becomes a blank idle orb.
+            _finish(VoiceEndReason.hangup);
+          } else {
+            unawaited(hangUp());
+          }
+        case SystemVoiceAction.startFailed:
+          _finish(
+            VoiceEndReason.error,
+            detailKey: 'voice:errors.backgroundStart',
+          );
         case SystemVoiceAction.mute:
         case SystemVoiceAction.unmute:
           final muted = action == SystemVoiceAction.mute;
@@ -386,6 +410,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     switch (event) {
       case VoiceReadyEvent():
         if (before.status == VoiceCallStatus.connecting && state.live) {
+          if (_viewedSessionId != null) _socket?.sendView(_viewedSessionId);
           _connectTimer?.cancel();
           _audio?.stopRinging();
           _deps.haptic(strong: false);
@@ -536,6 +561,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   /// Ends the call from this side (timeouts, close codes, local failures).
   void _finish(VoiceEndReason reason, {String? detailKey, String? message}) {
     if (!state.active) return;
+    // Native permission/CallKit/audio futures may finish after the system has
+    // rejected or cancelled startup. They must not reopen audio or a socket.
+    if (state.dialling) _generation++;
     state = endVoiceCall(
       state,
       // A closing already under way (hang-up, exhausted credits) keeps its reason.

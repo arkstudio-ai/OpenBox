@@ -218,16 +218,23 @@ async def _check_run(ticket: RunTicket, boundary: str, *, progress: bool) -> Non
         return
     moment = now()
     async with get_db_session() as db:
-        # Progress and liveness in one statement: zero rows means the lease is gone.
-        result = await db.execute(update(SessionExecution).where(
+        conditions = (
             SessionExecution.session_id == ticket.session_id,
             SessionExecution.user_id == ticket.user_id,
             SessionExecution.run_id == ticket.run_id,
             SessionExecution.generation == ticket.generation,
             SessionExecution.lease_until > moment,
-        ).values(run_progress=True if progress else SessionExecution.run_progress)
-            .execution_options(synchronize_session=False))
-        if result.rowcount == 1:
+        )
+        if progress:
+            result = await db.execute(update(SessionExecution).where(*conditions)
+                .values(run_progress=True).execution_options(synchronize_session=False))
+            matched = result.rowcount == 1
+        else:
+            # The dispatch follows this transaction, so a no-op UPDATE gives
+            # no stronger fence than a fresh read. Avoid writing a new row
+            # version and waiting for a commit on every tool boundary.
+            matched = await db.scalar(select(SessionExecution.session_id).where(*conditions)) is not None
+        if matched:
             reason = None
         else:
             execution = await db.get(SessionExecution, ticket.session_id)
@@ -247,6 +254,20 @@ async def _check_auxiliary(ticket: AuxiliaryTicket, boundary: str) -> None:
         raise RunRevoked(ticket, "deleted" if generation is None else "superseded", boundary)
 
 
+def assert_observed_run(ticket: RunTicket, execution, boundary: str, moment: datetime) -> None:
+    """Validate a fresh SQL row read together with the Driver ownership fence.
+
+    This is not a reusable receipt. The caller must fetch execution in the
+    current boundary's statement, including the exact session and owner.
+    """
+    reason = _revoked.get(ticket.run_id) or start_verdict(execution, ticket, moment)
+    if execution is not None and (execution.session_id != ticket.session_id or execution.user_id != ticket.user_id):
+        reason = "lease_lost"
+    if reason is not None:
+        raise RunRevoked(ticket, reason, boundary)
+    _verified.set((ticket.run_id, time.monotonic()))
+
+
 async def assert_current(boundary: str, *, progress: bool = False) -> None:
     """Refuse a new side effect from a revoked run with at most one statement.
 
@@ -264,6 +285,11 @@ async def assert_current(boundary: str, *, progress: bool = False) -> None:
 
 async def run_auxiliary(ticket: RunTicket, purpose: str, work):
     """Await work that may outlive its run but never its turn (title, suggestions)."""
+    from agent.latency import current as current_timing
+    # create_task copies ContextVars. This work is never awaited by the
+    # foreground reply, so its model wait is not on that reply's critical
+    # path and must not erase concurrent SQL/CPU time from its latency.
+    timing_token = current_timing.set(None)
     run_token = current_run.set(None)
     auxiliary_token = auxiliary_run.set(AuxiliaryTicket(
         ticket.session_id, ticket.user_id, ticket.generation, ticket.run_id, purpose))
@@ -272,6 +298,7 @@ async def run_auxiliary(ticket: RunTicket, purpose: str, work):
     finally:
         auxiliary_run.reset(auxiliary_token)
         current_run.reset(run_token)
+        current_timing.reset(timing_token)
 
 
 def _after_commit(db, action) -> None:

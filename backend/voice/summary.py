@@ -71,11 +71,15 @@ async def complete(model: str, system: str, text: str, timeout: float) -> str:
         if effort:
             payload["reasoning_effort"] = effort  # flat, as the qwen route expects it
     from agent.gateway import Observation
+    from memory.providers.common import shared_client
     observation = Observation(model, "voice_summary")
     try:
-        async with asyncio.timeout(timeout), httpx.AsyncClient(timeout=timeout, follow_redirects=False,
-                event_hooks={"request": [observation.on_request]}) as client:
-            response = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
+        # Preserve this helper's environment-proxy policy while reusing TLS
+        # with routing when both use that policy. Auth/deadline stay per request.
+        async with asyncio.timeout(timeout):
+            response = await shared_client(trust_env=True).post(url, json=payload,
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout,
+                follow_redirects=False, extensions={"trace": observation.trace})
     except BaseException as exc:
         observation.finish("cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", exc)
         raise

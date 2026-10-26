@@ -48,6 +48,31 @@ class _Call {
 }
 
 void main() {
+  testWidgets('view follows navigation only after ready and stops on hangup', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    call.controller.setViewedSession('first');
+    await call.dial(tester);
+    call.controller.setViewedSession('current');
+    expect(call.socket.jsonSent, isEmpty);
+    call.socket.sendReady();
+    await tester.pump();
+    expect(call.socket.jsonSent, [
+      {'type': 'view', 'session_id': 'current'},
+    ]);
+    call.controller.clearViewedSession('first');
+    expect(call.socket.jsonSent.length, 1);
+    call.controller.clearViewedSession('current');
+    expect(call.socket.jsonSent.last, {'type': 'view', 'session_id': null});
+    call.controller.setViewedSession('next');
+    await call.controller.hangUp();
+    final count = call.socket.jsonSent.length;
+    call.controller.setViewedSession('late');
+    expect(call.socket.jsonSent.length, count);
+    call.dispose();
+    await tester.pump();
+  });
   testWidgets('dials in order and sends no audio before ready', (tester) async {
     final call = _Call(VoiceRig());
     await call.dial(tester);
@@ -396,6 +421,45 @@ void main() {
     expect(call.state.end!.detailKey, 'voice:errors.backgroundStart');
     expect(rig.audios, isEmpty);
     expect(rig.systemCall.ends, 1);
+    call.dispose();
+  });
+
+  testWidgets('system startup rejection stays ended despite late callback', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    call.controller.setExpanded(true);
+    await call.dial(tester);
+    rig.systemCall.events.add(SystemVoiceAction.startFailed);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(call.state.end?.detailKey, 'voice:errors.backgroundStart');
+    expect(call.state.expanded, isTrue);
+    rig.systemCall.startGate!.completeError(StateError('CallKit cancelled'));
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(rig.audios, isEmpty);
+    expect(rig.systemCall.ends, 1);
+    call.dispose();
+  });
+
+  testWidgets('system cancellation during dial leaves a visible end state', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    rig.systemCall.startGate = Completer<void>();
+    final call = _Call(rig);
+    call.controller.setExpanded(true);
+    await call.dial(tester);
+    rig.systemCall.events.add(SystemVoiceAction.end);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ended);
+    expect(call.state.end?.reason, VoiceEndReason.hangup);
+    rig.systemCall.startGate!.complete();
+    await tester.pump();
+    expect(rig.audios, isEmpty);
     call.dispose();
   });
 

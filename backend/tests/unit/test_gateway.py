@@ -62,6 +62,8 @@ async def test_stalled_stream_closes_without_retry_or_partial_success(monkeypatc
                     "openai/qwen3.8-flash", [], [], {}, purpose="asset_description")]
             assert events[-1]["type"] == "error"
             assert isinstance(events[-1]["error"], gateway.GatewayTimeout)
+            from agent.retry import is_retryable
+            assert is_retryable(events[-1]["error"]) is None
             assert events[-1]["error"].phase == ("stream_idle" if partial else "first_progress")
             assert not any(e["type"] in {"finish", "tool_call"} for e in events)
             assert body.closed and len(calls) == 1
@@ -122,6 +124,77 @@ async def test_cancel_during_dispatch_is_not_converted_to_retry():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert gateway._current.get() is None
+
+
+async def test_real_tls_timeout_keeps_presend_evidence_through_sdk(monkeypatch):
+    from agent.retry import is_retryable, retry_delay
+    from agent.stream_deadline import StreamLimits
+    connections = []
+    async def serve(reader, writer):
+        connections.append(writer)
+        try:
+            await reader.read()  # Accept TCP without completing the TLS handshake.
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {
+        "api_key": "local-test", "api_base": f"https://127.0.0.1:{port}/v1"})
+    monkeypatch.setattr(llm, "request_timeout", lambda **kwargs: httpx.Timeout(.05))
+    monkeypatch.setattr("agent.stream_deadline.limits_for", lambda *args: StreamLimits(2, 2, 2))
+    try:
+        async with asyncio.timeout(3):
+            events = [e async for e in llm._stream_litellm_direct("openai/test", [], [], {})]
+        error = events[-1]["error"]
+        assert is_retryable(error) is not None
+        assert error._openbox_pre_dispatch.phase == "tls"
+        assert retry_delay(1, error, rand=0) == .1
+        assert retry_delay(1, error, rand=1) == .25
+        assert retry_delay(2, error, rand=.5) >= 2
+        assert len(connections) == 1  # No invisible SDK retry.
+    finally:
+        await gateway.close_clients()
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.parametrize("phase,sent,status", [
+    (None, False, None), ("upstream_headers", True, None),
+    ("tls", True, None), ("connect", False, 429),
+])
+async def test_short_retry_requires_proven_presend_failure(phase, sent, status):
+    from agent.retry import retry_delay
+    observation = gateway.Observation("qwen", "chat")
+    observation.failure_phase, observation.request_started, observation.status = phase, sent, status
+    error = httpx.ReadTimeout("TLS timed out")
+    observation.annotate_error(error)
+    assert not hasattr(error, "_openbox_pre_dispatch")
+    assert retry_delay(1, error, rand=.5) >= 1
+
+
+def test_presend_retry_does_not_override_retry_after():
+    from agent.retry import RetryableError, retry_delay
+    error = RetryableError("unavailable", headers={"retry-after": "7"})
+    error._openbox_pre_dispatch = gateway.PreDispatchFailure("tls")
+    assert retry_delay(1, error, rand=0) == 7
+
+
+async def test_model_progress_limits_reach_transport_and_observer(monkeypatch):
+    from agent.stream_deadline import StreamLimits
+    import litellm
+    captured = []
+    monkeypatch.setattr("agent.stream_deadline.limits_for", lambda *args: StreamLimits(.02, .03, .1))
+    async def completion(**kwargs):
+        captured.append(kwargs["timeout"].read)
+        await asyncio.Event().wait()
+    monkeypatch.setattr(litellm, "acompletion", completion)
+    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {})
+    async with asyncio.timeout(1):
+        events = [e async for e in llm._stream_litellm_direct("openai/test", [], [], {})]
+    assert captured == [.03]
+    assert isinstance(events[-1]["error"], gateway.GatewayTimeout)
+    assert events[-1]["error"].phase == "first_progress"
 
 
 async def test_normal_sse_teardown_is_not_reported_as_a_gateway_error(monkeypatch):

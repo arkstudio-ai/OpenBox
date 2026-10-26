@@ -85,6 +85,10 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
                 "userId": user_id,
                 "sessionId": session_id,
                 "status": str(status),
+                # Hydration, not a new transition. Clients already refresh
+                # their read views once on reconnect; repeating those HTTP
+                # reads for every stored chat floods the reply's event loop.
+                "recovery": True,
             }
             if generation is not None:
                 data["generation"] = int(generation)
@@ -410,7 +414,6 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""),
 
     # Send connection confirmation
     await send_queue.put({"type": "server.connected", "data": {}})
-    await _enqueue_recovery_snapshot(user_id, send_queue)
     if surface != "assistant":
         asyncio.create_task(_ensure_user_container(user_id, access))
 
@@ -418,6 +421,10 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""),
              asyncio.create_task(_send_loop(websocket, send_queue, access=access)),
              asyncio.create_task(_heartbeat_loop(send_queue)),
              asyncio.create_task(access.watch())]
+    # Start the consumer before filling its bounded queue. Otherwise an
+    # account with >=1000 chats deadlocks before even receiving a heartbeat.
+    # Recovery finishing is not a reason to close the live connection.
+    recovery = asyncio.create_task(_enqueue_recovery_snapshot(user_id, send_queue))
     try:
         done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
@@ -429,7 +436,7 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""),
     except Exception as e:
         log.error(f"WS error for user={user_id}: {e}")
     finally:
-        for task in pumps:
+        for task in [*pumps, recovery]:
             task.cancel()
         ws_manager.unregister(user_id, websocket)
         # If user has no more connections, schedule cleanup
@@ -439,7 +446,7 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""),
         # Release registry state synchronously and drain our tasks even then.
         import anyio
         with anyio.CancelScope(shield=True):
-            await asyncio.gather(*pumps, return_exceptions=True)
+            await asyncio.gather(*pumps, recovery, return_exceptions=True)
             try:
                 await websocket.close(code=4001, reason="Session closed")
             except (Exception, asyncio.CancelledError):

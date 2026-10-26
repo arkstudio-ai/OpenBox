@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -17,10 +18,12 @@ from db.base import get_db_session
 from db.models.session import Session
 from memory.policy import MemoryAccessDenied, resolve_access_scope
 from memory.redaction import redact_text, redact_value
+from memory.dialogue_read import DialogueReadPlan, DESCRIPTION as PREPARE_DESCRIPTION
 from tool.tool import ToolContext, ToolResult, define_tool
 
 log = create_logger("tool.memory")
-MEMORY_TOOL_IDS = frozenset({"memory_search", "memory_read_sources", "current_task_state"})
+MEMORY_TOOL_IDS = frozenset({"memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"})
+MEMORY_PREPARE_TOOL_IDS = frozenset({"memory_prepare", "memory.prepare"})
 # Changes a memory only after the person confirms it on a card.
 MEMORY_WRITE_TOOL_IDS = frozenset({"memory_forget"})
 
@@ -50,6 +53,85 @@ class MemoryForgetArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     memory_id: str = Field(min_length=1, max_length=64,
                            description="The id of one memory from <memory_context> or memory_search results.")
+
+
+class SupplementReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=64)
+    revision: int = Field(default=1, ge=1)
+
+
+class SupplementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["search", "sources", "documents", "wiki", "assets", "history", "experience", "task_state", "settings"] = "search"
+    query: str = Field(default="", max_length=3000)
+    refs: list[SupplementReference] = Field(default_factory=list, max_length=8)
+    offset: int = Field(default=0, ge=0, le=32000)
+    max_chars: int = Field(default=3000, ge=100, le=8000)
+
+
+class MemorySupplementArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reads: list[SupplementRequest] = Field(min_length=1, max_length=2)
+
+
+class MemoryPrepareArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan: DialogueReadPlan
+
+
+async def execute_memory_prepare(args, ctx):
+    from memory.packet import prepare_on_demand
+    if not _settings().enabled("retrieval_v2", ctx.user_id):
+        return _unavailable("feature_disabled")
+    if not _settings().enabled("semantic_recall", ctx.user_id) or ctx.memory_turn is None or ctx.memory_read_budget is None:
+        return _unavailable("turn_read_scope_unavailable")
+    if (ctx.user_id, ctx.workspace_id, ctx.session_id) != (
+            ctx.memory_turn.user_id, ctx.memory_turn.workspace_id, ctx.memory_turn.session_id):
+        return _unavailable("turn_read_scope_unavailable")
+    await ctx.assert_run_current()
+    try:
+        prepared = await prepare_on_demand(ctx.memory_turn, ctx.memory_read_budget,
+            plan=args.plan, model=ctx.model_id)
+        await ctx.assert_run_current()
+    except (MemoryAccessDenied, SQLAlchemyError):
+        return _unavailable("authority_unavailable")
+    if prepared is None:
+        return _result("Memory preparation", {"status": "already_prepared",
+            "instruction": "Use the current memory context; use memory_read_more only for a specific remaining gap."})
+    return _result("Memory preparation", {"status": prepared["status"],
+        "operation": "read_only", "state_changes": [],
+        "read_policy": prepared["route"]["read_policy"],
+        "instruction": "The next model request receives the freshly authorized bounded memory context. "
+            "Use it to answer the user now. Do not repeat this call; unavailable/restricted does not prove absence. "
+            "This read changed no execution state. A promise to wait or refrain from future work is not a "
+            "completed pause/stop/cancellation. Report such a state change only with a separate current "
+            "execution receipt, never from a previous assistant statement or this read-only result."})
+
+
+async def execute_memory_read_more(args, ctx, *, operation="memory_read_more"):
+    from memory.packet import ReadRequest, read_more
+    if not _settings().enabled("retrieval_v2", ctx.user_id):
+        return _unavailable("feature_disabled")
+    if not _settings().enabled("semantic_recall", ctx.user_id) or ctx.memory_turn is None:
+        return _unavailable("turn_read_scope_unavailable")
+    try:
+        await ctx.assert_run_current()
+        result = await read_more([ReadRequest(**{**item.model_dump(), "refs": tuple(
+            ref.model_dump() for ref in item.refs)}) for item in args.reads], ctx.memory_turn, ctx.memory_read_budget)
+        await ctx.assert_run_current()
+    except (MemoryAccessDenied, SQLAlchemyError):
+        return _unavailable("authority_unavailable")
+    references = []
+    for value in result.get("results", []):
+        references.extend({"kind": item["kind"], "id": item["id"], "revision": item["revision"]}
+            for item in value.get("items", []) if all(key in item for key in ("kind", "id", "revision")))
+    # Raw evidence stays only in this turn's memory, never in canonical history.
+    # Every provider step revalidates it against SQL before rematerializing it.
+    ctx.memory_read_budget.results[ctx.part_id] = (args.model_dump(), result)
+    return _result("Memory evidence", result, metadata={"references": references,
+        "transient_memory_refs": await _transient_boundary(ctx, operation, references,
+            packet_read=True, read_id=ctx.part_id)})
 
 
 class CurrentTaskStateArgs(BaseModel):
@@ -125,6 +207,9 @@ async def _transient_boundary(ctx: ToolContext, operation: str, references: list
 
 async def execute_memory_search(args: MemorySearchArgs, ctx: ToolContext) -> ToolResult:
     started = time.monotonic()
+    if _settings().enabled("semantic_recall", ctx.user_id):
+        return await execute_memory_read_more(MemorySupplementArgs(reads=[SupplementRequest(
+            query=args.query + ("\n" + args.time_context if args.time_context else ""))]), ctx, operation="memory_search")
     if not _settings().enabled("retrieval_v2", ctx.user_id):
         return _unavailable("feature_disabled")
     try:
@@ -162,6 +247,10 @@ async def execute_memory_search(args: MemorySearchArgs, ctx: ToolContext) -> Too
 
 async def execute_memory_read_sources(args: MemoryReadSourcesArgs, ctx: ToolContext) -> ToolResult:
     started = time.monotonic()
+    if _settings().enabled("semantic_recall", ctx.user_id):
+        return await execute_memory_read_more(MemorySupplementArgs(reads=[SupplementRequest(kind="sources",
+            refs=[SupplementReference(id=ref.source_id, revision=ref.revision) for ref in args.sources],
+            offset=args.offset, max_chars=args.max_chars)]), ctx, operation="memory_read_sources")
     if not _settings().enabled("retrieval_v2", ctx.user_id):
         return _unavailable("feature_disabled")
     try:
@@ -210,6 +299,9 @@ async def execute_memory_read_sources(args: MemoryReadSourcesArgs, ctx: ToolCont
 
 async def execute_current_task_state(args: CurrentTaskStateArgs, ctx: ToolContext) -> ToolResult:
     started = time.monotonic()
+    from memory.read_contract import check
+    if denied := check(ctx, "task_state"):
+        return _result("Current task state", denied)
     if not _settings().enabled("retrieval_v2", ctx.user_id):
         return _unavailable("feature_disabled")
     try:
@@ -268,10 +360,18 @@ async def execute_memory_forget(args: MemoryForgetArgs, ctx: ToolContext) -> Too
                       metadata={"memory_id": row.id, "decision": "dismissed"})
 
 
+memory_prepare_tool = define_tool(
+    "memory_prepare", description=PREPARE_DESCRIPTION,
+    parameters=MemoryPrepareArgs, execute=execute_memory_prepare, sandbox_required=False, parallel_safe=False,
+    discovery_hint="Prepare bounded evidence only when current advice or work needs memory.")
 memory_search_tool = define_tool(
     "memory_search", description="Search currently authorized, confirmed memories and evidence in this Session's project. Use when recall is needed or a fast router skipped memory. SQL keyword search remains available during index/provider failures. No writes or confirmation.",
     parameters=MemorySearchArgs, execute=execute_memory_search, sandbox_required=False, parallel_safe=True,
     discovery_hint="Read confirmed personal/project memory with source references.")
+memory_read_more_tool = define_tool(
+    "memory_read_more", description="Fill specific evidence gaps in one batch of up to two reads. Search meaning, read exact sources/Wiki/history, list full document names or assets with pagination, or find validated personal experience. One batch per turn; obey the current user's restrictions. Partial/unavailable never proves absence. No writes or execution permission.",
+    parameters=MemorySupplementArgs, execute=execute_memory_read_more, sandbox_required=False, parallel_safe=False,
+    discovery_hint="Batch precise memory, knowledge, history, asset and experience reads.")
 memory_read_sources_tool = define_tool(
     "memory_read_sources", description="Read bounded original evidence by exact source IDs and revisions. Use references returned by memory_search. Current permissions, source hashes, tombstones, and confirmed-memory admission apply. Unavailable or redacted text cannot support invented quotes.",
     parameters=MemoryReadSourcesArgs, execute=execute_memory_read_sources, sandbox_required=False, parallel_safe=True,

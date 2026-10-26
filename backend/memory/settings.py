@@ -36,7 +36,13 @@ async def saving_paused(user_id: str, session_id: str | None = None) -> bool:
 async def paused_scope(user_id: str, session_id: str | None = None) -> str | None:
     """Which pause applies: "account" when automatic saving is off, "chat" for this chat only."""
     async with get_db_session() as db:
-        prefs = _prefs(await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == user_id)))
+        extra = await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == user_id))
+    return paused_scope_from_preferences(extra, session_id)
+
+
+def paused_scope_from_preferences(extra, session_id: str | None = None) -> str | None:
+    """Interpret the same preferences snapshot used for the current reply."""
+    prefs = _prefs(extra)
     return "account" if prefs.get("auto_save") is False else "chat" if _paused(prefs, session_id) else None
 
 

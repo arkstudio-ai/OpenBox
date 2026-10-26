@@ -83,12 +83,8 @@ async def test_failed_revision_preserves_card_and_creates_no_partial_link(failur
             args["request_id"], _ = await ask_in(foreign, other)
         async with get_db_session() as db:
             before = await db.scalar(select(QuestionCheckpoint.status).where(QuestionCheckpoint.session_id == session.id))
-        if failure == "missing_asset":
-            with pytest.raises(inbox.InboxAttachmentError):
-                await tool_call(ctx, "requests.revise", args)
-        else:
-            result, _ = await tool_call(ctx, "requests.revise", args)
-            assert result.get("error"), result
+        result, _ = await tool_call(ctx, "requests.revise", args)
+        assert result.get("error"), result
         async with get_db_session() as db:
             assert await db.scalar(select(QuestionCheckpoint.status).where(QuestionCheckpoint.session_id == session.id)) == before
             assert await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)) is None
@@ -96,6 +92,155 @@ async def test_failed_revision_preserves_card_and_creates_no_partial_link(failur
                 AgentInboxItem.session_id == session.id, AgentInboxItem.origin == "assistant_delegation"))).all()
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_invalid_attachment_never_creates_a_shared_send_confirmation():
+    owner, _, _, main, session, ctx, lease, args = await setup(shared=True)
+    args["attachment_ids"] = [args["request_id"]]
+    try:
+        result, _ = await tool_call(ctx, "requests.revise", args)
+        assert result.get("error") == "ASSISTANT_ATTACHMENT_UNAVAILABLE"
+        async with get_db_session() as db:
+            assert not (await db.scalars(select(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id))).all()
+            assert (await db.get(QuestionCheckpoint, args["request_id"])).status == "pending"
+            assert await db.scalar(select(AssistantTask.id).where(
+                AssistantTask.execution_session_id == session.id)) is None
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("changed", ["attachment_ids", "instructions", "request_id", "version"])
+async def test_confirmation_resume_rejects_argument_drift_without_another_card(changed):
+    owner, _, _, main, session, ctx, lease, args = await setup(shared=True)
+    try:
+        result, _ = await tool_call(ctx, "requests.revise", args)
+        from assistant.confirmations import CONFIRM
+        await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
+        async with get_db_session() as db:
+            card = await db.get(QuestionCheckpoint, result["suspended"])
+            item = await db.scalar(select(AgentInboxItem).where(
+                AgentInboxItem.run_id == ctx.run_id, AgentInboxItem.generation == ctx.run_generation))
+            original_origin, original_ref = item.origin, dict(item.origin_ref)
+            # The real continuation has this provenance, not a new human turn.
+            item.origin = "system_recovery"
+            item.origin_ref = {"entrypoint": "question_answer", "generation": card.generation}
+        altered = {**args, changed: {"attachment_ids": [args["request_id"]], "instructions": "改成另一个方案",
+                                    "request_id": "different-task", "version": "b" * 64}[changed]}
+        from assistant.revisions import _check_confirmation_replay
+        from assistant.policy import AssistantError
+        async with get_db_session() as db:
+            with pytest.raises(AssistantError) as denied:
+                await _check_confirmation_replay(db, ctx, altered)
+            assert denied.value.code == "ASSISTANT_CONFIRMATION_INPUT_CHANGED"
+            await _check_confirmation_replay(db, ctx, args)
+        async with get_db_session() as db:
+            cards = (await db.scalars(select(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id))).all()
+            assert len(cards) == 1 and cards[0].status == "answered"
+            assert not cards[0].continuation["assistant_send"].get("consumed")
+            assert (await db.get(QuestionCheckpoint, args["request_id"])).status == "pending"
+            item = await db.scalar(select(AgentInboxItem).where(
+                AgentInboxItem.run_id == ctx.run_id, AgentInboxItem.generation == ctx.run_generation))
+            item.origin, item.origin_ref = original_origin, original_ref
+        accepted, _ = await tool_call(ctx, "requests.revise", args)
+        assert accepted.get("state") == "accepted", accepted
+        async with get_db_session() as db:
+            item = await db.get(AgentInboxItem, accepted["inbox_id"])
+            assert item.session_id == session.id and item.attachments == args["attachment_ids"]
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_current_confirmed_revision_survives_restricted_recall_after_restart(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from core.config import get_config
+    from assistant.confirmations import CONFIRM
+    from assistant.projection import project_main_messages
+    from session.agent_event_log import load_canonical_model_surface
+    from session.session import create_assistant_message
+    from tests.unit.test_assistant_sessions_v2 import finish_turn
+
+    owner, _, _, main, _, ctx, lease, args = await setup(shared=True)
+    result, _ = await tool_call(ctx, "requests.revise", args)
+    await finish_turn(ctx, lease, "等待确认发送。")
+    await lease.release(session_status="idle")
+    await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
+    from question.continuation import apply_answers, resume_main_through_inbox
+    generation = await apply_answers(main.id, owner)
+    assert generation is not None
+    assert await resume_main_through_inbox(main.id, owner, generation)
+    resumed = await reserve_run(main.id, owner)
+    try:
+        batch = await inbox.claim_inbox_boundary(resumed, step=1, include_next_turn=True)
+        message = await create_assistant_message(main.id, batch.messages[0].id, model_id="test/model",
+            agent="assistant", user_id=owner, run_fence=(main.id, resumed.run_id, resumed.generation))
+        ctx = replace(ctx, run_id=resumed.run_id, run_generation=resumed.generation, message_id=message.id)
+        config = get_config().model_copy(deep=True)
+        config.memory.semantic_recall = True
+        config.memory.retrieval_v2 = True
+        config.memory.allowed_user_ids = []
+        monkeypatch.setattr("core.config.get_config", lambda: config)
+        ctx.memory_turn = SimpleNamespace(read_policy="uncertain", explicit_read=False)
+        from memory.packet import TurnContext, prepare_context
+        async def must_not_classify(*_):
+            pytest.fail("A current server card answer must not invoke the semantic router")
+        packet = await prepare_context(TurnContext(user_id=owner, workspace_id=ctx.workspace_id,
+            session_id=main.id, turn_id=batch.messages[0].id, include_all_projects=True,
+            query=""), config.memory, evaluator=must_not_classify)
+        assert packet["route"]["reason_code"] == "current_card_continuation"
+        assert not packet["route"]["called"] and packet["route"]["read_policy"] == "current_only"
+        assert not packet["items"] and not packet["stable_background"]["items"]
+        from memory.packet import _packet_state
+        async with get_db_session() as db:
+            assert not (await _packet_state(db, TurnContext(user_id="another-user",
+                workspace_id=ctx.workspace_id, session_id=main.id, turn_id=batch.messages[0].id, query=""),
+                continuation=True))["card_continuation"]
+            assert not (await _packet_state(db, TurnContext(user_id=owner,
+                workspace_id=ctx.workspace_id, session_id=main.id, turn_id="another-message", query=""),
+                continuation=True))["card_continuation"]
+        surface = await load_canonical_model_surface(main.id, user_id=owner, run_fence=ctx.run_fence)
+        projected = await project_main_messages(list(surface.messages), ctx=ctx)
+        [block] = [m for m in projected if m.id == "assistant:confirmed-revision"]
+        assert args["attachment_ids"][0] in block.parts[0]["text"]
+        assert args["request_id"] in block.parts[0]["text"]
+        assert "arguments unchanged" in block.parts[0]["text"]
+        assert not any(m.id == "assistant:recent-call" for m in projected)
+        from assistant.runtime import runtime_view
+        from assistant.follow_through import unfinished_revision
+        before = await runtime_view(session_id=main.id, user_id=owner,
+            run_id=resumed.run_id, generation=resumed.generation)
+        assert before["tool_ids"] == frozenset({"requests.revise"})
+        # A provider may wrap the entire call in an `arguments` field. This
+        # is malformed input, not proof that the user's pending card changed.
+        # The public hook runs before tool validation, so exercise it too.
+        import json
+        from assistant.runtime import authorize_assistant_tool
+        from assistant.policy import AssistantError
+        for malformed in ({"arguments": json.dumps(args, ensure_ascii=False)},
+                          {**args, "request_id": "different-task"},
+                          {**args, "version": "b" * 64}):
+            with pytest.raises(AssistantError) as denied:
+                await authorize_assistant_tool(ctx, "requests.revise", malformed)
+            assert denied.value.code == "ASSISTANT_CONFIRMATION_INPUT_CHANGED"
+            assert "top-level" in str(denied.value)
+            correction = json.loads(str(denied.value)[str(denied.value).index("{"):])
+            assert correction == args
+        async with get_db_session() as db:
+            card = await db.get(QuestionCheckpoint, result["suspended"])
+            assert card.status == "answered" and not card.continuation["assistant_send"].get("consumed")
+            assert (await db.get(QuestionCheckpoint, args["request_id"])).status == "pending"
+        reminder = await unfinished_revision(ctx, [message.id])
+        assert "exact saved arguments" in reminder and args["request_id"] in reminder
+        accepted, _ = await tool_call(ctx, "requests.revise", correction)
+        assert accepted.get("state") == "accepted", accepted
+        after = await runtime_view(session_id=main.id, user_id=owner,
+            run_id=resumed.run_id, generation=resumed.generation)
+        assert after == before  # consuming consent cannot widen the current run
+        assert await unfinished_revision(ctx, [message.id]) is None
+    finally:
+        await resumed.release(session_status="idle")
 
 
 async def test_status_reads_and_shared_send_confirmation_leave_original_card_pending():

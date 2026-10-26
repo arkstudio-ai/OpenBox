@@ -47,6 +47,10 @@ _CLOUD_DESKTOP_COLUMNS = (
 
 def _create_current_schema(connection, *, missing_internal_column: str | None = None):
     connection.exec_driver_sql("CREATE TABLE kv_store (key VARCHAR PRIMARY KEY, value TEXT, updated_at DATETIME)")
+    from db.models.memory_protocol import MemoryChangeClock, MemoryWriteReceipt, MemoryExperience
+    from db.models.file_asset import FileAsset
+    for model in (MemoryChangeClock, MemoryWriteReceipt, MemoryExperience, FileAsset):
+        model.__table__.create(connection)
     from db.models.question import QuestionCheckpoint, SessionExecution
     from db.models.agent_driver import AgentDriverState
     from db.models.agent_event import AgentEvent

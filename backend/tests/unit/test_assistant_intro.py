@@ -111,7 +111,7 @@ async def test_the_first_call_asks_how_to_address_the_user_once_when_nothing_els
     assert (await voice_prompt.user_facts(owner, workspace, offer=True))["ask_address"] is False  # asked once
     # During the call it keeps asking until the answer is saved, then stops.
     assert (await voice_prompt.user_facts(owner, workspace, asking=True))["ask_address"] is True
-    await profile.save(owner, {"address": "老王"}, via="chat")
+    await profile.save(owner, {"address": "老王"}, via="settings")
     assert (await voice_prompt.user_facts(owner, workspace, asking=True))["ask_address"] is False
 
     text = front_instructions(FrontFacts(ask_address=True, business="food"), "zh", datetime(2026, 10, 8, 17, 30))

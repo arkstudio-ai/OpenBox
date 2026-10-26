@@ -177,6 +177,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         return fresh
     from voice.handoff import required as handoff_required
     from voice.live_context import publish as publish_context
+    from core.config import get_config
+    from voice.memory_context import prepare as prepare_memory, refresh as refresh_memory, prewarm as prewarm_memory
+    native_memory = get_config().memory.enabled("semantic_recall", user_id)
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
@@ -186,10 +189,16 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     recap=facts.recap, tell_reports=facts.reports,
                     detail=facts.detail, first_call=facts.first_call,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
-                    reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines))
+                    reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines),
+                    prepare_memory=prepare_memory if native_memory else None,
+                    refresh_memory=refresh_memory if native_memory else None,
+                    prewarm_memory=prewarm_memory if native_memory else None)
     from voice.shared_context import SharedContextWatcher
     shared_context = SharedContextWatcher(scope)
     updates = CallUpdates(scope)
+    from voice.memory_capture import OccurrenceClock
+    occurrence_clock = OccurrenceClock()
+    memory_changed = asyncio.Event()
 
     async def deliver_reports(found):
         for report in found:
@@ -203,6 +212,11 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
         if (event.get("data") or {}).get("userId") != user_id or bridge.closing:
+            return
+        if native_memory:
+            # One atomic packet replaces profile AND old memory settings. The
+            # bus event only wakes the SQL reader, never supplies authority.
+            memory_changed.set()
             return
         nonlocal facts
         try:
@@ -238,7 +252,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     await bridge.feed_audio(frame)
                 continue
             try:
-                kind = json.loads(message.get("text") or "").get("type")
+                payload = json.loads(message.get("text") or "")
+                kind = payload.get("type")
             except (ValueError, AttributeError):
                 continue
             if kind == "stop":
@@ -247,6 +262,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("hangup")
             if kind == "ping":
                 bridge.emit(events.heartbeat(time.monotonic() - started))
+            if kind == "view":
+                from voice.view_context import session_hint
+                bridge.scope = dataclasses.replace(bridge.scope,
+                    viewed_session_id=session_hint(payload.get("session_id")))
 
     async def provider_to_bridge():
         while True:  # a long call moves to a fresh provider session; follow it
@@ -255,7 +274,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 async for event in stream:
                     if current is not bridge.provider:
                         break  # the replaced session's last words: the new one has the call
-                    await bridge.on_provider_event(event)
+                    await _provider_event(bridge, link, event, occurrence_clock=occurrence_clock)
             # The provider closed the session in use (an idle timeout, a server error): a fresh one carries
             # the call on, the client socket staying open; or the call ends as it always did.
             if current is bridge.provider and not await bridge.recover(current):
@@ -289,6 +308,24 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 renew = now
                 await calls.renew_lock(user_id)
             await bridge.fill_idle()
+
+    async def memory_updates():
+        if not native_memory:
+            await asyncio.Future()
+        failures = 0
+        while True:
+            try:
+                await asyncio.wait_for(memory_changed.wait(), 0.5)
+            except TimeoutError:
+                pass
+            memory_changed.clear()
+            try:
+                await asyncio.wait_for(bridge.refresh_idle_memory(), 5)
+                failures = 0
+            except Exception as exc:
+                failures += 1
+                if failures == 1 or failures % 30 == 0:
+                    log.warning("voice memory refresh failed call=%s error=%s", call_id, type(exc).__name__)
 
     async def raise_on(flag: asyncio.Event, ending: CallEnded):
         await flag.wait()
@@ -338,7 +375,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         tasks = [asyncio.create_task(coroutine) for coroutine in (
             provider_to_bridge(), client_to_bridge(), access.watch(),
             raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
-            bridge_to_client(), timers(), pending_cards(),
+            bridge_to_client(), timers(), pending_cards(), memory_updates(),
             updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
             updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
@@ -368,6 +405,37 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                        main_id=main_id, model=config.model)
             if bridge.spoken.user_lines():  # what this call was about, for the next greeting (background)
                 summary.save_after_call(call_id, bridge.spoken.render(bridge.keeper.covered), bridge.keeper.summary)
+
+
+async def _provider_event(bridge, link, event, *, occurrence_clock=None):
+    """Final ASR becomes durable before recall/forwarding can use the words.
+
+    A bounded SQL-only write cannot wait on this event consumer for an ACK.
+    Hang-up drains the write already received, then cancels the Bridge work;
+    it must not cancel an accepted human utterance with a model response.
+    """
+    provider, epoch = getattr(bridge, "provider", None), bridge.session
+    occurred_at = occurrence_clock.observe(event, epoch) if occurrence_clock is not None else None
+    if event.kind == "user_transcript" and event.text.strip():
+        from voice.memory_capture import capture_final
+        writing = asyncio.create_task(asyncio.wait_for(capture_final(
+            bridge.scope, text=event.text, item_id=event.item_id, provider_session=epoch,
+            occurred_at=occurred_at), timeout=3))
+        try:
+            identity = await asyncio.shield(writing)
+        except asyncio.CancelledError:
+            await asyncio.gather(writing, return_exceptions=True)
+            raise
+        except Exception as exc:
+            log.warning("voice call=%s final ASR unavailable error=%s", bridge.call_id, type(exc).__name__)
+            # The normal call-error envelope tells the client this turn is
+            # unavailable. Never tell it, or the model, that saving succeeded.
+            raise CallEnded("error", close=1011, error="internal") from None
+        if bridge.session != epoch or getattr(bridge, "provider", None) is not provider:
+            return  # Keep the old human evidence; do not inject it into a replacement provider session.
+        if identity:
+            link.bind_native_source(event.item_id, event.text, identity)
+    await bridge.on_provider_event(event)
 
 
 def _ending(task: asyncio.Task, call_id: str) -> CallEnded:

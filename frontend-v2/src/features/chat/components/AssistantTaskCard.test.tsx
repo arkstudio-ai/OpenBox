@@ -59,6 +59,16 @@ function openMenu() {
 }
 
 describe("assistant task card", () => {
+  it("keeps a previous failure in history after the task resumes", () => {
+    api.watch.mockReturnValue({ data: { items: [{ ...watched, pending_questions: 1,
+      latest_result: { ...watched.latest_result!, is_current: false } }], has_more: false } })
+    mount()
+    expect(screen.getByText("assistant.status.waiting")).toBeTruthy()
+    expect(screen.queryByText("The build failed on step 3.")).toBeNull()
+    openMenu()
+    fireEvent.click(screen.getByText("assistant.card.showResult"))
+    expect(screen.getByText("Original failure report")).toBeTruthy()
+  })
   it("says what the task is, where it runs and the latest word, without any ids", () => {
     const { container } = mount()
     expect(screen.getByText("Prepare the report")).toBeTruthy()

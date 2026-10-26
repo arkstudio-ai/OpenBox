@@ -90,6 +90,30 @@ async def test_status_includes_current_decision_without_replaying_answered_or_ex
     assert "pending_request" not in (await overview(scope, {}))["items"][0]
 
 
+async def test_task_and_voice_reads_share_current_execution_choices():
+    from assistant.commands import accept_task_command
+    from assistant.reads import get_task
+    from tests.unit.test_assistant_commands import setup_task
+    owner, _, workspace, main, args = await setup_task()
+    accepted = await accept_task_command(**args)
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id)
+    for resolution, quality in (("768p", "low"), ("1080p", "high")):
+        async with get_db_session() as db:
+            row = await db.get(Session, accepted["execution_session_id"])
+            row.model, row.variant = "test/current-model", "high"
+            row.video_model, row.video_resolution, row.quality = "test/current-video", resolution, quality
+        task = await get_task(user_id=owner, workspace_id=workspace, main_id=main.id,
+                              task_id=accepted["task_id"])
+        voice = next(item for item in (await overview(scope, {}))["items"]
+                     if item["task_id"] == accepted["task_id"])
+        choices = task["execution_session"]["current_settings"]
+        assert choices == voice["current_settings"]
+        assert choices["video_resolution"] == resolution and choices["quality"] == quality
+        assert choices["model"] == "test/current-model" and choices["video_model"] == "test/current-video"
+        assert choices["grants_execution"] is False
+        assert choices["scope"] == "future_submissions"
+
+
 async def test_work_pages_bind_actor_and_filters_and_do_not_leak_shared_workspace_members(monkeypatch):
     monkeypatch.setattr(get_config(), "jwt_secret", "test-voice-work-cursor-secret")
     owner, other, workspace = await accounts()

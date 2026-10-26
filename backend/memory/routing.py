@@ -37,6 +37,8 @@ def may_retrieve(utterance: str, scope, config) -> bool:
     True lets the caller start retrieval alongside the routing call and keep the
     result only if routing then asks for memory.
     """
+    if config.enabled("semantic_recall", scope.actor_user_id):
+        return False  # no history is sent outside before semantic read restrictions are resolved
     direct = _direct_input(utterance)
     if _ONLY_CURRENT.search(direct) or _small_talk(direct):
         return False
@@ -71,6 +73,9 @@ def memory_forbidden(utterance: str) -> bool:
 
 
 async def route_context_needs(utterance: str, scope, config, *, recent_context=(), evaluator=None) -> dict:
+    if config.enabled("semantic_recall", scope.actor_user_id):
+        from memory.read_routing import route
+        return await route(utterance, scope, config, recent_context=recent_context, evaluator=evaluator)
     started = time.monotonic()
     direct = _direct_input(utterance)
     limited = redact_text(utterance, config.route_input_max_chars)
@@ -116,7 +121,7 @@ async def route_context_needs(utterance: str, scope, config, *, recent_context=(
                 code = "unknown_choice" if answer["choice"] == "unknown" else "low_confidence" if not confident else "jev_skip" if answer["choice"] == "skip" else "jev_retrieve"
                 # Unsure whether memory helps: a bounded, reranked retrieval costs far
                 # less than the assistant searching on its own in another model turn.
-                unsure = route == "memory" and not confident and answer["choice"] in {read_choice, "unknown"}
+                unsure = route == "memory" and not confident
                 needed = (confident and answer["choice"] == read_choice) or unsure
                 result[route] = {**answer, "threshold": threshold, "needed": needed, "reason_code": code}
             result["reason_code"] = "fallback" if any(result[r]["reason_code"] in {"unknown_choice", "low_confidence"} for r in ("memory", "task")) else "jev_retrieve" if any(result[r]["needed"] for r in ("memory", "task")) else "jev_skip"

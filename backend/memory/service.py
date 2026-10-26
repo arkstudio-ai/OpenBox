@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import String, and_, case, func, literal, or_, select, update
+from sqlalchemy import String, and_, case, func, literal, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -198,6 +198,7 @@ class SourceFacts:
     body_available: dict = field(default_factory=dict)
     # source memo key -> derived occurrence time (memory.source_time).
     occurred: dict = field(default_factory=dict)
+    native_bindings: dict = field(default_factory=dict)
     # Rows read ahead for primary-key reads; the session's identity map holds
     # objects weakly, so without these the reads would go to SQL again.
     held: list = field(default_factory=list)
@@ -237,6 +238,56 @@ async def source_authority(db, access: MemoryAccessScope):
         db.info.pop(_FACTS_KEY, None)
 
 
+@dataclass(frozen=True)
+class _SourcePart:
+    session_id: str
+    message_id: str
+    data: dict
+
+
+async def _prefetch_conversation_evidence(db, access, facts, batch):
+    """One statement for independent source-session, removal and text checks.
+
+    Preserve each original owner predicate. The result is confined to this
+    source-authority pass; it never becomes a cross-request permission cache.
+    """
+    from db.base import JSONType
+    from db.models.session import Session
+    from db.models.agent_event import AgentEvent
+    from db.models.part import Part
+    from memory.session_policy import memory_source_session_clause
+    session_ids = {s.session_id for s in batch if s.session_id} - set(facts.sessions)
+    removal_sessions = {s.session_id for s in batch if s.session_id and s.message_id} - set(facts.removed)
+    part_ids = {s.part_id for s in batch if s.part_id} - set(facts.parts)
+    queries = []
+    if session_ids:
+        queries.append(select(literal("session"), Session.id, Session.project_id, Session.kind,
+            literal(None, type_=JSONType())).where(Session.id.in_(session_ids),
+            Session.user_id == access.user_id, Session.workspace_id == access.workspace_id,
+            Session.is_deleted.is_(False), memory_source_session_clause()))
+    if removal_sessions:
+        queries.append(select(literal("removed"), AgentEvent.session_id, literal(None, type_=String()),
+            literal(None, type_=String()), AgentEvent.payload).where(
+            AgentEvent.session_id.in_(removal_sessions), AgentEvent.user_id == access.user_id,
+            AgentEvent.kind == "surface.messages_removed"))
+    if part_ids:
+        queries.append(select(literal("part"), Part.id, Part.session_id, Part.message_id, Part.data).where(
+            Part.id.in_(part_ids), Part.user_id == access.user_id))
+    removed = {identity: set() for identity in removal_sessions}
+    if queries:
+        statement = union_all(*queries) if len(queries) > 1 else queries[0]
+        for kind, identity, first, second, payload in (await db.execute(statement)).all():
+            if kind == "session":
+                facts.sessions[identity] = (first, second)
+            elif kind == "removed":
+                removed[identity].update(_removed_ids(payload))
+            else:
+                facts.parts[identity] = _SourcePart(first, second, payload)
+    facts.sessions.update({identity: _MISSING for identity in session_ids - set(facts.sessions)})
+    facts.removed.update({identity: frozenset(values) for identity, values in removed.items()})
+    facts.parts.update({identity: None for identity in part_ids - set(facts.parts)})
+
+
 async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
     facts = _facts(db, access)
     if facts is None:
@@ -245,22 +296,39 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
     if not batch:
         return
     ids = {source.id for source in batch}
-    facts.tombstoned_ids.update((await db.scalars(select(MemoryTombstone.object_id).where(
+    # Verified revisions cite flattened original evidence. Load those originals
+    # before checking the batch so they share the same authorization queries.
+    originals = {reference.get("id") for source in batch if source.source_kind == "verified_memory_revision"
+                 for reference in (source.source_metadata or {}).get("dependencies") or []
+                 if isinstance(reference, dict)} - facts.covered - ids
+    originals = sorted(source_id for source_id in originals if isinstance(source_id, str))
+    for start in range(0, len(originals), _IN_BATCH):
+        rows = list((await db.scalars(select(MemorySource).where(
+            MemorySource.id.in_(originals[start:start + _IN_BATCH])))).all())
+        facts.held.extend(rows)
+        batch.extend(row for row in rows if row.source_kind != "verified_memory_revision")
+    ids = {source.id for source in batch}
+    # Keep source deletion separate from a forgotten/superseded fact whose
+    # shared source may still support another fact. These predicates are
+    # unchanged, but share one SQL round trip and one statement snapshot.
+    revoked = union_all(
+        select(literal("source"), MemoryTombstone.object_id, literal(0)).where(
             MemoryTombstone.user_id == access.user_id, MemoryTombstone.workspace_id == access.workspace_id,
-            MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)))).all())
-    session_ids = {source.session_id for source in batch if source.session_id} - set(facts.sessions)
-    if session_ids:
-        from db.models.session import Session
-        from memory.session_policy import memory_source_session_clause
-        # Source policy also fences queued Wiki and extraction work. Checking
-        # only the worker's current Session would admit older isolated input.
-        for session_id, project_id, kind in (await db.execute(select(Session.id, Session.project_id, Session.kind).where(
-                Session.id.in_(session_ids), Session.user_id == access.user_id,
-                Session.workspace_id == access.workspace_id, Session.is_deleted.is_(False),
-                memory_source_session_clause()))).all():
-            facts.sessions[session_id] = (project_id, kind)
-        for session_id in session_ids - set(facts.sessions):
-            facts.sessions[session_id] = _MISSING
+            MemoryTombstone.object_kind == "source", MemoryTombstone.object_id.in_(ids)),
+        select(literal("forgotten"), MemorySourceLink.source_id, MemorySourceLink.source_revision)
+            .join(MemoryTombstone, MemorySourceLink.memory_id == MemoryTombstone.object_id).where(
+                MemorySourceLink.source_id.in_(ids), MemoryTombstone.object_kind == "memory",
+                *access.predicates(MemoryTombstone)),
+        select(literal("superseded"), MemorySourceLink.source_id, MemorySourceLink.source_revision)
+            .join(UserMemory, UserMemory.id == MemorySourceLink.memory_id).where(
+                MemorySourceLink.source_id.in_(ids), MemorySourceLink.revision == UserMemory.revision,
+                MemorySourceLink.relation == "SUPERSEDED", *access.predicates(UserMemory)))
+    for kind, source_id, revision in (await db.execute(revoked)).all():
+        if kind == "source":
+            facts.tombstoned_ids.add(source_id)
+        else:
+            (facts.forgotten if kind == "forgotten" else facts.superseded).add((source_id, revision))
+    await _prefetch_conversation_evidence(db, access, facts, batch)
     project_ids = {source.project_id for source in batch if source.project_id
                    and source.project_id != access.project_id and source.project_id not in access.project_ids
                    } - set(facts.projects)
@@ -270,52 +338,16 @@ async def prefetch_source_facts(db, access: MemoryAccessScope, sources) -> None:
             Project.user_id == access.user_id, Project.workspace_id == access.workspace_id,
             Project.is_deleted.is_(False)))).all())
         facts.projects.update({project_id: project_id in owned for project_id in project_ids})
-    removal_sessions = {source.session_id for source in batch if source.session_id and source.message_id} - set(facts.removed)
-    if removal_sessions:
-        from db.models.agent_event import AgentEvent
-        removed = {session_id: set() for session_id in removal_sessions}
-        for session_id, payload in (await db.execute(select(AgentEvent.session_id, AgentEvent.payload).where(
-                AgentEvent.session_id.in_(removal_sessions), AgentEvent.user_id == access.user_id,
-                AgentEvent.kind == "surface.messages_removed"))).all():
-            removed[session_id].update(_removed_ids(payload))
-        facts.removed.update({session_id: frozenset(ids) for session_id, ids in removed.items()})
-    part_ids = {source.part_id for source in batch if source.part_id} - set(facts.parts)
-    if part_ids:
-        from db.models.part import Part
-        for part in (await db.scalars(select(Part).where(Part.id.in_(part_ids), Part.user_id == access.user_id))).all():
-            facts.parts[part.id] = part
-        for part_id in part_ids - set(facts.parts):
-            facts.parts[part_id] = None
-    facts.forgotten.update((await db.execute(select(MemorySourceLink.source_id, MemorySourceLink.source_revision)
-        .join(MemoryTombstone, MemorySourceLink.memory_id == MemoryTombstone.object_id).where(
-        MemorySourceLink.source_id.in_(ids), MemoryTombstone.object_kind == "memory",
-        *access.predicates(MemoryTombstone)))).all())
-    facts.superseded.update((await db.execute(select(MemorySourceLink.source_id, MemorySourceLink.source_revision)
-        .join(UserMemory, UserMemory.id == MemorySourceLink.memory_id).where(
-        MemorySourceLink.source_id.in_(ids), MemorySourceLink.revision == UserMemory.revision,
-        MemorySourceLink.relation == "SUPERSEDED", *access.predicates(UserMemory)))).all())
     facts.covered.update(ids)
+    native = [source for source in batch if source.source_kind == "native_voice_utterance"]
+    if native:
+        from voice.memory_capture import prefetch_bindings
+        facts.native_bindings.update(await prefetch_bindings(db, access, native))
     documents = {(source.source_metadata or {}).get("document_id") for source in batch
                  if source.source_kind == "document_chunk"}
     if documents:
         from memory.documents.authority import prefetch_revisions
         await prefetch_revisions(db, access, documents)
-    # A verified revision stands on its original evidence (reconciliation's
-    # revision_sources_available reads each by primary key): load those rows
-    # into the session and read their facts with this batch's.
-    originals = {reference.get("id") for source in batch if source.source_kind == "verified_memory_revision"
-                 for reference in (source.source_metadata or {}).get("dependencies") or []
-                 if isinstance(reference, dict)} - facts.covered
-    originals = sorted(source_id for source_id in originals if isinstance(source_id, str))
-    if originals:
-        rows = []
-        for start in range(0, len(originals), _IN_BATCH):
-            rows.extend((await db.scalars(select(MemorySource).where(
-                MemorySource.id.in_(originals[start:start + _IN_BATCH])))).all())
-        facts.held.extend(rows)
-        # Dependencies are flattened, so this goes one level deep.
-        await prefetch_source_facts(db, access, [row for row in rows
-                                                 if row.source_kind != "verified_memory_revision"])
 
 
 _MISSING = object()
@@ -376,6 +408,11 @@ async def _source_is_available(db, access: MemoryAccessScope, source: MemorySour
     if source.source_kind == "document_chunk":
         from memory.documents.authority import source_available
         if not await source_available(db, access, source):
+            return False
+    if source.source_kind == "native_voice_utterance":
+        from voice.memory_capture import source_available
+        if not await source_available(db, access, source,
+                binding=facts.native_bindings.get(source.id) if facts is not None else None):
             return False
     if facts is not None:
         if source.id in facts.tombstoned_ids:
@@ -621,6 +658,8 @@ async def _store_source(db, access: MemoryAccessScope, data: dict) -> MemorySour
 
 
 async def _revision(db, row, *, reason, actor_user_id, sources=None, prior_revision=None, request_id=None):
+    from memory.versions import changed
+    await changed(db, row.user_id)
     versions = {}
     if prior_revision:
         links = (await db.scalars(select(MemorySourceLink).where(MemorySourceLink.memory_id == row.id,
@@ -1039,7 +1078,31 @@ async def edit_note(*, user_id, workspace_id=None, memory_id, summary, expected_
             expected_revision=expected_revision, request_id=request_id)
 
 
-async def edit_note_in_session(db, *, access, memory_id, summary, expected_revision=None, request_id=None):
+async def assertion_times(db, memories):
+    """Use current supporting evidence time, including legacy corrected rows.
+
+    Earlier conversational edits left occurred_at at the first assertion's
+    time. Current revision sources, not that stale field, order later writes.
+    A manual editor change remains ordered by its explicit valid_from time.
+    """
+    rows = list(memories)
+    ids = [row.id for row in rows if row.owner == "SYSTEM_VERIFIED"]
+    evidence = {}
+    if ids:
+        from sqlalchemy import func
+        evidence = dict((await db.execute(select(UserMemory.id, func.max(MemorySource.occurred_at))
+            .join(MemorySourceLink, and_(MemorySourceLink.memory_id == UserMemory.id,
+                MemorySourceLink.revision == UserMemory.revision, MemorySourceLink.relation == "SUPPORTS"))
+            .join(MemorySource, and_(MemorySource.id == MemorySourceLink.source_id,
+                MemorySource.user_id == UserMemory.user_id, MemorySource.workspace_id == UserMemory.workspace_id))
+            .where(UserMemory.id.in_(ids)).group_by(UserMemory.id))).all())
+    return {row.id: _utc((evidence.get(row.id) or row.occurred_at)
+                if row.owner == "SYSTEM_VERIFIED" and (evidence.get(row.id) or row.occurred_at)
+                else row.valid_from or row.created_at) for row in rows}
+
+
+async def edit_note_in_session(db, *, access, memory_id, summary, expected_revision=None, request_id=None,
+                               verified_sources=None):
     if not summary.strip():
         raise ValueError("A memory summary is required")
     _reject_sensitive(summary)
@@ -1050,20 +1113,29 @@ async def edit_note_in_session(db, *, access, memory_id, summary, expected_revis
         return _slim(row)
     if row.status != "ACTIVE" or row.confirmation_status != "CONFIRMED" or not _live(row):
         return None
+    said_at = None
+    if verified_sources:
+        said_at = await _evidence_time(db, verified_sources[1], verified_sources[0])
+        if said_at is None or said_at < (await assertion_times(db, [row]))[row.id]:
+            raise MemoryConflict("Newer memory evidence must not be overwritten by an older statement")
     direct_scope = MemoryAccessScope(access.user_id, access.workspace_id, row.project_id, project_ids=access.project_ids, acl_epoch=access.acl_epoch)
     summary = summary[:MAX_SUMMARY_CHARS]
     source_id = "ms_" + sha256(f"correction|{row.id}|{row.revision}|{summary}".encode()).hexdigest()[:48]
-    source = await _store_source(db, direct_scope, {"id": source_id, "source_kind": "user_correction", "body": summary,
-        "source_metadata": {"memory_id": row.id, "base_revision": row.revision}})
+    sources = ([await _store_source(db, verified_sources[1], item) for item in verified_sources[0]]
+        if verified_sources else [await _store_source(db, direct_scope, {
+            "id": source_id, "source_kind": "user_correction", "body": summary,
+            "source_metadata": {"memory_id": row.id, "base_revision": row.revision}})])
     old_hash, old_revision = row.content_hash, row.revision
     prior = await _cas(db, row, {"value": _truncate_value({**(row.value or {}), "summary": summary}),
-        "owner": "USER_CONFIRMED", "confirmation_status": "CONFIRMED", "confirmation_actor_id": access.user_id,
-        "content_hash": content_hash(summary), "valid_from": _now()})
+        "owner": "SYSTEM_VERIFIED" if verified_sources else "USER_CONFIRMED", "confirmation_status": "CONFIRMED",
+        "confirmation_actor_id": None if verified_sources else access.user_id,
+        "content_hash": content_hash(summary), "valid_from": _now(), "occurred_at": said_at})
     if old_hash != row.content_hash:
         db.add(MemoryTombstone(id=ascending("memory_tombstone"), object_kind="superseded", object_id=f"{row.id}:{old_revision}",
             revision=row.revision, user_id=row.user_id, workspace_id=row.workspace_id, project_id=row.project_id,
             content_hash=old_hash, scope="FACT", purge_status="SUCCEEDED", deleted_at=_now()))
-    await _revision(db, row, reason="user_corrected", actor_user_id=access.user_id, sources=[source], prior_revision=prior, request_id=request_id)
+    await _revision(db, row, reason="automatic_corrected" if verified_sources else "user_corrected",
+        actor_user_id=None if verified_sources else access.user_id, sources=sources, prior_revision=prior, request_id=request_id)
     await enqueue_memory_outbox(db, row)
     return _slim(row)
 

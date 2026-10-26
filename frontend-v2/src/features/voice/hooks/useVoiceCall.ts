@@ -9,6 +9,14 @@ import { useVoiceStore } from "../store"
 /** How long a normal ending's panel stays before closing itself. */
 const AUTO_DISMISS_MS = 8_000
 
+/** Feed only an authorized, currently visible chat, never a persisted bookmark. */
+export function useVoiceView(sessionId: string | null): void {
+  useEffect(() => {
+    useVoiceStore.getState().setViewedSession(sessionId)
+    return () => useVoiceStore.getState().setViewedSession(null)
+  }, [sessionId])
+}
+
 /** The call as the window and the entry button use it, with its actions. Level
  *  readings are left out on purpose: they change twenty times a second. */
 export function useVoiceCall() {

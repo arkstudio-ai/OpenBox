@@ -66,7 +66,7 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
 
     await record_file_change(ctx, args.file_path, operation="write", before=before, after=args.content)
 
-    output = f"{stale_warning}File written successfully ({len(args.content)} bytes)"
+    output = f"{stale_warning}File written successfully: {execution_path} ({len(args.content.encode('utf-8'))} UTF-8 bytes)"
 
     # F6: Auto-format (best-effort)
     formatter = None

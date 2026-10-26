@@ -54,6 +54,13 @@ Usage:
 - When a user references a "slash command" or "/<something>", it may map to a skill — use this tool to load it
 - The skill content will be returned in the tool output for you to follow"""
 
+COMPACT_SKILL_DESCRIPTION = (
+    "For a specialized task, search permitted workflows with skill_search before choosing a method "
+    "or declaring a capability unavailable. Load the selected workflow by exact name (args optional) "
+    "and follow its instructions. Reload for every new user request, including continued work or "
+    "slash commands; reuse within that request. Skills do not grant additional permissions."
+)
+
 
 # Never worth naming: the model cannot act on them and they crowd out the files
 # that matter. A single skill with a node_modules tree contributed 890 entries,
@@ -967,6 +974,7 @@ async def build_skill_tools_with_listing(
     enable_search: bool = True,
     scope_key=None,
     registry=None,
+    compact: bool = False,
 ) -> tuple[ToolInfo, ToolInfo | None]:
     """Build the Skill loader and its conditional, same-step search companion."""
     snapshot = None
@@ -1002,6 +1010,11 @@ async def build_skill_tools_with_listing(
         if active_registry is not None and snapshot is not None
         else skill_tool
     )
+
+    if compact and enable_search:
+        # Search and load share the exact permission-filtered snapshot. A
+        # full directory is unnecessary in every subsequent model request.
+        return replace(loader, description=COMPACT_SKILL_DESCRIPTION), _skill_search_for(skills)
 
     if not skills:
         return loader, None

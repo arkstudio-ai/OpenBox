@@ -35,6 +35,18 @@ _SENTENCE_END = "。！？!?；;…"
 _CJK = re.compile(r"[　-〿㐀-鿿＀-￯]")
 
 
+def without_salutation(text: str, address: str | None) -> str:
+    """Remove only a leading configured address from a background note.
+
+    Reports retain their original wording in the written conversation/audit.
+    The ongoing call has already greeted the user. A name inside a factual
+    sentence, task title or quotation must remain unchanged.
+    """
+    if not address or not address.strip():
+        return text
+    return re.sub(r"^\s*" + re.escape(address.strip()) + r"\s*[,，:：]\s*", "", text, count=1)
+
+
 def clean(text: str | None, lang: str = "zh", limit: int = LIMIT) -> str:
     if not text or not text.strip():
         return ""

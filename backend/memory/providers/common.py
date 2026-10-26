@@ -28,7 +28,8 @@ def jev_key() -> str:
 
 def response_json(response):
     if response.status_code >= 400:
-        code = "rate_limited" if response.status_code == 429 else "authentication_error" if response.status_code in (401, 403) else "provider_error"
+        code = ("region_unavailable" if response.status_code == 451 else "rate_limited" if response.status_code == 429
+                else "authentication_error" if response.status_code in (401, 403) else "provider_error")
         raise MemoryProviderError(code, response.status_code)
     try:
         data = response.json()
@@ -39,25 +40,23 @@ def response_json(response):
     return data
 
 
-# One keep-alive client per event loop and timeout: a recall makes several
-# provider calls (routing, embedding, the index, rerank) and used to open a new
-# TCP/TLS connection for each. Keyed by the current httpx.AsyncClient too, so a
-# test that replaces it gets its own client. A new connection costs 250-400 ms
-# per provider; idle ones stayed open for at least two minutes when measured,
-# and one the server has closed is noticed and replaced before reuse. Turns are
-# often more than half a minute apart.
+# Provider stages share connections, not timeouts or authorization headers.
+# A read's short timeout must not isolate it from a connection already opened
+# by extraction/verification. Each request supplies its own timeout. The pool
+# is confined to its event loop and proxy policy; HTTPX isolates origins.
 KEEPALIVE_SECONDS = 90.0
 _SHARED: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = weakref.WeakKeyDictionary()
 
 
-def shared_client(timeout: float) -> httpx.AsyncClient:
-    """A pooled client for provider calls; callers never close it."""
+def shared_client(*, trust_env: bool = False) -> httpx.AsyncClient:
+    """A pooled client; callers set request timeouts and never close it."""
     clients = _SHARED.setdefault(asyncio.get_running_loop(), {})
-    key = (httpx.AsyncClient, timeout)
+    key = (httpx.AsyncClient, trust_env)
     client = clients.get(key)
     if client is None or getattr(client, "is_closed", False):
         client = clients[key] = httpx.AsyncClient(
-            timeout=timeout, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_SECONDS))
+            timeout=20, trust_env=trust_env,
+            limits=httpx.Limits(keepalive_expiry=KEEPALIVE_SECONDS))
     return client
 
 

@@ -6,7 +6,7 @@ import { wikiApi, type WikiSummary } from "../wiki-api"
 import { documentsApi, type KnowledgeDocument } from "../wiki/documents-api"
 import { matches } from "./text"
 
-export const KNOWLEDGE_VIEWS = ["overview", "memories", "topics", "files"] as const
+export const KNOWLEDGE_VIEWS = ["overview", "memories", "topics", "files", "experiences"] as const
 export type KnowledgeView = (typeof KNOWLEDGE_VIEWS)[number]
 
 /** Unknown values — including the retired management views (reviews,

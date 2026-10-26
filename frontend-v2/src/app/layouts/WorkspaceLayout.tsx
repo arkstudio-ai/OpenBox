@@ -7,7 +7,7 @@ import { MemoryPauseToggle } from "@/features/memory"
 import { useInboxLiveEvents } from "@/features/inbox"
 import { AssistantTopbarActions, QuestionDock, useAssistantSidebarUnread, useSessionQuery } from "@/features/chat"
 import { useResourceMention } from "@/features/resources"
-import { VoiceCallDock } from "@/features/voice"
+import { VoiceCallDock, useVoiceView } from "@/features/voice"
 import { AssistantFloatingEntry } from "./AssistantFloatingEntry"
 import { AssistantPageActions } from "./AssistantPageActions"
 import { Spinner } from "@/shared/ui/Spinner"
@@ -70,6 +70,7 @@ function useWorkspaceSurface() {
 export default function WorkspaceLayout() {
   const { chatSessionId, isAssistant, isSettings, isAdmin, isBilling, isObservation, isDesktopPage, ownSessionReady, assistantBadgeVisible } = useWorkspaceSurface()
   const assistantUnread = useAssistantSidebarUnread(isAssistant, assistantBadgeVisible)
+  useVoiceView(ownSessionReady && !isAssistant && !isObservation ? chatSessionId : null)
   const panelOpen = usePanelStore((s) => s.open)
   const developerMode = useAppearanceStore((s) => s.developerMode)
   // Without developer mode the panel has one thing to show, so the toggle
@@ -100,7 +101,7 @@ export default function WorkspaceLayout() {
     if (!userId) return
     void http
       .get<UserPreferences>("/api/auth/me/preferences")
-      .then((prefs) => useAppearanceStore.getState().hydrateFromServer(prefs))
+      .then((prefs) => useAppearanceStore.getState().hydrateFromServer(prefs, userId))
       .catch(() => undefined)
   }, [userId])
 

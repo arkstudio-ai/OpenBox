@@ -8,7 +8,7 @@
   // Title generation runs in the background alongside the reply and never delays its stream.
   "model": "openai/gemini-3.8-flash",
 
-  // Lightweight model for MCP tool filtering (uses same provider gateway).
+  // Lightweight model for MCP tool filtering (uses its declared provider).
   // A fast/cheap model that picks relevant tools from large MCP tool lists.
   // Leave empty to use the default model.
   "mcp_filter_model": "openai/qwen3.8-flash",
@@ -17,6 +17,11 @@
   // Omit or leave empty to follow the user's selected chat model.
   // Uses the same provider/<model> routing and credentials as ordinary chat.
   "suggestion_model": "",
+
+  // Load workflow tools on demand; execution permissions remain unchanged.
+  // Set mode to legacy_eager (or OPENBOX_TOOL_EXPOSURE_MODE=legacy_eager)
+  // to roll back exposure without migrating data.
+  "tool_exposure": { "mode": "portable" },
 
   // Models the frontend offers in its picker. When empty, only "model" above
   // is offered. Ids carry the provider prefix ("openai/") because that is what
@@ -32,12 +37,14 @@
     { "id": "openai/gemini-3.8-flash", "name": "Gemini 3.8 Flash", "max_tokens": 64000, "context_limit": 1000000, "vision": true },
     { "id": "openai/deepseek-v4-pro", "name": "DeepSeek V4 Pro", "max_tokens": 64000, "context_limit": 1048576, "vision": false },
     { "id": "openai/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "max_tokens": 64000, "context_limit": 1048576, "vision": false },
-    { "id": "openai/qwen3.8-max", "name": "Qwen3.8 Max", "max_tokens": 131072, "context_limit": 1000000, "vision": true },
-    { "id": "openai/qwen3.8-flash", "name": "Qwen3.8 Flash", "max_tokens": 131072, "context_limit": 1000000, "vision": true }
+    { "id": "openai/qwen3.8-max", "provider": "bailian", "name": "Qwen3.8 Max", "max_tokens": 131072, "context_limit": 1000000, "vision": true },
+    { "id": "openai/qwen3.8-flash", "provider": "bailian", "name": "Qwen3.8 Flash", "max_tokens": 131072, "context_limit": 1000000, "vision": true }
   ],
 
   // Provider-specific config: api_key, base_url, extra options
-  // Key = provider name (matches model prefix before "/")
+  // Models with an explicit "provider" use that slot; otherwise use their prefix.
+  // Qwen's openai/ prefix selects the wire format, while bailian supplies its
+  // official endpoint and credential. It must not inherit the UEE gateway key.
   "provider": {
     "anthropic": {
       "api_key": "{env:ANTHROPIC_API_KEY}",
@@ -46,6 +53,10 @@
     "openai": {
       "api_key": "{env:OPENAI_API_KEY}",
       "base_url": null
+    },
+    "bailian": {
+      "api_key": "{env:BAILIAN_KEY}",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
     },
     "bossip": {
       "api_key": "{env:BOSSIP_API_KEY}",
@@ -357,9 +368,16 @@
     "max_title_chars": 30
   },
 
+  // Independent verification of durable account settings, not the recall router.
+  "memory": {
+    "setting_verify_model": "openai/qwen3.8-max"
+  },
+
   // Main-assistant coordination turns. Long work belongs in Task Sessions.
   // Limits freeze per input; provider retries and compaction share the count.
   "assistant": {
+    // Multimodal comparison for revised proposals only; ordinary recall keeps its router model.
+    "revision_review_model": "openai/qwen3.8-max",
     "ordinary": { "wall_time_seconds": 180, "model_requests": 12, "tool_calls": 24 },
     "report_only": { "wall_time_seconds": 120, "model_requests": 8, "tool_calls": 16 }
   },

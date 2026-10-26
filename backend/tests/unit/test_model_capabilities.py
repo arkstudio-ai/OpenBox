@@ -78,7 +78,9 @@ async def test_text_only_model_gets_a_note_instead_of_images() -> None:
         "content": "what is on screen?",
         "_images": [{"asset_id": "a1", "key": "k1", "mime": "image/png"}],
     }]
-    out = await resolve_images(messages, "openai/deepseek-v4-flash")
+    pixels = {"old": "data:image/png;base64,AAA"}
+    out = await resolve_images(messages, "openai/deepseek-v4-flash", image_inputs=pixels)
+    assert pixels == {}
 
     assert "_images" not in out[0], "the reference must not reach a text-only model"
     assert "cannot read images" in out[0]["content"]
@@ -97,7 +99,9 @@ async def test_vision_model_keeps_its_image_references() -> None:
     }]
     # Pre-seed the cache so the test never reaches OSS.
     loop._IMAGE_CACHE["a2"] = "data:image/png;base64,AAA"
-    out = await loop.resolve_images(messages, "openai/gpt-5.6-luna")
+    pixels = {"old": "data:image/png;base64,AAA"}
+    out = await loop.resolve_images(messages, "openai/gpt-5.6-luna", image_inputs=pixels)
+    assert pixels == {"a2": "data:image/png;base64,AAA"}
 
     assert out[0]["_images"] == ["data:image/png;base64,AAA"]
     assert "cannot read images" not in out[0]["content"]

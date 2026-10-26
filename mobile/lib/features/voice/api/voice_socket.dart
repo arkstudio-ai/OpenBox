@@ -104,6 +104,12 @@ class VoiceSocket {
     if (!_closed) _channel.sink.add(jsonEncode({'type': 'stop'}));
   }
 
+  void sendView(String? sessionId) {
+    if (!_closed) {
+      _channel.sink.add(jsonEncode({'type': 'view', 'session_id': sessionId}));
+    }
+  }
+
   /// Our side is done; no close callback follows. Nothing is awaited: a
   /// server that never answers the close handshake must not hold the call.
   void close() {

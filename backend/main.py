@@ -148,6 +148,25 @@ async def _shutdown_trajectory(mode: str) -> None:
             log.warning(f"Error stopping embedded trajectory worker: {type(e).__name__}")
 
 
+async def _stop_background_services(**services) -> None:
+    """Request every consumer to stop before waiting for any one to drain.
+
+    A slow warm-up or client shutdown must not leave this retired process
+    claiming new work while its replacement is already serving requests.
+    Each service retains its own lease-safe shutdown policy.
+    """
+    async def stop(name, operation):
+        log.info("Stopping background service %s", name)
+        try:
+            await operation
+        except Exception:
+            log.exception("Error stopping background service %s", name)
+        else:
+            log.info("Stopped background service %s", name)
+
+    await asyncio.gather(*(stop(name, operation) for name, operation in services.items()))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from core.config import get_config
@@ -160,6 +179,16 @@ async def lifespan(app: FastAPI):
     warmup_started = time.monotonic()
     await asyncio.to_thread(importlib.import_module, "litellm")
     log.info("Model runtime ready warmup_ms=%.1f", (time.monotonic() - warmup_started) * 1000)
+
+    from agent.tool_payload import _proxy_encoding
+    tokenizer_started = time.monotonic()
+    encoding = await asyncio.to_thread(_proxy_encoding)
+    log.info("Context tokenizer ready mode=%s warmup_ms=%.1f",
+             "local_vocabulary" if encoding is not None else "estimate",
+             (time.monotonic() - tokenizer_started) * 1000)
+
+    from core.runtime_gc import freeze_startup_heap
+    freeze_startup_heap()
 
     _init_infrastructure(config)
     _init_agent()
@@ -286,35 +315,38 @@ async def lifespan(app: FastAPI):
         await pricing_rules.start()
     except Exception as e:
         log.warning(f"Pricing rules unavailable at startup (base rates.json applies): {e}")
+    from memory.providers.configured_read import schedule_transport_warmup
+    memory_transport_warmup = schedule_transport_warmup(config.memory)
     yield
-    await pricing_rules.stop()
     log.info("OpenBox shutting down, cleaning up...")
-    await stop_fold_warmup()
-    from memory.providers.common import close_shared_clients
-    await close_shared_clients()
-    await memory_wiki_worker.stop()
-    await wiki_organization_worker.stop()
-    await memory_document_worker.stop()
-    await asset_description_worker.stop()
-    await memory_index_worker.stop()
-    await memory_extraction_worker.stop()
-    await inbox_janitor.stop()
-    await push_worker.stop()
-    await question_worker.stop()
-    await agent_recovery_service.stop()
-    await platform_plugin_watcher.stop()
-    await desktop_activation_service.stop()
-
+    if memory_transport_warmup is not None:
+        memory_transport_warmup.cancel()
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
         from sandbox.wuying_desktop_service import wuying_desktop_service
         wuying_desktop_service.stop_patrol()
 
-    # Stop cron scheduler
-    try:
-        from cron.service import cron_service
-        await cron_service.stop()
-    except Exception as e:
-        log.warning(f"Error stopping cron scheduler: {e}")
+    from cron.service import cron_service
+    await _stop_background_services(
+        recovery=agent_recovery_service.stop(),
+        questions=question_worker.stop(),
+        cron=cron_service.stop(),
+        desktop_activation=desktop_activation_service.stop(),
+        plugins=platform_plugin_watcher.stop(),
+        pricing=pricing_rules.stop(),
+        fold_warmup=stop_fold_warmup(),
+        transport_warmup=asyncio.gather(
+            *([memory_transport_warmup] if memory_transport_warmup is not None else []),
+            return_exceptions=True,
+        ),
+        wiki=memory_wiki_worker.stop(),
+        wiki_organization=wiki_organization_worker.stop(),
+        documents=memory_document_worker.stop(),
+        asset_descriptions=asset_description_worker.stop(),
+        memory_index=memory_index_worker.stop(),
+        memory_extraction=memory_extraction_worker.stop(),
+        inbox_janitor=inbox_janitor.stop(),
+        push=push_worker.stop(),
+    )
 
     # Abort active agent loops
     from session.status import abort_all, active_session_ids
@@ -334,6 +366,10 @@ async def lifespan(app: FastAPI):
     # Execution leases recover interrupted runs. Never mark every busy
     # session as failed here: other workers may still be executing them.
 
+    # Workers and agent loops may still own pooled memory requests until
+    # they have drained; closing the pool first can strand their shutdown.
+    from memory.providers.common import close_shared_clients
+    await close_shared_clients()
     from agent.gateway import close_clients
     await close_clients()
 
@@ -449,6 +485,8 @@ def create_app() -> FastAPI:
     from memory.wiki.exchange_api import router as wiki_exchange_router
     from memory.wiki.workflow_api import router as wiki_workflow_router
     application.include_router(memory_search_router)
+    from memory.experience_api import router as memory_experience_router
+    application.include_router(memory_experience_router)
     application.include_router(memory_debug_router)
     application.include_router(memory_backfill_router)
     application.include_router(memory_wiki_router)

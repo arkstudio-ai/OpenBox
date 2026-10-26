@@ -3,6 +3,9 @@
 The marker travels the real path: accept_turn's origin_ref → the Inbox item →
 the claimed user message's text part → project_main_messages.
 """
+from types import SimpleNamespace
+
+import pytest
 from sqlalchemy import select
 
 from agent import inbox
@@ -20,6 +23,43 @@ from tool.tool import ToolContext
 from voice.prompt import VOICE_TURN_BLOCK, voice_turn_block
 
 VOICE = "assistant:voice-turn"
+
+
+@pytest.mark.parametrize("policy", ["allowed", "current_only", "no_history", "uncertain"])
+async def test_semantic_recall_keeps_current_voice_revision_without_legacy_history(monkeypatch, policy):
+    from core.config import get_config
+    from assistant.service import ensure_main_session
+    from tests.unit.test_assistant_foundation import accounts
+
+    config = get_config().model_copy(deep=True)
+    config.memory.semantic_recall = True
+    config.memory.allowed_user_ids = []
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    context = {"heard": "改用这张照片，先给我看新脚本，不生成视频。",
+               "request": "修改原任务的素材和规划，先展示脚本。",
+               "call": ["用户：以前的通话内容"], "summary": "以前的摘要",
+               "revision_request": {"request_id": "pending-plan", "version": "a" * 64,
+                                    "session_id": "same-task"}}
+    ctx, lease, _, _ = await claimed(owner, workspace, main, client_id="voice-revision",
+        text=context["heard"], voice=True, context=context)
+    ctx.memory_turn = SimpleNamespace(read_policy=policy, explicit_read=False)
+    try:
+        messages = await projected(ctx)
+        [block] = [message for message in messages if message.id == VOICE]
+        text = block.parts[0]["text"]
+        assert "pending-plan" in text and "same-task" in text and "requests.revise" in text
+        assert "修改原任务的素材和规划，先展示脚本" in text
+        assert any("先给我看新脚本，不生成视频" in str(message.parts) for message in messages)
+        assert "requests.answer" not in text
+        assert ("以前的通话内容" in text) == (policy == "allowed")
+        assert ("以前的摘要" in text) == (policy == "allowed")
+        assert not set(block_ids(messages)) & {"assistant:work-directory", "assistant:recent-assets",
+                                              "assistant:recent-call", "assistant:pending-decisions"}
+        assert VOICE not in block_ids(await projected(ctx, for_compaction=True))
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def claimed(owner, workspace, main, *, client_id, text, voice, context=None):
@@ -135,8 +175,9 @@ async def test_a_voice_request_brings_the_users_words_and_the_calls_last_lines()
         assert "grant no authority" in text  # context, never a new instruction
     finally:
         await lease.release(session_status="idle")
-    assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []}) == VOICE_TURN_BLOCK.format(
-        length="be concise and leave space for conversation")
+    assert voice_turn_block(None) == voice_turn_block({"heard": "", "call": []})
+    assert voice_turn_block(None).startswith(VOICE_TURN_BLOCK.format(
+        length="be concise and leave space for conversation"))
     # The user asked for fuller answers on the phone (Settings → 语音通话).
     assert "include the useful details the user asked for" in voice_turn_block({"detail": "detailed"})
 

@@ -198,12 +198,15 @@ class ProfileBody(Body):
     address: str | None = Field(default=None, max_length=80)
     tone: Literal["warm", "professional", "lively"] | None = None
     length: Literal["brief", "balanced", "detailed"] | None = None
+    language: str | None = Field(default=None, max_length=20)
     emoji: bool | None = None
     persona: str | None = Field(default=None, max_length=600)
     call_recap: bool | None = None
     call_reports: bool | None = None
     call_detail: Literal["brief", "detailed"] | None = None
     business: str | None = Field(default=None, max_length=80)
+    expected_revision: int | None = Field(default=None, ge=0)
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class IntroBody(Body):
@@ -237,8 +240,13 @@ async def get_learned(current_user: dict = Depends(get_current_user)):
 @router.put("/profile")
 async def set_profile(body: ProfileBody, current_user: dict = Depends(get_current_user)):
     from assistant import profile
+    from memory.service import MemoryConflict
     try:
-        await profile.save(current_user["user_id"], body.model_dump(exclude_unset=True))
+        patch = body.model_dump(exclude_unset=True, exclude={"expected_revision", "operation_id"})
+        await profile.save(current_user["user_id"], patch, expected_revision=body.expected_revision,
+                           operation_id=body.operation_id)
+    except MemoryConflict:
+        raise HTTPException(409, {"code": "ASSISTANT_PROFILE_CONFLICT", "message": "设置已更新，请重新读取后再修改"})
     except ValueError:
         raise HTTPException(422, _INVALID_PROFILE)
     return await profile.load_view(current_user["user_id"])

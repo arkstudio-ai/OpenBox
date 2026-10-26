@@ -33,4 +33,4 @@ async def search(body: SearchBody, current_user: dict = Depends(get_current_user
         raise HTTPException(422, str(exc)) from exc
     # Internal intermediate candidates are for the ACL-revalidated debug
     # store; only the final, freshly checked context crosses this endpoint.
-    return {key: value for key, value in bundle.items() if key != 'candidates'}
+    return {key: value for key, value in bundle.items() if key != 'candidates' and not key.startswith('_')}

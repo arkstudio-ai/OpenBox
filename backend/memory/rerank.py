@@ -9,9 +9,10 @@ from memory.redaction import redact_text
 async def rerank(query: str, documents: list[str], config, *, client=None) -> tuple[list[tuple[int, float]], dict]:
     if len(documents) > config.rerank_max_documents:
         raise ValueError("rerank budget exceeded")
-    client = client or shared_client(config.provider_timeout_seconds)
+    client = client or shared_client(trust_env=config.provider_trust_env)
     try:
-        response = await client.post(config.rerank_url, headers={"Authorization": "Bearer " + bailian_key()},
+        response = await client.post(config.rerank_url, timeout=config.provider_timeout_seconds,
+            headers={"Authorization": "Bearer " + bailian_key()},
             json={"model": config.rerank_model, "input": {"query": redact_text(query, len(query)),
                   "documents": [redact_text(text, len(text)) for text in documents]},
                   "parameters": {"top_n": len(documents), "return_documents": False}})

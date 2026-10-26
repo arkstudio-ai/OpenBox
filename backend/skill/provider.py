@@ -18,6 +18,9 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -26,6 +29,22 @@ from core.log import create_logger
 from core.markdown import MAX_DESCRIPTION_CHARS, clip_description, parse_frontmatter
 
 log = create_logger("skill.provider")
+
+_catalogue_observation = ContextVar("skill_catalogue_observation", default=None)
+
+
+@contextmanager
+def catalogue_observation(sandbox, availability, snapshot):
+    """Share this resolution's already-observed directory, including an outage.
+
+    This is not a TTL cache: a subsequent resolution or tool load obtains a
+    fresh observation. The exact client identity prevents cross-tenant reuse.
+    """
+    token = _catalogue_observation.set((sandbox, availability, deepcopy(snapshot)))
+    try:
+        yield
+    finally:
+        _catalogue_observation.reset(token)
 
 _PROVIDER_ID = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
@@ -1264,10 +1283,16 @@ class SandboxCatalogueSkillProvider:
     async def _read(self, scope: ScopeKey) -> _RemoteState:
         self._check_scope(scope)
         get_state = getattr(self._sandbox, "get_catalogue_projection_state", None)
-        if callable(get_state):
-            state = await get_state()
-            availability = getattr(state, "availability", "unavailable")
-            payload = getattr(state, "snapshot", None)
+        observed = _catalogue_observation.get()
+        if observed is not None and observed[0] is not self._sandbox:
+            observed = None
+        if observed is not None or callable(get_state):
+            if observed is not None:
+                _, availability, payload = observed
+            else:
+                state = await get_state()
+                availability = getattr(state, "availability", "unavailable")
+                payload = getattr(state, "snapshot", None)
             if availability not in {"available", "stale"} or not isinstance(payload, dict):
                 previous = self._states.get(scope.user_scope())
                 if previous is not None:

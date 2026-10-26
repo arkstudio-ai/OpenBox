@@ -25,14 +25,16 @@ For partial changes keep ALL unrelated facts, qualifiers and uncertainty verbati
 non-overlapping substring replacements in the existing summary, not a rewritten whole note.
 Do not remove other clauses, invent unspecified times or turn a conditional fact unconditional.
 If several existing memories repeat the changed fact, revise each affected memory.
-A proposal that adds a different fact and leaves every existing memory true (for example
-another weekly activity on the same broad topic) is separate: list its index in "separate",
-even when it shares a fact_key with an existing memory. A proposal used in a revision is
-never separate, and one that only repeats an existing memory is neither.
-Return ONLY {"revisions":[{"memory_id":"an input memory id","edits":[
-{"old":"unique exact substring of that summary","new":"replacement text",
-"proposal_indexes":[0]}]}],"separate":[1]}. Maximum 16 memories and 8 edits per memory.
-Indices identify supporting input proposals. Use empty arrays when nothing applies.
+Classify EACH input proposal exactly once: action="revise" when it changes existing facts,
+"separate" when it adds a fact while leaving every existing fact true, or "unchanged" when
+it only repeats a fact or needs no change. A broad shared fact_key alone is not a conflict.
+Equivalent wording is unchanged: do not rewrite a memory solely to paraphrase it or add
+an instruction to use that same fact. Preserve stated temporal qualifiers in actual changes.
+Return ONLY {"outcomes":[{"proposal_index":0,"action":"revise","changes":[
+{"memory_id":"input reference","old":"unique exact substring","new":"replacement text"}]}]}.
+For revise, changes must be nonempty and cover ALL affected copies. For separate/unchanged,
+changes must be empty. Do not include unchanged memories in changes. One proposal cannot
+be both separate and revised. Return outcomes in input proposal order, exactly one per proposal.
 Never edit IDs, fact keys, access, ownership or publication state.
 """
 
@@ -136,10 +138,63 @@ class MemoryReconciler:
         self.adapter = adapter or ConfiguredWikiModel(config)
 
     async def plan(self, *, existing, proposals, sources, model):
-        return await self.adapter.generate_data(model=model, system=SYSTEM,
+        # Model-facing IDs are small, request-local references. Database IDs
+        # and hashes are neither semantic evidence nor safe to ask a model to
+        # reproduce (redaction may also change a digit run inside an ID).
+        aliases = {f"m{i}": key for i, key in enumerate(existing)}
+        rows = [{**{key: value for key, value in existing[identity].items()
+                    if key not in {"id", "revision", "project_id"}},
+                 "id": alias, "scope": "project" if existing[identity].get("project_id") else "personal"}
+                for alias, identity in aliases.items()]
+        change = {"type": "object", "additionalProperties": False,
+            "required": ["memory_id", "old", "new"], "properties": {
+                "memory_id": {"type": "string", "enum": list(aliases)},
+                "old": {"type": "string", "minLength": 1},
+                "new": {"type": "string", "minLength": 1, "maxLength": 2000}}}
+        schema = {"type": "object", "additionalProperties": False, "required": ["outcomes"],
+            "properties": {"outcomes": {"type": "array", "minItems": len(proposals), "maxItems": len(proposals),
+                "items": {"type": "object", "additionalProperties": False,
+                    "required": ["proposal_index", "action", "changes"], "properties": {
+                        "proposal_index": {"type": "integer", "enum": list(range(len(proposals)))},
+                        "action": {"type": "string", "enum": ["revise", "separate", "unchanged"]},
+                        "changes": {"type": "array", "maxItems": 128, "items": change}}}}}}
+        value, usage = await self.adapter.generate_data(model=model, system=SYSTEM,
             sources=[SimpleNamespace(text=item["body"]) for item in sources],
-            data={"existing_memories": list(existing.values()), "proposals": proposals,
-                  "new_user_sources": [item["body"] for item in sources]})
+            data={"existing_memories": rows, "proposals": proposals,
+                  "new_user_sources": [item["body"] for item in sources]},
+            schema=schema, schema_name="memory_reconciliation")
+        if (not isinstance(value, dict) or set(value) != {"outcomes"}
+                or not isinstance(value["outcomes"], list) or len(value["outcomes"]) != len(proposals)):
+            raise MemoryProviderError("memory_revision_invalid_response")
+        revisions, separate = {}, []
+        for index, outcome in enumerate(value["outcomes"]):
+            if (not isinstance(outcome, dict) or set(outcome) != {"proposal_index", "action", "changes"}
+                    or type(outcome["proposal_index"]) is not int or outcome["proposal_index"] != index
+                    or not isinstance(outcome["changes"], list)):
+                raise MemoryProviderError("memory_revision_invalid_response")
+            action, changes = outcome["action"], outcome["changes"]
+            if action in ("separate", "unchanged") and not changes:
+                if action == "separate":
+                    separate.append(index)
+                continue
+            if action != "revise" or not 1 <= len(changes) <= 128:
+                raise MemoryProviderError("memory_revision_invalid_response")
+            for change in changes:
+                if (not isinstance(change, dict) or set(change) != {"memory_id", "old", "new"}
+                        or not isinstance(change["memory_id"], str) or change["memory_id"] not in aliases
+                        or not isinstance(change["old"], str) or not isinstance(change["new"], str)):
+                    raise MemoryProviderError("memory_revision_invalid_target")
+                identity = aliases[change["memory_id"]]
+                edits = revisions.setdefault(identity, {})
+                # Two supported proposals may jointly support the same exact
+                # change. Merge its provenance, never overlap/rewrite spans.
+                edit = edits.setdefault((change["old"], change["new"]), {
+                    "old": change["old"], "new": change["new"], "proposal_indexes": []})
+                if index not in edit["proposal_indexes"]:
+                    edit["proposal_indexes"].append(index)
+        return {"revisions": [{"memory_id": identity, "edits": list(edits.values())}
+                              for identity, edits in revisions.items()], "separate": separate}, usage
+
 
 
 async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconciler=None, verifier=None,
@@ -147,20 +202,34 @@ async def prepare_reconciliation(frozen, proposals, grounding, config, *, reconc
     """``before_call`` runs ahead of each provider request; the worker uses it to stop on a forget."""
     from core.config import get_config
     supported = grounding.get("supported", [])
-    existing = eligible_memories(frozen, proposals)
-    if not existing or not supported:
+    # Only independently supported proposals may influence reconciliation.
+    # Keep their original positions for proof/commit; an unsupported proposal
+    # must not appear as a tempting but invalid separate/revision choice.
+    positions = [i for i, proposal in enumerate(proposals) if canonical_hash(proposal) in supported]
+    admitted = [proposals[i] for i in positions]
+    existing = eligible_memories(frozen, admitted)
+    if not existing or not admitted:
         return None, {}
     model = config.extract_model or get_config().model
     if before_call:
         await before_call()
     value, usage = await (reconciler or MemoryReconciler(config)).plan(
-        existing=existing, proposals=proposals, sources=frozen.sources, model=model)
+        existing=existing, proposals=admitted, sources=frozen.sources, model=model)
+    # Validate the model's local indexes before translating, never coerce an
+    # unknown reference or boolean into an authorized proposal index.
+    local_plans = validate_revisions(value, existing, admitted, supported)
+    local_separate = validate_separate(value, local_plans, admitted, supported)
+    value = {"revisions": [{"memory_id": plan["memory_id"], "edits": [
+        {**edit, "proposal_indexes": [positions[i] for i in edit["proposal_indexes"]]}
+        for edit in plan["edits"]]} for plan in local_plans],
+        "separate": [positions[i] for i in local_separate]}
     plans = validate_revisions(value, existing, proposals, supported)
     separate = validate_separate(value, plans, proposals, supported)
     validate_revision_times(plans, existing, frozen, proposals)
     validate_revision_scopes(plans, existing, frozen, proposals)
     if plans:
         items = [{"claim": plan["summary"], "previous_memory": existing[plan["memory_id"]]["summary"],
+            "edits": [{"old": edit["old"], "new": edit["new"]} for edit in plan["edits"]],
             "changes": [proposals[i]["summary"] for i in plan["proposal_indexes"]],
             "sources": list(dict.fromkeys(frozen.sources[index]["body"]
                 for i in plan["proposal_indexes"] for index in proposals[i]["source_indexes"]))} for plan in plans]

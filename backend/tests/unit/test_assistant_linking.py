@@ -384,6 +384,31 @@ async def test_only_persisted_human_tool_authority_can_link(origin):
             ctx = ToolContext(session_id=main.id, user_id=owner, workspace_id=scope["workspace_id"],
                 message_id=message.id, part_id=part.id, agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation)
             tool = next(tool for tool in assistant_tools if tool.id == "tasks.link_existing")
+            await inbox.accept_inbox_item(session_id=session.id, user_id=owner,
+                prompt="The original task requirements", delivery="followup", origin="human",
+                origin_ref={"actor_user_id": owner})
+            historical_lease = await reserve_run(session.id, owner)
+            try:
+                historical_batch = await inbox.claim_inbox_boundary(historical_lease, step=1, include_next_turn=True)
+                historical_id = historical_batch.messages[0].id
+            finally:
+                await historical_lease.release(session_status="idle")
+            args = await inspected(scope, session)
+            invalid = await tool.execute(LinkArgs(session_id=session.id, expected_version=args["expected_version"],
+                source_message_ids=[historical_id, *source.source_message_ids]), ctx)
+            error = json.loads(invalid.output)
+            assert invalid.metadata["failure_code"] == "ASSISTANT_SOURCE_UNVERIFIED"
+            assert error["details"] == {
+                "unavailable_source_message_ids": [historical_id],
+                "verified_source_message_ids": list(source.source_message_ids),
+                "command_applied": False,
+            }
+            async with get_db_session() as db:
+                assert await db.scalar(select(AssistantTask.id).where(AssistantTask.user_id == owner)) is None
+                assert await db.scalar(select(AssistantCommand.id).where(AssistantCommand.actor_user_id == owner)) is None
+            # An explicit retry with only the validated original instruction
+            # must still pass all normal command/lease/version checks.
+            args = await inspected(scope, session)
             result = await tool.execute(LinkArgs(session_id=session.id, expected_version=args["expected_version"],
                 source_message_ids=list(source.source_message_ids)), ctx)
             receipt = json.loads(result.output)

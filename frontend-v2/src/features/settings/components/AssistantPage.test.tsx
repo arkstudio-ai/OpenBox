@@ -17,6 +17,12 @@ vi.mock("react-i18next", async (original) => ({
 }))
 vi.mock("@/shared/ui/Toast", () => ({ toast: vi.fn() }))
 
+const profileCommand = (patch: Record<string, unknown>) => ({
+  ...patch,
+  expected_revision: undefined,
+  operation_id: expect.any(String),
+})
+
 const learned = {
   learned: [{ id: "m1", revision: 3, summary: "用户嫌回答太长，希望先说结论", updated_at: null }],
   reactions: [{ reason: "too_long", count: 2 }],
@@ -47,6 +53,23 @@ afterEach(() => {
 })
 
 describe("AssistantPage", () => {
+  it("saves and clears a shared conversation language without replacing other preferences", async () => {
+    const put = vi.spyOn(http, "put").mockResolvedValue({ ...DEFAULT_ASSISTANT_PROFILE, language: "英语" })
+    render(page())
+    fireEvent.change(screen.getByLabelText("assistant.languageLabel"), { target: { value: " 英语 " } })
+    fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("/api/assistant/profile", profileCommand({ language: "英语" })),
+    )
+    await waitFor(() => expect(useAppearanceStore.getState().assistant.language).toBe("英语"))
+    put.mockResolvedValue(DEFAULT_ASSISTANT_PROFILE)
+    fireEvent.change(screen.getByLabelText("assistant.languageLabel"), { target: { value: "" } })
+    fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", profileCommand({ language: "" })),
+    )
+  })
+
   it("saves only what changed, as the server keeps it, and every screen follows", async () => {
     const put = vi
       .spyOn(http, "put")
@@ -60,7 +83,10 @@ describe("AssistantPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "assistant.tone.lively" }))
     fireEvent.click(save)
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith("/api/assistant/profile", { name: "Mary", tone: "lively" }),
+      expect(put).toHaveBeenCalledWith(
+        "/api/assistant/profile",
+        profileCommand({ name: "Mary", tone: "lively" }),
+      ),
     )
     await waitFor(() => expect(useAppearanceStore.getState().assistant.name).toBe("Mary"))
     expect(toast).toHaveBeenCalledWith("success", "assistant.saved")
@@ -72,7 +98,9 @@ describe("AssistantPage", () => {
     fireEvent.change(screen.getByLabelText("assistant.nameLabel"), { target: { value: "" } })
     put.mockResolvedValue({ ...DEFAULT_ASSISTANT_PROFILE, tone: "lively" })
     fireEvent.click(save)
-    await waitFor(() => expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { name: "" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", profileCommand({ name: "" })),
+    )
   })
 
   it("explains a refused profile and keeps the current one", async () => {
@@ -112,10 +140,14 @@ describe("AssistantPage", () => {
       target: { value: " 宠物店 " },
     })
     fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
-    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/assistant/profile", { business: "宠物店" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("/api/assistant/profile", profileCommand({ business: "宠物店" })),
+    )
     fireEvent.click(screen.getByRole("button", { name: "assistant.business.food" }))
     fireEvent.click(screen.getByRole("button", { name: "assistant.save" }))
-    await waitFor(() => expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", { business: "food" }))
+    await waitFor(() =>
+      expect(put).toHaveBeenLastCalledWith("/api/assistant/profile", profileCommand({ business: "food" })),
+    )
   })
 
   it("goes through the first meeting again from 重新认识一下", () => {

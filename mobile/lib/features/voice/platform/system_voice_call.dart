@@ -6,8 +6,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../audio/debug_capture.dart';
 
-enum SystemVoiceAction { open, end, mute, unmute, interrupted, resumed }
+enum SystemVoiceAction {
+  open,
+  end,
+  startFailed,
+  mute,
+  unmute,
+  interrupted,
+  resumed,
+}
 
 /// Native call lifetime, separate from the call page and overlay visibility.
 abstract class SystemVoiceCall {
@@ -41,6 +50,7 @@ class NoopSystemVoiceCall implements SystemVoiceCall {
 
 final systemVoiceCallProvider = Provider<SystemVoiceCall>((ref) {
   if (kIsWeb ||
+      voiceSimulatorAudioOnly ||
       !const {
         TargetPlatform.android,
         TargetPlatform.iOS,
@@ -68,6 +78,7 @@ class DeviceSystemVoiceCall implements SystemVoiceCall {
       final action = switch (call.method) {
         'open' => SystemVoiceAction.open,
         'end' => SystemVoiceAction.end,
+        'start_failed' => SystemVoiceAction.startFailed,
         'interrupted' => SystemVoiceAction.interrupted,
         'resumed' => SystemVoiceAction.resumed,
         'mute' =>

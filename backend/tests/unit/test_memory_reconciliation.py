@@ -112,11 +112,13 @@ async def test_retrieval_reads_a_verified_revisions_original_words_with_its_batc
     data, note, config = await seed_correction(monkeypatch)
     assert await MemoryExtractionWorker(extractor=proposal, verifier=Verifier(),
         reconciler=Planner(note["id"])).run_once() == "SUCCEEDED"
-    single_reads = []
+    single_reads, revocation_reads = [], []
 
     def watch(conn, cursor, statement, *_args):
         if "FROM memory_sources" in statement and "WHERE memory_sources.id = " in statement:
             single_reads.append(statement)
+        if "UNION ALL" in statement and "memory_source_links" in statement:
+            revocation_reads.append(statement)
     engine = get_engine().sync_engine
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=data[0], workspace_id=data[1], project_id=data[2])
@@ -130,6 +132,9 @@ async def test_retrieval_reads_a_verified_revisions_original_words_with_its_batc
     # The correcting message behind the verified revision was read with the
     # batch, not one primary-key read per dependency.
     assert single_reads == []
+    # The verified revision and its original evidence share one revocation
+    # snapshot, including whole-source, forgotten-fact and superseded checks.
+    assert len(revocation_reads) == 1
     # It is still checked: once it is unavailable, so is the memory.
     async with get_db_session() as db:
         raw = await db.scalar(select(MemorySource).where(MemorySource.user_id == data[0], MemorySource.body == CHANGE))

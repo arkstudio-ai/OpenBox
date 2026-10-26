@@ -20,7 +20,7 @@ export interface AssistantWatchItem {
   revision: number
   updated_at: string
   pending_questions: number
-  latest_result?: { result_id: string; outcome: string; delivery_state: string; created_at: string; summary: string } | null
+  latest_result?: { result_id: string; outcome: string; delivery_state: string; created_at: string; summary: string; is_current?: boolean } | null
   /** The card the conversation waits on, when it waits on one (servers that report it). */
   blocked_by?: AssistantBlockingCard | null
 }
@@ -62,7 +62,8 @@ export function useAssistantWatch(enabled = true) {
       !!sessionId && (qc.getQueryData<AssistantWatchPage>(key)?.items ?? []).some((item) => item.session_id === sessionId)
     // A watched conversation changed state, or any run settled — the main
     // session's run may have started or stopped watching something.
-    const status = (data: { sessionId: string; status: SessionStatus }) => {
+    const status = (data: { sessionId: string; status: SessionStatus; recovery?: boolean }) => {
+      if (data.recovery) return
       if (watched(data.sessionId) || data.status === "idle" || data.status === "error") refresh()
     }
     // Pending questions are counted per watched conversation.

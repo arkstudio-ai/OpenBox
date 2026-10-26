@@ -88,6 +88,15 @@ async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=N
         .group_by(AgentEvent.message_id))).all()}
     from assistant.results import ready_assets
     ready = await ready_assets(db, window_parts, user_id=user_id, workspace_id=workspace_id)
+    # A displayed question/review is conversation content, even though its
+    # transport is a tool. Read the durable checkpoint, never an unshown or
+    # rejected tool input. Superseding a card must not erase its old proposal.
+    from db.models.question import QuestionCheckpoint
+    question_parts = [part.id for part in window_parts if part.type == "tool"
+                      and (part.canonical_tool_id or part.data.get("tool")) == "question"]
+    questions = {row.part_id: row for row in await db.scalars(select(QuestionCheckpoint).where(
+        QuestionCheckpoint.part_id.in_(question_parts), QuestionCheckpoint.message_id.in_(selected),
+        QuestionCheckpoint.session_id == session_id, QuestionCheckpoint.user_id == user_id))} if question_parts else {}
     entries, version = [], []
     for message in messages:
         parts = [part for part in window_parts if part.message_id == message.id
@@ -106,11 +115,19 @@ async def _window(db, *, ids, session_id, user_id, workspace_id, allowed_parts=N
                 "content_hash": digest, "event_span": list(span), "text": text,
                 "total_chars": len(text), "untrusted_data": True})
         for part in parts:
-            if part.type == "tool" and not include_tools:
+            question = questions.get(part.id)
+            if part.type == "tool" and not include_tools and question is None:
                 continue
             if allowed_parts is not None and part.id not in allowed_parts:
                 continue
-            text = visible_part_text(part)
+            if question is not None and not part.data.get("ignored"):
+                shown = {"kind": "displayed_question", "request_id": question.id,
+                    "status": question.status, "questions": question.questions, "answers": question.answers,
+                    "instruction": "Historical proposal and recorded answers only; not current execution approval."}
+                text = redact_credentials(json.dumps(shown, ensure_ascii=False))
+                version.append({"question_id": question.id, "version": command_digest(shown)})
+            else:
+                text = visible_part_text(part)
             if text is None:
                 continue
             ref = {"session_id": session_id, "message_id": message.id, "part_id": part.id,

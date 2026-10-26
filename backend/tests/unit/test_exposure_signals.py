@@ -95,6 +95,63 @@ class _FakeClock:
         self.now += seconds
 
 
+@pytest.mark.asyncio
+async def test_video_snapshot_is_one_fresh_statement_per_collection(monkeypatch):
+    from sqlalchemy import event, update
+    monkeypatch.setattr(signals_mod, "_has_open_todos", _return_false)
+    monkeypatch.setattr(signals_mod, "_deliverable_asset_ids", _return_empty)
+    user_id, session_id = await _seed_scope()
+    now = datetime.now(timezone.utc)
+    job_id = f"video_job_{uuid4().hex[:12]}"
+    async with get_db_session() as db:
+        db.add(VideoJob(id=job_id, user_id=user_id, session_id=session_id, kind="segment",
+            idempotency_key=job_id, request_hash="hash", status="transfer_failed",
+            request_data={}, result_data={}, created_at=now, updated_at=now))
+        engine = db.get_bind()
+    statements = []
+    def observe(_conn, _cursor, sql, _params, _context, _many):
+        if sql.lstrip().upper().startswith("SELECT"):
+            statements.append(sql)
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        first = await collect_exposure_signals([], user_id=user_id, session_id=session_id)
+        assert first.has_active_video_job and len(statements) == 1
+        async with get_db_session() as db:
+            await db.execute(update(VideoJob).where(VideoJob.id == job_id).values(status="completed"))
+        statements.clear()
+        second = await collect_exposure_signals([], user_id=user_id, session_id=session_id)
+        assert not second.has_active_video_job and len(statements) == 1
+        assert signals_mod._VIDEO_STATE_READ.get() is None
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
+
+
+@pytest.mark.asyncio
+async def test_failed_batched_source_preserves_other_video_recovery_signals(monkeypatch):
+    from sqlalchemy import event
+    monkeypatch.setattr(signals_mod, "_has_open_todos", _return_false)
+    monkeypatch.setattr(signals_mod, "_deliverable_asset_ids", _return_empty)
+    user_id, session_id = await _seed_scope()
+    now = datetime.now(timezone.utc)
+    job_id = f"video_job_{uuid4().hex[:12]}"
+    async with get_db_session() as db:
+        db.add(VideoJob(id=job_id, user_id=user_id, session_id=session_id, kind="segment",
+            idempotency_key=job_id, request_hash="hash", status="transfer_failed",
+            request_data={}, result_data={}, created_at=now, updated_at=now))
+        engine = db.get_bind()
+    def fail_productions(_conn, _cursor, sql, _params, _context, _many):
+        if "video_productions" in sql:
+            raise RuntimeError("production source unavailable in this fixture")
+    event.listen(engine, "before_cursor_execute", fail_productions)
+    try:
+        result = await collect_exposure_signals([], user_id=user_id, session_id=session_id)
+        assert result.has_active_video_job and not result.has_active_video_production
+        assert set(result.signal_errors) == {"video_production_state_unavailable", "video_approval_state_unavailable"}
+        assert signals_mod._VIDEO_STATE_READ.get() is None
+    finally:
+        event.remove(engine, "before_cursor_execute", fail_productions)
+
+
 async def _seed_scope() -> tuple[str, str]:
     suffix = uuid4().hex[:12]
     user_id = f"signal_user_{suffix}"

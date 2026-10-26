@@ -109,6 +109,9 @@ export function useChatEvents(sessionId: string, surface?: "assistant" | "worksp
           qc.setQueryData(["session", userId, d.sessionId], (old: object | undefined) =>
             old ? { ...old, status: d.status } : old,
           )
+          // The reconnect handler refreshes the mounted transcript and cards
+          // once. Historical idle snapshots are not hundreds of new endings.
+          if (d.recovery) return
           // The terminal idle/error edge is also a consistency barrier: pull
           // the final full parts in case this tab missed the last delta/update.
           if (

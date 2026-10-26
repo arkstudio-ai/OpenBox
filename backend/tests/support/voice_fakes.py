@@ -149,7 +149,9 @@ class ScriptedProvider:
         self.sent.append(("instructions", instructions))
         self.instructions = instructions
 
-    async def create_response(self, instructions=None):
+    async def create_response(self, instructions=None, response_policy=None):
+        if response_policy:
+            self.sent.append(("response_policy", response_policy))
         self.sent.append(("create", instructions))
         if self.auto_reply:  # the reply starts, speaks and finishes at once
             self.count += 1

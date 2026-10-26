@@ -12,16 +12,25 @@ from db.models.file_asset import FileAsset
 from memory.redaction import redact_credentials
 
 
-async def recent_decisions(db, user_id, workspace_id, *, limit=12):
+async def recent_decisions(db, user_id, workspace_id, *, limit=12, request_id=None, query="", session_id=None):
     """Actual card answers, including manual clicks, with their original task identity."""
     from db.models.question import QuestionCheckpoint
     from db.models.session import Session
-    rows = (await db.execute(select(QuestionCheckpoint, Session.title).join(
+    stmt = select(QuestionCheckpoint, Session.title).join(
         Session, Session.id == QuestionCheckpoint.session_id).where(
         QuestionCheckpoint.user_id == user_id, Session.user_id == user_id,
         Session.workspace_id == workspace_id, Session.is_deleted.is_(False),
         QuestionCheckpoint.status.in_(("answered", "rejected")))
-        .order_by(QuestionCheckpoint.updated_at.desc(), QuestionCheckpoint.id.desc()).limit(limit))).all()
+    # Filter before the bound so a named decision is not hidden by newer,
+    # unrelated cards. These are lookup arguments, never user-intent rules.
+    if request_id:
+        stmt = stmt.where(QuestionCheckpoint.id == request_id)
+    if session_id:
+        stmt = stmt.where(QuestionCheckpoint.session_id == session_id)
+    if query:
+        stmt = stmt.where(Session.title.icontains(query, autoescape=True))
+    rows = (await db.execute(stmt.order_by(QuestionCheckpoint.updated_at.desc(),
+        QuestionCheckpoint.id.desc()).limit(limit))).all()
     items, remaining = [], 12000
     for row, title in rows:
         setup = (row.continuation or {}).get("assistant_task_setup") or {}

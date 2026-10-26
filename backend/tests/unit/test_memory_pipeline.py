@@ -154,6 +154,54 @@ async def test_waiting_is_not_success_and_old_history_is_not_backfilled(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_recovery_filters_incomplete_turns_before_replaying_their_transcripts(monkeypatch):
+    seed = await _seed(monkeypatch)
+    await _finish_turn(seed, finish="waiting_input")
+    await _finish_turn(seed, finish="aborted")
+    async def forbidden(*args, **kwargs):
+        pytest.fail("An incomplete turn must be filtered before canonical replay")
+    monkeypatch.setattr(jobs, "_create_completion_locked", forbidden)
+    assert await jobs.recover_extraction_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_recovery_still_recovers_a_successful_turn_without_a_receipt(monkeypatch):
+    seed = await _seed(monkeypatch)
+    # Simulate a lost receipt after rollout, not unauthorized import of a
+    # conversation that happened before enrollment (PG keeps microseconds).
+    async with get_db_session() as db:
+        await jobs._enroll_locked(db, seed[0], seed[1])
+    async def lost_receipt(*args, **kwargs):
+        return None
+    with monkeypatch.context() as patch:
+        patch.setattr(jobs, "record_completion_locked", lost_receipt)
+        await _finish_turn(seed)
+    assert await _job(seed) is None
+    assert await jobs.recover_extraction_jobs() == 1
+    assert (await _job(seed)).state == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_idle_worker_bounds_recovery_without_delaying_queue_claims(monkeypatch):
+    from types import SimpleNamespace
+    from memory import extraction
+    now, recovered, claimed = [0.0], [], []
+    async def recover(**kwargs):
+        recovered.append(now[0])
+    async def claim(*args, **kwargs):
+        claimed.append(now[0])
+    monkeypatch.setattr(extraction, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(extraction, "recover_extraction_jobs", recover)
+    monkeypatch.setattr(extraction, "claim_job", claim)
+    worker = extraction.MemoryExtractionWorker(enabled=True, extractor=lambda _: None)
+    for instant in (0.0, 1.0, 29.0, 30.0):
+        now[0] = instant
+        assert await worker.run_once() is None
+    assert recovered == [0.0, 30.0]
+    assert claimed == [0.0, 1.0, 29.0, 30.0]
+
+
+@pytest.mark.asyncio
 async def test_expired_worker_cannot_commit_after_takeover(monkeypatch):
     seed = await _seed(monkeypatch)
     await _finish_turn(seed)
@@ -296,17 +344,38 @@ async def test_worker_schema_validation_retry_and_suppression(monkeypatch):
     assert (await _job(seed, 3)).last_error == "invalid_candidate_fields"
 
 
+async def test_verifier_timeout_keeps_stage_and_never_commits_unchecked_memory(monkeypatch):
+    seed = await _seed(monkeypatch)
+    from core.config import get_config
+    get_config().memory.automatic_knowledge = True
+    await _finish_turn(seed)
+    class UnavailableVerifier:
+        async def verify(self, *args, **kwargs):
+            raise TimeoutError()
+    worker = MemoryExtractionWorker(extractor=_proposal, verifier=UnavailableVerifier())
+    assert await worker.run_once() == "RETRY"
+    job = await _job(seed)
+    assert job.last_error == "verification_timeout" and not job.result_memory_ids
+    async with get_db_session() as db:
+        assert not await db.scalar(select(UserMemory.id).where(UserMemory.user_id == seed[0]))
+
+
 @pytest.mark.asyncio
 async def test_provider_receives_only_authorized_frozen_source_and_usage(monkeypatch):
     seed = await _seed(monkeypatch)
     await _finish_turn(seed)
     lease = await jobs.claim_job("provider-test", allowed_user_ids=[seed[0]])
     frozen = await jobs.read_extraction_input(lease)
+    from dataclasses import replace
+    frozen = replace(frozen, existing_memories=({"summary": "old task instruction must not anchor admission"},))
     requests = []
     def handler(request):
         payload = __import__("json").loads(request.content)
         requests.append(payload)
         assert seed[0] not in request.content.decode()
+        data = __import__("json").loads(payload["messages"][-1]["content"])
+        assert set(data) == {"sources"}
+        assert "old task instruction must not anchor admission" not in request.content.decode()
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": __import__("json").dumps(_proposal(frozen))}}],
                                          "usage": {"prompt_tokens": 31, "completion_tokens": 17}})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

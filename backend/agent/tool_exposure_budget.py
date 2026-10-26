@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from core.config import ToolExposureConfig
 
 
-Priority = Literal["resident", "product_pinned", "explicit_intent", "revealed", "other"]
+Priority = Literal["resident", "product_pinned", "requested", "explicit_intent", "revealed", "other"]
 CatalogueDecision = Literal[
     "ok",
     "warn",
@@ -28,9 +28,10 @@ CatalogueDecision = Literal[
 _PRIORITY_ORDER: Mapping[Priority, int] = MappingProxyType({
     "resident": 0,
     "product_pinned": 1,
-    "explicit_intent": 2,
-    "revealed": 3,
-    "other": 4,
+    "requested": 2,
+    "explicit_intent": 3,
+    "revealed": 4,
+    "other": 5,
 })
 _NO_TRIM_STRATEGIES = frozenset({"legacy_eager", "shadow", "emergency_eager"})
 
@@ -135,6 +136,8 @@ class ExposureBudgetResult:
 
 def _priority(reason: str) -> Priority:
     normalized = (reason or "").strip().lower()
+    if normalized == "requested":
+        return "requested"
     if normalized in {
         "resident",
         "core",
@@ -231,6 +234,7 @@ def _decision_reason(priority: Priority) -> str:
     return {
         "resident": "required_resident",
         "product_pinned": "required_product_pinned",
+        "requested": "selected_requested",
         "explicit_intent": "selected_explicit_intent",
         "revealed": "selected_revealed",
         "other": "selected_other",
@@ -293,17 +297,17 @@ def apply_exposure_budget(
             trimmed[tool_id] = "single_tool_hard_limit"
             continue
 
-        if pack and pack_totals.get(pack, 0) + size > active_budgets.intent_pack_hard_chars:
+        if priority != "requested" and pack and pack_totals.get(pack, 0) + size > active_budgets.intent_pack_hard_chars:
             trimmed[tool_id] = f"intent_pack_hard_limit:{pack}"
             continue
 
         total_limit = (
             active_budgets.visible_hard_chars
-            if priority == "explicit_intent"
+            if priority in {"requested", "explicit_intent"}
             else active_budgets.visible_soft_chars
         )
         if visible_chars + size > total_limit:
-            limit_name = "hard" if priority == "explicit_intent" else "soft"
+            limit_name = "hard" if priority in {"requested", "explicit_intent"} else "soft"
             trimmed[tool_id] = f"initial_visible_{limit_name}_limit"
             continue
 

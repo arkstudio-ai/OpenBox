@@ -19,6 +19,8 @@ interface VoiceStore {
   call: CallState
   /** A live call keeps talking to the workspace whose ticket opened it. */
   workspaceId: string | null
+  viewedSessionId: string | null
+  setViewedSession: (sessionId: string | null) => void
   /** The window's form, card or pill. Local only: the server never hears of it. */
   expanded: boolean
   muted: boolean
@@ -71,6 +73,11 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
   return {
     call: initialCall,
     workspaceId: null,
+    viewedSessionId: null,
+    setViewedSession: (viewedSessionId) => {
+      set({ viewedSessionId })
+      session?.setViewedSession(get().workspaceId === useWorkspaceStore.getState().currentId ? viewedSessionId : null)
+    },
     expanded: true,
     muted: false,
     timings: [],
@@ -84,6 +91,7 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
       set({ timings: [], muted: false, expanded: true, workspaceId: useWorkspaceStore.getState().currentId })
       const next: VoiceCallSession = new VoiceCallSession(sinkFor(() => session === next))
       session = next
+      next.setViewedSession(get().viewedSessionId)
       next.start()
     },
     hangUp: () => session?.hangUp(),
@@ -109,9 +117,13 @@ useVoiceStore.subscribe((state) => {
 // A call belongs to the account that placed it: signing out or switching
 // accounts must not leave the microphone open behind the login page.
 useAuthStore.subscribe((auth, previous) => {
-  if (auth.user?.id === previous.user?.id || !session) return
+  if (auth.user?.id === previous.user?.id) return
   const leaving = session
   session = null
-  leaving.abandon()
-  useVoiceStore.setState({ call: initialCall, muted: false, workspaceId: null })
+  leaving?.abandon()
+  useVoiceStore.setState({ call: initialCall, muted: false, workspaceId: null, viewedSessionId: null })
+})
+
+useWorkspaceStore.subscribe((workspace, previous) => {
+  if (workspace.currentId !== previous.currentId) useVoiceStore.getState().setViewedSession(null)
 })

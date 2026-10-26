@@ -210,6 +210,26 @@ async def _resume_plan_locked(db, task, execution, ids):
         raise _conflict(task, "ASSISTANT_STILL_STOPPING", "Wait for the original runs to stop before continuing")
     if await unresolved_effect_locked(db, execution, ids):
         raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", effect_unresolved_message(task.id))
+    if task.desired_state == "canceled":
+        # Reopening a stopped conversation is not replaying a canceled turn.
+        # All old work must have settled; only a subsequent, newly authorized
+        # input may run. In particular, never reuse an older pause outbox or
+        # revive a canceled approval/continuation grant.
+        unsettled = await db.scalar(select(AgentInboxItem.id).where(
+            AgentInboxItem.session_id.in_(ids), AgentInboxItem.state == "accepted",
+        ).limit(1))
+        questions = await db.scalar(select(SessionExecution.session_id).where(
+            SessionExecution.session_id.in_(ids), SessionExecution.resume_pending.is_(True),
+        ).limit(1))
+        pending = await db.scalar(select(QuestionCheckpoint.id).join(
+            SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id,
+        ).where(QuestionCheckpoint.session_id.in_(ids),
+            QuestionCheckpoint.generation == SessionExecution.generation,
+            QuestionCheckpoint.status == "pending",
+        ).limit(1))
+        if task.observed_state != "canceled" or unsettled or questions or pending:
+            raise _conflict(task, "ASSISTANT_STILL_STOPPING", "Wait for the original runs and questions to stop before continuing")
+        return {"mode": "idle", "observed_state": "idle", "requires_followup": True}
     pending = await db.scalar(select(QuestionCheckpoint.id).where(
         QuestionCheckpoint.session_id == execution.id, QuestionCheckpoint.user_id == task.user_id,
         QuestionCheckpoint.status == "pending",
@@ -298,7 +318,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         if actual != expected_run:
             raise _conflict(task, "ASSISTANT_RUN_CONFLICT", "The observed run changed; reload the task")
         if (action == "pause" and task.desired_state != "running"
-                or action == "resume" and task.desired_state != "paused"
+                or action == "resume" and task.desired_state not in {"paused", "canceled"}
                 or action == "cancel" and task.desired_state == "canceled"):
             raise _conflict(task, "ASSISTANT_CONTROL_CONFLICT", "This control no longer applies to the task")
         now = datetime.now(timezone.utc)
@@ -347,6 +367,8 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         receipt = {"command_id": command.id, "task_id": task.id, "execution_session_id": execution.id,
             "action": action, "state": "accepted", "task_revision": task.control_revision,
             "desired_state": task.desired_state, "observed_state": task.observed_state, "expected_run": expected_run}
+        if context.get("requires_followup"):
+            receipt["requires_followup"] = True
         command.receipt = receipt
         await append_agent_event_locked(db, execution, kind="assistant.control.accepted", payload=receipt,
                                          idempotency_key=f"assistant-control:{command.id}")

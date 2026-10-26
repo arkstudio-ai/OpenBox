@@ -47,7 +47,9 @@ class HintChannel:
     """Publishes on and listens to ``trajectory:hints`` through one ``redis.asyncio`` client."""
 
     def __init__(self, client, *, sender_id: str | None = None):
+        from bus.channels import event_channel
         self.client = client
+        self.channel = event_channel(CHANNEL)
         self.sender_id = sender_id or uuid4().hex
         self._listener: asyncio.Task | None = None
 
@@ -69,7 +71,7 @@ class HintChannel:
         envelope = json.dumps({"sender": self.sender_id, "type": EVENT_TYPE, "data": data},
                               separators=(",", ":"), default=str)
         try:
-            task = asyncio.get_running_loop().create_task(self.client.publish(CHANNEL, envelope))
+            task = asyncio.get_running_loop().create_task(self.client.publish(self.channel, envelope))
         except RuntimeError:
             return None
         task.add_done_callback(_log_publish_failure)
@@ -103,7 +105,7 @@ class HintChannel:
             pubsub = None
             try:
                 pubsub = self.client.pubsub()
-                await pubsub.subscribe(CHANNEL)
+                await pubsub.subscribe(self.channel)
                 delay = RECONNECT_MIN_SECONDS
                 while True:
                     message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
@@ -118,7 +120,7 @@ class HintChannel:
             finally:
                 if pubsub is not None:
                     with suppress(Exception):
-                        await pubsub.unsubscribe(CHANNEL)
+                        await pubsub.unsubscribe(self.channel)
                         await pubsub.aclose()
             await asyncio.sleep(delay)
             delay = min(delay * 2, RECONNECT_MAX_SECONDS)

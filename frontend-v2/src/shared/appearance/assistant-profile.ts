@@ -15,12 +15,15 @@ export type IntroStep = (typeof INTRO_STEPS)[number]
 export type IntroStatus = "new" | "started" | "done" | "dismissed" | "bypassed"
 
 export interface AssistantProfile {
+  revision?: number
   /** "" is the default name the UI translates (个人助理 / Personal assistant). */
   name: string
   /** What it calls the person; "" for no name. */
   address: string
   tone: (typeof ASSISTANT_TONES)[number]
   length: (typeof ASSISTANT_LENGTHS)[number]
+  /** Explicit conversation language; empty follows the current user input. */
+  language?: string
   emoji: boolean
   /** The person's own words on how it should be, up to 300 characters. */
   persona: string
@@ -57,6 +60,7 @@ export const DEFAULT_ASSISTANT_PROFILE: AssistantProfile = {
   address: "",
   tone: "warm",
   length: "balanced",
+  language: "",
   emoji: false,
   persona: "",
   call_recap: true,
@@ -78,10 +82,14 @@ export function readAssistantProfile(raw: unknown, legacyName?: unknown): Assist
     typeof value[key] === "boolean" ? (value[key] as boolean) : fallback
   const d = DEFAULT_ASSISTANT_PROFILE
   return {
+    ...(typeof value.revision === "number" && Number.isInteger(value.revision)
+      ? { revision: value.revision }
+      : {}),
     name: text("name", typeof legacyName === "string" ? legacyName : ""),
     address: text("address"),
     tone: oneOf(ASSISTANT_TONES, value.tone, d.tone),
     length: oneOf(ASSISTANT_LENGTHS, value.length, d.length),
+    language: text("language"),
     emoji: flag("emoji", d.emoji),
     persona: text("persona"),
     call_recap: flag("call_recap", d.call_recap),

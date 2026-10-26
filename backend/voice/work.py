@@ -11,6 +11,7 @@ from sqlalchemy import and_, case, func, or_, select
 
 from assistant.commands import _authority
 from assistant.history import _decode_cursor, _encode_cursor
+from assistant.reads import execution_settings
 from assistant.transactions import read_session
 from assistant.work_context import conversation_background
 from db.models.assistant import AssistantTask, TaskResult
@@ -101,6 +102,7 @@ async def overview(scope, arguments, *, limit=12):
                 "project": redact_credentials(project or "")[:100], "watched": task is not None,
                 "state": state, "state_source": "assistant_task" if task else "video_job" if job else "conversation",
                 "conversation_state": session.status, "created_at": _iso(session.created_at),
+                "current_settings": execution_settings(session),
                 "updated_at": _iso(observed_activity), "url": f"/app/s/{session.id}"}
             if question := pending.get(session.id):
                 # A fresh pending decision is more useful than a stale task

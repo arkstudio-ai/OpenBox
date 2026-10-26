@@ -19,6 +19,7 @@ import { TopicGrid } from "./TopicGrid"
 import { button, primaryButton, textButton } from "./ui"
 import { useFileUpload } from "./useFileUpload"
 import { useMemoryActions } from "./useMemoryActions"
+import { ExperienceList } from "./ExperienceList"
 
 const PREVIEW = { memories: 5, topics: 6, files: 4 } as const
 
@@ -60,10 +61,12 @@ function useKnowledgeLocation() {
 export function KnowledgeHome() {
   const { t } = useTranslation("knowledge")
   const location = useKnowledgeLocation()
-  const { view, projectId, update } = location
+  const { projectId, update } = location
   const [search, setSearch] = useState(location.initialQuery)
   const query = useDebounced(search.trim(), 250)
   const data = useKnowledge(projectId, query)
+  const view = location.view === "experiences" && !data.capability.data?.experience_learning
+    ? "overview" : location.view
   const actions = useMemoryActions()
   const setView = (next: KnowledgeView) => update({ view: next === "overview" ? "" : next })
   const upload = useFileUpload(projectId, () => setView("files"))
@@ -113,7 +116,8 @@ export function KnowledgeHome() {
             update({ project: id })
           }}
         />
-        <ViewTabs view={view} counts={counts(data)} onChange={setView} />
+        <ViewTabs view={view} counts={counts(data)} onChange={setView}
+          experiences={data.capability.data?.experience_learning === true} />
       </div>
       {(view === "overview" || view === "memories") && <ProcessingNotice processing={data.processing.data} />}
       <LoadError data={data} />
@@ -228,6 +232,7 @@ interface ViewProps {
 
 function ViewBody(props: ViewProps) {
   const { view, data, query, projectId, canUpload, upload, actions } = props
+  if (view === "experiences") return <ExperienceList projectId={projectId} query={query} />
   const loading = data.memories.isPending || data.library.isPending || data.documents.isPending
   const empty = !data.memoryList.length && !data.topics.length && !data.files.length
   if (view === "overview" && loading) return <Skeleton rows={4} />

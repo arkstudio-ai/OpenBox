@@ -42,7 +42,8 @@ async def list_assets(*, user_id, workspace_id, main_id, project_id=None, query=
         # No object keys, presigned URLs, credentials or file contents enter the
         # main assistant. The execution input carries only the original IDs.
         return _page(rows, limit, lambda row: {key: getattr(row, key) for key in (
-            "id", "name", "description", "mime", "size", "source", "project_id", "session_id", "created_at")})
+            "id", "name", "description", "description_state", "description_updated_at",
+            "mime", "size", "source", "project_id", "session_id", "created_at")})
 
 
 async def sources(db, main, arguments, value):

@@ -91,6 +91,26 @@ def test_config_adapter_keeps_resident_and_active_budgets_distinct():
     assert budgets.catalogue_wire_hard_chars == 128_000
 
 
+def test_just_requested_capability_evicts_speculative_pack_before_hard_limit():
+    catalog = _catalog({"core": 18, "analysis": 10, "video": 12})
+    plan = _plan(catalog, tuple(catalog.entries),
+        {"core": "resident", "analysis": "intent:video", "video": "requested"})
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets())
+    assert set(result.plan.direct_ids) == {"core", "video"}
+    assert result.visible_chars == 30
+    assert result.visible_chars <= result.budgets.visible_hard_chars
+
+
+def test_requested_capability_cannot_bypass_single_or_total_hard_limits():
+    catalog = _catalog({"core": 18, "large": 21, "remaining": 15})
+    plan = _plan(catalog, tuple(catalog.entries),
+        {"core": "resident", "large": "requested", "remaining": "requested"})
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets())
+    assert result.plan.direct_ids == ("core",)
+    assert result.deferred_reasons["large"] == "single_tool_hard_limit"
+    assert result.deferred_reasons["remaining"] == "initial_visible_hard_limit"
+
+
 def test_priority_is_resident_then_product_then_intent_then_reveal_then_other():
     catalog = _catalog({"core": 10, "recovery": 8, "intent": 10, "revealed": 4, "other": 2})
     # Worst-first input catches implementations that slice direct_ids by position.

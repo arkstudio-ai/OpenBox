@@ -11,6 +11,7 @@ import mimetypes
 import re
 import time
 from collections.abc import Iterable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +67,23 @@ _PRODUCT_STATE_LKG: dict[
     tuple[str, str],
     dict[str, _ProductStateLkgValue],
 ] = {}
+
+
+@dataclass
+class _VideoStateRead:
+    user_id: str
+    session_id: str
+    task: asyncio.Task | None = None
+
+    async def read(self, name: str) -> bool:
+        if self.task is None:
+            self.task = asyncio.create_task(_read_video_states(self.user_id, self.session_id))
+        return (await self.task)[name]
+
+
+# One fresh statement per collector invocation. This is not a cross-step or
+# cross-request cache, and exposes only activity flags, never authorization.
+_VIDEO_STATE_READ: ContextVar[_VideoStateRead | None] = ContextVar("video_state_read", default=None)
 
 
 def _prune_product_state_lkg(now: float) -> None:
@@ -213,67 +231,57 @@ async def _has_open_todos(session_id: str) -> bool:
     return any(item.status not in {"completed", "cancelled"} for item in todo.items)
 
 
-async def _has_active_video_production(user_id: str, session_id: str) -> bool:
+def _video_state_queries(user_id: str, session_id: str):
+    production = select(VideoProduction.id).where(
+        VideoProduction.user_id == user_id, VideoProduction.session_id == session_id,
+        # Error, approval and revision states still need recovery controls.
+        VideoProduction.status != "delivered")
+    jobs = select(VideoJob.id).where(VideoJob.user_id == user_id, VideoJob.session_id == session_id)
+    approval = select(VideoApproval.id).join(VideoProduction, VideoApproval.production_id == VideoProduction.id).where(
+        VideoApproval.user_id == user_id, VideoApproval.session_id == session_id,
+        VideoProduction.user_id == user_id, VideoProduction.session_id == session_id,
+        VideoProduction.status != "delivered")
+    return {"production": production, "job": jobs.where(VideoJob.status.in_(_RUNNING_VIDEO_JOB_STATUSES)),
+        "approval": approval, "recovery": jobs.where(VideoJob.status.in_(_RECOVERY_VIDEO_JOB_STATUSES))}
+
+
+async def _read_video_states(user_id: str, session_id: str) -> dict[str, bool]:
+    queries = _video_state_queries(user_id, session_id)
     async with get_db_session() as db:
-        value = await db.execute(
-            select(VideoProduction.id)
-            .where(
-                VideoProduction.user_id == user_id,
-                VideoProduction.session_id == session_id,
-                # Delivered is the only terminal production status. Error,
-                # approval and revision states still need status/recovery UI.
-                VideoProduction.status != "delivered",
-            )
-            .limit(1)
-        )
-        return value.scalar_one_or_none() is not None
+        row = (await db.execute(select(*(query.exists() for query in queries.values())))).one()
+    return dict(zip(queries, (bool(value) for value in row)))
+
+
+async def _has_video_state(name: str, user_id: str, session_id: str) -> bool:
+    shared = _VIDEO_STATE_READ.get()
+    if shared is not None and (shared.user_id, shared.session_id) == (user_id, session_id):
+        try:
+            return await shared.read(name)
+        except Exception:
+            # Preserve independent fault domains: one broken state source
+            # must not hide the other recovery controls. The fallback retains
+            # the original per-source errors and bounded last-known booleans.
+            pass
+    async with get_db_session() as db:
+        return bool(await db.scalar(select(_video_state_queries(user_id, session_id)[name].exists())))
+
+
+async def _has_active_video_production(user_id: str, session_id: str) -> bool:
+    return await _has_video_state("production", user_id, session_id)
 
 
 async def _has_active_video_job(user_id: str, session_id: str) -> bool:
-    async with get_db_session() as db:
-        value = await db.execute(
-            select(VideoJob.id)
-            .where(
-                VideoJob.user_id == user_id,
-                VideoJob.session_id == session_id,
-                VideoJob.status.in_(_RUNNING_VIDEO_JOB_STATUSES),
-            )
-            .limit(1)
-        )
-        return value.scalar_one_or_none() is not None
+    return await _has_video_state("job", user_id, session_id)
 
 
 async def _has_video_approval_state(user_id: str, session_id: str) -> bool:
     """Find approval evidence only through its owned, active production."""
 
-    async with get_db_session() as db:
-        value = await db.execute(
-            select(VideoApproval.id)
-            .join(VideoProduction, VideoApproval.production_id == VideoProduction.id)
-            .where(
-                VideoApproval.user_id == user_id,
-                VideoApproval.session_id == session_id,
-                VideoProduction.user_id == user_id,
-                VideoProduction.session_id == session_id,
-                VideoProduction.status != "delivered",
-            )
-            .limit(1)
-        )
-        return value.scalar_one_or_none() is not None
+    return await _has_video_state("approval", user_id, session_id)
 
 
 async def _has_video_recovery_state(user_id: str, session_id: str) -> bool:
-    async with get_db_session() as db:
-        value = await db.execute(
-            select(VideoJob.id)
-            .where(
-                VideoJob.user_id == user_id,
-                VideoJob.session_id == session_id,
-                VideoJob.status.in_(_RECOVERY_VIDEO_JOB_STATUSES),
-            )
-            .limit(1)
-        )
-        return value.scalar_one_or_none() is not None
+    return await _has_video_state("recovery", user_id, session_id)
 
 
 async def _deliverable_asset_ids(user_id: str, session_id: str) -> tuple[str, ...]:
@@ -342,10 +350,18 @@ async def collect_exposure_signals(
             _deliverable_asset_ids(user_id, session_id),
         ),
     )
-    values = await asyncio.gather(
-        *(probe for _error_code, probe in probes),
-        return_exceptions=True,
-    )
+    video_read = _VideoStateRead(user_id, session_id)
+    token = _VIDEO_STATE_READ.set(video_read)
+    try:
+        values = await asyncio.gather(
+            *(probe for _error_code, probe in probes),
+            return_exceptions=True,
+        )
+    finally:
+        _VIDEO_STATE_READ.reset(token)
+        if video_read.task is not None and not video_read.task.done():
+            video_read.task.cancel()
+            await asyncio.gather(video_read.task, return_exceptions=True)
 
     now = _PRODUCT_STATE_LKG_CLOCK()
     scope = (str(user_id), str(session_id))

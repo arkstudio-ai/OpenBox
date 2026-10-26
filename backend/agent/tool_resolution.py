@@ -31,6 +31,7 @@ class ResolvedStepTools:
 
     tools: dict
     catalogue_availability: CatalogueAvailability
+    deferred: bool = False
 
 
 class _CatalogueSnapshotSandbox:
@@ -188,6 +189,7 @@ async def attach_skill_listing(
     *,
     scope_key=None,
     skill_registry=None,
+    compact: bool = False,
 ) -> dict:
     """Advertise Skills and conditionally materialize their search companion.
 
@@ -216,6 +218,7 @@ async def attach_skill_listing(
             enable_search=search_is_eligible,
             scope_key=scope_key,
             registry=skill_registry,
+            compact=compact,
         )
         tools["skill"] = skill
         if search is not None:
@@ -268,6 +271,8 @@ async def resolve_step_tools(
     scope_key=None,
     include_discovery: bool = True,
     return_catalogue_state: bool = False,
+    defer_remote: bool = False,
+    compact_skills: bool = False,
 ) -> dict | ResolvedStepTools:
     """The full set of tools a step may call, schema included."""
     explicit_scope = (
@@ -298,14 +303,16 @@ async def resolve_step_tools(
             raise ValueError("scope_key conflicts with explicit scope fields")
 
     tools = get_tools_for_agent(agent_def.tools)
-    from tool.memory_tools import MEMORY_TOOL_IDS, MEMORY_WRITE_TOOL_IDS
-    memory_tool_ids = MEMORY_TOOL_IDS | MEMORY_WRITE_TOOL_IDS
+    from tool.memory_tools import MEMORY_TOOL_IDS, MEMORY_WRITE_TOOL_IDS, MEMORY_PREPARE_TOOL_IDS
+    memory_tool_ids = MEMORY_TOOL_IDS | MEMORY_WRITE_TOOL_IDS | MEMORY_PREPARE_TOOL_IDS
     if memory_tool_ids.intersection(tools):
         from core.config import get_config
 
         memory_config = getattr(get_config(), "memory", None)
         if not memory_config or not memory_config.enabled("retrieval_v2", user_id):
             tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in memory_tool_ids}
+        elif not (memory_config.enabled("semantic_recall", user_id) and getattr(memory_config, "lazy_read_planning", False)):
+            tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in MEMORY_PREPARE_TOOL_IDS}
     if not include_discovery:
         # The logical discovery slot is explicit in AgentDef but has no role
         # in legacy/shadow provider wire. Keeping it out preserves the eager
@@ -316,6 +323,20 @@ async def resolve_step_tools(
     # correctly resolved it to nothing.
     if not agent_def.tools:
         resolved = ResolvedStepTools(tools, "available")
+        return resolved if return_catalogue_state else resolved.tools
+    if defer_remote and include_discovery and "capability_search" in tools:
+        # No directory IO until the model actually requests a capability or
+        # Skill. This is structural, not a classifier for user expressions.
+        from agent.deferred_tools import deferred_tools
+        async def load():
+            return await resolve_step_tools(
+                agent_def, sandbox, config_rules, user_id=user_id,
+                project_id=project_id, workdir=workdir, scope_key=scope_key,
+                include_discovery=include_discovery, return_catalogue_state=True,
+                compact_skills=True,
+            )
+        tools = strip_denied(tools, config_rules, agent_def)
+        resolved = ResolvedStepTools(deferred_tools(tools, load), "unavailable", deferred=True)
         return resolved if return_catalogue_state else resolved.tools
     ruleset = list(config_rules) + agent_ruleset(agent_def)
     # Installation/restoration remains main's explicit management operation.
@@ -342,12 +363,16 @@ async def resolve_step_tools(
         # LKG and lifecycle survive across steps. MCP still consumes the
         # frozen aggregate projection above.
         skill_registry = skill_registry_for(sandbox)
-    tools = await attach_skill_listing(
-        tools,
-        sandbox if explicit_scope else catalogue_sandbox,
-        ruleset,
-        scope_key=scope_key if explicit_scope else None,
-        skill_registry=skill_registry,
-    )
+    from skill.provider import catalogue_observation
+    with catalogue_observation(sandbox, catalogue_availability,
+                               getattr(catalogue_sandbox, "_snapshot", None)):
+        tools = await attach_skill_listing(
+            tools,
+            sandbox if explicit_scope else catalogue_sandbox,
+            ruleset,
+            scope_key=scope_key if explicit_scope else None,
+            skill_registry=skill_registry,
+            compact=compact_skills,
+        )
     resolved = ResolvedStepTools(tools, catalogue_availability)
     return resolved if return_catalogue_state else resolved.tools

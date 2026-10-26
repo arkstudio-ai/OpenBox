@@ -6,6 +6,9 @@ retried. The failures themselves were a JSON object sent as a string
 (tool/argument_repair.py).
 """
 import pytest
+import asyncio
+import json
+import re
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 
@@ -36,6 +39,69 @@ async def result_text(main, input_id):
         parts = (await db.scalars(select(Part).where(Part.message_id == item.result_message_id,
                                                      Part.type == "text"))).all()
     return item, "".join(part.data.get("text") or "" for part in parts)
+
+
+async def test_confirmed_revision_runs_once_through_real_loop_without_history_lookup(monkeypatch):
+    from core.config import get_config
+    from db.models.question import QuestionCheckpoint
+    from question import question as q
+    from question.continuation import apply_answers, resume_main_through_inbox
+    from assistant.confirmations import CONFIRM
+    owner, main, _, target, binding = await revision_input(monkeypatch, shared=True)
+    saved, seen = {}, []
+    phase = "prepare"
+    async def stream(**kwargs):
+        text = json.dumps(kwargs["messages"], ensure_ascii=False)
+        visible = {tool.id for tool in kwargs["tools"].values()}
+        seen.append((phase, visible))
+        wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "requests.revise")
+        if phase == "prepare":
+            human = re.findall(r"Original human message_id=([^\]]+)", text)[-1]
+            saved.update(request_id=binding["request_id"], version=binding["version"],
+                instructions="Use the selected photo in a new script. Do not generate media.",
+                attachment_ids=[], source_message_ids=[human])
+        else:
+            assert visible == {"requests.revise"}
+            resumed_calls = sum(value[0] == "resume" for value in seen)
+            if resumed_calls == 1:
+                assert "current answer" in text and saved["request_id"] in text
+                yield {"type": "text_delta", "text": "I cannot find which card you answered."}
+                yield {"type": "finish", "reason": "stop", "usage": {}}
+                return
+            if resumed_calls == 2:
+                assert "exact saved arguments" in text
+            else:
+                yield {"type": "text_delta", "text": "The revision was accepted by the original task."}
+                yield {"type": "finish", "reason": "stop", "usage": {}}
+                return
+        yield {"type": "tool_call", "tool": wire, "args": dict(saved), "call_id": f"revise-{len(seen)}", "invalid": False}
+        yield {"type": "finish", "reason": "tool_calls", "usage": {}}
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    await run(main, owner)
+    async with get_db_session() as db:
+        card = await db.scalar(select(QuestionCheckpoint).where(
+            QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.status == "pending"))
+        assert card is not None
+    await q.reply(card.id, [[CONFIRM]], user_id=owner)
+    generation = await apply_answers(main.id, owner)
+    assert await resume_main_through_inbox(main.id, owner, generation)
+    phase = "resume"
+    config = get_config()
+    config.memory.semantic_recall = config.memory.retrieval_v2 = True
+    config.memory.allowed_user_ids = []
+    async def no_router(*_, **__):
+        pytest.fail("Card continuation must not classify empty synthetic input")
+    monkeypatch.setattr("memory.read_routing.route", no_router)
+    await run(main, owner)
+    assert [p for p, _ in seen] == ["prepare", "resume", "resume", "resume"]
+    async with get_db_session() as db:
+        original = await db.get(QuestionCheckpoint, binding["request_id"])
+        assert original.status == "superseded" and original.answers is None
+        delegated = list((await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == target.id, AgentInboxItem.origin == "assistant_delegation"))).all())
+        assert len(delegated) == 1 and delegated[0].prompt == saved["instructions"]
+        cards = list((await db.scalars(select(QuestionCheckpoint).where(QuestionCheckpoint.session_id == main.id))).all())
+        assert len(cards) == 1 and cards[0].continuation["assistant_send"]["consumed"]
 
 
 async def test_a_reply_promising_a_retry_gets_one_more_step_with_a_reminder(monkeypatch):
@@ -72,6 +138,150 @@ async def test_no_reminder_near_the_request_limit(monkeypatch):
     monkeypatch.setattr(processor, "stream_llm", scripted([PROMISE, HONEST], seen))
     await run(main, owner)
     assert len(seen) == 1  # one more request would exhaust the turn: the reply stands
+
+
+async def revision_input(monkeypatch, *, shared=False):
+    from tests.unit.test_assistant_sessions_v2 import conversation
+    from tests.unit.test_assistant_requests_v2 import ask_in
+    from assistant.requests import question_version
+    from db.models.question import QuestionCheckpoint
+    _, owner, workspace, main, first = await runtime(monkeypatch, model_requests=6)
+    session = await conversation(owner, workspace, main, "Autumn fruit video",
+        visibility="workspace" if shared else "private")
+    question, _ = await ask_in(session, owner)
+    async with get_db_session() as db:
+        row = await db.get(QuestionCheckpoint, question)
+        binding = {"request_id": question, "version": question_version(row), "session_id": session.id}
+        item = await db.get(AgentInboxItem, first["inbox_id"])
+        item.prompt = "Change that autumn video to use the store photo. Show the script before generating anything."
+        item.origin_ref = {**item.origin_ref, "entrypoint": "assistant_voice",
+                           "voice_context": {"revision_request": binding, "heard": item.prompt}}
+    return owner, main, first, session, binding
+
+
+@pytest.mark.parametrize("shared", [False, True])
+async def test_bound_revision_without_attempt_gets_one_step_and_preserves_consent(monkeypatch, shared):
+    from db.models.question import QuestionCheckpoint
+    owner, main, first, target, binding = await revision_input(monkeypatch, shared=shared)
+    seen = []
+    async def stream(**kwargs):
+        seen.append(kwargs["messages"][-1])
+        if len(seen) == 1:
+            assert {tool.id for tool in kwargs["tools"].values()} == {
+                "requests.get", "requests.revise", "assets.list", "history.read"}
+            # No known promise phrase: an ordinary draft cannot satisfy this action.
+            yield {"type": "text_delta", "text": "Here is a new draft. Say yes and I will replace the old one."}
+        elif len(seen) == 2:
+            assert "has not attempted requests.revise" in seen[-1]["content"]
+            human = re.findall(r"Original human message_id=([^\]]+)", json.dumps(kwargs["messages"]))[-1]
+            wire = next(name for name, tool in kwargs["tools"].items() if tool.id == "requests.revise")
+            yield {"type": "tool_call", "tool": wire, "args": {
+                "request_id": binding["request_id"], "version": binding["version"],
+                "instructions": "Prepare a new script using the selected store photo; do not generate media.",
+                "attachment_ids": [], "source_message_ids": [human]}, "call_id": "revision", "invalid": False}
+            yield {"type": "finish", "reason": "tool_calls", "usage": {}}
+            return
+        else:
+            yield {"type": "text_delta", "text": "The planning change was submitted to the original task."}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    await run(main, owner)
+    async with get_db_session() as db:
+        row = await db.get(QuestionCheckpoint, binding["request_id"])
+        delegated = list((await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == target.id, AgentInboxItem.origin == "assistant_delegation"))).all())
+        cards = list((await db.scalars(select(QuestionCheckpoint).where(
+            QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.status == "pending"))).all())
+    if shared:
+        assert len(seen) == 2 and len(cards) == 1
+        assert row.status == "pending" and not delegated  # no implicit shared-send consent
+    else:
+        assert len(seen) == 3 and not cards
+        assert row.status == "superseded" and row.answers is None and len(delegated) == 1
+        assert "do not generate media" in delegated[0].prompt
+
+
+@pytest.mark.parametrize("condition", ["changed", "expired", "foreign", "different_run", "failed_attempt"])
+async def test_revision_guard_does_not_revive_changed_or_unavailable_work(monkeypatch, condition):
+    from datetime import timedelta
+    from db.models.question import QuestionCheckpoint
+    from db.models.part import Part
+    from agent.driver import reserve_run
+    from agent.inbox import claim_inbox_boundary
+    from types import SimpleNamespace
+    from question.runtime import now
+    owner, main, first, target, binding = await revision_input(monkeypatch)
+    lease = await reserve_run(main.id, owner)
+    try:
+        await claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        ctx = SimpleNamespace(session_id=main.id, user_id=owner, workspace_id=main.workspace_id,
+                              run_id=lease.run_id, run_generation=lease.generation)
+        ids = []
+        assert await follow_through.unfinished_revision(ctx, ids)
+        async with get_db_session() as db:
+            row = await db.get(QuestionCheckpoint, binding["request_id"])
+            if condition == "changed": row.status = "answered"
+            if condition == "expired": row.expires_at = now() - timedelta(seconds=1)
+            if condition == "foreign": row.user_id = "different-owner"
+            if condition == "different_run": ctx.run_id = "not-current"
+            if condition == "failed_attempt":
+                from session.session import create_assistant_message, save_part
+                from models.message import ToolPartData, ToolStatus
+        if condition == "failed_attempt":
+            message = await create_assistant_message(main.id, None, agent="assistant", model_id=main.model,
+                user_id=owner, run_fence=(main.id, lease.run_id, lease.generation))
+            await save_part(ToolPartData(session_id=main.id, message_id=message.id,
+                tool="requests.revise", status=ToolStatus.ERROR, input={}, error="Unknown outcome"),
+                is_new=True, user_id=owner, run_fence=(main.id, lease.run_id, lease.generation))
+            ids.append(message.id)
+        assert await follow_through.unfinished_revision(ctx, ids) is None
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_corrective_step_keeps_the_original_deadline_watcher(monkeypatch):
+    from tests.unit.test_assistant_budget import assert_failed
+    _, owner, _, main, first = await runtime(monkeypatch, model_requests=6, wall_time_seconds=2)
+    seen = []
+    closed = asyncio.Event()
+    async def stream(**kwargs):
+        seen.append(kwargs["messages"][-1])
+        if len(seen) == 1:
+            yield {"type": "text_delta", "text": PROMISE}
+            yield {"type": "finish", "reason": "stop", "usage": {}}
+        else:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+    monkeypatch.setattr(processor, "stream_llm", stream)
+    await run(main, owner)
+    assert len(seen) == 2 and closed.is_set()
+    await assert_failed(main, owner, first["inbox_id"])
+
+
+async def test_revision_scope_cannot_inspect_media_create_tasks_or_change_target(monkeypatch):
+    from agent.driver import reserve_run
+    from agent.inbox import claim_inbox_boundary
+    from assistant.runtime import runtime_view, _authorize_tool_scope
+    from assistant.policy import AssistantError
+    owner, main, _, _, binding = await revision_input(monkeypatch)
+    lease = await reserve_run(main.id, owner)
+    try:
+        await claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        view = await runtime_view(session_id=main.id, user_id=owner,
+                                  run_id=lease.run_id, generation=lease.generation)
+        assert view["revision_target"] == binding
+        for tool, args in [("assets.describe", {}), ("tasks.submit", {}), ("requests.list", {}),
+                           ("requests.revise", {**binding, "request_id": "other-card"}),
+                           ("requests.revise", {**binding, "version": "b" * 64}),
+                           ("history.read", {"session_id": "other-session"})]:
+            with pytest.raises(AssistantError):
+                _authorize_tool_scope(view, tool, args)
+        _authorize_tool_scope(view, "requests.revise", binding)
+        _authorize_tool_scope(view, "history.read", {"session_id": binding["session_id"]})
+    finally:
+        await lease.release(session_status="idle")
 
 
 @pytest.mark.parametrize("text, promised", [
@@ -144,3 +354,27 @@ def test_a_union_of_objects_is_advertised_as_an_object():
     assert _simplify_schema({"anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]}) == {
         "anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]}  # mixed types: left alone
     assert _simplify_schema({"oneOf": [{"type": "string", "const": "a"}, {"type": "string", "const": "b"}]})["type"] == "string"
+
+
+def test_gateway_repr_question_is_decoded_without_changing_strings_or_schema():
+    from tool.question_tool import QuestionArgs
+    question = {"question": "新的脚本可以吗？", "header": "脚本确认", "custom": True,
+                "options": [{"label": "可以", "description": "只确认脚本"}]}
+    args = {"questions": repr([question])}
+    parsed = argument_repair.validate(QuestionArgs, args, tool_id="question")
+    assert parsed.questions[0].question == question["question"]
+    assert args["questions"] == repr([question])
+    assert parsed.questions[0].options[0].description == "只确认脚本"
+    with pytest.raises(ValidationError):
+        argument_repair.validate(QuestionArgs, {"questions": "[{'header': '缺少问题'}]"})
+
+
+@pytest.mark.parametrize("value", ["[open('/tmp/no-write','w')]", "[x for x in []]", "[unknown]",
+    "[('tuple',)]", "[{'set'}]", "[{1: 'non-string-key'}]", "[{'a': 1, 'a': 2}]",
+    "[b'bytes']", "[1e999]", "['x' * 1000000]", "[" * 40 + "'x'" + "]" * 40,
+    "['" + "x" * 65536 + "']"])
+def test_container_repair_rejects_code_and_non_json_or_unbounded_literals(value):
+    class Values(BaseModel):
+        values: list
+    with pytest.raises(ValidationError):
+        argument_repair.validate(Values, {"values": value})

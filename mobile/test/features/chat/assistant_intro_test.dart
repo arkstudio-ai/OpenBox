@@ -248,6 +248,7 @@ void main() {
           await zhI18n(tester),
           authProvider.overrideWith(_NamedUser.new),
           assistantProfileApiProvider.overrideWithValue(api),
+          assistantProfileOwnerProvider.overrideWithValue('owner'),
           wsClientProvider.overrideWithValue(ws),
         ],
         child: MaterialApp(
@@ -263,6 +264,7 @@ void main() {
     // Said on the phone meanwhile.
     ws.frames.add(
       const WsEvent('assistant.profile.updated', {
+        'userId': 'owner',
         'profile': {
           'address': '老王',
           'decided': {

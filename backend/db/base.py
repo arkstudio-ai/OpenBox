@@ -88,6 +88,8 @@ def init_engine(
             echo=False,
         )
 
+    from agent.latency import attach_sql_timing
+    attach_sql_timing(_engine)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     log.info(
         f"Database engine initialized: {database_url.split('@')[-1] if '@' in database_url else database_url}"
@@ -629,6 +631,18 @@ def get_engine() -> AsyncEngine:
 # small, explicit list beside the engine avoids reporting a healthy service
 # whose first session query will fail with UndefinedColumnError.
 _READINESS_SCHEMA: dict[str, frozenset[str]] = {
+    # Settings writes use receipts and clocks even when semantic recall is
+    # disabled. Do not advertise readiness before the additive migration.
+    "memory_change_clocks": frozenset({"user_id", "revision", "updated_at"}),
+    "memory_write_receipts": frozenset({
+        "user_id", "operation_id", "kind", "payload_hash", "state", "result",
+        "source_refs", "occurred_at", "created_at",
+    }),
+    "memory_experiences": frozenset({
+        "id", "user_id", "workspace_id", "project_id", "operation_id", "revision",
+        "state", "content", "source_refs", "validation", "skill_id", "skill_hash",
+        "created_at", "updated_at",
+    }),
     "session_executions": frozenset({
         "session_id", "user_id", "generation", "run_id", "run_generation", "lease_until",
         "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at", "trace_context",
@@ -1032,7 +1046,9 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
     session = _session_factory()
     try:
         yield session
-        await session.commit()
+        from agent.latency import span
+        with span("db.commit"):
+            await session.commit()
     except Exception:
         await session.rollback()
         raise

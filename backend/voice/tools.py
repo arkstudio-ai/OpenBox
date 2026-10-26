@@ -40,7 +40,7 @@ class AskArguments(BaseModel):
         "查看或修改已有任务卡时使用 cards_pending 返回的 request_id；修改用mode=revise。无关新请求不填。"))
     mode: Literal["request", "remember", "revise"] = Field(default="request", description=(
         "request：交办或查询；revise：用户修改正在等待任务卡的原任务，必须带该卡question_id，完整转交新要求，不先回答旧卡；"
-        "remember：仅保存长期事实或偏好。"))
+        "remember：按本通话记忆规则处理长期事实或偏好；新记忆模式仅核对已捕获原话的真实提取状态，不创建执行任务。"))
 
 
 class CardAnswerArguments(BaseModel):
@@ -57,7 +57,8 @@ ASK_SCHEMA = {"type": "function", "function": {
     "description": ("把事情交给个人助理去办或去看（它没听到这通电话）：要办的事（建、改、删、发、安排、提醒、记下来、"
                     "让任务接着做、调查原因），问进度细节、具体内容和原因，要翻对话、看文件、上网、写东西、分析总结的，"
                     "你查不到或拿不准的，以及用户在回答个人助理的问题。寒暄和澄清不用它，确认卡片用 cards_answer。"
-                    "答应用户去办，就在这次回复里调用它。立即返回 accepted，结果稍后以后台备注送到。"),
+                    "答应用户去办，就在这次回复里调用它。request/revise 成功转交才返回 accepted，执行结果稍后以后台备注送到；"
+                    "remember 按本通话记忆规则返回真实状态，原话已接收或后台处理中不表示长期记忆已保存。"),
     "parameters": AskArguments.model_json_schema(),
 }}
 
@@ -75,6 +76,10 @@ class CallScope:
     utterance_index: int | None = None  # actual source utterance, not the latest unrelated transcript
     # The call's cards (voice/cards.py CardDesk): which ones the model was given, and what the user said since.
     desk: object = field(default=None, compare=False)
+    memory_turn: object = field(default=None, compare=False)
+    memory_budget: object = field(default=None, compare=False)
+    # Client navigation hint only; SQL authority is resolved anew per utterance.
+    viewed_session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +169,11 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
 
 async def memory_search(scope: CallScope, arguments: dict) -> dict:
     """The assistant's own recall (voice/recall.py): personal and project memories, documents, knowledge pages."""
+    if scope.memory_turn is not None:
+        return await memory_read_more(scope, {"reads": [{"kind": "search", "query": arguments.get("query", "")}]})
+    from core.config import get_config
+    if get_config().memory.enabled("semantic_recall", scope.user_id):
+        return {"status": "unavailable", "reason": "turn_scope_not_ready"}
     from voice import recall
     query = str(arguments.get("query") or "").strip()[:200]
     if not query:
@@ -172,6 +182,16 @@ async def memory_search(scope: CallScope, arguments: dict) -> dict:
     if not found:
         return {"status": "nothing_found", "memories": []}
     return {"status": "ok", "memories": found, "note": DATA_NOTE}
+
+
+async def memory_read_more(scope: CallScope, arguments: dict) -> dict:
+    from memory.packet import ReadRequest, read_more
+    from tool.memory_tools import MemorySupplementArgs
+    if scope.memory_turn is None or scope.memory_budget is None:
+        return {"status": "unavailable", "reason": "turn_scope_not_ready"}
+    args = MemorySupplementArgs.model_validate(arguments)
+    return await read_more([ReadRequest(**{**item.model_dump(), "refs": tuple(
+        ref.model_dump() for ref in item.refs)}) for item in args.reads], scope.memory_turn, scope.memory_budget)
 
 
 async def schedules_list(scope: CallScope, arguments: dict) -> dict:
@@ -209,11 +229,24 @@ async def platforms_status(scope: CallScope, arguments: dict) -> dict:
 
 
 async def resources_list(scope: CallScope, arguments: dict) -> dict:
+    if scope.memory_turn is not None and scope.memory_turn.read_policy != "allowed":
+        return unread_result(scope.memory_turn.read_policy)
     from assistant.assets import list_assets
     value = await list_assets(user_id=scope.user_id, workspace_id=scope.workspace_id,
         main_id=scope.main_session_id, limit=12, cursor=arguments.get("cursor"), query=arguments.get("query", ""),
         session_id=arguments.get("session_id"), kind=arguments.get("kind"))
-    return json.loads(json.dumps(value, default=str))
+    # Names can change while the call remains open. A literal filter miss is
+    # not proof that the user's asset disappeared; offer bounded, authorized
+    # candidates for the model to compare, never choose one by list position.
+    if not value.get("items") and arguments.get("query", "").strip() and not arguments.get("cursor"):
+        recent = await list_assets(user_id=scope.user_id, workspace_id=scope.workspace_id,
+            main_id=scope.main_session_id, limit=12, session_id=arguments.get("session_id"), kind=arguments.get("kind"))
+        value = {**value, "query_matched": False, "candidates": recent["items"],
+            "candidate_next_cursor": recent.get("next_cursor"),
+            "note": "名称或描述的文字筛选没有匹配；以下是同一范围最新的候选，不能据此说素材不存在。"
+                    "结合描述与稳定ID辨认，不能仅凭旧文件名或列表顺序选择；候选仍不明确时才询问缺少的区别。"
+                    "需要更多候选时去掉query并使用candidate_next_cursor翻页。"}
+    return {"status": "ok", "checked": True, **json.loads(json.dumps(value, default=str))}
 
 
 async def task_question_answer(scope: CallScope, arguments: dict) -> dict:
@@ -244,8 +277,9 @@ DIRECT: dict[str, DirectTool] = {
         "先确定用户针对的 conversation，再取该任务的 request_id/version，不能套用最近播报的另一任务。"
         "先解释用户疑问，不把疑问当同意；没有选完不能补选。不能代做人工验证。", task_question_answer,
         task_answer_schema(), timeout=8.0),
-    "resources_list": DirectTool("按最新优先查看用户资源库的文件名称、类型和ID，可按任务会话和媒体类型筛选。"
-        "query只匹配文件名；用户描述画面内容时不要把画面描述当文件名搜索。问图片长什么样交给 assistant_ask 实际查看。"
+    "resources_list": DirectTool("按最新优先查看用户资源库的文件名称、已保存描述、类型和ID，可按任务会话和媒体类型筛选。"
+        "query匹配文件名或已保存描述中的文字，不是语义全文搜索；不确定关键词时先查看最近资源。"
+        "可以直接依据已保存描述辨认用户选定的素材，同名文件按ID区分；只有需要核验原图的新细节才交给 assistant_ask 实际查看。"
         "分页时保留筛选条件并使用 next_cursor。", resources_list,
         {"type": "object", "properties": {"query": {"type": "string", "maxLength": 200},
                                            "session_id": {"type": "string", "maxLength": 64},
@@ -275,7 +309,9 @@ DIRECT: dict[str, DirectTool] = {
     "credits": DirectTool("查工作区的积分余额和用户本月用掉的积分。", credits),
     "cards_pending": DirectTool(
         "列出此刻等用户决定的卡片：个人助理要做的高风险操作的确认（删除、代答、发送、记忆），"
-        "以及任务对话里等用户回答的问题。每次解释、推荐或回答卡片前都先查询，包括刚播报过的卡片，"
+        "以及任务对话里等用户回答的问题，同时返回匹配的已提交决定和实际答案。"
+        "用户说已经在屏幕选择后，查询handled_decisions，不能把无待办当成未收到答案。"
+        "每次解释、推荐或回答卡片前都先查询，包括刚播报过的卡片，"
         "以免继续讲用户已在屏幕处理的旧选项。已知目标用 request_id 或任务名称 query，只在问全部待办时不筛选。",
         cards_pending, {"type": "object", "properties": {
             "request_id": {"type": "string", "description": "确切的卡片 ID 或已展示的 card 标识"},
@@ -287,6 +323,14 @@ DIRECT: dict[str, DirectTool] = {
         "改变待执行事项的内容或范围才另用 assistant_ask。返回 decision_recorded 只代表回答已记录，后续执行结果另行返回。",
         cards_answer, CardAnswerArguments.model_json_schema(), timeout=8.0),
 }
+
+
+from tool.memory_tools import MemorySupplementArgs
+
+DIRECT["memory_read_more"] = DirectTool(
+    "按当前通话已允许的范围补读缺失资料。一次最多两项，共享本轮预算；保留完整名称、来源和版本。"
+    "可读记忆、文件原文、知识页、素材、历史及已验证的个人经验；读取失败不代表没有资料。",
+    memory_read_more, MemorySupplementArgs.model_json_schema(), timeout=6.0)
 
 
 def schemas() -> list[dict]:
@@ -326,6 +370,12 @@ async def run(name: str, scope: CallScope, arguments: str) -> dict:
                         'answers 每道题对应一个选项数组；attachments 例如 [["asset_ID"]]，不是素材对象或 JSON 字符串。'
                         "多个素材问题需逐题分组。相同错误不要反复调用，解释失败并等待用户下一步。"}
     try:
+        if scope.memory_turn is not None and name in {"tasks_overview", "cards_pending", "schedules_list",
+                "projects_list", "resources_list", "memory_search", "memory_read_more"}:
+            from memory.read_contract import permits
+            kind = "task_state" if name in {"tasks_overview", "cards_pending", "schedules_list"} else "search"
+            if not permits(scope.memory_turn, kind, bounded=name in {"memory_search", "memory_read_more"}):
+                return unread_result(scope.memory_turn.read_policy)
         return await asyncio.wait_for(tool.run(scope, parsed if isinstance(parsed, dict) else {}), tool.timeout)
     except TimeoutError:
         return ({"status": "result_unknown", "execution_confirmed": False,
@@ -334,6 +384,15 @@ async def run(name: str, scope: CallScope, arguments: str) -> dict:
     except Exception as exc:  # slow, refused or broken: the model says it could not check
         log.info("voice tool unavailable tool=%s call=%s error=%s", name, scope.call_id, type(exc).__name__)
         return dict(UNAVAILABLE)
+
+
+def unread_result(policy):
+    """No read was performed; an empty payload is not an absent business record."""
+    return {"status": "unavailable" if policy == "uncertain" else "restricted", "items": [],
+            "checked": False, "reason": "read_scope_unresolved" if policy == "uncertain" else "current_turn_restricted",
+            "note": ("本轮未取得可用的读取范围判断，暂时无法核实。" if policy == "uncertain"
+                     else "本轮读取范围不允许该查询，未查询数据。")
+                    + "这不是没有记录的查询结果。不能说用户未提交或选择丢失，不能要求重复作答。"}
 
 
 def _argument_shape(value, depth=0):

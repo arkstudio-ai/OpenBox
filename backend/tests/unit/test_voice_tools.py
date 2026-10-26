@@ -4,7 +4,10 @@ Each read has exactly the assistant tool's authority (user, workspace, main
 session): a stranger's call gets ``unavailable``, never someone else's rows.
 """
 import asyncio
+import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from assistant.service import ensure_main_session
 from db.base import get_db_session
@@ -18,6 +21,52 @@ from voice.tools import CallScope
 
 def scope_of(owner, workspace, main_id):
     return CallScope(user_id=owner, workspace_id=workspace, main_session_id=main_id, call_id="call-t")
+
+
+@pytest.mark.parametrize("policy", ["allowed", "uncertain", "current_only", "no_history"])
+async def test_asset_descriptions_keep_identity_and_origin_without_bypassing_read_scope(policy):
+    from db.models.file_asset import FileAsset
+    from memory.packet import TurnContext
+    from tests.unit.test_assistant_assets import asset_for
+    owner, other, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    chosen = await asset_for(owner, workspace, name="IMG_123.jpg", mime="image/jpeg",
+        description="已选定的店面宣传素材", description_state="manual")
+    await asset_for(owner, workspace, name="IMG_123.jpg", mime="image/jpeg",
+        description="备用门店照片", description_state="ready")
+    await asset_for(other, workspace, name="IMG_123.jpg", mime="image/jpeg",
+        description="已选定的店面宣传素材", description_state="manual")
+    async with get_db_session() as db:
+        (await db.get(FileAsset, chosen.id)).name = "宣传照片.jpg"
+    scope = replace(scope_of(owner, workspace, main.id), memory_turn=TurnContext(
+        user_id=owner, workspace_id=workspace, query="哪张是我选定的图片", read_policy=policy))
+    result = await tools.run("resources_list", scope, '{"query":"已选定","kind":"image"}')
+    if policy == "allowed":
+        row, = result["items"]
+        assert row["id"] == chosen.id and row["name"] == "宣传照片.jpg"
+        assert row["description"] == "已选定的店面宣传素材" and row["description_state"] == "manual"
+    else:
+        assert result["checked"] is False and result["items"] == []
+        assert result["reason"] == ("read_scope_unresolved" if policy == "uncertain" else "current_turn_restricted")
+
+
+async def test_asset_name_miss_returns_current_candidates_with_the_same_filters():
+    from tests.unit.test_assistant_assets import asset_for
+    owner, other, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    chosen = await asset_for(owner, workspace, name="IMG_123.jpg", mime="image/jpeg",
+        session_id=main.id, description="用于宣传的选定版本", description_state="manual")
+    await asset_for(owner, workspace, name="IMG_123.jpg", mime="image/jpeg", description="别的会话")
+    await asset_for(owner, workspace, name="recording.mp4", mime="video/mp4", session_id=main.id)
+    await asset_for(other, workspace, name="IMG_123.jpg", mime="image/jpeg", session_id=main.id)
+    result = await tools.run("resources_list", scope_of(owner, workspace, main.id),
+        json.dumps({"query": "修改前的文件名", "kind": "image", "session_id": main.id}))
+    assert result["status"] == "ok" and result["checked"] is True
+    assert result["query_matched"] is False and result["items"] == []
+    row, = result["candidates"]
+    assert row["id"] == chosen.id and row["name"] == "IMG_123.jpg"
+    assert row["description"] == "用于宣传的选定版本" and row["description_state"] == "manual"
+    assert "selected_id" not in result
 
 
 async def test_voice_and_assistant_read_current_model_catalogue_after_removal(monkeypatch):

@@ -68,7 +68,7 @@ interface AppearanceState {
   /** Saves the fields given (the server cleans names to one line of up to 20 characters) and
    *  resolves to the whole profile it kept. */
   setAssistantProfile: (patch: Partial<AssistantProfile>) => Promise<AssistantProfile>
-  hydrateFromServer: (prefs: UserPreferences) => void
+  hydrateFromServer: (prefs: UserPreferences, ownerId?: string) => void
 }
 
 function readLocal(): Partial<Pick<AppearanceState, "theme" | "mode" | "fontSize" | "developerMode">> {
@@ -159,19 +159,27 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     },
     applyAssistantView: (view) => {
       const value = (view && typeof view === "object" ? view : {}) as Record<string, unknown>
+      const incoming = readAssistantProfile(value)
+      if (incoming.revision !== undefined && get().assistant.revision !== undefined &&
+          incoming.revision < get().assistant.revision!) return
       set({
-        assistant: readAssistantProfile(value),
+        assistant: incoming,
         assistantMeta: readAssistantMeta(value.decided, value.intro),
       })
     },
     setAssistantProfile: async (patch) => {
       const userId = useAuthStore.getState().user?.id
-      const view = await http.put<unknown>("/api/assistant/profile", patch)
+      const { revision, ...values } = patch
+      const view = await http.put<unknown>("/api/assistant/profile", {
+        ...values, expected_revision: revision ?? get().assistant.revision, operation_id: crypto.randomUUID(),
+      })
       if (useAuthStore.getState().user?.id === userId) get().applyAssistantView(view)
       return readAssistantProfile(view)
     },
     recordIntro: async (event) => {
-      get().applyAssistantView(await http.post<unknown>("/api/assistant/intro", event))
+      const userId = useAuthStore.getState().user?.id
+      const view = await http.post<unknown>("/api/assistant/intro", event)
+      if (useAuthStore.getState().user?.id === userId) get().applyAssistantView(view)
     },
     setLanguage: (language) => {
       set({ language })
@@ -180,7 +188,8 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       const s = get()
       persist(s)
     },
-    hydrateFromServer: (prefs) => {
+    hydrateFromServer: (prefs, ownerId) => {
+      if (ownerId !== undefined && useAuthStore.getState().user?.id !== ownerId) return
       const extra = (prefs.extra ?? {}) as Record<string, unknown>
       const patch: Partial<AppearanceState> = {}
       if (typeof prefs.theme === "string" && (THEMES as readonly string[]).includes(prefs.theme))
@@ -194,8 +203,13 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
       )
         patch.fontSize = extra.fontSize
       if (typeof extra.developerMode === "boolean") patch.developerMode = extra.developerMode
-      patch.assistant = readAssistantProfile(extra.assistant_profile, extra.assistant_name)
-      patch.assistantMeta = readAssistantMeta(extra.assistant_decided, extra.assistant_intro)
+      const profile = readAssistantProfile(extra.assistant_profile, extra.assistant_name)
+      if (typeof extra.assistant_profile_revision === "number") profile.revision = extra.assistant_profile_revision
+      if (get().assistant.revision === undefined ||
+          (profile.revision !== undefined && profile.revision >= get().assistant.revision!)) {
+        patch.assistant = profile
+        patch.assistantMeta = readAssistantMeta(extra.assistant_decided, extra.assistant_intro)
+      }
       set(patch)
       const s = get()
       applyDom(s.theme, s.mode, s.fontSize)
@@ -218,3 +232,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => {
     },
   }
 })
+
+// Profile revisions are per account, unlike device appearance preferences.
+const stopProfileOwnerSync = useAuthStore.subscribe((state, previous) => {
+  if (state.user?.id !== previous.user?.id)
+    useAppearanceStore.setState({ assistant: DEFAULT_ASSISTANT_PROFILE, assistantMeta: null })
+})
+if (import.meta.hot) import.meta.hot.dispose(stopProfileOwnerSync)

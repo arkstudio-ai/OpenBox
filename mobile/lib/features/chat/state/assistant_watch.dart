@@ -28,6 +28,7 @@ class AssistantWatchItem {
 
   /// The newest result's summary as plain words, when it said anything.
   String? get summary {
+    if (latestResult['is_current'] == false) return null;
     final text = plainSummary(asString(latestResult['summary']) ?? '');
     return text.isEmpty ? null : text;
   }
@@ -80,6 +81,7 @@ final assistantWatchProvider = FutureProvider.autoDispose
       );
       final events = ref.read(wsClientProvider).events.listen((event) {
         if (event.type == 'session.status') {
+          if (event.data['recovery'] == true) return;
           // A followed conversation changed state, or any run settled — the
           // assistant's own run may have started or stopped following one.
           final status = event.data['status'];

@@ -27,6 +27,7 @@ _redis_listener_task: asyncio.Task | None = None
 _redis_required = False
 
 REDIS_BUS_CHANNEL = "bus:events"
+_redis_channel = REDIS_BUS_CHANNEL
 
 
 def _dispatch_local(event: dict[str, Any]) -> None:
@@ -100,7 +101,7 @@ async def _redis_publish(envelope: str) -> None:
     client = _redis_client
     if client is None:
         raise RuntimeError("Redis bus is not connected")
-    await client.publish(REDIS_BUS_CHANNEL, envelope)
+    await client.publish(_redis_channel, envelope)
 
 
 def _log_redis_publish_failure(task: asyncio.Task) -> None:
@@ -147,7 +148,7 @@ async def _redis_listener() -> None:
             if client is None:
                 return
             pubsub = client.pubsub()
-            await pubsub.subscribe(REDIS_BUS_CHANNEL)
+            await pubsub.subscribe(_redis_channel)
             log.info(f"Redis bus listener started (worker_id={worker_id})")
             reconnect_delay = 1.0
             while True:
@@ -183,7 +184,7 @@ async def _redis_listener() -> None:
         finally:
             if pubsub is not None:
                 try:
-                    await pubsub.unsubscribe(REDIS_BUS_CHANNEL)
+                    await pubsub.unsubscribe(_redis_channel)
                     await pubsub.aclose()
                 except Exception:
                     pass
@@ -198,7 +199,11 @@ async def init_redis_bus(redis_url: str) -> None:
     If Redis is unavailable, ordinary in-process events continue locally; a
     durable outbox publish fails closed and remains unstamped for retry.
     """
-    global _redis_client, _redis_listener_task, _redis_required
+    global _redis_client, _redis_listener_task, _redis_required, _redis_channel
+    from bus.channels import event_channel
+    # Invalid scope is a startup error, never an implicit fallback to the
+    # shared legacy channel. Freeze it for both publishing and reconnects.
+    _redis_channel = event_channel(REDIS_BUS_CHANNEL)
     _redis_required = True
     try:
         import redis.asyncio as aioredis

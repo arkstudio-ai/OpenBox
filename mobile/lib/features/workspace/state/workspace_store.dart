@@ -85,6 +85,9 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
           (s) => s.copyWith(title: asString(event.data['title']) ?? s.title),
         );
       case 'session.status':
+        // Reconnect already fetches the complete list. In particular, an
+        // unknown historical/subagent session must not start another fetch.
+        if (event.data['recovery'] == true) return;
         _patchSession(
           event.sessionId,
           (s) => s.copyWith(

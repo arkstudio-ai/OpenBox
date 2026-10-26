@@ -228,7 +228,7 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
             "continuation_authority": binding_ref(coordination)}
     if not 1 <= len(source.source_message_ids) <= 20:
         raise AssistantError(400, "ASSISTANT_SOURCE_REQUIRED", "Reference the original human input")
-    references = []
+    references, unavailable = [], []
     for message_id in dict.fromkeys(source.source_message_ids):
         inbox = await db.scalar(select(AgentInboxItem).where(
             AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
@@ -244,11 +244,26 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
                        and p.data.get("origin_ref", {}).get("actor_user_id") == main.user_id
                        and p.data.get("origin_ref", {}).get("inbox_id") == inbox.id]
         if inbox is None or not human_parts:
-            raise AssistantError(403, "ASSISTANT_SOURCE_UNVERIFIED", "Human source is no longer available")
+            unavailable.append(message_id)
+            continue
         for p in human_parts:
             from assistant.results import part_hash
             references.append({"session_id": main.id, "message_id": message_id, "part_id": p.id,
                                "origin": "human", "content_hash": part_hash(p)})
+    if unavailable:
+        # Deny the complete command. History from another conversation may
+        # describe its requirements, but cannot authorize a new command here.
+        # Return only IDs the caller already supplied and this exact check
+        # verified, so it can repair the provenance without rereading history
+        # or guessing an ID. This neither executes nor auto-retries anything.
+        raise AssistantError(403, "ASSISTANT_SOURCE_UNVERIFIED",
+            "Some cited messages are not verified human instructions in this private assistant conversation. "
+            "Do not include task-conversation history IDs in source_message_ids. "
+            "Use the verified messages below only if their original words authorize this action; "
+            "otherwise obtain the user's instruction. Do not repeat the same invalid sources.",
+            details={"unavailable_source_message_ids": unavailable,
+                     "verified_source_message_ids": list(dict.fromkeys(r["message_id"] for r in references)),
+                     "command_applied": False})
     return {"part_id": source.part_id, "run_id": source.run_id,
             "generation": source.generation, "source_refs": references}
 
@@ -448,9 +463,14 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             if project_id is not None and project_id != task.project_id:
                 raise AssistantError(409, "ASSISTANT_PROJECT_CONFLICT", "A continuation keeps its original project")
             if expected_revision is None or task.control_revision != expected_revision:
-                raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT", "Task revision changed; reload the task")
+                raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT",
+                    "Task revision changed; nothing was applied. Reload tasks.get and copy task.control_revision "
+                    "as expected_revision, not intent_revision. Never guess or increment it.")
             if task.desired_state != "running":
-                raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING", "Resume the task before adding input")
+                raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING",
+                    "The same task is paused or stopped. Read tasks.get, then tasks.resume on the user's "
+                    "explicit continuation request and tasks.followup with the returned revision. "
+                    "Keep this task and session; do not submit or link a replacement.")
             if source is not None and source.coordination_inbox_id:
                 from assistant.continuation import require_next_submission
                 await require_next_submission(db, main, task, execution, source_ref)
@@ -483,14 +503,14 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                       "submission_id": submission_id, "intent_revision": task.intent_revision}
         if expected_run is not None:
             origin_ref["expected_run"] = expected_run
+        # Setup cards resolve after the assistant drafted its task text. This
+        # applies to every video form, not only the talking-head workflow.
+        # Carry only explicit choices, never an inherited session default.
+        if video_model is not None:
+            origin_ref["confirmed_setup"] = {"task_model": model or execution.model,
+                "video_model": video_model, "video_resolution": video_resolution}
         if workflow:
             origin_ref["workflow"] = workflow
-            # Setup cards resolve after the assistant drafted its task text.
-            # Carry the resolved choices as server facts, so an old sentence
-            # saying "choose a tier later" cannot undo the completed choice.
-            if video_model is not None:
-                origin_ref["confirmed_setup"] = {"task_model": model or execution.model,
-                    "video_model": video_model, "video_resolution": video_resolution}
             prompt = ("Load the video-production skill before planning or generating this talking-head video. "
                       "Follow its script, material, shot/price, transcript and delivery review stages. "
                       "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)

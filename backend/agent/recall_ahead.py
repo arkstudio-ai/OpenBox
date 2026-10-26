@@ -58,16 +58,27 @@ def recall_inputs(session, user_message, history, *, user_id: str, assistant_sco
 
 async def recall(inputs: RecallInputs, *, session_id: str, turn_id: str, config) -> dict[str, Any]:
     """The turn's memory context for these inputs (the run's own recall uses this too)."""
+    if config.enabled("semantic_recall", inputs.user_id):
+        from memory.packet import TurnContext, prepare_context
+        # prepare_context validates identity, membership and the owned session
+        # in its first transaction. Do not perform the same preflight twice.
+        return await prepare_context(TurnContext(user_id=inputs.user_id, workspace_id=inputs.workspace_id,
+            project_id=inputs.project_id, include_all_projects=inputs.include_all_projects,
+            query=inputs.query, entry="assistant" if inputs.include_all_projects else "chat",
+            session_id=session_id, turn_id=turn_id,
+            recent_context=tuple({"role": role, "text": text} for role, text in inputs.recent)), config)
     from db.base import get_db_session
     from memory.orchestrator import run_memory_context
     from memory.policy import resolve_access_scope
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=inputs.user_id, workspace_id=inputs.workspace_id,
             project_id=inputs.project_id, include_all_projects=inputs.include_all_projects)
-    return await run_memory_context(
+    bundle = await run_memory_context(
         inputs.query, scope, config, session_id=session_id, turn_id=turn_id,
         input_metadata={"run_id": inputs.run_id, "main_model": inputs.model_id},
         recent_context=[{"role": role, "text": text} for role, text in inputs.recent])
+    bundle["_access_scope"] = scope
+    return bundle
 
 
 def start(lease, batch) -> None:
@@ -80,8 +91,9 @@ def start(lease, batch) -> None:
     if key in _early:
         return
     entry = _Early(started=time.monotonic())
-    entry.task = asyncio.create_task(_recall_claimed(entry, lease, message_ids[-1]),
-                                     name=f"recall-ahead:{lease.session_id}")
+    from agent.latency import create_dependency_task
+    entry.task = create_dependency_task(_recall_claimed(entry, lease, message_ids[-1]),
+                                        name=f"recall-ahead:{lease.session_id}")
     # Unused or failed, it must not leave an unread exception behind.
     entry.task.add_done_callback(lambda done: done.cancelled() or done.exception())
     _early[key] = entry

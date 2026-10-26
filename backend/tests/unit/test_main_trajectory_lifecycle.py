@@ -5,6 +5,7 @@ the in-process worker, and stops them again. In external mode it neither
 imports the trace store or the worker nor serves the admin trajectory routes.
 """
 import importlib.abc
+import asyncio
 import json
 import os
 import subprocess
@@ -72,8 +73,9 @@ async def fresh_database_afterwards():
 
 
 @pytest.fixture
-def quiet_backend(monkeypatch):
+def quiet_backend(monkeypatch, tmp_path):
     """Every lifespan subsystem other than trajectory recording, reduced to no-ops."""
+    monkeypatch.chdir(tmp_path)
     import sandbox
     from cron.service import cron_service
     from notifications import announcements, providers, runtime
@@ -99,6 +101,28 @@ def quiet_backend(monkeypatch):
     monkeypatch.setattr("bus.bus.init_redis_bus", AsyncMock())
     monkeypatch.setattr("bus.bus.close_redis_bus", AsyncMock())
     monkeypatch.setattr("video.job_recovery.schedule_startup_recovery", lambda: None)
+    # This suite tests the lifespan wiring, not live SQL recovery or provider
+    # warm-up. Otherwise an inherited local .env can start real consumers.
+    from agent.recovery_service import agent_recovery_service
+    from tool.registry import platform_plugin_watcher
+    for service in (agent_recovery_service, platform_plugin_watcher):
+        monkeypatch.setattr(service, "start", AsyncMock())
+        monkeypatch.setattr(service, "stop", AsyncMock())
+    monkeypatch.setattr("assistant.fold_warmup.schedule_fold_warmup", lambda: None)
+    monkeypatch.setattr("assistant.fold_warmup.stop_fold_warmup", AsyncMock())
+    monkeypatch.setattr("billing.rules.start", AsyncMock())
+    monkeypatch.setattr("billing.rules.stop", AsyncMock())
+    monkeypatch.setattr("memory.providers.configured_read.schedule_transport_warmup", lambda _: None)
+    from assets.descriptions import DescriptionWorker
+    from memory.documents.worker import MemoryDocumentWorker
+    from memory.extraction import MemoryExtractionWorker
+    from memory.outbox import MemoryIndexWorker
+    from memory.wiki.organization_worker import WikiOrganizationWorker
+    from memory.wiki.worker import MemoryWikiWorker
+    for worker in (DescriptionWorker, MemoryDocumentWorker, MemoryIndexWorker,
+                   WikiOrganizationWorker, MemoryWikiWorker):
+        monkeypatch.setattr(worker, "start", lambda self: None)
+    monkeypatch.setattr(MemoryExtractionWorker, "start", AsyncMock())
 
 
 @pytest.fixture
@@ -206,6 +230,45 @@ async def test_off_mode_runs_no_emitter_meta_sync_or_worker(quiet_backend, recor
     async with main.lifespan(app):
         assert get_emitter() is None and "meta_sync.start" not in events
     assert not recording.exists()
+
+
+async def test_slow_memory_shutdown_cannot_leave_recovery_claiming_work(quiet_backend, monkeypatch):
+    """Exercise actual lifespan ordering, including a stalled memory worker."""
+    from agent.recovery_service import agent_recovery_service
+    from memory.wiki.worker import MemoryWikiWorker
+
+    stopping = asyncio.Event()
+    drained = asyncio.Event()
+    recovery_stopped = asyncio.Event()
+
+    async def stop_wiki(_self):
+        stopping.set()
+        await drained.wait()
+
+    async def stop_recovery():
+        recovery_stopped.set()
+
+    monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(jwt_secret=""))
+    monkeypatch.setenv("TRAJECTORY_WORKER_MODE", "off")
+    monkeypatch.setattr(agent_recovery_service, "start", AsyncMock())
+    monkeypatch.setattr(agent_recovery_service, "stop", stop_recovery)
+    monkeypatch.setattr(MemoryWikiWorker, "start", lambda self: None)
+    monkeypatch.setattr(MemoryWikiWorker, "stop", stop_wiki)
+    pool_closed = AsyncMock()
+    monkeypatch.setattr("memory.providers.common.close_shared_clients", pool_closed)
+
+    context = main.lifespan(main.create_app())
+    await context.__aenter__()
+    shutdown = asyncio.create_task(context.__aexit__(None, None, None))
+    try:
+        await asyncio.wait_for(stopping.wait(), 2)
+        await asyncio.wait_for(recovery_stopped.wait(), 2)
+        assert not shutdown.done()
+        pool_closed.assert_not_awaited()
+    finally:
+        drained.set()
+        await asyncio.wait_for(shutdown, 10)
+    pool_closed.assert_awaited_once()
 
 
 async def test_emitter_starts_before_serving_and_closes_with_five_seconds(quiet_backend, events, monkeypatch):

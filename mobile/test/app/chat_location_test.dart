@@ -14,6 +14,59 @@ const _scope = (userId: 'alice', workspaceId: 'shop');
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('a first-run sheet cannot prevent an authorized chat bookmark', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final ready = ValueNotifier(false);
+    final container = ProviderContainer(
+      overrides: [
+        prefsProvider.overrideWithValue(prefs),
+        assistantScopeProvider.overrideWithValue(_scope),
+      ],
+    );
+    final router = GoRouter(
+      initialLocation: '/app/s/fruit-shop',
+      routes: [
+        GoRoute(
+          path: '/app/s/fruit-shop',
+          builder: (_, _) => ValueListenableBuilder<bool>(
+            valueListenable: ready,
+            builder: (_, value, _) => value
+                ? const RememberChatLocation(
+                    location: '/app/s/fruit-shop',
+                    child: Scaffold(body: Text('Chat')),
+                  )
+                : const Scaffold(body: Text('Loading')),
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    unawaited(
+      showModalBottomSheet<void>(
+        context: tester.element(find.text('Loading')),
+        builder: (_) =>
+            const SizedBox(height: 100, child: Text('Getting started')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    ready.value = true;
+    await tester.pumpAndSettle();
+    expect(ChatLocationStore(prefs).read(_scope), '/app/s/fruit-shop');
+    await tester.pumpWidget(const SizedBox.shrink());
+    router.dispose();
+    container.dispose();
+    ready.dispose();
+  });
+
   test(
     'bookmark accepts only chat pages and strips transient task queries',
     () {

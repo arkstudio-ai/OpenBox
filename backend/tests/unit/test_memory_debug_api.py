@@ -33,6 +33,52 @@ async def debug_env(authority_scope, monkeypatch):
     yield scope, config, run_id, memory
 
 
+@pytest.mark.parametrize("fail_insert", [False, True])
+async def test_completed_packet_diagnostics_use_one_atomic_commit(debug_env, fail_insert):
+    from sqlalchemy import event
+    from db import base
+    from db.models.memory_v2 import MemoryDebugStep
+    scope, config, _, memory = debug_env
+    async with get_db_session() as db:
+        access = await resolve_access_scope(db, **identity(scope), project_id=scope['p1'])
+    run_id = await observability.create_debug_run('A completed packet', access, config.memory)
+    refs = [{'kind': 'memory', 'id': memory['id'], 'revision': memory['revision']}]
+    steps = [dict(phase='route', status='SUCCEEDED', data={'api_key': 'synthetic-sensitive-value'}),
+             dict(phase='bundle', status='DEGRADED', source_refs=refs,
+                  data={'items': [{'text': 'Evidence body'}]}, duration_ms=123)]
+    commits = []
+    def committed(_connection):
+        commits.append(True)
+    def before(_conn, _cursor, statement, _parameters, _context, _many):
+        if fail_insert and statement.startswith('INSERT INTO memory_debug_steps'):
+            raise RuntimeError('Injected debug persistence failure')
+    engine = base._engine.sync_engine
+    event.listen(engine, 'commit', committed)
+    event.listen(engine, 'before_cursor_execute', before)
+    try:
+        if fail_insert:
+            with pytest.raises(RuntimeError, match='Injected debug persistence failure'):
+                await observability.finish_debug_run(run_id, 'DEGRADED', steps=steps, usage={'input_tokens': 8})
+        else:
+            await observability.finish_debug_run(run_id, 'DEGRADED', steps=steps, usage={'input_tokens': 8})
+    finally:
+        event.remove(engine, 'before_cursor_execute', before)
+        event.remove(engine, 'commit', committed)
+    assert len(commits) == (0 if fail_insert else 1)
+    async with get_db_session() as db:
+        row = await db.get(MemoryDebugRun, run_id)
+        saved = list((await db.scalars(select(MemoryDebugStep).where(MemoryDebugStep.run_id == run_id)
+                                      .order_by(MemoryDebugStep.id))).all())
+        if fail_insert:
+            assert row.status == 'RUNNING' and row.source_refs == [] and saved == []
+        else:
+            assert row.status == 'DEGRADED' and row.source_refs == refs and row.usage == {'input_tokens': 8}
+            assert [item.phase for item in saved] == ['route', 'bundle']
+            assert saved[1].data['items'][0]['text'] == 'Evidence body'
+            assert saved[1].duration_ms == 123
+            assert 'synthetic-sensitive-value' not in str(saved[0].data)
+
+
 async def test_gets_are_read_only_redacted_and_cross_user_ids_are_hidden(debug_env, monkeypatch):
     scope, config, run_id, memory = debug_env
     async def forbidden_provider(*args, **kwargs):

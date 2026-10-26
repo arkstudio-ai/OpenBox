@@ -206,4 +206,26 @@ async def test_explicit_scope_catalogue_uses_the_client_registry_getter_contract
     client = OrdinaryClient()
     result = await resolve_step_tools(SimpleNamespace(name="build", tools=["skill"], permission=[]),
         client, [], scope_key=ScopeKey("ordinary-user"))
-    assert "ordinary" in result["skill"].description and client.gets == 5
+    assert "ordinary" in result["skill"].description and client.gets == 1
+    # The frozen observation is local to resolution, not a new cache for loads.
+    await client.get_catalogue_projection_state()
+    assert client.gets == 2
+
+
+async def test_scoped_catalogue_outage_is_not_retried_by_each_skill_provider():
+    from types import SimpleNamespace
+    from skill.provider import ScopeKey, SandboxCatalogueSkillProvider, catalogue_observation
+    from unittest.mock import AsyncMock
+
+    state = SimpleNamespace(availability="available", snapshot={"generation": "fresh", "skills": []})
+    first = SimpleNamespace(get_catalogue_projection_state=AsyncMock(return_value=state))
+    second = SimpleNamespace(get_catalogue_projection_state=AsyncMock(return_value=state))
+    a, b = SandboxCatalogueSkillProvider(first), SandboxCatalogueSkillProvider(second)
+    with catalogue_observation(first, "unavailable", None):
+        assert not (await a._read(ScopeKey("owner-a"))).available
+        assert not (await a._read(ScopeKey("owner-a"))).available
+        first.get_catalogue_projection_state.assert_not_awaited()
+        assert (await b._read(ScopeKey("owner-b"))).available
+        second.get_catalogue_projection_state.assert_awaited_once()
+    assert (await a._read(ScopeKey("owner-a"))).available
+    first.get_catalogue_projection_state.assert_awaited_once()

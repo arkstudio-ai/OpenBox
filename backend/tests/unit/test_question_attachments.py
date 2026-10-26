@@ -12,6 +12,39 @@ from question.continuation import apply_answers
 from tests.unit.test_durable_questions import checkpoint, read, state  # noqa: F401
 
 
+@pytest.mark.parametrize("content", [None, "", "  \n "])
+def test_review_cannot_ask_for_an_unseen_proposal(content):
+    from pydantic import ValidationError
+    from tool.question_tool import QuestionArgs
+    with pytest.raises(ValidationError, match="complete current proposal"):
+        QuestionArgs.model_validate({"questions": [{"purpose": "review",
+            "question": "Confirm this revision?", "review_content": content}]})
+
+
+async def test_review_content_is_visible_and_does_not_grant_media_execution(monkeypatch):
+    from tool.question_tool import QuestionArgs, execute
+    from tool.tool import ToolContext
+    seen = []
+    async def ask(**kwargs):
+        seen.extend(kwargs["questions"])
+        return [["Change the wording"]]
+    monkeypatch.setattr(q, "ask", ask)
+    monkeypatch.setattr("tool.question_tool._interaction_timeout", _no_timeout)
+    draft = "0–6s: camera moves over the real shelf.\n6–12s: widen the view.\nNo media generation."
+    result = await execute(QuestionArgs.model_validate({"questions": [{"purpose": "review",
+        "review_content": draft, "question": "Does this new draft work?",
+        "options": [{"label": "Change the wording"}]}]}),
+        ToolContext(user_id="u1", session_id="s1", message_id="m1", agent_id="build"))
+    assert seen[0].question == draft + "\n\nDoes this new draft work?"
+    assert not seen[0].requires_confirmation and seen[0].kind is None
+    assert result.metadata["questions"] == [seen[0].question]
+    assert draft in result.output and result.metadata["answers"] == [["Change the wording"]]
+
+
+async def _no_timeout(*_):
+    return None
+
+
 async def asset(asset_id="asset-a", **changes):
     values = dict(id=asset_id, user_id="u1", workspace_id="w1", name="portrait.png",
                   mime="image/png", size=100, oss_key=f"assets/u1/{asset_id}/portrait.png",

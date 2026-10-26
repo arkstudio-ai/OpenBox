@@ -542,9 +542,10 @@ async def test_memory_derived_task_records_no_derivation_and_forgetting_is_not_r
     from assistant.scheduling import require_runnable
     from db.models.assistant import AssistantCommand
     from session.session import create_session
-    identity, _, _, _ = await seed(monkeypatch)
+    identity, _, _, config = await seed(monkeypatch)
+    config.model = "test/model"
     value = await note(identity)
-    ctx, lease, answer = await start(identity, prompt="Read the source, then create the derived draft in a new conversation in this project.")
+    ctx, lease, answer = await start(identity, prompt="Read the source, then create the derived draft in a new conversation in this project. Use test/model.")
     try:
         result, _, _ = await call_tool(ctx, "memory.search", {"query": "MEMORY_CANARY"})
         assert not result.metadata.get("error"), result.output
@@ -554,6 +555,7 @@ async def test_memory_derived_task_records_no_derivation_and_forgetting_is_not_r
         await consume_context(ctx)
         result, _, _ = await call_tool(ctx, "tasks.submit", {"project_id": ctx.project_id, "destination_confirmed": True,
             "title": "Memory-derived draft", "instructions": "Draft text from my verified memory. Do not publish.",
+            "model": "test/model", "model_confirmed": True,
             "source_message_ids": [answer.parent_id]})
         assert not result.metadata.get("error"), result.output
         receipt = json.loads(result.output)

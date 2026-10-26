@@ -41,6 +41,13 @@ class ProviderUnavailable(Exception):
 
 
 @dataclass(frozen=True)
+class _DeleteAck:
+    item_id: str
+    event_id: str
+    future: asyncio.Future
+
+
+@dataclass(frozen=True)
 class ProviderEvent:
     """One provider event the bridge cares about (docs/VOICE_CALL_BACKEND.md §7)."""
     kind: str
@@ -63,6 +70,7 @@ class ProviderEvent:
     item_id: str = ""
     role: str = ""
     item_type: str = ""
+    output_items: tuple[str, ...] = ()
 
 
 def classify_error(message: str, param: str = "", code: str = "") -> str:
@@ -164,7 +172,9 @@ def translate(event: dict, key: str = "") -> ProviderEvent | None:
     if kind == "response.done":
         response = event.get("response") or {}
         return ProviderEvent("response_done", response_id=response.get("id"),
-                             status=str(response.get("status") or "completed"), usage=response.get("usage"))
+                             status=str(response.get("status") or "completed"), usage=response.get("usage"),
+                             output_items=tuple(str(item["id"]) for item in response.get("output") or []
+                                                if isinstance(item, dict) and item.get("id")))
     if kind == "error":
         error = event.get("error") or {}
         message, param, code = (str(error.get(name) or "") for name in ("message", "param", "code"))
@@ -201,6 +211,16 @@ class RealtimeProvider:
         self._prompt_items: set[str] = set()
         self._pending_prompts: set[str] = set()
         self._response_prompts: dict[str, set[str]] = {}
+        self._reader = None
+        self._events = asyncio.Queue(maxsize=2048)
+        self._update_lock = asyncio.Lock()
+        self._instruction_ack = None
+        self._instruction_sequence = 0
+        self._instruction_started = None
+        # One deletion per immutable item on this socket, including keeper and
+        # prompt cleanup. Keep terminal receipts: retrying an uncertain delete
+        # would make an error without a client event_id ambiguous.
+        self._delete_acks: dict[str, _DeleteAck] = {}
         # How the session ended, once ``events`` is over: the close frame and the last error's code.
         self.close_code: int | None = None
         self.close_reason = ""
@@ -311,7 +331,18 @@ class RealtimeProvider:
                     return event
         raise ProviderUnavailable(f"closed before {expected}")
 
+    def _ensure_reader(self):
+        if self._reader is None:
+            self._reader = asyncio.create_task(self._read_events())
+
     async def events(self):
+        # One socket reader owns all receives. In particular, a bridge event
+        # handler may await session.updated without deadlocking its own pump.
+        self._ensure_reader()
+        while (event := await self._events.get()) is not None:
+            yield event
+
+    async def _read_events(self):
         """Translated events until the provider closes the connection.
 
         Then ``close_code``, ``close_reason`` and ``last_error`` say how it
@@ -324,17 +355,48 @@ class RealtimeProvider:
                     event = json.loads(raw)
                 except ValueError:
                     continue
+                if event.get("type") == "session.updated" and self._instruction_started is not None:
+                    received = (event.get("session") or {}).get("instructions")
+                    expected, future = self._instruction_ack or (None, None)
+                    # Lengths/timing only; never log private instruction text.
+                    log.debug("voice instruction receipt sequence=%d pending=%s elapsed_ms=%d "
+                              "expected_chars=%s received_chars=%s exact=%s stripped_match=%s",
+                        self._instruction_sequence, future is not None,
+                        round((time.monotonic() - self._instruction_started) * 1000),
+                        len(expected) if expected is not None else None,
+                        len(received) if isinstance(received, str) else None,
+                        received == expected,
+                        isinstance(received, str) and expected is not None and received.strip() == expected.strip())
+                    # Bailian does not echo the client's event_id. Serialize
+                    # updates and bind the exact instructions on this socket.
+                    if future is not None and received == expected and not future.done():
+                        future.set_result(True)
+                if absence := self._acknowledge_delete(event):
+                    self._events.put_nowait(absence)
+                    continue
                 if await self._response_prompt_event(event):
                     continue
                 if event.get("type") == "error":
                     self.last_error = str((event.get("error") or {}).get("code") or "error")[:80]
                 translated = translate(event, self._key)
                 if translated is not None:
-                    yield translated
+                    self._events.put_nowait(translated)
         except websockets.exceptions.ConnectionClosed:
             pass
-        self.close_code = getattr(self._ws, "close_code", None)
-        self.close_reason = str(getattr(self._ws, "close_reason", None) or "")[:120]
+        except asyncio.QueueFull:
+            await _quiet_close(self._ws)
+        finally:
+            self.close_code = getattr(self._ws, "close_code", None)
+            self.close_reason = str(getattr(self._ws, "close_reason", None) or "")[:120]
+            futures = [ack.future for ack in self._delete_acks.values()]
+            if self._instruction_ack:
+                futures.append(self._instruction_ack[1])
+            for future in futures:
+                if not future.done():
+                    future.set_exception(ProviderUnavailable("connection closed before acknowledgement"))
+            if self._events.full():
+                self._events.get_nowait()
+            self._events.put_nowait(None)
 
     async def send_audio(self, pcm: bytes) -> None:
         await self._send({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode("ascii")})
@@ -349,16 +411,103 @@ class RealtimeProvider:
             "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
 
     async def delete_item(self, item_id: str) -> None:
-        await self._send({"type": "conversation.item.delete", "item_id": item_id})
+        await self._send_delete(item_id)
+
+    async def _send_delete(self, item_id: str) -> _DeleteAck:
+        if item_id in self._delete_acks:
+            return self._delete_acks[item_id]
+        future = asyncio.get_running_loop().create_future()
+        # Unconfirmed housekeeping has no waiter, but its failure still goes
+        # through provider_error. Consume exceptions without hiding them from
+        # any later confirmed waiter.
+        future.add_done_callback(lambda value: value.exception() if not value.cancelled() else None)
+        ack = _DeleteAck(item_id, "voice_delete_" + uuid.uuid4().hex, future)
+        self._delete_acks[item_id] = ack
+        try:
+            await self._send({"type": "conversation.item.delete", "event_id": ack.event_id, "item_id": item_id})
+        except BaseException:
+            if not future.done():
+                future.set_exception(ProviderUnavailable("item deletion send was interrupted"))
+            raise
+        return ack
+
+    def _acknowledge_delete(self, event: dict) -> ProviderEvent | None:
+        kind = event.get("type")
+        if kind == "conversation.item.deleted":
+            ack = self._delete_acks.get(event.get("item_id"))
+            if ack is not None and not ack.future.done():
+                ack.future.set_result("provider_deleted")
+            return None
+        if kind != "error":
+            return None
+        error = event.get("error") or {}
+        request_id = error.get("event_id")
+        ack = next((value for value in self._delete_acks.values()
+                    if request_id == value.event_id and not value.future.done()), None)
+        if "event_id" not in error:
+            # Measured on Bailian Audio 2026-10-22: errors contain no client
+            # event_id or structured item_id. Accept only its exact absence
+            # response for a target with ONE wire delete on this socket.
+            # An explicit but mismatched ID must never use this fallback.
+            ack = next((value for value in self._delete_acks.values() if not value.future.done()
+                        and _delete_confirmed_absent(event, value.item_id)), None)
+        if error.get("param") == "conversation.item.delete":
+            # IDs/code only: never log the raw provider message or item content.
+            log.info("voice delete error server_event=%s request_event=%s item=%s code=%s correlation=%s",
+                     scrub(str(event.get("event_id") or "-"), self._key),
+                     ack.event_id if ack else scrub(str(request_id or "-"), self._key),
+                     scrub(ack.item_id, self._key) if ack else "-",
+                     scrub(str(error.get("code") or "-"), self._key),
+                     ("request_event_id" if request_id else "single_item_request") if ack else "unmatched")
+        if ack is None:
+            return None
+        if not _delete_confirmed_absent(event, ack.item_id):
+            ack.future.set_exception(ProviderUnavailable("provider refused item deletion"))
+            return None
+        ack.future.set_result("provider_confirmed_absent")
+        self._prompt_items.discard(ack.item_id)
+        log.info("voice delete outcome=provider_confirmed_absent request_event=%s item=%s",
+                 ack.event_id, scrub(ack.item_id, self._key))
+        # Absence is a distinct acknowledgement, never a fabricated provider
+        # conversation.item.deleted event.
+        return ProviderEvent("provider_confirmed_absent", item_id=ack.item_id, event_id=ack.event_id,
+                             code="invalid_value", param="conversation.item.delete")
 
     async def update_instructions(self, instructions: str) -> None:
         """Only the instructions; voice, VAD and tools stay (measured 2026-10-07). Send it while idle."""
         await self._send({"type": "session.update", "session": {"instructions": instructions}})
 
-    async def create_response(self, instructions: str | None = None) -> None:
+    async def update_instructions_confirmed(self, instructions: str, timeout: float = 2.0) -> None:
+        self._ensure_reader()
+        async with self._update_lock:
+            future = asyncio.get_running_loop().create_future()
+            self._instruction_ack = (instructions, future)
+            self._instruction_sequence += 1
+            self._instruction_started = time.monotonic()
+            try:
+                await self.update_instructions(instructions)
+                await asyncio.wait_for(future, timeout)
+            finally:
+                self._instruction_ack = None
+
+    async def delete_item_confirmed(self, item_id: str, timeout: float = 2.0) -> None:
+        self._ensure_reader()
+        ack = await self._send_delete(item_id)
+        # A cancelled/timed-out waiter must not cancel another waiter's receipt
+        # or force a second wire request. A late exact acknowledgement remains
+        # useful on this same socket.
+        await asyncio.wait_for(asyncio.shield(ack.future), timeout)
+
+    async def create_response(self, instructions: str | None = None, response_policy: str | None = None) -> None:
         """Audio requires a user item even for a greeting; Omni supports per-response instructions."""
+        if response_policy and not instructions:
+            raise ValueError("A response policy requires the full session contract for override-style providers")
         if instructions and is_audio(self.config.model):
-            await self._send_many(self._prompt_item(instructions), {"type": "response.create"})
+            # Current session instructions already carry the verified memory
+            # packet. A normal answer only needs its short presentation rule
+            # repeated; this transient item is retired by the existing ACK
+            # lifecycle and never becomes a user utterance or saved memory.
+            await self._send_many(self._prompt_item(response_policy or instructions), {"type": "response.create"})
             return
         event = {"type": "response.create"}
         if instructions:
@@ -421,6 +570,9 @@ class RealtimeProvider:
     async def close(self) -> None:
         if self._ws is not None:
             await _quiet_close(self._ws)
+        if self._reader is not None and self._reader is not asyncio.current_task():
+            self._reader.cancel()
+            await asyncio.gather(self._reader, return_exceptions=True)
 
     async def _send(self, event: dict) -> None:
         await self._send_many(event)
@@ -434,6 +586,16 @@ class RealtimeProvider:
 def _error_reason(event: dict) -> str:
     error = event.get("error") or {}
     return classify_error(*(str(error.get(name) or "") for name in ("message", "param", "code")))
+
+
+def _delete_confirmed_absent(event: dict, item_id: str) -> bool:
+    error = event.get("error") or {}
+    return (error.get("type") == "invalid_request_error"
+            and error.get("code") == "invalid_value"
+            and error.get("param") == "conversation.item.delete"
+            and error.get("message") == "Cannot find item with id: " + item_id
+            and error.get("item_id", item_id) == item_id
+            and event.get("item_id", item_id) == item_id)
 
 
 async def _quiet_close(ws) -> None:

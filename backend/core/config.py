@@ -599,7 +599,7 @@ class MemoryConfig(BaseModel):
     lazy_read_planning: bool = False
     # Resolve the model's explicit provider binding (Qwen: official Bailian;
     # JEV uses its native typed protocol). Empty explicitly opts into
-    # the legacy native JEV adapter; timeout never switches providers.
+    # the native JEV adapter, with one bounded independent fallback below.
     read_router_model: str = "openai/qwen3.8-flash"
     read_router_url: str = ""  # Optional explicit endpoint; requires MEMORY_READ_ROUTER_API_KEY.
     read_router_timeout_seconds: float = Field(default=6.0, gt=0, le=10)
@@ -644,6 +644,10 @@ class MemoryConfig(BaseModel):
     jev_model: str = "jev-1.13.0"
     jev_url: str = "https://api.typesafe.ai/v1/systemone"
     jev_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+    # Empty disables fallback. This resolves its own model/provider binding;
+    # it never reuses JEV/UEE credentials or the main conversation model.
+    jev_fallback_model: str = "openai/qwen3.8-flash"
+    jev_fallback_timeout_seconds: float = Field(default=4.0, gt=0, le=6)
     jev_memory_confidence: float = Field(default=0.65, ge=0, le=1)
     jev_task_confidence: float = Field(default=0.65, ge=0, le=1)
     provider_timeout_seconds: float = Field(default=20, gt=0, le=120)

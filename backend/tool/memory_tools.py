@@ -23,6 +23,7 @@ from tool.tool import ToolContext, ToolResult, define_tool
 
 log = create_logger("tool.memory")
 MEMORY_TOOL_IDS = frozenset({"memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"})
+MEMORY_ASSISTANT_TOOL_IDS = frozenset({"memory.read_more"})
 MEMORY_PREPARE_TOOL_IDS = frozenset({"memory_prepare", "memory.prepare"})
 # Changes a memory only after the person confirms it on a card.
 MEMORY_WRITE_TOOL_IDS = frozenset({"memory_forget"})
@@ -65,7 +66,8 @@ class SupplementRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["search", "sources", "documents", "wiki", "assets", "history", "experience", "task_state", "settings"] = "search"
     query: str = Field(default="", max_length=3000)
-    refs: list[SupplementReference] = Field(default_factory=list, max_length=8)
+    refs: list[SupplementReference] = Field(default_factory=list, max_length=8,
+        description="For history use exact session IDs from the history catalogue (up to two); for sources/Wiki use their IDs and revisions. A query alone does not select a transcript.")
     offset: int = Field(default=0, ge=0, le=32000)
     max_chars: int = Field(default=3000, ge=100, le=8000)
 
@@ -113,7 +115,10 @@ async def execute_memory_read_more(args, ctx, *, operation="memory_read_more"):
     from memory.packet import ReadRequest, read_more
     if not _settings().enabled("retrieval_v2", ctx.user_id):
         return _unavailable("feature_disabled")
-    if not _settings().enabled("semantic_recall", ctx.user_id) or ctx.memory_turn is None:
+    if not _settings().enabled("semantic_recall", ctx.user_id) or ctx.memory_turn is None or ctx.memory_read_budget is None:
+        return _unavailable("turn_read_scope_unavailable")
+    if (ctx.user_id, ctx.workspace_id, ctx.session_id) != (
+            ctx.memory_turn.user_id, ctx.memory_turn.workspace_id, ctx.memory_turn.session_id):
         return _unavailable("turn_read_scope_unavailable")
     try:
         await ctx.assert_run_current()
@@ -369,7 +374,7 @@ memory_search_tool = define_tool(
     parameters=MemorySearchArgs, execute=execute_memory_search, sandbox_required=False, parallel_safe=True,
     discovery_hint="Read confirmed personal/project memory with source references.")
 memory_read_more_tool = define_tool(
-    "memory_read_more", description="Fill specific evidence gaps in one batch of up to two reads. Search meaning, read exact sources/Wiki/history, list full document names or assets with pagination, or find validated personal experience. One batch per turn; obey the current user's restrictions. Partial/unavailable never proves absence. No writes or execution permission.",
+    "memory_read_more", description="Fill specific evidence gaps in one batch of up to two reads. Search confirmed facts, read exact sources/Wiki/history, list full document names or assets with pagination, or find validated personal experience. For history pass session IDs from the catalogue. One further narrower batch is allowed only when continuation_available is true; both share one token budget. Obey the user's restrictions. Partial/unavailable never proves absence. No writes or execution permission.",
     parameters=MemorySupplementArgs, execute=execute_memory_read_more, sandbox_required=False, parallel_safe=False,
     discovery_hint="Batch precise memory, knowledge, history, asset and experience reads.")
 memory_read_sources_tool = define_tool(

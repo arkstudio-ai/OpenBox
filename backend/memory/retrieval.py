@@ -257,10 +257,25 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                         force_rerank=False, index=None, embedding=None,
                         document_loader=None, kinds=None, io_budget_seconds=None,
                         prefer_document_source=False, diagnostics=None, time_query=None, time_intent=None,
-                        include_background=False, on_background=None, on_checkpoint=None) -> dict:
+                        include_background=False, on_background=None, on_checkpoint=None, retrieval_needs=None) -> dict:
     from core.config import get_config
     from core.identifier import ascending
     config = config or get_config().memory
+    typed_needs = retrieval_needs if retrieval_needs and "personal_useful" in retrieval_needs else None
+    def needed(document):
+        if typed_needs is None:
+            return True
+        personal = typed_needs.get("personal_useful", 0) >= .4
+        history = typed_needs.get("history_useful", 0) >= .4
+        knowledge = typed_needs.get("knowledge_useful", 0) >= .4
+        assets = typed_needs.get("assets_useful", 0) >= .4
+        experience = typed_needs.get("experience_useful", 0) >= .4
+        if document.kind == "wiki":
+            return knowledge
+        if document.kind == "memory":
+            return personal or history or experience
+        document_source = any(ref.get("kind") == "document_chunk" for ref in document.sources)
+        return knowledge or assets if document_source else personal or history or experience
     kinds = tuple(kinds) if kinds is not None else ("memory", "source", "wiki")
     if not kinds or len(set(kinds)) != len(kinds) or set(kinds) - {"memory", "source", "wiki"}:
         raise ValueError("Invalid memory retrieval kinds")
@@ -330,7 +345,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
             if include_background:
                 from memory.orchestrator import core_memory_candidates
                 background_ids = await core_memory_candidates(db, scope,
-                    include_style=config.enabled("semantic_recall", scope.user_id))
+                    include_style=config.enabled("semantic_recall", scope.user_id), personal_only=typed_needs is not None)
             pooled = {}
             if document_loader is None:
                 # Only the current query goes to the embedding provider. After
@@ -388,7 +403,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
                 project_id=project_id, include_all_projects=include_all_projects)
             current_all = await load_documents(db, current_scope, config, only=wanted)
             current = [doc for doc in current_all
-                       if document_matches_time(doc, time_context)]
+                       if needed(doc) and document_matches_time(doc, time_context)]
     from memory.orchestrator import background_snapshot
     background = background_snapshot(background_ids, current_all, config)
     if include_background and on_background:

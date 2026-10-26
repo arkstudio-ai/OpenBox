@@ -59,7 +59,7 @@ def core_usage_order(now=None) -> tuple:
 STYLE_KEYS = "personal.style.%"
 
 
-async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL, *, include_style=False) -> list[str]:
+async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL, *, include_style=False, personal_only=False) -> list[str]:
     style_filter = [] if include_style else [or_(UserMemory.fact_key.is_(None), ~UserMemory.fact_key.like(STYLE_KEYS))]
     # These are semantic storage fields, not a phrase matcher on user input.
     # Time-bounded events, project instructions and task-scoped feedback remain
@@ -71,18 +71,21 @@ async def core_memory_candidates(db, scope, limit=CORE_CANDIDATE_POOL, *, includ
     eligible = or_(UserMemory.type.in_(PERSONAL_TYPES),
         UserMemory.type == "USER_NOTE",
         (UserMemory.type == "FEEDBACK") & UserMemory.fact_key.like(STYLE_KEYS))
+    if personal_only:
+        eligible = UserMemory.type.in_(PERSONAL_TYPES)
     return list((await db.scalars(select(UserMemory.id).where(*scope.predicates(UserMemory),
         *active_memory_predicates(), lasting, personal_key, eligible, *style_filter)
         .order_by(core_importance(scope), *core_usage_order(),
         UserMemory.updated_at.desc(), UserMemory.id).limit(limit))).all())
 
 
-async def _stable_background(scope, config):
+async def _stable_background(scope, config, *, personal_only=False):
     async with get_db_session() as db:
         current = await resolve_access_scope(db, user_id=scope.user_id, workspace_id=scope.workspace_id,
                                              project_id=scope.project_id,
                                              include_all_projects=scope.include_all_projects)
-        ranked = await core_memory_candidates(db, current, include_style=config.enabled("semantic_recall", current.user_id))
+        ranked = await core_memory_candidates(db, current, include_style=config.enabled("semantic_recall", current.user_id),
+                                             personal_only=personal_only)
         # Full authorization only for the ranked pool, never every memory.
         docs = await authorized_documents(db, current, config, only={("memory", memory_id) for memory_id in ranked}) \
             if ranked else []
@@ -412,10 +415,13 @@ def render_memory_context(bundle) -> str:
         if bundle.get("catalogs"):
             from memory.redaction import ReferenceId
             material["discovery"] = [{**item, "id": ReferenceId(item["id"])} for item in bundle["catalogs"]]
+        supplement_tool = "memory.read_more" if getattr(bundle.get("_turn"), "entry", None) == "assistant" else "memory_read_more"
         material["instruction"] = ("Settings are current user decisions and override stale memories; name is the assistant name and address is how to address the user. "
             "Use the address only when naturally opening a conversation, not every reply. The current request overrides defaults for this task. "
             "An incomplete or empty recall is not proof that no records exist. Read only within the user's current restrictions. "
-            "One supplement batch with at most two reads is available through memory_read_more; preserve exact references and conditions. "
+            f"Use {supplement_tool} for up to two selected reads in a batch; preserve exact references and conditions. "
+            "Only when continuation_available is true, one further different/narrower batch may fill an explicit gap within the same total token budget. "
+            "Do not search the sandbox filesystem as a substitute for restricted or unavailable memory/history. "
             "Reading does not save a preference or change a task. Report a change as completed only with a successful current write receipt; "
             "a user's request to avoid an action is a constraint on your behavior, not evidence that a running task was changed.")
         if bundle.get("status") == "unavailable":

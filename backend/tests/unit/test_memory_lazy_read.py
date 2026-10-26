@@ -172,7 +172,8 @@ async def test_assistant_preparation_keeps_mode_authority_and_original_turn(monk
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-async def test_preparation_tools_require_explicit_rollout(monkeypatch, enabled):
+@pytest.mark.parametrize("native", [True, False])
+async def test_preparation_tools_require_explicit_rollout(monkeypatch, enabled, native):
     from agent.agent import AgentDef
     from agent.tool_resolution import resolve_step_tools
     from memory.session_policy import MEMORY_CAPABILITIES
@@ -181,6 +182,7 @@ async def test_preparation_tools_require_explicit_rollout(monkeypatch, enabled):
     from tool.assistant_tools import assistant_tools
     config, value = await deferred(monkeypatch)
     config.lazy_read_planning = enabled
+    config.read_router_model = "" if native else "openai/qwen3.8-flash"
     assistant_tool = next(tool for tool in assistant_tools if tool.id == "memory.prepare")
     monkeypatch.setattr(registry, "_tools", {tool.id: tool for tool in (memory_prepare_tool, assistant_tool)})
     agent = AgentDef(name="memory-probe", description="Exact memory preparation tools", tools=["memory_prepare", "memory.prepare"])

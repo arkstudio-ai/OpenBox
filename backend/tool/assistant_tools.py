@@ -21,7 +21,7 @@ from assistant.runtime import authorize_assistant_tool
 from core.log import create_logger
 from db.base import get_db_session
 from tool.tool import ToolContext, ToolInfo, ToolResult, define_tool
-from tool.memory_tools import MemoryPrepareArgs, PREPARE_DESCRIPTION
+from tool.memory_tools import MemoryPrepareArgs, MemorySupplementArgs, PREPARE_DESCRIPTION, memory_read_more_tool
 
 log = create_logger("tool.assistant")
 READ_TOOLS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
@@ -531,6 +531,9 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
             if operation == "memory.prepare":
                 from tool.memory_tools import execute_memory_prepare
                 return await execute_memory_prepare(args, ctx)
+            if operation == "memory.read_more":
+                from tool.memory_tools import execute_memory_read_more
+                return await execute_memory_read_more(args, ctx, operation=operation)
             if operation in READ_TOOLS:
                 # V2: the observation is used as read. Later turns see a stub
                 # and read again (assistant.projection.guard_assistant_read).
@@ -722,6 +725,7 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
 
 assistant_tools = (
     _tool("memory.prepare", MemoryPrepareArgs, PREPARE_DESCRIPTION),
+    _tool("memory.read_more", MemorySupplementArgs, memory_read_more_tool.description),
     _tool("requests.revise", RequestRevisionArgs, "Apply an explicit user change to the SAME task waiting on a planning question, including an unlinked ordinary conversation. Atomically supersedes that turn's old questions and queues the complete revised instructions and selected files; preserves history and previously settled decisions. Use this for changing materials, scope or approach, including an answer combined with a change. Do not answer the old card first or link/create a different task. This grants no approval or spending. Status questions and unrelated conversation do not revise a task. Shared conversations retain exact-send confirmation. accepted means persisted and queued, not generated or completed."),
     _tool("cards.list", CardsArgs, "Read your main assistant's saved preparation and confirmation cards, including unfinished requests from earlier topics. A pending card means the work has NOT started. Use request_id to read one exact card and its original arguments. Do not confuse it with an executing task."),
     _tool("cards.answer", CardReplyArgs, "Record the user's explicit answer to an exact saved main-assistant card from cards.list. Use its unchanged version and exact option labels, citing the original human answer after the card was presented. Questions about an option are not choices; clarify ambiguous targets. project_name is only for a chosen new-project option. The receipt records a decision, not execution: continue only the original_call through its normal tool with the saved arguments. A new topic does not cancel another pending request. Use requests.answer for questions inside task conversations."),

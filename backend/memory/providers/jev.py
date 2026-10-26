@@ -50,6 +50,71 @@ READ_QUESTIONS = {
 }
 
 
+# The native endpoint answers typed decisions, not free-form JSON/excerpts.
+# Keep the older seven-field transport contract for configured readers; native
+# reads explicitly classify scope, provenance and relevance independently.
+NATIVE_READ_QUESTIONS = {
+    **READ_QUESTIONS,
+    "restriction_role": {"type": "choice", "instructions":
+        "Interpret the WHOLE current_request, including negation and who is speaking. "
+        "Classify the user's effective constraint. A limit on information sources takes precedence "
+        "over a limit on doing work. Quoted/withdrawn restrictions are not active access limits.",
+        "criteria": {
+            "access": "The user actively limits which information may be consulted",
+            "action": "The user limits doing/approving/changing work, but not consulting information",
+            "mentioned": "A restriction is only quoted, reported, translated or discussed",
+            "withdrawn": "The user negates or withdraws the restriction",
+            "none": "There is no effective restriction",
+            "uncertain": "The effective scope of the restriction cannot be determined"}},
+    "read_policy": {"type": "choice", "instructions":
+        "Choose the permitted INFORMATION SOURCES for the whole current_request. "
+        "A restriction on production, approval, changing tasks or the format of an answer does not "
+        "restrict reading. Quoting somebody else's prohibition does not make it the user's prohibition. "
+        "A self-contained question is not a restriction: current_only requires an explicit instruction "
+        "to exclude outside information, not merely that the answer can be derived from current input. "
+        "Preserve an explicit permission to read uploaded documents even when chat/personal history "
+        "is forbidden. Merely naming a file is not an exclusive source restriction. "
+        "An exclusive scope narrower than these categories must be uncertain, never broadened.",
+        "criteria": {
+            "allowed": "No active restriction on relevant information sources; action-only, quoted or withdrawn limits included",
+            "documents_only": "Uploaded documents are allowed, while personal/chat history and other sources are excluded",
+            "no_history": "Stored personal memory, chats AND documents are excluded, but live work status may be read",
+            "current_only": "Only the current input is allowed; all outside information including live status is excluded",
+            "uncertain": "The allowed information sources cannot be represented or reliably resolved"}},
+    "personal_useful": {"type": "noul", "instructions":
+        "Would the user's personal profile, interests, habits or enduring constraints materially improve "
+        "this answer? Personalizing advice is yes. Looking up a document, filename, past transcript, "
+        "procedure or task status alone does not require unrelated personal background."},
+    "history_useful": {"type": "noul", "instructions":
+        "Is conversation text or an earlier event/decision needed, including what was said or changed? "
+        "A stored personal preference or uploaded document alone does not require chat transcripts."},
+    "knowledge_useful": {"type": "noul", "instructions":
+        "Is content from an uploaded document or curated knowledge page needed? "
+        "This excludes general knowledge, personal preferences and conversation transcripts."},
+    "assets_useful": {"type": "noul", "instructions":
+        "Are uploaded file/media identities, exact filenames, descriptions or availability needed? "
+        "This is not task execution status and not needed for ordinary personalized advice."},
+    "experience_useful": {"type": "noul", "instructions":
+        "Is a previously validated personal work procedure needed? This concerns reusable steps "
+        "and failure boundaries, not personal interests or merely reading a document."},
+    "task_needed": {"type": "choice", "instructions":
+        "Does the answer need live execution progress, pending cards or current work status? "
+        "File identities, stored content, previous conversations and planning advice are not live work status.",
+        "criteria": QUESTIONS["task_needed"]["criteria"]},
+    "recent_context_useful": {"type": "noul", "instructions":
+        "Does resolving a missing referent require the preceding conversation? "
+        "Return low when the current request identifies its subject, or context_available is false. "
+        "The existence of previous conversation alone does not make it relevant."},
+    "time_scope": {"type": "choice", "instructions":
+        "Does the user limit WHEN the records were created/uploaded/discussed? "
+        "An event's planned date does not restrict the age of useful preferences or documents.",
+        "criteria": {
+            "unrestricted": "No record-creation time filter; any date describes the activity or intended use",
+            "record_filter": "Only records created/uploaded/discussed in a time range may be read",
+            "uncertain": "A temporal reference needs clarification to select the correct records"}},
+}
+
+
 def validate_response(data: dict, requested_model: str, questions=None) -> dict:
     questions = QUESTIONS if questions is None else questions
     model, answers = data.get("model"), data.get("answers")
@@ -110,4 +175,6 @@ async def evaluate_context_needs(state: dict, config, *, client=None, questions=
 
 
 async def evaluate_read_needs(state: dict, config, *, client=None):
-    return await evaluate_context_needs(state, config, client=client, questions=READ_QUESTIONS)
+    result = await evaluate_context_needs(state, config, client=client, questions=NATIVE_READ_QUESTIONS)
+    result.update(classifier="jev", protocol="native-read-v3")
+    return result

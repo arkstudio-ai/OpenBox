@@ -86,6 +86,37 @@ async def test_unknown_upload_window_never_turns_into_all_documents(monkeypatch,
     assert result["status"] == "unavailable" and result["items"] == []
 
 
+async def test_explicit_absence_of_time_condition_is_not_an_unresolved_date(monkeypatch):
+    data, config, turn = await setup(monkeypatch)
+    doc, _ = await ingest(data, "# 拍摄说明\n总时长十八秒。")
+    turn = replace(turn, query="只读上传文档，不读聊天。", time_intent={
+        "choice": "none", "expression": "", "confidence": 0})
+    result = await read_request(ReadRequest(kind="documents"), turn, config)
+    assert result["status"] == "complete" and result["items"][0]["id"] == doc.id
+    uncertain = replace(turn, time_intent={"choice": "uncertain", "expression": "", "confidence": 0})
+    assert (await read_request(ReadRequest(kind="documents"), uncertain, config))["status"] == "unavailable"
+
+
+async def test_category_selection_keeps_document_evidence_out_of_personal_recall_and_vice_versa(monkeypatch):
+    from memory.retrieval import search_memory
+    from memory.service import create_note
+    data, config, turn = await setup(monkeypatch)
+    config.retrieval_v2 = config.rerank = False
+    doc, _ = await ingest(data, "# 拍摄说明\n门店拍摄使用自然光，十八秒。")
+    note = await create_note(user_id=turn.user_id, workspace_id=turn.workspace_id,
+        project_id=turn.project_id, summary="门店拍摄时用户偏好蓝色围裙。")
+    async def search(personal, knowledge):
+        return await search_memory(query="门店拍摄", user_id=turn.user_id, workspace_id=turn.workspace_id,
+            project_id=turn.project_id, config=config, retrieval_needs={"personal_useful": personal,
+                "knowledge_useful": knowledge, "history_useful": 0, "assets_useful": 0, "experience_useful": 0})
+    document_read = await search(0, 1)
+    assert any(item["id"] in doc.source_ids for item in document_read["items"])
+    assert all(item["id"] != note["id"] for item in document_read["items"])
+    personal_read = await search(1, 0)
+    assert any(item["id"] == note["id"] for item in personal_read["items"])
+    assert all(item["id"] not in doc.source_ids for item in personal_read["items"])
+
+
 async def test_document_scope_does_not_enable_legacy_history_or_personal_core(monkeypatch):
     data, config, turn = await setup(monkeypatch)
     await ingest(data, "# 文件\n门店镜头最多五秒。")

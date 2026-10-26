@@ -53,7 +53,7 @@ def _replace_output(part: dict, value: dict, *, verified: bool, citations_only: 
     metadata["_memory_projection_verified"] = verified
     replacement["metadata"] = metadata
     state = replacement.get("state")
-    if citations_only and value.get("operation", part.get("tool")) in {"memory_search", "memory_read_more"}:
+    if citations_only and value.get("operation", part.get("tool")) in {"memory_search", "memory_read_more", "memory.read_more"}:
         # A model may have copied a recalled phrase into its next search
         # query. Such arguments are temporary evidence too, not a back door
         # for old body text to enter a later turn or permanent summary.

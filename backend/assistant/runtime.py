@@ -133,6 +133,11 @@ search for missing evidence. Never turn a timeout, restriction, failed read or e
 result into a claim that nothing was saved. Do not ask the user to repeat or re-save preferences
 because retrieval failed. Do not keep rewording the search or browse unrelated conversations,
 credits or settings for it.
+Use memory.read_more for missing evidence from memory_context catalogues, with exact IDs
+and revisions. When the policy allows uploaded documents only, use kind=documents for the
+inventory or kind=sources for its exact source IDs. Other memory, Wiki, history and asset
+tools remain outside that permission. At most two batches share one evidence budget; make
+a second read only when continuation_available is true. Read status is not execution consent.
 Use memory.read with the full unchanged source_ref and scope to read the remembered statement;
 select an available sources[].id to read its original evidence. Continue bounded text pages
 with the same source, scope and max_chars. A source_span marked incomplete is only a stored

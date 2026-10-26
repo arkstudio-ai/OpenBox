@@ -21,7 +21,10 @@ async def _scope(db, turn, config):
     decision = turn.time_intent or {}
     temporal = turn.read_time_context or await query_time_context(db, turn.user_id, turn.query, config, intent=decision)
     choice, confidence = decision.get("choice"), decision.get("confidence", 0)
-    if (choice not in {"none", "event_time", "source_time"} or confidence < .9
+    # `none` is an explicit absence of a time condition, not an uncertain
+    # date estimate. Some typed dialogue plans use zero for a non-applicable
+    # confidence. Actual date interpretations still need strong evidence.
+    if (choice not in {"none", "event_time", "source_time"} or choice != "none" and confidence < .9
             or choice == "source_time" and not temporal.get("hard_filter_applied")):
         return scope, None, temporal
     predicates = [*scope.predicates(MemoryDocument), MemoryDocument.status != "DELETED"]

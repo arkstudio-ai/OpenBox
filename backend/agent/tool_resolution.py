@@ -303,8 +303,8 @@ async def resolve_step_tools(
             raise ValueError("scope_key conflicts with explicit scope fields")
 
     tools = get_tools_for_agent(agent_def.tools)
-    from tool.memory_tools import MEMORY_TOOL_IDS, MEMORY_WRITE_TOOL_IDS, MEMORY_PREPARE_TOOL_IDS
-    memory_tool_ids = MEMORY_TOOL_IDS | MEMORY_WRITE_TOOL_IDS | MEMORY_PREPARE_TOOL_IDS
+    from tool.memory_tools import MEMORY_TOOL_IDS, MEMORY_WRITE_TOOL_IDS, MEMORY_PREPARE_TOOL_IDS, MEMORY_ASSISTANT_TOOL_IDS
+    memory_tool_ids = MEMORY_TOOL_IDS | MEMORY_WRITE_TOOL_IDS | MEMORY_PREPARE_TOOL_IDS | MEMORY_ASSISTANT_TOOL_IDS
     if memory_tool_ids.intersection(tools):
         from core.config import get_config
 

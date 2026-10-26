@@ -29,6 +29,7 @@ async def read_request(request, turn, config):
             workspace_id=turn.workspace_id, project_id=turn.project_id,
             include_all_projects=turn.include_all_projects, config=config, limit=config.recall_item_limit,
             time_query=turn.query, time_intent=turn.time_intent,
+            retrieval_needs=turn.read_needs,
             io_budget_seconds=max(.01, config.read_more_deadline_seconds - .2))
         async with get_db_session() as db:
             await authority(db, turn)
@@ -90,6 +91,9 @@ async def read_request(request, turn, config):
             from memory.experiences import read_enabled
             return await read_enabled(db, scope, query=request.query, offset=request.offset, refs=request.refs)
         if request.kind == "history":
+            if not request.refs:
+                return {"kind": "history", "status": "partial", "reason": "history_reference_required", "items": [],
+                    "instruction": "Choose exact session IDs from the history catalogue; an unselected history is not an empty history."}
             items = [await history_window(db, scope, turn, ref["id"], offset=request.offset,
                 max_chars=request.max_chars) for ref in request.refs[:2]]
             return {"kind": request.kind, "status": "complete", "items": items}
@@ -174,7 +178,8 @@ async def history_window(db, scope, turn, session_id, *, offset=0, limit=10, max
         else:
             room -= len(text)
     return {"session_id": row.id, "project_id": row.project_id, "version": version,
-        "entries": entries, "next_offset": offset + limit if len(ids) > limit else None}
+        "entries": entries, "next_offset": offset + limit if len(ids) > limit else None,
+        "message_offsets": {identity: offset + index for index, identity in enumerate(ids[:limit])}}
 
 
 async def catalogs(turn, needs, config, *, recall_needed=False):
@@ -223,12 +228,25 @@ async def catalogs(turn, needs, config, *, recall_needed=False):
             if documents:
                 items = documents + items[:2]
         if history_needed:
+            from sqlalchemy import func
+            from db.models.message import Message
             rows = list((await db.scalars(select(Session).where(*scope.predicates(Session, personal_visibility=False),
                 Session.is_deleted.is_(False), Session.kind == "normal", Session.parent_id.is_(None),
-                Session.memory_policy == "standard").order_by(Session.updated_at.desc()).limit(6))).all())
+                Session.memory_policy == "standard", Session.id != turn.session_id)
+                .order_by(Session.updated_at.desc()).limit(64))).all())
+            # Rank authorized titles locally; do not let this very query or a
+            # handful of unrelated recent chats hide the relevant original.
+            # Recency remains the tie-breaker and the fallback for paraphrases.
+            from memory.index.lexical import bm25
+            ranked = [index for index, _ in bm25(turn.query, [row.title or "" for row in rows])]
+            selected = (ranked + [index for index in range(len(rows)) if index not in ranked])[:6]
+            counts = dict((await db.execute(select(Message.session_id, func.count()).where(
+                Message.session_id.in_([rows[index].id for index in selected]),
+                Message.user_id == turn.user_id, Message.role == "user").group_by(Message.session_id))).all())
             items += [{"kind": "history", "id": row.id, "title": row.title, "project_id": row.project_id,
+                "created_at": row.created_at.isoformat(), "user_turns": counts.get(row.id, 0),
                 "updated_at": row.updated_at.isoformat(), "instruction": "Read this session with memory_read_more before making factual claims about its history."}
-                for row in rows]
+                for row in (rows[index] for index in selected)]
         if experience_needed:
             from memory.experiences import read_enabled
             result = await read_enabled(db, scope, query=turn.query, matched_only=not experience_requested)
@@ -251,6 +269,7 @@ async def revalidate_result(arguments, value, turn, config):
         raise MemoryAccessDenied("The user restricted this read")
     async with get_db_session() as db:
         scope = await authority(db, turn)
+        fresh_results = []
         for request, result in zip(arguments["reads"], value.get("results", []), strict=False):
             if request["kind"] == "search" and turn.read_policy != "documents_only":
                 wanted = {(item["kind"], item["id"]): item for item in result.get("items", [])}
@@ -258,9 +277,23 @@ async def revalidate_result(arguments, value, turn, config):
                 current = {(doc.kind, doc.id): model_item(document_item(doc)) for doc in docs}
                 if current != wanted:
                     return {"status": "unavailable", "reason": "evidence_changed", "items": []}
+                fresh_results.append(result)
             else:
                 fresh = await read_request(ReadRequest(**request), turn, config)
+                if "budget" in value:
+                    fresh_results.append(fresh)
+                    continue
                 if json_hash({k: v for k, v in fresh.items() if k != "observed_at"}) != json_hash(
                         {k: v for k, v in result.items() if k != "observed_at"}):
                     return {"status": "unavailable", "reason": "evidence_changed", "items": []}
+        if "budget" in value and value.get("results"):
+            from memory.supplement_budget import fit_results
+            fitted = fit_results(fresh_results, value["budget"]["max_tokens"])
+            # observed_at is a current live-state timestamp, not evidence text.
+            def stable(result):
+                if isinstance(result, dict):
+                    return {k: stable(v) for k, v in result.items() if k != "observed_at"}
+                return [stable(v) for v in result] if isinstance(result, list) else result
+            if json_hash(stable(fitted.get("results", []))) != json_hash(stable(value["results"])):
+                return {"status": "unavailable", "reason": "evidence_changed", "items": []}
     return value

@@ -13,7 +13,7 @@ import httpx
 from memory.providers.common import MemoryProviderError, response_json, shared_client
 from memory.providers.jev import READ_QUESTIONS
 
-WIRE_VERSION = "configured-read-grounded-v23"
+WIRE_VERSION = "configured-read-grounded-v24"
 NEEDS = ("history_useful", "knowledge_useful", "assets_useful", "experience_useful")
 _WARM_STARTS = weakref.WeakKeyDictionary()
 WARM_INTERVAL_SECONDS = 45.0
@@ -24,7 +24,7 @@ SYSTEM = """你是读取规划器，只理解本轮用户意图，不回答问�
 读取限制必须同时满足：是当前用户对助手的要求、肯定生效、对象是信息访问范围。
 先理解整句的否定范围和实际要求，再决定是否存在限制，不能看见一段禁止措辞就截出来当限制。
 引用、转述、翻译、否认或撤回禁令不产生读取限制；这些情况p必须为["","allowed",置信度]。
-仅输出单行紧凑JSON（不缩进），先输出g，再输出其余七个字段：
+仅输出单行紧凑JSON（不缩进），先输出g，再输出其余字段：
 g: [限制的语用角色,置信度0到1]。先判断整条消息实际在做什么：
 access=用户现在直接约束信息读取；action=约束产物或行动；mentioned=只是引用、翻译、解释或讨论限制文本；withdrawn=用户撤回/否认限制；none=没有限制；uncertain=无法判定。
 判断对象而非动词：被排除的是哪些信息、个人背景、知识来源或依据时，这是access；要求只依据当前给出的内容作答也属于access，即使最终是在写作或改写。
@@ -51,6 +51,8 @@ t: [read/skip/unknown,置信度0到1]。是否需要当前工作执行进展或�
 文档名称、资料内容、附件属性属于知识或素材查询，不等于查询任务执行状态。
 普通聊天不是执行任务；复述对话、解释之前的回答、接着讨论内容需要对话正文，不能用任务状态替代。
 n: [对话原文及历史事件结果,文档内容与身份信息,附件身份描述与可用性,已验证经验步骤]，四项有用程度，分别0到1。
+u: 0到1。个人背景、兴趣、习惯或长期约束是否能实质改善回答？个性化建议需要；仅查询文件、任务或聊天原文不需要无关个人背景。
+各类别独立判断：泛泛的知识不等于上传文档；个人习惯不等于聊天原文；文件与聊天内容不等于实时执行状态。
 第一项包括正在查看的聊天、刚发生的交流和更早记录，不要求时间久远。需要回顾、比较或引用聊天内容时第一项应高。
 visible_conversation_available只表示界面上有一段聊天可供定位，不包含正文、不代表任务待确认，也不授予读取权限。
 r: 0到1。本轮检索是否需要借助近期对话来解析省略、指代或接续目标？只判断是否缺少指向信息。
@@ -144,7 +146,7 @@ def read_schema(*, voice=False):
             choice("allowed", "action_only", "no_history", "current_only", "documents_only", "uncertain"), score),
         "m": array(choice("retrieve", "skip", "unknown"), score),
         "t": array(choice("read", "skip", "unknown"), score),
-        "n": {"type": "array", "items": score, "minItems": 4, "maxItems": 4}, "r": score,
+        "n": {"type": "array", "items": score, "minItems": 4, "maxItems": 4}, "r": score, "u": score,
         "d": array({"type": "string", "maxLength": 128}, choice("filter_records", "keep_older", "none", "uncertain"), score),
         "q": {"type": "string", "maxLength": 128}}
     if voice:
@@ -232,7 +234,7 @@ def validate(value):
 def decode(value, current_request=""):
     """Expand transport-only aliases into the unchanged semantic read contract."""
     required = {"p", "m", "t", "n", "r", "d"}
-    if (not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"q", "g", "l"}
+    if (not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"q", "g", "l", "u"}
             or not isinstance(value["n"], list) or len(value["n"]) != len(NEEDS)
             or not isinstance(value["p"], list) or len(value["p"]) != 3):
         raise MemoryProviderError("invalid_response")
@@ -280,6 +282,11 @@ def decode(value, current_request=""):
     answers["read_policy"]["restriction_quote"] = quote
     answers["read_policy"]["restriction_target"] = "action" if choice == "action_only" else "information" if quote else "none"
     answers["recent_context_useful"] = {"noul": relevance}
+    if "u" in value:
+        score = value["u"]
+        if type(score) not in (float, int) or not math.isfinite(score) or not 0 <= score <= 1:
+            raise MemoryProviderError("invalid_response")
+        answers["personal_useful"] = {"noul": score}
     temporal = value["d"]
     if not isinstance(temporal, list) or len(temporal) != 3:
         raise MemoryProviderError("invalid_response")
@@ -308,12 +315,14 @@ def decode(value, current_request=""):
     return answers
 
 
-async def evaluate(state, config, *, client=None):
+async def evaluate(state, config, *, client=None, max_attempts=2):
     from agent.llm import _model_family
     from agent.latency import span, provider_wait
     from agent.gateway import Observation
     from memory.providers.structured_output import response_format
     model = config.read_router_model
+    if max_attempts not in (1, 2):
+        raise ValueError("The read planner permits one or two provider attempts")
     voice = state.get("entry") == "voice"
     if _requires_native_protocol(model):
         raise MemoryProviderError("read_router_protocol_mismatch")
@@ -327,7 +336,7 @@ async def evaluate(state, config, *, client=None):
         async with asyncio.timeout(config.read_router_timeout_seconds):
             usage_total = {"input_tokens": 0, "output_tokens": 0}
             protocol_errors = []
-            for attempt in range(2):
+            for attempt in range(max_attempts):
                 payload = dict(state)
                 if attempt:
                     # No prior answer or stored history is fed back. Re-evaluate
@@ -368,7 +377,7 @@ async def evaluate(state, config, *, client=None):
                     answers = decode(json.loads(choice["message"]["content"]), state.get("current_request", ""))
                 except (MemoryProviderError, KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
                     protocol_errors.append(exc.code if isinstance(exc, MemoryProviderError) else "invalid_response")
-                    if attempt == 0:
+                    if attempt + 1 < max_attempts:
                         continue
                     raise
                 reported_model = data.get("model")

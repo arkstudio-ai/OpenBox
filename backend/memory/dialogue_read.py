@@ -34,12 +34,17 @@ class ReadNeeds(PlanFields):
     knowledge: Score
     assets: Score
     experience: Score
+    personal: Score | None = Field(default=None, description=
+        "Relevance of personal profile, interests, habits or enduring constraints. High for personalized advice; "
+        "low for a document, filename, transcript or task-status lookup that does not need personal background.")
 
 
 class ReadTime(PlanFields):
     quote: str = Field(max_length=128, description="Exact current human time expression, or empty.")
     intent: Literal["filter_records", "keep_older", "none", "uncertain"]
-    confidence: Score
+    confidence: Score = Field(description=
+        "Confidence in the time interpretation. Use intent=none and empty quote when no record-date condition exists; "
+        "uncertain is a separate decision, never a substitute for none.")
 
 
 class DialogueReadPlan(PlanFields):
@@ -61,6 +66,7 @@ class DialogueReadPlan(PlanFields):
             "r": self.recent_context_useful,
             "d": [self.time.quote, self.time.intent, self.time.confidence],
             "q": self.search_query,
+            **({"u": self.needs.personal} if self.needs.personal is not None else {}),
         }, original_query)
 
 
@@ -124,7 +130,8 @@ DESCRIPTION = (
     "Role action/policy action_only limits executing, approving or changing a product, not useful reading. "
     "Mentioned/quoted or withdrawn restrictions mean allowed, empty quote; understand negation and the whole sentence. "
     "Only active restrictions use an exact quote. Confidence below .9 or contradictory fields cannot authorize reading. "
-    "Needs scores indicate history text, document content/identity, asset metadata, or validated procedures; "
+    "Fill needs.personal for personal profile/preferences, separate from history text, uploaded document "
+    "content/identity, asset metadata, or validated procedures. General knowledge is not document knowledge; "
     "task=read only for live work status, not document names or conversation. "
     "Time filter_records refers to when records were made; keep_older refers to the event/activity being planned. "
     "Use time none/empty quote if absent. Do not invent dates or search facts. "

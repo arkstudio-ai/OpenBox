@@ -307,7 +307,9 @@ async def test_router_deadline_cancels_decision_and_never_reads_persistent_conte
     assert cancelled.is_set()
     assert result["status"] == "unavailable" and result["route"]["read_policy"] == "uncertain"
     assert "route_deadline" in result["degraded_reasons"]
-    assert "recall_ms" not in result["phase_timings"]
+    assert result["phase_timings"].get("recall_ms", 0) == 0
+    assert result["route"]["called"] and result["route"]["reason_code"] == "timeout"
+    assert result["route"]["duration_ms"] >= 20
     rendered = render_memory_context(result)
     assert "Briefly tell the user this" in rendered
     assert "Do not present that suggestion as personalized" in rendered

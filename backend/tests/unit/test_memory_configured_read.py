@@ -78,7 +78,7 @@ def test_malformed_restriction_role_is_rejected(role):
 def test_strict_schema_fixes_tuple_types_without_authorizing_fabricated_evidence():
     from jsonschema import Draft202012Validator
     validator = Draft202012Validator(read_schema())
-    wire = {**wire_answer(), "g": ["none", 1]}
+    wire = {**wire_answer(), "g": ["none", 1], "u": 1}
     validator.validate(wire)
     for invalid in ({**wire, "g": [1, "none"]}, {**wire, "n": [1, 0]},
                     {**wire, "p": ["", "invented_policy", 1]}, {**wire, "r": True}):
@@ -400,6 +400,26 @@ async def test_transport_error_is_not_retried_as_a_protocol_repair(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         with pytest.raises(MemoryProviderError, match="provider_error"):
             await evaluate({}, MemoryConfig(read_router_model="openai/qwen3.8-flash"), client=client)
+    assert len(requests) == 1
+
+
+async def test_fallback_attempt_does_not_retry_invalid_protocol_or_use_jev_credentials(monkeypatch):
+    monkeypatch.setenv("JEV_KEY", "jev-only-secret")
+    monkeypatch.setenv("MEMORY_READ_ROUTER_API_KEY", "primary-override-secret")
+    monkeypatch.setattr("agent.llm._get_provider_kwargs", lambda _: {
+        "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "official-qwen-only"})
+    from memory.read_routing import fallback_config
+    config = fallback_config(MemoryConfig(read_router_model="", read_router_url="https://primary.invalid"))
+    requests = []
+    def respond(request):
+        requests.append(request)
+        assert str(request.url) == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer official-qwen-only"
+        assert json.loads(request.content)["model"] == "qwen3.8-flash"
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(MemoryProviderError):
+            await evaluate({"current_request": "安排周末"}, config, client=client, max_attempts=1)
     assert len(requests) == 1
 
 

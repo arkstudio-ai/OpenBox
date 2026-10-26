@@ -17,7 +17,7 @@ SCHEMA = "read-needs-v2"
 _cache = OrderedDict()
 
 
-async def route(utterance, scope, config, *, recent_context=(), visible_conversation_available=False, evaluator=None):
+async def route(utterance, scope, config, *, recent_context=(), visible_conversation_available=False, evaluator=None, entry="chat"):
     from db.base import get_db_session
     from memory.versions import version
     from memory.dialogue_read import DialogueReadEvaluator
@@ -44,7 +44,7 @@ async def route(utterance, scope, config, *, recent_context=(), visible_conversa
     # The planner receives only the presence of prior context, never its
     # contents. Its decision can be reused across changed preceding replies;
     # contextual_query still binds the current reference text on every read.
-    key = json_hash({"input": utterance, "context_available": bool(recent_context), "user": scope.actor_user_id,
+    key = json_hash({"input": utterance, "entry": entry, "context_available": bool(recent_context), "user": scope.actor_user_id,
         "visible_conversation_available": bool(visible_conversation_available),
         "workspace": scope.workspace_id, "project": scope.project_id, "projects": list(scope.project_ids),
         "acl": scope.acl_epoch, "content": current_version, "model": result["model_requested"],
@@ -57,6 +57,7 @@ async def route(utterance, scope, config, *, recent_context=(), visible_conversa
         return {**deepcopy(cached[1]), "attempt_id": result["attempt_id"], "called": False,
                 "cache": "hit", "usage": {}, "duration_ms": round((time.monotonic() - started) * 1000)}
     state = {"current_request": redact_credentials(utterance), "schema": SCHEMA,
+        "entry": entry,
         "context_available": bool(recent_context), "project_in_view": bool(scope.project_id),
         "visible_conversation_available": bool(visible_conversation_available),
         "available_reads": ["personal_facts", "history", "knowledge", "assets", "task_state", "validated_experience"]}
@@ -92,6 +93,8 @@ async def route(utterance, scope, config, *, recent_context=(), visible_conversa
             result["recent_context_useful"] = answers["recent_context_useful"]["noul"]
         if "time_intent" in answers:
             result["time_intent"] = answers["time_intent"]
+        if entry == "voice" and response.get("classifier") == "configured" and answers.get("spoken_language"):
+            result["spoken_language"] = answers["spoken_language"]
         for name, threshold, read in (("memory", config.jev_memory_confidence, "retrieve"),
                                       ("task", config.jev_task_confidence, "read")):
             answer = answers[name + "_needed"]

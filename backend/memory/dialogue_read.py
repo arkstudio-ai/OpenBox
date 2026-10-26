@@ -79,6 +79,38 @@ class DialogueReadEvaluator:
                 "provider_model": self.model, "classifier": "dialogue", "usage": {}}
 
 
+def completed_plan(messages, *, session_id, turn_id):
+    """Recover a proposal from the owner-checked canonical turn, never its result.
+
+    Suspension/restart loses the process-local packet. The first completed
+    prepare is the effective proposal (later calls share that preparation).
+    Replaying this proposal must still validate the original human input and
+    read fresh SQL; it is neither a saved permission nor saved memory content.
+    """
+    from pydantic import ValidationError
+    active = False
+    for message in messages:
+        if message.role == "user":
+            active = message.id == turn_id and message.session_id == session_id
+        if (not active or message.role != "assistant" or message.session_id != session_id
+                or message.parent_id != turn_id):
+            continue
+        for part in message.parts:
+            get = part.get if isinstance(part, dict) else lambda key, default=None: getattr(part, key, default)
+            if (get("type") != "tool" or get("status") != "completed"
+                    or get("canonical_tool_id") not in {"memory_prepare", "memory.prepare"}
+                    or get("session_id") != session_id or get("message_id") != message.id):
+                continue
+            value = get("input")
+            try:
+                if not isinstance(value, dict) or set(value) != {"plan"}:
+                    return None
+                return DialogueReadPlan.model_validate(value["plan"]).model_dump_json()
+            except ValidationError:
+                return None
+    return None
+
+
 DESCRIPTION = (
     "Prepare bounded memory before personalized advice, prior work, documents or a reference to conversation. "
     "Call once when memory_context is deferred. Greetings and self-contained general facts need no call. "

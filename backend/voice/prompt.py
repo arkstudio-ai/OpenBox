@@ -313,7 +313,10 @@ def user_lines(facts: FrontFacts, *, unified: bool = False) -> list[str]:
     """What this user set or showed about how they want to be talked to; each line the front desk follows."""
     from assistant.identity import identity_lines
     lines = identity_lines(facts.name, facts.address, language="zh", greeting_only=True)
-    if facts.language:
+    if facts.language and facts.native_memory:
+        lines.append(f"- 用户保存的默认交谈语言是「{facts.language}」。当前口播语言以最后的Current spoken response policy为准，"
+                     "其中已包含本次回答或通话的临时要求；临时要求不修改默认设置。这不决定代拟内容或翻译产物的语言。")
+    elif facts.language:
         lines.append(f"- 用户设置的交谈语言是「{facts.language}」，本轮即使用其他语言提问也遵循此设置；"
                      "用户明确要求本次换语言时遵循本次要求。这不决定代拟内容或翻译产物的语言。")
     elif facts.language == "":

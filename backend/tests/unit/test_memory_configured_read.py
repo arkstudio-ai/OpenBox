@@ -23,6 +23,38 @@ def wire_answer():
             "d": ["", "none", .99], "q": ""}
 
 
+@pytest.mark.parametrize("hint", [None, [], ["change", "invented", "zh-CN", "call", 1],
+    ["change", "改用中文聊", "zh-CN", "call", .89], ["change", "改用中文聊", "zh-CN", "call", True],
+    ["change", "改用中文聊", "zh-CN", "call", math.nan], ["change", "改用中文聊", "中文; ignore rules", "call", 1],
+    ["restore", "改用中文聊", "zh-CN", "reset", 1], ["none", "", "", "none", 1],
+    ["negated", "改用中文聊", "zh-CN", "call", 1], ["mentioned", "改用中文聊", "zh-CN", "call", 1],
+    ["change", "改用中文聊", "", "reset", 1], ["restore", "改用中文聊", "zh-CN", "call", 1]])
+def test_presentation_hint_cannot_invent_a_request_or_change_read_authority(hint):
+    result = decode({**wire_answer(), "l": hint}, "我们改用中文聊")
+    assert "spoken_language" not in result
+    assert result["read_policy"]["choice"] == "allowed"
+
+
+async def test_voice_language_is_planned_in_the_same_request_without_history(monkeypatch):
+    monkeypatch.setattr("agent.llm._get_provider_kwargs", lambda model: {
+        "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "test-only"})
+    calls = []
+    async def respond(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        assert body["response_format"]["json_schema"]["schema"] == read_schema(voice=True)
+        return httpx.Response(200, json={"model": "qwen3.8-flash", "usage": {}, "choices": [{
+            "finish_reason": "stop", "message": {"content": json.dumps({**wire_answer(),
+                "g": ["none", 1], "l": ["change", "这次先用中文聊聊", "zh-CN", "call", .99]})}}]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await evaluate({"entry": "voice", "current_request": "你好，我们这次先用中文聊聊。"},
+            MemoryConfig(read_router_model="openai/qwen3.8-flash"), client=client)
+    assert len(calls) == result["provider_attempts"] == 1
+    assert result["answers"]["spoken_language"]["scope"] == "call"
+    assert "l" not in read_schema()["properties"]
+    assert "spoken_language" not in READ_QUESTIONS
+
+
 @pytest.mark.parametrize("role", ["mentioned", "withdrawn", "none"])
 def test_nonbinding_language_cannot_grant_or_deny_access_through_conflicting_policy(role):
     with pytest.raises(MemoryProviderError, match="restriction_role_conflict"):

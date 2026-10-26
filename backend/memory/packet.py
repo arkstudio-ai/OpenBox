@@ -229,7 +229,8 @@ async def prepare_context(turn: TurnContext, config=None, *, evaluator=None, res
                         "memory": {"needed": True}, "task": {"needed": False}}
                 else:
                     routed = await route(turn.query, scope, config, recent_context=turn.recent_context,
-                        visible_conversation_available=turn.visible_conversation_available, evaluator=evaluator)
+                        visible_conversation_available=turn.visible_conversation_available, evaluator=evaluator,
+                        **({"entry": "voice"} if turn.entry == "voice" else {}))
             bundle["phase_timings"]["route_ms"] = round((time.monotonic() - stage_started) * 1000)
             stage, stage_started = "recall", time.monotonic()
             bundle["route"] = routed

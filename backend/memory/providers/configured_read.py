@@ -3,6 +3,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import time
 import weakref
 from hashlib import sha256
@@ -12,7 +13,7 @@ import httpx
 from memory.providers.common import MemoryProviderError, response_json, shared_client
 from memory.providers.jev import READ_QUESTIONS
 
-WIRE_VERSION = "configured-read-grounded-v21"
+WIRE_VERSION = "configured-read-grounded-v23"
 NEEDS = ("history_useful", "knowledge_useful", "assets_useful", "experience_useful")
 _WARM_STARTS = weakref.WeakKeyDictionary()
 WARM_INTERVAL_SECONDS = 45.0
@@ -72,6 +73,39 @@ q: 简短检索词字符串，最多128字符。把当前需要查找的信息�
 读取只为提供信息，永远不代表批准执行、发布、付款或使用媒体；新需求不必确认旧任务的卡片。
 """
 
+SPOKEN_LANGUAGE = """\n本轮来自实时语音，还需输出l：[语用角色,用户要求的原文,交谈语言BCP47标签,作用域,置信度0到1]。
+先判断整句的语用角色，再选择语言和作用域：change=用户肯定要求换交谈语言；restore=肯定要求恢复保存设置；
+negated=用户拒绝或否定语言切换；mentioned=仅引用、转述、翻译或讨论语言；none=没要求；uncertain=无法判定。
+negated/mentioned/none/uncertain都不能切换或重置语言，作用域必须none、原文和语言留空。
+只理解当前用户是否明确要求改变助手与自己的交谈语言，不按用户说话语言自动切换。
+作用域reply=仅这次回答；call=本通话持续使用（明确改交谈语言但未限制为一句时也选call）；
+reset=用户肯定要求恢复已保存的交谈语言；none=没有生效的交谈语言要求。
+reset必须有明确恢复默认设置的目标，不能把拒绝切换到某种语言、只撤回某种语言或否定要求当成恢复默认。
+先理解否定、引用和目标。翻译、代拟某种语言的内容、讨论别人说哪种语言，都不改变交谈语言。
+call/reply须从current_request逐字摘录完整要求（最多256字符），语言用BCP47标签，例如zh-CN、en、fr。
+reset也须摘录当前要求，语言留空。none时原文和语言都留空。不确定则none，不能猜。
+这只控制即时口播，不写入长期偏好，不授予资料读取或执行权限，不改变g/p等字段的判断。
+"""
+
+
+def spoken_language(value, current_request):
+    """Validate a grounded presentation hint, independently of read authority."""
+    if not isinstance(value, list) or len(value) != 5:
+        return None
+    role, quote, language, scope, confidence = value
+    if (role not in ("change", "restore") or (role == "restore") != (scope == "reset")
+            or scope not in ("reply", "call", "reset") or not isinstance(quote, str)
+            or not quote.strip() or len(quote) > 256 or quote not in current_request
+            or type(confidence) not in (float, int) or not math.isfinite(confidence) or confidence < .9
+            or confidence > 1 or not isinstance(language, str)):
+        return None
+    if scope == "reset":
+        if language:
+            return None
+    elif not re.fullmatch(r"[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,3}", language):
+        return None
+    return {"role": role, "quote": quote, "language": language, "scope": scope, "confidence": confidence}
+
 
 def provider_settings(config):
     """Resolve the same configured gateway for transport and cache isolation."""
@@ -97,7 +131,7 @@ def _requires_native_protocol(model):
     return model.rsplit("/", 1)[-1].startswith("jev-")
 
 
-def read_schema():
+def read_schema(*, voice=False):
     """The verified Qwen route supports fixed-position JSON Schema tuples."""
     score = {"type": "number", "minimum": 0, "maximum": 1}
     def choice(*values):
@@ -113,6 +147,10 @@ def read_schema():
         "n": {"type": "array", "items": score, "minItems": 4, "maxItems": 4}, "r": score,
         "d": array({"type": "string", "maxLength": 128}, choice("filter_records", "keep_older", "none", "uncertain"), score),
         "q": {"type": "string", "maxLength": 128}}
+    if voice:
+        fields["l"] = array(choice("change", "restore", "negated", "mentioned", "none", "uncertain"),
+                            {"type": "string", "maxLength": 256}, {"type": "string", "maxLength": 35},
+                            choice("none", "reply", "call", "reset"), score)
     return {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}
 
 
@@ -194,7 +232,7 @@ def validate(value):
 def decode(value, current_request=""):
     """Expand transport-only aliases into the unchanged semantic read contract."""
     required = {"p", "m", "t", "n", "r", "d"}
-    if (not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"q", "g"}
+    if (not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"q", "g", "l"}
             or not isinstance(value["n"], list) or len(value["n"]) != len(NEEDS)
             or not isinstance(value["p"], list) or len(value["p"]) != 3):
         raise MemoryProviderError("invalid_response")
@@ -265,6 +303,8 @@ def decode(value, current_request=""):
     if isinstance(query, str) and len(query) <= 128 and query.strip():
         from memory.redaction import redact_credentials
         answers["search_query"] = redact_credentials(query.strip())
+    if language := spoken_language(value.get("l"), current_request):
+        answers["spoken_language"] = language
     return answers
 
 
@@ -274,6 +314,7 @@ async def evaluate(state, config, *, client=None):
     from agent.gateway import Observation
     from memory.providers.structured_output import response_format
     model = config.read_router_model
+    voice = state.get("entry") == "voice"
     if _requires_native_protocol(model):
         raise MemoryProviderError("read_router_protocol_mismatch")
     root, key = provider_settings(config)
@@ -310,8 +351,8 @@ async def evaluate(state, config, *, client=None):
                             "model": model.split("/", 1)[-1], "temperature": 0,
                             **({"reasoning_effort": "none"} if _model_family(model) == "qwen" else {}),
                             "stream": False, "max_tokens": 768,
-                            "response_format": response_format(model, root, name="memory_read_plan", schema=read_schema()),
-                            "messages": [{"role": "system", "content": SYSTEM},
+                            "response_format": response_format(model, root, name="memory_read_plan", schema=read_schema(voice=voice)),
+                            "messages": [{"role": "system", "content": SYSTEM + (SPOKEN_LANGUAGE if voice else "")},
                                          {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]})
                 data = response_json(response)
                 usage = data.get("usage", {})

@@ -106,6 +106,8 @@ async def refresh(scope, previous):
 
 class MemoryContextMixin:
     def _init_memory(self, prepare_memory, refresh_memory=None, prewarm_memory=None):
+        from voice.call_language import CallLanguage
+        self.call_language = CallLanguage()
         self.prepare_memory = prepare_memory
         self.refresh_memory = refresh_memory
         self.prewarm_memory = prewarm_memory
@@ -216,6 +218,7 @@ class MemoryContextMixin:
     def _memory_new_speech(self):
         if self.prepare_memory is None:
             return
+        self.call_language.begin_turn()
         self._prewarm_memory_connection()
         self._memory_generation += 1
         self._native_work_read = False
@@ -382,6 +385,7 @@ class MemoryContextMixin:
             self.memory_packet = packet
             self.memory_turn = replace(packet["_turn"], read_policy=policy, turn_id=event.item_id)
             self.memory_budget = ReadBudget()
+            self.call_language.apply(packet, event.text)
             self.base_instructions = base
             self._memory_text = render_memory_context(packet)
             if not await self._sync_instructions(force=True):

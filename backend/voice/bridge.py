@@ -575,6 +575,10 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.handoff is not None:
             self.handoff.response_done(self._answering.get(event.response_id or "", ""), kind,
                                        event.status == "completed")
+        if (kind in {"model", "followup"} and heard and event.status == "completed"
+                and not self.followup_due and not self.pending_calls
+                and self._answering.get(event.response_id or "") == self._last_user_item):
+            self.call_language.begin_turn()  # a one-reply override must not leak into later reports
         self._answering.pop(event.response_id or "", None)
         self._update_phase()
         await self.fill_idle()
@@ -871,7 +875,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         # first utterance builds a memory packet. Presentation rules still
         # apply; absence of a packet must not restart the greeting.
         settings = (packet or {}).get("settings", {})
-        return response_preferences(settings.get("language"), settings.get("call_detail", self.detail),
+        return response_preferences(self.call_language.resolve(settings), settings.get("call_detail", self.detail),
                                     opening=self.greeting)
 
     def _instructions(self, *, memory_packet=None, include_response_policy=True) -> str:

@@ -141,3 +141,40 @@ async def test_semantic_history_need_loads_bounded_view_and_missing_view_is_expl
     rendered = render_memory_context(packet)
     assert '"status":"unavailable"' in rendered and "总共二十秒" not in rendered
     assert "viewed_task" not in packet
+
+
+async def test_visible_manual_answers_are_fresh_bounded_and_do_not_revive_forgotten_cards(monkeypatch):
+    from db.models.part import Part
+    from db.models.memory_v2 import MemorySource, MemoryTombstone
+    from session.session import create_user_message, create_assistant_message
+    owner, _, workspace, main, _ = await setup(monkeypatch)
+    chat = await create_session(user_id=owner, workspace_id=workspace, title="读书会")
+    human = await create_user_message(chat.id, "给我两个风格选", user_id=owner)
+    assistant = await create_assistant_message(chat.id, human.id, user_id=owner)
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(Part(id="selected-style-part", message_id=assistant.id, session_id=chat.id,
+            user_id=owner, type="tool", data={}, created_at=now))
+        db.add(QuestionCheckpoint(id="selected-style", user_id=owner, session_id=chat.id,
+            message_id=assistant.id, part_id="selected-style-part", generation=1, status="answered",
+            applied=True, questions=[{"question": "开场风格？"}], answers=[["轻松温暖"]],
+            draft=[], continuation={}, created_at=now, updated_at=now))
+    turn = TurnContext(owner, workspace, "我已经点好了，还要选吗", session_id=main.id,
+        include_all_projects=True, read_policy="allowed")
+    async with get_db_session() as db:
+        assert "handled_decisions" not in await view_context.read(db, turn, chat.id)
+        value = await view_context.read(db, turn, chat.id, include_history=True)
+        [decision] = value["handled_decisions"]
+        assert decision["answers"] == [["轻松温暖"]]
+        assert decision["execution_confirmed"] is False
+        (await db.get(QuestionCheckpoint, "selected-style")).answers = [["幽默"]]
+    async with get_db_session() as db:
+        fresh = await view_context.read(db, turn, chat.id, include_history=True)
+        assert fresh["handled_decisions"][0]["answers"] == [["幽默"]]
+        db.add(MemorySource(id="forgotten-card-source", user_id=owner, workspace_id=workspace,
+            source_kind="user_statement", session_id=chat.id, message_id=assistant.id,
+            part_id="selected-style-part", body="卡片", content_hash="a" * 64, created_at=now))
+        db.add(MemoryTombstone(id="forgotten-card-marker", object_kind="source", object_id="forgotten-card-source",
+            revision=1, user_id=owner, workspace_id=workspace, deleted_at=now))
+    async with get_db_session() as db:
+        assert not (await view_context.read(db, turn, chat.id, include_history=True))["handled_decisions"]

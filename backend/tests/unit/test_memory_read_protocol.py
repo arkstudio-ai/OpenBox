@@ -35,6 +35,26 @@ async def context(monkeypatch):
     return config.memory, turn
 
 
+async def test_voice_presentation_uses_current_input_without_reopening_restricted_reads(monkeypatch):
+    from memory.providers.configured_read import decode
+    config, original = await context(monkeypatch)
+    turn = replace(original, entry="voice", query="只看我现在这句话，这次用法语聊天。")
+    calls = []
+    async def evaluate(state, _config):
+        calls.append(state)
+        assert state["entry"] == "voice"
+        return {"classifier": "configured", "model": "test", "usage": {}, "answers": decode({
+            "g": ["access", 1], "p": ["只看我现在这句话", "current_only", 1], "m": ["skip", 1],
+            "t": ["skip", 1], "n": [0, 0, 0, 0], "r": 0, "d": ["", "none", 1],
+            "l": ["change", "这次用法语聊天", "fr", "call", 1]}, turn.query)}
+    bundle = await packet.prepare_context(turn, config, evaluator=evaluate)
+    assert len(calls) == 1
+    assert bundle["route"]["spoken_language"]["language"] == "fr"
+    assert bundle["route"]["read_policy"] == "current_only"
+    assert bundle["route"]["memory_forbidden"] is True
+    assert not bundle["items"] and not bundle["stable_background"]["items"]
+
+
 async def test_asset_supplement_is_json_safe_and_revalidated_against_sql(monkeypatch):
     from datetime import datetime, timezone
     from core.identifier import ascending

@@ -1,4 +1,5 @@
 """A visible conversation is a reference hint, never task/answer authority."""
+import json
 import re
 
 from sqlalchemy import select
@@ -47,7 +48,53 @@ async def read(db, turn, session_id, *, include_history=False):
                         for entry in window["entries"]]}
         value["history_status"] = "partial" if window["next_offset"] or any(
             entry.get("omitted") for entry in window["entries"]) else "complete"
+        # Spoken history can still contain the old question after a manual
+        # click. Supply committed answers, not just an empty pending list.
+        value["handled_decisions"] = await _visible_decisions(db, turn, row.id)
+        value["instruction"] += (" handled_decisions contains already submitted choices in this conversation, newest first. "
+            "They supersede old spoken questions about those choices: do not ask the user to select them again. "
+            "Answers alone do not prove subsequent work completed. Missing or omitted answers are unknown, never evidence to re-ask.")
     return value
+
+
+async def _visible_decisions(db, turn, session_id):
+    from assistant.shared_context import recent_decisions
+    from db.models.agent_event import AgentEvent
+    from db.models.memory_v2 import MemorySource, MemoryTombstone
+    from db.models.part import Part
+    from memory.service import _removed_ids
+
+    decisions = await recent_decisions(db, turn.user_id, turn.workspace_id, session_id=session_id, limit=2)
+    if not decisions:
+        return []
+    removed = {identity for payload in (await db.scalars(select(AgentEvent.payload).where(
+        AgentEvent.session_id == session_id, AgentEvent.user_id == turn.user_id,
+        AgentEvent.kind == "surface.messages_removed"))).all() for identity in _removed_ids(payload)}
+    forgotten = select(MemorySource.part_id).join(MemoryTombstone,
+        MemoryTombstone.object_id == MemorySource.id).where(MemorySource.user_id == turn.user_id,
+        MemoryTombstone.user_id == turn.user_id, MemoryTombstone.object_kind == "source",
+        MemorySource.part_id.is_not(None))
+    visible = set((await db.scalars(select(QuestionCheckpoint.id).join(Part,
+        Part.id == QuestionCheckpoint.part_id).where(
+        QuestionCheckpoint.id.in_([item["request_id"] for item in decisions]),
+        QuestionCheckpoint.session_id == session_id, QuestionCheckpoint.user_id == turn.user_id,
+        QuestionCheckpoint.message_id.not_in(removed), Part.session_id == session_id,
+        Part.message_id == QuestionCheckpoint.message_id, Part.user_id == turn.user_id,
+        Part.id.not_in(forgotten)))).all())
+    result, remaining = [], 1600
+    for decision in decisions:
+        if decision["request_id"] not in visible:
+            continue
+        size = len(json.dumps(decision, ensure_ascii=False))
+        if size > remaining:
+            decision = {key: decision[key] for key in ("request_id", "state", "answered_at", "execution_confirmed")}
+            decision["details_omitted"] = True
+            size = len(json.dumps(decision, ensure_ascii=False))
+        if size > remaining:
+            break
+        result.append(decision)
+        remaining -= size
+    return result
 
 
 def history_needed(packet):

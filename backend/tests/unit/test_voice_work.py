@@ -143,3 +143,19 @@ async def test_work_pages_bind_actor_and_filters_and_do_not_leak_shared_workspac
     rest = await overview(scope, {"query": "多巴胺风格居家", "media_kind": "video",
                                   "cursor": relaxed["next_cursor"]}, limit=1)
     assert rest["query_relaxed"] and [item["session_id"] for item in rest["items"]] == [second.id]
+
+
+async def test_manual_progress_changes_version_even_when_task_status_is_unchanged():
+    from session.session import create_user_message
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    chat = await create_session(user_id=owner, workspace_id=workspace, title="社区读书会")
+    await create_user_message(chat.id, "周六上午在社区花园举办", user_id=owner)
+    scope = CallScope(owner, workspace, main.id)
+    [before] = (await overview(scope, {}))["items"]
+    await create_user_message(chat.id, "改到周日下午三点，在室内阅览室举办", user_id=owner)
+    [after] = (await overview(scope, {}))["items"]
+    assert before["state"] == after["state"]
+    assert before["version"] != after["version"]
+    assert "周日下午三点" in str(after["recent_messages"])
+    assert (await overview(scope, {}))["items"][0]["version"] == after["version"]

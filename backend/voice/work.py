@@ -189,7 +189,8 @@ async def overview(scope, arguments, *, limit=12, db=None):
                 item["recent_messages"] = [{**entry, "text": entry["text"][:200],
                     "truncated": entry["truncated"] or len(entry["text"]) > 200} for entry in previews]
             item["version"] = sha256(json.dumps({key: item.get(key) for key in (
-                "task_version", "state", "pending_request", "last_decision", "video", "available_outputs")},
+                "task_version", "state", "pending_request", "last_decision", "video", "available_outputs",
+                "current_settings", "recent_messages")},
                 sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             items.append(item)
         next_cursor = (_encode_cursor({"scope": identity, "at": _iso(selected[-1][-1]), "id": selected[-1][0].id,

@@ -486,12 +486,26 @@ async def test_a_repeated_question_reuses_its_embedding_and_still_drops_a_revoke
     assert found["items"] == [] and "MEMORY_CANARY" not in json.dumps(found)
 
 
-async def test_turn_recall_reads_documents_once_after_the_network_waits_and_once_at_the_end(monkeypatch, external_io):
+@pytest.mark.parametrize("with_rerank", [False, True])
+async def test_turn_recall_reauthorizes_after_each_external_wait(monkeypatch, external_io, with_rerank):
     identity, _, _, config = await seed(monkeypatch)
     value = await note(identity)
     external_io.hits = [value]
     reads = []
     original = retrieval.authorized_documents
+
+    async def network_wait(_kind):
+        assert reads == []
+
+    async def rerank(_query, documents, _config):
+        assert len(reads) == 1
+        assert get_engine().sync_engine.pool.checkedout() == 0
+        return [(i, .9) for i in range(len(documents))], {}
+
+    external_io.before = network_wait
+    config.memory.rerank = with_rerank
+    config.memory.rerank_min_score = .1
+    monkeypatch.setattr("memory.rerank.rerank", rerank)
 
     async def counted(db, scope, config, *, only=None):
         reads.append(only)
@@ -499,14 +513,18 @@ async def test_turn_recall_reads_documents_once_after_the_network_waits_and_once
 
     monkeypatch.setattr(retrieval, "authorized_documents", counted)
     # The per-turn recall path (the orchestrator passes no document loader).
+    diagnostics = {}
     found = await retrieval.search_memory(query="MEMORY_CANARY", user_id=identity["user_id"],
-        workspace_id=identity["workspace_id"], include_all_projects=True, config=config.memory)
+        workspace_id=identity["workspace_id"], include_all_projects=True, config=config.memory,
+        diagnostics=diagnostics)
     assert [item["id"] for item in found["items"]] == [value["id"]]
-    # Keyword and dense candidates share one read after the waits; the final
-    # checkpoint follows. Nothing is read before the waits.
-    assert len(reads) == 2 and all(only for only in reads)
+    # Keyword and dense candidates share a fresh authorized read. A second
+    # pass is needed only when the reranker introduces another external wait.
+    assert len(reads) == (2 if with_rerank else 1) and all(only for only in reads)
+    assert diagnostics["reused_authorized_pass"] is not with_rerank
     # Each stage's time is kept for the debug step.
-    assert set(found["timings"]) == {"keywords", "embedding", "index", "authorize", "final_check"}
+    assert set(found["timings"]) == {"keywords", "embedding", "index", "authorize", "final_check"} | (
+        {"rerank"} if with_rerank else set())
 
 
 @pytest.mark.parametrize("read_body", [False, True])

@@ -204,8 +204,13 @@ _FRONT = (
     "下一通生效，不把调整语气说成已更换音色。\n")
 LEGACY_MEMORY_GUIDANCE = "仅需记住长期事实或偏好时，使用 assistant_ask 的 mode=remember 交给个人助理。\n"
 NATIVE_MEMORY_GUIDANCE = (
-    "本轮记忆中的 viewed_conversation 是用户开始说话时打开的普通会话，不自动等于执行任务。"
+    "本轮记忆中的 viewed_conversation 是用户开始说话时打开且已核实权限的会话；kind=assistant_task表示当前个人助理的执行会话。"
+    "assistant_conversation是本通话绑定的个人助理文字会话。用户说在文字里改过要求时，先核对这两处的最新用户正文与当前状态，"
+    "不要让用户重述已经提供的改动；用户提出修改、任务已接收和任务已完成须分别表述。"
+    "当前conversation_state与waiting_for_user优先于历史回复中的进度；waiting_for_user为true时，"
+    "先用pending_request_ids调用cards_pending核实当前卡片再回答进展，不沿用历史中的正在整理或已完成。"
     "回顾内容以其中 history 正文为准，不凭标题或用户爱好编造聊天内容、待确认事项或进度。"
+    "已提交卡片的答案覆盖旧口播。只有当前待办才需要用户确认；额外建议必须说明是可选的，不说成任务缺项。"
     "视图 unavailable 时没有核实到当前普通会话，用户指向该页面时先澄清对象，不拿旧任务或个人记忆冒充页面内容。"
     "本通话的最终用户原话由服务端接收，并按当前记忆开关在后台整理；普通事实或偏好不另建个人助理任务。"
     "用户只要求记住长期事实或偏好时，assistant_ask 的 mode=remember 仅核对当前这句原话的真实捕获和提取状态，"

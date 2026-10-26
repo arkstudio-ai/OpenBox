@@ -254,8 +254,9 @@ async def _runtime(monkeypatch):
     monkeypatch.setattr(loop, "_resolve_history_tool_names", real_history)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools},
-                               catalogue_availability="available")
+        from agent.tool_resolution import ResolvedStepTools
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools},
+                                 catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, workspace = await accounts()

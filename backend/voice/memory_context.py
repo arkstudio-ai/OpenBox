@@ -72,18 +72,22 @@ async def refresh(scope, previous):
         current, state = await authorized_packet_state(db, turn)
         revision = state["version"]
         if previous is not None and revision == previous["context_version"]:
-            if not previous.get("viewed_task"):
+            if not any(previous.get(key) for key in ("viewed_task", "assistant_context", "task_state")):
                 return None
-            from voice.view_context import read, history_needed
-            value = await read(db, replace(turn, read_policy=previous["route"]["read_policy"]),
-                previous.get("_viewed_session_id"), include_history=history_needed(previous))
-            if value == previous.get("viewed_task"):
-                return None
+            from voice.view_context import refresh_live
             packet = copy.deepcopy(previous)
-            packet.pop("viewed_task", None)
-            if value:
-                packet["viewed_task"] = value
+            await refresh_live(db, scope, packet)
+            if previous.get("task_state"):
+                from memory.retrieval import read_task_state
+                fresh = await read_task_state(current, session_id=previous.get("_task_session_id"))
+                # Observation time changes on every poll, not the evidence.
+                before = {key: value for key, value in previous["task_state"].items() if key != "observed_at"}
+                after = {key: value for key, value in fresh.items() if key != "observed_at"}
+                if before != after:
+                    packet["task_state"] = fresh
             apply_budget(packet, get_config().memory)
+            if packet == previous:
+                return None
             return packet, instructions(scope, packet)
         if previous is not None:
             packet = await _refresh_packet_snapshot(db, copy.deepcopy(previous), current,

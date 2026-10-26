@@ -475,6 +475,27 @@ def apply_budget(bundle, config):
             bundle["degraded_reasons"].append("settings_require_exact_read")
         changed()
     if packet_tokens() > config.recall_token_budget:
+        # Live surfaces compete with older full receipts and messages too.
+        # Trim complete older entries before dropping the latest committed
+        # answer / progress. Never cut a filename, choice or sentence in half.
+        for key in ("assistant_context", "viewed_task"):
+            context = bundle.get(key, {})
+            entries = context.get("history", {}).get("entries", [])
+            while len(entries) > 1 and packet_tokens() > config.recall_token_budget:
+                entries.pop(0)
+                context["history_status"] = "partial"
+                context["older_history_omitted"] = True
+                changed()
+            decisions = context.get("handled_decisions", [])
+            while len(decisions) > 1 and packet_tokens() > config.recall_token_budget:
+                decisions.pop()
+                context["older_decisions_omitted"] = True
+                changed()
+    if packet_tokens() > config.recall_token_budget:
+        if bundle.pop("assistant_context", None):
+            bundle["degraded_reasons"].append("assistant_context_requires_exact_read")
+        changed()
+    if packet_tokens() > config.recall_token_budget:
         bundle.pop("viewed_task", None)
         changed()
     core_tokens = settings_tokens + sum(tokens(json.dumps(model_item(item), ensure_ascii=False, separators=(",", ":"))) for item in core)

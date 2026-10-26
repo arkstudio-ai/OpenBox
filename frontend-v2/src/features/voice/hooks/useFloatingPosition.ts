@@ -38,7 +38,12 @@ function persist(key: string, point: Point | null) {
 }
 
 /** Account-scoped placement, a drag threshold, keyboard movement, and viewport clamping. */
-export function useFloatingPosition(key: string, desired: Size, bottomInset = 0) {
+export function useFloatingPosition(
+  key: string,
+  desired: Size,
+  bottomInset = 0,
+  anchor: "bottom-right" | "top-right" = "bottom-right",
+) {
   const [screen, setScreen] = useState(viewport)
   const [saved, setSaved] = useState(() => readPosition(key))
   const drag = useRef<Drag | null>(null)
@@ -50,7 +55,12 @@ export function useFloatingPosition(key: string, desired: Size, bottomInset = 0)
     x: Math.max(MARGIN, Math.min(point.x, screen.width - width - MARGIN)),
     y: Math.max(MARGIN, Math.min(point.y, screen.height - height - MARGIN - bottomInset)),
   })
-  const point = clamp(saved ?? { x: screen.width - width - 24, y: screen.height - height - 24 - bottomInset })
+  const point = clamp(
+    saved ?? {
+      x: screen.width - width - 24,
+      y: anchor === "top-right" ? 72 : screen.height - height - 24 - bottomInset,
+    },
+  )
   useEffect(() => {
     const onResize = () => setScreen(viewport())
     window.addEventListener("resize", onResize)

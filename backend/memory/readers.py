@@ -103,7 +103,7 @@ async def read_request(request, turn, config):
 
 
 async def history_window(db, scope, turn, session_id, *, offset=0, limit=10, max_chars=3000,
-                         visible_only=False):
+                         visible_only=False, live_execution=False):
     """One owner-bound window, shared by supplements and the voice view adapter.
 
     Both paths exclude removed messages and forgotten source parts. A visible
@@ -119,18 +119,44 @@ async def history_window(db, scope, turn, session_id, *, offset=0, limit=10, max
     from memory.session_policy import memory_extraction_eligible
     row = await db.scalar(select(Session).where(Session.id == session_id,
         *scope.predicates(Session, personal_visibility=False), Session.is_deleted.is_(False)))
-    if row is None or not memory_extraction_eligible(row):
+    eligible = row is not None and memory_extraction_eligible(row)
+    if (not eligible and row is not None and live_execution and visible_only
+            and turn.entry == "voice" and turn.read_policy == "allowed"
+            and row.kind == "normal" and row.memory_policy == "assistant_isolated" and not row.parent_id):
+        # Voice can inspect its own assistant's current execution conversation
+        # without making that task eligible for extraction or memory retrieval.
+        # Explicit user isolation ("isolated") is never bypassed. Generic memory
+        # tools cannot select this internal live-read path.
+        from db.models.assistant import AssistantTask
+        eligible = await db.scalar(select(AssistantTask.id).where(
+            AssistantTask.execution_session_id == row.id, AssistantTask.assistant_session_id == turn.session_id,
+            AssistantTask.user_id == turn.user_id, AssistantTask.workspace_id == turn.workspace_id,
+            AssistantTask.archived_at.is_(None))) is not None
+    if not eligible:
         raise MemoryAccessDenied("History is unavailable")
     removed = {identity for payload in (await db.scalars(select(AgentEvent.payload).where(
         AgentEvent.session_id == row.id, AgentEvent.user_id == turn.user_id,
         AgentEvent.kind == "surface.messages_removed"))).all() for identity in _removed_ids(payload)}
-    ids = list((await db.scalars(select(Message.id).where(Message.session_id == row.id,
-        Message.user_id == turn.user_id, Message.id.not_in(removed))
-        .order_by(Message.id.desc()).offset(offset).limit(limit + 1))).all())
     forgotten = select(MemorySource.part_id).join(MemoryTombstone,
         MemoryTombstone.object_id == MemorySource.id).where(MemorySource.user_id == turn.user_id,
         MemoryTombstone.user_id == turn.user_id, MemoryTombstone.object_kind == "source",
         MemorySource.part_id.is_not(None))
+    visible_message = ()
+    if visible_only:
+        from sqlalchemy import and_, func
+        from assistant.permission_requests import json_text
+        channel, body = json_text(db, Part.data, "channel"), json_text(db, Part.data, "text")
+        # Tool/reasoning-only steps are not conversation turns. Applying the
+        # window limit before filtering them can hide the human's latest edit
+        # while the agent is working, even though it is visible on screen.
+        visible_message = (select(Part.id).where(Part.message_id == Message.id,
+            Part.session_id == row.id, Part.user_id == turn.user_id, Part.id.not_in(forgotten),
+            or_(channel.is_(None), channel == "final"),
+            or_(Part.type == "file", and_(Part.type == "text",
+                func.length(func.trim(func.coalesce(body, ""))) > 0))).exists(),)
+    ids = list((await db.scalars(select(Message.id).where(Message.session_id == row.id,
+        Message.user_id == turn.user_id, Message.id.not_in(removed), *visible_message)
+        .order_by(Message.id.desc()).offset(offset).limit(limit + 1))).all())
     parts = list((await db.scalars(select(Part).where(Part.message_id.in_(ids[:limit]),
         Part.user_id == turn.user_id, Part.id.not_in(forgotten)))).all())
     allowed_parts = {part.id for part in parts if not visible_only or

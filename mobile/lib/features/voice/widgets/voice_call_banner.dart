@@ -14,7 +14,7 @@ import 'voice_copy.dart';
 import 'voice_ticker.dart';
 
 /// The 44 pt call bar under the status bar while the call page is closed
-/// (mobile §3): "● 通话中 · 02:14 · 我在听" and a hang-up button. Grey with
+/// (mobile §3): "● 通话中 · 02:14 · 我在听", mute and hang-up. Grey with
 /// "通话已结束" for a moment after a call ends away from the page.
 ///
 /// It lives in `MaterialApp.builder`, above the Navigator: no Overlay, so
@@ -83,6 +83,44 @@ class VoiceCallBanner extends ConsumerWidget {
                     ),
                   ),
                 ),
+                if (call.status == VoiceCallStatus.connected)
+                  Semantics(
+                    button: true,
+                    toggled: call.muted,
+                    label: i18n.t(
+                      call.muted
+                          ? 'voice:controls.unmute'
+                          : 'voice:controls.mute',
+                    ),
+                    excludeSemantics: true,
+                    onTap: ref
+                        .read(voiceCallControllerProvider.notifier)
+                        .toggleMute,
+                    child: InkWell(
+                      key: const Key('voice-banner-mute'),
+                      onTap: ref
+                          .read(voiceCallControllerProvider.notifier)
+                          .toggleMute,
+                      child: SizedBox.square(
+                        dimension: height,
+                        child: Center(
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: call.muted ? ink : Colors.transparent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              call.muted ? Icons.mic_off : Icons.mic_none,
+                              size: 18,
+                              color: call.muted ? t.s700 : ink,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (!ended)
                   Padding(
                     padding: const EdgeInsets.only(right: 12),

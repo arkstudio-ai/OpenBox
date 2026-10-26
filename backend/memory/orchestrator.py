@@ -403,10 +403,12 @@ def render_memory_context(bundle) -> str:
                     "Permission to read background does not authorize executing or resuming work."}
         if material["read_policy"] == "allowed" and bundle.get("viewed_task"):
             material["viewed_conversation"] = bundle["viewed_task"]
-        elif material["read_policy"] == "allowed" and bundle.get("_view_context_checked"):
+        elif material["read_policy"] == "allowed" and bundle.get("_view_context_checked") and not bundle.get("assistant_context"):
             material["viewed_conversation"] = {"status": "unavailable", "instruction":
                 "No ordinary conversation is verified as visible for this utterance. If the user refers to a visible chat, "
                 "clarify which one. Do not substitute personal memories, older tasks or the call's greeting for its contents."}
+        if material["read_policy"] == "allowed" and bundle.get("assistant_context"):
+            material["assistant_conversation"] = bundle["assistant_context"]
         if bundle.get("catalogs"):
             from memory.redaction import ReferenceId
             material["discovery"] = [{**item, "id": ReferenceId(item["id"])} for item in bundle["catalogs"]]

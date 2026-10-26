@@ -272,3 +272,38 @@ async def test_new_and_restricted_call_refreshes_settings_without_historical_rea
     assert second["context_version"] == revision
     assert second["items"] == second["stable_background"]["items"] == []
     assert await refresh(scope, second) is None
+
+
+async def test_live_main_and_task_changes_refresh_without_memory_version_change(monkeypatch):
+    from dataclasses import replace
+    from db.base import get_db_session
+    from db.models.session import Session
+    from memory import packet as packets
+    from memory.orchestrator import render_memory_context
+    from session.session import create_session, create_user_message
+    from tests.unit.test_memory_read_protocol import allowed
+    from voice.memory_context import refresh
+    from voice.tools import CallScope
+    from voice.view_context import attach
+    config, turn = await context(monkeypatch)
+    turn = replace(turn, entry="voice", query="刚才在文字里改好了，现在进展怎么样")
+    task = await create_session(user_id=turn.user_id, workspace_id=turn.workspace_id, title="社区读书会")
+    scope = CallScope(turn.user_id, turn.workspace_id, turn.session_id, call_id="call")
+    async def evaluate(*args, **kwargs):
+        response = allowed()
+        response["answers"]["task_needed"] = {"choice": "read", "confidence": 1}
+        return response
+    previous = await packets.prepare_context(turn, config, evaluator=evaluate)
+    await attach(scope, previous)
+    async with get_db_session() as db:
+        (await db.get(Session, task.id)).status = "busy"
+    await create_user_message(turn.session_id, "改到周日下午三点，不要沿用周六方案", user_id=turn.user_id,
+        agent="assistant", origin="human", origin_ref={"actor_user_id": turn.user_id})
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Live refresh must not call a model or search")
+    monkeypatch.setattr("memory.read_routing.route", forbidden)
+    fresh, _ = await refresh(scope, previous)
+    assert fresh["context_version"] == previous["context_version"]
+    assert "周日下午三点" in render_memory_context(fresh)
+    assert fresh["task_state"]["sessions"][0]["status"] == "busy"
+    assert await refresh(scope, fresh) is None  # no repeated updates for observed_at alone

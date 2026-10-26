@@ -9,7 +9,10 @@
   "moveWindow": "Move companion window",
   "moveHint": "Drag to move, or use arrow keys while focused. Hold Shift to move faster.",
   "tabsLabel": "Assistant panel",
-  "tabs": { "chat": "Chat", "settings": "Quick settings" },
+  "tabs": {
+    "chat": "Chat",
+    "settings": "Quick settings"
+  },
   "loading": "Loading…",
   "retry": "Retry",
   "call": {
@@ -31,9 +34,6 @@
   "appearance": {
     "title": "Your assistant's look",
     "hint": "Choose a companion or use your own picture. Your choice stays with your account.",
-    "orb": "Pebble",
-    "sprout": "Sprout",
-    "cat": "Cat",
     "custom": "My picture",
     "upload": "Upload a custom portrait",
     "uploading": "Saving portrait…",
@@ -42,7 +42,54 @@
     "invalid": "Choose a PNG, JPG, WebP or GIF image under 5 MB.",
     "failed": "Couldn't save the portrait. Check your connection and try again.",
     "enabled": "Show the PC floating entry",
-    "enabledHint": "Reach your assistant from any BossIP page. When hidden, you can still call from the assistant page."
+    "enabledHint": "Reach your assistant from any BossIP page. When hidden, you can still call from the assistant page.",
+    "ip-01": "Silver Suit",
+    "ip-02": "Blue-cap Chef",
+    "ip-03": "Navy Dress",
+    "ip-04": "Denim Companion",
+    "ip-05": "Little Baker",
+    "ip-06": "Uniformed Companion",
+    "ip-07": "Strawberry Baker",
+    "ip-08": "Pizza Hamster",
+    "ip-09": "Embroidered Dress",
+    "ip-10": "Lamb Teacher",
+    "ip-11": "Coffee Cat",
+    "ip-12": "Bow-tie Tabby",
+    "ip-13": "Giraffe Doctor",
+    "ip-14": "Red Panda Engineer",
+    "ip-15": "Sunny Chef",
+    "ip-16": "Pink-hat Baker",
+    "ip-17": "Ivory Robes",
+    "ip-18": "White-hat Chef",
+    "ip-19": "Sage Robes",
+    "ip-20": "Bookish Girl",
+    "ip-21": "Cake Cat",
+    "ip-22": "Crimson Robes",
+    "ip-23": "Elegant Companion",
+    "ip-24": "Ice Cream Chef",
+    "ip-25": "Flower Crown",
+    "ip-26": "Bookish Boy",
+    "ip-27": "Bun-haired Companion",
+    "ip-28": "Jewelled Dress",
+    "ip-29": "Postie Puppy",
+    "ip-30": "Beret Artist",
+    "ip-31": "Cheerful Cat",
+    "ip-32": "Silver Headdress",
+    "ip-33": "Ice Cream Cat",
+    "ip-34": "Uniformed Girl",
+    "selected": "Current look: {{name}}",
+    "categories": "Character categories",
+    "category": {
+      "all": "All looks",
+      "female": "Female",
+      "male": "Male",
+      "pets": "Animals"
+    },
+    "voiceHint": "Default female voice: Expert Long Anqian; male voice: Long Anlufeng. Custom pictures default to the female voice. A voice you choose takes priority.",
+    "voiceGender": {
+      "female": "Female voice default",
+      "male": "Male voice default"
+    }
   },
   "settings": {
     "voiceTitle": "Voice and calls",
@@ -64,6 +111,7 @@
     "saveFailed": "Couldn't save. Please try again.",
     "loadFailed": "Couldn't load these settings.",
     "resetPosition": "Reset floating position",
-    "all": "More assistant settings"
+    "all": "More assistant settings",
+    "autoVoice": "Automatic · {{name}}"
   }
 }

@@ -80,7 +80,8 @@ async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers,
         provider = providers.made[-1]
         provider.push(item("modify"), transcript("每种海鲜独立砂锅，结尾加全家福，现在提交修改", "modify"),
                       started("promise"), event("assistant_transcript", response_id="promise", text="我这就安排"), done("promise"))
-        assert wait_until(lambda: any("尚未确认提交成功" in str(row) for row in provider.commands("create")))
+        read_until(socket, lambda value: value["type"] == "turn" and value["state"] == "accepted")
+        assert not any("尚未确认提交成功" in str(row) for row in provider.commands("create"))
         assert checked == ["每种海鲜独立砂锅，结尾加全家福，现在提交修改"]
         socket.send_json({"type": "stop"})
         assert "ended" in kinds(read_until(socket, lambda value: False))
@@ -89,8 +90,11 @@ async def test_socket_checks_a_spoken_promise_without_a_handoff(http, providers,
     from db.models.voice import VoiceCall
     async with get_db_session() as db:
         call = await db.get(VoiceCall, ready["call_id"])
-        assert not list((await db.scalars(select(AgentInboxItem).where(
+        items = list((await db.scalars(select(AgentInboxItem).where(
             AgentInboxItem.session_id == call.main_session_id))).all())
+        assert len(items) == 1
+        assert items[0].prompt == checked[0]
+        assert items[0].origin_ref["voice_context"]["handover_source"] == "verified_missing_handoff"
 
 
 @pytest.fixture
@@ -387,8 +391,9 @@ async def settle_turn(inbox_id, text):
         await lease.release(session_status="idle")
 
 
+@pytest.mark.parametrize("playback_ack", [False, True])
 async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_note(http, providers, app,
-                                                                                   monkeypatch):
+                                                                               monkeypatch, playback_ack):
     from db.base import get_db_session
     from db.models.voice import VoiceTurn
     from voice import phrases
@@ -399,6 +404,8 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
     with client.websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
         read_until(socket, lambda item: item["type"] == "phase" and item["value"] == "listening")
         heard_greeting()
+        if playback_ack:
+            socket.send_json({"type": "capabilities", "playback_ack": True})
         socket.send_bytes(ASK_MARKER + FRAME[len(ASK_MARKER):])
         accepted = read_until(socket, lambda item: item["type"] == "turn")[-1]
         provider = providers.made[0]
@@ -409,7 +416,17 @@ async def test_a_turn_is_acknowledged_at_once_and_its_result_told_once_from_a_no
         assert tool_id == "call-2" and output["status"] == "accepted"
         assert output["operation_state"] == "received" and not output["execution_confirmed"]
         await settle_turn(accepted["inbox_id"], "[贪吃蛇](/app/s/x) 的收尾自检做完了，一切正常。")
-        told = read_until(socket, lambda item: item["type"] == "turn" and item["state"] == "delivered")
+        told = []
+        for _ in range(5):
+            seen = read_until(socket, lambda item: item["type"] == "playback.finished"
+                or item["type"] == "turn" and item["state"] == "delivered")
+            told.extend(seen)
+            if seen[-1]["type"] != "playback.finished":
+                break
+            async with get_db_session() as db:
+                turn = await db.get(VoiceTurn, accepted["turn_id"])
+                assert turn.delivered_at is None  # generated PCM alone is not delivery
+            socket.send_json({"type": "playback.completed", "response_id": seen[-1]["response_id"]})
         assert told[-1]["turn_id"] == accepted["turn_id"] and "<audio>" in kinds(told)
         socket.send_json({"type": "stop"})
         ended = read_until(socket, lambda item: item["type"] == "ended")[-1]
@@ -535,6 +552,40 @@ async def test_a_user_picks_a_voice_and_the_next_call_speaks_with_it(http, provi
         socket.send_json({"type": "stop"})
         read_until(socket, lambda item: False)
     assert providers.made[-1].config.voice == "longanqian_v3.1"
+
+
+async def test_appearance_defaults_reach_the_next_call_and_manual_choices_win(http, providers, app):
+    from db.base import get_db_session
+    from db.models.voice import VoiceCall
+    headers = await account(http)
+    appearance_endpoint, voice_endpoint = "/api/assistant/appearance", "/api/assistant/voice/voices"
+    male = await http.put(appearance_endpoint, json={"preset": "ip-11"}, headers=headers)
+    assert male.status_code == 200
+    assert (await http.get(voice_endpoint, headers=headers)).json()["selected"] == "longanlufeng"
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        ready = socket.receive_json()
+        assert providers.made[-1].config.voice == "longanlufeng"
+        assert providers.made[-1].config.model == AUDIO_MODEL
+        assert (await http.put(appearance_endpoint, json={"preset": "ip-10"}, headers=headers)).status_code == 200
+        assert (await http.get(voice_endpoint, headers=headers)).json()["selected"] == "longanqian_v3.1"
+        assert providers.made[-1].config.voice == "longanlufeng"  # no mid-call voice change
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    async with get_db_session() as db:
+        assert (await db.get(VoiceCall, ready["call_id"])).voice == "longanlufeng"
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        socket.receive_json()
+        assert providers.made[-1].config.voice == "longanqian_v3.1"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
+    chosen = await http.put("/api/assistant/voice/voice", json={"voice": "longanqian_v3.1"}, headers=headers)
+    assert chosen.json()["voice_source"] == "user"
+    assert (await http.put(appearance_endpoint, json={"preset": "ip-04"}, headers=headers)).status_code == 200
+    with TestClient(app).websocket_connect(f"/ws/assistant/voice?ticket={await ticket(http, headers)}") as socket:
+        socket.receive_json()
+        assert providers.made[-1].config.voice == "longanqian_v3.1"
+        socket.send_json({"type": "stop"})
+        read_until(socket, lambda _: False)
 
 
 async def test_previews_are_served_for_listed_voices_only(http, providers):

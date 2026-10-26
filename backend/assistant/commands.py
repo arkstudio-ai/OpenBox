@@ -466,7 +466,17 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 raise AssistantError(409, "ASSISTANT_REVISION_CONFLICT",
                     "Task revision changed; nothing was applied. Reload tasks.get and copy task.control_revision "
                     "as expected_revision, not intent_revision. Never guess or increment it.")
-            if task.desired_state != "running":
+            if (task.desired_state == "canceled" and source is None and client_message_id is not None
+                    and delivery == "followup" and command_action is None):
+                # Only a fresh authenticated execution-page message reopens a
+                # stopped task. Replays returned above; tools, coordination and
+                # exact-run steering cannot turn a canceled task back on.
+                from assistant.control import reopen_canceled_for_input_locked
+                source_ref["reopened_from"] = {"desired_state": task.desired_state,
+                                               "control_revision": task.control_revision}
+                await reopen_canceled_for_input_locked(db, task, execution)
+                command.source_ref = dict(source_ref)
+            elif task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING",
                     "The same task is paused or stopped. Read tasks.get, then tasks.resume on the user's "
                     "explicit continuation request and tasks.followup with the returned revision. "

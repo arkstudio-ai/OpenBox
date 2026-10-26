@@ -1,22 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { http, request } from "@/shared/api/http"
+import { assistantPreferenceKeys } from "@/shared/api/assistant-preference-keys"
+import {
+  DEFAULT_COMPANION_PRESET,
+  type BuiltinCompanionPreset,
+  type CompanionPreset,
+} from "./companion-presets"
 
-export const COMPANION_PRESETS = ["orb", "sprout", "cat"] as const
-export type CompanionPreset = (typeof COMPANION_PRESETS)[number] | "custom"
+export { COMPANION_PRESETS, type CompanionPreset } from "./companion-presets"
+export interface CompanionPresetOption {
+  id: BuiltinCompanionPreset
+  category: "female" | "male" | "pets"
+  voice_gender: "female" | "male"
+}
 export interface CompanionAppearance {
   enabled: boolean
   preset: CompanionPreset
   has_image: boolean
   image_url: string | null
+  /** Optional while older backend instances are being upgraded. */
+  presets?: CompanionPresetOption[]
 }
 export const DEFAULT_COMPANION: CompanionAppearance = {
   enabled: true,
-  preset: "orb",
+  preset: DEFAULT_COMPANION_PRESET,
   has_image: false,
   image_url: null,
 }
-const appearanceKey = (userId: string | undefined) => ["assistant-appearance", userId] as const
+const appearanceKey = assistantPreferenceKeys.appearance
 const ENDPOINT = "/api/assistant/appearance"
 
 export function useCompanionAppearance() {
@@ -36,13 +48,16 @@ export function useSaveCompanionAppearance() {
   const userId = useAuthStore((state) => state.user?.id)
   const qc = useQueryClient()
   return useMutation({
-    scope: { id: `assistant-appearance:${userId}` },
+    scope: { id: `assistant-preferences:${userId}` },
     mutationFn: (patch: Partial<Pick<CompanionAppearance, "enabled" | "preset">>) => {
       if (useAuthStore.getState().user?.id !== userId) throw new Error("accountChanged")
       return http.put<CompanionAppearance>(ENDPOINT, patch)
     },
     onMutate: () => qc.cancelQueries({ queryKey: appearanceKey(userId) }),
-    onSuccess: (data) => qc.setQueryData(appearanceKey(userId), data),
+    onSuccess: async (data) => {
+      qc.setQueryData(appearanceKey(userId), data)
+      await qc.invalidateQueries({ queryKey: assistantPreferenceKeys.voices(userId) })
+    },
   })
 }
 
@@ -80,7 +95,7 @@ export function useUploadCompanionImage() {
   const userId = useAuthStore((state) => state.user?.id)
   const qc = useQueryClient()
   return useMutation({
-    scope: { id: `assistant-appearance:${userId}` },
+    scope: { id: `assistant-preferences:${userId}` },
     mutationFn: async (file: File) => {
       const body = new FormData()
       body.append("file", await portraitFile(file))
@@ -88,6 +103,9 @@ export function useUploadCompanionImage() {
       return request<CompanionAppearance>(`${ENDPOINT}/image`, { method: "POST", body })
     },
     onMutate: () => qc.cancelQueries({ queryKey: appearanceKey(userId) }),
-    onSuccess: (data) => qc.setQueryData(appearanceKey(userId), data),
+    onSuccess: async (data) => {
+      qc.setQueryData(appearanceKey(userId), data)
+      await qc.invalidateQueries({ queryKey: assistantPreferenceKeys.voices(userId) })
+    },
   })
 }

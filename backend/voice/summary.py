@@ -14,13 +14,18 @@ from core.log import create_logger
 
 log = create_logger("voice.summary")
 
-LIMIT = 300
-MAX_TOKENS = 600
+# 800 CJK characters fit the handoff's 6200-byte ASCII provenance budget,
+# leaving room for the current utterance and card identities.
+LIMIT, WORKING_LIMIT = 300, 800
+MAX_TOKENS = 1800
 MID_CALL_SECONDS, CALL_SECONDS = 15.0, 25.0
 _tasks: set[asyncio.Task] = set()  # hang-up summaries outlive the socket
 
-SO_FAR = ("你在帮电话里的语音前台记备忘。把下面的通话记录（和已有备忘）合成一段不超过300字的中文备忘："
+SO_FAR = ("你在帮电话里的语音前台记工作备忘。把下面的通话记录（和已有备忘）合成不超过800字的中文备忘："
           "用户说了什么、交代了什么事、结果怎样、还有什么在办、用户表达的偏好（比如希望怎么称呼）。"
+          "优先完整保留尚在讨论或执行中的任务约束：主题、人物、时长、分段、每段内容、配音、背景音乐、"
+          "素材用途、已选档位和规格、费用边界、放置空间，以及每项已确认或未确认的状态；不要只保留最近的追问。"
+          "用户已决定的事项不得摘要成待选择。用户明确改口才替换对应要求，其余已确认要求继续保留。"
           "只写记录里有的事实，不编造；事情办没办成以“后台备注”里个人助理的回复为准，"
           "前台自己说的“建好了”“办好了”“再试一次”不算数；不写ID、链接和编号；不用列表，直接输出备忘正文。")
 CALL = ("下面是用户和个人助理语音前台的一通电话。写一段不超过300字的中文摘要，下次通话开场时给前台看："
@@ -32,7 +37,7 @@ CALL = ("下面是用户和个人助理语音前台的一通电话。写一段�
 
 async def summarize(transcript: str, previous: str = "", *, final: bool = False, model: str | None = None,
                     timeout: float | None = None) -> str:
-    """The summary text (≤300 characters), or "" when the model is unavailable or says nothing."""
+    """A working brief (≤800 chars) or final recap (≤300); empty on failure."""
     from core.config import get_config
     from agent.model_resolve import resolve
     if not transcript.strip():
@@ -47,7 +52,8 @@ async def summarize(transcript: str, previous: str = "", *, final: bool = False,
         log.info("voice summary unavailable model=%s final=%s error=%s", model, final, type(exc).__name__)
         return ""
     text = " ".join(text.split())
-    return text if len(text) <= LIMIT else text[:LIMIT - 1] + "…"
+    limit = LIMIT if final else WORKING_LIMIT
+    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 async def complete(model: str, system: str, text: str, timeout: float) -> str:

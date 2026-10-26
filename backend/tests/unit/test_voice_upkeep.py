@@ -384,3 +384,15 @@ async def test_a_vad_reply_taken_for_the_silent_one_is_heard():
     assert [value for value in items if isinstance(value, bytes)] and bridge.state == "responding"
     await replay(bridge, done("vad"))
     assert bridge.spoken.lines[-1].text == "好的" and bridge.state == "idle"
+
+
+async def test_working_summary_retains_requirements_beyond_the_short_hangup_recap(monkeypatch):
+    from voice.summary import summarize, WORKING_LIMIT, LIMIT
+    requirements = '先前讨论的内容。' * 45 + '已确认：两段各15秒，中文配音，不要背景音乐，快速档，单独砂锅分焗。尚未交办。'
+    async def complete(*args):
+        return requirements
+    monkeypatch.setattr('voice.summary.complete', complete)
+    working = await summarize('完整原话')
+    assert len(working) > LIMIT and len(working) <= WORKING_LIMIT
+    assert '两段各15秒' in working and '尚未交办' in working
+    assert len(await summarize('完整原话', final=True)) <= LIMIT

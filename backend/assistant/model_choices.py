@@ -14,6 +14,8 @@ from db.base import get_db_session
 from db.models.question import QuestionCheckpoint
 
 KIND = "assistant_task_setup"
+CHOICE_FIELDS = frozenset({"model", "model_confirmed", "work_type", "video_model", "video_model_confirmed",
+                           "video_tier", "video_tier_confirmed", "video_resolution"})
 
 
 def business_video_tiers(config, videos):
@@ -59,7 +61,8 @@ def catalogue():
                                   supports_vision=supports_vision),
             "video": videos, "video_tiers": business_video_tiers(config, videos), "default_chat": config.model,
             "default_video": config.video_generation.model,
-            "note": "Defaults are recommendations, not consent. Describe video tiers conversationally; "
+            "note": "Use the user's saved default task AI unless they request another. Video generation and paid "
+                    "production still require their own decisions. Describe tiers conversationally; "
                     "model IDs are execution details. Prices are current reference credits per second, not a full "
                     "production quote. Extra images, transcription or paid composition need their actual quote. "
                     "supports_reference_* describes optional accepted material, not mandatory uploads. "
@@ -99,6 +102,25 @@ async def prepare(ctx, source, arguments):
         rows = (await db.scalars(select(QuestionCheckpoint).where(
             QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.user_id == main.user_id,
             QuestionCheckpoint.status.in_(("answered", "pending"))).order_by(QuestionCheckpoint.updated_at.desc()).limit(100))).all()
+        default_model = await preferred_model(db, ctx.user_id, inventory)
+    # A model may replay only part of an answered patch (e.g. video ->
+    # spoken_video). That is still the same request, not a new approval chain.
+    # Only persisted choices may differ; changed instructions, sources, files
+    # or destination never inherit another request's decisions.
+    for row in rows:
+        saved = (row.continuation or {}).get(KIND) or {}
+        if row.status != "answered" or not saved.get("input"):
+            continue
+        if any(arguments.get(key) != saved["input"].get(key)
+               for key in (arguments.keys() | saved["input"].keys()) - CHOICE_FIELDS):
+            continue
+        restored, last_id = saved_choices(saved["input"], rows, inventory)
+        if last_id and all(arguments.get(key) in (saved["input"].get(key), restored.get(key))
+                           for key in arguments.keys() | saved["input"].keys() | restored.keys()):
+            original, values, setup_id = dict(saved["input"]), restored, last_id
+            break
+    if not values.get("model_confirmed") and not values.get("model_question") and default_model:
+        values.update(model=default_model, model_confirmed=True)
     for field in ("model", "work_type", "video_model"):
         if field == "model" and values.get("model_confirmed") and values.get("model"):
             continue
@@ -138,9 +160,7 @@ async def prepare(ctx, source, arguments):
             descriptions = {}
             for item in items:
                 price = item["credits_per_second"].get(item["resolution"])
-                model_name = next((video["name"] for video in inventory["video"]
-                                   if video["id"] == item["model"]), item["model"])
-                descriptions[item["name"]] = "；".join(filter(None, [model_name, item["description"], item["resolution"],
+                descriptions[item["name"]] = "；".join(filter(None, [item["description"], item["resolution"],
                     f"参考每秒 {price} 积分，完整方案另行报价" if price is not None else "费用待核实，不预先承诺价格"]))
             title = "视频档次"
             question = values.get("video_model_question") or "这条片子更看重日常出片还是画面细节？可以先了解各档的实际费用和素材要求，再决定。"
@@ -166,7 +186,7 @@ async def prepare(ctx, source, arguments):
         await ask(ctx.session_id, [Question(header=title, question=question, custom=False,
             options=[QuestionOption(label=label, description=descriptions.get(label, "暂不创建会话")) for label in choices])],
             tool={"callID": ctx.part_id, "messageID": ctx.message_id}, user_id=ctx.user_id,
-            continuation={"kind": "question", KIND: {"digest": digest, "input": original,
+            continuation={"kind": "question", KIND: {"digest": digest, "input": original, "resolved": values,
                 "field": field, "choices": choices}})
     if values["model"] not in {row["id"] for row in inventory["chat"]}:
         raise AssistantError(400, "ASSISTANT_MODEL_UNAVAILABLE", "Read status.models and choose an available task model")
@@ -184,6 +204,41 @@ async def prepare(ctx, source, arguments):
     # part still create only one conversation for the completed setup card.
     values["_setup_id"] = setup_id
     return values
+
+
+async def preferred_model(db, user_id, inventory):
+    from db.models.preference import UserPreference
+    preferred = await db.scalar(select(UserPreference.default_model).where(UserPreference.user_id == user_id))
+    available = {row["id"] for row in inventory["chat"]}
+    return next((model for model in (preferred, inventory.get("default_chat")) if model in available), None)
+
+
+def saved_choices(original, rows, inventory):
+    """Replay the exact persisted chain, including cards issued before snapshots existed."""
+    values, identity = dict(original), None
+    resolve_video_tier(values, inventory)
+    for field in ("model", "work_type", "video_model"):
+        if (field == "model" and values.get("model_confirmed") and values.get("model") or
+                field == "work_type" and values.get("work_type") != "video" or
+                field == "video_model" and (values.get("work_type") not in {"spoken_video", "other_video"}
+                    or values.get("video_model_confirmed") and values.get("video_model"))):
+            continue
+        candidates = [row for row in rows if row.status == "answered"
+                      and ((row.continuation or {}).get(KIND) or {}).get("input") == original
+                      and row.continuation[KIND].get("field") == field]
+        row = next((row for row in candidates if row.continuation[KIND].get("digest") == command_digest(
+            {"input": original, "resolved": row.continuation[KIND].get("resolved", values), "field": field})), None)
+        if row is None:
+            continue
+        saved = row.continuation[KIND]
+        choice = (row.answers or [[]])[0]
+        patch = saved.get("choices", {}).get(choice[0]) if len(choice) == 1 else None
+        if patch is None:
+            continue  # Cancellation remains on the ordinary exact-digest path.
+        values.update(saved.get("resolved") or values)
+        values.update(patch)
+        identity = row.id
+    return values, identity
 
 
 def result(card, answers):

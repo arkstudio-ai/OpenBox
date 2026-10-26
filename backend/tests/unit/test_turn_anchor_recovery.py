@@ -198,3 +198,59 @@ async def test_unstarted_resume_cannot_invent_a_missing_user_anchor():
             await load_canonical_model_surface(session_id, user_id=user_id, run_fence=fence)
     finally:
         await lease.release(session_status="error")
+
+
+@pytest.mark.parametrize("refused_count", [0, 1, 2])
+async def test_direct_question_resume_anchors_model_visible_user(monkeypatch, refused_count):
+    from agent import loop
+    from agent.driver import DriverBusyError
+    from agent.inbox import settle_refused_claims
+
+    user_id, session_id, turn_id, steer_id = await _waiting_steered_turn()
+    excluded = []
+    for _ in range(refused_count):
+        await accept_inbox_item(
+            session_id=session_id, user_id=user_id, delivery="followup",
+            prompt="A later input refused while the question is pending",
+        )
+        lease = await reserve_run(session_id, user_id)
+        try:
+            batch = await claim_inbox_boundary(lease, step=1, include_next_turn=True)
+            excluded.append(batch.receipts[0].message_id)
+            assert len(await settle_refused_claims(lease)) == 1
+        finally:
+            await lease.release(session_status="waiting_input")
+
+    # Exercise run_loop's real no-lease entry, stopping before any dispatch.
+    # Selecting the anchor must not repair the question that is resuming.
+    before = await _events(session_id)
+    selected = []
+
+    async def capture_reservation(sid, uid, *, trigger_message_id):
+        assert (sid, uid) == (session_id, user_id)
+        selected.append(trigger_message_id)
+        raise DriverBusyError(session_id, "already-running", 1)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agent.driver.reserve_run", capture_reservation)
+        assert await loop.run_loop(session_id, user_id=user_id, expected_generation=0) is None
+    assert selected == [steer_id]
+    assert [event.id for event in await _events(session_id)] == [event.id for event in before]
+
+    resumed = await reserve_run(session_id, user_id, trigger_message_id=selected[0])
+    fence = (session_id, resumed.run_id, resumed.generation)
+    try:
+        await resumed.set_phase("running")
+        surface = await load_canonical_model_surface(session_id, user_id=user_id, run_fence=fence)
+        last_user = next(message for message in reversed(surface.messages) if message.role == "user")
+        assert last_user.id == steer_id
+        assert not set(excluded) & {message.id for message in surface.messages}
+        reply = await create_assistant_message(session_id, last_user.id, user_id=user_id, run_fence=fence)
+        reply.finish = "stop"
+        await update_message_info(reply, user_id=user_id, run_fence=fence)
+        surface = await load_canonical_model_surface(session_id, user_id=user_id, run_fence=fence)
+        assert next(message for message in surface.messages if message.id == reply.id).parent_id == steer_id
+        assert {event.turn_id for event in await _events(session_id)
+                if event.run_id == resumed.run_id} == {turn_id}
+    finally:
+        await resumed.release(session_status="idle")

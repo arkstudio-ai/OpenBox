@@ -180,6 +180,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     from core.config import get_config
     from voice.memory_context import prepare as prepare_memory, refresh as refresh_memory, prewarm as prewarm_memory
     native_memory = get_config().memory.enabled("semantic_recall", user_id)
+    from voice.shared_context import SharedContextWatcher
+    shared_context = SharedContextWatcher(scope)
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
@@ -190,20 +192,17 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     detail=facts.detail, first_call=facts.first_call,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
                     reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines),
+                    context_reader=shared_context.read,
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None)
-    from voice.shared_context import SharedContextWatcher
-    shared_context = SharedContextWatcher(scope)
     updates = CallUpdates(scope)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
     memory_changed = asyncio.Event()
 
     async def deliver_reports(found):
-        for report in found:
-            await bridge.report(report.title, report.text, report.inbox_id, report.task_id,
-                                running=report.running, decision_versions=report.decision_versions)
+        await bridge.report_batch(found)
 
     async def deliver_context(fresh):
         if fresh:
@@ -262,10 +261,14 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("hangup")
             if kind == "ping":
                 bridge.emit(events.heartbeat(time.monotonic() - started))
-            if kind == "view":
+            elif kind == "view":
                 from voice.view_context import session_hint
                 bridge.scope = dataclasses.replace(bridge.scope,
                     viewed_session_id=session_hint(payload.get("session_id")))
+            elif kind == "capabilities" and payload.get("playback_ack") is True:
+                bridge.playback_ack = True
+            elif kind == "playback.completed" and isinstance(payload.get("response_id"), str):
+                await bridge.playback_completed(payload["response_id"])
 
     async def provider_to_bridge():
         while True:  # a long call moves to a fresh provider session; follow it

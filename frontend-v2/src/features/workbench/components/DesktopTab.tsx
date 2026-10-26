@@ -155,11 +155,14 @@ async function requireDesktopReady(
   }
 }
 
-/** Prefer the current SDK input API and keep the legacy method as fallback. */
+/** Keep the SDK's session input gate and local input policy in sync. */
 function setSessionControl(session: WuyingSession | null, on: boolean) {
   if (!session) return
-  if (session.setInputEnabled) session.setInputEnabled(on)
-  else session.enableInput?.(on)
+  // These are separate gates in the pinned Web SDK: enableInput calls the
+  // live engine, while setInputEnabled updates its local configuration.
+  // Updating only local configuration can leave a connected viewer inert.
+  session.enableInput?.(on)
+  session.setInputEnabled?.(on)
   // Wuying exposes keyboard activation separately from the general input
   // gate. This also activates the SDK's hidden IME proxy used for composed
   // Chinese text; setInputEnabled alone only controls event forwarding.

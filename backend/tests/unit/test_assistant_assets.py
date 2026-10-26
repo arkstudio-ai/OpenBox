@@ -61,13 +61,13 @@ async def test_descriptions_are_searchable_shared_and_still_owner_scoped():
     assert [row["id"] for row in result["items"]] == [own.id]
     watcher = SharedContextWatcher(SimpleNamespace(user_id=owner, workspace_id=workspace,
         main_session_id=main.id, call_id="local-test"))
-    first = await watcher.poll()
+    first = (await watcher.poll()).text
     assert "开业参考图" in first and "另一个用户" not in first
     assert await watcher.poll() is None
     async with get_db_session() as db:
         row = await db.get(FileAsset, own.id)
         row.description, row.description_updated_at = "蓝色方块，修订后的参考图", datetime.now(timezone.utc)
-    changed = await watcher.poll()
+    changed = (await watcher.poll()).text
     assert "修订后的参考图" in changed and "开业参考图" not in changed
 
 
@@ -82,12 +82,12 @@ async def test_open_call_sees_manual_sessions_and_renames_without_other_owners()
     await watcher.poll()
     own = await create_session(user_id=owner, workspace_id=workspace, title="蛋糕店开业")
     await create_session(user_id=other, workspace_id=workspace, title="他人的私人安排")
-    value = await watcher.poll()
+    value = (await watcher.poll()).text
     assert "蛋糕店开业" in value and "他人的私人安排" not in value
     async with get_db_session() as db:
         row = await db.get(Session, own.id)
         row.title, row.status = "甜橙开业海报", "busy"
-    changed = await watcher.poll()
+    changed = (await watcher.poll()).text
     assert "甜橙开业海报" in changed and '"status": "busy"' in changed
 
 

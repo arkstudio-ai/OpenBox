@@ -124,6 +124,36 @@ void main() {
     call.dispose();
   });
 
+  testWidgets('new server playback capability keeps the legacy mobile path', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.dial(tester);
+    call.socket.event({
+      'type': 'ready',
+      'call_id': 'call-1',
+      'model': 'qwen-audio-3.1-realtime-plus',
+      'input_sample_rate': 16000,
+      'output_sample_rate': 24000,
+      'max_seconds': null,
+      'playback_ack': true,
+    });
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.connected);
+    // This client does not advertise exact playback completion. The server
+    // must retain its estimated playback fallback, rather than wait for ACK.
+    expect(call.socket.jsonSent, isEmpty);
+    call.socket
+      ..audio([1, 0, 2, 0])
+      ..event({'type': 'phase', 'value': 'listening', 'working': false});
+    await tester.pump();
+    expect(call.rig.audio.played.single, [1, 0, 2, 0]);
+    expect(call.state.phase, VoicePhase.listening);
+    await call.controller.hangUp();
+    expect(call.socket.jsonSent.last, {'type': 'stop'});
+    call.dispose();
+  });
+
   testWidgets('muted, the microphone sends silence', (tester) async {
     final call = _Call(VoiceRig());
     await call.connect(tester);

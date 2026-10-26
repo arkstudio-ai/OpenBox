@@ -147,9 +147,8 @@ export function VoicePage() {
   useEffect(
     () => () => {
       audio.current?.pause()
-      audio.current = null
     },
-    [],
+    [voices.data?.model, voices.data?.selected],
   )
 
   const list = voices.data?.voices ?? []
@@ -169,6 +168,9 @@ export function VoicePage() {
     player.onended = () => {
       if (audio.current === player) setPlaying(null)
     }
+    player.onpause = () => {
+      if (audio.current === player) setPlaying(null)
+    }
     setPlaying(id)
     player.play().catch(() => {
       if (audio.current !== player) return
@@ -178,7 +180,13 @@ export function VoicePage() {
   }
 
   const pick = (voice: AssistantVoice) => {
-    if (voice.id === selected || choose.isPending) return
+    if (
+      (voice.id === selected &&
+        voices.data?.voice_source !== "appearance" &&
+        voices.data?.voice_source !== "model_default") ||
+      choose.isPending
+    )
+      return
     choose.mutate(
       { voice: voice.id, model },
       {
@@ -242,6 +250,17 @@ export function VoicePage() {
           </div>
           <p className="text-n600 text-xs text-pretty">{t("voice.model.hint")}</p>
         </div>
+      )}
+      {voices.data?.voice_source && (
+        <p className="text-n700 text-xs leading-5" role="status">
+          {t(
+            voices.data.voice_source === "user"
+              ? "voice.userChoice"
+              : voices.data.voice_source === "appearance"
+                ? "voice.followsAppearance"
+                : "voice.followsModel",
+          )}
+        </p>
       )}
       {GROUPS.map((group) => {
         const items = list.filter((voice) => groupOf(voice) === group)

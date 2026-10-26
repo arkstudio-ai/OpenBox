@@ -131,6 +131,76 @@ async def test_asr_before_vad_waits_for_cancel_and_exact_instruction_ack():
     await bridge.close()
 
 
+async def test_shared_task_changes_do_not_restart_a_prepared_memory_answer_or_leak_context():
+    from voice.shared_context import SharedSnapshot
+    async def prepare(scope, text, recent):
+        return packet(text, "current_only"), "fresh bounded instructions"
+    bridge, provider, _ = call(prepare)
+    async def read():
+        return SharedSnapshot("unrelated private task details", [
+            {"session_id": "other", "version": "changed"}], sequence=1)
+    bridge.context_reader = read
+    await bridge.refresh_shared_context(await read())  # the background watcher still refreshes work
+    bridge._native_work_read = True
+    bridge._native_work_pending = {"other": "previous-turn"}
+    bridge._native_work_decisions = {"old-card": "old-version"}
+    bridge._native_work_stale = True
+    await replay(bridge, event("user_started", item_id="human"), item("human"),
+        event("user_stopped"), started("auto"), done("auto", status="cancelled"),
+        event("user_transcript", item_id="human", text="只根据我这句话回答，今天怎么安排运动"))
+    await finish_tasks(bridge)
+    assert len(provider.commands("create")) == 1
+    await replay(bridge, started("prepared"), audio("prepared"), done("prepared"))
+    assert any(isinstance(value, bytes) for value in outbox(bridge))
+    assert len(provider.commands("cancel")) == 1  # only the speculative VAD reply
+    assert len(provider.commands("create")) == 1
+    assert all("unrelated private task details" not in text
+               for _, text in provider.commands("instructions"))
+    await bridge.close()
+
+
+async def test_memory_asr_does_not_wait_for_a_slow_work_snapshot():
+    bridge, provider, _ = call()
+    calls = []
+    async def read():
+        calls.append("read")
+        await asyncio.Event().wait()
+    bridge.context_reader = read
+    await replay(bridge, event("user_started", item_id="human"))
+    await asyncio.wait_for(bridge.on_provider_event(event("user_stopped")), .2)
+    assert not calls  # memory answers have their own acknowledged preparation barrier
+    assert bridge._memory_pending
+    await replay(bridge, item("human"), started("auto"), done("auto", status="cancelled"),
+        event("user_transcript", item_id="human", text="你好"))
+    await finish_tasks(bridge)
+    await asyncio.wait_for(bridge.on_provider_event(started("prepared")), .2)
+    await replay(bridge, audio("prepared"), done("prepared"))
+    assert not calls and any(isinstance(value, bytes) for value in outbox(bridge))
+    await bridge.close()
+
+
+async def test_an_explicit_empty_work_read_still_requires_freshness(monkeypatch):
+    from voice.tools import CallScope
+    bridge, provider, _ = call()
+    bridge.scope = CallScope("user", "workspace", "main")
+    bridge.memory_packet = packet("我有待办吗")
+    bridge.memory_turn = replace(bridge.memory_packet["_turn"], read_policy="allowed")
+    reads = []
+    async def empty(*_):
+        return {"status": "ok", "tasks": []}
+    async def unavailable():
+        reads.append("snapshot")
+        raise TimeoutError("work state unavailable")
+    monkeypatch.setattr("voice.tools.run", empty)
+    bridge.context_reader = unavailable
+    await bridge._complete_direct_call(tool_call("read-work", name="tasks_overview", arguments="{}"))
+    await bridge.fill_idle()
+    assert reads == ["snapshot"]
+    assert bridge.requested == "followup"
+    assert "暂时无法核实进展" in provider.commands("create")[-1][1]
+    await bridge.close()
+
+
 async def test_new_utterance_cancels_old_preparation_even_if_asr_arrives_immediately():
     calls = []
     async def prepare(scope, text, recent):

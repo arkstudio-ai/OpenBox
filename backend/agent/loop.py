@@ -937,16 +937,18 @@ async def run_loop(
         from agent.driver import DriverBusyError, reserve_run
         if await get_session(session_id, user_id=user_id) is None:
             return None
-        # Legacy command/cron/question callers have already committed their
-        # input. Anchor that turn before canonical tail recovery runs.
-        from db.models.message import Message as MessageRow
-        from db.base import get_db_session
-        from sqlalchemy import select
-        async with get_db_session() as db:
-            trigger = await db.scalar(select(MessageRow.id).where(
-                MessageRow.session_id == session_id, MessageRow.user_id == user_id,
-                MessageRow.role == "user",
-            ).order_by(MessageRow.created_at.desc(), MessageRow.id.desc()).limit(1))
+        # Direct command/cron/question callers have already committed input.
+        # Resolve the same User the model can see: a later SQL User may have
+        # been refused while a question was pending and excluded from model
+        # context. Binding that User would put the resumed reply in another
+        # logical turn. Do not repair the waiting tail before its lease exists.
+        from session.agent_event_log import load_canonical_model_surface
+
+        trigger_surface = await load_canonical_model_surface(
+            session_id, user_id=user_id, repair_tail=False,
+        )
+        trigger = next((message.id for message in reversed(trigger_surface.messages)
+                        if message.role == "user" and message.agent != "compaction"), None)
         try:
             lease = await reserve_run(session_id, user_id, trigger_message_id=trigger)
         except DriverBusyError:

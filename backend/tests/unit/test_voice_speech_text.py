@@ -48,3 +48,18 @@ def test_long_replies_stop_at_a_sentence_end_and_point_to_the_conversation():
 @pytest.mark.parametrize("empty", [None, "", "   \n ", "https://example.com", "```\n```"])
 def test_empty_or_unspeakable_input_gives_nothing(empty):
     assert clean(empty) == ""
+
+
+def test_final_speech_uses_configured_business_tiers_without_changing_execution_ids(monkeypatch):
+    from core.config import OpenBoxConfig
+    from voice.model_names import public_model_names
+    config = OpenBoxConfig(model='openai/task-a', models=[{'id': 'openai/task-a', 'name': 'Task Vendor A'}],
+        video_generation={'model': 'video-a', 'models': [{'id': 'video-a', 'name': 'Video Vendor A'}]},
+        model_tiers={'chat': [{'tier': 'medium', 'model': 'openai/task-a'}],
+                     'video': [{'tier': 'fast', 'model': 'video-a'}]})
+    monkeypatch.setattr('core.config.get_config', lambda: config)
+    spoken = clean('Task Vendor A 已处理，Video Vendor A（video-a）生成的两段15秒视频已完成，无背景音乐。')
+    assert 'Vendor' not in spoken and 'video-a' not in spoken
+    assert '专业' in spoken and '快速档' in spoken and '两段15秒' in spoken
+    assert config.video_generation.model == 'video-a'
+    assert public_model_names('专业（openai/task-a）', config) == '专业（专业）'

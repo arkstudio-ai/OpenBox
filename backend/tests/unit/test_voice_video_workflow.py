@@ -53,7 +53,7 @@ async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(t
         assert "video_tier_question" not in pending.continuation[KIND]["input"]
         option = pending.questions[0]["options"][0]
         assert option["label"] == "快速档" and "0.77" in option["description"]
-        assert "MiniMax Turbo" in option["description"] and "768p" in option["description"]
+        assert "MiniMax" not in option["description"] and "768p" in option["description"]
         assert await counts(owner) == before
         await q.reply(pending.id, [["快速档"]], owner)
         receipt, _ = await tool_call(ctx, "tasks.submit", args)
@@ -429,3 +429,70 @@ async def test_builtin_skill_exposes_runtime_paths_without_claiming_other_host_f
     assert "/opt/openbox/skills/video-production/" in builtin and "NOT readable" not in builtin
     other = "\n".join(skill_tool._host_bundle_note("video-production", "/tmp/user/video-production"))
     assert "NOT readable" in other and "/opt/openbox/skills" not in other
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_confirmed_video_type_does_not_reopen_the_answered_model(legacy):
+    """Production replay: the only changed argument was video -> spoken_video."""
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, '默认空间做两段15秒海鲜视频，无背景音乐')
+    args = {'project_id': main.project_id, 'title': '海鲜视频', 'instructions': '两段15秒，单独砂锅分焗，中文，无背景音乐',
+            'source_message_ids': [human], 'destination_confirmed': True, 'work_type': 'video',
+            'model_question': '我想选择任务档位', 'video_model': 'wan3.0', 'video_model_confirmed': True}
+    try:
+        selected = []
+        for label in ('Task AI', '口播视频'):
+            result, _ = await tool_call(ctx, 'tasks.submit', args)
+            selected.append(result['suspended'])
+            await q.reply(result['suspended'], [[label]], owner)
+        if legacy:
+            async with get_db_session() as db:
+                for identity in selected:
+                    row = await db.get(QuestionCheckpoint, identity)
+                    saved = dict(row.continuation[KIND])
+                    saved.pop('resolved', None)
+                    row.continuation = {**row.continuation, KIND: saved}
+        changed = {**args, 'work_type': 'spoken_video'}
+        receipt, _ = await tool_call(ctx, 'tasks.submit', changed)
+        assert receipt['state'] == 'accepted'
+        assert (await counts(owner))[2] == 1
+        assert (await tool_call(ctx, 'tasks.submit', args))[0] == receipt
+        assert (await tool_call(ctx, 'tasks.submit', changed))[0] == receipt
+        async with get_db_session() as db:
+            inbound = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == receipt['execution_session_id']))
+            assert args['instructions'] in inbound.prompt
+            assert inbound.origin_ref['confirmed_setup']['video_model'] == 'wan3.0'
+        other, _ = await tool_call(ctx, 'tasks.submit', {**changed, 'instructions': '改成60秒旅游短片'})
+        assert other['suspended'] not in selected
+    finally:
+        await lease.release(session_status='idle')
+
+
+@pytest.mark.parametrize('preferred,explicit,expected', [
+    (None, None, 'test/default'), ('retired/model', None, 'test/default'),
+    ('test/preferred', None, 'test/preferred'), ('test/preferred', 'test/model', 'test/model')])
+async def test_new_task_uses_account_default_without_model_question(monkeypatch, preferred, explicit, expected):
+    from db.models.preference import UserPreference
+    inventory = {**CATALOGUE, 'default_chat': 'test/default', 'chat': [*CATALOGUE['chat'],
+        {'id': 'test/default', 'name': 'Default'}, {'id': 'test/preferred', 'name': 'Preferred'}]}
+    monkeypatch.setattr('assistant.model_choices.catalogue', lambda: inventory)
+    owner, _, workspace, main = await assistant()
+    async with get_db_session() as db:
+        db.add(UserPreference(id='pref-' + owner, user_id=owner, default_model=preferred))
+    ctx, lease, human = await main_turn(owner, workspace, main, '在默认空间按刚才的方案开始做')
+    try:
+        args = {'project_id': main.project_id, 'title': '已确认方案', 'instructions': '两段15秒，中文配音，不要背景音乐',
+                'source_message_ids': [human], 'destination_confirmed': True, 'work_type': 'other_video',
+                'video_model': 'wan3.0', 'video_model_confirmed': True}
+        if explicit:
+            args.update(model=explicit, model_confirmed=True)
+        receipt, _ = await tool_call(ctx, 'tasks.submit', args)
+        assert receipt['state'] == 'accepted'
+        async with get_db_session() as db:
+            assert (await db.get(Session, receipt['execution_session_id'])).model == expected
+            assert await db.scalar(select(QuestionCheckpoint.id)) is None
+        from assistant.status_tools import models
+        assert (await models(user_id=owner, workspace_id=workspace, main_id=main.id))['default_chat'] == (
+            preferred if preferred == 'test/preferred' else 'test/default')
+    finally:
+        await lease.release(session_status='idle')

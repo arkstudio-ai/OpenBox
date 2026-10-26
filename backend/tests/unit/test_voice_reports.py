@@ -6,9 +6,9 @@ import pytest
 from voice import reports
 
 
-def row(identity, state="settled", outcome="succeeded", message="msg-1", task="task-1"):
+def row(identity, state="settled", outcome="succeeded", message="msg-1", task="task-1", origin="task_result"):
     return SimpleNamespace(id=identity, state=state, outcome=outcome, result_message_id=message,
-                           origin_ref={"task_id": task})
+                           origin=origin, origin_ref={"task_id": task})
 
 
 async def test_only_reports_finished_after_the_call_began_are_told_once(monkeypatch):
@@ -36,7 +36,7 @@ async def test_only_reports_finished_after_the_call_began_are_told_once(monkeypa
     assert await watcher.poll() == []
 
 
-async def test_typed_replies_are_told_but_current_calls_own_reply_is_not_duplicated(monkeypatch):
+async def test_watch_own_reply_too_so_a_timed_out_waiter_does_not_lose_the_result(monkeypatch):
     rows = []
     async def recent(self):
         return rows
@@ -49,11 +49,15 @@ async def test_typed_replies_are_told_but_current_calls_own_reply_is_not_duplica
     monkeypatch.setattr("voice.assistant_link.reply_text", text)
     watcher = reports.ReportWatcher(user_id="u", main_session_id="main", call_id="call-1")
     await watcher.start()
-    typed, voice = row("typed"), row("voice")
+    typed, voice = row("typed", origin="human"), row("voice", origin="human")
     typed.origin_ref, voice.origin_ref = {}, {"voice_call_id": "call-1"}
-    rows.extend([typed, voice])
+    other_call = row("other-call", origin="human")
+    other_call.origin_ref = {"voice_call_id": "other-call"}
+    resumed = row("resumed", origin="system_recovery")
+    resumed.origin_ref = {"entrypoint": "question_answer"}
+    rows.extend([typed, voice, other_call, resumed])
     found = await watcher.poll()
-    assert len(found) == 1 and found[0].inbox_id == "typed"
+    assert [report.inbox_id for report in found] == ["resumed", "voice"]
     assert await watcher.poll() == []
 
 

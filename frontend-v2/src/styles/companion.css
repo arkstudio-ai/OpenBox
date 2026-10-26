@@ -2,6 +2,7 @@
    Container-scoped spacing avoids changing the main page's desktop layout. */
 .companion-window .scr {
   scrollbar-width: thin;
+  scrollbar-color: var(--t-n400) transparent;
 }
 /* Use the shared focus rules: text fields stay chromeless while their
    InputGroup shows focus. Buttons and links keep the global keyboard ring. */

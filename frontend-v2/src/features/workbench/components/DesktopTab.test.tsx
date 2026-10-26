@@ -204,18 +204,32 @@ describe("DesktopTab", () => {
     // Web SDK docs); onConnected must pin the fixed 1080p mode straight back.
     expect(session.setResolution).toHaveBeenCalledWith(1920, 1080, 0)
 
-    // Connected read-only state uses the preferred API once, without issuing
-    // the duplicate legacy command that used to race it.
+    // The pinned SDK has separate live-engine and local-policy input gates.
+    // Read-only and takeover must update both, including after reconnecting.
     expect(session.setInputEnabled).toHaveBeenLastCalledWith(false)
-    expect(session.enableInput).not.toHaveBeenCalled()
+    expect(session.enableInput).toHaveBeenLastCalledWith(false)
     expect(session.enableKeyBoard).toHaveBeenLastCalledWith(false)
 
     fireEvent.click(control)
+    expect(session.enableInput).toHaveBeenLastCalledWith(true)
     expect(session.setInputEnabled).toHaveBeenLastCalledWith(true)
     expect(session.enableKeyBoard).toHaveBeenLastCalledWith(true)
     expect(session.setTouchEnabled).toHaveBeenLastCalledWith(true)
     expect(session.setMouseMode).toHaveBeenLastCalledWith("Client")
     expect(document.activeElement).toBe(frame)
     expect(screen.getByText("desktop.imeHint")).toBeTruthy()
+
+    session.enableInput.mockClear()
+    session.setInputEnabled.mockClear()
+    act(() => handlers.get("onConnected")?.())
+    expect(session.enableInput).toHaveBeenLastCalledWith(true)
+    expect(session.setInputEnabled).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(control)
+    expect(session.enableInput).toHaveBeenLastCalledWith(false)
+    expect(session.setInputEnabled).toHaveBeenLastCalledWith(false)
+    expect(session.enableKeyBoard).toHaveBeenLastCalledWith(false)
+    expect(session.setTouchEnabled).toHaveBeenLastCalledWith(false)
+    expect(screen.queryByText("desktop.imeHint")).toBeNull()
   })
 })

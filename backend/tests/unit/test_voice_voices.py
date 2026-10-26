@@ -2,6 +2,7 @@
 from core.config import VoiceConfig
 from voice import voices
 from voice.models import AUDIO_MODEL, OMNI_MODEL
+from assistant import appearance
 
 
 def test_the_catalog_is_well_formed_and_offers_the_default():
@@ -73,6 +74,18 @@ def test_existing_users_and_old_deployment_overrides_get_audio_without_losing_vo
         assert extra == before
 
 
+def test_configured_clone_remains_available_until_user_selects_appearance_or_voice():
+    clone = AUDIO_MODEL + "-custom-123"
+    cfg = VoiceConfig(model=AUDIO_MODEL, voice=clone)
+    state = voices.selection({}, cfg)
+    assert state["selected"] == clone and state["voice_source"] == "model_default"
+    portrait = voices.selection({appearance.KEY: {"preset": "ip-11"}}, cfg)
+    assert portrait["selected"] == "longanlufeng" and portrait["voice_source"] == "appearance"
+    manual = voices.selection({appearance.KEY: {"preset": "ip-11"},
+        "assistant_voice_audio": "longanqian_v3.1"}, cfg)
+    assert manual["selected"] == "longanqian_v3.1" and manual["voice_source"] == "user"
+
+
 async def test_existing_model_choice_resets_once_and_later_explicit_choice_persists():
     from db.repository.preference_repo import PgPreferenceRepo
     cfg = VoiceConfig(model=OMNI_MODEL, voice="Tina")
@@ -96,3 +109,64 @@ async def test_existing_model_choice_resets_once_and_later_explicit_choice_persi
     assert saved["locale"] == "zh-CN" and saved["onboarding"] == {"welcome": True}
     restored = await voices.save_choice(user, cfg, model=AUDIO_MODEL, voice=None)
     assert restored["selected"] == "longanqian_v3.1"
+
+
+def test_all_portraits_share_the_pickers_gender_and_expert_voice_defaults():
+    catalog = appearance.preset_catalog()
+    assert len({option["id"] for option in catalog}) == 34
+    assert {category: sum(option["category"] == category for option in catalog)
+            for category in ("female", "male", "pets")} == {"female": 17, "male": 7, "pets": 10}
+    assert {option["voice_gender"] for option in catalog if option["category"] == "pets"} == {"female", "male"}
+    # An old deployment voice does not override character defaults.
+    cfg = VoiceConfig(voice="longanhuan_v3.1")
+    for option in catalog:
+        selected = voices.selection({appearance.KEY: {"preset": option["id"]}}, cfg)
+        expected = "longanlufeng" if option["voice_gender"] == "male" else "longanqian_v3.1"
+        assert selected["model"] == AUDIO_MODEL
+        assert selected["selected"] == selected["default"] == expected
+        assert selected["voice_source"] == "appearance"
+    # Old aliases, missing/corrupt preferences, and custom uploads are deterministic.
+    for preset, expected in (("cat", "longanlufeng"), ("sprout", "longanqian_v3.1"),
+                             ("custom", "longanqian_v3.1"), ("unknown", "longanqian_v3.1"),
+                             ({}, "longanqian_v3.1")):
+        assert voices.selection({appearance.KEY: {"preset": preset}}, cfg)["selected"] == expected
+
+
+async def test_model_only_saves_do_not_pin_automatic_voices_and_explicit_default_picks_do():
+    from db.repository.preference_repo import PgPreferenceRepo
+    repo, cfg, user = PgPreferenceRepo(), VoiceConfig(), "voice-appearance-auto"
+    await repo.upsert(user, extra={appearance.KEY: {"preset": "ip-04"}, "locale": "zh-CN"})
+    for model in (AUDIO_MODEL, OMNI_MODEL, AUDIO_MODEL):
+        state = await voices.save_choice(user, cfg, model=model, voice=None)
+        assert state["voice_source"] != "user"
+    assert state["selected"] == "longanlufeng"
+    extra = (await repo.get(user))["extra"]
+    assert voices.PREFERENCE_KEY not in extra
+    assert not any(key in extra for key in voices.VOICE_KEYS.values())
+    await appearance.save(user, {"preset": "ip-01"})
+    assert (await voices.user_selection(user, cfg))["selected"] == "longanqian_v3.1"
+    # Explicitly choosing the voice already in use is a real preference.
+    chosen = await voices.save_choice(user, cfg, model=None, voice="longanqian_v3.1")
+    assert chosen["voice_source"] == "user"
+    await appearance.save(user, {"preset": "ip-11"})
+    reloaded = await voices.user_selection(user, VoiceConfig())
+    assert reloaded["selected"] == "longanqian_v3.1" and reloaded["default"] == "longanlufeng"
+    assert reloaded["voice_source"] == "user"
+    assert (await repo.get(user))["extra"]["locale"] == "zh-CN"
+
+
+async def test_custom_upload_defaults_to_female_but_never_overwrites_chosen_voices():
+    from db.repository.preference_repo import PgPreferenceRepo
+    cfg, user, other = VoiceConfig(), "voice-custom-manual", "voice-custom-auto"
+    for owner in (user, other):
+        await appearance.save(owner, {"preset": "ip-02"})
+    await voices.save_choice(user, cfg, model=AUDIO_MODEL, voice="longanlufeng")
+    for owner in (user, other):
+        await appearance.save(owner, {"preset": "custom", "image_key": f"assistant-avatars/{owner}/{'a' * 64}.png"})
+    assert (await voices.user_selection(other, cfg))["selected"] == "longanqian_v3.1"
+    assert (await voices.user_selection(user, cfg))["selected"] == "longanlufeng"
+    # Old explicit selections, including the old default itself, are preserved.
+    for key in (voices.PREFERENCE_KEY, voices.VOICE_KEYS[AUDIO_MODEL]):
+        legacy_user = f"voice-legacy-{key}"
+        await PgPreferenceRepo().upsert(legacy_user, extra={key: "longanqian_v3.1", appearance.KEY: {"preset": "ip-04"}})
+        assert (await voices.user_selection(legacy_user, cfg))["selected"] == "longanqian_v3.1"

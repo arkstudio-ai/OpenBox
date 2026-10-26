@@ -235,7 +235,10 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
         await handed(owner, main, "another-run", "别的回合派的")                     # not this turn's
     waiting = asyncio.create_task(link.wait(ref))
     await answer(owner, main, [("已经帮你安排去查了，正在后台检索。", "final")], during=run)
-    assert await waiting == {"status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
+    value = await waiting
+    assert all(task["intent_revision"] == 1 and task["task_version"] for task in value["running"])
+    assert {**value, "running": [{key: task[key] for key in ("task_id", "title")} for task in value["running"]]} == {
+        "status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
         {"task_id": made["searching"], "title": "查询OpenAI最新技术发展"},
         {"task_id": made["more"], "title": "继续整理资料"},
         {"task_id": made["revision"], "title": "改用新照片重新规划"}]}
@@ -273,7 +276,9 @@ async def test_a_task_waiting_on_a_card_is_never_told_as_still_at_it():
         await waiting_on_card(owner, made["blocked"])
     waiting = asyncio.create_task(link.wait(ref))
     await answer(owner, main, [("「抓取订单」在等你完成云桌面验证。", "final")], during=run)
-    assert (await waiting)["running"] == [{"task_id": made["working"], "title": "整理订单"}]
+    running = (await waiting)["running"]
+    assert [{key: task[key] for key in ("task_id", "title")} for task in running] == [
+        {"task_id": made["working"], "title": "整理订单"}]
 
 
 async def test_reply_text_prefers_final_parts_and_never_reads_narration():
@@ -322,3 +327,16 @@ async def test_main_session_lookup_distinguishes_missing_entry_and_missing_acces
     assert await main_session(owner, None) == (workspace, main.id)  # single-user mode: default workspace
     stranger, _, _ = await accounts()
     assert await main_session(stranger, workspace) == (None, None)
+
+
+def test_working_brief_fits_handoff_with_original_utterance_and_card_identity():
+    from voice.assistant_link import bounded_context
+    from voice.summary import WORKING_LIMIT
+    context = {'spoken_input_id': 'utterance-1', 'handover_source': 'missed_handoff',
+        'request': '按照刚才确认的方案开始', 'summary': '已确认的任务要求。' * (WORKING_LIMIT // 9),
+        'task_questions': [{'request_id': 'q-1', 'session_id': 's-1', 'questions': ['内容' * 1000]}],
+        'call': ['用户：按照刚才确认的方案开始']}
+    bounded = bounded_context(context)
+    assert bounded['summary'] == context['summary']
+    assert bounded['request'] == context['request']
+    assert bounded['task_questions'][0]['request_id'] == 'q-1'

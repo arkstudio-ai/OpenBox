@@ -137,6 +137,7 @@ def first_sentence(text: str | None, limit: int = LINE_CHARS) -> str:
 
 
 STATES = {"queued": "等待处理", "running": "处理中", "waiting_input": "等你回复", "idle": "停着", "completed": "已完成",
+          "resuming": "已确认，等待恢复", "decision_recorded": "已确认，执行状态待更新",
           "succeeded": "已完成", "failed": "失败了", "paused": "已暂停", "pausing": "正在暂停",
           "canceling": "正在取消", "canceled": "已取消", "cancelled": "已取消", "effect_unknown": "结果待确认",
           "resume_blocked": "恢复受阻", "input_not_applied": "补充没送达"}
@@ -160,6 +161,8 @@ async def tasks_overview(scope: CallScope, arguments: dict) -> dict:
                                          "query_relaxed", "needs_assistant", "untrusted_data", "grants_authority")},
             "schedules": jobs.get("schedules") or [],
             "note": "包含用户自建项目对话和助理关注任务，按最近活动排序。idle只表示对话没运行，不表示工作完成；"
+                    "state和state_summary是当前状态；waiting_for_user=false时不得要求用户重复确认。"
+                    "resuming、decision_recorded、resume_blocked都表示用户已确认；恢复受阻是后台问题。"
                     "waiting_input表示任务在等用户决定，不是后台还在计算；pending_request是当前待确认内容，"
                     "用它的request_id查询cards_pending核对选项，不能沿用旧汇报或说报价还没出来。"
                     "video.output_available=true才证实已有可用成片。more=true时继续翻页。query_relaxed=true表示标题没匹配，"
@@ -219,7 +222,12 @@ async def cards_pending(scope: CallScope, arguments: dict) -> dict:
 
 async def models_available(scope: CallScope, arguments: dict) -> dict:
     from assistant.status_tools import models
-    return await models(user_id=scope.user_id, workspace_id=scope.workspace_id, main_id=scope.main_session_id)
+    value = await models(user_id=scope.user_id, workspace_id=scope.workspace_id, main_id=scope.main_session_id)
+    from core.config import get_config
+    from voice.model_names import labels
+    chat, video = labels(get_config())
+    return {**value, "chat": [{**item, "name": chat.get(item["id"], "其他任务档位")} for item in value["chat"]],
+            "video": [{**item, "name": video.get(item["id"], "其他视频档位")} for item in value["video"]]}
 
 
 async def platforms_status(scope: CallScope, arguments: dict) -> dict:
@@ -288,7 +296,7 @@ DIRECT: dict[str, DirectTool] = {
     "platforms_status": DirectTool(
         "查询当前工作空间授权中心的历史记录。当前登录状态未知，不能由无记录推断未连接，也不能由有记录保证已连接；要核验需执行任务查看实际页面。", platforms_status),
     "models_available": DirectTool(
-        "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频选择只讲业务档次、规格、素材支持和费用，具体型号留在内部用于准确选路，不口播。结合用户需求自然解释，不要把默认值当成用户本次选择。", models_available),
+        "读取真实可选的任务AI模型、视频业务档次、实际参考积分及素材能力。视频选择只讲业务档次、规格、素材支持和费用，具体型号留在内部用于准确选路，不口播。任务AI默认沿用用户设置，不主动要求选择；视频档次和付费制作仍需用户决定。", models_available),
     "tasks_overview": DirectTool(
         "查用户做过的工作、最近任务和视频：包括用户自行创建的项目对话及助理关注任务，按最近活动排序，"
         "返回真实视频生成和成片状态、时间、会话链接与近期内容。query仅筛标题，不是语义全文搜索；"

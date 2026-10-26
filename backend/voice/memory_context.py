@@ -218,6 +218,10 @@ class MemoryContextMixin:
             return
         self._prewarm_memory_connection()
         self._memory_generation += 1
+        self._native_work_read = False
+        self._native_work_pending = {}
+        self._native_work_decisions = {}
+        self._native_work_stale = False
         self._memory_scope = self.scope
         if self._memory_task and not self._memory_task.done():
             self._memory_task.cancel()

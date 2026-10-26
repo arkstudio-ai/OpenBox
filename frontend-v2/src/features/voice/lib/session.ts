@@ -53,6 +53,8 @@ export class VoiceCallSession {
   private muted = false
   private viewedSessionId: string | null = null
   private heardAudio = false
+  private playbacks = new Map<string, { finished: boolean; audio: boolean; failed: boolean }>()
+  private activePlayback: string | null = null
   private micLevel = 0
   private connectTimer: number | undefined
   private silenceTimer: number | undefined
@@ -206,15 +208,32 @@ export class VoiceCallSession {
       case "ready":
         if (this.ready) return
         this.onReady(event.output_sample_rate)
+        if (event.playback_ack) this.send({ type: "capabilities", playback_ack: true })
         break
       case "phase":
         this.sink.mark(`phase:${event.value}`)
         break
       case "playback.clear":
+        this.playbacks.clear()
+        this.activePlayback = null
         this.sink.mark("playback_clear_received")
         if (this.player && this.player.clear() > 0) this.sink.mark("playback_stopped")
         this.sink.dispatch({ type: "playing", playing: false })
         break
+      case "playback.started":
+        this.activePlayback = event.response_id
+        if (!this.playbacks.has(event.response_id)) {
+          this.playbacks.set(event.response_id, { finished: false, audio: false, failed: false })
+        }
+        break
+      case "playback.finished": {
+        const playback = this.playbacks.get(event.response_id)
+        if (playback) {
+          playback.finished = true
+          this.acknowledgePlayback()
+        }
+        break
+      }
       case "phrase":
         this.sink.mark(`phrase:${event.key}`)
         break
@@ -256,7 +275,12 @@ export class VoiceCallSession {
     const received = performance.now()
     const burst = !this.player.busy
     const start = this.player.enqueue(raw)
-    if (start === null) return
+    const playback = this.activePlayback ? this.playbacks.get(this.activePlayback) : undefined
+    if (start === null) {
+      if (playback) playback.failed = true
+      return
+    }
+    if (playback) playback.audio = true
     const audible = contextToPerformanceTime(this.context, start)
     if (!this.heardAudio) {
       this.heardAudio = true
@@ -317,6 +341,16 @@ export class VoiceCallSession {
 
   private readonly handleIdle = (): void => {
     if (!this.done) this.sink.dispatch({ type: "playing", playing: false })
+    this.acknowledgePlayback()
+  }
+
+  private acknowledgePlayback(): void {
+    if (this.done || this.stopping || !this.player || this.player.busy) return
+    for (const [id, playback] of this.playbacks) {
+      if (!playback.finished || !playback.audio || playback.failed) continue
+      this.playbacks.delete(id)
+      this.send({ type: "playback.completed", response_id: id })
+    }
   }
 
   private readonly handlePageHide = (): void => this.abandon()

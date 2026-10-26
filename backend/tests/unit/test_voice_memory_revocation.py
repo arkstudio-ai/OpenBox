@@ -75,7 +75,10 @@ async def test_fresh_utterance_survives_revocation_before_first_answer():
     await finish_tasks(bridge)
     assert ("delete", "now") not in provider.sent
     assert [line.item_id for line in bridge.spoken.context_lines] == ["now"]
-    assert provider.commands("create") == [("create", None)]
+    replies = provider.commands("create")
+    assert len(replies) == 1
+    assert "fresh evidence" in replies[0][1]
+    assert "青禾书屋" not in replies[0][1]
     assert "青禾书屋" not in str(bridge._call_context("我周末有什么安排？"))
     await bridge.close()
 

@@ -99,7 +99,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 
 1. `response.function_call_arguments.done` → 创建 `VoiceTurn`，向后台 `accept_turn`，向客户端发 `turn{state:accepted}` 和 `phase:working`。
 2. 后台结束 → 立刻 `conversation.item.create(function_call_output)`（任何状态下都可以），把 `VoiceTurn` 放进 `deliveries`。
-3. 仅当状态为 `idle` 且 `deliveries` 非空时发一次 `response.create`，带 `response.instructions`：“逐字朗读：我这边查到了，<speech>”（实测逐字一致、0.57 秒出声）；`response.created` 到达后把队首标记为 `delivering`，`response.done` 后发 `turn{state:delivered}`。实验证明在 `responding` 时发 `response.create` 会被拒绝（`Conversation already has an active response`），重复回传同一 `call_id` 会被拒绝（`Duplicate function call output`），所以每个 `call_id` 只回传一次、`response.create` 只在空闲发。
+3. 仅当状态为 `idle` 且上一段播放结束后请求 `response.create`；`response.created` 到达后把队首标记为 `delivering`。`response.done` 只表示供应商生成结束；协商播放回执的客户端在真实播完后发送 `playback.completed`，服务端才记录 `turn{state:delivered}`。旧客户端使用音频时长估算，取消或打断不能记作完整送达。每个工具 `call_id` 只回传一次，后台结果按 inbox/result 身份跨入口去重，共享一次播放结论。
 4. `pending_calls` 中某项超过 `late_after_seconds`（默认 20）且状态 `idle` → 固定短语 `still_working`（`response.create` 带“只说这一句，不要调用任何工具：还在办，好了我马上告诉你。”；实测照说且不重复调用工具；每个轮次最多一次），向客户端发 `phase:working late=true`。
 5. 超过 `turn_timeout_seconds`（默认 120）→ 回传 `{"status":"timeout","speech":"这件事还在办，办好了我在对话里告诉你。"}`，`VoiceTurn.outcome=late`；后台稍后结束时结果照常进主会话，不再注入前台。
 6. 用户挂断时仍有 `pending_calls` → `ended` 事件带 `pending_turns: n`，客户端提示 `voice:ended.pendingHint`；后台继续办。
@@ -129,9 +129,11 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 
 | type | 字段 | 说明 |
 | --- | --- | --- |
-| `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date` | 握手完成；`max_seconds=null`，无通话时长上限 |
+| `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date`, `playback_ack` | 握手完成；`max_seconds=null`，无通话时长上限；`playback_ack=true` 表示支持可选的播放回执协商 |
 | `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
+| `playback.started` | `response_id` | 协商回执后，在该回复首个 PCM 帧之前发送；ID 包含供应商会话代次 |
+| `playback.finished` | `response_id` | 该回复生成完成，等待真实播放结束；不是“用户已听完” |
 | `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached/reconnected | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working`；2026-10-10 起 `reconnected`：百炼会话断开后续上，用户当时被打断，请其再说一遍 |
 | `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
@@ -148,6 +150,12 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | --- | --- | --- |
 | `stop` | — | 挂断：服务端 `response.cancel`、等待最后用量最多 2 秒、发 `ended`、关闭 |
 | `ping` | — | 可选；服务端回 `heartbeat` |
+| `capabilities` | `playback_ack: true` | 客户端见到 `ready.playback_ack` 后开启播放回执；不发送则保留旧客户端时长估算行为 |
+| `playback.completed` | `response_id` | 对应 `playback.finished` 已收到且成功入队的音频实际播完后发送一次。清空队列、挂断或播放失败不能发送；过早、重复或已取消 ID 会被忽略 |
+
+播放回执超时只记录未知状态，不自动重播整段；迟到的有效回执仍可完成送达。用户打断正在播放的主动结果汇报时，暂停该批结果的自动重播，由当前对话结合最新任务事实承接；保留未完整送达状态和文字结果，不把插话后的任意回复当作送达凭据。无效语音起声可恢复排队，状态更新撤回不等同于用户打断。SQL 任务状态、当前代次确认项与已就绪文件组成一致快照；语音回答前重新读取，过期的待确认播报或旧任务版本应撤回。后台结果先整批入队，相邻通知保留 400 ms 合并窗口，最多三个普通结果合并汇报。图片就绪只说明文件可用，不能据此宣布整个任务完成。
+
+普通网页输入的成功答复随共享快照进入语音上下文，供当前问答参考，不再作为主动语音通知重播。本通电话的迟到执行结果、后台任务结果与卡片确认续接仍保留汇报路径，并按 inbox/result 身份去重。
 
 静音、扬声器切换、展开收起都是客户端本地行为，不上报。
 

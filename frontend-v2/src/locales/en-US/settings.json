@@ -208,7 +208,10 @@
       "defaultTag": "Default model",
       "hint": "Each model has its own voices and remembers your choice. Model and voice changes apply to your next call.",
       "saved": "Voice model switched. Your next call uses it."
-    }
+    },
+    "userChoice": "Using your chosen voice. Changing your look will keep this choice.",
+    "followsAppearance": "Your voice follows your look. Pick any voice below to keep that choice instead.",
+    "followsModel": "Using this model’s default voice. Pick any voice below to keep that choice."
   },
   "assistant": {
     "nameLabel": "Name",

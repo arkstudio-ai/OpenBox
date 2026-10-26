@@ -1,0 +1,60 @@
+{
+  "source_commit": "27dfeb876bf9a23e9efca5bbffe92d9ced884542",
+  "activation": {
+    "completed_at": "2026-10-21T10:36:38Z",
+    "tag": "20261021-question-anchor-27dfeb87",
+    "base_image": "openbox-backend:20261021-voice-address-131cb413",
+    "new_image": "openbox-backend:20261021-question-anchor-27dfeb87",
+    "image_id": "sha256:322839cc5f9dcbdd8116abf7563c4357ab8b2572a950cc254f2234ca5e7629fb",
+    "backend_container": "9e6bfb80fc02",
+    "backup": "/opt/openbox/backups/20261021-question-anchor-27dfeb87/activation-20261021T102640Z",
+    "business_and_trajectory_dumps_readable": true,
+    "database_migration": false,
+    "pre_activation_gates": "0|0|0|0",
+    "gate_exception": "Known finalizing/error recovery markers only; no active execution excluded",
+    "source_hashes": {
+      "agent/loop.py": "d94a95139e8eb33e009cfee7f3c290d1ce08e0785eec0dfa037e65778f97b2fb"
+    },
+    "unchanged_services": {
+      "frontend": "1e325c525802",
+      "trajectory-worker": "cc763009ee7b",
+      "postgres": "745a495da1be",
+      "redis": "4c1a6fb5613a",
+      "qdrant-memory": "f1bdfc91b485"
+    }
+  },
+  "validation": {
+    "targeted_tests_passed": 96,
+    "full_suite_run": false,
+    "backend_health": "healthy",
+    "backend_restart_count": 0,
+    "public_environment_http_status": 200,
+    "continuous_availability_probe": false,
+    "known_unchanged_issue": "trajectory-worker was unhealthy before deployment"
+  },
+  "incident_recovery": {
+    "applied_at": "2026-10-21T10:45:38Z",
+    "session_id": "session_7YBVEBDJXT5V1YV6055XCZ18YE",
+    "head_before": 612,
+    "head_after": 616,
+    "original_events_preserved": true,
+    "archived_empty_message": "message_01M4S94S53QWPB4565S8F0H9GH",
+    "archive_event": "surface_01M5F123E6FJ7DES8KQXT71VGY",
+    "removal_event": "aevt_01M5F123EBZ6Q70NVKHDBTPN12",
+    "superseded_inbox_ids": [
+      "inbox_01M4S95R4F42M2QBM2CRGPH2XF",
+      "inbox_01M4S9AAS66PT98CXRFF0924YE",
+      "inbox_01M4SQZZSD204ETTYBBVQ9CBAG"
+    ],
+    "latest_inbox_id": "inbox_01M5EVCAKJWYBSMJMV6QTNMGF4",
+    "latest_inbox_outcome": "succeeded",
+    "session_status": "waiting_input",
+    "driver_phase": "idle",
+    "pending_question_id": "01M5F14K06TG0FTMY99X7HA9SM",
+    "browser_confirmation_card_verified": true,
+    "new_paid_generation_confirmed": false,
+    "new_publish_jobs": 0,
+    "public_projection_matches": true,
+    "model_surface_loads": true
+  }
+}

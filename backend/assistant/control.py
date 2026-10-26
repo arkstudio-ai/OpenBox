@@ -194,6 +194,26 @@ async def converge_session_locked(db, execution):
         await converge_locked(db, task, execution)
 
 
+async def reopen_canceled_for_input_locked(db, task, execution):
+    """A new human message opens a new intent only after Stop fully settles.
+
+    The caller owns the command, Session and Task locks and checked its exact
+    revision. Do not use the resume planner: that would replay the interrupted
+    input. Old queues, questions and continuation grants stay canceled.
+    """
+    if task.desired_state != "canceled" or task.archived_at is not None:
+        raise _conflict(task, "ASSISTANT_TASK_NOT_RUNNING", "Resume the task before adding input")
+    # Inspect durable descendants, claims, question continuations and external
+    # outcomes as well as the root Driver. An idle page alone is not quiescence.
+    await converge_locked(db, task, execution)
+    if task.observed_state == "effect_unknown":
+        raise _conflict(task, "ASSISTANT_EFFECT_UNRESOLVED", effect_unresolved_message(task.id))
+    if task.observed_state != "canceled":
+        raise _conflict(task, "ASSISTANT_STILL_STOPPING", "Wait for the original runs to stop before sending a new message")
+    task.desired_state = "running"
+    task.observed_state = "queued"
+
+
 def _conflict(task, code, message):
     error = AssistantError(409, code, message)
     error.current_task = {"id": task.id, "desired_state": task.desired_state,

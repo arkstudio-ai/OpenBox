@@ -133,6 +133,14 @@ class VoiceTurnRef:
     finished: float | None = None
     delivery_requested_at: float | None = None  # provider boundary, distinct from local queue time
     decision_versions: dict | None = None  # exact decisions read by this turn, never the global pending list
+    result_id: str = ""            # durable task result, shared by retry reports
+    task_id: str = ""
+    task_revision: int | None = None
+    interrupted: bool = False
+    paused_by_user: bool = False  # interrupted unsolicited speech yields to the conversation
+    heard: bool = False
+    duplicate_of: "VoiceTurnRef | None" = None
+    listeners: "list[VoiceTurnRef] | None" = None  # local turn receipts sharing this single delivery
 
     @property
     def recorded(self) -> bool:
@@ -406,26 +414,30 @@ async def running_tasks(session_id: str, user_id: str, inbox_id: str | None) -> 
             QuestionCheckpoint.session_id == AssistantTask.execution_session_id,
             QuestionCheckpoint.status == "pending",
             QuestionCheckpoint.generation == SessionExecution.generation)).exists()
-        rows = (await db.execute(select(AssistantTask.id, AssistantTask.title).join(
+        rows = (await db.scalars(select(AssistantTask).join(
             AssistantCommand, AssistantCommand.target_id == AssistantTask.id).where(
             AssistantCommand.assistant_session_id == session_id, AssistantCommand.actor_user_id == user_id,
             AssistantCommand.target_type == "task", AssistantCommand.action.in_(WORK_ACTIONS),
             type_coerce(AssistantCommand.source_ref, JSON)["run_id"].as_string() == item.run_id,
             AssistantTask.user_id == user_id, AssistantTask.observed_state.in_(WORKING), ~waiting)
             .order_by(AssistantCommand.created_at))).all()
-    return list({task_id: {"task_id": task_id, "title": title} for task_id, title in rows}.values())
+    from voice.work import task_version
+    return list({task.id: {"task_id": task.id, "title": task.title, "intent_revision": task.intent_revision,
+                          "task_version": task_version(task)} for task in rows}.values())
 
 
-async def reply_text(session_id: str, message_id: str, user_id: str) -> str:
+async def reply_text(session_id: str, message_id: str, user_id: str, *, db=None) -> str:
     """The answer's own text parts: final ones when the reply marked them, never tool narration."""
     from db.base import get_db_session
     from db.models.message import Message
     from db.models.part import Part
     from memory.redaction import redact_credentials
-    async with get_db_session() as db:
-        parts = list((await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
-            Part.message_id == message_id, Part.session_id == session_id, Part.user_id == user_id,
-            Part.type == "text", Message.role == "assistant").order_by(Part.created_at, Part.id))).all())
+    if db is None:
+        async with get_db_session() as db:
+            return await reply_text(session_id, message_id, user_id, db=db)
+    parts = list((await db.scalars(select(Part).join(Message, Message.id == Part.message_id).where(
+        Part.message_id == message_id, Part.session_id == session_id, Part.user_id == user_id,
+        Part.type == "text", Message.role == "assistant").order_by(Part.created_at, Part.id))).all())
     texts = [(part.data.get("channel"), str(part.data.get("text") or "")) for part in parts
              if not part.data.get("ignored") and not part.data.get("synthetic")]
     chosen = ([text for channel, text in texts if channel == "final"]

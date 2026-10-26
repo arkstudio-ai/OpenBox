@@ -360,7 +360,8 @@ async def evaluate(state, config, *, client=None, max_attempts=2):
                             "model": model.split("/", 1)[-1], "temperature": 0,
                             **({"reasoning_effort": "none"} if _model_family(model) == "qwen" else {}),
                             "stream": False, "max_tokens": 768,
-                            "response_format": response_format(model, root, name="memory_read_plan", schema=read_schema(voice=voice)),
+                            "response_format": response_format(model, root, name="memory_read_plan", schema=read_schema(voice=voice),
+                                                               verified_base_urls=config.json_schema_base_urls),
                             "messages": [{"role": "system", "content": SYSTEM + (SPOKEN_LANGUAGE if voice else "")},
                                          {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]})
                 data = response_json(response)

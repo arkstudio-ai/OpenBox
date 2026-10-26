@@ -635,12 +635,19 @@ class MemoryConfig(BaseModel):
     setting_verify_model: str = "openai/qwen3.8-max"
     qdrant_url: str = "http://127.0.0.1:6333"
     index_generation: str = "memory-v1"
+    # Explicit credential for embedding/rerank gateways. Official credentials
+    # remain a fallback only for Alibaba endpoints (never for a custom host).
+    api_key: str = ""
     embedding_model: str = "qwen3.7-text-embedding"
     embedding_dimensions: int = Field(default=1024, ge=64, le=4096)
     embedding_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
     embedding_batch_size: int = Field(default=10, ge=1, le=20)
     rerank_model: str = "qwen3.7-text-rerank"
     rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    rerank_protocol: Literal["dashscope", "standard"] = "dashscope"
+    # Explicit, verified gateway base URLs supporting strict JSON Schema.
+    # Preserve unknown providers' JSON-object contract.
+    json_schema_base_urls: list[str] = Field(default_factory=list)
     jev_model: str = "jev-1.13.0"
     jev_url: str = "https://api.typesafe.ai/v1/systemone"
     jev_timeout_seconds: float = Field(default=3.0, gt=0, le=15)

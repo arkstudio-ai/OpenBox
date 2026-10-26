@@ -2,7 +2,7 @@ import math
 
 import httpx
 
-from memory.providers.common import MemoryProviderError, bailian_key, response_json, shared_client
+from memory.providers.common import MemoryProviderError, memory_api_key, response_json, shared_client
 from memory.redaction import redact_text
 
 
@@ -10,14 +10,18 @@ async def rerank(query: str, documents: list[str], config, *, client=None) -> tu
     if len(documents) > config.rerank_max_documents:
         raise ValueError("rerank budget exceeded")
     client = client or shared_client(trust_env=config.provider_trust_env)
+    query = redact_text(query, len(query))
+    documents = [redact_text(text, len(text)) for text in documents]
+    standard = config.rerank_protocol == "standard"
+    payload = ({"model": config.rerank_model, "query": query, "documents": documents,
+                "top_n": len(documents), "return_documents": False} if standard else
+               {"model": config.rerank_model, "input": {"query": query, "documents": documents},
+                "parameters": {"top_n": len(documents), "return_documents": False}})
     try:
         response = await client.post(config.rerank_url, timeout=config.provider_timeout_seconds,
-            headers={"Authorization": "Bearer " + bailian_key()},
-            json={"model": config.rerank_model, "input": {"query": redact_text(query, len(query)),
-                  "documents": [redact_text(text, len(text)) for text in documents]},
-                  "parameters": {"top_n": len(documents), "return_documents": False}})
+            headers={"Authorization": "Bearer " + memory_api_key(config, config.rerank_url)}, json=payload)
         data = response_json(response)
-        results = data.get("output", {}).get("results")
+        results = data.get("results") if standard else data.get("output", {}).get("results")
         if not isinstance(results, list) or len(results) != len(documents):
             raise MemoryProviderError("invalid_response")
         ranked, seen = [], set()

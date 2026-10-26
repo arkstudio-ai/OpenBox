@@ -7,14 +7,15 @@ schema, source/quote and independent grounding checks remain authoritative.
 from urllib.parse import urlsplit
 
 
-def response_format(model, base_url, *, name, schema):
+def response_format(model, base_url, *, name, schema, verified_base_urls=()):
     host = (urlsplit(base_url).hostname or "").lower()
     official = (host == "dashscope.aliyuncs.com" or host.endswith(".dashscope.aliyuncs.com")
                 or host.endswith(".maas.aliyuncs.com"))
     bare = model.rsplit("/", 1)[-1].lower()
     supported = any(bare == prefix or bare.startswith(prefix + "-") for prefix in (
         "qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash", "qwen3.7-plus", "qwen3.7-max"))
-    if official and supported:
+    verified = base_url.rstrip("/") in {url.rstrip("/") for url in verified_base_urls}
+    if (official or verified) and supported:
         return {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}}
     return {"type": "json_object"}
 

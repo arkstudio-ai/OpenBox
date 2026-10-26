@@ -344,7 +344,8 @@ class ConfiguredMemoryExtractor:
             payload = {"model": bare_model, "stream": False, "max_tokens": 3000,
                        **({"reasoning_effort": "none"} if _model_family(model) == "qwen" else {}),
                        "response_format": response_format(model, base_url, name="memory_candidates_v1",
-                                                          schema=extraction_schema()),
+                                                          schema=extraction_schema(),
+                                                          verified_base_urls=memory.json_schema_base_urls),
                        "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                                     {"role": "user", "content": payload_text}]}
         started = time.monotonic()

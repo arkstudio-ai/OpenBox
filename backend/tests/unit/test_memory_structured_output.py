@@ -68,6 +68,15 @@ def test_route_capability_is_explicit_and_does_not_change_unknown_gateways(root,
     assert response_format(model, root, name="memory", schema=extraction_schema())["type"] == expected
 
 
+def test_verified_gateway_preserves_schema_without_trusting_other_hosts_or_paths():
+    allowed = ["http://gateway:3000/v1/"]
+    for root, expected in [("http://gateway:3000/v1", "json_schema"),
+                           ("http://gateway:3000/other", "json_object"),
+                           ("http://gateway.evil:3000/v1", "json_object")]:
+        assert response_format("openai/qwen3.8-flash", root, name="memory", schema=extraction_schema(),
+                               verified_base_urls=allowed)["type"] == expected
+
+
 async def test_strict_provider_request_keeps_local_validation_and_source_only_contract():
     calls = []
     def handler(request):

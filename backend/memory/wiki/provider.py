@@ -77,7 +77,8 @@ class ConfiguredWikiModel:
             from memory.providers.structured_output import response_format
             payload = {"model": bare_model, "stream": False, "max_tokens": 3500,
                        **({"reasoning_effort": "none"} if _model_family(model) == "qwen" else {}),
-                       "response_format": response_format(model, base, name=schema_name, schema=schema)
+                       "response_format": response_format(model, base, name=schema_name, schema=schema,
+                                                          verified_base_urls=memory.json_schema_base_urls)
                            if schema is not None else {"type": "json_object"},
                        "messages": [{"role": "system", "content": system}, {"role": "user", "content":
                            [{"type": "text", "text": text}, *({"type": "image_url", "image_url": {"url": uri}}

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import weakref
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -17,6 +18,18 @@ def bailian_key() -> str:
     if not key:
         raise MemoryProviderError("provider_not_configured")
     return key
+
+
+def memory_api_key(config, endpoint: str) -> str:
+    """Do not forward an official fallback credential to an arbitrary gateway."""
+    if key := getattr(config, "api_key", ""):
+        return key
+    host = (urlsplit(endpoint).hostname or "").lower()
+    if not (host in {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com",
+                     "dashscope-us.aliyuncs.com"}
+            or host.endswith(".dashscope.aliyuncs.com") or host.endswith(".maas.aliyuncs.com")):
+        raise MemoryProviderError("gateway_credential_not_configured")
+    return bailian_key()
 
 
 def jev_key() -> str:

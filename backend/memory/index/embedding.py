@@ -3,7 +3,7 @@ import math
 
 import httpx
 
-from memory.providers.common import MemoryProviderError, bailian_key, response_json, shared_client
+from memory.providers.common import MemoryProviderError, memory_api_key, response_json, shared_client
 from memory.redaction import redact_text
 
 
@@ -21,7 +21,7 @@ class BailianEmbedding:
             for start in range(0, len(texts), self.config.embedding_batch_size):
                 batch = texts[start:start + self.config.embedding_batch_size]
                 response = await client.post(self.config.embedding_url, timeout=self.config.provider_timeout_seconds,
-                    headers={"Authorization": "Bearer " + bailian_key()},
+                    headers={"Authorization": "Bearer " + memory_api_key(self.config, self.config.embedding_url)},
                     json={"model": self.config.embedding_model, "input": [redact_text(text, len(text)) for text in batch],
                           "dimensions": self.config.embedding_dimensions, "encoding_format": "float"})
                 data = response_json(response)

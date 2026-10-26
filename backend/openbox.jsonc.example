@@ -43,8 +43,8 @@
 
   // Provider-specific config: api_key, base_url, extra options
   // Models with an explicit "provider" use that slot; otherwise use their prefix.
-  // Qwen's openai/ prefix selects the wire format, while bailian supplies its
-  // official endpoint and credential. It must not inherit the UEE gateway key.
+  // Qwen's openai/ prefix selects the wire format. The bailian slot points to
+  // our internal gateway; official Alibaba credentials live on that gateway.
   "provider": {
     "anthropic": {
       "api_key": "{env:ANTHROPIC_API_KEY}",
@@ -55,8 +55,8 @@
       "base_url": null
     },
     "bailian": {
-      "api_key": "{env:BAILIAN_KEY}",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      "api_key": "{env:INTERNAL_MODEL_API_KEY}",
+      "base_url": "{env:INTERNAL_MODEL_BASE_URL}"
     },
     "bossip": {
       "api_key": "{env:BOSSIP_API_KEY}",
@@ -370,7 +370,12 @@
 
   // Independent verification of durable account settings, not the recall router.
   "memory": {
-    "setting_verify_model": "openai/qwen3.8-max"
+    "setting_verify_model": "openai/qwen3.8-max",
+    "api_key": "{env:INTERNAL_MODEL_API_KEY}",
+    "embedding_url": "{env:INTERNAL_MODEL_BASE_URL}/embeddings",
+    "rerank_url": "{env:INTERNAL_MODEL_BASE_URL}/rerank",
+    "rerank_protocol": "standard",
+    "json_schema_base_urls": ["{env:INTERNAL_MODEL_BASE_URL}"]
   },
 
   // Main-assistant coordination turns. Long work belongs in Task Sessions.

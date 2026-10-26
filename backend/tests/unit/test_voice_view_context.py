@@ -274,14 +274,15 @@ async def test_live_assistant_execution_is_readable_without_enabling_its_long_te
         assert await view_context.read(db, turn, identity, include_history=True) is None
 
 
-def test_budget_retains_latest_live_answer_and_progress_before_older_context():
+@pytest.mark.parametrize("surface,budget", [("viewed_task", 600), ("assistant_context", 640)])
+def test_budget_retains_latest_live_answer_and_progress_before_older_context(surface, budget):
     from core.config import OpenBoxConfig
     from memory.packet import apply_budget
     from memory.orchestrator import render_memory_context
-    config = OpenBoxConfig(model="test/model", memory={"recall_token_budget": 600}).memory
+    config = OpenBoxConfig(model="test/model", memory={"recall_token_budget": budget}).memory
     packet = {"_semantic_packet": True, "settings": {}, "route": {"read_policy": "allowed"},
         "items": [], "stable_background": {"items": []}, "known_gaps": [], "degraded_reasons": [],
-        "viewed_task": {"session_id": "task", "pending_request_ids": [], "history_status": "complete",
+        surface: {"session_id": "task", "pending_request_ids": [], "history_status": "complete",
             "history": {"entries": [{"role": "user", "text": "较早的完整说明。" * 300},
                 {"role": "assistant", "text": "活动已经改到周日下午三点。"}]},
             "handled_decisions": [{"answers": [["小区业主活动室 / 物业多功能室"]]},
@@ -290,6 +291,7 @@ def test_budget_retains_latest_live_answer_and_progress_before_older_context():
     text = render_memory_context(packet)
     assert "周日下午三点" in text and "小区业主活动室 / 物业多功能室" in text
     assert "较早的完整说明" not in text and "较早的选择说明" not in text
-    assert packet["viewed_task"]["older_history_omitted"]
-    assert packet["viewed_task"]["older_decisions_omitted"]
-    assert packet["budget"]["tokens"] <= 600
+    assert packet[surface]["older_history_omitted"]
+    assert packet[surface]["older_decisions_omitted"]
+    assert "task_state_requires_exact_read" not in packet["degraded_reasons"]
+    assert packet["budget"]["tokens"] <= budget

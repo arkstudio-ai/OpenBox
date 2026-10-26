@@ -477,9 +477,9 @@ def apply_budget(bundle, config):
         bundle["known_gaps"].append({"kind": omitted["kind"], "id": omitted["id"], "reason": "envelope_budget"})
         changed()
     if packet_tokens() > config.recall_token_budget:
-        bundle.pop("task_state", None)
-        bundle["degraded_reasons"].append("task_state_requires_exact_read")
-        changed()
+        if bundle.pop("task_state", None):
+            bundle["degraded_reasons"].append("task_state_requires_exact_read")
+            changed()
     if packet_tokens() > config.recall_token_budget:
         details = bundle.pop("settings_details", None)
         if details:

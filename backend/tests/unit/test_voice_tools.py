@@ -187,3 +187,30 @@ async def test_the_next_greeting_knows_the_last_call_and_what_finished_since():
     instructions = prompt.front_instructions(facts, "zh", prompt.local_now())
     assert "上次通话：" in instructions and "上次通话后办完的事：「" in instructions
     assert summary.save_after_call(call_id, "  ") is None  # nothing said: nothing to keep
+
+
+async def test_pending_cards_stay_readable_on_an_undecided_turn_only_while_no_restriction_was_seen(monkeypatch):
+    """Measured 2026-10-27: "Is anything waiting for me?" on an undecided read scope got "unavailable",
+    although the call kept those very cards in its instructions."""
+    from dataclasses import replace as replaced
+    from memory.packet import TurnContext
+    from voice import tools as voice_tools
+    reads = []
+    async def pending(scope, arguments):
+        reads.append(scope.context_kept)
+        return {"status": "ok", "items": [{"card": "1"}]}
+    monkeypatch.setitem(voice_tools.DIRECT, "cards_pending", replaced(voice_tools.DIRECT["cards_pending"], run=pending))
+    turn = replaced(TurnContext("owner", "workspace", "anything waiting?"), read_policy="uncertain")
+    scope = voice_tools.CallScope(user_id="owner", workspace_id="workspace", main_session_id="main",
+                                  memory_turn=turn, context_kept=True)
+    assert (await voice_tools.run("cards_pending", scope, "{}"))["status"] == "ok"
+    restricted = await voice_tools.run("cards_pending", replaced(scope, context_kept=False), "{}")
+    assert restricted["status"] == "unavailable" and reads == [True]
+    # Live task state is read the same way (measured 2026-10-27: "how is the video going?" got
+    # "unavailable"); other reads stay gated by the undecided scope.
+    async def overview(scope, arguments):
+        return {"status": "ok", "tasks": []}
+    monkeypatch.setitem(voice_tools.DIRECT, "tasks_overview", replaced(voice_tools.DIRECT["tasks_overview"], run=overview))
+    assert (await voice_tools.run("tasks_overview", scope, "{}"))["status"] == "ok"
+    assert (await voice_tools.run("tasks_overview", replaced(scope, context_kept=False), "{}"))["status"] == "unavailable"
+    assert (await voice_tools.run("schedules_list", scope, "{}"))["status"] == "unavailable"

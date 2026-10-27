@@ -86,8 +86,54 @@ async def test_status_includes_current_decision_without_replaying_answered_or_ex
     assert "pending_request" not in (await overview(scope, {}))["items"][0]
     async with get_db_session() as db:
         row = await db.get(QuestionCheckpoint, identity)
-        row.expires_at, row.status = None, "answered"
-    assert "pending_request" not in (await overview(scope, {}))["items"][0]
+        row.expires_at, row.status, row.answers = None, "answered", [["可以"]]
+    [item] = (await overview(scope, {}))["items"]
+    assert "pending_request" not in item
+    assert item["last_decision"]["choice"] == "可以"  # what was chosen, not only that something was
+
+
+async def test_a_paused_task_stays_paused_while_its_decision_waits():
+    """Measured 2026-10-27: a paused task with a pending card read as waiting, so a call kept asking for it."""
+    from tests.unit.test_assistant_requests_v2 import ask_in
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, title="鲜果店视频")
+    identity, _ = await ask_in(session, owner, question="新图方案21.71积分，是否开始生成？", options=[{"label": "可以"}])
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(AssistantTask(id="task-" + uuid4().hex, assistant_session_id=main.id, user_id=owner,
+            workspace_id=workspace, project_id=session.project_id, execution_session_id=session.id,
+            title="鲜果店视频", desired_state="running", observed_state="waiting_input", created_at=now, updated_at=now))
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id)
+    [item] = (await overview(scope, {}))["items"]
+    assert item["state"] == "waiting_input" and item["pending_request"]["request_id"] == identity
+    async with get_db_session() as db:
+        task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session.id))
+        task.desired_state, task.observed_state, task.control_revision = "paused", "paused", 2
+    [item] = (await overview(scope, {}))["items"]
+    assert item["state"] == "paused" and item["waiting_for_user"] and "暂停" in item["state_summary"]
+    assert item["pending_request"]["request_id"] == identity  # still answerable, still shown
+
+
+async def test_a_card_no_longer_waits_once_the_person_sends_new_requirements():
+    """Measured 2026-10-27: for seconds after new requirements were sent, the call offered the old plan's approval."""
+    from agent import inbox
+    from tests.unit.test_assistant_requests_v2 import ask_in
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, title="鲜果店视频")
+    identity, _ = await ask_in(session, owner, question="新图方案21.71积分，是否开始生成？", options=[{"label": "可以"}])
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id)
+    # Platform input waits behind the card (question.runtime.admission_blocked_locked).
+    await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup", prompt="继续",
+                                  origin="assistant_delegation", origin_ref={"actor_user_id": owner})
+    [item] = (await overview(scope, {}))["items"]
+    assert item["waiting_for_user"] and item["pending_request"]["request_id"] == identity
+    await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup",
+                                  prompt="背景音乐换成轻快的钢琴曲", origin="human", origin_ref={"actor_user_id": owner})
+    [item] = (await overview(scope, {}))["items"]
+    assert not item["waiting_for_user"] and "pending_request" not in item
+    assert "新的要求" in item["state_summary"]
 
 
 async def test_task_and_voice_reads_share_current_execution_choices():
@@ -112,6 +158,64 @@ async def test_task_and_voice_reads_share_current_execution_choices():
         assert choices["model"] == "test/current-model" and choices["video_model"] == "test/current-video"
         assert choices["grants_execution"] is False
         assert choices["scope"] == "future_submissions"
+
+
+async def test_manual_conversation_keeps_human_input_identity_after_claim_without_creating_a_task():
+    from agent import inbox
+    from agent.driver import reserve_run
+    from voice.freshness import work_claim, work_change
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, title="咖啡店视频")
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id)
+    [before] = (await overview(scope, {}))["items"]
+    receipt = await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup",
+        prompt="改成15秒，加一个店内人气场景", origin="human", origin_ref={"actor_user_id": owner})
+    [accepted] = (await overview(scope, {}))["items"]
+    assert accepted["human_input"] == {"id": receipt.id, "text": "改成15秒，加一个店内人气场景", "truncated": False}
+    assert work_change(work_claim(before), accepted)["user_input_updated"]
+    lease = await reserve_run(session.id, owner)
+    try:
+        await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        [claimed] = (await overview(scope, {}))["items"]
+        assert claimed["human_input"] == accepted["human_input"]
+        assert not claimed["watched"] and claimed["task_id"] is None
+        # A later platform continuation is neither a new human message nor an approval.
+        await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup",
+            prompt="继续执行旧方案", origin="assistant_delegation", origin_ref={"actor_user_id": owner})
+        [platform] = (await overview(scope, {}))["items"]
+        assert platform["human_input"] == accepted["human_input"]
+    finally:
+        await lease.release(session_status="idle")
+    from session.session import create_user_message
+    message = await create_user_message(session.id, "换成20秒", user_id=owner,
+        origin="human", origin_ref={"actor_user_id": owner})
+    [legacy] = (await overview(scope, {}))["items"]
+    assert legacy["human_input"] == {"id": message.id, "text": "换成20秒", "truncated": False}
+
+
+async def test_direct_chat_message_changes_the_voice_claim_without_an_inbox_or_task():
+    from session.session import create_user_message
+    from voice.freshness import work_claim, work_change
+    owner, _, workspace = await accounts()
+    main = await ensure_main_session(user_id=owner, workspace_id=workspace, model="test/model")
+    session = await create_session(user_id=owner, workspace_id=workspace, title="咖啡店视频")
+    scope = CallScope(owner, workspace, main.id)
+    original = await create_user_message(session.id, "做10秒视频", user_id=owner,
+        origin="human", origin_ref={"actor_user_id": owner})
+    [before] = (await overview(scope, {}))["items"]
+    assert before["human_input"]["id"] == original.id
+    update = await create_user_message(session.id, "改成20秒，加拉花特写", user_id=owner,
+        origin="human", origin_ref={"actor_user_id": owner})
+    await create_user_message(session.id, "已确认旧方案", user_id=owner,
+        origin="assistant_delegation", origin_ref={"actor_user_id": owner})
+    await create_user_message(session.id, "没有证据的历史文字", user_id=owner)
+    [after] = (await overview(scope, {}))["items"]
+    assert before["state"] == after["state"]
+    assert after["human_input"] == {"id": update.id, "text": "改成20秒，加拉花特写", "truncated": False}
+    assert work_claim(before) != work_claim(after)
+    assert work_change(work_claim(before), after)["latest_user_input"]["text"] == "改成20秒，加拉花特写"
+    assert not after["watched"] and after["task_id"] is None
 
 
 async def test_work_pages_bind_actor_and_filters_and_do_not_leak_shared_workspace_members(monkeypatch):

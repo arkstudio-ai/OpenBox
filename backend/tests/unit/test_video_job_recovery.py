@@ -642,3 +642,82 @@ async def test_recovery_settles_a_paid_job_with_no_production_attached(monkeypat
     assert job.output_asset_id
     assert job.production_id is None and job.segment_id is None
     assert job.result_data["completion_delivery_pending"] is True
+
+
+async def test_status_without_job_id_lists_every_shot_of_the_conversation_for_recovery():
+    # Measured 2026-10-26: five shots completed upstream, a continuation fetched
+    # the one its wake named and asked for the storyboard again.
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+    from tool import video_production as vp
+
+    uid, sid = "u_list_" + uuid.uuid4().hex[:6], "session_list_" + uuid.uuid4().hex[:6]
+    done = []
+    for shot in range(1, 6):
+        job_id = await _insert_job(age_seconds=600 - shot, user_id=uid, session_id=sid, status="completed",
+                                   prompt=f"镜头{shot}：抽象流体色彩缓慢旋转",
+                                   request_data={"shot": shot, "duration": 10, "ratio": "9:16"},
+                                   attached_message_id="message_1" if shot == 1 else None)
+        done.append(job_id)
+    failed = await _insert_job(age_seconds=10, user_id=uid, session_id=sid, status="failed",
+                               prompt="镜头6：粒子汇聚", request_data={"shot": 6}, error="provider refused")
+    await _insert_job(age_seconds=10, user_id="someone_else", session_id=sid, status="completed",
+                      prompt="other user's shot")
+    await _insert_job(age_seconds=10, user_id=uid, session_id="another_session", status="completed",
+                      prompt="other conversation")
+    async with get_db_session() as db:
+        for job_id in done:
+            job = await db.get(VideoJob, job_id)
+            (await db.get(FileAsset, job.output_asset_id)).status = "ready"
+
+    result = await vp.execute_generate(vp.VideoGenerateArgs(action="status"),
+                                       SimpleNamespace(user_id=uid, session_id=sid))
+
+    rows = result.metadata["jobs"]
+    assert [row["shot"] for row in rows] == [1, 2, 3, 4, 5, 6]
+    assert [row["job_id"] for row in rows] == [*done, failed]
+    assert all(row["asset_id"] for row in rows[:5]) and rows[5]["asset_id"] is None
+    assert "镜头3：抽象流体色彩缓慢旋转" in result.output and "error=provider refused" in result.output
+    assert "other user's shot" not in result.output and "other conversation" not in result.output
+    assert "never resubmit a completed" in result.output
+    assert "shown_in_chat=true" in result.output.splitlines()[1]
+
+
+def test_completion_wake_points_the_continuation_at_every_shot():
+    prompt = job_recovery.RESUME_PROMPT.format(job_id="vjob_x")
+    assert "vjob_x" in prompt and "不填 job_id" in prompt and "不要重新提交" in prompt
+    assert "不要再向用户索要" in prompt
+
+
+async def test_attaching_a_clip_by_asset_marks_its_job_shown_so_later_wakes_do_not_repeat_it(monkeypatch):
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+    from tool import asset_delivery
+    from tool import video_production as vp
+    from tool.tool import ToolResult
+
+    uid, sid = "u_shown_" + uuid.uuid4().hex[:6], "session_shown_" + uuid.uuid4().hex[:6]
+    job_id = await _insert_job(age_seconds=60, user_id=uid, session_id=sid, status="completed",
+                               request_data={"shot": 1}, prompt="镜头1")
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, job_id)
+        asset = await db.get(FileAsset, job.output_asset_id)
+        asset.status = "ready"
+        asset_id = asset.id
+    async def found(identity, ctx):
+        async with get_db_session() as db:
+            return await db.get(FileAsset, identity)
+    async def attached(asset, ctx, **kwargs):
+        return ToolResult(title="attached", output="attached=true", metadata={"asset_id": asset.id})
+    monkeypatch.setattr(asset_delivery, "find_owned_ready_asset", found)
+    monkeypatch.setattr(asset_delivery, "attach_owned_asset", attached)
+    ctx = SimpleNamespace(user_id=uid, session_id=sid, message_id="message_reply")
+
+    await vp.execute_generate(vp.VideoGenerateArgs(action="attach", asset_id=asset_id), ctx)
+
+    async with get_db_session() as db:
+        assert (await db.get(VideoJob, job_id)).attached_message_id == "message_reply"
+    listing = await vp.execute_generate(vp.VideoGenerateArgs(action="status"), ctx)
+    assert "shown_in_chat=true" in listing.output

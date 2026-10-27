@@ -37,6 +37,11 @@ def _drop_inherited_proxy() -> None:
     dropped = [name for name in _PROXY_VARS if os.environ.pop(name, None)]
     if dropped:
         print(f"[entrypoint] ignoring inherited proxy: {', '.join(sorted(dropped))}")
+    # With no proxy variable at all, urllib (and so httpx with trust_env) falls
+    # back to the macOS system proxy settings. Measured 2026-10-26: each voice
+    # handoff check then paid ~4 s of proxy TLS and missed its 4 s deadline.
+    if not (os.environ.get("NO_PROXY") or os.environ.get("no_proxy")):
+        os.environ["NO_PROXY"] = "*"
 
 
 def _migrate() -> None:

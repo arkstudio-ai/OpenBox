@@ -153,3 +153,35 @@ async def test_watch_list_is_redacted_and_bounded():
         assert item["session_id"] == accepted["execution_session_id"] and item["pending_questions"] == 0
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_a_card_that_is_no_longer_current_stops_showing_its_task_as_waiting():
+    """A reopened assistant counted every pending row, so a superseded card kept the task "waiting"
+    although no request list offered it any more. Unbound questions still count as before."""
+    from db.models.question import QuestionCheckpoint, SessionExecution
+    ctx, lease, _, accepted, _ = await read_turn()
+    try:
+        session_id, now = accepted["execution_session_id"], datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            execution = await db.get(SessionExecution, session_id)
+            if execution is None:
+                execution = SessionExecution(session_id=session_id, user_id=ctx.user_id, generation=0)
+                db.add(execution)
+            generation = execution.generation or 0
+            question = [{"header": "确认", "question": "可以开始吗？", "options": [{"label": "可以"}]}]
+            for identity, continuation in (
+                    # Bound, but its binding no longer matches the card: _fresh refuses it.
+                    ("stale-card", {"assistant_request": {
+                        "request_revision": "an-older-revision", "task_id": accepted["task_id"],
+                        "assistant_session_id": ctx.session_id, "workspace_id": ctx.workspace_id,
+                        "run_id": "an-older-run", "generation": generation}}),
+                    ("unbound-card", {})):
+                db.add(QuestionCheckpoint(id=identity, session_id=session_id, user_id=ctx.user_id, generation=generation,
+                    status="pending", questions=question, draft=[], continuation=continuation,
+                    created_at=now, updated_at=now))
+        async with get_db_session() as db:
+            value = await task_context(db, await db.get(Session, ctx.session_id))
+        [item] = [entry for entry in value["items"] if entry["session_id"] == session_id]
+        assert item["pending_questions"] == 1
+    finally:
+        await lease.release(session_status="idle")

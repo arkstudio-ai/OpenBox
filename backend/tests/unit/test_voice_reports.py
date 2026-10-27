@@ -120,3 +120,26 @@ async def test_running_report_is_delivered_as_pending_work_not_completion():
     assert payload["status"] == "running" and "尚未取得成品" in payload["state_note"]
     assert payload["running_tasks"] == ["开业清单"]
     assert provider.response_purposes()[-1][1] == phrases.notice_instructions("zh")
+
+
+async def test_a_card_continuation_report_is_titled_by_the_card_it_answered(tmp_path, monkeypatch):
+    # Measured 2026-10-26: cancelling an unrelated placement card produced an
+    # untitled "the project and task were cancelled" report, which the call
+    # told as the cancellation of the video it was discussing.
+    from datetime import datetime, timezone
+    from db.base import get_db_session
+    from db.models.question import QuestionCheckpoint
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(QuestionCheckpoint(id="card-placement", session_id="main-1", user_id="u1", generation=0,
+            status="answered", questions=[{"header": "安排这件事", "question": "新建项目吗？"}], draft=[],
+            continuation={"kind": "question", "assistant_placement": {"input": {"title": "50秒流体抽象短视频"}}},
+            created_at=now, updated_at=now))
+        db.add(QuestionCheckpoint(id="card-other-user", session_id="main-1", user_id="u2", generation=0,
+            status="answered", questions=[{"header": "别人的卡片"}], draft=[], continuation={"kind": "question"},
+            created_at=now, updated_at=now))
+    watcher = reports.ReportWatcher(user_id="u1", main_session_id="main-1")
+    answered = SimpleNamespace(origin_ref={"entrypoint": "assistant_card_answer", "question_id": "card-placement"})
+    assert await watcher._title(answered) == "50秒流体抽象短视频"
+    foreign = SimpleNamespace(origin_ref={"entrypoint": "assistant_card_answer", "question_id": "card-other-user"})
+    assert await watcher._title(foreign) == ""

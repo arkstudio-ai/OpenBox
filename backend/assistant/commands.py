@@ -579,6 +579,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
+    from assistant.control import publish_task_changed
+    publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
     from agent.driver import request_abort
     for target in interruption_targets:
         try:

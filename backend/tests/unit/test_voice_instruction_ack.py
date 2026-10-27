@@ -64,3 +64,40 @@ async def test_late_receipt_cannot_confirm_the_next_different_update():
         await next_update
     finally:
         await provider.close()
+
+
+async def test_a_repeated_update_waits_for_its_late_receipt_instead_of_queueing_another_copy():
+    """Measured 2026-10-27: receipts trailed by 5-22 s; each re-sent copy queued behind the last."""
+    provider = RealtimeProvider(VoiceConfig())
+    provider._ws = socket = Socket()
+    try:
+        with pytest.raises(TimeoutError):
+            await provider.update_instructions_confirmed("current", timeout=.01)
+        await socket.sent.get()
+        retry = asyncio.create_task(provider.update_instructions_confirmed("current"))
+        await drain()
+        assert socket.sent.empty()  # no second copy behind the first
+        await receipt(socket, "current")
+        await retry
+        changed = asyncio.create_task(provider.update_instructions_confirmed("changed"))
+        assert (await socket.sent.get())["session"]["instructions"] == "changed"  # new text always goes
+        await receipt(socket, "changed")
+        await changed
+    finally:
+        await provider.close()
+
+
+async def test_an_update_unconfirmed_for_long_is_sent_again(monkeypatch):
+    monkeypatch.setattr("voice.provider.RESEND_AFTER_SECONDS", 0.0)
+    provider = RealtimeProvider(VoiceConfig())
+    provider._ws = socket = Socket()
+    try:
+        with pytest.raises(TimeoutError):
+            await provider.update_instructions_confirmed("current", timeout=.01)
+        await socket.sent.get()
+        retry = asyncio.create_task(provider.update_instructions_confirmed("current"))
+        assert (await socket.sent.get())["session"]["instructions"] == "current"
+        await receipt(socket, "current")
+        await retry
+    finally:
+        await provider.close()

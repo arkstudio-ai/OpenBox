@@ -683,10 +683,15 @@ async def test_memory_capabilities_do_not_open_restricted_modes(monkeypatch, ext
 
 async def test_actual_loop_searches_and_reads_original_pages_and_later_runs_do_not_replay_them(monkeypatch, external_io):
     from agent import processor
+    from core.config import MemoryConfig
     from session.agent_event_log import verify_agent_event_parity
     from tests.unit.test_agent_loop_terminal_steps import _assert_balanced_steps
     from tests.unit.assistant_helpers import _accept, _events, _run, _runtime
     state = await _runtime(monkeypatch)
+    # The real-loop runtime copies the developer's openbox.json. Its memory section
+    # (gateway endpoints, credentials, routers) must not decide this test: memory
+    # providers stay the defaults that external_io answers, as in seed().
+    state.config.memory = MemoryConfig()
     configure(monkeypatch, state.config)
     state.config.memory.allowed_user_ids = [state.owner]
     identity = {"user_id": state.owner, "workspace_id": state.workspace, "main_id": state.main.id}

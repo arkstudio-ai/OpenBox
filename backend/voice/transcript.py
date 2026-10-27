@@ -73,6 +73,13 @@ class CallTranscript:
         """A fresh provider session has no items of its own yet."""
         self.items = []
 
+    def unheld(self, start: int = 0, limit: int = 12) -> str:
+        """Lines from ``start`` the provider no longer holds: retired by a restricted turn, or a fresh session."""
+        held = {item.id for item in self.items}
+        lines = [line for line in self.lines[max(start, self.context_start):]
+                 if line.role in ("user", "assistant") and line.item_id not in held][-limit:]
+        return "\n".join(f"{line.at:%H:%M} {ROLES[line.role]}：{_bounded(line.text)}" for line in lines)
+
     def render(self, start: int = 0, end: int | None = None) -> str:
         return "\n".join(f"{line.at:%H:%M} {ROLES[line.role]}：{_bounded(line.text)}"
                          for line in self.lines[max(start, self.context_start):end])

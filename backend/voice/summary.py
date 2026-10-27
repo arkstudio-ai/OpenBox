@@ -56,6 +56,37 @@ async def summarize(transcript: str, previous: str = "", *, final: bool = False,
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+WARM_INTERVAL_SECONDS, WARM_TIMEOUT_SECONDS = 20.0, 8.0
+_warm_at: dict[str, float] = {}
+
+
+async def warm(model: str) -> None:
+    """Open the pooled connection while the user speaks; no input, no model call.
+
+    The handoff check runs right after a reply. A fresh TLS handshake on a
+    slow path (measured 2.2-4.3 s locally) consumed its whole deadline, so
+    every check timed out. A HEAD response of any status only warms the pool.
+    """
+    import time
+    from agent.llm import _get_provider_kwargs
+    from memory.providers.common import shared_client
+    provider = _get_provider_kwargs(model)
+    base_url = (provider.get("api_base") or "").rstrip("/")
+    if not provider.get("api_key") or not base_url:
+        return
+    root = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
+    now = time.monotonic()
+    if now - _warm_at.get(root, -WARM_INTERVAL_SECONDS) < WARM_INTERVAL_SECONDS:
+        return
+    _warm_at[root] = now
+    try:
+        async with asyncio.timeout(WARM_TIMEOUT_SECONDS):
+            await shared_client(trust_env=True).head(root + "/models", timeout=WARM_TIMEOUT_SECONDS,
+                                                     follow_redirects=False)
+    except (httpx.HTTPError, TimeoutError):
+        pass  # opportunistic; the check keeps its own deadline
+
+
 async def complete(model: str, system: str, text: str, timeout: float) -> str:
     """One plain completion with the model's reasoning turned down as far as it goes."""
     from agent.llm import _get_provider_kwargs, _needs_responses_api, reasoning_profile

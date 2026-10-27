@@ -29,6 +29,7 @@ class _Requests {
   String? cursor;
   int pages = 1;
   bool loading = false;
+  bool reload = false;
   Object? error;
 }
 
@@ -49,6 +50,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
   final _requests = {for (final kind in _kinds) kind: _Requests()};
   List<Map<String, dynamic>> _waiting = [];
   bool _waitingLoading = false;
+  bool _waitingReload = false;
   int _ticks = 0;
   Timer? _timer;
   StreamSubscription<WsEvent>? _ws;
@@ -105,7 +107,11 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
 
   Future<void> _load(String kind, {bool more = false}) async {
     final state = _requests[kind]!;
-    if (!_current || state.loading) return;
+    if (!_current) return;
+    if (state.loading) {
+      state.reload = true;
+      return;
+    }
     setState(() => state.loading = true);
     try {
       final count = state.pages + (more ? 1 : 0);
@@ -126,6 +132,9 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
         cursor = asString(page['next_cursor']);
         if (cursor == null) break;
       }
+      // A reply/change event during the read invalidates its old snapshot.
+      // Read again immediately; do not revive a card until the next poll.
+      if (state.reload) return;
       if (kind == 'question') {
         for (final item in items) {
           ref
@@ -154,17 +163,25 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
       }
     } finally {
       if (mounted) setState(() => state.loading = false);
+      if (_current && state.reload) {
+        state.reload = false;
+        unawaited(_load(kind));
+      }
     }
   }
 
   Future<void> _loadWaiting() async {
-    if (!_current || _waitingLoading) return;
+    if (!_current) return;
+    if (_waitingLoading) {
+      _waitingReload = true;
+      return;
+    }
     _waitingLoading = true;
     try {
       final page = await ref
           .read(assistantApiProvider(widget.scope))
           .waitingQuestions();
-      if (!_current) return;
+      if (!_current || _waitingReload) return;
       setState(
         () => _waiting = asList(
           page['items'],
@@ -174,6 +191,10 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
       // Secondary: the conversations themselves still hold their questions.
     } finally {
       _waitingLoading = false;
+      if (_current && _waitingReload) {
+        _waitingReload = false;
+        unawaited(_loadWaiting());
+      }
     }
   }
 

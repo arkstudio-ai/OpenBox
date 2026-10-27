@@ -49,6 +49,9 @@ AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({
     "general": frozenset({"bash", "read", "glob", "grep", "skill", "skill_search", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"}),
 })
 
+# Pack members are listed most important first: when a budget cannot hold a
+# whole pack, the budgeter keeps them in this order and defers the rest to
+# discovery (agent/tool_exposure_budget.py).
 INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "planning": ("todo_write", "todo_read", "plan_enter"),
     "efficiency": ("batch", "multiedit"),
@@ -59,16 +62,18 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "automation": ("cron",),
     "image": ("image_gen", "view_image"),
     "video": (
+        # Generate, recover and deliver first: an in-progress production needs
+        # these to fetch completed clips without resubmitting (and paying) again.
+        "video_generate",
+        "share_file",
+        "video_compose",
+        "video_transcribe",
+        "video_analyze",
         "creator_context",
         "image_gen",
-        "video_generate",
-        "video_transcribe",
-        "video_compose",
-        "video_analyze",
         "hot_trends",
         "desktop_publish",
         "autopilot_run",
-        "share_file",
     ),
     "skill_admin": ("skill_manage", "share_file"),
 })
@@ -378,6 +383,23 @@ def route_intent_packs(signals: ExposureSignals) -> tuple[str, ...]:
     return tuple(name for name in INTENT_PACKS if name in packs)
 
 
+# When several packs compete for the same budget, their equally ranked members
+# are taken in this order: paid video outputs first, then delivery, browser
+# workflows and todo bookkeeping, then every other pack.
+PACK_PRECEDENCE = ("video", "delivery", "browser", "planning")
+
+
+def pack_rank(tool_id: str, pack: str | None) -> int:
+    """Position of a tool in its pack (most important first); unknown last."""
+    members = INTENT_PACKS.get(pack or "", ())
+    return members.index(tool_id) if tool_id in members else len(members)
+
+
+def pack_precedence(pack: str | None) -> int:
+    order = PACK_PRECEDENCE + tuple(name for name in INTENT_PACKS if name not in PACK_PRECEDENCE)
+    return order.index(pack) if pack in order else len(order)
+
+
 def preferred_editor_id(model_id: str, eligible_ids: Iterable[str]) -> str | None:
     """Select one schema-compatible editor for the current model family."""
     eligible = set(eligible_ids)
@@ -447,10 +469,13 @@ def portable_plan(
     # A discovery request from the immediately preceding step takes priority
     # over speculative intent packs. It is still intersected with the current
     # eligible catalogue and constrained by the provider's hard wire budget.
+    # It also replaces a product-state reason: a pack's non-lead controls only
+    # fill the soft target, so keeping that reason trimmed the very tool the
+    # model had just been told it could load.
     for tool_id in requested_ids:
         if tool_id in eligible:
             direct.add(tool_id)
-            if reasons.get(tool_id) not in {"resident", "model_editor"} and not reasons.get(tool_id, "").startswith("product:"):
+            if reasons.get(tool_id) not in {"resident", "model_editor"}:
                 reasons[tool_id] = "requested"
 
     direct_ids = tuple(sorted(direct))

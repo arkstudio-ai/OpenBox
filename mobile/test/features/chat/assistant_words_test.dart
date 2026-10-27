@@ -24,6 +24,15 @@ void main() {
         TaskStatus.paused,
       ),
       ({'desired': 'canceled', 'observed': 'running'}, TaskStatus.stopped),
+      (
+        {'desired': 'paused', 'observed': 'waiting_input', 'pending': 1},
+        TaskStatus.paused,
+      ),
+      ({'observed': 'pausing', 'pending': 1}, TaskStatus.paused),
+      (
+        {'desired': 'canceled', 'observed': 'paused', 'pending': 1},
+        TaskStatus.stopped,
+      ),
       ({'observed': 'effect_unknown'}, TaskStatus.failed),
       ({'session': 'error'}, TaskStatus.failed),
       ({'observed': 'completed'}, TaskStatus.done),

@@ -108,6 +108,17 @@ def enforce_serialized_payload_limits(
         )
 
 
+def _synthetic_chars(synthetic: Mapping[str, ToolInfo]) -> int:
+    if not synthetic:
+        return 0
+    import json
+    from agent.tool_payload import build_tool_definitions
+    return sum(max(len(json.dumps(build_tool_definitions({name: tool}, dialect),
+                                  ensure_ascii=False, separators=(",", ":")))
+                   for dialect in ("litellm", "responses"))
+               for name, tool in synthetic.items())
+
+
 def assemble_tool_runtime(
     eligible_tools: Mapping[str, ToolInfo],
     *,
@@ -183,6 +194,9 @@ def assemble_tool_runtime(
         catalogue,
         candidate_plan if mode == "shadow" and candidate_plan is not None else provider_plan,
         exposure_config,
+        # Request-local definitions are always direct and count against the
+        # same serialized boundary the payload gate enforces.
+        reserved_chars=_synthetic_chars(synthetic),
     )
     if mode == "shadow":
         # Candidate metrics/decisions are available, but shadow must preserve

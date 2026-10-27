@@ -259,12 +259,14 @@ async def test_explicit_gateway_identity_does_not_reuse_another_providers_secret
     assert result["provider_model"] == "qwen-gateway-alias"
 
 
-async def test_qwen_official_binding_does_not_inherit_gateway_credentials(monkeypatch):
+async def test_qwen_internal_binding_does_not_inherit_other_credentials(monkeypatch):
     from core.config import OpenBoxConfig, _load_json, _resolve_env_vars
     from agent.llm import _get_provider_kwargs
 
     monkeypatch.setenv("BAILIAN_KEY", "official-test-key")
     monkeypatch.setenv("OPENAI_API_KEY", "uee-test-key")
+    monkeypatch.setenv("INTERNAL_MODEL_BASE_URL", "https://internal.invalid/v1")
+    monkeypatch.setenv("INTERNAL_MODEL_API_KEY", "internal-test-key")
     data = _resolve_env_vars(_load_json(Path(__file__).parents[2] / "openbox.jsonc.example"))
     data["provider"]["openai"]["base_url"] = "https://uee.invalid/v1"
     config = OpenBoxConfig(**data)
@@ -273,8 +275,8 @@ async def test_qwen_official_binding_does_not_inherit_gateway_credentials(monkey
     # resolve this same declared binding, despite retaining the openai/ wire id.
     for model in ("openai/qwen3.8-max", "openai/qwen3.8-flash"):
         assert _get_provider_kwargs(model) == {
-            "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "official-test-key"}
+            "api_base": "https://internal.invalid/v1",
+            "api_key": "internal-test-key"}
 
     seen = []
     def respond(request):
@@ -289,13 +291,13 @@ async def test_qwen_official_binding_does_not_inherit_gateway_credentials(monkey
             await evaluate({"current_request": "按我的兴趣推荐一下"},
                 MemoryConfig(read_router_model=model), client=client)
     assert seen == [
-        ("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "Bearer official-test-key", "qwen3.8-flash"),
-        ("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "Bearer official-test-key", "qwen3.8-max"),
+        ("https://internal.invalid/v1/chat/completions", "Bearer internal-test-key", "qwen3.8-flash"),
+        ("https://internal.invalid/v1/chat/completions", "Bearer internal-test-key", "qwen3.8-max"),
     ]
     config.provider["bailian"].api_key = None
     with pytest.raises(MemoryProviderError, match="read_router_not_configured"):
         await evaluate({}, MemoryConfig(read_router_model="openai/qwen3.8-flash"))
-    assert len(seen) == 2  # Missing official credentials cannot fall back to UEE.
+    assert len(seen) == 2  # Missing internal credentials cannot fall back to another key.
 
 
 @pytest.mark.parametrize("model", ["jev-1.13.0", "jev-latest", "jev-preview", "jev-1.14.0"])
@@ -486,6 +488,36 @@ async def test_transport_warmup_is_input_free_throttled_and_shares_the_actual_re
         assert [request.method for request in seen] == ["HEAD", "POST"]
         assert len(clients) == 1 and result["answers"]["read_policy"]["choice"] == "allowed"
         assert seen[-1].extensions["timeout"]["read"] == config.read_router_timeout_seconds
+    finally:
+        await common.close_shared_clients()
+
+
+@pytest.mark.parametrize("jev_url, heads", [
+    ("https://gateway.invalid/v1/systemone", ["https://gateway.invalid/v1/models"]),
+    ("https://jev.invalid/v1/systemone", ["https://gateway.invalid/v1/models", "https://jev.invalid/v1/systemone"]),
+])
+async def test_jev_routing_without_a_router_model_warms_its_actual_origins(monkeypatch, jev_url, heads):
+    from memory.providers import common, configured_read
+    monkeypatch.setattr("agent.llm._get_provider_kwargs", lambda _: {
+        "api_base": "https://gateway.invalid/v1", "api_key": "test-key"})
+    seen = []
+    def respond(request):
+        seen.append(request)
+        assert request.method == "HEAD" and not request.content and "authorization" not in request.headers
+        return httpx.Response(404)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(common.httpx, "AsyncClient", lambda **kw: original(
+        transport=httpx.MockTransport(respond), **kw))
+    config = MemoryConfig(read_router_model="", jev_fallback_model="openai/gemini-3.8-flash-high", jev_url=jev_url)
+    try:
+        await configured_read.warm_connection(config)
+        await configured_read.warm_connection(config)  # throttled per origin
+        assert [str(request.url) for request in seen] == heads
+        startup = configured_read.schedule_transport_warmup(
+            config.model_copy(update={"semantic_recall": True, "route_jev": True}))
+        assert startup is not None
+        startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
     finally:
         await common.close_shared_clients()
 

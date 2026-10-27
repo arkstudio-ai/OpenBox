@@ -190,3 +190,24 @@ async def test_preparation_tools_require_explicit_rollout(monkeypatch, enabled, 
     assert set(tools) == ({"memory_prepare", "memory.prepare"} if enabled else set())
     assert {"memory_prepare", "memory_read_more"} <= MEMORY_CAPABILITIES
     assert "memory.prepare" not in MEMORY_CAPABILITIES
+
+
+async def test_a_read_before_preparation_says_it_is_pending_not_empty(monkeypatch):
+    # Measured 2026-10-26: cards.list ran in the same step as memory.prepare,
+    # read "restricted, no items", and the assistant submitted the same task
+    # again instead of answering its pending card.
+    from types import SimpleNamespace
+    from memory.read_contract import check
+    config, bundle = await deferred(monkeypatch, "The fast one is fine.")
+    monkeypatch.setattr("core.config.get_config", lambda: SimpleNamespace(memory=SimpleNamespace(
+        enabled=lambda feature, user_id=None: True)))
+    turn = replace(bundle["_turn"], read_policy="uncertain")
+    assert turn.deferred_read
+    denied = check(SimpleNamespace(user_id=turn.user_id, memory_turn=turn), "task_state")
+    assert denied["status"] == "restricted" and denied["items"] == []
+    assert denied["read_scope"] == "pending" and denied["checked"] is False
+    assert "memory.prepare" in denied["instruction"] and "not evidence" in denied["instruction"]
+    # A resolved restriction is still a plain refusal.
+    resolved = replace(turn, deferred_read=False, read_policy="current_only")
+    assert check(SimpleNamespace(user_id=turn.user_id, memory_turn=resolved), "task_state") == {
+        "status": "restricted", "items": [], "reason": "turn_read_scope"}

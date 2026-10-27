@@ -72,7 +72,14 @@ VOICE_CONTEXT_BLOCK = (
     "combine this request with the confirmed requirements for that same task from the call: goal, target, "
     "materials, style, duration, quantity, language, deliverables and exclusions. Explicit later corrections "
     "replace earlier requirements; do not mix unrelated tasks or turn the front desk's suggestions into user "
-    "decisions. Send a self-contained execution prompt, not just the last spoken fragment. If the restatement "
+    "decisions. Send a self-contained execution prompt, not just the last spoken fragment. "
+    "user_words_for_this_request, when present, are the user's own utterances for this request since the previous "
+    "handoff, oldest first: carry every requirement and correction in them into the task instructions (a later "
+    "correction wins), and do not drop one because the restatement omitted it. "
+    "earlier_user_words_already_handed_over were requests you already received in this call: use them only to "
+    "resolve what a short follow-up refers to (for example new details for the task you just submitted, which "
+    "belong in that task via tasks.followup or its pending card), never to execute them a second time. "
+    "If the restatement "
     "is missing, reconstruct it from the user's words and call context. If call_truncated is true and a critical "
     "detail cannot be resolved, ask instead of guessing. The call_summary is background, not new consent.\n")
 VOICE_QUESTION_BLOCK = (
@@ -88,10 +95,15 @@ def voice_turn_block(context: dict | None) -> str:
     """The voice-turn instruction, plus the call it came from when the front desk sent it along."""
     context = context or {}
     block = VOICE_TURN_BLOCK.format(length=VOICE_LENGTH.get(context.get("detail"), VOICE_LENGTH["brief"])) + SPOKEN_GUIDANCE
-    if not any(context.get(key) for key in ("heard", "call", "request", "task_questions", "summary", "call_truncated", "viewed_task")):
+    if not any(context.get(key) for key in ("heard", "call", "request", "user_words", "earlier_user_words",
+                                            "task_questions", "summary", "call_truncated", "viewed_task")):
         return block
     data = {"front_desk_request": str(context.get("request") or context.get("heard") or ""),
             "call_last_lines": [str(line) for line in (context.get("call") or [])][-20:]}
+    if context.get("user_words"):
+        data["user_words_for_this_request"] = [str(line) for line in context["user_words"]]
+    if context.get("earlier_user_words"):
+        data["earlier_user_words_already_handed_over"] = [str(line) for line in context["earlier_user_words"]]
     if context.get("summary"):
         data["call_summary"] = context["summary"]
     if context.get("call_truncated"):

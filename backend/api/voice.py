@@ -181,6 +181,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     from voice.memory_context import prepare as prepare_memory, refresh as refresh_memory, prewarm as prewarm_memory
     native_memory = get_config().memory.enabled("semantic_recall", user_id)
     from voice.shared_context import SharedContextWatcher
+    from voice.reply_focus import ReplyFocus
     shared_context = SharedContextWatcher(scope)
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
@@ -195,7 +196,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     context_reader=shared_context.read,
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
-                    prewarm_memory=prewarm_memory if native_memory else None)
+                    prewarm_memory=prewarm_memory if native_memory else None,
+                    focus=ReplyFocus())
     updates = CallUpdates(scope)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
@@ -431,9 +433,12 @@ async def _provider_event(bridge, link, event, *, occurrence_clock=None):
             raise
         except Exception as exc:
             log.warning("voice call=%s final ASR unavailable error=%s", bridge.call_id, type(exc).__name__)
-            # The normal call-error envelope tells the client this turn is
-            # unavailable. Never tell it, or the model, that saving succeeded.
-            raise CallEnded("error", close=1011, error="internal") from None
+            # The utterance is still answered and can still be handed over, but
+            # without a durable human source it is never recalled from and
+            # nothing may claim it was saved (remember reports unavailable).
+            identity = None
+            if skip := getattr(bridge, "skip_recall", None):
+                skip(event.item_id)
         if bridge.session != epoch or getattr(bridge, "provider", None) is not provider:
             return  # Keep the old human evidence; do not inject it into a replacement provider session.
         if identity:

@@ -157,18 +157,36 @@ class AssistantTasksButton extends ConsumerWidget {
   }
 }
 
+final assistantTasksSheetOpenProvider = StateProvider.autoDispose
+    .family<bool, AssistantScope>((ref, scope) => false);
+
 Future<void> showAssistantTasksSheet(
   BuildContext context,
   AssistantScope scope,
-) {
+) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  final provider = assistantTasksSheetOpenProvider(scope);
+  // Keep the flag alive when the sheet is opened outside the assistant page.
+  final subscription = container.listen(provider, (_, _) {});
+  final open = container.read(provider.notifier);
+  if (open.state) {
+    subscription.close();
+    return;
+  }
   FocusScope.of(context).unfocus();
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: context.tokens.bg,
-    builder: (_) => AssistantTasksSheet(scope: scope),
-  );
+  open.state = true;
+  try {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: context.tokens.bg,
+      builder: (_) => AssistantTasksSheet(scope: scope),
+    );
+  } finally {
+    if (open.mounted) open.state = false;
+    subscription.close();
+  }
 }
 
 /// Everything handed to the personal assistant, in one sheet (web

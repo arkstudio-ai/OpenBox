@@ -891,6 +891,22 @@ async def process_step(
                 else:
                     raise error
 
+        if (finish_reason in ("stop", "unknown") and not pending_tool_calls and not collected_text.strip()
+                and not collected_reasoning.strip() and not int((total_usage or {}).get("output") or 0)):
+            # Nothing at all came back (measured 2026-10-27: headers after 30 s,
+            # then a bare stop with 0 output tokens, mid-workflow). That is not
+            # an answer: recorded as a stop, it ended the run with "no final
+            # answer" before composition. Nothing visible was persisted, so the
+            # request is replay-safe; the loop owns the retry budget and backoff,
+            # and an exhausted budget closes the step as an error, not a success.
+            log.warning("Empty model response session=%s finish=%s", session_id, finish_reason)
+            return StepResult(
+                outcome=StepOutcome.RETRY,
+                retry_reason="Empty model response",
+                error="The model returned an empty response",
+                duration=time.time() - step_start_time,
+            )
+
         # Validate the complete batch before entering any executor.  A reused
         # provider call id with different payloads is ambiguous on replay; if
         # even one exists, fail the whole batch closed rather than allowing a

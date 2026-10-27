@@ -78,6 +78,8 @@ class CallScope:
     desk: object = field(default=None, compare=False)
     memory_turn: object = field(default=None, compare=False)
     memory_budget: object = field(default=None, compare=False)
+    # This turn keeps the call's own context (memory_context.keeps_call_context): no judge saw a restriction.
+    context_kept: bool = False
     # Client navigation hint only; SQL authority is resolved anew per utterance.
     viewed_session_id: str | None = None
 
@@ -382,7 +384,15 @@ async def run(name: str, scope: CallScope, arguments: str) -> dict:
                 "projects_list", "resources_list", "memory_search", "memory_read_more"}:
             from memory.read_contract import permits
             kind = "task_state" if name in {"tasks_overview", "cards_pending", "schedules_list"} else "search"
-            if not permits(scope.memory_turn, kind, bounded=name in {"memory_search", "memory_read_more"}):
+            # The decisions still waiting on the user and the tasks' live state are
+            # the call's own current context while no judge saw a restriction: an
+            # undecided read scope must not hide them ("is anything waiting?", "how
+            # is the video going?"; measured 2026-10-27, both answered "unavailable").
+            # Even no_history reads task state; history and memory stay gated.
+            live = (name in {"cards_pending", "tasks_overview"} and scope.context_kept
+                    and scope.memory_turn.read_policy == "uncertain")
+            if not live and not permits(scope.memory_turn, kind,
+                                        bounded=name in {"memory_search", "memory_read_more"}):
                 return unread_result(scope.memory_turn.read_policy)
         return await asyncio.wait_for(tool.run(scope, parsed if isinstance(parsed, dict) else {}), tool.timeout)
     except TimeoutError:
@@ -400,7 +410,9 @@ def unread_result(policy):
             "checked": False, "reason": "read_scope_unresolved" if policy == "uncertain" else "current_turn_restricted",
             "note": ("本轮未取得可用的读取范围判断，暂时无法核实。" if policy == "uncertain"
                      else "本轮读取范围不允许该查询，未查询数据。")
-                    + "这不是没有记录的查询结果。不能说用户未提交或选择丢失，不能要求重复作答。"}
+                    + "这不是没有记录的查询结果。不能说用户未提交或选择丢失，不能要求重复作答。"
+                    + ("用户要办的事需要这些记录时（例如“和上次一样再做一个”），本轮用 assistant_ask 把用户已说的完整要求"
+                       "交给个人助理，它会自行核对实际记录；不要让用户重述已经说过的内容。" if policy == "uncertain" else "")}
 
 
 def _argument_shape(value, depth=0):

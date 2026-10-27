@@ -160,7 +160,9 @@ async def test_manual_click_withdraws_unified_voice_explanation(stage):
             link.finish(ref.provider_call_id, speech="还需要确认新建项目。",
                         decision_versions={"placement": "v1"}, speech_stale=True)
             await drain()
-            assert not provider.commands("note")
+            # Only the note that the card went (voice/phrases.closed_decisions_note), never the stale explanation.
+            assert not any("还需要确认新建项目" in note for _, note in provider.commands("note"))
+            assert all("no_longer_waiting" in note for _, note in provider.commands("note"))
         else:
             assert {"type": "playback.clear"} in outbox(bridge)
             if stage == "speaking":

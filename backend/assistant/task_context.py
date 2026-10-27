@@ -7,12 +7,11 @@ current state.
 """
 from datetime import datetime
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, select
 from sqlalchemy.orm import aliased
 
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.project import Project
-from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
 from memory.redaction import redact_credentials
 
@@ -43,12 +42,8 @@ async def task_context(db, main) -> dict:
     pending = {}
     blocked = {}
     if selected:
-        pending = dict((await db.execute(select(QuestionCheckpoint.session_id, func.count())
-            .join(SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id)
-            .where(QuestionCheckpoint.session_id.in_([row[0].execution_session_id for row in selected]),
-                   QuestionCheckpoint.user_id == main.user_id, QuestionCheckpoint.status == "pending",
-                   QuestionCheckpoint.generation == SessionExecution.generation)
-            .group_by(QuestionCheckpoint.session_id))).all())
+        from assistant.requests import current_question_counts
+        pending = await current_question_counts(db, main.user_id, [row[0] for row in selected])
         waiting = [row[0].execution_session_id for row in selected if pending.get(row[0].execution_session_id)]
         if waiting:
             from assistant.blocking import blocked_views

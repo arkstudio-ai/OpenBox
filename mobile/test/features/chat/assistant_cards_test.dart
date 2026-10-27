@@ -3,16 +3,19 @@ import 'dart:convert';
 
 import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/api/chat_api.dart';
+import 'package:bossip_mobile/features/chat/assistant_screen.dart';
 import 'package:bossip_mobile/features/chat/utils/task_receipt.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_notification_target.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_report.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_requests.dart';
 import 'package:bossip_mobile/features/chat/widgets/assistant_task_receipts.dart';
+import 'package:bossip_mobile/features/chat/widgets/assistant_tasks.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/widgets/toast.dart';
+import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,43 +61,54 @@ class _RequestsApi extends TestApi {
   bool revoked = false;
   Completer<void>? holdNextResult;
   final resultReads = <({int offset, String? version})>[];
+  Completer<void>? holdNextRequests;
+  int questionReads = 0;
   @override
-  Future<Map<String, dynamic>> requests(String kind, {String? cursor}) async =>
-      {
-        'items': replies.any((r) => r['kind'] == kind)
-            ? <Map<String, dynamic>>[]
-            : [
-                {
-                  'id': kind,
-                  'session_id': 'execution',
-                  'assistant': binding,
-                  'task_title': 'Campaign plan',
-                  'project_name': 'Project Orchard',
-                  if (kind == 'permission') ...{
-                    'tool': 'shell',
-                    'input': {'command': 'test-command'},
-                    'always': ['test-command *'],
-                  } else
-                    'questions': [
-                      {
-                        'question': 'Which audience?',
-                        'options': [
-                          {'label': 'Existing customers'},
-                        ],
-                        'custom': false,
-                      },
-                    ],
-                },
-              ],
-        'receipts': [
-          for (final r in replies.where((r) => r['kind'] == kind))
-            {
-              'command_id': 'reply-${r['id']}',
-              'state': 'accepted',
-              'session_id': 'execution',
-            },
-        ],
-      };
+  Future<Map<String, dynamic>> requests(String kind, {String? cursor}) async {
+    final hold = kind == 'question' ? holdNextRequests : null;
+    if (kind == 'question') {
+      questionReads++;
+      holdNextRequests = null;
+    }
+    final value = <String, dynamic>{
+      'items': replies.any((r) => r['kind'] == kind)
+          ? <Map<String, dynamic>>[]
+          : [
+              {
+                'id': kind,
+                'session_id': 'execution',
+                'assistant': binding,
+                'task_title': 'Campaign plan',
+                'project_name': 'Project Orchard',
+                if (kind == 'permission') ...{
+                  'tool': 'shell',
+                  'input': {'command': 'test-command'},
+                  'always': ['test-command *'],
+                } else
+                  'questions': [
+                    {
+                      'question': 'Which audience?',
+                      'options': [
+                        {'label': 'Existing customers'},
+                      ],
+                      'custom': false,
+                    },
+                  ],
+              },
+            ],
+      'receipts': [
+        for (final r in replies.where((r) => r['kind'] == kind))
+          {
+            'command_id': 'reply-${r['id']}',
+            'state': 'accepted',
+            'session_id': 'execution',
+          },
+      ],
+    };
+    await hold?.future;
+    return value;
+  }
+
   @override
   Future<Map<String, dynamic>> result(
     String id, {
@@ -129,8 +143,11 @@ class _LegacyApi extends ChatApi {
   @override
   Future<List<PermissionRequest>> listPermissions() async => [];
   @override
-  Future<void> replyQuestion(String id, List<List<String>> answers) async =>
-      throw StateError('Assistant question used unversioned reply');
+  Future<void> replyQuestion(
+    String id,
+    List<List<String>> answers, {
+    List<List<String>>? attachments,
+  }) async => throw StateError('Assistant question used unversioned reply');
   @override
   Future<void> replyPermission(String id, String action) async =>
       throw StateError('Assistant permission used unversioned reply');
@@ -210,7 +227,109 @@ Future<void> _unmount(WidgetTester tester, Fixture f) async {
   await tester.pump(const Duration(milliseconds: 1));
 }
 
+Future<void> _revealInConversation(WidgetTester tester, Finder target) async {
+  final viewport = find.byType(CustomScrollView).first;
+  for (
+    var attempt = 0;
+    attempt < 15 && target.hitTestable().evaluate().isEmpty;
+    attempt++
+  ) {
+    final above = tester.getCenter(target).dy < tester.getCenter(viewport).dy;
+    // Drag as a reader would so ChatFlow releases its stream auto-scroll.
+    await tester.drag(viewport, Offset(0, above ? 140 : -140));
+    await tester.pumpAndSettle();
+  }
+  expect(target.hitTestable(), findsOneWidget);
+}
+
 void main() {
+  for (final empty in [false, true]) {
+    testWidgets(
+      'delegated cards are answerable in the assistant conversation (empty=$empty)',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _RequestsApi();
+        if (empty) {
+          api.newest.clear();
+          api.stored.clear();
+        }
+        final f = await _mount(
+          tester,
+          const Column(
+            children: [
+              AssistantTasksButton(scope: scope),
+              Expanded(child: AssistantScreen(scope: scope)),
+            ],
+          ),
+          server: api,
+        );
+        expect(find.text('Which audience?'), findsOneWidget);
+        expect(find.byType(AssistantRequests), findsOneWidget);
+        await _revealInConversation(tester, find.text('Existing customers'));
+        await tester.tap(find.text('Existing customers'));
+        await tester.pumpAndSettle();
+        // Opening My tasks must not leave two editors for the same draft.
+        await tester.tap(find.byKey(const ValueKey('assistant-tasks-button')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byType(AssistantRequests, skipOffstage: false),
+          findsOneWidget,
+        );
+        expect(find.text('Which audience?'), findsOneWidget);
+        await tester.tap(find.byTooltip('Close'));
+        await tester.pumpAndSettle();
+        expect(find.text('Which audience?'), findsOneWidget);
+        await _revealInConversation(
+          tester,
+          find.widgetWithText(FilledButton, 'Confirm'),
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
+        await tester.pumpAndSettle();
+        expect(
+          api.replies.single['expected_request_revision'],
+          binding['request_revision'],
+        );
+        expect(api.replies.single['answers'], [
+          ['Existing customers'],
+        ]);
+        expect(find.text('Which audience?'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await _unmount(tester, f);
+      },
+    );
+  }
+
+  testWidgets(
+    'a card change during an in-flight read is refreshed immediately',
+    (tester) async {
+      final api = _RequestsApi();
+      final f = await _mount(
+        tester,
+        const SingleChildScrollView(child: AssistantRequests(scope: scope)),
+        server: api,
+      );
+      expect(find.text('Which audience?'), findsOneWidget);
+      final hold = Completer<void>();
+      api.holdNextRequests = hold;
+      f.ws.frames.add(const WsEvent('question.asked', {}));
+      await tester.pump();
+      final reads = api.questionReads;
+      api.replies.add({'id': 'question', 'kind': 'question'});
+      f.ws.frames.add(const WsEvent('question.replied', {}));
+      await tester.pump();
+      hold.complete();
+      await tester.pumpAndSettle();
+      expect(api.questionReads, greaterThan(reads));
+      expect(find.text('Which audience?'), findsNothing);
+      expect(find.text('1 things need you'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await _unmount(tester, f);
+    },
+  );
+
   testWidgets(
     'notification selects the original result and hides it after revocation',
     (tester) async {

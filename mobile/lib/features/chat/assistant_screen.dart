@@ -16,6 +16,7 @@ import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/assistant_api.dart';
 import 'state/assistant_controller.dart';
+import 'state/assistant_pending.dart';
 import 'state/stream_store.dart';
 import 'utils/compaction_view.dart';
 import 'utils/suggestions.dart';
@@ -23,7 +24,8 @@ import 'utils/turn_view.dart';
 import 'widgets/assistant_intro_entry.dart';
 import 'widgets/assistant_notification_target.dart';
 import 'widgets/assistant_persona_turn.dart';
-import 'widgets/assistant_request_reminder.dart';
+import 'widgets/assistant_requests.dart';
+import 'widgets/assistant_tasks.dart';
 import 'widgets/assistant_welcome.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
@@ -171,7 +173,12 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
         )
         .toList();
     final busy = isBusyStatus(session.status);
-    final empty = rows.isEmpty && !busy && !state.hasMore;
+    final pending = ref.watch(assistantPendingProvider(widget.scope));
+    final hasRequests =
+        (pending.valueOrNull?.ids.isNotEmpty ?? false) ||
+        (pending.valueOrNull?.hasMore ?? false) ||
+        pending.hasError;
+    final empty = rows.isEmpty && !busy && !state.hasMore && !hasRequests;
     _anchor ??= rows.whereType<UserRowData>().firstOrNull?.message.id;
     final anchor = rows.indexWhere(
       (r) => r is UserRowData && r.message.id == _anchor,
@@ -202,10 +209,12 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
         },
       if (busy && (rows.isEmpty || rows.last is UserRowData))
         const AssistantPersonaTyping(),
-      AssistantRequestReminder(
-        key: ValueKey((widget.scope, 'requests')),
-        scope: widget.scope,
-      ),
+      // The task sheet renders the same drafts. Only one editor may be live.
+      if (!ref.watch(assistantTasksSheetOpenProvider(widget.scope)))
+        AssistantRequests(
+          key: ValueKey((widget.scope, 'requests')),
+          scope: widget.scope,
+        ),
     ];
     final lastKey = switch (rows.lastOrNull) {
       UserRowData(:final message) => message.id,

@@ -86,6 +86,8 @@ def test_provider_refusals_are_classified_not_forwarded(message, reason):
     ("Cannot update 'voice' after session has started processing audio.", "session.update", "invalid_value",
      "session"),
     ("Conversation already has an active response", "response.create", "invalid_value", "active_response"),
+    # A cancel with nothing to cancel is never the refusal of a reply we asked for (measured 2026-10-27).
+    ("Conversation has no active response.", "response.cancel", "invalid_value", "cancel"),
     ("Something else", "response.create", "invalid_value", "other"),
     ("Your session was closed because no response was generated for 180 seconds.", "", "response_idle_timeout",
      "session_closed"),
@@ -100,7 +102,7 @@ def test_errors_are_classified_by_the_event_they_concern_first(message, param, c
     ("active_response", "", True), ("no_input", "", True), ("other", "response.create", True),
     ("denied", "response.create", True), ("other", "", False), ("item", "conversation.item.delete", False),
     ("session", "session.update", False), ("duplicate_output", "conversation.item.create", False),
-    ("item", "response.create", False),
+    ("item", "response.create", False), ("cancel", "response.cancel", False),
 ])
 def test_only_a_refused_response_create_gives_a_request_up(reason, param, refused):
     assert provider_module.refuses_reply(reason, param) is refused

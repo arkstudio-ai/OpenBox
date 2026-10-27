@@ -1805,6 +1805,10 @@ async def run_loop(
                                 assistant_scope=assistant_memory, run_id=run_id, model_id=model_id)
                             memory_turn_contexts[last_user.id] = await recall_ahead.recall(
                                 inputs, session_id=session_id, turn_id=last_user.id, config=config.memory)
+                    if assistant_memory:
+                        # A voice turn's read restriction holds for the words it handed over.
+                        from assistant.projection import voice_read_floor
+                        memory_turn_contexts[last_user.id] = voice_read_floor(memory_turn_contexts[last_user.id], last_user)
                     memory_bundle = memory_turn_contexts[last_user.id]
                     # The trusted preparation result carries its resolved scope.
                     # Every provider boundary still reauthorizes it using fresh SQL.
@@ -1836,6 +1840,9 @@ async def run_loop(
                             # the entry-bound source. Tool result text/metadata
                             # never supplies a permission or a memory packet.
                             memory_bundle = {**ctx.memory_read_budget.prepared, "_read_budget": ctx.memory_read_budget}
+                            if assistant_memory:
+                                from assistant.projection import voice_read_floor
+                                memory_bundle = voice_read_floor(memory_bundle, last_user)
                             memory_turn_contexts[last_user.id] = memory_bundle
                             ctx.memory_debug_run_id = memory_bundle.get("run_id")
                             try:
@@ -2256,13 +2263,37 @@ async def run_loop(
                 else payload_metrics.tool_count
             )
             exposure_config = config.tool_exposure
-            enforce_serialized_payload_limits(
-                exposure_mode=exposure_mode,
-                catalogue_wire_chars=catalogue_wire_chars,
-                initial_visible_chars=initial_visible_chars,
-                native_wire_hard_chars=exposure_config.native_wire_hard_chars,
-                active_hard_chars=exposure_config.active_hard_chars,
-            )
+            try:
+                enforce_serialized_payload_limits(
+                    exposure_mode=exposure_mode,
+                    catalogue_wire_chars=catalogue_wire_chars,
+                    initial_visible_chars=initial_visible_chars,
+                    native_wire_hard_chars=exposure_config.native_wire_hard_chars,
+                    active_hard_chars=exposure_config.active_hard_chars,
+                )
+            except RuntimeError as budget_error:
+                # Deterministic for this state: recovery would replay the same
+                # step, fail identically and finally leave the turn "aborted"
+                # with no explanation. Close it once, visibly, before any
+                # provider request or tool execution.
+                log.error("Tool definition budget refused session=%s agent=%s: %s",
+                          session_id, agent_name, budget_error)
+                failed = True
+                last_step_info = await create_assistant_message(session_id, last_user.id,
+                    agent=agent_name, model_id=model_id, user_id=user_id, run_fence=run_fence)
+                run_message_ids.add(last_step_info.id)
+                await save_part(StepStartPart(id=ascending("part"), step=step,
+                    session_id=session_id, message_id=last_step_info.id),
+                    is_new=True, user_id=user_id, run_fence=run_fence)
+                public_error = await _close_failed_provider_step(last_step_info, session_id=session_id,
+                    user_id=user_id, run_fence=run_fence, step=step, start_snapshot=None, duration=0,
+                    code="TOOL_DEFINITION_BUDGET",
+                    message="这一步需要的工具说明超出了当前模型请求的上限，尚未发送给模型，也没有执行任何工具。"
+                            "已完成的成果不受影响；请稍后继续，或联系管理员调整工具配置。")
+                bus.publish(SESSION_ERROR, {"userId": user_id, "sessionId": session_id,
+                    "generation": lease.generation, "error": public_error})
+                last_assistant_msg = last_step_info
+                break
             largest_payload_items = ",".join(
                 f"{item.tool_id}:{item.definition_chars}"
                 for item in payload_metrics.largest_items

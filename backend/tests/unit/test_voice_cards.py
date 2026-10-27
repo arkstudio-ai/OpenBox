@@ -13,7 +13,7 @@ import pytest
 
 from tests.support.voice_fakes import (FakeClock, FakeLink, ScriptedProvider, audio, done, drain, event, item,
                                        started, tool_call, transcript)
-from voice import cards, phrases, tools
+from voice import cards, phrases, reply_focus, tools
 from voice.bridge import Bridge
 from voice.progress import Progress
 from voice.tools import CallScope
@@ -352,6 +352,21 @@ async def test_watch_reads_the_same_user_workspace_and_main_as_the_card_tool(mon
     assert identities == [{"user_id": "u1", "workspace_id": "w1", "main_id": "main-1", "limit": cards.WATCH_LIMIT}]
 
 
+async def test_watch_drops_a_question_the_persons_new_message_replaces(monkeypatch):
+    """Measured 2026-10-27: after new requirements were typed on the task's page the call still asked the old card."""
+    answering(monkeypatch)
+
+    async def list_waiting(**identity):
+        return [FORM]
+
+    async def replaced_questions(db, user_id, session_ids):
+        assert user_id == "u1" and session_ids == ["video-session"]
+        return {"video-session"}
+    monkeypatch.setattr("assistant.request_answers.list_waiting", list_waiting)
+    monkeypatch.setattr("voice.work.replaced_questions", replaced_questions)
+    assert await cards.waiting(SCOPE) == ([CARD], [])
+
+
 async def test_new_pending_form_is_announced_once_when_reports_are_on(call):
     bridge, provider, link, _ = call
     await greeted(bridge, provider)
@@ -465,7 +480,9 @@ async def test_manual_choice_invalidates_plain_explanation_based_on_old_card_sta
         await replay(bridge, audio("explanation"), done("explanation", status="cancelled"))
     else:
         await bridge._settle(ref, {"status": "ok", "speech": "你还需要点确认。"})
-        assert not provider.commands("note")
+        # Only the note that the card went (voice/phrases.closed_decisions_note), never the stale explanation.
+        assert [json.loads(note.split("）", 1)[1]).get("no_longer_waiting") for _, note in provider.commands("note")] == [
+            [reply_focus.describe(CARD)]]
     assert not any(isinstance(value, bytes) for value in outbox(bridge))
     assert ref.delivery == "superseded" and not bridge.deliveries
 
@@ -705,3 +722,130 @@ async def test_card_choice_records_its_original_utterance_even_when_later_speech
     await replay(bridge, tool_call("choice", name="cards_answer", arguments=json.dumps(selection()), response_id="first-response"))
     assert replies
     assert bridge.refs[-1].transcript == "按原方案办"
+
+
+def test_a_short_card_survives_when_long_task_questions_overflow_the_calls_decision_context():
+    """Measured 2026-10-27: five long task questions pushed out the confirmation the user was answering."""
+    desk = cards.CardDesk(lambda: (0, ""))
+    for index in range(5):
+        desk.show_question({"id": f"q{index}", "version": "v1", "session_id": f"s{index}", "session_title": f"任务{index}",
+                            "questions": [{"header": "方案审阅", "question": "分镜方案" * 400, "options": ["可以", "修改"]}],
+                            "assistant_may_answer": True, "card_kind": "question", "context": "画面" * 400}, "zh")
+    desk.show(CARD)
+    shown = desk.call_context("zh")
+    assert [item["card"] for item in shown if item.get("kind_of") == "assistant_card"] == ["1"]
+    assert len(json.dumps(shown, ensure_ascii=False)) <= cards.CALL_CONTEXT_CHARS
+
+
+@pytest.mark.parametrize("answered_card", ["discussed", "unrelated"])
+async def test_an_english_reply_naming_the_task_as_written_is_stopped_only_by_its_own_card(call, answered_card):
+    """Measured 2026-10-27: with an English UI the voice translated Chinese task names, nothing tied the
+    reply to its card, and a card answered on screen mid-reply could not stop the outdated explanation."""
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    sunset = {**CARD, "card_id": "q-sunset", "task_title": "30秒日落海浪横屏短视频方案",
+              "options": ["调整运镜方式或时长分配", "取消"]}
+    orange = {**CARD, "card_id": "q-orange", "task_title": "橙光鲜果周末上新宣传视频脚本",
+              "options": ["微调个别语句的表达", "取消"]}
+    bridge.seed_waiting_cards([sunset, orange], [])
+    await replay(bridge, started("explain"), audio("explain", size=480000),
+                 event("assistant_transcribing", response_id="explain",
+                       text="The task 30秒日落海浪横屏短视频方案 is asking you how to adjust the seagull shots."))
+    outbox(bridge)
+    await bridge.waiting_cards([orange] if answered_card == "discussed" else [sunset], [])
+    cleared = any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
+    assert cleared is (answered_card == "discussed")
+
+
+def test_cards_are_named_as_written_whatever_language_the_call_speaks():
+    from voice import phrases
+    assert "照卡片上的原名说" in phrases.card_instructions("zh")
+    assert "exactly as written on the card" in phrases.card_instructions("en")
+    assert "exactly as written on the card" in phrases.question_instructions("en")
+
+
+SUNSET = {"id": "q-sunset", "version": "v1", "session_id": "sunset", "session_title": "30秒日落海浪横屏短视频方案",
+          "project_name": "日落海浪短视频", "assistant_may_answer": True, "high_risk": False,
+          "questions": [{"header": "海鸥镜头位置", "question": "海鸥飞过放在哪个镜头？",
+                         "options": ["放在镜头3（收尾镜头：晚霞倒影与海鸥飞过）", "放在镜头2（中间镜头：金光浪花与海鸥低空掠过）",
+                                     "单独作为一个专门的海鸥飞过镜头（总长保持30秒）"], "custom": False}]}
+ORANGE = {**SUNSET, "id": "q-orange", "session_id": "orange", "session_title": "橙光鲜果周末上新宣传视频脚本",
+          "project_name": "橙光鲜果新品宣传"}
+# Measured 2026-10-27 (English UI, Chinese cards): the notice, then the explanation the user asked for.
+ANNOUNCED = ('The task "30秒日落海浪横屏短视频方案" is waiting for your decision on where to place the seagull footage. '
+             'You can choose to add it to the third shot as a closing scene, the second shot with the golden waves, '
+             'or create a dedicated seagull shot while keeping the total duration at 30 seconds. Which option would you prefer?')
+EXPLAINED = ('The video task is waiting for you to decide where to place the seagull footage: either in the third shot as a '
+             'closing scene, the second shot with the golden waves, or as a dedicated seagull shot while keeping the total '
+             'duration at 30 seconds.')
+
+
+def test_a_reply_repeating_a_notices_own_wording_is_about_that_card_and_boilerplate_is_not():
+    from voice.spoken_cards import rendered, rendering
+    renderings = {"q-sunset": ("v1", rendering(ANNOUNCED))}
+    assert rendered(EXPLAINED, renderings) == {"q-sunset": "v1"}
+    assert rendered("The Chunhe Fruit Store video is waiting for your approval of the storyboard and production "
+                    "quote. Once you confirm, the production can proceed.", renderings) == {}
+    assert rendered("The task is waiting for your decision. Which option would you prefer?", renderings) == {}
+    # A phrase two notices both used identifies neither card.
+    shared = {**renderings, "q-orange": ("v1", rendering(ANNOUNCED))}
+    assert rendered(EXPLAINED, shared) == {}
+
+
+ZH_ANNOUNCED = ("「30秒日落海浪横屏短视频方案」这个任务需要你确认一下海鸥镜头放在哪里：你想放在第三个镜头作为收尾，"
+                "还是放在第二个镜头的金光浪花里？")
+ZH_EXPLAINED = "日落海浪这个视频要你决定海鸥放在哪里：可以放在第三个镜头作为收尾，也可以放在第二个镜头的金光浪花里。"
+# What attribution must refuse (review 2026-10-27): another card's subject, boilerplate, and the same task's
+# other decision or status told under the task name both share.
+NOT_THIS_CARD = [
+    'The task "橙光鲜果周末上新宣传视频脚本" is waiting for your decision on the revised copy. You can choose to simplify '
+    'the wording to make it shorter, or keep the current script with the second shot unchanged. Which option would you prefer?',
+    "The Chunhe video needs your sign-off on the storyboard. Would you like it to keep the current shots, or should I "
+    "change the total duration?",
+    'The task "30秒日落海浪横屏短视频方案" is also asking about the background music: keep the soft piano or switch to '
+    'ocean ambience only?',
+    'The task "30秒日落海浪横屏短视频方案" is now generating the second segment; I will tell you when it is ready.',
+    "好的，「橙光鲜果」那个任务也需要你确认一下是哪个版本，你想要简化的文案，还是保留现在的镜头和时长？",
+    "好的，需要你确认一下是哪个任务，你想先处理哪一个，还是都放一放？",
+    "「30秒日落海浪横屏短视频方案」这个任务还想问背景音乐，是保留轻柔钢琴，还是只用海浪声？",
+    # Another card of the same kind, told in the same sentence pattern.
+    'The task "橙光鲜果周末上新宣传视频脚本" is waiting for your decision on where to place the store logo. '
+    'You can choose to add it to the third shot as an end card, or show it in the corner of every shot.',
+    "「橙光鲜果周末上新宣传视频脚本」这个任务需要你确认一下店铺标志放在哪里：你想放在第三个镜头作为片尾，还是每个镜头角落都放？",
+]
+
+
+@pytest.mark.parametrize("reply", NOT_THIS_CARD)
+@pytest.mark.parametrize("announced", [ANNOUNCED, ZH_ANNOUNCED], ids=["en", "zh"])
+def test_boilerplate_another_subject_or_a_shared_task_name_never_attribute_a_reply(announced, reply):
+    from voice.spoken_cards import names, rendered, rendering
+    assert rendered(reply, {"q-sunset": ("v1", rendering(announced, names(SUNSET)))}) == {}
+
+
+def test_the_card_explained_again_in_its_own_words_still_matches_in_either_language():
+    from voice.spoken_cards import names, rendered, rendering
+    assert rendered(EXPLAINED, {"q-sunset": ("v1", rendering(ANNOUNCED, names(SUNSET)))}) == {"q-sunset": "v1"}
+    assert rendered(ZH_EXPLAINED, {"q-sunset": ("v1", rendering(ZH_ANNOUNCED, names(SUNSET)))}) == {"q-sunset": "v1"}
+
+
+@pytest.mark.parametrize("answered", ["explained", "unrelated"])
+async def test_a_translated_explanation_of_a_told_card_stops_only_when_that_card_is_answered(call, answered):
+    """Measured 2026-10-27: the voice told the sunset card, then explained it as "the video task" in English; the
+    card answered on screen mid-explanation left the outdated explanation playing for 10 s."""
+    from tests.support.voice_fakes import outbox
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    bridge.seed_waiting_cards([], [ORANGE])
+    await bridge.waiting_cards([], [ORANGE, SUNSET])
+    note = provider.commands("note")[-1][1]
+    await replay(bridge, item("note-sunset", text=note), started("notice"),
+                 event("assistant_transcript", response_id="notice", text=ANNOUNCED), audio("notice"), done("notice"))
+    await bridge._finish_playbacks()
+    await replay(bridge, event("user_started"), event("user_stopped"), transcript("日落海浪那个视频现在要我决定什么？", "u-ask"),
+                 started("explain"), audio("explain", size=480000),
+                 event("assistant_transcribing", response_id="explain", text=EXPLAINED))
+    outbox(bridge)
+    await bridge.waiting_cards([], [ORANGE] if answered == "explained" else [SUNSET])
+    cleared = any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
+    assert cleared is (answered == "explained")

@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from hashlib import sha256
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import JSON, and_, case, func, or_, select, type_coerce
 
 from assistant.commands import _authority
 from assistant.history import _decode_cursor, _encode_cursor
@@ -15,8 +15,11 @@ from assistant.reads import execution_settings
 from assistant.requests import question_version
 from assistant.transactions import begin_snapshot, read_session
 from assistant.work_context import conversation_background
+from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.file_asset import FileAsset
+from db.models.message import Message
+from db.models.part import Part
 from db.models.project import Project
 from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
@@ -34,6 +37,21 @@ def task_version(task):
     """A state identity, not an ordering inferred from prose or status rank."""
     return sha256(json.dumps([task.intent_revision, task.control_revision,
         task.observed_state, task.latest_result_id], sort_keys=True).encode()).hexdigest()
+
+
+async def replaced_questions(db, user_id, session_ids) -> set[str]:
+    """Task conversations whose pending question the person's own new message will replace.
+
+    The message, not yet taken up, invalidates the card once materialized
+    (question.runtime admission_blocked_locked; platform input waits behind the
+    card instead): the requirements changed and the old decision no longer waits.
+    """
+    if not session_ids:
+        return set()
+    return set((await db.scalars(select(AgentInboxItem.session_id).where(
+        AgentInboxItem.session_id.in_(session_ids), AgentInboxItem.user_id == user_id,
+        AgentInboxItem.state == "accepted", AgentInboxItem.delivery == "followup",
+        AgentInboxItem.origin == "human").distinct())).all())
 
 
 async def overview(scope, arguments, *, limit=12, db=None):
@@ -107,6 +125,44 @@ async def overview(scope, arguments, *, limit=12, db=None):
         from assistant.execution_errors import result_execution_errors
         errors = await result_execution_errors(db, [row[3] for row in selected], user_id=scope.user_id)
         context = await conversation_background(db, [row[0].id for row in selected], user_id=scope.user_id)
+        # Ordinary, manually created conversations have no AssistantTask intent
+        # revision. Keep a durable human-input identity across accepted ->
+        # claimed -> settled, so a new message cannot look like approval of the
+        # old card merely because that card disappeared during materialization.
+        ranked_inputs = select(AgentInboxItem.id, AgentInboxItem.session_id, AgentInboxItem.prompt,
+            AgentInboxItem.accepted_at,
+            func.row_number().over(partition_by=AgentInboxItem.session_id,
+                order_by=(AgentInboxItem.accepted_at.desc(), AgentInboxItem.id.desc())).label("rank")).where(
+                    AgentInboxItem.session_id.in_([row[0].id for row in selected]),
+                    AgentInboxItem.user_id == scope.user_id, AgentInboxItem.origin == "human",
+                    AgentInboxItem.state.in_(("accepted", "claimed", "settled"))).subquery()
+        human_inputs, input_times = {}, {}
+        for row in (await db.execute(select(ranked_inputs).where(ranked_inputs.c.rank == 1))).all():
+            text = redact_credentials(row.prompt)
+            human_inputs[row.session_id] = {"id": row.id, "text": text[:300], "truncated": len(text) > 300}
+            input_times[row.session_id] = (row.accepted_at, row.id)
+        # The ordinary-chat legacy endpoint writes a human Message directly,
+        # without an inbox row. Its server-authored provenance is required:
+        # provider role=user alone also carries platform messages. Exclude
+        # materialized inbox messages to preserve their original acceptance
+        # identity and ordering when they are claimed later.
+        data = type_coerce(Part.data, JSON)
+        ranked_messages = select(Message.id, Message.session_id, Message.created_at, Part.data,
+            func.row_number().over(partition_by=Message.session_id,
+                order_by=(Message.created_at.desc(), Message.id.desc(), Part.id.desc())).label("rank")).join(
+                    Part, and_(Part.message_id == Message.id, Part.session_id == Message.session_id)).where(
+                        Message.session_id.in_([row[0].id for row in selected]),
+                        Message.user_id == scope.user_id, Part.user_id == scope.user_id,
+                        Message.role == "user", Message.summary.is_not(True), Part.type == "text",
+                        data["origin"].as_string() == "human",
+                        data["origin_ref"]["actor_user_id"].as_string() == scope.user_id,
+                        data["ignored"].as_boolean().is_not(True), data["synthetic"].as_boolean().is_not(True),
+                        ~select(AgentInboxItem.id).where(AgentInboxItem.message_id == Message.id).exists()).subquery()
+        for row in (await db.execute(select(ranked_messages).where(ranked_messages.c.rank == 1))).all():
+            if row.session_id in input_times and (row.created_at, row.id) <= input_times[row.session_id]:
+                continue
+            text = redact_credentials(str((row.data or {}).get("text") or ""))
+            human_inputs[row.session_id] = {"id": row.id, "text": text[:300], "truncated": len(text) > 300}
         pending = {}
         for question in (await db.scalars(select(QuestionCheckpoint).join(SessionExecution,
                 SessionExecution.session_id == QuestionCheckpoint.session_id).where(
@@ -117,6 +173,7 @@ async def overview(scope, arguments, *, limit=12, db=None):
                 or_(QuestionCheckpoint.expires_at.is_(None), QuestionCheckpoint.expires_at > func.now()))
                 .order_by(QuestionCheckpoint.created_at.desc(), QuestionCheckpoint.id.desc()))).all():
             pending.setdefault(question.session_id, question)
+        replaced = await replaced_questions(db, scope.user_id, list(pending))
         answered = {}
         for question, execution in (await db.execute(select(QuestionCheckpoint, SessionExecution).join(
                 SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id).where(
@@ -139,10 +196,24 @@ async def overview(scope, arguments, *, limit=12, db=None):
                 "conversation_state": session.status, "created_at": _iso(session.created_at),
                 "current_settings": execution_settings(session),
                 "updated_at": _iso(observed_activity), "url": f"/app/s/{session.id}"}
-            if question := pending.get(session.id):
+            if human_input := human_inputs.get(session.id):
+                item["human_input"] = human_input
+            question = pending.get(session.id)
+            if question and session.id in replaced:
+                # Measured 2026-10-27: for seconds after new requirements were
+                # sent, the call still offered the replaced plan's confirmation.
+                item["waiting_for_user"] = False
+                item["state_summary"] = "用户刚提交了新的要求，任务将按新要求重新处理；之前的待确认事项会被替换，不需要再确认。"
+            elif question:
                 # A fresh pending decision is more useful than a stale task
                 # summary. It is not an unfinished calculation or a result.
-                item["state"] = "waiting_input"
+                # A task the user paused or stopped stays so while its question
+                # waits (measured 2026-10-27: a paused task still read as
+                # waiting, so a call went on asking for its decision).
+                if task is None or task.desired_state == "running":
+                    item["state"] = "waiting_input"
+                elif task.desired_state == "paused":
+                    item["state_summary"] = "用户已暂停此任务；待确认事项仍保留，任务恢复后才会继续执行。"
                 item["waiting_for_user"] = True
                 item["pending_request"] = {"request_id": question.id, "version": question_version(question),
                     "questions": [{"header": redact_credentials(str(q.get("header") or ""))[:80],
@@ -152,6 +223,11 @@ async def overview(scope, arguments, *, limit=12, db=None):
             elif resolved := answered.get(session.id):
                 question, execution = resolved
                 item["last_decision"] = {"request_id": question.id, "state": "answered", "applied": question.applied}
+                if choice := "；".join("、".join(str(label) for label in answer) for answer in question.answers or []
+                                      if isinstance(answer, list)):
+                    # What was chosen, not only that something was (measured
+                    # 2026-10-27: "modify the plan" was told as "confirmed").
+                    item["last_decision"]["choice"] = redact_credentials(choice)[:160]
                 item["waiting_for_user"] = False
                 if state == "waiting_input":
                     # The task projection can lag the committed answer and its
@@ -176,6 +252,7 @@ async def overview(scope, arguments, *, limit=12, db=None):
                     item["previous_result"] = summary
             if task:
                 item["intent_revision"] = task.intent_revision
+                item["control_revision"] = task.control_revision
                 item["task_version"] = task_version(task)
             if ready := outputs.get(session.id):
                 item["available_outputs"] = ready
@@ -190,7 +267,7 @@ async def overview(scope, arguments, *, limit=12, db=None):
                     "truncated": entry["truncated"] or len(entry["text"]) > 200} for entry in previews]
             item["version"] = sha256(json.dumps({key: item.get(key) for key in (
                 "task_version", "state", "pending_request", "last_decision", "video", "available_outputs",
-                "current_settings", "recent_messages")},
+                "current_settings", "recent_messages", "human_input")},
                 sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             items.append(item)
         next_cursor = (_encode_cursor({"scope": identity, "at": _iso(selected[-1][-1]), "id": selected[-1][0].id,

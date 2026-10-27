@@ -15,7 +15,7 @@ def guarded(checker):
     return bridge, provider, link
 
 
-async def needs_handoff(words, context):
+async def needs_handoff(words, context, *request_words):
     return True
 
 
@@ -323,4 +323,291 @@ async def test_speech_started_without_an_item_id_supersedes_a_slow_check():
     release.set()
     await drain()
     assert not link.started
+    await bridge.close()
+
+
+async def test_a_request_spread_over_utterances_is_checked_and_recovered_with_all_its_words():
+    # Measured 2026-10-26: "make me another short video" ... "you decide the
+    # rest" got a spoken promise, no tool call, and no task.
+    seen = []
+    async def checker(words, context, request_words=()):
+        seen.append((words, tuple(request_words)))
+        return words.endswith("你定吧")  # the first turn was a clarifying question: direct
+    bridge, provider, link = guarded(checker)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u0"), transcript("再帮我做个五十秒左右的抽象风格短视频", "u0"), started("ask"),
+                 said("想要什么主题？", "ask"), audio("ask"), done("ask"))
+    seen.clear()
+    await replay(bridge, item("u1"), transcript("颜色流动的就行，你定吧", "u1"), started("promise"),
+                 said("好的，我来做", "promise"), audio("promise"), done("promise"))
+    await drain()
+    assert seen == [("颜色流动的就行，你定吧", ("再帮我做个五十秒左右的抽象风格短视频",))]
+    [ref] = link.started
+    assert ref.text == "颜色流动的就行，你定吧"
+    assert ref.context["user_words"] == ["再帮我做个五十秒左右的抽象风格短视频", "颜色流动的就行，你定吧"]
+    await bridge.close()
+
+
+async def test_semantic_check_binds_authorization_to_an_earlier_utterance_of_the_request(monkeypatch):
+    bodies = []
+    async def complete(model, instructions, body, timeout):
+        bodies.append(json.loads(body))
+        return json.dumps({"decision": "handoff", "operation": "artifact", "authorization": "做个五十秒的抽象短视频"})
+    monkeypatch.setattr("voice.summary.complete", complete)
+    assert await required("你定吧", "assistant: 想要什么主题？", ("帮我做个五十秒的抽象短视频",))
+    assert bodies[0]["same_request_user_words"] == ["帮我做个五十秒的抽象短视频"]
+    # Words that only the front desk said still never authorize anything.
+    with pytest.raises(ValueError):
+        await required("你定吧", "assistant: 我来做个五十秒的抽象短视频")
+
+
+async def test_a_check_that_times_out_once_is_retried_while_the_utterance_is_current(monkeypatch):
+    monkeypatch.setattr("voice.handoff.TIMEOUT_SECONDS", 0.05)
+    calls = []
+    async def checker(words, context, *request_words):
+        calls.append(words)
+        if len(calls) == 1:
+            await asyncio.sleep(1)
+        return True
+    bridge, provider, link = guarded(checker)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("帮我做个短视频，现在就开始", "u1"), started("promise"),
+                 said("好的", "promise"), audio("promise"), done("promise"))
+    for _ in range(40):
+        if link.started:
+            break
+        await asyncio.sleep(0.02)
+    assert len(calls) == 2 and len(link.started) == 1
+    await bridge.close()
+
+
+async def test_a_check_on_a_dropped_pooled_connection_is_retried_once():
+    import httpx
+    calls = []
+    async def checker(words, context, *request_words):
+        calls.append(words)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return True
+    bridge, provider, link = guarded(checker)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("帮我做个短视频，现在就开始", "u1"), started("promise"),
+                 said("好的", "promise"), audio("promise"), done("promise"))
+    for _ in range(40):
+        if link.started:
+            break
+        await asyncio.sleep(0.02)
+    assert len(calls) == 2 and len(link.started) == 1
+    await bridge.close()
+
+
+async def test_semantic_check_accepts_a_fenced_json_answer(monkeypatch):
+    async def complete(*args):
+        return '```json\n{"decision":"handoff","operation":"artifact","authorization":"制作视频"}\n```'
+    monkeypatch.setattr("voice.summary.complete", complete)
+    assert await required("用那张图制作视频", "assistant: 好的")
+
+
+async def test_semantic_check_binding_ignores_punctuation_and_case_but_not_words(monkeypatch):
+    answers = iter([
+        '{"decision":"handoff","operation":"task_change","authorization":"just something colorful and flowing no pictures"}',
+        '{"decision":"handoff","operation":"task_change","authorization":"something colorful with music"}',
+    ])
+    async def complete(*args):
+        return next(answers)
+    monkeypatch.setattr("voice.summary.complete", complete)
+    words = "Just something colorful and flowing, no pictures. You decide the rest."
+    assert await required(words, "assistant: Got it")
+    with pytest.raises(ValueError):
+        await required(words, "assistant: Got it")
+
+
+SEND_CARD = {"card_id": "q-send", "kind": "assistant_confirm", "header": "确认修改任务",
+             "prompt": "把这些修改发送到会话「春禾果店15秒竖屏宣传视频」吗？\\n\\n修改视频总时长为10秒。",
+             "options": ["确认发送", "取消"], "created_at": "2026-10-27T03:04:20+00:00",
+             "expires_at": "2026-10-27T03:14:20+00:00", "high_risk": True}
+
+
+async def _told_card_then(checker, applies):
+    """A card the call told, then the user's reply; the front desk claims a choice without cards_answer."""
+    seen = {}
+    async def answer(source, choice):
+        seen[source] = choice
+        return applies
+    bridge, provider, link = guarded(checker)
+    bridge._answer_card_for = answer
+    await greeted(bridge, provider)
+    bridge.desk.show(SEND_CARD)
+    await replay(bridge, item("u1"), transcript("Yes, send that change.", "u1"), started("claim"),
+                 said("I've confirmed the change.", "claim"), audio("claim"), done("claim"))
+    for _ in range(40):
+        if seen or link.started:
+            break
+        await asyncio.sleep(0.02)
+    await drain()
+    return bridge, link, seen
+
+
+async def test_a_reply_to_a_told_card_is_applied_to_that_card_not_forwarded_as_a_new_request():
+    calls = []
+    async def checker(words, context, *request_words, cards=()):
+        calls.append([card["card"] for card in cards])
+        [card] = cards
+        return {"card": card["card"], "version": card["version"], "option_id": card["options"][0]["id"]}
+    bridge, link, seen = await _told_card_then(checker, applies=True)
+    assert calls == [["1"]] and seen["u1"]["card"] == "1"  # the open card was offered to the check
+    assert not link.started  # no second request, so no second confirmation
+    assert "u1" in bridge.handoff.fulfilled
+    await bridge.close()
+
+
+async def test_a_card_that_no_longer_takes_the_choice_keeps_the_users_words_as_a_request():
+    async def checker(words, context, *request_words, cards=()):
+        [card] = cards
+        return {"card": card["card"], "version": card["version"], "option_id": card["options"][0]["id"]}
+    bridge, link, seen = await _told_card_then(checker, applies=False)
+    assert seen and [ref.transcript for ref in link.started] == ["Yes, send that change."]
+    await bridge.close()
+
+
+async def test_the_card_check_binds_the_choice_to_the_users_words_and_the_shown_options(monkeypatch):
+    shown = ({"card": "1", "title": "确认修改任务", "what": "修改视频总时长为10秒", "version": "v-1",
+              "options": [{"id": "1", "label": "确认发送"}, {"id": "2", "label": "取消"}]},)
+    answers = iter([
+        '{"decision":"card","card":"1","option_id":"1","authorization":"yes send that change"}',
+        '{"decision":"card","card":"1","option_id":"7","authorization":"yes send that change"}',
+        '{"decision":"card","card":"1","option_id":"1","authorization":"I have confirmed the change"}',
+    ])
+    bodies = []
+    async def complete(model, system, text, timeout):
+        bodies.append(json.loads(text))
+        return next(answers)
+    monkeypatch.setattr("voice.summary.complete", complete)
+    assert await required("Yes, send that change.", "assistant: ...", cards=shown) == {
+        "card": "1", "version": "v-1", "option_id": "1"}
+    assert bodies[0]["open_cards"][0]["options"][0] == {"id": "1", "label": "确认发送"}
+    with pytest.raises(ValueError):  # an option the card never showed
+        await required("Yes, send that change.", "assistant: ...", cards=shown)
+    with pytest.raises(ValueError):  # the front desk's own claim is no authorization
+        await required("Yes, send that change.", "assistant: I have confirmed the change", cards=shown)
+
+
+async def test_a_card_choice_from_the_check_is_applied_by_the_cards_answer_tool_with_the_users_words(monkeypatch):
+    from voice.tools import CallScope
+    calls = []
+    async def run(name, scope, arguments):
+        calls.append((name, scope.transcript, scope.desk is bridge.desk, json.loads(arguments)))
+        return {"status": "decision_recorded", "this_call_applied": True}
+    monkeypatch.setattr("voice.tools.run", run)
+    bridge, provider, link = guarded(needs_handoff)
+    bridge.scope = CallScope(user_id="owner", workspace_id="workspace", main_session_id="main", call_id="call")
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("Yes, send that change.", "u1"))
+    choice = {"card": "1", "version": "v-1", "option_id": "1"}
+    assert await bridge._answer_card_for("u1", choice)
+    assert calls == [("cards_answer", "Yes, send that change.", True, choice)]
+    await bridge.close()
+
+
+async def test_the_check_never_declines_a_card_for_the_user(monkeypatch):
+    """Measured 2026-10-27: "这个先放一放，我再想想" came back as the cancel option and withdrew a revision."""
+    shown = ({"card": "1", "title": "确认修改任务", "what": "背景音乐换成轻快的钢琴曲", "version": "v-1",
+              "options": [{"id": "option_0", "label": "确认发送"}, {"id": "option_1", "label": "取消"}]},)
+    answers = iter(['{"decision":"card","card":"1","option_id":"option_1","authorization":"这个先放一放"}',
+                    '{"decision":"card","card":"1","option_id":"option_1","authorization":"我没这么说"}'])
+    async def complete(model, system, text, timeout):
+        return next(answers)
+    monkeypatch.setattr("voice.summary.complete", complete)
+    assert await required("这个先放一放，我再想想。", "assistant: 要把修改发出去吗？", cards=shown) is False
+    with pytest.raises(ValueError):  # an unbound choice is still refused, decline or not
+        await required("这个先放一放，我再想想。", "assistant: 要把修改发出去吗？", cards=shown)
+
+
+async def test_a_deferral_read_as_a_decline_leaves_the_told_card_waiting(monkeypatch):
+    async def complete(model, system, text, timeout):
+        [card] = json.loads(text)["open_cards"]
+        return json.dumps({"decision": "card", "card": card["card"], "option_id": card["options"][-1]["id"],
+                           "authorization": "Hold on"}, ensure_ascii=False)
+    async def warm(model):
+        return None
+    monkeypatch.setattr("voice.summary.complete", complete)
+    monkeypatch.setattr("voice.summary.warm", warm)
+    seen = {}
+    async def answer(source, choice):
+        seen[source] = choice
+        return True
+    bridge, provider, link = guarded(required)
+    bridge._answer_card_for = answer
+    await greeted(bridge, provider)
+    bridge.desk.show(SEND_CARD)
+    await replay(bridge, item("u1"), transcript("Hold on, let me think about it.", "u1"), started("r1"),
+                 said("Sure, I'll wait.", "r1"), audio("r1"), done("r1"))
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    await drain()
+    assert not seen and not link.started  # no card answered, nothing forwarded
+    assert "u1" in bridge.handoff.checked and "u1" not in bridge.handoff.fulfilled
+    await bridge.close()
+
+
+async def test_a_card_answer_the_check_applied_is_followed_told_and_never_submitted_again(monkeypatch):
+    """Review 2026-10-27: the check's card path skipped the turn bookkeeping. The confirmed card's resumed turn
+    was never followed or told, and a late handover of the same words was not recognised as a duplicate."""
+    from tests.unit.test_voice_cards import answering
+    from voice.tools import CallScope
+    replies = answering(monkeypatch, waiting=(SEND_CARD,))
+    async def checker(words, context, *request_words, cards=()):
+        [card] = cards
+        return {"card": card["card"], "version": card["version"], "option_id": card["options"][0]["id"]}
+    bridge, provider, link = guarded(checker)
+    bridge.scope = CallScope(user_id="u1", workspace_id="w1", main_session_id="main-1", call_id="call-x")
+    await greeted(bridge, provider)
+    bridge.desk.show(SEND_CARD)
+    await replay(bridge, item("u1"), transcript("Yes, send that change.", "u1"), started("claim"),
+                 said("I've confirmed the change.", "claim"), audio("claim"), done("claim"))
+    for _ in range(50):
+        if link.followed:
+            break
+        await asyncio.sleep(0.02)
+    await drain()
+    assert [request_id for request_id, *_ in replies] == ["q-send"] and not bridge.desk.answers
+    [(follow, after)] = link.followed  # the confirmed card's resumed turn is followed...
+    assert after == "inbox_0001" and follow.transcript == "Yes, send that change."
+    link.finish(follow.provider_call_id, speech="修改已经发到「春禾果店15秒竖屏宣传视频」，正在重新处理。")
+    for _ in range(50):
+        if provider.commands("note"):
+            break
+        await asyncio.sleep(0.01)
+    await bridge.fill_idle()
+    await drain()
+    assert any("正在重新处理" in note for _, note in provider.commands("note"))  # ...and its result told
+    # A late handover of the same words is a duplicate, never a second submission.
+    await replay(bridge, tool_call("late-ask", text="把修改发出去", response_id="claim"))
+    assert not link.started
+    [(_, _, output)] = [entry for entry in provider.commands("output") if entry[1] == "late-ask"]
+    assert output["duplicate"] is True and output["this_call_applied"] is False
+    await bridge.close()
+
+
+async def test_words_already_acted_on_are_neither_answered_on_a_card_again_nor_forwarded(monkeypatch):
+    from voice.tools import CallScope
+    runs = []
+    async def run(name, scope, arguments):
+        runs.append(name)
+        return {"status": "decision_recorded", "this_call_applied": True}
+    monkeypatch.setattr("voice.tools.run", run)
+    bridge, provider, link = guarded(needs_handoff)
+    bridge.scope = CallScope(user_id="owner", workspace_id="workspace", main_session_id="main", call_id="call")
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("Yes, send that change.", "u1"))
+    bridge._remember_spoken_action("u1", {"status": "accepted", "request_id": "turn-1"})
+    assert await bridge._answer_card_for("u1", {"card": "1", "version": "v-1", "option_id": "1"}) is None
+    assert runs == []
+    await bridge.close()
+
+    async def checker(words, context, *request_words, cards=()):
+        [card] = cards
+        return {"card": card["card"], "version": card["version"], "option_id": card["options"][0]["id"]}
+    bridge, link, seen = await _told_card_then(checker, applies=None)
+    assert seen and not link.started and "u1" not in bridge.handoff.required
     await bridge.close()

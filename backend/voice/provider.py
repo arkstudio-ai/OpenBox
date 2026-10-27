@@ -26,11 +26,18 @@ MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 RETRY_PAUSE_SECONDS = 0.5
 RACE_HEAD_START_SECONDS = 0.4  # the first route usually opens in 0.15-0.25 s
 ERROR_MESSAGE_CHARS = 200
+# session.updated / item deletion receipts through a gateway: 1-2.2 s as a rule,
+# up to 13 s under load (measured 2026-10-26). 2 s failed healthy calls.
+ACK_TIMEOUT_SECONDS = 6.0
+# The same instructions still on their way are waited for, not queued again,
+# for this long (measured 2026-10-27: receipts trailed by 5-22 s and every
+# re-sent copy queued behind the last until the gateway closed the socket).
+RESEND_AFTER_SECONDS = 20.0
 # A reply nobody hears (voice/upkeep.py): measured 2026-10-10 on Audio and Omni, answered with "嗯" and no audio.
 KEEPALIVE = "这是系统保活，不要说话，只输出一个字：嗯"
 _PROMPT_LEAD = "（后台播报要求，不是用户发言，也不是要转交的新任务。仅适用于紧接着的一次回复。）\n"
 # An error about something other than a reply we asked for: an item, the session prompt, a tool output.
-UNRELATED = frozenset({"item", "session", "duplicate_output"})
+UNRELATED = frozenset({"item", "session", "duplicate_output", "cancel"})
 # A key or an account the provider refuses: a fresh session would be refused too.
 _DENIED = ("invalidapikey", "invalid api-key", "invalid api key", "unauthorized", "authentication", "accessdenied",
            "access denied", "forbidden", "arrearage", "quota")
@@ -62,7 +69,7 @@ class ProviderEvent:
     usage: dict | None = None
     invalid: bool = False
     code: str = ""
-    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / item / session /
+    # provider_error only: active_response / duplicate_output / voice_unsupported / no_input / item / session / cancel /
     # session_closed / denied / other; ``param`` is the client event it concerns, ``text`` its scrubbed message.
     reason: str = ""
     param: str = ""
@@ -93,6 +100,11 @@ def classify_error(message: str, param: str = "", code: str = "") -> str:
         return "item"
     if param == "session" or param.startswith("session."):
         return "session"
+    if param.startswith("response.cancel"):
+        # "Conversation has no active response": a cancel with nothing left to
+        # cancel. Measured 2026-10-27: read as a refusal, it dropped the reply
+        # requested right after a card answered on screen stopped the old one.
+        return "cancel"
     if "active response" in text:
         return "active_response"
     if "duplicate" in text and "output" in text:
@@ -217,6 +229,7 @@ class RealtimeProvider:
         self._instruction_ack = None
         self._instruction_sequence = 0
         self._instruction_started = None
+        self._unechoed: tuple[str, float] | None = None  # the last instructions sent, until their receipt
         # One deletion per immutable item on this socket, including keeper and
         # prompt cleanup. Keep terminal receipts: retrying an uncertain delete
         # would make an error without a client event_id ambiguous.
@@ -371,6 +384,8 @@ class RealtimeProvider:
                     # updates and bind the exact instructions on this socket.
                     if future is not None and received == expected and not future.done():
                         future.set_result(True)
+                    if self._unechoed and received == self._unechoed[0]:
+                        self._unechoed = None
                 if absence := self._acknowledge_delete(event):
                     self._events.put_nowait(absence)
                     continue
@@ -475,9 +490,10 @@ class RealtimeProvider:
 
     async def update_instructions(self, instructions: str) -> None:
         """Only the instructions; voice, VAD and tools stay (measured 2026-10-07). Send it while idle."""
+        self._unechoed = None
         await self._send({"type": "session.update", "session": {"instructions": instructions}})
 
-    async def update_instructions_confirmed(self, instructions: str, timeout: float = 2.0) -> None:
+    async def update_instructions_confirmed(self, instructions: str, timeout: float = ACK_TIMEOUT_SECONDS) -> None:
         self._ensure_reader()
         async with self._update_lock:
             future = asyncio.get_running_loop().create_future()
@@ -485,12 +501,17 @@ class RealtimeProvider:
             self._instruction_sequence += 1
             self._instruction_started = time.monotonic()
             try:
-                await self.update_instructions(instructions)
+                # A receipt that is late is not lost: wait for it rather than
+                # queue another copy of the same instructions behind it.
+                pending = self._unechoed
+                if not (pending and pending[0] == instructions and time.monotonic() - pending[1] < RESEND_AFTER_SECONDS):
+                    await self.update_instructions(instructions)
+                    self._unechoed = (instructions, time.monotonic())
                 await asyncio.wait_for(future, timeout)
             finally:
                 self._instruction_ack = None
 
-    async def delete_item_confirmed(self, item_id: str, timeout: float = 2.0) -> None:
+    async def delete_item_confirmed(self, item_id: str, timeout: float = ACK_TIMEOUT_SECONDS) -> None:
         self._ensure_reader()
         ack = await self._send_delete(item_id)
         # A cancelled/timed-out waiter must not cancel another waiter's receipt

@@ -311,8 +311,8 @@ def test_product_recovery_pack_survives_adversarial_multi_intent_budgeting():
         budgets=ExposureBudgets(
             resident_soft_chars=50,
             resident_hard_chars=75,
-            visible_soft_chars=100,
-            visible_hard_chars=150,
+            visible_soft_chars=1_500,
+            visible_hard_chars=1_500,
             single_tool_soft_chars=50,
             single_tool_hard_chars=100,
             intent_pack_soft_chars=100,
@@ -322,9 +322,12 @@ def test_product_recovery_pack_survives_adversarial_multi_intent_budgeting():
         ),
     )
 
+    # Oversized recovery controls are kept whole (they are exempt from the
+    # per-tool target) while competing intent is deferred, and the request
+    # still stays inside the hard boundary the payload gate enforces.
     assert {"video_generate", "video_transcribe"}.issubset(result.plan.direct_ids)
     assert {"web_search", "web_fetch"}.issubset(result.trimmed_ids)
-    assert result.hard_limit_exceeded is True
+    assert result.hard_limit_exceeded is False
     assert all(
         result.deferred_reasons[tool_id] == "single_tool_hard_limit"
         for tool_id in ("web_search", "web_fetch")

@@ -114,6 +114,53 @@ async def test_maintenance_recovery_keeps_actual_terminal_identity():
 REPORT_TEXT = "The report is saved. Browser verification is still untested."
 
 
+async def test_legacy_recovery_marker_settles_without_attributing_current_intent():
+    from agent.driver import get_driver_state
+    _, _, _, accepted, lease, _ = await result_ready(settle=False)
+    await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        row = await db.get(AgentInboxItem, accepted["inbox_id"])
+        row.origin = "system_recovery"
+        row.origin_ref = {"entrypoint": "question_answer"}
+        row.claim_expires_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        task = await db.get(AssistantTask, accepted["task_id"])
+        task.intent_revision = 5
+        state_before = task.observed_state
+    assert await inbox.settle_orphaned_claims() >= 1
+    async with get_db_session() as db:
+        row = await db.get(AgentInboxItem, accepted["inbox_id"])
+        task = await db.get(AssistantTask, accepted["task_id"])
+        assert row.state == "settled" and row.outcome == "recovered"
+        assert "intent_revision" not in row.origin_ref
+        assert task.intent_revision == 5 and task.observed_state == state_before
+        assert task.latest_result_id is None
+        assert await db.scalar(select(func.count()).select_from(TaskResult)) == 0
+    assert (await get_driver_state(lease.session_id)).phase == "idle"
+    assert await inbox.settle_orphaned_claims() == 0
+
+
+@pytest.mark.parametrize("origin,outcome", [
+    ("human_text", "recovered"), ("assistant_delegation", "recovered"),
+    ("unknown", "recovered"), ("system_recovery", "succeeded"),
+])
+async def test_unverified_user_or_non_recovery_result_remains_rejected(origin, outcome):
+    from assistant.policy import AssistantError
+    _, _, _, accepted, lease, message = await result_ready(settle=False)
+    async with get_db_session() as db:
+        row = await db.get(AgentInboxItem, accepted["inbox_id"])
+        row.origin = origin
+        row.origin_ref = {}
+    try:
+        with pytest.raises(AssistantError) as denied:
+            await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome=outcome)
+        assert denied.value.code == "ASSISTANT_INTENT_UNVERIFIED"
+        async with get_db_session() as db:
+            assert (await db.get(AgentInboxItem, accepted["inbox_id"])).state == "claimed"
+            assert await db.scalar(select(func.count()).select_from(TaskResult)) == 0
+    finally:
+        await lease.release(session_status="idle")
+
+
 async def test_delivery_carries_the_settled_summary_and_ignores_later_source_edits():
     _, _, main, accepted, lease, message = await result_ready()
     await lease.release(session_status="idle")

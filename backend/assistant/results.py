@@ -126,6 +126,14 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
                           "error" if message.error or message.finish != "stop" else "succeeded")
     observed_revision = max((int(row.origin_ref.get("intent_revision", 0)) for row in consumed), default=0)
     if not observed_revision:
+        if outcome == "recovered" and consumed and all(row.origin == "system_recovery" for row in consumed):
+            # Older recovery/continuation markers have no delegated intent.
+            # Settle their fenced Inbox repair without inventing a revision,
+            # reporting a completion, or changing the current Task's state.
+            # Otherwise this exception strands the maintenance driver and
+            # every recovery pass repeats the same synthetic input forever.
+            log.info("Settling recovery-only input without task result session=%s", execution.id)
+            return None
         # Never attribute an unproven new goal to an old completion.
         raise AssistantError(409, "ASSISTANT_INTENT_UNVERIFIED", "Consumed task input has no intent revision")
     # Freeze the original human evidence that authorized delegation, not just

@@ -19,7 +19,7 @@ CHOICE_FIELDS = frozenset({"model", "model_confirmed", "work_type", "video_model
 
 
 def business_video_tiers(config, videos):
-    """Reuse deployment presets and billing, never infer tiers from model names.
+    """Reuse deployment presets and capabilities, never infer tiers from model names.
 
     Older composer presets have more than three levels. Present one configured
     representative per business tier; explicit model selections remain valid.
@@ -36,7 +36,7 @@ def business_video_tiers(config, videos):
             continue
         result.append({"id": key, "name": label, "model": row["model"],
                        "resolution": row["resolution"], "resolutions": row["resolutions"],
-                       "credits_per_second": row["prices"], "description": row["description"],
+                       "description": row["description"],
                        "capabilities": offered[row["model"]]})
     return result
 
@@ -63,8 +63,8 @@ def catalogue():
             "default_video": config.video_generation.model,
             "note": "Use the user's saved default task AI unless they request another. Video generation and paid "
                     "production still require their own decisions. Describe tiers conversationally; "
-                    "model IDs are execution details. Prices are current reference credits per second, not a full "
-                    "production quote. Extra images, transcription or paid composition need their actual quote. "
+                    "model IDs are execution details. Compare specifications and material support without estimating "
+                    "credits, pricing alternatives or adding a fee confirmation. "
                     "supports_reference_* describes optional accepted material, not mandatory uploads. "
                     "Validate the exact generation mode before claiming a material is required. "
                     "Capabilities and tier names are not quality or speed guarantees."}
@@ -159,11 +159,9 @@ async def prepare(ctx, source, arguments):
                        "video_resolution": item["resolution"]} for item in items}
             descriptions = {}
             for item in items:
-                price = item["credits_per_second"].get(item["resolution"])
-                descriptions[item["name"]] = "；".join(filter(None, [item["description"], item["resolution"],
-                    f"参考每秒 {price} 积分，完整方案另行报价" if price is not None else "费用待核实，不预先承诺价格"]))
+                descriptions[item["name"]] = "；".join(filter(None, [item["description"], item["resolution"]]))
             title = "视频档次"
-            question = values.get("video_model_question") or "这条片子更看重日常出片还是画面细节？可以先了解各档的实际费用和素材要求，再决定。"
+            question = values.get("video_model_question") or "这条片子更看重日常出片还是画面细节？可以按画面规格和素材要求选择；已有选择就直接沿用。"
         else:
             items = inventory["chat" if field == "model" else "video"]
             if not items:

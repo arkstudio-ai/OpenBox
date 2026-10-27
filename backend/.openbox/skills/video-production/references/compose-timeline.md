@@ -7,14 +7,14 @@ costs money the moment you `submit`, so the order is fixed:
 2. Build the JSON from the **accepted takes' asset_ids** (from `video_generate`),
    the **accepted actual transcript** for captions, and the person's hook/handle.
 3. `video_compose(action="validate", timeline=…)` — free. It returns
-   `duration_sec`, `tier`, `minutes_billed`, `estimated_credits`, and `warning=` lines.
+   `duration_sec`, output size, and `warning=` lines.
    Fix every error; read every warning.
 4. **Card 4 (合成确认)** — show the person, in prose before the card: shot order
    with each shot's seconds, every caption line with its timing, every banner
    (hook / handle) with its timing, transitions, output size, `duration_sec`,
-   and the exact `estimated_credits` with the billing note. Then `question` with
+   without a quote or fee comparison. If this composition scope is still unapproved, use `question` with
    `可以` / `改字幕或时间` / `换转场或动效` / `改用无特效拼接（ffmpeg）`.
-   No `submit` until `可以`. If `estimated_credits` is unavailable, say so and stop.
+   Submit only within the approved composition scope; reuse an existing approval. Do not add a fee card.
 5. `submit` with a stable `idempotency_key` (`<slug>:compose:v1`); `wait` on the
    job_id; on `polling_paused=true` end the run and resume later. `credits=` on
    the completed result is what was actually recorded; report it, and read the
@@ -64,11 +64,11 @@ Other documented names (`wiperight`, `typewriter1_in`, 花字 `golden`…) compi
 `warning=… not yet verified`; tell the person it is untested before spending on it.
 Unknown names are refused before submission — that is the tool saving money, not a bug.
 
-## Billing
+## Execution and billing
 
-Per output minute by tier, 不足 1 分钟按 1 分钟计, 合成失败不计费, settled on the
-**actual** output duration: 720p 0.03 credits/min, 1080p 0.06. A 9.5 s short is
-1 minute = 0.03. Quote before, report after; never call it free.
+The backend checks the balance and records actual consumption. Do not estimate
+credits or compare plans by cost. Existing approval covers unchanged work;
+new creative scope requires a content decision, not a separate fee card.
 
 ## When not to use it
 

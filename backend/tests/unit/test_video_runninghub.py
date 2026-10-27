@@ -93,7 +93,7 @@ def test_unsupported_image_formats_are_not_sent_as_png(route, mime):
 async def test_default_selection_and_image_ratio_follow_conversation_inputs(config, monkeypatch, images, ratio):
     monkeypatch.setattr(vp, '_session_video_model_id', AsyncMock(return_value=None))
     monkeypatch.setattr(vp, '_session_video_resolution', AsyncMock(return_value=None))
-    args = vp.VideoGenerateArgs(action='estimate', prompt='小狗玩球',
+    args = vp.VideoGenerateArgs(action='validate', prompt='小狗玩球',
                                 input_assets=[{'asset_id': 'image-one'}] if images else [])
     approved = await vp._resolve_open_submission(args, object())
     assert approved['ratio'] == ratio and approved['resolution'] == '768p'
@@ -174,7 +174,7 @@ def test_status_contract_never_finishes_without_a_video(route, data, expected):
     (['first_frame', 'last_frame', 'reference_image'], False),
     (['first_frame'], True), (['last_frame', 'first_frame'], True),
 ])
-async def test_estimate_checks_explicit_intent_and_reports_asset_bindings(config, route, monkeypatch, roles, valid):
+async def test_validate_checks_explicit_intent_and_reports_asset_bindings(config, route, monkeypatch, roles, valid):
     from types import SimpleNamespace
     from tool.tool import ToolContext
     # Actual asset IDs are resolved before routing; list order does not decide
@@ -189,7 +189,7 @@ async def test_estimate_checks_explicit_intent_and_reports_asset_bindings(config
     monkeypatch.setattr(vp, '_configured_target', lambda _model: (route, config.video_generation))
     submit = AsyncMock(side_effect=AssertionError('an estimate must never pay'))
     monkeypatch.setattr(providers, 'submit', submit)
-    args = vp.VideoGenerateArgs(action='estimate', prompt='按指定素材生成', input_assets=[
+    args = vp.VideoGenerateArgs(action='validate', prompt='按指定素材生成', input_assets=[
         {'asset_id': f'asset-{i}', 'role': role} for i, role in enumerate(roles)
     ])
     result = await vp.execute_generate(args, ToolContext(user_id='u', session_id='s'))
@@ -199,7 +199,7 @@ async def test_estimate_checks_explicit_intent_and_reports_asset_bindings(config
             {'asset_id': f'asset-{i}', 'role': role} for i, role in enumerate(roles)
         ]
         assert 'operation=image-to-video' in result.output
-        assert result.metadata['estimated_credits'] == '3.85'  # 768p 5 s at the T1 price 0.77/s
+        assert 'estimated_credits' not in result.metadata and 'credits' not in result.output
     else:
         assert 'estimated_credits' not in result.metadata
     submit.assert_not_awaited()

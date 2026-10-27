@@ -48,9 +48,10 @@ change to photo-based footage permits the corresponding scenes and camera
 motion to be replanned. Preserve unaffected text, duration, constraints and
 approval requirements. New shot plans are proposals, not completed work.
 current_video_options is the current server catalogue and session selection,
-not permission to generate. Compare any quoted prices/specs to that evidence.
-A refreshed price can equal a previous price: equality alone is not a stale
-quote or a violation. Preserve the separate approval for actual production.
+not permission to generate. Compare the proposed specifications to that evidence.
+Production estimates, pricing comparisons and fee cards are retired: removing them
+from an older proposal is allowed and does not change its creative scope.
+Preserve actual production authorization; do not demand a new fee confirmation.
 Allow changes explicitly requested or necessarily implied by accepted_changes.
 Preserve all unaffected facts, wording that is part of the deliverable, timing,
 conditions, assets, limits and commitments. A style/format edit does not permit

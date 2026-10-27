@@ -1009,16 +1009,22 @@ async def execute_stream(req: ExecuteRequest, request: Request):
 
         async def reader():
             nonlocal stdout_done, stderr_done, process_exited
+            import codecs
+
             tasks = {}
+            decoders = {name: codecs.getincrementaldecoder("utf-8")(errors="replace")
+                        for name in ("stdout", "stderr")}
             wait_task = asyncio.create_task(process.wait())
             last_output_time = time.time()
             drain_deadline = None
 
             while not (stdout_done and stderr_done):
+                if drain_deadline is not None and time.monotonic() >= drain_deadline:
+                    break
                 if not stdout_done and "stdout" not in tasks:
-                    tasks["stdout"] = asyncio.create_task(process.stdout.readline())
+                    tasks["stdout"] = asyncio.create_task(process.stdout.read(16384))
                 if not stderr_done and "stderr" not in tasks:
-                    tasks["stderr"] = asyncio.create_task(process.stderr.readline())
+                    tasks["stderr"] = asyncio.create_task(process.stderr.read(16384))
 
                 if not tasks:
                     break
@@ -1054,19 +1060,20 @@ async def execute_stream(req: ExecuteRequest, request: Request):
                 for name in list(tasks.keys()):
                     if tasks[name] in done:
                         line = tasks.pop(name).result()
+                        content = decoders[name].decode(line, final=not line)
                         if not line:
                             if name == "stdout":
                                 stdout_done = True
                             else:
                                 stderr_done = True
-                        else:
+                        if content:
                             last_output_time = time.time()
                             yield {"event": "output", "data": json_mod.dumps({
                                 "type": name,
-                                "content": line.decode("utf-8", errors="replace"),
+                                "content": content,
                             })}
 
-                # Exit is not stdout EOF. Continue reading every buffered line
+                # Exit is not stdout EOF. Continue reading buffered chunks
                 # within the existing grace period; the former one-read drain
                 # silently returned success with most short-command output lost.
 
@@ -1110,6 +1117,10 @@ async def execute_stream(req: ExecuteRequest, request: Request):
         yield {"event": "exit", "data": json.dumps({
             "exit_code": exit_code,
             "timed_out": exit_code == -1,
+            "output_complete": stdout_done and stderr_done,
+            "output_incomplete_reason": (
+                None if stdout_done and stderr_done else "pipe_drain_deadline"
+            ),
         })}
 
     return EventSourceResponse(event_generator())

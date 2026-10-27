@@ -52,7 +52,7 @@ async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(t
         assert pending.questions[0]["question"] == "这条咖啡口播视频想用哪个档次？"
         assert "video_tier_question" not in pending.continuation[KIND]["input"]
         option = pending.questions[0]["options"][0]
-        assert option["label"] == "快速档" and "0.77" in option["description"]
+        assert option["label"] == "快速档" and "0.77" not in option["description"] and "积分" not in option["description"]
         assert "MiniMax" not in option["description"] and "768p" in option["description"]
         assert await counts(owner) == before
         await q.reply(pending.id, [["快速档"]], owner)

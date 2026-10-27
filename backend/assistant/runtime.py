@@ -175,7 +175,8 @@ For video requests, first resolve whether the user wants a talking-head video: a
 speaking to camera, possibly with supporting visuals. Explain this if asked; do not turn a
 request for an explanation into agreement. Pass work_type=video when unresolved, spoken_video
 when confirmed, or other_video for a confirmed other form. Then help choose an available business tier using
-status.models.video_tiers, with actual prices and supported material types. Do not recite technical
+status.models.video_tiers, with supported specifications and material types. Do not estimate credits,
+compare pricing or introduce a separate fee confirmation. Do not recite technical
 model names unless asked. Use video_tier and video_tier_confirmed for their contextual tier choice;
 use video_model and video_model_confirmed when they explicitly chose a concrete model. The server
 resolves the configured tier to its model/resolution, separate from task AI and the phone's Audio model.

@@ -1,4 +1,4 @@
-"""Whole-plan estimate (``quote_plan``) and the gate on card 2: priced on the server, refused before anything is scheduled."""
+"""Legacy persisted quote cards remain answerable; new tool schemas no longer offer estimates."""
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -38,20 +38,15 @@ async def test_quote_plan_prices_on_the_server_and_registers_the_plan(default_co
     monkeypatch.setenv("BILLING_MODE", "shadow")
     uid, wid = await seed_scope()
     sid = await _platform_session(uid, wid)
-    ctx = ToolContext(session_id=sid, user_id=uid, workspace_id=wid)
-    args = vp.VideoGenerateArgs(action="quote_plan", plan_items=[
+    items = [PlanItem.model_validate(item) for item in [
         # The model says 5; wan3.0-video at the session's 1080p is 2.70/s → 27.
         {"kind": "generation", "shot": 1, "seconds": 10, "claimed_credits": "5"},
         {"kind": "generation", "shot": 2, "seconds": 5, "resolution": "720p"},   # 1.40/s → 7
         {"kind": "transcribe", "seconds": 15},                                   # fun-asr 0.05/min, one minute minimum
         {"kind": "compose", "seconds": 15},                                      # 1080p 0.0015/s, billed as 60 s → 0.09
-    ])
-    result = await vp.execute_generate(args, ctx)
-    assert result.metadata["plan_registered"] is True, result.output
-    assert result.metadata["plan_total"] == "34.14"
-    assert "plan_total=34.14" in result.output and "plan_blocked=false" in result.output
-    assert "corrected=shot=1 generation: you said 5, the server prices 27" in result.output
-    assert 'kind="plan_confirm"' in result.output and 'estimated_credits="34.14"' in result.output
+    ]]
+    result = await plan_quote.register(sid, items)
+    assert result['total'] == '34.14'
     stored = await _stored_plan(sid)
     assert stored["total"] == "34.14" and stored["confirmed_at"] is None and stored["created_at"]
     assert [row["credits"] for row in stored["items"]] == ["27", "7", "0.05", "0.09"]
@@ -60,14 +55,12 @@ async def test_quote_plan_prices_on_the_server_and_registers_the_plan(default_co
     assert stored["items"][1]["resolution"] == "720p" and stored["items"][3]["resolution"] == "1080p"
     assert stored["items"][2]["model"] == "fun-asr"
     # An item without a verified price registers nothing; the earlier plan stays.
-    bad = await vp.execute_generate(vp.VideoGenerateArgs(action="quote_plan", plan_items=[
-        {"kind": "generation", "shot": 1, "seconds": 10, "model": "no-such-model"}]), ctx)
-    assert bad.metadata["plan_registered"] is False and "unpriced=item 1 (shot 1) generation" in bad.output
+    with pytest.raises(plan_quote.PlanUnpriced):
+        await plan_quote.register(sid, [PlanItem(kind='generation', shot=1, seconds=10, model='no-such-model')])
     assert (await _stored_plan(sid))["total"] == "34.14"
-    with pytest.raises(ValueError):
-        vp.VideoGenerateArgs(action="quote_plan")
-    with pytest.raises(ValueError):
-        vp.VideoGenerateArgs(action="quote_plan", plan_items=[{"kind": "generation", "seconds": 0}])
+    for action in ('estimate', 'quote_plan'):
+        with pytest.raises(ValueError):
+            vp.VideoGenerateArgs(action=action, prompt='shot')
 
 
 async def _card_two(monkeypatch, internal_sid: str, total: str) -> dict:
@@ -194,7 +187,7 @@ async def test_gate_only_bites_on_the_confirming_option_and_marks_confirmation(d
     assert await plan_quote.view(SimpleNamespace(id="x", plan_quote=None)) is None
 
 
-def test_question_projection_and_tool_arguments_carry_estimated_credits_and_kind():
+def test_legacy_question_projection_survives_but_new_tool_schema_omits_quotes():
     from api.v1 import public
     from tool.question_tool import QuestionArgs
 
@@ -206,8 +199,5 @@ def test_question_projection_and_tool_arguments_carry_estimated_credits_and_kind
                               {"label": "改", "description": ""}]
     plain = public._public_question({"question": "x", "options": [{"label": "a"}]})
     assert "kind" not in plain and plain["options"] == [{"label": "a", "description": ""}]
-    args = QuestionArgs(questions=[{"question": "报价", "kind": "plan_confirm",
-                                    "options": [{"label": "可以", "estimated_credits": "233.1"}]}])
-    assert args.questions[0].kind == "plan_confirm" and args.questions[0].options[0].estimated_credits == "233.1"
-    with pytest.raises(ValueError):
-        QuestionArgs(questions=[{"question": "x", "kind": "other"}])
+    schema = QuestionArgs.model_json_schema()
+    assert 'estimated_credits' not in str(schema) and 'plan_confirm' not in str(schema)

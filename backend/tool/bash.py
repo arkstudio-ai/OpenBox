@@ -175,6 +175,8 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
     try:
         collected_output = ""
         exit_code = 0
+        stream_output_complete = None
+        output_incomplete_reason = None
         idle_judge_count = 0
 
         stream = ctx.sandbox.execute_stream(
@@ -218,7 +220,9 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                     )
 
             elif isinstance(chunk, int):
-                exit_code = chunk
+                exit_code = int(chunk)
+                stream_output_complete = getattr(chunk, "output_complete", None)
+                output_incomplete_reason = getattr(chunk, "output_incomplete_reason", None)
             else:
                 # OutputChunk with type and content
                 collected_output += chunk.content
@@ -236,13 +240,25 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
 
         ctx._trajectory_full_tool_output = collected_output
         output = collected_output
+        output_truncated = len(output) > MAX_STREAM_OUTPUT
         if len(output) > MAX_STREAM_OUTPUT:
             output = output[:MAX_STREAM_OUTPUT] + "\n... (output truncated)"
+        if stream_output_complete is False:
+            output += (
+                "\n[Command exited, but its output is incomplete: the output pipes did not "
+                "close before the drain deadline. Do not infer missing files or rerun the "
+                "command from this result. Read the specific expected file with the read "
+                "tool, or inspect the process/log of an intentionally backgrounded job.]"
+            )
 
         return ToolResult(
             title=f"exit code: {exit_code}",
             output=output,
-            metadata={"exit_code": exit_code},
+            metadata={"exit_code": exit_code,
+                      "stream_output_complete": stream_output_complete,
+                      "output_complete": False if output_truncated else stream_output_complete,
+                      "output_truncated": output_truncated,
+                      "output_incomplete_reason": output_incomplete_reason},
         )
 
     except _BashAborted:

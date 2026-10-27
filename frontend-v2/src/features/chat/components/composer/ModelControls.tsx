@@ -38,12 +38,9 @@ export function ModelControls({ choices }: Props) {
     hint: videoName(row.model),
     description: row.description || undefined,
     defaultChip: row.resolution,
-    // Each resolution with its per-second price, from the table the estimate
-    // bills against. Unpriced ones show bare.
     chips: row.resolutions.map((resolution) => ({
       id: resolution,
       label: resolution,
-      note: row.prices[resolution] ? t("tier.video.perSecond", { price: row.prices[resolution] }) : undefined,
     })),
   }))
   const videoFallbackLabel = [videoName(video.activeId), video.activeResolution ?? ""]

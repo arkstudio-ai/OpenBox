@@ -222,6 +222,21 @@ class OutputChunk:
     content: str
 
 
+class CommandExit(int):
+    """An exit code with optional stream integrity from newer Action Servers.
+
+    Retains the int contract for existing consumers and legacy desktops. A
+    missing flag means unverified, never proof that the output was complete.
+    """
+
+    def __new__(cls, code: int, *, output_complete: bool | None = None,
+                output_incomplete_reason: str | None = None):
+        result = super().__new__(cls, code)
+        result.output_complete = output_complete
+        result.output_incomplete_reason = output_incomplete_reason
+        return result
+
+
 @dataclass
 class IdleNotification:
     """Notification that the command has produced no output for a while."""
@@ -668,9 +683,9 @@ print(json.dumps(out))
     ) -> AsyncIterator[OutputChunk | IdleNotification | int]:
         """Execute a command with streaming output.
 
-        Yields OutputChunk for each line of output,
+        Yields OutputChunk for each streamed output chunk,
         IdleNotification when no output for idle_timeout seconds,
-        and finally the exit code (int) at the end.
+        and finally CommandExit (an int with optional output integrity).
         """
         pid = 0
         completed = False
@@ -694,8 +709,11 @@ print(json.dumps(out))
                             data_str = line[6:]
                             try:
                                 data = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                continue
+                            except json.JSONDecodeError as exc:
+                                raise httpx.RemoteProtocolError(
+                                    "Sandbox command stream contained malformed output",
+                                    request=resp.request,
+                                ) from exc
 
                             if "type" in data and "content" in data:
                                 yield OutputChunk(
@@ -704,7 +722,12 @@ print(json.dumps(out))
                                 )
                             elif "exit_code" in data:
                                 completed = True
-                                yield data["exit_code"]
+                                yield CommandExit(
+                                    data["exit_code"],
+                                    output_complete=(data.get("output_complete")
+                                                     if isinstance(data.get("output_complete"), bool) else None),
+                                    output_incomplete_reason=data.get("output_incomplete_reason"),
+                                )
                             elif "pid" in data and "idle_seconds" not in data:
                                 pid = data["pid"]
                             elif "idle_seconds" in data:

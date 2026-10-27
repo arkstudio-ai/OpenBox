@@ -165,9 +165,9 @@ def test_capability_lines_describe_each_model():
     assert "ratios=adaptive/16:9/9:16" in text
 
 
-def test_estimate_needs_no_idempotency_key():
+def test_validate_needs_no_idempotency_key():
     """Validating a request costs nothing, so it must not demand a paid key."""
-    args = VideoGenerateArgs(action="estimate", prompt="一只猫")
+    args = VideoGenerateArgs(action="validate", prompt="一只猫")
 
     assert args.idempotency_key is None
 
@@ -217,7 +217,7 @@ def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p")
 async def test_person_selected_model_cannot_be_silently_overridden(monkeypatch):
     ctx = _selected_preferences(monkeypatch)
     args = VideoGenerateArgs(
-        action="estimate",
+        action="validate",
         prompt="小狗玩球",
         model="doubao-seedance-2-0-260128",
     )
@@ -230,7 +230,7 @@ async def test_person_selected_model_cannot_be_silently_overridden(monkeypatch):
 async def test_person_selected_resolution_cannot_be_silently_overridden(monkeypatch):
     ctx = _selected_preferences(monkeypatch)
     args = VideoGenerateArgs(
-        action="estimate",
+        action="validate",
         prompt="小狗玩球",
         model="MiniMax-H3",
         resolution="1080p",
@@ -245,7 +245,7 @@ async def test_omitted_video_preferences_use_the_persons_exact_selection(monkeyp
     ctx = _selected_preferences(monkeypatch)
 
     approved = await video_production._resolve_open_submission(
-        VideoGenerateArgs(action="estimate", prompt="小狗玩球"), ctx
+        VideoGenerateArgs(action="validate", prompt="小狗玩球"), ctx
     )
 
     assert approved["model"] == "MiniMax-H3"
@@ -258,7 +258,7 @@ async def test_incompatible_person_selected_resolution_is_refused_not_substitute
 
     with pytest.raises(video_providers.VideoRequestError, match="no substitute"):
         await video_production._resolve_open_submission(
-            VideoGenerateArgs(action="estimate", prompt="小狗玩球"), ctx
+            VideoGenerateArgs(action="validate", prompt="小狗玩球"), ctx
         )
 
 
@@ -496,7 +496,7 @@ def test_the_budget_line_says_what_is_left_not_what_is_spent():
 
     from tool import video_production
 
-    source = inspect.getsource(video_production._execute_estimate)
+    source = inspect.getsource(video_production._execute_validate)
     assert "daily_submits_remaining" in source
     # The old "used=N/limit" form is what invited the misreading.
     assert not re.search(r"daily_submits_used=\{used\}\"?\s*\+", source)
@@ -615,4 +615,4 @@ def test_a_capability_refusal_points_at_the_table_not_at_another_guess():
                 route, generate_audio=True, input_mimes=[], declared=entry, **args
             )
         assert 'action="models"' in str(caught.value)
-        assert 'action="estimate"' in str(caught.value)
+        assert 'action="validate"' in str(caught.value)

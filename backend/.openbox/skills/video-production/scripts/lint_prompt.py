@@ -191,8 +191,11 @@ def contains_any(value: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase.casefold() in lowered for phrase in phrases)
 
 
-def lint_issue(code: str, message: str) -> dict[str, str]:
-    return {"code": code, "message": message}
+def lint_issue(code: str, message: str) -> dict:
+    rule = PROMPT_LINT_RULES.get(code, {})
+    return {"code": code, "message": message,
+            "requirement": rule.get("requirement", message),
+            "accepted_examples": rule.get("accepted_examples", [])}
 
 
 def lint_prompt(
@@ -213,7 +216,7 @@ def lint_prompt(
     aloud, and honest asset references.
     """
     failures: list[str] = []
-    issues: list[dict[str, str]] = []
+    issues: list[dict] = []
     warnings: list[str] = []
 
     def fail(code: str, message: str) -> None:

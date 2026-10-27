@@ -95,13 +95,13 @@ async def test_authorization_snapshot_is_scoped_redacted_and_not_a_live_probe(mo
         await platforms(user_id=foreign, workspace_id=workspace, main_id=main.id)
 
 
-def test_business_tiers_use_real_presets_and_prices_and_hide_missing_tiers(monkeypatch):
+def test_business_tiers_keep_capabilities_without_price_comparisons(monkeypatch):
     from assistant.model_choices import business_video_tiers, resolve_video_tier
     rows = [{"tier": "fast", "model": "m", "resolution": "480p", "resolutions": ["480p"],
              "prices": {"480p": "0.51"}, "description": "支持图片"}]
     monkeypatch.setattr("api.metadata._model_tiers", lambda _: {"video": rows})
     tiers = business_video_tiers(object(), [{"id": "m", "supports_reference_video": False}])
-    assert len(tiers) == 1 and tiers[0]["credits_per_second"] == {"480p": "0.51"}
+    assert len(tiers) == 1 and "credits_per_second" not in tiers[0]
     assert tiers[0]["capabilities"]["supports_reference_video"] is False
     values = {"video_tier": "fast", "video_tier_confirmed": False}
     resolve_video_tier(values, {"video_tiers": tiers})

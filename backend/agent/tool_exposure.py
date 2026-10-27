@@ -59,19 +59,33 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "automation": ("cron",),
     "image": ("image_gen", "view_image"),
     "video": (
+        "video_generate",
+        "share_file",
+        "video_compose",
+        "video_transcribe",
+        "video_analyze",
         "creator_context",
         "image_gen",
-        "video_generate",
-        "video_transcribe",
-        "video_compose",
-        "video_analyze",
         "hot_trends",
         "desktop_publish",
         "autopilot_run",
-        "share_file",
     ),
     "skill_admin": ("skill_manage", "share_file"),
 })
+
+PACK_PRECEDENCE = ("video", "delivery", "browser", "planning")
+
+
+def pack_rank(tool_id: str, pack: str | None) -> int:
+    """Keep a workflow's primary capability ahead of its optional helpers."""
+    members = INTENT_PACKS.get(pack or "", ())
+    return members.index(tool_id) if tool_id in members else len(members)
+
+
+def pack_precedence(pack: str | None) -> int:
+    order = PACK_PRECEDENCE + tuple(name for name in INTENT_PACKS if name not in PACK_PRECEDENCE)
+    return order.index(pack) if pack in order else len(order)
+
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _SPACE = re.compile(r"\s+")

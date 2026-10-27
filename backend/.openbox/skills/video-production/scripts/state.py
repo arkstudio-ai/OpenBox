@@ -13,7 +13,7 @@ Examples::
     state.py confirm --slug spring-tips --kind script --note "用户确认成稿卡"
     state.py shot --slug spring-tips --index 1 --script "第一段" \
       --prompt "完整 prompt" --planned-seconds 8
-    state.py confirm --slug spring-tips --kind shots --note "用户确认拆段与费用"
+    state.py confirm --slug spring-tips --kind shots --note "用户确认拆段与制作范围"
     state.py shot --slug spring-tips --index 1 --job video_abc --path shot1.mp4
     state.py check --slug spring-tips --final final.mp4
 """
@@ -32,7 +32,7 @@ from typing import Callable
 ROOT = Path(os.environ.get("VIDEO_STATE_ROOT", "/workspace/videos"))
 
 # Output fields must not invalidate a confirmed creative plan. Everything in
-# this tuple affects the user's script/model/shot/cost decision and therefore
+# this tuple affects the user's script/model/shot decision and therefore
 # participates in the confirmation hash.
 SHOT_PLAN_FIELDS = (
     "script",
@@ -124,6 +124,8 @@ def shots_snapshot(data: dict) -> dict:
     # Preserve legacy paid-plan hashes until a new material plan is recorded.
     if "material_plan" in data:
         snapshot["materials_hash"] = materials_hash(data)
+    if "ratio" in data:
+        snapshot["ratio"] = data["ratio"]
     return snapshot
 
 
@@ -332,13 +334,13 @@ def check_state(
         add("script_drift", f"已确认讲稿内容已改动{suffix}，请重新拆段并确认")
 
     if not shots_confirmation:
-        add("shots_unconfirmed", "拆段、prompt 与费用尚无合并确认记录")
+        add("shots_unconfirmed", "拆段、prompt 与制作范围尚无确认记录")
     elif shots_confirmation.get("hash") != shots_hash(data):
         affected = _changed_shots(data, shots_confirmation)
         suffix = ",".join(map(str, affected)) or "未能定位"
         add(
             "shots_drift",
-            f"已确认拆段内容已改动；受影响段：{suffix}，原费用确认同时作废",
+            f"已确认拆段内容已改动；受影响段：{suffix}，原制作确认需按变更范围复核",
         )
 
     actual_durations: list[float] = []

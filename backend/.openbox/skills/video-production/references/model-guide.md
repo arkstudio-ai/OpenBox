@@ -18,11 +18,11 @@ What the registry cannot tell you:
 | Situation | Choose |
 |---|---|
 | Default vertical talking head | The configured default from the live registry, within its current limits |
-| A quick look at whether an idea works | The cheapest fast tier at 480p, then regenerate the keeper at full resolution |
+| A quick look at whether an idea works | An available 480p tier if it supports the requested materials; preserve an existing selection |
 | Final delivery | A 1080p tier |
 | The shot uses a reference **video** | Not the 720p tier — it drops video references upstream, and you pay for a take that ignored them |
 
-Always `action="estimate"` first on anything unusual. It runs the full
+Always `action="validate"` first on anything unusual. It runs the full
 validation and costs nothing.
 
 For supplied pictures or proposed new frames, follow [material-plan.md](material-plan.md)
@@ -46,9 +46,9 @@ creative premise, not a default that may be improved or replaced silently.
   explain the exact incompatibility and offer model/material choices. Only the
   person changes the selection; never silently change model or tier.
 - A mid-session selection change invalidates splitting, prompts affected by
-  capabilities, and the estimate. Read the menu again and show a new shot card.
+  capabilities, and parameter validation. Read the menu again and show a new shot card.
 - With no `person_selected_model`, ask once before paying: the registry default
-  or one alternative, each with estimated credits (skip if the person already
+  or one alternative, with their supported specifications (skip if the person already
   chose or said 随便/你定). Label the result on the card. After a provider
   refusal, never switch models without asking.
 
@@ -95,7 +95,7 @@ alternative that the selected model actually supports and the person accepts.
 For this exact effective model, follow
 [minimax-turbo-frames.md](minimax-turbo-frames.md). Resolve the person's material
 choice early, then confirm the script and split it before preparing the images.
-Finish the entire approved batch's frames, prompts and quotes before submitting
+Finish the entire approved batch's frames and prompts before submitting
 any video. A same-scene N-shot first/last-frame plan normally uses N+1 images,
 sharing the actual boundary asset between neighbours so videos can run in parallel.
 Independent scenes use separate shot frames, with no automatic shared boundary;
@@ -105,19 +105,17 @@ missing-image count determine preparation, not a universal N+1 formula.
 This route accepts explicit `first_frame` and optional `last_frame`, not generic
 image/video/audio references. Image requests use `ratio="adaptive"`; text-only
 requests need an explicit ratio. It currently uses explicit 5–15s durations and
-480p/768p tiers, without seed or smart duration; read `models` and `estimate` for
+480p/768p tiers, without seed or smart duration; read `models` and `validate` for
 current limits rather than applying the separate MiniMax H3 rows below. A 720×1280
 input picture does not select a 720p video tier. First/last frames do not lock the
 voice, so include audio continuity in join review.
 
-## Cost
+## Parameter checks
 
-Use each exact request's free `estimate` for the planned cost. This spoken-video
-workflow always supplies an explicit `duration`, including a one-shot cut;
-support for smart duration on another model is not a reason to use `-1` here.
-The daily ceiling is back-pressure, not permission: if it refuses, tell the
-person rather than retrying.
-
+Use `validate` to check the exact request when needed; it does not quote prices.
+This workflow supplies explicit duration for every shot. The daily ceiling is
+back-pressure, not permission: if it refuses, tell the person rather than retrying.
+Do not compare estimated credits or introduce a fee-confirmation step.
 
 ## Shot length per model
 
@@ -136,8 +134,7 @@ Delivered length runs a fraction over the request (encoder rounding), never
 under.
 
 MiniMax H3's ceiling rose from 15 to 30s on 2026-10-10 (the gateway behind
-it opened 30s; MiniMax's own docs still say 15). Billing is per requested
-second, so a 30s H3 shot costs twice a 15s one.
+it opened 30s; MiniMax's own docs still say 15). Read the live model menu for current request limits.
 
 
 | model | seconds | smart (-1) |

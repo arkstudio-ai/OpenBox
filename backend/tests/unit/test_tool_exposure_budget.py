@@ -111,6 +111,41 @@ def test_requested_capability_cannot_bypass_single_or_total_hard_limits():
     assert result.deferred_reasons["remaining"] == "initial_visible_hard_limit"
 
 
+@pytest.mark.parametrize("revealed", [(), ("video_generate", "video_compose")])
+def test_video_primary_tool_survives_real_catalogue_budget_after_discovery(monkeypatch, revealed):
+    from agent.agent import AGENTS
+    from agent.tool_exposure import ExposureSignals, build_eligible_catalog, portable_plan
+    from tool import registry
+
+    monkeypatch.setattr(registry, "_tools", {})
+    registry.register_builtin_tools(load_custom=False)
+    tools = registry.get_tools_for_agent(AGENTS["build"].tools)
+    # Memory tools are feature-gated off in the observed production/dev run.
+    tools = {name: tool for name, tool in tools.items()
+             if not name.startswith("memory_") and name != "current_task_state"}
+    catalog = build_eligible_catalog(tools)
+    plan = portable_plan(catalog, agent_name="build", editor_id="edit",
+        signals=ExposureSignals(user_task_text="制作40秒双人短视频，先估价再确认"),
+        revealed_ids=revealed)
+
+    result = apply_exposure_budget(catalog, plan)
+
+    assert {"video_generate", "video_compose", "share_file"} <= set(result.plan.direct_ids)
+    assert {"autopilot_run", "desktop_publish", "hot_trends"} <= set(result.plan.deferred_ids)
+    assert result.visible_chars <= result.budgets.visible_hard_chars
+    assert result.pack_chars["video"] <= result.budgets.intent_pack_hard_chars
+
+
+def test_ranked_video_tool_still_cannot_cross_hard_budget():
+    catalog = _catalog({"core": 18, "video_generate": 15, "autopilot_run": 10})
+    plan = _plan(catalog, tuple(catalog.entries), {
+        "core": "resident", "video_generate": "intent:video", "autopilot_run": "intent:video",
+    })
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets())
+    assert result.deferred_reasons["video_generate"] == "initial_visible_hard_limit"
+    assert result.visible_chars <= result.budgets.visible_hard_chars
+
+
 def test_priority_is_resident_then_product_then_intent_then_reveal_then_other():
     catalog = _catalog({"core": 10, "recovery": 8, "intent": 10, "revealed": 4, "other": 2})
     # Worst-first input catches implementations that slice direct_ids by position.

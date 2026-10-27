@@ -349,14 +349,14 @@ async def test_missing_oss_configuration_is_named_not_swallowed(monkeypatch):
     assert "OSS_BUCKET" in result.output
 
 
-async def test_validate_quotes_credits_and_completion_records_a_shadow_usage_event(env, monkeypatch):
+async def test_validate_omits_quote_but_completion_still_records_shadow_usage(env, monkeypatch):
     monkeypatch.setenv("BILLING_MODE", "shadow")
     oss, ims = env
     ctx, aid = await _user_with_asset()
     quoted = await execute_compose(VideoComposeArgs(action="validate", timeline=_timeline(aid)), ctx)
     kv = _kv(quoted)
-    # 720p is 0.00075 credits/s billed in whole minutes: a short cut is one minute, 0.045.
-    assert kv["estimated_credits"] == "0.045" and kv["seconds_billed"] == "60" and kv["tier"] == "720p"
+    assert kv["valid"] == "true"
+    assert "estimated_credits" not in kv and "seconds_billed" not in kv
     job_id = (await execute_compose(VideoComposeArgs(action="submit", idempotency_key="key-1", timeline=_timeline(aid)), ctx)).metadata["job_id"]
     ims.finish("ims-1")
     done = await execute_compose(VideoComposeArgs(action="wait", job_id=job_id, wait_seconds=1), ctx)

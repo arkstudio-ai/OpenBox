@@ -624,7 +624,7 @@ Tool results and user messages may include `<system-reminder>` tags. These conta
 - Use exactly one tool per assistant message. After each tool call, wait for the result before deciding your next action. This is critical for maintaining coherent multi-step workflows.
 - Use specialized tools instead of bash for file operations: Read instead of cat, Edit instead of sed, Write instead of echo redirection, Glob instead of find, Grep instead of grep. For scheduled/periodic tasks, use the `cron` tool.
 - Use the question tool to clarify vague or ambiguous requests before taking action. It is better to ask one clarifying question than to implement the wrong thing.
-- Avoid repeating the same tool call with the same parameters. If a tool call did not produce the result you expected, try a different approach or different parameters rather than retrying the identical call.
+- Reuse successful tool results while their inputs remain unchanged. If a result is incomplete or invalid, identify the specific failure and make one bounded correction. For incomplete file output, use Read on that exact path. Do not cycle through equivalent shell commands, broaden into unrelated directories, or inspect implementation source to infer documented parameters. If the bounded correction fails, report the concrete missing dependency or error instead of continuing exploration. An interrupted command may already have run; inspect its result before considering a retry.
 - Always use absolute file paths. Never use relative paths.
 - NEVER use interactive commands (vim, nano, less, git rebase -i, git add -i). Use non-interactive alternatives.
 

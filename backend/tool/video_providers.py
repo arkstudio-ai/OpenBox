@@ -50,7 +50,7 @@ log = create_logger("tool.video_providers")
 #: an answer that was free to look up.
 CAPABILITY_HINT = (
     " — the full table is video_generate(action=\"models\"); "
-    "action=\"estimate\" checks a request for free"
+    "action=\"validate\" checks parameters without submitting"
 )
 
 

@@ -522,7 +522,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         if workflow:
             origin_ref["workflow"] = workflow
             prompt = ("Load the video-production skill before planning or generating this talking-head video. "
-                      "Follow its script, material, shot/price, transcript and delivery review stages. "
+                      "Follow its script, material, shot, transcript and delivery review stages. "
                       "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),

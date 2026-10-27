@@ -396,8 +396,8 @@ async def test_permission_refusal_asks_before_switching_and_marks_the_model(monk
     # Another account's route first, then the same gateway; each priced.
     assert [item["model"] for item in first.metadata["alternatives"]] == ["wan3.0-video-prime", "wan3.0-video"]
     # The current T1 catalogue quotes sale prices, not the provider's cost.
-    assert "wan3.0-video-prime (Wan 3.0 Prime) 720p 5s ≈10.15 credits" in first.output
-    assert "wan3.0-video (wan3.0-video) 720p 5s ≈7 credits" in first.output
+    assert "wan3.0-video-prime (Wan 3.0 Prime) 720p 5s" in first.output
+    assert "wan3.0-video (wan3.0-video) 720p 5s" in first.output
     assert "SECRET" not in first.output and "SECRET" not in json.dumps(first.metadata, ensure_ascii=False)
     job = await vp._owned_job(first.metadata["job_id"], ctx, "segment")
     assert job.status == "failed" and job.result_data["submit_error"]["unavailable"] == "permission"
@@ -412,7 +412,7 @@ async def test_permission_refusal_asks_before_switching_and_marks_the_model(monk
     assert "暂不可用" in rows["id=MiniMax-H3"] and "暂不可用" not in rows["id=wan3.0-video"]
     assert models.metadata["unavailable_models"] == ["MiniMax-H3"]
     estimate = await vp.execute_generate(vp.VideoGenerateArgs(
-        action="estimate", prompt="cat", resolution="720p", ratio="9:16", duration=5), ctx)
+        action="validate", prompt="cat", resolution="720p", ratio="9:16", duration=5), ctx)
     assert estimate.metadata["model_unavailable"] is True and "暂不可用" in estimate.output
 
 

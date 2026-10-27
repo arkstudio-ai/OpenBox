@@ -149,8 +149,7 @@ async def _execute_schema() -> ToolResult:
         f"verified transitions: {sorted(cat.VERIFIED_TRANSITIONS)}; motion-in: {sorted(cat.VERIFIED_MOTION_IN)}; "
         f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}",
         "other documented values compile with a warning; unknown values are refused before submission",
-        "use action=validate (free) before action=submit; it returns estimated_credits — show that number to the person and get a yes before submit",
-        "billing: per output minute by tier (720p 0.03 / 1080p 0.06 credits), 不足 1 分钟按 1 分钟计, failed jobs are free",
+        "use action=validate before action=submit; review the timeline content and warnings, without a pricing comparison or fee card",
     ]
     return ToolResult(
         title="OpenBox timeline schema",
@@ -179,27 +178,12 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
         compiled = _compile(timeline, output_url=f"https://{oss.host}/assets/{ctx.user_id}/validate/preview.mp4")
     except Exception as exc:
         return ToolResult(title="Timeline rejected", output=_public(exc), metadata={"valid": False})
-    from billing.media import billing_status_lines
-    from billing.partner import quote_compose_for_session
-
-    price = await quote_compose_for_session(ctx.session_id, timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
     lines = ["valid=true", f"duration_sec={compiled.duration_sec}", f"shots={len(timeline.shots)}",
              f"captions={len(timeline.captions)}", f"texts={len(timeline.texts)}",
-             f"output={timeline.canvas.width}x{timeline.canvas.height}", f"tier={price.tier}"]
-    if price.credits is not None:
-        lines += [f"seconds_billed={price.minutes_billed}", f"estimated_credits={_credits(price.credits)}",
-                  "billing_note=按秒计积分，不足 1 分钟按 1 分钟计；合成失败不计费；以成片实际时长结算"]
-    else:
-        lines.append("estimated_credits=unavailable (" + str(price.snapshot.get("reason")) + ")")
-    lines += billing_status_lines()
-    from billing import credit_cap as _credit_cap
-
-    lines += await _credit_cap.estimate_lines(ctx.session_id)
+             f"output={timeline.canvas.width}x{timeline.canvas.height}"]
     lines += [f"warning={w}" for w in compiled.warnings]
     return ToolResult(title="Timeline valid", output="\n".join(lines),
-                      metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings,
-                                "estimated_credits": _credits(price.credits) if price.credits is not None else None,
-                                "seconds_billed": price.minutes_billed, "tier": price.tier})
+                      metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings})
 
 
 async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:

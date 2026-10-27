@@ -173,7 +173,7 @@ def test_state_check_names_only_the_edited_shot_and_invalidates_spend():
     assert {"script_drift", "shots_drift"} <= _codes(report)
     drift = next(issue for issue in report["issues"] if issue["code"] == "shots_drift")
     assert "受影响段：2" in drift["message"]
-    assert "费用确认同时作废" in drift["message"]
+    assert "原制作确认需按变更范围复核" in drift["message"]
 
 
 def test_state_check_treats_model_change_as_all_shots_affected():
@@ -235,7 +235,7 @@ def test_frame_replacement_invalidates_only_shots_using_that_asset(frame, affect
     })
 
     assert _codes(report) == {"shots_drift"}
-    assert f"受影响段：{affected}，原费用确认同时作废" in report["issues"][0]["message"]
+    assert f"受影响段：{affected}，原制作确认需按变更范围复核" in report["issues"][0]["message"]
     assert [shot["job"] for shot in data["shots"]] == jobs_before
 
 
@@ -249,7 +249,7 @@ def test_switching_to_text_video_records_empty_inputs_and_invalidates_quote():
     })
 
     assert _codes(report) == {"shots_drift"}
-    assert "受影响段：1,2,3，原费用确认同时作废" in report["issues"][0]["message"]
+    assert "受影响段：1,2,3，原制作确认需按变更范围复核" in report["issues"][0]["message"]
     assert all(json.loads(shot["assets"])["input_assets"] == [] for shot in data["shots"])
 
 
@@ -419,10 +419,10 @@ def test_skill_contains_all_u1_to_u9_user_experience_contracts():
     flowed = " ".join(text.split())
 
     assert "短到约 30 秒" in text and "长到 60–75 秒" in text
-    assert "complete model prompt, character for character" in flowed
-    assert "Until the person chooses “可以”, make zero paid submits" in flowed
+    assert "every line and complete prompt" in flowed
+    assert "Before the person approves the current production scope, make zero paid video submits" in flowed
     assert "Call `image_gen` only when the person explicitly asks" in flowed
-    assert "受影响段" in text and "费用确认同时作废" in (SCRIPTS / "state.py").read_text()
+    assert "受影响段" in text and "原制作确认需按变更范围复核" in (SCRIPTS / "state.py").read_text()
     assert "max(2s, planned × 25%)" in text
     assert "Delivery means `share_file`" in text
     assert "禁图床 / 网盘" in text and "ssh -R" in text and "禁对外监听" in text
@@ -431,15 +431,15 @@ def test_skill_contains_all_u1_to_u9_user_experience_contracts():
     assert "person_selected_model" in text and "Never silently change the model or tier" in flowed
 
 
-def test_skill_can_invoke_real_question_cards_and_never_fakes_a_quote():
+def test_skill_reviews_content_without_quotes_or_fee_cards():
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     frontmatter = text.split("---", 2)[1]
 
     assert "  - question\n" in frontmatter
     assert "A Markdown heading, table, or request for confirmation is not a card" in text
-    assert "预计费用暂不可得（estimate 未返回金额）" in text
-    assert 'never substitute "已产生费用 0 元" for the planned quote' in text
-    assert "tool-call details do not count as display" in text
+    assert "Do not estimate credits" in text
+    assert "do not require a fixed number of cards" in text
+    assert "Tool-call details do not count as display" in text
 
 
 def test_lint_still_flags_uri_but_cli_exits_zero(tmp_path):

@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Mapping
 
+from agent.tool_exposure import pack_precedence, pack_rank
+
 if TYPE_CHECKING:
     from agent.tool_exposure import EligibleCatalog, ExposurePlan
     from core.config import ToolExposureConfig
@@ -268,9 +270,18 @@ def apply_exposure_budget(
         tool_id: _priority(original_reasons.get(tool_id, ""))
         for tool_id in plan.direct_ids
     }
+    packs = {
+        tool_id: _pack_name(original_reasons.get(tool_id, ""), catalog.entries[tool_id])
+        for tool_id in plan.direct_ids
+    }
     candidates = sorted(
         plan.direct_ids,
-        key=lambda tool_id: (_PRIORITY_ORDER[classified[tool_id]], tool_id),
+        key=lambda tool_id: (
+            _PRIORITY_ORDER[classified[tool_id]],
+            pack_rank(tool_id, packs[tool_id]),
+            pack_precedence(packs[tool_id]),
+            tool_id,
+        ),
     )
     no_trim = (plan.strategy or "").lower() in _NO_TRIM_STRATEGIES
 

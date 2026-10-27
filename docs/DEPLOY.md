@@ -5,6 +5,10 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+无影云桌面组件的发布步骤见 [现有无影云组件更新：视频准备与交互延迟修复](WUYING_SANDBOX.md#wuying-latency-rollout)。
+该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
+再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
+
 ## 当前阿里云前端：2026-10-21 20:47 `20261021-desktop-input-d0c0e956`（远程桌面输入开关）
 
 - 修复“允许操控”已勾选但键鼠无响应：固定版本的无影 SDK 中，`enableInput` 控制 live engine，`setInputEnabled` 修改 local config，两者不是新旧替代 API。开关和重连时同步更新两者，保留默认只读、键盘/IME、触屏与 Client 鼠标模式。

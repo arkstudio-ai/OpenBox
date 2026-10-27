@@ -18,6 +18,7 @@ can be attached to over the WUYING client to see what the agent did.
 - [Configuration](#configuration)
 - [Daily use](#daily-use)
 - [Operations](#operations)
+- [现有无影云组件更新：视频准备与交互延迟修复](#wuying-latency-rollout)
 - [Troubleshooting](#troubleshooting)
 - [What differs from the Docker and Kubernetes providers](#what-differs-from-the-docker-and-kubernetes-providers)
 - [Per-user desktops (WUYING_MODE=per_user)](#per-user-desktops-wuying_modeper_user)
@@ -351,13 +352,278 @@ python backend/scripts/wuying_bootstrap.py --desktop-id … --relay … --api-ke
 # then update WUYING_API_KEY in backend/.env and restart the backend
 ```
 
-To refresh only the action server and media runtime, use the narrow deploy
-script. It reuses an already healthy pinned runtime by default; pass
-`--force-media-bundle` when the lockfile or Node bundle changed:
+For a reviewed, full Action Server module update, the existing deploy script
+supports a retained-backup mode. This updates the five service modules, but
+does **not** synchronize the video-production skill:
 
 ```bash
-python backend/scripts/wuying_deploy_action_server.py --force-media-bundle
+backend/.venv/bin/python backend/scripts/wuying_deploy_action_server.py \
+  --env-file backend/.env.wuying-dev --action-server-only --dry-run
 ```
+
+Remove `--dry-run` only for the approved desktop and maintenance window. Use
+`--no-restart` to stage the modules before restarting the service. The default
+mode without `--action-server-only` also copies the video skill and may install
+media packages; it has a different scope and does not provide the same retained
+module backup workflow. `--force-media-bundle` is not a supported option in the
+current script. For the latency/video preparation release, use the bounded
+procedure below instead of re-running bootstrap or the default deploy mode.
+
+<a id="wuying-latency-rollout"></a>
+
+### 现有无影云组件更新：视频准备与交互延迟修复（2026-10-28）
+
+本节对应 `82927482`、`3209dfe6` 的更新操作，**是发布手册，不是生产已发布记录**。
+截至编写时，本轮只在 `wuying-dev` 真机验证过；生产桌面需要单独盘点和发布。
+命令均从仓库根目录执行，使用已配置阿里云 CLI 的运维机器。
+
+#### 1. 更新范围与依赖
+
+| 位置 | 更新内容 | 生效方式 |
+|---|---|---|
+| Web 后端 | `browser_action`、减少请求重复准备、shell 空闲判断与输出接收并行、移除估价 | 发布后端；单独合并 Git 不会更新线上进程 |
+| 每台旧版桌面的 `/opt/action_server/action_server.py` | 按块接收输出、退出后排空输出、返回 `output_complete` | 下发流式输出补丁，重启 `openbox-action-server` |
+| 每台旧版桌面的 `/opt/openbox/skills/video-production/` | `prepare.py`、配套脚本、技能指引和参考文件，共 10 个固定文件 | 按第 4 步同步，并校验源文件 SHA-256 |
+| 新建桌面的镜像/初始化资源、已有预热池 | 与上述组件保持一致 | 更新模板或供应流程；预热桌面验收后才可分配 |
+
+`browser_action` 只在 shell 退出码为 0 **且** `output_complete=true` 时继续读取截图。
+旧服务缺少该字段，可能已经完成浏览器动作，却不能通过结果完整性检查。因此要先更新
+桌面组件并验收，再发布使用新流程的后端；不能先全量启用新工具、再慢慢补桌面。
+
+本次没有提升 `ACTION_SERVER_VERSION` 或浏览器 `RUNTIME_VERSION`。只看 `/alive`
+版本号不能判断补丁是否存在，必须检查文件/函数摘要和实际 SSE 回执。现有浏览器自检也
+不会自动下发 Action Server 补丁或视频脚本。旧 `dev-browser/SKILL.md` 的路由提示由
+新后端补充，本次不要求升级 Chrome、Node 或整个浏览器运行时；不要直接改该目录中的
+单个文件，否则可能与 `dev-browser-sources.json` 不一致。
+
+#### 2. 冻结目标、等待空闲、准备发布记录
+
+1. 从生产桌面绑定和桌面池盘点目标，固定每台的 `desktop_id`、区域、归属、池状态和
+   当前组件摘要。只处理已确认的目标，不把测试配置当作生产配置，也不按旧文档中的
+   历史桌面数量决定本次范围。
+2. 先测试桌面，再少量空闲用户桌面，最后分批覆盖其余用户桌面和预热池。离线桌面记录为
+   待更新，在下次恢复并通过验收前不得进入新流程。当前没有通用的自动版本准入开关，
+   发布方必须安排维护窗口或先补齐准入机制，不能假定已有自动保护。
+3. 阻止目标桌面接收新任务，等待该桌面的 Agent run、shell、浏览器/桌面操作、媒体任务
+   和资源操作租约结束；Web 页面对话空闲或 `/media/jobs/status` 为空，单独都不足以证明
+   整台桌面已空闲。保持这个门禁直到文件校验和服务验收完成。
+4. 固定本次源码提交并记录哈希；不要在上传过程中切换分支或修改源文件。保留本轮输出的
+   release 路径、更新前后摘要和验收结果。保留用户工作区、浏览器数据、用户技能、密钥、
+   桌面绑定以及现有执行身份/资源控制逻辑；不运行 `wuying_bootstrap.py`。
+
+下面的默认示例只指向开发环境。生产执行时，把配置文件替换为该台桌面的专用配置；文件
+需以无引号的 `KEY=value` 形式提供 `WUYING_DESKTOP_ID` 和 `WUYING_REGION_ID`。
+`--env-file` 不会切换阿里云 CLI 账号，也不会自动建立到桌面的应用隧道。
+
+```bash
+export WUYING_UPDATE_ENV=backend/.env.wuying-dev
+export WUYING_SKILL_RELEASE="video_prep_$(date -u +%Y%m%dT%H%M%SZ)"
+git rev-parse HEAD
+aliyun sts GetCallerIdentity
+```
+
+#### 3. 更新流式输出，保留原有执行服务实现
+
+```bash
+# 只检查本地源文件和目标配置、展示计划；不访问桌面，也不证明远端布局兼容。
+backend/.venv/bin/python backend/scripts/wuying_patch_stream_output.py \
+  --env-file "$WUYING_UPDATE_ENV" --dry-run
+
+# 已通过维护窗口门禁后执行；暂不重启，待技能文件也同步完再统一重启。
+backend/.venv/bin/python backend/scripts/wuying_patch_stream_output.py \
+  --env-file "$WUYING_UPDATE_ENV" --no-restart
+```
+
+此脚本只替换 `execute_stream` 中的 reader 和退出回执，保留桌面上其他实现。它会检查
+目标布局、root 保护和发布前哈希，并将原文件保存到输出中的
+`/opt/action_server/releases/stream_output_<时间>/original-action_server.py`。
+执行前还需通过云助手记录 `stat -c '%a %u %g %n' /opt/action_server/action_server.py`
+的结果；备份副本采用私有权限保存，回滚时应使用记录的原权限，不直接套用备份文件的权限。
+失败时停止该台发布；布局不兼容时需先审查整套模块升级，不能自动改用 bootstrap。
+任何超时都先检查真实远端结果，不能根据“没有收到回复”直接重复执行或重启。
+
+#### 4. 同步视频技能的 10 个文件
+
+下面的独立发布段通过现有 `Desktop.run` 使用云助手，固定文件集合，上传前备份原文件，
+校验所有新旧摘要后才覆盖代码；传输分片和备份均保留。它不调用会清理临时文件的
+`Desktop.put`，不安装依赖，不修改其他技能或用户内容。`release` 必须是新的目录名，
+失败后保留同一目录检查部分发布状态，不能换一个 release 盲目重试。
+本段已做本地临时目录中的传输、备份和摘要模拟校验；真实发布仍须先从开发桌面开始验收。
+
+```bash
+PYTHONPATH=backend/scripts backend/.venv/bin/python - \
+  "$WUYING_UPDATE_ENV" "$WUYING_SKILL_RELEASE" <<'PY'
+import base64, gzip, hashlib, json, re, shlex, sys
+from pathlib import Path
+from wuying_bootstrap import Desktop
+from wuying_deploy_action_server import read_env
+
+profile, release = sys.argv[1:]
+if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", release):
+    raise SystemExit("Invalid release name")
+desktop_id = read_env("WUYING_DESKTOP_ID", profile)
+region = read_env("WUYING_REGION_ID", profile)
+if not desktop_id or not region:
+    raise SystemExit("Explicit desktop ID and region are required")
+names = (
+    "SKILL.md", "scripts/prepare.py", "scripts/state.py", "scripts/lint_prompt.py",
+    "references/compose-timeline.md", "references/material-plan.md",
+    "references/minimax-turbo-frames.md", "references/model-guide.md",
+    "references/prompt-recipes.md", "references/quality.md",
+)
+source = Path("backend/.openbox/skills/video-production")
+contents = {name: (source / name).read_bytes() for name in names}
+for name, content in contents.items():
+    if name.endswith(".py"):
+        compile(content, name, "exec")
+expected = {name: hashlib.sha256(content).hexdigest() for name, content in contents.items()}
+packed = base64.b64encode(gzip.compress(json.dumps({
+    name: base64.b64encode(content).decode() for name, content in contents.items()
+}).encode())).decode()
+chunks = [packed[i:i + 8500] for i in range(0, len(packed), 8500)]
+desktop = Desktop(desktop_id, region)
+
+common = f"""
+import base64, gzip, hashlib, json, os, pathlib, stat
+root = pathlib.Path('/opt/openbox/skills/video-production')
+stage = pathlib.Path('/opt/openbox/skill-backups') / {release!r}
+names = {names!r}
+expected = {expected!r}
+def protected(path):
+    for item in (path, *path.parents):
+        meta = item.lstat()
+        if stat.S_ISLNK(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
+            raise RuntimeError('Expected root-protected path: ' + str(item))
+if os.geteuid() != 0:
+    raise RuntimeError('Existing root deployment authority required')
+protected(root)
+"""
+
+def run(body):
+    command = "python3 -I -S -c " + shlex.quote(common + body)
+    if len(base64.b64encode(command.encode())) > 16 * 1024:
+        raise RuntimeError("Cloud Assistant command exceeds transport limit")
+    return desktop.run(command, timeout=60)
+
+print(run("""
+stage.parent.mkdir(mode=0o700, exist_ok=True)
+protected(stage.parent)
+stage.mkdir(mode=0o700, exist_ok=False)
+before = {}
+for name in names:
+    target = root / name
+    protected(target.parent)
+    if target.exists() or target.is_symlink():
+        protected(target)
+        if not target.is_file():
+            raise RuntimeError('Expected regular file: ' + name)
+        old = target.read_bytes()
+        saved = stage / 'originals' / name
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_bytes(old)
+        before[name] = {'sha256': hashlib.sha256(old).hexdigest(),
+                        'mode': stat.S_IMODE(target.stat().st_mode)}
+    else:
+        before[name] = {'sha256': None, 'mode': 0o644}
+(stage / 'manifest.json').write_text(json.dumps({'before': before, 'after': expected}))
+print(json.dumps({'release': str(stage), 'files': len(names)}))
+"""))
+for index, chunk in enumerate(chunks):
+    run(f"protected(stage)\nwith (stage / 'chunk-{index:04d}').open('xb') as out:\n    out.write({chunk.encode()!r})\n")
+print(run(f"""
+protected(stage)
+manifest = json.loads((stage / 'manifest.json').read_text())
+if manifest['after'] != expected:
+    raise RuntimeError('Release manifest changed')
+encoded = b''.join((stage / f'chunk-{{i:04d}}').read_bytes() for i in range({len(chunks)}))
+payload = json.loads(gzip.decompress(base64.b64decode(encoded)))
+if set(payload) != set(names):
+    raise RuntimeError('Unexpected skill files')
+new = {{name: base64.b64decode(payload[name]) for name in names}}
+for name in names:
+    if hashlib.sha256(new[name]).hexdigest() != expected[name]:
+        raise RuntimeError('Uploaded hash mismatch: ' + name)
+    if name.endswith('.py'):
+        compile(new[name], name, 'exec')
+    target = root / name
+    protected(target.parent)
+    if target.exists() or target.is_symlink():
+        protected(target)
+    actual = hashlib.sha256(target.read_bytes()).hexdigest() if target.exists() else None
+    if actual != manifest['before'][name]['sha256']:
+        raise RuntimeError('Target changed since backup: ' + name)
+for name in names:
+    target = root / name
+    target.write_bytes(new[name])
+    target.chmod(manifest['before'][name]['mode'])
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected[name]:
+        raise RuntimeError('Installed hash mismatch: ' + name)
+print(json.dumps({{'release': str(stage), 'verified_files': len(names), 'sha256': expected}}))
+"""))
+PY
+```
+
+#### 5. 重启执行服务并验收
+
+仅在目标桌面仍空闲、两项代码发布均成功时执行。此命令不重启整个云电脑或 Chrome。
+
+```bash
+PYTHONPATH=backend/scripts backend/.venv/bin/python - "$WUYING_UPDATE_ENV" <<'PY'
+import sys
+from wuying_bootstrap import Desktop
+from wuying_deploy_action_server import read_env
+profile = sys.argv[1]
+desktop_id = read_env("WUYING_DESKTOP_ID", profile)
+region = read_env("WUYING_REGION_ID", profile)
+if not desktop_id or not region:
+    raise SystemExit("Explicit desktop ID and region are required")
+desktop = Desktop(desktop_id, region)
+print(desktop.run("systemctl restart openbox-action-server && "
+                  "systemctl is-active openbox-action-server", timeout=60))
+PY
+```
+
+每台至少记录以下证据，失败的桌面保持维护状态：
+
+- 服务为 `active`，经该桌面实际应用通道请求 `/alive` 成功，返回的主机身份与目标一致。
+  root 云助手的文件校验不能替代普通用户执行身份验收。
+- 在该用户原有资源授权上下文中，用后端 `bash` 执行
+  `printf 'update-check-start\n'; sleep 2; printf 'update-check-done\n'`。
+  两段输出齐全、退出码 0，原始 SSE exit 的 `output_complete=true`，工具结果中的
+  `stream_output_complete=true`。只看退出码或 `/alive` 版本不能作为发布成功依据。
+- 校验第 4 步 10 个文件的安装后摘要与本次源码一致，`prepare.py` 的导入/语法检查通过。
+  用新建的独立 QA 草稿验证准备流程，不改用户已有草稿或已生成片段。
+- 新后端先在指定测试用户上验证浏览器普通请求：一个 `browser_action` 返回页面状态和
+  截图，内部 bash/view_image 均完成；查看已有页面时使用空 script，不重复点击或刷新。
+- 视频准备验证到内容确认卡为止：没有积分估价/费用卡，没有开始付费生成。记录模型轮次、
+  shell 次数、总时长和 provider/runtime/internal 分解；模型等待波动不能当作固定性能收益。
+
+开发环境的受控慢判断对照曾为 shell 21.1 秒 → 约 2.1 秒；普通浏览器观察为 2 轮模型、
+1 个模型可见工具调用；视频准备样例为 7 轮模型、1 次 shell、约 111 秒。这些是开发验收
+样例，不是所有生产桌面的时延承诺，也不是每次发布必须重复付费调用的门槛。
+
+#### 6. 发布后端、覆盖预热池和新建桌面
+
+已分配桌面和可被分配的预热桌面完成上述验收后，按 [DEPLOY.md](DEPLOY.md) 的后端发布
+流程切换；本次 Web 估价入口的移除也需随前端构建发布。保留原有权限、资源身份和实际计费。
+休眠或离线桌面继续挂起新流程准入，恢复后补更新及验收。镜像/初始化资源更新必须覆盖
+Action Server 和视频技能，两者不能依赖浏览器运行时版本自检；新建一台测试桌面复验后，
+再允许该模板供应新的桌面。不要仅修复现有桌面而继续从旧模板补充预热池。
+
+发布记录逐台写入：目标 ID/区域、源码提交、更新前后摘要、两类备份路径、服务重启时间、
+SSE/浏览器/视频验收结果、已更新/待更新/失败状态。不得记录 API key 或登录凭据。
+
+#### 7. 回滚与失败处理
+
+1. 先暂停新流程、保持目标桌面不接新任务；如需恢复旧执行服务，先回滚或停用依赖
+   `output_complete` 的新后端，避免新工具继续访问旧回执服务。
+2. 检查实际安装文件是否仍等于该次发布记录的 after SHA。若不一致，视为后续修改或
+   不确定状态，停止覆盖并调查；不按“最新时间的备份”猜测回滚目标。
+3. 执行服务只恢复该台发布输出给出的 `original-action_server.py`，恢复原权限并重启
+   `openbox-action-server`。视频技能按同一台同一 release 的 `manifest.json` 恢复
+   `originals/` 中有备份的文件和原权限；原本不存在的新增文件先保留，不通过删除清理回滚。
+4. 重新检查服务、通道、用户执行身份和旧流程。保留分片、备份、失败日志与用户数据。
+   部分上传或超时不是“没有发生写入”，先读真实状态，再决定恢复或继续。
 
 ### Pinned resource-control commands
 

@@ -21,15 +21,23 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 DESKTOP_PLATFORM = "douyin_creator"
 #: Job statuses that count against the day's budget.
 COUNTED = ("pending", "published")
+#: How far ahead the creator center lets a post be scheduled; bounds how far back
+#: a job may have been created and still land on the day being budgeted.
+MAX_SCHEDULE_DAYS = 14
 
 
 @dataclass(frozen=True)
 class Budget:
     allowed: bool
     reason: str
+    #: Posts already on the day being budgeted (today, or the scheduled day).
     today_count: int
     daily_limit: int
     next_allowed_at: datetime | None = None
+    #: The day being budgeted, "MM-DD" Asia/Shanghai.
+    day: str | None = None
+    #: True when the budget was judged for a `schedule_at` slot rather than now.
+    scheduled: bool = False
 
 
 def _aware(when: datetime | None) -> datetime | None:
@@ -69,30 +77,71 @@ def next_window_start(now: datetime, start_hour: int, end_hour: int) -> datetime
     return start.astimezone(timezone.utc)
 
 
+def parse_schedule_at(value: str | None) -> datetime | None:
+    """'YYYY-MM-DD HH:mm' in Asia/Shanghai → aware UTC datetime; None when absent or malformed."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M").replace(tzinfo=SHANGHAI).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def effective_time(created_at: datetime, published_at: datetime | None, details: dict | None) -> datetime:
+    """When a counted job appears (or will appear) on the account: its scheduled
+    slot when it was queued with `schedule_at`, else its publish time, else creation."""
+    return parse_schedule_at((details or {}).get("schedule_at")) or _aware(published_at or created_at)
+
+
+def _day_start(when: datetime) -> datetime:
+    return when.astimezone(SHANGHAI).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
 async def check_budget(*, workspace_id: str, account_id: str | None, now: datetime, daily_limit: int,
-                       min_interval_minutes: int, window_start_hour: int, window_end_hour: int) -> Budget:
-    """Today's desktop posts for this account, the last one's time, and the hours window."""
-    day_start_local = now.astimezone(SHANGHAI).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_start = day_start_local.astimezone(timezone.utc)
+                       min_interval_minutes: int, window_start_hour: int, window_end_hour: int,
+                       schedule_at: str | None = None) -> Budget:
+    """Whether this account may post at the slot: now, or the time named by
+    `schedule_at`. A scheduled post is budgeted against the day it will appear
+    and spaced against every other post's effective time, so a person can queue
+    several days of posts in one sitting without the queueing itself tripping
+    the daily cap, the interval, or the posting window."""
+    scheduled = bool(schedule_at)
+    slot = parse_schedule_at(schedule_at) if scheduled else now
+    if slot is None:
+        return Budget(False, "schedule_at 格式应为 YYYY-MM-DD HH:mm（上海时间）", 0, daily_limit, scheduled=True)
+    slot_local = slot.astimezone(SHANGHAI)
+    day = f"{slot_local:%m-%d}"
+    if scheduled and slot <= now:
+        return Budget(False, f"定时时间 {slot_local:%m-%d %H:%M} 已过，请改为将来的时刻", 0, daily_limit, day=day, scheduled=True)
+    slot_day = _day_start(slot)
+    lookback = min(slot_day, _day_start(now)) - timedelta(days=MAX_SCHEDULE_DAYS)
     async with get_db_session() as db:
         conds = [PublishJob.workspace_id == workspace_id, PublishJob.platform == DESKTOP_PLATFORM,
-                 PublishJob.status.in_(COUNTED), PublishJob.created_at >= day_start]
+                 PublishJob.status.in_(COUNTED), PublishJob.created_at >= lookback]
         if account_id:
             conds.append(PublishJob.platform_account_id == account_id)
-        rows = (await db.execute(select(PublishJob.created_at, PublishJob.published_at).where(*conds))).all()
-    today = len(rows)
-    last = max((_aware(p or c) for c, p in rows), default=None)
-    if today >= daily_limit:
-        return Budget(False, f"今天已通过云电脑发布 {today} 条，达到每日上限 {daily_limit}", today, daily_limit,
-                      next_allowed_at=next_window_start(now, window_start_hour, window_end_hour))
-    if last is not None and now - last < timedelta(minutes=min_interval_minutes):
-        nxt = last + timedelta(minutes=min_interval_minutes)
-        return Budget(False, f"距上一条发布不足 {min_interval_minutes} 分钟，最早 {nxt.astimezone(SHANGHAI):%H:%M} 再发", today, daily_limit, next_allowed_at=nxt)
-    if not in_window(now, window_start_hour, window_end_hour):
-        nxt = next_window_start(now, window_start_hour, window_end_hour)
-        return Budget(False, f"当前不在发布时段 {window_start_hour:02d}:00–{window_end_hour:02d}:00（上海时间）", today, daily_limit, next_allowed_at=nxt)
-    return Budget(True, "ok", today, daily_limit)
-
+        rows = (await db.execute(select(PublishJob.created_at, PublishJob.published_at, PublishJob.details).where(*conds))).all()
+    times = sorted(effective_time(c, p, d) for c, p, d in rows)
+    count = sum(1 for t in times if _day_start(t) == slot_day)
+    if count >= daily_limit:
+        nxt = (slot_local + timedelta(days=1)).replace(hour=window_start_hour, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        reason = (f"{day} 已安排 {count} 条，达到每日上限 {daily_limit}，请改到 {nxt.astimezone(SHANGHAI):%m-%d} 之后" if scheduled
+                  else f"今天已通过云电脑发布 {count} 条，达到每日上限 {daily_limit}")
+        return Budget(False, reason, count, daily_limit, next_allowed_at=nxt, day=day, scheduled=scheduled)
+    gap = timedelta(minutes=min_interval_minutes)
+    near = [t for t in times if abs(slot - t) < gap]
+    if near:
+        nxt = max(near) + gap
+        reason = (f"定时 {slot_local:%m-%d %H:%M} 与另一条（{max(near).astimezone(SHANGHAI):%m-%d %H:%M}）相隔不足 {min_interval_minutes} 分钟，"
+                  f"请改到 {nxt.astimezone(SHANGHAI):%H:%M} 之后" if scheduled
+                  else f"距上一条发布不足 {min_interval_minutes} 分钟，最早 {nxt.astimezone(SHANGHAI):%H:%M} 再发")
+        return Budget(False, reason, count, daily_limit, next_allowed_at=nxt, day=day, scheduled=scheduled)
+    if not in_window(slot, window_start_hour, window_end_hour):
+        nxt = next_window_start(slot, window_start_hour, window_end_hour)
+        window = f"{window_start_hour:02d}:00–{window_end_hour:02d}:00（上海时间）"
+        reason = (f"定时 {slot_local:%m-%d %H:%M} 不在发布时段 {window}" if scheduled else f"当前不在发布时段 {window}")
+        return Budget(False, reason, count, daily_limit, next_allowed_at=nxt, day=day, scheduled=scheduled)
+    return Budget(True, "ok", count, daily_limit, day=day, scheduled=scheduled)
 
 def risk_signal(text: str, patterns: list[str]) -> str | None:
     """The first risk pattern present in page text, or None."""

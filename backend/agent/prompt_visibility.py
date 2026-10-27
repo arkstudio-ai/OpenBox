@@ -44,6 +44,9 @@ def build_tool_visibility_fragment(
         lines.append("Use the visible web tools for current facts or supplied URLs instead of a custom scraper.")
     if "computer" in visible:
         lines.append("Use computer only for desktop UI outside a semantically controllable web page.")
+    if {"browser_action", "bash", "view_image"} <= set(visible):
+        lines.append("For browser interactions, prefer browser_action: it returns page state and a screenshot "
+                     "together. Group known dependent actions; inspect once before deciding the next action.")
     if "todo_write" in visible:
         lines.append("Use todo_write for genuinely complex multi-step work, not trivial answers.")
     lines.append("</tool_visibility>")

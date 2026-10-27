@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from models.message import ToolPartData, ToolStatus
 from tool.tool import ToolContext, ToolResult
@@ -255,6 +255,73 @@ class NestedToolRuntime:
                 # A stale generation cannot close its Part; run-scoped tail
                 # repair owns that exact recovery transition.
                 pass
+
+    async def execute_sequence(
+        self,
+        invocations: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        continue_after: Callable[[ToolResult], bool],
+        dispatch_scope: Callable,
+    ) -> list[ToolResult]:
+        """Authorize every child, then run dependent children in order.
+
+        A trusted composite supplies its completion predicate and dispatch
+        resource scope. Child arguments and durable slots are fixed before
+        any body is dispatched; neither stdout nor a child result can name a
+        new command or grant authority. Unlike batch, a failed prerequisite
+        prevents every later body from running.
+        """
+        calls: list[_NestedCall] = []
+        results: list[ToolResult] = []
+        try:
+            for index, (tool_id, args) in enumerate(invocations):
+                await self.ctx.assert_run_current()
+                call_id = _call_id(self.ctx, index, tool_id)
+                call = _NestedCall(
+                    index=index, tool_id=tool_id, args=dict(args),
+                    part=ToolPartData(
+                        id="part_" + call_id.removeprefix("nested_"),
+                        tool=tool_id, status=ToolStatus.PENDING, input=dict(args),
+                        call_id=call_id, canonical_tool_id=tool_id, wire_tool_name=tool_id,
+                        provider_binding_digest=_NESTED_BINDING_DIGEST,
+                        provider_dialect="nested", stream_seq=index,
+                        session_id=self.ctx.session_id, message_id=self.ctx.message_id,
+                    ),
+                )
+                calls.append(call)
+                await self._prepare(call)
+
+            # Refusal of even the observation child must precede the action.
+            # Replayed completed children retain their original terminal data.
+            denied = any(call.direct_result is not None and not continue_after(call.direct_result)
+                         for call in calls)
+            if denied:
+                for call in calls:
+                    if call.direct_result is None:
+                        call.direct_result = _blocked("Sequence not started",
+                            "Another required child was refused or previously failed. No remaining action was sent.",
+                            "nested_sequence_not_started")
+                    results.append(await self._commit(call))
+                return results
+
+            if self.ctx.abort.is_set():
+                raise asyncio.CancelledError
+            async with dispatch_scope():
+                for call in calls:
+                    if self.ctx.abort.is_set():
+                        raise asyncio.CancelledError
+                    if results and not continue_after(results[-1]):
+                        call.direct_result = _blocked("Sequence stopped",
+                            "The preceding action did not return a complete successful result. "
+                            "Inspect current state before a new action; it was not replayed.",
+                            "nested_sequence_stopped")
+                    else:
+                        await self._dispatch(call)
+                    results.append(await self._commit(call))
+            return results
+        except BaseException:
+            await self._close_canceled(calls)
+            raise
 
     async def execute_batch(
         self,

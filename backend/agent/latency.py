@@ -84,6 +84,8 @@ class RunTiming:
         values = target.setdefault(name, {key: 0.0 for key in (
             "total_ms", "provider_wait_ms", "application_ms", "runtime_network_wait_ms", "internal_ms")})
         total, provider, network, external = (end[i] - start[i] for i in range(4))
+        values["count"] = values.get("count", 0) + 1
+        values["max_ms"] = max(values.get("max_ms", 0.0), total)
         values["total_ms"] += total
         values["provider_wait_ms"] += provider
         values["application_ms"] += max(total - provider, 0.0)

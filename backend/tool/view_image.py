@@ -25,6 +25,8 @@ _IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 class ViewImageArgs(BaseModel):
     file_path: str = Field(description="Absolute path to the image file in the workspace")
+    transient: bool = Field(default=False,
+        description="True for an ephemeral browser/desktop checkpoint. Keep false for reference images and deliverables.")
 
 
 async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
@@ -73,6 +75,7 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
             mime,
             size,
             name=name,
+            transient=args.transient,
             relation_kind="inspection_image",
             relation_role="evidence",
             relation_label=name,
@@ -88,7 +91,8 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
             f"Image attached for viewing: {args.file_path} ({mime}, {size} bytes; asset_id={asset_id}). "
             "It will be visible in your next turn. Use this asset_id for image_gen input_images."
         ),
-        metadata={"asset_id": asset_id, "mime": mime, "path": path, "size": verified},
+        metadata={"asset_id": asset_id, "mime": mime, "path": path, "size": verified,
+                  "transient": args.transient},
     )
 
 

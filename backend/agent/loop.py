@@ -20,7 +20,10 @@ from agent.compaction import (
 )
 from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
-from agent.latency import measured_run, phase as latency_phase, bind_run as bind_latency_run, span as latency_span
+from agent.latency import (
+    measured_run, measured_span as latency_measured_span, phase as latency_phase,
+    bind_run as bind_latency_run, span as latency_span,
+)
 from agent.processor import StepOutcome, StepResult, process_step
 from agent.structured_output import (
     SYSTEM_PROMPT as STRUCTURED_OUTPUT_SYSTEM_PROMPT,
@@ -1504,21 +1507,23 @@ async def run_loop(
             # directory before tool materialization and pass it explicitly;
             # providers must never infer a long-lived backend process cwd.
             latency_phase("tool_catalogue")
-            session_workdir = await workdir_for_session(session)
-            resolved_step_tools = await resolve_step_tools(
-                agent_def,
-                sandbox,
-                config_rules,
-                user_id=user_id,
-                project_id=session.project_id or "",
-                workdir=session_workdir,
-                include_discovery=exposure_mode
-                in {"shadow", "portable", "native_auto"},
-                return_catalogue_state=True,
-                defer_remote=(exposure_mode == "portable" and session.kind == "normal"
-                              and inherited_authority is None and not remote_catalogue_requested),
-                compact_skills=exposure_mode == "portable",
-            )
+            with latency_span("catalogue.workdir"):
+                session_workdir = await workdir_for_session(session)
+            with latency_span("catalogue.resolve_tools"):
+                resolved_step_tools = await resolve_step_tools(
+                    agent_def,
+                    sandbox,
+                    config_rules,
+                    user_id=user_id,
+                    project_id=session.project_id or "",
+                    workdir=session_workdir,
+                    include_discovery=exposure_mode
+                    in {"shadow", "portable", "native_auto"},
+                    return_catalogue_state=True,
+                    defer_remote=(exposure_mode == "portable" and session.kind == "normal"
+                                  and inherited_authority is None and not remote_catalogue_requested),
+                    compact_skills=exposure_mode == "portable",
+                )
             latency_phase("context")
             from agent.subagent_authority import (
                 compose_subagent_authority,
@@ -1577,37 +1582,40 @@ async def run_loop(
                     output_schema, lambda payload: structured.setdefault("value", payload)
                 )
 
-            exposure_signals = await collect_exposure_signals(
-                last_user,
-                session_id=session_id,
-                user_id=user_id,
-            )
+            with latency_span("context.exposure_signals"):
+                exposure_signals = await collect_exposure_signals(
+                    last_user,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
             editor_id = preferred_editor_id(model_id, eligible_tools)
-            preliminary_runtime = assemble_tool_runtime(
-                eligible_tools,
-                mode=exposure_mode,
-                agent_name=agent_name,
-                signals=exposure_signals,
-                editor_id=editor_id,
-                synthetic_tools=synthetic_tools,
-                exposure_config=config.tool_exposure,
-            )
+            with latency_span("context.assemble_catalogue"):
+                preliminary_runtime = assemble_tool_runtime(
+                    eligible_tools,
+                    mode=exposure_mode,
+                    agent_name=agent_name,
+                    signals=exposure_signals,
+                    editor_id=editor_id,
+                    synthetic_tools=synthetic_tools,
+                    exposure_config=config.tool_exposure,
+                )
             revealed_ids: frozenset[str] = frozenset()
             if exposure_mode in {"portable", "native_auto"} and not resolved_step_tools.deferred:
                 try:
                     from session.internal_parts import get_valid_revealed_ids
 
-                    revealed_ids = await get_valid_revealed_ids(
-                        session_id=session_id,
-                        user_id=user_id,
-                        agent_id=agent_name,
-                        catalog_generation=preliminary_runtime.eligible_catalog.generation,
-                        schema_digests={
-                            tool_id: entry.schema_digest
-                            for tool_id, entry in preliminary_runtime.eligible_catalog.entries.items()
-                        },
-                        catalogue_availability=sandbox_catalogue_availability,
-                    )
+                    with latency_span("context.restore_reveals"):
+                        revealed_ids = await get_valid_revealed_ids(
+                            session_id=session_id,
+                            user_id=user_id,
+                            agent_id=agent_name,
+                            catalog_generation=preliminary_runtime.eligible_catalog.generation,
+                            schema_digests={
+                                tool_id: entry.schema_digest
+                                for tool_id, entry in preliminary_runtime.eligible_catalog.entries.items()
+                            },
+                            catalogue_availability=sandbox_catalogue_availability,
+                        )
                 except Exception as exc:
                     # A rollout against an old/unavailable state store starts
                     # from an empty frontier; it must never widen to eager.
@@ -1615,21 +1623,20 @@ async def run_loop(
                         "Could not restore tool reveal state error_type=%s",
                         type(exc).__name__,
                     )
-            runtime = (
-                assemble_tool_runtime(
-                    eligible_tools,
-                    mode=exposure_mode,
-                    agent_name=agent_name,
-                    signals=exposure_signals,
-                    revealed_ids=revealed_ids,
-                    requested_ids=fresh_reveals & revealed_ids,
-                    editor_id=editor_id,
-                    synthetic_tools=synthetic_tools,
-                    exposure_config=config.tool_exposure,
-                )
-                if exposure_mode in {"portable", "native_auto"}
-                else preliminary_runtime
-            )
+            runtime = preliminary_runtime
+            if exposure_mode in {"portable", "native_auto"} and revealed_ids:
+                with latency_span("context.replan_catalogue"):
+                    runtime = assemble_tool_runtime(
+                        preliminary_runtime.eligible_catalog,
+                        mode=exposure_mode,
+                        agent_name=agent_name,
+                        signals=exposure_signals,
+                        revealed_ids=revealed_ids,
+                        requested_ids=fresh_reveals & revealed_ids,
+                        editor_id=editor_id,
+                        synthetic_tools=synthetic_tools,
+                        exposure_config=config.tool_exposure,
+                    )
             if (
                 runtime.budget_result is not None
                 and runtime.budget_result.catalogue_decision == "fail_closed"
@@ -1738,7 +1745,7 @@ async def run_loop(
                 if any(tool_id not in discovery_ids for tool_id in ids):
                     raise ValueError("capability result is outside the discovery frontier")
                 next_runtime = assemble_tool_runtime(
-                    discovery_catalog.tools, mode=exposure_mode, agent_name=agent_name,
+                    discovery_catalog, mode=exposure_mode, agent_name=agent_name,
                     signals=exposure_signals, revealed_ids=revealed_ids,
                     requested_ids=ids, editor_id=editor_id, synthetic_tools=synthetic_tools,
                     exposure_config=config.tool_exposure,
@@ -2098,11 +2105,13 @@ async def run_loop(
                     start = next((i for i, message in enumerate(projected_messages) if message.id == last_user.id), None)
                     projected_messages = projected_messages[start:] if start is not None else []
                 from assistant.plans import validate_context
-                plan_review_context_present = await validate_context(projected_messages, ctx)
+                with latency_span("request.plan_authorization"):
+                    plan_review_context_present = await validate_context(projected_messages, ctx)
                 from memory.tool_projection import revalidate_memory_tool_messages
-                projected_messages = await revalidate_memory_tool_messages(
-                    projected_messages, ctx=ctx, for_compaction=for_compaction,
-                )
+                with latency_span("request.memory_tool_authorization"):
+                    projected_messages = await revalidate_memory_tool_messages(
+                        projected_messages, ctx=ctx, for_compaction=for_compaction,
+                    )
                 if assistant_view is not None:
                     from assistant.projection import project_main_messages
                     projected_messages = await project_main_messages(
@@ -2198,11 +2207,17 @@ async def run_loop(
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
                 return result
 
-            # Ordinary inputs and bound reports size their actual candidate
-            # below. Other modes keep the preflight that persists one-time
-            # plan reminders; explicit compaction keeps its existing path.
-            single_candidate = (assistant_view is not None and assistant_view["mode"] in {"ordinary", "report_only"}
-                                and not compaction_pending and bool(tools))
+            # Size the request we will checkpoint, rather than projecting the
+            # entire history once for preflight and again before dispatch.
+            # Plan transitions retain preflight: their reminder preparation
+            # can append a synthetic Event before the candidate is frozen.
+            single_candidate = (
+                not compaction_pending and bool(tools) and (
+                    (assistant_view is not None and assistant_view["mode"] in {"ordinary", "report_only"})
+                    or (session.kind == "normal" and agent_def.name == "build"
+                        and prev_assistant_agent != "plan")
+                )
+            )
             from session.todo import pending_notices
             todo_notice_snapshot = tuple(await pending_notices(session_id))
             llm_messages = []
@@ -2580,7 +2595,7 @@ async def run_loop(
                                 f"{assistant_info.id}:{budget_attempt_number}",
                                 **({"report_view": report, "report_identity": report_identity} if report else {})):
                             return messages
-                    if single_candidate and assistant_view["mode"] == "report_only":
+                    if single_candidate and assistant_view is not None and assistant_view["mode"] == "report_only":
                         # Capture before reading the bodies. A changed result,
                         # attempt or Inbox after admission forces a new build.
                         from assistant.transactions import source_snapshot
@@ -2623,7 +2638,7 @@ async def run_loop(
                     prompt_shape_digest: str,
                 ):
                     nonlocal admission_candidate, admission_messages
-                    if single_candidate and not request_admitted:
+                    if single_candidate and main_budget is not None and not request_admitted:
                         await lease.assert_current()
                         # Pressure/pruning is resolved before spending a
                         # request. Compaction has its own durable admission.
@@ -3527,6 +3542,7 @@ async def run_loop(
                     )
 
 
+@latency_measured_span("context.system_prompt")
 async def _build_system_prompt(
     agent_def: AgentDef,
     model_id: str,
@@ -3751,6 +3767,7 @@ def _legacy_tool_aliases(
     return {alias: tuple(sorted(candidates)) for alias, candidates in aliases.items()}
 
 
+@latency_measured_span("request.history_tool_names")
 async def _resolve_history_tool_names(
     msgs: list[MessageWithParts],
     *,
@@ -4218,6 +4235,7 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
     }
 
 
+@latency_measured_span("request.resolve_images")
 async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                          media_sources: dict[str, str] | None = None,
                          media_inputs: dict[str, dict] | None = None,

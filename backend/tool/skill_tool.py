@@ -271,6 +271,8 @@ async def _execute_skill(
     if args.skill == "dev-browser":
         output_parts.append("")
         output_parts.append(await _browser_readiness(ctx))
+        if guidance := _browser_workflow_guidance(ctx):
+            output_parts.append(guidance)
 
     await _record_skill_loaded(args.skill, content, output_parts, files, host_only, ctx)
     return ToolResult(
@@ -387,6 +389,8 @@ async def _execute_selected_skill(
     output_parts.append("</skill_content>")
     if args.skill == "dev-browser":
         output_parts.extend(["", await _browser_readiness(ctx)])
+        if guidance := _browser_workflow_guidance(ctx):
+            output_parts.append(guidance)
     await _record_skill_loaded(args.skill, content, output_parts, files, host_only, ctx)
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
@@ -430,6 +434,30 @@ def _skill_tool_for_snapshot(
         execute=selected,
         sandbox_required=False,
         never_prune=True,
+    )
+
+
+def _browser_workflow_guidance(ctx: ToolContext) -> str:
+    """Current platform routing, independent of an older installed Skill body.
+
+    This is guidance for already materialized tools, never a reveal or grant.
+    Check both the exact-step frontier and its frozen execution definitions.
+    """
+    required = {"browser_action", "bash", "view_image"}
+    available, lookup = ctx.available_tools, ctx._tool_execution_lookup
+    if (available is None or lookup is None or not required <= available
+            or any(getattr(lookup.get(name), "id", None) != name for name in required)):
+        return ""
+    return (
+        "<browser_workflow>\n"
+        "Current platform workflow: prefer browser_action for a focused browser step. "
+        "It returns page state and the screenshot together; the shell examples above remain fallback references. "
+        "Supply page (the persistent page name) and script (a TypeScript async function body). "
+        "The tool supplies page, client and pageName; omit shell wrappers, imports, connect/disconnect "
+        "and separate screenshot/view_image calls. Group known dependent actions and use targeted waits. "
+        "An empty script observes an existing named page. After a failed action, inspect current state "
+        "before deciding whether to retry. All existing tool permissions still apply.\n"
+        "</browser_workflow>"
     )
 
 

@@ -206,7 +206,7 @@ Measure actual duration and frame rate. Before card 3 show every playable shot l
 
 For a multi-shot cut, also review each join as described in `references/quality.md`: adjacent actual images, motion, voice and pauses. Shared planned frames constrain endpoints but do not prove a seamless join or a consistent voice. Include join findings in card 3; never report an unobserved visual/audio property as checked.
 
-The person chooses affected shots to regenerate or accept. Before a paid regeneration, show incremental shot count, seconds, unchanged/current model and resolution, and estimate. Record acceptance with `python3 "$S/state.py" shot --slug <slug> --index <N> --accept "<用户接受理由>"`. Regenerate only affected shots. One shot has exactly one current take; `:v2` supersedes `:v1`.
+The person chooses affected shots to regenerate or accept. Before a paid regeneration, show the affected shots, actual changes, seconds, and current model and resolution. Reuse an explicit request to regenerate that same scope; do not estimate credits or add a fee confirmation. Record acceptance with `python3 "$S/state.py" shot --slug <slug> --index <N> --accept "<用户接受理由>"`. Regenerate only affected shots. One shot has exactly one current take; `:v2` supersedes `:v1`.
 
 ### 8. Compose, check, deliver
 

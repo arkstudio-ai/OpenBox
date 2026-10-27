@@ -282,6 +282,7 @@ async def test_revision_draft_cannot_overwrite_the_previous_review_snapshot():
 
 @pytest.mark.parametrize("changed_after_step", [False, True])
 async def test_plan_entry_review_and_execution_complete_one_task_after_restarts(monkeypatch, changed_after_step):
+    from agent.tool_resolution import ResolvedStepTools
     from tool.tool import ToolResult, define_tool
     config = _loop_config()
     config.permission = {"*": "allow"}
@@ -294,7 +295,7 @@ async def test_plan_entry_review_and_execution_complete_one_task_after_restarts(
         execute=check, sandbox_required=False)
     async def get_sandbox(*args, **kwargs): return sandbox
     async def tools(*args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in (plan_enter_tool, plan_exit_tool, check_tool)},
+        return ResolvedStepTools(tools={tool.id: tool for tool in (plan_enter_tool, plan_exit_tool, check_tool)},
             catalogue_availability="available")
     monkeypatch.setattr("sandbox.sandbox_manager.get_client", get_sandbox)
     monkeypatch.setattr(loop, "resolve_step_tools", tools)

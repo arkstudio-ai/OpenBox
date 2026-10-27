@@ -1,7 +1,9 @@
 """Bash tool: execute shell commands in the sandbox with real-time output streaming."""
 import asyncio
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,46 +19,128 @@ class _BashAborted(RuntimeError):
     """The owning Agent run stopped while its command stream was open."""
 
 
-async def _iter_until_abort(stream: AsyncIterator[Any], abort: asyncio.Event):
-    """Yield stream items while making a user Stop close the HTTP stream.
+@dataclass(frozen=True)
+class _IdleJudgment:
+    notice: IdleNotification
+    decision: str
+    forced: bool = False
+
+
+async def _iter_until_abort(
+    stream: AsyncIterator[Any],
+    abort: asyncio.Event,
+    judge: Callable[[IdleNotification], Awaitable[str]],
+):
+    """Keep receiving output and Stop while the auxiliary idle judge runs.
 
     The generic tool scheduler deliberately drains already-dispatched external
     effects.  A shell process is locally cancellable, so waiting for it would
     make the Stop button appear broken.  Canceling the pending ``__anext__``
     closes SandboxClient's response; Action Server then kills the exact process
     group in its generator cleanup.
+
+    A judge only describes the output observed when it started. New output or
+    an exit invalidates it, even if its decision is ready in the same event-loop
+    turn. At most one judge (including cancellation/billing settlement) exists;
+    repeated idle notices do not queue more model calls behind a slow one.
     """
     iterator = stream.__aiter__()
     abort_task = asyncio.create_task(abort.wait())
     next_task: asyncio.Task | None = None
+    judge_task: asyncio.Task | None = None
+    judge_notice: IdleNotification | None = None
+    judge_stale = False
+    judge_forced = False
+    idle_judge_count = 0
+    command_exited = False
+
+    def invalidate_judge():
+        nonlocal judge_stale
+        if judge_task is not None and not judge_stale:
+            judge_stale = True
+            # Cancel once: another cancellation could interrupt the provider's
+            # shielded usage settlement. Its obsolete result is never applied.
+            if not judge_task.done():
+                judge_task.cancel()
+
+    def check_judge_failure():
+        if judge_task is not None and judge_task.done():
+            if judge_task.cancelled() and judge_stale:
+                return
+            # Revocation must still reach the owning run when output made this
+            # judgment stale, or when cancellation raced with the run fence.
+            # A cancellation we did not request is also a run cancellation.
+            judge_task.result()
+
+    async def forced_kill():
+        return "kill"
+
     try:
         while True:
             if abort.is_set():
                 raise _BashAborted
-            next_task = asyncio.create_task(anext(iterator))
-            done, _ = await asyncio.wait(
-                {next_task, abort_task},
+            check_judge_failure()
+            if judge_task is not None and judge_stale and judge_task.done():
+                judge_task = None
+            if next_task is None:
+                next_task = asyncio.create_task(anext(iterator))
+            pending = {next_task, abort_task}
+            if judge_task is not None:
+                pending.add(judge_task)
+            await asyncio.wait(
+                pending,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if abort_task in done:
-                next_task.cancel()
-                await asyncio.gather(next_task, return_exceptions=True)
+            if abort.is_set():
                 raise _BashAborted
-            try:
-                yield next_task.result()
-            except StopAsyncIteration:
-                return
-            finally:
+            check_judge_failure()
+            # Check the live task state, not just asyncio.wait's snapshot: the
+            # stream may become ready alongside the judge's completion callback.
+            if next_task.done():
+                try:
+                    chunk = next_task.result()
+                except StopAsyncIteration:
+                    return
                 next_task = None
+                if isinstance(chunk, IdleNotification):
+                    if not command_exited and judge_task is None:
+                        idle_judge_count += 1
+                        judge_notice = chunk
+                        judge_stale = False
+                        judge_forced = idle_judge_count > MAX_IDLE_JUDGES
+                        judge_task = asyncio.create_task(
+                            forced_kill() if judge_forced else judge(chunk)
+                        )
+                    continue
+                invalidate_judge()
+                if isinstance(chunk, int):
+                    command_exited = True
+                else:
+                    idle_judge_count = 0
+                yield chunk
+                continue
+            if judge_task is not None and judge_task.done():
+                completed_judge = judge_task
+                judge_task = None
+                if not judge_stale and not completed_judge.cancelled():
+                    assert judge_notice is not None
+                    yield _IdleJudgment(judge_notice, completed_judge.result(), judge_forced)
     finally:
         if next_task is not None and not next_task.done():
             next_task.cancel()
+        if next_task is not None:
             await asyncio.gather(next_task, return_exceptions=True)
-        close = getattr(iterator, "aclose", None)
-        if close is not None:
-            await close()
-        abort_task.cancel()
-        await asyncio.gather(abort_task, return_exceptions=True)
+        invalidate_judge()
+        try:
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                await close()
+        finally:
+            abort_task.cancel()
+            await asyncio.gather(abort_task, return_exceptions=True)
+            if judge_task is not None:
+                await asyncio.gather(judge_task, return_exceptions=True)
+                check_judge_failure()
 
 
 class BashArgs(BaseModel):
@@ -151,8 +235,9 @@ Reply with one word only: wait, kill, or success"""
         log.warning(f"[LLM Judge] Unrecognized response '{answer}', defaulting to kill")
         return "kill"
     except Exception as e:
+        from agent.driver import LeaseLostError
         from question.runtime import RunRevoked
-        if isinstance(e, RunRevoked):
+        if isinstance(e, (LeaseLostError, RunRevoked)):
             raise
         log.warning(f"[LLM Judge] LLM call failed: {e}")
         return "kill"
@@ -177,7 +262,16 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
         exit_code = 0
         stream_output_complete = None
         output_incomplete_reason = None
-        idle_judge_count = 0
+
+        async def judge(notice: IdleNotification) -> str:
+            log.info(f"Idle detected ({notice.idle_seconds}s), asking LLM to judge: {args.command[:80]}")
+            return await _judge_idle_command(
+                command=args.command,
+                recent_output=collected_output[-2000:],
+                idle_seconds=notice.idle_seconds,
+                total_seconds=notice.total_seconds,
+                ctx=ctx,
+            )
 
         stream = ctx.sandbox.execute_stream(
             command=args.command,
@@ -185,58 +279,42 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
             idle_timeout=IDLE_TIMEOUT,
             workdir=ctx.workdir,
         )
-        async for chunk in _iter_until_abort(stream, ctx.abort):
-            if isinstance(chunk, IdleNotification):
-                idle_judge_count += 1
-
-                if idle_judge_count > MAX_IDLE_JUDGES:
-                    # Too many idle checks — force kill
-                    log.info(f"Force killing idle process (pid={chunk.pid}): {args.command[:80]}")
-                    await ctx.sandbox.kill_command(chunk.pid)
-                    collected_output += f"\n[Process killed: idle too long ({chunk.idle_seconds}s no output)]\n"
-                    await ctx.update_output(collected_output)
-                    continue
-
-                # Ask LLM to judge
-                log.info(f"Idle detected ({chunk.idle_seconds}s), asking LLM to judge: {args.command[:80]}")
-                decision = await _judge_idle_command(
-                    command=args.command,
-                    recent_output=collected_output[-2000:],
-                    idle_seconds=chunk.idle_seconds,
-                    total_seconds=chunk.total_seconds,
-                    ctx=ctx,
-                )
-                log.info(f"LLM idle judgment: {decision}")
-
-                if decision in ("kill", "success"):
-                    await ctx.sandbox.kill_command(chunk.pid)
-                    suffix = "completed successfully" if decision == "success" else "killed (idle)"
-                    collected_output += f"\n[Process {suffix} after {chunk.total_seconds}s]\n"
-                    await ctx.update_output(collected_output)
+        async with aclosing(_iter_until_abort(stream, ctx.abort, judge)) as events:
+            async for chunk in events:
+                if isinstance(chunk, _IdleJudgment):
+                    notice, decision = chunk.notice, chunk.decision
+                    if chunk.forced:
+                        log.info(f"Force killing idle process (pid={notice.pid}): {args.command[:80]}")
+                        await ctx.sandbox.kill_command(notice.pid)
+                        collected_output += f"\n[Process killed: idle too long ({notice.idle_seconds}s no output)]\n"
+                        await ctx.update_output(collected_output)
+                    elif decision in ("kill", "success"):
+                        log.info(f"LLM idle judgment: {decision}")
+                        await ctx.sandbox.kill_command(notice.pid)
+                        suffix = "completed successfully" if decision == "success" else "killed (idle)"
+                        collected_output += f"\n[Process {suffix} after {notice.total_seconds}s]\n"
+                        await ctx.update_output(collected_output)
+                    else:
+                        log.info(f"LLM idle judgment: {decision}")
+                        await ctx.update_output(
+                            collected_output + f"\n[Waiting... no output for {notice.idle_seconds}s]\n"
+                        )
+                elif isinstance(chunk, int):
+                    exit_code = int(chunk)
+                    stream_output_complete = getattr(chunk, "output_complete", None)
+                    output_incomplete_reason = getattr(chunk, "output_incomplete_reason", None)
                 else:
-                    # decision == "wait" — continue waiting, show status
-                    await ctx.update_output(
-                        collected_output + f"\n[Waiting... no output for {chunk.idle_seconds}s]\n"
-                    )
-
-            elif isinstance(chunk, int):
-                exit_code = int(chunk)
-                stream_output_complete = getattr(chunk, "output_complete", None)
-                output_incomplete_reason = getattr(chunk, "output_incomplete_reason", None)
-            else:
-                # OutputChunk with type and content
-                collected_output += chunk.content
-                idle_judge_count = 0  # Reset on new output
-                # Push incremental update to frontend
-                if len(collected_output) <= MAX_STREAM_OUTPUT:
-                    await ctx.update_output(collected_output)
-                else:
-                    # The chat preview has a size budget, but observed stdout
-                    # remains part of the execution history after that point:
-                    # the call's output stream records each further chunk as
-                    # appended text, never the whole output again.
-                    from trajectory.tool_output import output_stream
-                    await output_stream(ctx, "bash").append(chunk.content, output=collected_output)
+                    collected_output += chunk.content
+                    # Push incremental update to frontend
+                    if len(collected_output) <= MAX_STREAM_OUTPUT:
+                        await ctx.update_output(collected_output)
+                    else:
+                        # The chat preview has a size budget, but observed stdout
+                        # remains part of the execution history after that point:
+                        # the call's output stream records each further chunk as
+                        # appended text, never the whole output again.
+                        from trajectory.tool_output import output_stream
+                        await output_stream(ctx, "bash").append(chunk.content, output=collected_output)
 
         ctx._trajectory_full_tool_output = collected_output
         output = collected_output

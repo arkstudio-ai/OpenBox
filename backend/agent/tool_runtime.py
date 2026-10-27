@@ -120,7 +120,7 @@ def _synthetic_chars(synthetic: Mapping[str, ToolInfo]) -> int:
 
 
 def assemble_tool_runtime(
-    eligible_tools: Mapping[str, ToolInfo],
+    eligible_tools: Mapping[str, ToolInfo] | EligibleCatalog,
     *,
     mode: str,
     agent_name: str,
@@ -131,8 +131,14 @@ def assemble_tool_runtime(
     synthetic_tools: Mapping[str, ToolInfo] | None = None,
     exposure_config=None,
 ) -> ToolRuntime:
-    """Build a step runtime without database, provider, Skill or sandbox I/O."""
-    catalogue = build_eligible_catalog(eligible_tools)
+    """Build a step runtime without database, provider, Skill or sandbox I/O.
+
+    Reveal restoration may replan the same step's already materialized
+    catalogue. Reuse that snapshot rather than rebuilding every schema; a new
+    step must still resolve its eligible mapping and authorization afresh.
+    """
+    catalogue = (eligible_tools if isinstance(eligible_tools, EligibleCatalog)
+                 else build_eligible_catalog(eligible_tools))
     synthetic = dict(synthetic_tools or {})
 
     if mode in {"legacy_eager", "emergency_eager"}:

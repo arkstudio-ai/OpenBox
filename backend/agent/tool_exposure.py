@@ -56,7 +56,10 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "planning": ("todo_write", "todo_read", "plan_enter"),
     "efficiency": ("batch", "multiedit"),
     "research": ("web_search", "web_fetch"),
-    "browser": ("browser_mode", "computer", "desktop_takeover"),
+    # The composite needs the normal image child materialized in this exact
+    # request. Bash is resident; missing children remain fail-closed under a
+    # constrained wire budget instead of silently widening execution rights.
+    "browser": ("browser_action", "view_image", "browser_mode", "computer", "desktop_takeover"),
     "vision": ("view_image",),
     "delivery": ("share_file",),
     "automation": ("cron",),

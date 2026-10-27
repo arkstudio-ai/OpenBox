@@ -96,6 +96,33 @@ def test_requested_tool_has_priority_but_does_not_grant_an_absent_capability():
     assert "revoked_tool" not in runtime.execution_lookup
 
 
+def test_reveal_replanning_reuses_only_the_current_steps_catalogue(monkeypatch):
+    from agent import tool_runtime
+
+    tools = {name: _tool(name) for name in ("read", "capability_search", "image_gen")}
+    preliminary = assemble_tool_runtime(tools, mode="portable", agent_name="build")
+    expected = assemble_tool_runtime(tools, mode="portable", agent_name="build",
+        revealed_ids={"image_gen", "absent_tool"})
+
+    def unexpected_build(_tools):
+        raise AssertionError("restoring reveals must not serialize the same catalogue twice")
+
+    monkeypatch.setattr(tool_runtime, "build_eligible_catalog", unexpected_build)
+    restored = assemble_tool_runtime(preliminary.eligible_catalog, mode="portable", agent_name="build",
+        revealed_ids={"image_gen", "absent_tool"})
+    assert restored.eligible_catalog is preliminary.eligible_catalog
+    assert restored.provider_plan == expected.provider_plan
+    assert restored.provider_tools == expected.provider_tools
+    assert restored.step_executable_ids == expected.step_executable_ids
+    assert "image_gen" in restored.provider_tools
+    assert "absent_tool" not in restored.execution_lookup
+
+    # A later step supplies a newly resolved mapping, so it cannot take the
+    # prepared-catalogue path or resurrect a capability removed by live policy.
+    with pytest.raises(AssertionError, match="same catalogue"):
+        assemble_tool_runtime({"read": tools["read"]}, mode="portable", agent_name="build")
+
+
 def test_shadow_wire_is_eager_while_candidate_is_portable():
     runtime = assemble_tool_runtime(
         {

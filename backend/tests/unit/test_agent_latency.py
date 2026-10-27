@@ -15,6 +15,33 @@ class Clock:
         self.now += seconds
 
 
+async def test_phase_and_span_counts_reveal_repeated_preparation_without_mutating_snapshots():
+    clock = Clock()
+    timing = latency.RunTiming(clock)
+    token = latency.current.set(timing)
+
+    @latency.measured_span("request.prepare")
+    async def prepare(seconds):
+        clock.advance(seconds)
+
+    try:
+        for seconds in (1, 3):
+            latency.phase("context")
+            await prepare(seconds)
+            latency.phase("model")
+        with latency.span("request.prepare"):
+            clock.advance(2)
+        first, second = timing.breakdown(), timing.breakdown()
+        assert first == second
+        assert first["context"]["count"] == 2
+        assert first["context"]["max_ms"] == 3000
+        assert timing.spans["request.prepare"]["count"] == 3
+        assert timing.spans["request.prepare"]["total_ms"] == 6000
+        assert timing.spans["request.prepare"]["max_ms"] == 3000
+    finally:
+        latency.current.reset(token)
+
+
 async def test_auxiliary_title_wait_does_not_subtract_foreground_work():
     from question.runtime import RunTicket, run_auxiliary, auxiliary_run
     clock = Clock()

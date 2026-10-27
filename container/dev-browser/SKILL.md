@@ -5,7 +5,37 @@ description: Browser automation with persistent page state via user's Chrome ext
 
 # Dev Browser Skill
 
-Browser automation that controls the user's real Chrome browser through the OpenBox Dev Browser Chrome Extension. Write small, focused scripts to accomplish tasks incrementally.
+Browser automation through the managed cloud Chrome or the user's Chrome extension. Use focused scripts that finish a useful action and return its observation together.
+
+## One action and observation per call
+
+When `browser_action` is available, prefer it for browser interaction. It runs a
+TypeScript body with `page` and `client` already connected and `pageName` supplied, then returns bounded
+URL/title/ARIA state and the current viewport screenshot in the same result:
+
+```json
+{"page":"search","script":"await page.goto('https://example.com', {waitUntil: 'domcontentloaded'});"}
+```
+
+Use `{"page":"search","script":""}` to observe the current page. Reuse that
+page name. Group dependent actions when their targets are already known, then
+inspect the resulting state once. Use specific element/URL waits; avoid a
+blanket network-idle wait on sites with background requests.
+
+The tool performs connection, snapshot, screenshot and disconnection. Do not
+repeat those steps in its script, and do not add a separate `view_image` call.
+For a known ARIA ref: `await (await client.selectSnapshotRef(pageName, 'e5')).click()`.
+Both `bash` and `view_image` must be available in the current tool list. Reveal
+missing tools with `capability_search`; this does not override their permissions.
+The screenshot is an ephemeral browser viewport, not a desktop coordinate
+reference. For native dialogs, use a fresh `computer` screenshot.
+
+If the script or image upload fails, the page action may already have happened.
+Inspect the page with an empty script before deciding whether to retry. Do not
+automatically repeat a submission or other side effect.
+
+The shell examples below remain useful when `browser_action` is unavailable or
+when a task needs an operation outside this interface.
 
 ## Choosing Your Approach
 
@@ -119,7 +149,7 @@ EOF
 
 ### Key Principles
 
-1. **Small scripts**: Each script does ONE thing (navigate, click, fill, check)
+1. **Focused scripts**: Group known dependent actions into one useful step; observe before choosing unknown targets
 2. **Evaluate state**: Log/return state at the end to decide next steps
 3. **Descriptive page names**: Use `"checkout"`, `"login"`, not `"main"`
 4. **Disconnect to exit**: `await client.disconnect()` - pages persist on server
@@ -154,8 +184,8 @@ cannot watch and you cannot recover from a native dialog.
 
 Follow this pattern for complex tasks:
 
-1. **Write a script** to perform one action
-2. **Run it** and observe the output
+1. **Write a focused script** for the next useful step, grouping known dependent actions
+2. **Run `browser_action`** and observe its page state and screenshot together
 3. **Evaluate** - did it work? What's the current state?
 4. **Decide** - is the task complete or do we need another script?
 5. **Repeat** until task is done

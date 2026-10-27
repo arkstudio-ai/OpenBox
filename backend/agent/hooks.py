@@ -416,7 +416,7 @@ class ToolHooks:
         # Set part_id on the call-local context so tools can reference their
         # own card even while a sibling body is running.
         run_ctx.part_id = part_id
-        if tool_id == "batch" and run_ctx.session_id and run_ctx.message_id:
+        if tool_id in {"batch", "browser_action"} and run_ctx.session_id and run_ctx.message_id:
             from agent.nested_tool_runtime import NestedToolRuntime
 
             run_ctx._nested_tool_runtime = NestedToolRuntime(self, run_ctx)

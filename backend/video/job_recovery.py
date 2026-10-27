@@ -292,9 +292,11 @@ async def _recover_job(job) -> bool:
 
 
 RESUME_PROMPT = (
-    "系统提示：视频任务 {job_id} 已在后台生成完成。请继续之前的流程：先用 video_generate "
-    "取回该 job_id 的结果并挂到对话里，再完成剩余镜头或合成，最后交付成片。"
-    "不要重新提交已完成的生成。"
+    "系统提示：视频任务 {job_id} 已在后台生成完成。请继续之前的流程：先用 video_generate(action=status，"
+    "不填 job_id) 查看本对话全部镜头的实际状态，取回所有已完成镜头的结果（不只这一个）并挂到对话里"
+    "（已标明 shown_in_chat=true 的不要重复挂载），再完成剩余镜头或合成，最后交付成片；若上一轮已处理完这些结果，"
+    "只需简短说明现状。不要重新提交已完成或仍在生成的镜头；分镜和要求以对话中已确认的"
+    "内容和这些任务记录为准，不要再向用户索要已经提供过的信息。"
 )
 
 
@@ -316,6 +318,12 @@ async def resume_conversation(job) -> bool:
     try:
         from agent.inbox import accept_inbox_item, wake_inbox_session
 
+        if await _continuation_queued(job):
+            # One queued continuation lists every finished shot of the
+            # conversation. One per shot made the later turns repeat the
+            # delivery and end with an empty, "failed" reply (2026-10-26). A
+            # shot that wake leaves unshown is swept again afterwards.
+            return False
         reference = await _resume_reference(job)
         if reference is None:
             return False
@@ -334,6 +342,24 @@ async def resume_conversation(job) -> bool:
     except Exception as exc:
         log.warning(f"Could not resume conversation for video job {job.id}: {type(exc).__name__}: {exc}")
         return False
+
+
+async def _continuation_queued(job) -> bool:
+    """Another completion wake will still list this job: queued, or claimed after it finished."""
+    from sqlalchemy import and_, or_, select
+
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+
+    covering = AgentInboxItem.state == "accepted"
+    if getattr(job, "completed_at", None) is not None:
+        covering = or_(covering, and_(AgentInboxItem.state == "claimed",
+                                      AgentInboxItem.claimed_at >= job.completed_at))
+    async with get_db_session() as db:
+        return await db.scalar(select(AgentInboxItem.id).where(
+            AgentInboxItem.session_id == job.session_id, AgentInboxItem.user_id == job.user_id,
+            AgentInboxItem.client_id.like("vjob:%"), AgentInboxItem.client_id != f"vjob:{job.id}", covering,
+        ).limit(1)) is not None
 
 
 async def _resume_reference(job) -> dict | None:

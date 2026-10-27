@@ -284,3 +284,22 @@ async def test_request_events_recover_without_transport_and_contain_only_referen
     assert len(changed) == 3
     assert all(e["request_id"] == request.id and e["request_kind"] == "question" for e in changed)
     assert "Blue" not in str(changed) and "questions" not in str(changed)
+
+
+async def test_an_assistant_or_voice_answer_meets_the_same_plan_gate_as_a_click(monkeypatch):
+    """A priced plan confirmed through the assistant (text or voice) is checked before anything is scheduled."""
+    from types import SimpleNamespace
+    from assistant.requests import assistant_answer
+    checked = []
+    async def refuse(session_id, questions, answers):
+        checked.append((session_id, questions, answers))
+        raise RuntimeError("plan cannot be paid for")
+    async def must_not_resolve(*_args, **_kwargs):
+        raise AssertionError("resolved before the plan gate")
+    monkeypatch.setattr("billing.plan_quote.gate_answer", refuse)
+    monkeypatch.setattr("assistant.requests.question_task", must_not_resolve)
+    row = SimpleNamespace(id="card", session_id="execution", user_id="owner", continuation={},
+                          questions=[{"kind": "plan_confirm", "question": "开始生成吗？", "options": [{"label": "可以"}]}])
+    with pytest.raises(RuntimeError, match="plan cannot be paid for"):
+        await assistant_answer(row, [["可以"]], answered_by={"kind": "voice"})
+    assert checked == [("execution", row.questions, [["可以"]])]

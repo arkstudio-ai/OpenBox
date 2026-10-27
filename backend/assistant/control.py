@@ -392,6 +392,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         command.receipt = receipt
         await append_agent_event_locked(db, execution, kind="assistant.control.accepted", payload=receipt,
                                          idempotency_key=f"assistant-control:{command.id}")
+    publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
     # SQL already owns the interruption. This is only the exact local fast path.
     from agent.driver import request_abort
     for target in targets:
@@ -401,6 +402,17 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         except Exception:
             log.exception("Task control interruption deferred command_id=%s", receipt["command_id"])
     return receipt
+
+
+def publish_task_changed(user_id: str, workspace_id: str, session_id: str) -> None:
+    """A wake hint that a task's state or requirements changed: open pages and calls read SQL again.
+
+    A paused, cancelled or edited task otherwise reached a live call only on
+    its next fallback scan (voice/updates.py); the hint carries no state.
+    """
+    from bus import bus
+    from bus.events import SESSION_UPDATED
+    bus.publish(SESSION_UPDATED, {"userId": user_id, "workspaceId": workspace_id, "sessionId": session_id})
 
 
 async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, task_id: str,

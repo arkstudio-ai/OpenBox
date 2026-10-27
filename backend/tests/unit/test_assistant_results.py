@@ -153,3 +153,23 @@ async def test_delivery_blocks_a_result_after_current_permission_is_revoked(chan
         result = await db.get(TaskResult, result_id)
         assert result.delivery_state == "blocked"
         assert result.assistant_inbox_id is None and result.processed_message_id is None
+
+
+async def test_an_empty_reply_is_recorded_with_its_reason_not_as_an_unexplained_failure():
+    # Measured 2026-10-26: a redundant video-completion wake replied with
+    # nothing; the result had no summary and was reported as "failed, no cause".
+    owner, _, workspace, main, kwargs = await setup_task()
+    accepted = await accept_task_command(**kwargs)
+    lease = await reserve_run(accepted["execution_session_id"], owner)
+    batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+    fence = (lease.session_id, lease.run_id, lease.generation)
+    message = await create_assistant_message(lease.session_id, batch.messages[0].id,
+        model_id="test/model", agent="build", user_id=owner, run_fence=fence)
+    message.finish = "stop"
+    await update_message_info(message, user_id=owner, run_fence=fence)
+    await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
+    await lease.release(session_status="idle")
+    async with get_db_session() as db:
+        result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+        assert result.outcome == "error"
+        assert "EMPTY_REPLY" in result.summary and "without a reply" in result.summary

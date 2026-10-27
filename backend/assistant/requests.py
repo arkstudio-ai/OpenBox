@@ -82,6 +82,34 @@ async def validate_question_read(db, row):
     return linked
 
 
+async def current_question_counts(db, user_id, tasks) -> dict[str, int]:
+    """Per task execution session, its pending questions the user can still answer.
+
+    A bare count of pending rows kept a reopened assistant showing a task as
+    waiting for a card that no request list offers any more (superseded by a
+    later run, cancelled, or consumed). A bound card counts only while it is
+    current (``_fresh``); a question without a binding counts as before.
+    """
+    from question.question import QuestionGone
+    tasks_by_session = {task.execution_session_id: task for task in tasks}
+    if not tasks_by_session:
+        return {}
+    rows = (await db.execute(select(QuestionCheckpoint, SessionExecution)
+        .join(SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id)
+        .where(QuestionCheckpoint.session_id.in_(list(tasks_by_session)), QuestionCheckpoint.user_id == user_id,
+               QuestionCheckpoint.status == "pending",
+               QuestionCheckpoint.generation == SessionExecution.generation))).all()
+    counts: dict[str, int] = {}
+    for row, execution in rows:
+        if (row.continuation or {}).get("assistant_request"):
+            try:
+                await _fresh(db, row, execution, tasks_by_session[row.session_id])
+            except QuestionGone:
+                continue
+        counts[row.session_id] = counts.get(row.session_id, 0) + 1
+    return counts
+
+
 async def _fresh(db, row, execution, task):
     from question.question import QuestionGone
     binding = row.continuation.get("assistant_request")
@@ -261,7 +289,11 @@ async def assistant_answer(row, answers, *, answered_by: dict, attachments=None,
     Either way the answer is marked so the conversation shows "由个人助理代答".
     """
     from bus import bus
+    from billing.plan_quote import gate_answer
     from question import question as questions
+    # A priced plan the workspace cannot pay for is refused before anything is
+    # scheduled, exactly as a click on the card is (question._resolve).
+    await gate_answer(row.session_id, row.questions, answers)
     async with get_db_session() as db:
         linked = await question_task(db, row)
     if linked is None:

@@ -773,3 +773,110 @@ async def test_signal_planner_and_local_search_perform_zero_sandbox_http(monkeyp
     assert commits == [("hidden_report",)]
     assert sandbox.calls == []
     assert manager_calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_trimmed_workflow_control_requested_through_discovery_is_loaded_and_executed(monkeypatch):
+    """Discovery → reveal commit → next step's tools → execution, for a product-pinned control."""
+    from core.config import ToolExposureConfig
+    from session.internal_parts import commit_tool_reveal as commit_reveal
+
+    user_id, session_id, parent_id = await _seed_scope()
+    compose_calls: list[str] = []
+
+    async def execute_compose(args: StringArgs, _ctx: ToolContext) -> ToolResult:
+        compose_calls.append(args.value)
+        return ToolResult(title="compose", output=args.value)
+
+    filler = "Control for the conversation's active video workflow. " * 25
+    tools = {
+        "capability_search": capability_search_tool,
+        "video_generate": _tool("video_generate", description="Generate video segments. " + filler),
+        "share_file": _tool("share_file", description="Share a finished file. " + filler),
+        "video_compose": _tool("video_compose", description="Compose finished segments. " + filler,
+                               execute=execute_compose),
+    }
+    signals = ExposureSignals(user_task_text="把海浪视频做完", has_active_video_job=True)
+    sizes = {tool_id: entry.schema_chars for tool_id, entry in assemble_tool_runtime(
+        tools, mode="portable", agent_name="build", signals=signals).eligible_catalog.entries.items()}
+    # The workflow already fills the soft target; the compose control fits
+    # only in the burst room below the hard limit, as in the reproduction.
+    soft = sizes["capability_search"] + sizes["video_generate"] + sizes["share_file"]
+    config = ToolExposureConfig(resident_soft_chars=1_000, resident_hard_chars=soft, active_soft_chars=soft,
+                                active_hard_chars=soft + sizes["video_compose"] + 50)
+
+    def runtime(revealed=frozenset(), requested=()):
+        return assemble_tool_runtime(tools, mode="portable", agent_name="build", signals=signals,
+                                     revealed_ids=revealed, requested_ids=requested, exposure_config=config)
+
+    first = runtime()
+    assert "video_compose" in first.provider_plan.discovery_ids
+    assert "video_compose" not in first.step_executable_ids
+    assistant = await create_assistant_message(session_id=session_id, parent_id=parent_id,
+                                               model_id="test/model", agent="build", user_id=user_id)
+    ctx = _context_for(first, session_id=session_id, user_id=user_id)
+
+    async def commit(ids, generation, digests):
+        # The run loop's commit: refuse a reveal the next step could not load.
+        from agent.hooks import current_tool_context
+        if not set(ids) <= runtime(requested=ids).step_executable_ids:
+            raise ValueError("Requested tool schemas cannot fit the next step's definition budget")
+        call_context = current_tool_context() or ctx
+        for stream_seq, tool_id in enumerate(ids):
+            entry = first.eligible_catalog.entries[tool_id]
+            await commit_reveal(ToolRevealEvent(
+                session_id=session_id, user_id=user_id, message_id=assistant.id,
+                origin_part_id=call_context.part_id, agent_id="build", canonical_tool_id=tool_id,
+                schema_digest=entry.schema_digest, catalog_generation=generation,
+                evidence_source="portable", stream_seq=stream_seq))
+
+    ctx._commit_tool_reveal = commit
+    monkeypatch.setattr(processor_mod, "stream_llm", _fake_stream(_tool_call(
+        "capability_search", {"query": "", "names": ["video_compose"]}, "call_search")))
+    await process_step(
+        session_id=session_id, user_id=user_id, session=SimpleNamespace(),
+        agent_def=AgentDef(name="build", description="test"), system=[], llm_messages=[],
+        tools=dict(first.provider_tools), model_id="test/model", ctx=ctx,
+        hooks=_allowing_hooks(session_id, user_id), assistant_info=assistant, sandbox=None,
+        abort=asyncio.Event(), doom_loop_history=[], execution_lookup=first.execution_lookup,
+        step_executable_ids=first.step_executable_ids, provider_to_canonical=first.provider_to_canonical)
+    revealed = await get_valid_revealed_ids(
+        session_id=session_id, user_id=user_id, agent_id="build",
+        catalog_generation=first.eligible_catalog.generation,
+        schema_digests={tool_id: entry.schema_digest for tool_id, entry in first.eligible_catalog.entries.items()})
+    assert revealed == frozenset({"video_compose"})  # the reveal was accepted, not refused as too large
+
+    # The next step, as the loop builds it from this step's fresh reveal.
+    second = runtime(revealed, requested=("video_compose",))
+    assert "video_compose" in second.provider_tools and "video_compose" in second.step_executable_ids
+    assert second.budget_result.visible_chars <= config.active_hard_chars
+    await _process_runtime_step(
+        monkeypatch, runtime=second, ctx=_context_for(second, session_id=session_id, user_id=user_id),
+        events=_tool_call("video_compose", {"value": "final.mp4"}, "call_compose"),
+        session_id=session_id, user_id=user_id, parent_id=parent_id)
+    assert compose_calls == ["final.mp4"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_model_response_is_retried_instead_of_recorded_as_a_final_stop(monkeypatch):
+    # Measured 2026-10-27: headers after 30 s, a bare stop and 0 output tokens
+    # mid-workflow ended the run with "no final answer" before composition.
+    user_id, session_id, parent_id = await _seed_scope()
+    runtime = assemble_tool_runtime({"capability_search": capability_search_tool}, mode="portable",
+                                    agent_name="build", signals=ExposureSignals())
+    assistant = await create_assistant_message(session_id=session_id, parent_id=parent_id,
+                                               model_id="test/model", agent="build", user_id=user_id)
+    monkeypatch.setattr(processor_mod, "stream_llm", _fake_stream(
+        [{"type": "finish", "reason": "stop", "usage": {"input": 49611, "output": 0}}]))
+    result = await process_step(
+        session_id=session_id, user_id=user_id, session=SimpleNamespace(),
+        agent_def=AgentDef(name="build", description="test"), system=[], llm_messages=[],
+        tools=dict(runtime.provider_tools), model_id="test/model",
+        ctx=_context_for(runtime, session_id=session_id, user_id=user_id),
+        hooks=_allowing_hooks(session_id, user_id), assistant_info=assistant, sandbox=None,
+        abort=asyncio.Event(), doom_loop_history=[], execution_lookup=runtime.execution_lookup,
+        step_executable_ids=runtime.step_executable_ids, provider_to_canonical=runtime.provider_to_canonical)
+    assert result.outcome is StepOutcome.RETRY and result.retry_reason == "Empty model response"
+    async with get_db_session() as db:
+        types = (await db.scalars(select(Part.type).where(Part.message_id == assistant.id))).all()
+    assert "text" not in types  # nothing was persisted: the request is replay-safe

@@ -201,6 +201,27 @@ async def test_a_turn_keeps_the_words_of_its_own_utterance(call):
     assert link.started[1].transcript == "我有什么待办"
 
 
+async def test_a_handoff_carries_the_users_own_words_for_the_whole_request(call):
+    bridge, provider, link, _ = call
+    await greeted(bridge, provider)
+    said = ["帮我再做个短视频，五十秒左右", "抽象一点的风格", "竖屏的"]
+    for index, text in enumerate(said[:-1]):
+        await replay(bridge, event("user_started", item_id=f"u{index}"), event("user_stopped"),
+                     event("user_transcript", item_id=f"u{index}", text=text), started(f"chat{index}"), done(f"chat{index}"))
+    await replay(bridge, event("user_started", item_id="u2"), event("user_stopped"),
+                 event("user_transcript", item_id="u2", text=said[-1]), started("ack"),
+                 tool_call("call-1", text="做一个五十秒抽象风格的竖屏短视频"))
+    [ref] = link.started
+    assert ref.transcript == "竖屏的"  # the conversation still shows the exact utterance
+    assert ref.context["user_words"] == said
+    await replay(bridge, done("ack"), event("user_started", item_id="u3"), event("user_stopped"),
+                 event("user_transcript", item_id="u3", text="现在做到哪了"), started("ack-2"),
+                 tool_call("call-2", text="查进度"))
+    assert "user_words" not in link.started[1].context  # a new request starts after the handoff
+    # ...but what was already handed over still resolves a follow-up's reference.
+    assert link.started[1].context["earlier_user_words"] == said
+
+
 async def test_transcripts_are_kept_for_the_call_and_logged_with_the_call_id_only_in_qa():
     import logging
     from voice.tools import CallScope
@@ -326,6 +347,38 @@ async def test_a_user_cut_off_by_a_drop_is_asked_to_say_it_again(call):
     assert phrases.phrase_text("reconnected", "zh") == "刚才线路断了一下，您再说一遍？"
     await replay(bridge, started("again"), audio("again"), done("again"))
     assert of_type(outbox(bridge), "phrase") == [{"type": "phrase", "key": "reconnected"}]
+
+
+async def test_an_unanswered_request_is_carried_into_the_new_session_not_asked_again(call):
+    # Measured 2026-10-26: the provider dropped the socket while generating the
+    # answer to "make me another short video"; the user had to say it again.
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await replay(bridge, event("user_started", item_id="u1"), item("u1"), event("user_stopped"),
+                 event("user_transcript", text="帮我再做一个五十秒的抽象短视频", item_id="u1"), started("answer"))
+    outbox(bridge)
+    provider.drop()
+    assert await bridge.recover(provider)
+    [(_, note)] = fresh[0].commands("note")
+    assert note == phrases.carried_utterance("帮我再做一个五十秒的抽象短视频", "zh")
+    assert bridge.next_phrase is None
+    clock.advance(REPLY_GRACE_SECONDS)
+    await bridge.fill_idle()
+    assert bridge.requested == "model" and len(fresh[0].commands("create")) == 1
+    assert phrases.phrase_text("reconnected", "zh") not in str(fresh[0].sent)
+    # Its answer is attributed to the original utterance (handoff source, guard).
+    await replay(bridge, item("carried", text=note), started("carried-answer"))
+    assert bridge._answering["carried-answer"] == "u1"
+
+
+async def test_an_answered_request_is_not_carried_again(call):
+    bridge, provider, link, clock = call
+    fresh = await answered(bridge, provider, clock)
+    await replay(bridge, event("user_started", item_id="u1"), item("u1"), event("user_stopped"),
+                 event("user_transcript", text="今天几号", item_id="u1"), started("answer"), audio("answer"), done("answer"))
+    provider.drop()
+    assert await bridge.recover(provider)
+    assert not fresh[0].commands("note") and not fresh[0].commands("create")
 
 
 async def test_a_reply_cut_off_is_billed_once_and_the_user_asked_again(call):

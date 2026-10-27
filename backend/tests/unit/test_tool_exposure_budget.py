@@ -175,7 +175,9 @@ def test_priority_is_resident_then_product_then_intent_then_reveal_then_other():
     assert {"other", "revealed"}.issubset(result.plan.discovery_ids)
 
 
-def test_core_and_paid_recovery_survive_even_when_they_exceed_global_hard_limit():
+def test_paid_recovery_never_pushes_the_request_past_the_hard_limit():
+    # Measured 2026-10-26: keeping a whole recovery pack above the boundary made
+    # the payload gate abort every continuation of a paid video production.
     catalog = _catalog({"intent": 2, "recovery": 18, "core": 18})
     plan = _plan(
         catalog,
@@ -189,11 +191,45 @@ def test_core_and_paid_recovery_survive_even_when_they_exceed_global_hard_limit(
 
     result = apply_exposure_budget(catalog, plan, budgets=_budgets(visible_hard_chars=30))
 
-    assert result.plan.direct_ids == ("core", "recovery")
-    assert result.deferred_reasons["intent"] == "initial_visible_hard_limit"
-    assert result.visible_chars == 36
-    assert result.hard_limit_exceeded is True
-    assert any(warning.startswith("initial_visible_hard:") for warning in result.warnings)
+    assert result.plan.direct_ids == ("core", "intent")
+    assert result.deferred_reasons["recovery"] == "product_pinned_hard_limit"
+    assert "recovery" in result.plan.discovery_ids
+    assert result.visible_chars == 20
+    assert result.hard_limit_exceeded is False
+
+
+def test_recovery_outranks_intent_and_keeps_its_most_important_controls_first():
+    catalog = _catalog({"core": 10, "video_generate": 8, "share_file": 6, "hot_trends": 6, "web_search": 4})
+    plan = _plan(
+        catalog,
+        tuple(catalog.entries),
+        {
+            "core": "resident",
+            "video_generate": "product:video",
+            "share_file": "product:video",
+            "hot_trends": "product:video",
+            "web_search": "intent:research",
+        },
+    )
+
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets(visible_hard_chars=25))
+
+    # Alphabetically hot_trends sorts first; the pack's importance order wins.
+    assert set(result.plan.direct_ids) == {"core", "video_generate", "share_file"}
+    assert result.deferred_reasons["hot_trends"] == "product_pinned_soft_limit:video"
+    assert result.deferred_reasons["web_search"] == "initial_visible_hard_limit"
+    assert result.visible_chars <= 25
+
+
+def test_reserved_request_local_definitions_share_the_hard_limit():
+    catalog = _catalog({"core": 10, "video_generate": 8})
+    plan = _plan(catalog, tuple(catalog.entries), {"core": "resident", "video_generate": "product:video"})
+
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets(visible_soft_chars=20, visible_hard_chars=20),
+                                   reserved_chars=5)
+
+    assert result.plan.direct_ids == ("core",)
+    assert result.deferred_reasons["video_generate"] == "product_pinned_hard_limit:video"
 
 
 def test_explicit_pack_is_capped_as_whole_items_not_sliced_bytes():
@@ -380,3 +416,42 @@ def test_budgeter_rejects_a_plan_that_silently_omits_catalogue_entries():
 
     with pytest.raises(ValueError, match="omits eligible tool ids"):
         apply_exposure_budget(catalog, plan, budgets=_budgets())
+
+
+def _video_workflow_budget(sizes, requested=()):
+    """The real planner and budgeter for an active video job, default 28K/32K budgets."""
+    from agent.tool_exposure import ExposureSignals, portable_plan
+    catalog = _catalog(sizes)
+    plan = portable_plan(catalog, agent_name="build", signals=ExposureSignals(has_active_video_job=True),
+                         requested_ids=requested)
+    return apply_exposure_budget(catalog, plan, ToolExposureConfig())
+
+
+def test_a_requested_pinned_control_that_fits_the_hard_limit_is_loaded():
+    # Reproduction: 28,000 chars kept; the compose control was trimmed at the
+    # soft target and kept that classification when the model requested it.
+    sizes = {"capability_search": 22_000, "video_generate": 4_000, "share_file": 2_000, "video_compose": 3_000}
+    before = _video_workflow_budget(sizes)
+    assert "video_compose" in before.plan.discovery_ids
+    assert before.deferred_reasons["video_compose"] == "product_pinned_soft_limit:video"
+    after = _video_workflow_budget(sizes, requested=("video_compose",))
+    assert set(after.plan.direct_ids) == set(sizes)  # nothing else gives way: 31,000 <= 32,000
+    assert after.visible_chars == 31_000 and not after.hard_limit_exceeded
+
+
+def test_a_request_retires_non_lead_controls_only_when_that_lets_it_fit():
+    sizes = {"capability_search": 22_000, "video_generate": 4_000, "share_file": 1_000,
+             "video_compose": 1_000, "report_builder": 4_800}
+    result = _video_workflow_budget(sizes, requested=("report_builder",))
+    assert "report_builder" in result.plan.direct_ids
+    assert {"capability_search", "video_generate"} <= set(result.plan.direct_ids)
+    assert result.deferred_reasons["video_compose"] == "product_pinned_soft_limit:video"
+    assert "share_file" in result.plan.direct_ids  # the more important control stays
+    assert result.visible_chars == 31_800 and not result.hard_limit_exceeded
+
+
+def test_a_request_that_cannot_fit_never_moves_the_hard_limit():
+    sizes = {"capability_search": 26_000, "video_generate": 4_000, "share_file": 1_500, "report_builder": 4_000}
+    result = _video_workflow_budget(sizes, requested=("report_builder",))
+    assert result.deferred_reasons["report_builder"] == "initial_visible_hard_limit"
+    assert result.visible_chars <= 32_000 and not result.hard_limit_exceeded

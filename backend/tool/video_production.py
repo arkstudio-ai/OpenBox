@@ -83,6 +83,7 @@ def _asset_kind(mime: str) -> str:
 #: 13 covers p90, so the common case finishes inside the turn and the pause
 #: goes back to meaning what it should: this one is genuinely slow.
 _MAX_INLINE_GENERATION_WAITS = 13
+_LIST_LIMIT, _LIST_PROMPT_CHARS = 24, 280
 _DEFERRED_PROVIDER_RECHECK_SECONDS = 60
 
 
@@ -187,6 +188,8 @@ class VideoGenerateArgs(BaseModel):
             if not self.prompt:
                 raise ValueError("submit requires prompt")
             return self
+        if self.action == "status" and not self.job_id:
+            return self  # lists this conversation's jobs (recovery after an interrupted turn)
         if not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
@@ -2202,13 +2205,25 @@ async def _execute_attach(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResu
             output="No ready asset owned by this user matches that id.",
             metadata={"error": True},
         )
-    return await attach_owned_asset(
+    result = await attach_owned_asset(
         asset,
         ctx,
         kind="video_final" if (asset.mime or "").startswith("video/") else "shared_file",
         role="final" if (asset.mime or "").startswith("video/") else "result",
         metadata={"job_id": job.id if job else None},
     )
+    if not (result.metadata or {}).get("error") and ctx.message_id:
+        # The job's output is now shown: the conversation listing says so and
+        # the completion sweep stops offering it (recovery attached the same
+        # three clips once per wake before, 2026-10-26).
+        from db.base import get_db_session
+        from db.models.video_job import VideoJob
+        async with get_db_session() as db:
+            await db.execute(update(VideoJob).where(
+                VideoJob.output_asset_id == asset.id, VideoJob.user_id == ctx.user_id,
+                VideoJob.attached_message_id.is_(None),
+            ).values(attached_message_id=ctx.message_id, updated_at=datetime.now(timezone.utc)))
+    return result
 
 
 async def _owned_job_any_kind(job_id: str, ctx: ToolContext):
@@ -2413,9 +2428,64 @@ def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = Fa
     )
 
 
+async def _execute_list(ctx: ToolContext) -> ToolResult:
+    """Every generation of this conversation, oldest first, for recovery.
+
+    A completion wake names one job. After an interrupted or failed turn the
+    others were invisible: a continuation fetched one finished shot, asked
+    for the storyboard again and could have paid to regenerate the rest
+    (measured 2026-10-26: five shots completed upstream, one retrieved).
+    """
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    if not ctx.session_id:
+        return ToolResult(title="No conversation", output="jobs=0\nThis call needs a conversation.")
+    async with get_db_session() as db:
+        jobs = list((await db.execute(select(VideoJob).where(
+            VideoJob.user_id == ctx.user_id, VideoJob.session_id == ctx.session_id,
+            VideoJob.kind.in_(("segment", "render")),
+        ).order_by(VideoJob.created_at.desc()).limit(_LIST_LIMIT))).scalars())
+    jobs.reverse()
+    if not jobs:
+        return ToolResult(title="No video jobs in this conversation",
+                          output="jobs=0\nNothing was generated in this conversation yet.",
+                          metadata={"jobs": []})
+    lines, rows = [f"jobs={len(jobs)}"], []
+    for job in jobs:
+        request = job.request_data if isinstance(job.request_data, dict) else {}
+        asset = await _job_asset(job) if job.status == "completed" else None
+        ready = bool(asset and asset.status == "ready")
+        fields = [f"job_id={job.id}", f"kind={job.kind}", f"status={job.status}"]
+        fields += [f"{key}={request[key]}" for key in ("shot", "duration", "resolution", "ratio")
+                   if request.get(key) not in (None, "")]
+        if ready:
+            fields.append(f"asset_id={asset.id}")
+        fields.append(f"shown_in_chat={'true' if job.attached_message_id else 'false'}")
+        lines.append(" ".join(fields))
+        prompt = " ".join(str(job.prompt or "").split())
+        if prompt:
+            lines.append("  prompt=" + (prompt if len(prompt) <= _LIST_PROMPT_CHARS
+                                       else prompt[:_LIST_PROMPT_CHARS - 1] + "…"))
+        if job.status == "failed" and job.error:
+            lines.append("  error=" + str(job.error)[:200])
+        rows.append({"job_id": job.id, "status": job.status, "shot": request.get("shot"),
+                     "asset_id": asset.id if ready else None})
+    lines.append(
+        "instruction=These are the real jobs of this conversation. A completed job already holds its paid "
+        "output: show it with action=attach (asset_id) unless shown_in_chat=true (already shown; do not attach it "
+        "again unless the person asks), or fetch it into the workspace with action=fetch; never resubmit a "
+        "completed or still-running job. Submit only shots that have no job or whose job failed. "
+        "The prompts and shot numbers are the confirmed storyboard; do not ask the person for it again.")
+    return ToolResult(title=f"{len(jobs)} video job(s) in this conversation", output="\n".join(lines),
+                      metadata={"jobs": rows})
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
+    if args.action == "status" and not args.job_id:
+        return await _execute_list(ctx)
     if args.action == "validate":
         return await _execute_validate(args, ctx)
     if args.action == "fetch":
@@ -3376,6 +3446,7 @@ Before paying, clarify ambiguous asset selection or purpose. If a model cannot u
 explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
 Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \
 fetch re-delivers an owned video to the workspace; attach shows an owned asset card without a sandbox; never write an asset link. \
+status without job_id lists this conversation's jobs, shots and finished assets: use it to resume before submitting again. \
 Different jobs may run together; never parallelize mutations of one job. \
 After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 

@@ -40,6 +40,8 @@ async def test_semantic_recall_keeps_current_voice_revision_without_legacy_histo
     context = {"heard": "改用这张照片，先给我看新脚本，不生成视频。",
                "request": "修改原任务的素材和规划，先展示脚本。",
                "call": ["用户：以前的通话内容"], "summary": "以前的摘要",
+               "user_words": ["这个任务换成五十秒的抽象风格", "改用这张照片，先给我看新脚本，不生成视频。"],
+               "earlier_user_words": ["之前交办的门店宣传视频"],
                "revision_request": {"request_id": "pending-plan", "version": "a" * 64,
                                     "session_id": "same-task"}}
     ctx, lease, _, _ = await claimed(owner, workspace, main, client_id="voice-revision",
@@ -53,6 +55,11 @@ async def test_semantic_recall_keeps_current_voice_revision_without_legacy_histo
         assert "修改原任务的素材和规划，先展示脚本" in text
         assert any("先给我看新脚本，不生成视频" in str(message.parts) for message in messages)
         assert "requests.answer" not in text
+        # The user's own words for this same request survive a restricted
+        # read scope; a short follow-up must not reach the task as a fragment.
+        # Earlier requests of the call are history: only an allowed turn sees them.
+        assert "五十秒的抽象风格" in text and "user_words_for_this_request" in text
+        assert ("之前交办的门店宣传视频" in text) == (policy == "allowed")
         assert ("以前的通话内容" in text) == (policy == "allowed")
         assert ("以前的摘要" in text) == (policy == "allowed")
         assert not set(block_ids(messages)) & {"assistant:work-directory", "assistant:recent-assets",

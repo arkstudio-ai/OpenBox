@@ -379,3 +379,91 @@ async def test_third_compaction_failure_closes_exact_real_step(
         up_to_message_id=assistants[-1].id,
     )
     assert frozen.covered_message_ids[-1] == assistants[-1].id
+
+
+@pytest.mark.asyncio
+async def test_tool_definition_budget_refusal_closes_one_visible_error_step(
+    ensure_test_db,
+    monkeypatch,
+):
+    from db.models.agent_driver import AgentDriverState
+
+    config = _loop_config()
+    user_id, _project_id, session_id, _user, lease = await _seed_session(
+        model=config.model,
+        output_format=None,
+    )
+    provider_calls = 0
+
+    async def _provider_step(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="stop", duration=0.1)
+
+    real_gate = loop.enforce_serialized_payload_limits
+
+    def _oversized_gate(**kwargs):
+        # The reported state: pinned packs pushed the first request past the
+        # portable hard budget, so the real gate refuses before any request.
+        real_gate(**{**kwargs, "exposure_mode": "portable",
+                     "initial_visible_chars": 39_569, "active_hard_chars": 32_000})
+
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=_provider_step)
+    monkeypatch.setattr(loop, "enforce_serialized_payload_limits", _oversized_gate)
+    result = await loop.run_loop(session_id, user_id=user_id, lease=lease)
+
+    assert provider_calls == 0
+    assert result is not None and result.error["code"] == "TOOL_DEFINITION_BUDGET"
+    assistants = await _assert_balanced_steps(session_id, user_id, 1)
+    assert assistants[0].finish == "error"
+    assert assistants[0].error["code"] == "TOOL_DEFINITION_BUDGET"
+    assert assistants[0].error["message"]
+    parity = await verify_agent_event_parity(session_id, user_id=user_id, require_closed=True)
+    assert parity.ok is True, parity.model_dump()
+    async with get_db_session() as db:
+        driver = await db.get(AgentDriverState, session_id)
+    # Released, not preserved: recovery must not replay the same refusal.
+    assert driver.phase == "idle" and driver.run_id is None
+
+
+async def _empty_then(answer_after, monkeypatch):
+    """A real run whose provider returns empty responses before ``answer_after`` (None: never answers)."""
+    config = _loop_config()
+    user_id, _project_id, session_id, _user, lease = await _seed_session(model=config.model, output_format=None)
+    calls = 0
+
+    async def step(**kwargs):
+        nonlocal calls
+        calls += 1
+        if answer_after is None or calls < answer_after:
+            # What the processor now returns for a bare stop with nothing in it.
+            return StepResult(outcome=StepOutcome.RETRY, retry_reason="Empty model response",
+                              error="The model returned an empty response", duration=0.1)
+        from models.message import TextPart
+        await loop.save_part(TextPart(text="The final video is ready.", session_id=session_id,
+            message_id=kwargs["assistant_info"].id), is_new=True, user_id=user_id,
+            run_fence=(session_id, lease.run_id, lease.generation))
+        return StepResult(outcome=StepOutcome.CONTINUE, finish_reason="stop",
+                          text="The final video is ready.", duration=0.1)
+
+    from unittest.mock import AsyncMock
+    _patch_real_loop_runtime(monkeypatch, config=config, process_step=step)
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock())  # no background work left behind
+    monkeypatch.setitem(loop._run_provider_attempts.__kwdefaults__, "delay_for", lambda *_args: 0)
+    result = await loop.run_loop(session_id, user_id=user_id, lease=lease)
+    return result, calls, await _assert_balanced_steps(session_id, user_id, 1)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_model_response_is_retried_and_the_run_still_answers(ensure_test_db, monkeypatch):
+    result, calls, [assistant] = await _empty_then(2, monkeypatch)
+    assert calls == 2 and result is not None
+    assert assistant.finish == "stop" and assistant.error is None
+
+
+@pytest.mark.asyncio
+async def test_persistently_empty_responses_end_the_run_as_an_error_not_a_success(ensure_test_db, monkeypatch):
+    result, calls, [assistant] = await _empty_then(None, monkeypatch)
+    assert calls == 6  # the first attempt and the loop's five retries
+    assert assistant.finish == "error"
+    assert assistant.error == {"code": "LLM_UNAVAILABLE", "message": "The model returned an empty response"}

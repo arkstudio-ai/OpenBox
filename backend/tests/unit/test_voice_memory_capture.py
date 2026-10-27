@@ -308,14 +308,18 @@ async def test_capture_failure_never_claims_saved_or_runs_recall(monkeypatch, fa
         async def broken(*_args, **_kwargs):
             raise RuntimeError("SQL unavailable")
         monkeypatch.setattr(capture, "capture_final", broken)
-    heard = []
+    heard, skipped = [], []
     async def on_event(event):
         heard.append(event)
-    bridge = SimpleNamespace(scope=scope, call_id=scope.call_id, session=0, on_provider_event=on_event)
-    with pytest.raises(CallEnded) as ending:
-        await _provider_event(bridge, link_for(scope), ProviderEvent("user_transcript", text=SAID,
-            item_id="" if failure == "missing_identity" else "asr-1"))
-    assert ending.value.error == "internal" and not heard
+    bridge = SimpleNamespace(scope=scope, call_id=scope.call_id, session=0, on_provider_event=on_event,
+                             skip_recall=skipped.append)
+    link = link_for(scope)
+    item_id = "" if failure == "missing_identity" else "asr-1"
+    # The call goes on and the words are still answered, but never recalled
+    # from (the bridge answers them without memory) and never bound as saved.
+    await _provider_event(bridge, link, ProviderEvent("user_transcript", text=SAID, item_id=item_id))
+    assert [event.text for event in heard] == [SAID] and skipped == [item_id]
+    assert not link._native_sources
 
 
 async def test_partial_asr_and_assistant_output_never_create_human_evidence(monkeypatch):

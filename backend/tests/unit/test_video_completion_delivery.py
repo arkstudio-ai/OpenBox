@@ -178,6 +178,52 @@ async def test_completion_scan_pages_past_temporarily_unavailable_jobs(monkeypat
         monkeypatch.setattr(job_recovery, "_resume_reference", original)
         await job_recovery.resume_unattached_completions()  # end page wraps cursor
         await job_recovery.resume_unattached_completions()
-        assert len(await queued(first)) == 1
+        # The queued continuation for ``second`` lists every finished shot of
+        # the conversation, ``first`` included; no second wake is queued.
+        assert await queued(first) == [] and len(await queued(second)) == 1
     finally:
         await active.release(session_status="idle")
+
+
+async def test_simultaneous_completions_share_one_queued_continuation():
+    # Measured 2026-10-26: three shots finishing together queued three wakes;
+    # the second re-attached every clip and the third replied with nothing,
+    # which settled the completed task as an unexplained error.
+    _, _, active, batch = await running()
+    first = await completed_job(active)
+    second = await completed_job(active)
+    try:
+        assert await job_recovery.resume_conversation(await _fetch(first))
+        assert not await job_recovery.resume_conversation(await _fetch(second))
+        assert len(await queued(first)) == 1 and await queued(second) == []
+        await terminal(active, batch.messages[0].id)
+    finally:
+        await active.release(session_status="idle")
+    next_run = await reserve_run(active.session_id, active.user_id)
+    try:
+        followup = await inbox.claim_inbox_boundary(next_run, step=1, include_next_turn=True)
+        await terminal(next_run, followup.messages[0].id)
+    finally:
+        await next_run.release(session_status="idle")
+    # Still unshown after that continuation: the next pass queues it.
+    assert await job_recovery.resume_conversation(await _fetch(second))
+    assert len(await queued(second)) == 1
+
+
+async def test_a_wake_claimed_after_a_completion_also_covers_it():
+    _, _, active, batch = await running()
+    first = await completed_job(active)
+    second = await completed_job(active)
+    try:
+        assert await job_recovery.resume_conversation(await _fetch(first))
+        await terminal(active, batch.messages[0].id)
+    finally:
+        await active.release(session_status="idle")
+    next_run = await reserve_run(active.session_id, active.user_id)
+    try:
+        await inbox.claim_inbox_boundary(next_run, step=1, include_next_turn=True)
+        # Claimed after ``second`` finished: its listing includes ``second``.
+        assert not await job_recovery.resume_conversation(await _fetch(second))
+        assert await queued(second) == []
+    finally:
+        await next_run.release(session_status="idle")

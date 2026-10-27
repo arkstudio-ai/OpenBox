@@ -31,6 +31,7 @@ class Report:
     decision_versions: dict[str, str] | None = None
     result_id: str = ""
     task_revision: int | None = None
+    control_revision: int | None = None  # the task's pause/resume/cancel count when the report was read
 
 
 class ReportWatcher:
@@ -98,8 +99,9 @@ class ReportWatcher:
         result_id = (row.origin_ref or {}).get("result_id")
         if not result_id:
             return {}
+        from assistant.control import CONTROL_ACTIONS
         from db.base import get_db_session
-        from db.models.assistant import AssistantTask, TaskResult
+        from db.models.assistant import AssistantCommand, AssistantTask, TaskResult
         async with get_db_session() as db:
             pair = (await db.execute(select(TaskResult, AssistantTask).join(
                 AssistantTask, AssistantTask.id == TaskResult.task_id).where(
@@ -111,7 +113,15 @@ class ReportWatcher:
             result, task = pair
             if task.latest_result_id != result.id or task.intent_revision != result.observed_intent_revision:
                 return None
-            return {"result_id": result.id, "task_revision": result.observed_intent_revision}
+            # Paused, resumed or cancelled since: the result no longer says
+            # where the task is (a failure told after the user retried it).
+            if await db.scalar(select(AssistantCommand.id).where(
+                    AssistantCommand.target_type == "task", AssistantCommand.target_id == task.id,
+                    AssistantCommand.action.in_([f"task_{action}" for action in CONTROL_ACTIONS]),
+                    AssistantCommand.created_at > result.created_at).limit(1)):
+                return None
+            return {"result_id": result.id, "task_revision": result.observed_intent_revision,
+                    "control_revision": task.control_revision}
 
     async def _recent(self):
         from db.base import get_db_session
@@ -125,9 +135,25 @@ class ReportWatcher:
     async def _title(self, row) -> str:
         from db.base import get_db_session
         from db.models.assistant import AssistantTask
-        task_id = (row.origin_ref or {}).get("task_id")
-        if not task_id:
+        from db.models.question import QuestionCheckpoint
+        ref = row.origin_ref or {}
+        task_id, question_id = ref.get("task_id"), ref.get("question_id")
+        if not task_id and not question_id:
             return ""
         async with get_db_session() as db:
-            task = await db.get(AssistantTask, task_id)
-        return task.title if task is not None and task.user_id == self.user_id else ""
+            if task_id:
+                task = await db.get(AssistantTask, task_id)
+                return task.title if task is not None and task.user_id == self.user_id else ""
+            checkpoint = await db.get(QuestionCheckpoint, question_id)
+        # A card answered before any task exists (placement, task setup): name
+        # what the card was about. Untitled, "the task was cancelled" was told
+        # as the call's current topic, a different task (2026-10-26).
+        if checkpoint is None or checkpoint.user_id != self.user_id or checkpoint.session_id != self.main_session_id:
+            return ""
+        continuation = checkpoint.continuation or {}
+        for kind in ("assistant_placement", "assistant_task_setup"):
+            title = ((continuation.get(kind) or {}).get("input") or {}).get("title")
+            if title:
+                return str(title)
+        questions = checkpoint.questions or []
+        return str((questions[0] or {}).get("header") or "") if questions else ""

@@ -67,6 +67,8 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
     if fits(context):
         return context
     kept = {"call_truncated": True}
+    if context.get("read_scope"):
+        kept["read_scope"] = context["read_scope"]  # a restriction is never trimmed away
     if context.get("spoken_input_id"):
         kept["spoken_input_id"] = context["spoken_input_id"]
     if context.get("detail"):
@@ -80,7 +82,7 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
     if questions := context.get("task_questions"):
         kept["task_questions"] = [{"request_id": item["request_id"], "session_id": item["session_id"],
                                    "questions_omitted": True} for item in questions]
-    for key in ("request", "summary"):
+    for key in ("request", "user_words", "earlier_user_words", "summary"):
         if context.get(key) and fits({**kept, key: context[key]}):
             kept[key] = context[key]
     if questions and fits({**kept, "task_questions": questions}):
@@ -136,6 +138,7 @@ class VoiceTurnRef:
     result_id: str = ""            # durable task result, shared by retry reports
     task_id: str = ""
     task_revision: int | None = None
+    control_revision: int | None = None  # pause/resume/cancel count its report was read at
     interrupted: bool = False
     paused_by_user: bool = False  # interrupted unsolicited speech yields to the conversation
     heard: bool = False

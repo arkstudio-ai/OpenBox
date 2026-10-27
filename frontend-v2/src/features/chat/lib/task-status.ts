@@ -19,11 +19,11 @@ export interface TaskStatusInput {
 const LIVE: ReadonlySet<string> = new Set(["busy", "finalizing", "retry", "compacting"])
 const TROUBLE: ReadonlySet<string> = new Set(["error", "resume_blocked", "effect_unknown"])
 
-/** States that win over whatever the run is doing: stopped, waiting on you, paused. */
+/** Human control wins over a retained question: stopped, paused, then waiting on you. */
 function heldStatus({ sessionStatus, observedState, desiredState, pendingQuestions = 0 }: TaskStatusInput): TaskStatus | null {
   if (desiredState === "canceled" || observedState === "canceled" || observedState === "canceling") return "stopped"
-  if (pendingQuestions > 0 || sessionStatus === "waiting_input" || observedState === "waiting_input") return "waiting"
   if (desiredState === "paused" || observedState === "paused" || observedState === "pausing") return "paused"
+  if (pendingQuestions > 0 || sessionStatus === "waiting_input" || observedState === "waiting_input") return "waiting"
   return null
 }
 

@@ -52,3 +52,16 @@ def test_a_deployment_that_needs_one_can_keep_it(clean_env):
     entrypoint._drop_inherited_proxy()
 
     assert os.environ["HTTPS_PROXY"] == "http://corp-egress:3128"
+
+
+def test_without_any_proxy_variable_the_system_proxy_is_bypassed_too(clean_env):
+    """urllib falls back to the macOS system proxy when no variable is set at all."""
+    import urllib.request
+    for name in ("NO_PROXY", "no_proxy"):  # setenv first so teardown restores the original state
+        clean_env.setenv(name, "")
+        clean_env.delenv(name)
+
+    entrypoint._drop_inherited_proxy()
+
+    assert os.environ["NO_PROXY"] == "*"
+    assert urllib.request.proxy_bypass_environment("api.example.com")

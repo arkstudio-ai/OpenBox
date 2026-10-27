@@ -6,6 +6,7 @@ option are valid, and the owned checkpoint still accepts an answer. No sentence
 is classified here and no transcript alone can answer or cancel a card.
 """
 import asyncio
+import copy
 import json
 import hashlib
 import time
@@ -19,6 +20,7 @@ MAX_QUESTIONS = 5
 WATCH_LIMIT = 30
 POLL_SECONDS, POLL_TIMEOUT_SECONDS = 2, 4
 WHAT_CHARS, IMPACT_CHARS = 300, 200
+CONTEXT_CHARS, CALL_CONTEXT_CHARS = 300, 4000  # open decisions repeated in every turn's instructions
 KINDS = {"assistant_confirm": "确认", "assistant_send": "确认发送", "memory_proposal": "记忆",
          "assistant_placement": "安排位置", "assistant_task_setup": "任务准备"}
 
@@ -51,11 +53,13 @@ class CardDesk:
         self.answers: list[dict] = []        # answered in this call, waiting for the bridge to follow
         self.questions: dict[str, dict] = {}  # task questions actually offered in this call
         self._question_shown: dict[str, int] = {}
+        self._raw: dict[str, dict] = {}       # card id → the card as last shown
 
     def show(self, card: dict) -> str:
         card_id = card["card_id"]
         changed = card_id in self._versions and self._versions[card_id] != version(card)
         self._versions[card_id] = version(card)
+        self._raw[card_id] = card
         self._inactive.discard(card_id)
         handle = self.handle(card_id)
         if handle is None:
@@ -107,6 +111,36 @@ class CardDesk:
         current = {item["id"] for item in questions}
         self.questions = {key: value for key, value in self.questions.items() if key in current}
         self._question_shown = {key: count for key, count in self._question_shown.items() if key in current}
+
+    def call_context(self, lang: str = "zh") -> list[dict]:
+        """Decisions this call already presented that still wait on the user, for every later turn.
+
+        Each turn retires the previous turn's tool observations; without this a
+        user answering "the fast one" after the next utterance left a card the
+        model could no longer address. The watcher reconciles the desk with SQL,
+        so an answer given on screen drops the card here too.
+        """
+        cards = [{"kind_of": "assistant_card", **spoken_card(self._raw[card_id], self.handle(card_id), lang)}
+                 for card_id in self.open() if card_id in self._raw][-MAX_QUESTIONS:]
+        questions = [copy.deepcopy({key: value for key, value in item.items() if key not in {"context_note", "link"}})
+                     for item in list(self.questions.values())[-MAX_QUESTIONS:]]
+        for item in questions:
+            if item.get("context"):
+                item["context"] = _bounded(item["context"], CONTEXT_CHARS)
+                item["context_truncated"] = True
+        shown = cards + questions
+        if len(json.dumps(shown, ensure_ascii=False)) > CALL_CONTEXT_CHARS:
+            for item in shown:
+                item.pop("context", None)
+                for question in item.get("questions") or []:
+                    question.pop("option_descriptions", None)
+        # Measured 2026-10-27: five long task questions pushed out the short
+        # confirmation card the user was answering by voice, so the model had no
+        # version to submit. The oldest task questions give way first.
+        while shown and len(json.dumps(shown, ensure_ascii=False)) > CALL_CONTEXT_CHARS:
+            older = next((index for index, item in enumerate(shown) if item.get("kind_of") != "assistant_card"), 0)
+            shown.pop(older)
+        return shown
 
     def question_context(self, identity: str = "") -> list[dict]:
         """Stable targets survive a short answer like '第二个'. Long forms are re-read by ID.
@@ -209,7 +243,16 @@ async def waiting(scope, *, limit: int = WATCH_LIMIT) -> tuple[list[dict], list[
         main_cards = group.create_task(pending_cards(scope.user_id, scope.workspace_id, scope.main_session_id))
         questions = group.create_task(list_waiting(user_id=scope.user_id, workspace_id=scope.workspace_id,
                                                   main_id=scope.main_session_id, limit=limit))
-    return main_cards.result(), questions.result()
+    waiting_questions = questions.result()
+    if sessions := [item["session_id"] for item in waiting_questions if item.get("session_id")]:
+        # Measured 2026-10-27: for seconds after new requirements were typed
+        # on a task's page, the call still asked its replaced plan's approval.
+        from db.base import get_db_session
+        from voice.work import replaced_questions
+        async with get_db_session() as db:
+            replaced = await replaced_questions(db, scope.user_id, sessions)
+        waiting_questions = [item for item in waiting_questions if item.get("session_id") not in replaced]
+    return main_cards.result(), waiting_questions
 
 
 async def pending(scope, arguments: dict) -> dict:

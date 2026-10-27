@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MemoryRouter } from "react-router"
+import { MemoryRouter, useLocation } from "react-router"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
@@ -165,4 +165,80 @@ it("lists questions waiting in the user's other conversations with a link to ans
   expect(screen.getByText("assistant.requests.askMe")).toBeTruthy()
   expect(screen.getByText("配色讨论 · 贪吃蛇")).toBeTruthy()
   expect(screen.getByRole("link", { name: "assistant.requests.answerThere" }).getAttribute("href")).toBe("/app/s/palette")
+})
+
+it("keeps a delegated task's question an answerable card in the conversation, other conversations a hint", async () => {
+  vi.mocked(http.get).mockImplementation(async (url) => url.includes("/requests/waiting")
+    ? { items: [{ id: "waiting-1", session_id: "palette", session_title: "配色讨论",
+        questions: [{ header: "", question: "页面用哪种配色？" }] }] } as never
+    : url.includes("kind=permission") ? { items: [], next_cursor: null, receipts: [] } as never
+    : { items: [item], next_cursor: null, receipts: [] } as never)
+  render(<MemoryRouter initialEntries={["/app/assistant"]}><QueryClientProvider client={client}>
+    <AssistantRequests conversation />
+  </QueryClientProvider></MemoryRouter>)
+  expect(await screen.findByText("question-1")).toBeTruthy()  // the task's own card, answerable here
+  expect(screen.getByText("assistant.requests.asks")).toBeTruthy()  // and which task asks
+  expect(screen.getByText("assistant.requests.reminder")).toBeTruthy()  // the other conversation's question
+  expect(screen.queryByText("页面用哪种配色？")).toBeNull()
+  // My tasks shows the same card while open: one editor per card, the conversation keeps the hint.
+  act(() => useAssistantTasksPanel.setState({ open: true }))
+  await waitFor(() => expect(screen.queryByText("question-1")).toBeNull())
+  expect(screen.getByText("assistant.requests.reminder")).toBeTruthy()
+})
+
+it("opens My tasks on the assistant page from a hint shown elsewhere", async () => {
+  vi.mocked(http.get).mockImplementation(async (url) => url.includes("/requests/waiting")
+    ? { items: [{ id: "waiting-1", session_id: "palette", session_title: "配色讨论",
+        questions: [{ header: "", question: "页面用哪种配色？" }] }] } as never
+    : { items: [], next_cursor: null, receipts: [] } as never)
+  function Where() { return <p data-testid="where">{useLocation().pathname}</p> }
+  render(<MemoryRouter initialEntries={["/app/s/other"]}><QueryClientProvider client={client}>
+    <AssistantRequests compact /><Where />
+  </QueryClientProvider></MemoryRouter>)
+  fireEvent.click(await screen.findByText("assistant.requests.reminder"))
+  expect(useAssistantTasksPanel.getState().open).toBe(true)
+  expect(screen.getByTestId("where").textContent).toBe("/app/assistant")
+})
+
+it("opens only the newest card, folds the rest, and opens the next newest once one is answered", async () => {
+  const asked = { older: "2026-10-27T01:00:00Z", middle: "2026-10-27T02:00:00Z", newest: "2026-10-27T03:00:00Z",
+    later: "2026-10-27T04:00:00Z", approval: "2026-10-27T00:30:00Z" }
+  let questions: Array<keyof typeof asked> = ["older", "newest", "middle"]
+  const approvals: Array<keyof typeof asked> = ["approval"]
+  vi.mocked(http.get).mockImplementation(async (url) => url.includes("/requests/waiting") ? { items: [] } as never
+    : url.includes("kind=permission")
+    ? { items: approvals.map((id) => ({ id, session_id: "execution", task_title: "A task", tool: "bash",
+        title: `run ${id}`, created_at: asked[id] })), next_cursor: null, receipts: [] } as never
+    : { items: questions.map((id) => ({ ...item, id, created_at: asked[id], questions: [{ question: `### ask ${id}` }] })),
+        next_cursor: null, receipts: [] } as never)
+  render(<MemoryRouter initialEntries={["/app/assistant"]}><QueryClientProvider client={client}>
+    <AssistantRequests conversation />
+  </QueryClientProvider></MemoryRouter>)
+  expect(await screen.findByText("newest")).toBeTruthy()  // the open card's body
+  for (const id of ["older", "middle", "approval"]) expect(screen.queryByText(id)).toBeNull()
+  // Folded in the order asked, questions and approvals together, each one line with its question in plain words.
+  const folded = screen.getAllByRole("button", { expanded: false })
+  expect(folded.map((button) => button.textContent)).toEqual(
+    ["assistant.requests.needsApprovalrun approval", "assistant.requests.asksask older", "assistant.requests.asksask middle"])
+  fireEvent.click(folded[1]!)
+  expect(screen.getByText("older")).toBeTruthy()
+  expect(screen.queryByText("newest")).toBeNull()
+  // Answering the card it opened unfolds the newest one left.
+  questions = ["newest", "middle"]
+  await act(() => client.invalidateQueries())
+  expect(await screen.findByText("newest")).toBeTruthy()
+  // A card asked while the user answers this one folds instead of replacing it.
+  fireEvent.pointerDown(screen.getByText("newest"))
+  questions = ["newest", "middle", "later"]
+  await act(() => client.invalidateQueries())
+  expect(await screen.findByRole("button", { name: /ask later/ })).toBeTruthy()
+  expect(screen.getByText("newest")).toBeTruthy()
+  questions = ["middle", "later"]
+  await act(() => client.invalidateQueries())
+  expect(await screen.findByText("later")).toBeTruthy()
+  questions = []
+  await act(() => client.invalidateQueries())
+  expect(await screen.findByText("approval")).toBeTruthy()  // the last one left opens too
+  expect(screen.queryByRole("button", { expanded: false })).toBeNull()
+  expect(http.post).not.toHaveBeenCalled()
 })

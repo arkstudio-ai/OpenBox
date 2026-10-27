@@ -21,17 +21,17 @@ from collections import deque
 from contextlib import suppress
 
 from core.log import create_logger
-from voice import events, phrases
+from voice import events, phrases, reply_focus
 from voice.assistant_link import turn_outcome as _outcome
 from voice.meter import CallMeter, OUTPUT_BYTES_PER_SECOND
 from voice.prompt import with_sections
-from voice.provider import refuses_reply
+from voice.provider import ProviderEvent, refuses_reply
 from voice.transcript import CallTranscript
-from voice.freshness import FreshnessMixin
+from voice.freshness import FreshnessMixin, work_claim
 from voice.playback import PlaybackMixin
-from voice.turns import ACK_WAIT_SECONDS, TurnsMixin
+from voice.turns import ACK_WAIT_SECONDS, REMOVED_DECISION_SECONDS, TurnsMixin
 from voice.upkeep import ContextKeeper
-from voice.memory_context import MemoryContextMixin, RecentContext
+from voice.memory_context import DEGRADE_AFTER_SECONDS, MemoryContextMixin, RecentContext, keeps_call_context
 
 log = create_logger("voice.bridge")
 
@@ -52,11 +52,13 @@ INSTRUCTIONS_GAP_SECONDS = 2.0  # progress moves fast; the session prompt follow
 # A response.create neither started nor refused by then is given up: an error naming no client event is no
 # longer taken for a refusal, so one that was would otherwise hold every later reply back.
 REQUEST_TIMEOUT_SECONDS = 8.0
+CANCEL_TIMEOUT_SECONDS = 2.0  # response.cancel must release the slot, or the provider session is replaced
 KEEPALIVE_RETRY_SECONDS = 10.0  # after a silent reply that was refused, before the next one
 # A session the provider drops under a live call (2026-10-09: 13 of 62 calls ended that way): a fresh one,
 # two attempts about a second apart within 20 s, three times per call at most.
 RECOVERY_ATTEMPTS, RECOVERY_PAUSE_SECONDS, RECOVERY_WINDOW_SECONDS, RECOVERIES_PER_CALL = 2, 1.0, 20.0, 3
 UNSENT_AUDIO_BYTES = events.INPUT_SAMPLE_RATE * 2 * 2  # the microphone's last two seconds while no session listens
+STREAMED_KINDS = frozenset({"audio", "assistant_transcribing", "user_transcribing"})  # one per delta; never traced
 
 
 class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
@@ -67,7 +69,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
                  context_sink=None, context_reader=None,
-                 prepare_memory=None, refresh_memory=None, prewarm_memory=None):
+                 prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.unified = unified
         self.shared_context = ""
@@ -112,6 +114,9 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._unsent_bytes = 0
         self._rotation: asyncio.Task | None = None
         self._requested_at: float | None = None
+        self._cancel_wait = None  # (provider, session generation, response id, deadline)
+        self._cancel_wake: asyncio.TimerHandle | None = None
+        self._cancel_recovery_provider = None
         self._keepalives: dict[str, set[str]] = {}  # silent replies of ours → their output items
         self._keepalive_at: float | None = None
         self._keepalive_prompt = False          # Audio said the conversation has no user message: prompt first
@@ -131,11 +136,15 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._sent_instructions = opening_instructions if opening_instructions is not None else instructions
         self._instructions_at: float | None = None
         self._seen_calls: set[str] = set()
+        self._answered_item = ""                # the latest utterance a completed, heard reply answered
+        self._carried_note = self._carried_item = ""  # an unanswered utterance carried into a new session
+        self._carry_due = False
         self._claimed: str | None = None        # the request the active reply was taken to answer
         self._tasks: set[asyncio.Task] = set()
         self._idle = asyncio.Lock()             # one decision about the next reply at a time
         self._phase = None
         self._init_turns()
+        self.focus = focus  # voice/reply_focus.py; none: only exact names place a reply on a decision
         self._init_memory(prepare_memory, refresh_memory, prewarm_memory)
         self._init_freshness(context_reader)
         self._init_playback()
@@ -157,8 +166,9 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         late = any(ref.late for ref in self.pending_calls.values())
         responding = self.state == "responding"
         value = ("greeting" if self.greeting else "listening" if self.state == "user_speaking"
-                 else "speaking" if responding and self.audio_sent
-                 else "thinking" if (responding and self.response_kind == "model") or self._awaiting_reply()
+                 else "speaking" if responding and self.audio_sent and not self.interrupted
+                 else "thinking" if ((responding and self.response_kind == "model") or self._awaiting_reply()
+                                      or self.followup_due or self._cancel_recovery_provider is not None)
                  else "working" if working else "listening")
         if (value, working, late) != self._phase:
             self._phase = (value, working, late)
@@ -197,7 +207,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         # Only a spent call limit silences input. Acoustic echo cancellation is
         # the capture layer's responsibility; muting playback also mutes real interruptions.
         frame = bytes(len(pcm)) if self.limit_reason else pcm
-        if self.recovering:
+        if self.recovering or self.provider is self._cancel_recovery_provider:
             self._keep_unsent(frame)
             return
         try:
@@ -230,13 +240,25 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def on_provider_event(self, event) -> None:
         self.seq += 1
+        if event.kind not in STREAMED_KINDS:  # identities and states only, never words
+            log.debug("voice provider event call=%s seq=%d kind=%s response=%s item=%s status=%s reason=%s",
+                      self.call_id, self.seq, event.kind, event.response_id or "-", event.item_id or "-",
+                      event.status or "-", event.reason or "-")
         if await self._memory_event(event):
             return
         if handler := getattr(self, "_on_" + event.kind, None):
             await handler(event)
 
     async def _on_user_started(self, event) -> None:
+        # Newer speech supersedes a carried utterance: its note becomes an
+        # earlier line, which a later restricted turn retires like any other.
+        self._carried_note, self._carried_item, self._carry_due = "", "", False
+        self._answers_again = 0  # the user speaks: a new question, answered at most twice again
+        self._changed_work = {}
+        self._question_at = self.clock()
         self._memory_new_speech()
+        if self.handoff is not None:
+            self.handoff.warm()
         already_cut = self.interrupted and self._playing_until is None
         self.state, self.interrupted, self.awaiting_since = "user_speaking", True, None
         if self.greeting:
@@ -272,14 +294,56 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.greeting:
             self._greeting_over()
         self.emit(events.playback_clear())
+        self._update_phase()  # never keep showing "speaking" while awaiting a provider ACK
         log.info("voice interruption call=%s source=%s", self.call_id, source)
         self._playing_until = None  # the client has stopped playing
         await self._cancel_playbacks()
         if self.active_response:
+            self._remember_stale_response(self.active_response)
             await self._command("cancel_response")
         # Restore navigation/history before the response to this real utterance.
         # The opening must not read old task summaries when recap is disabled.
         await self._sync_instructions(force=True)
+        self._update_phase()
+
+    def _clear_cancel_wait(self) -> None:
+        self._cancel_wait = None
+        if self._cancel_wake is not None:
+            self._cancel_wake.cancel()
+            self._cancel_wake = None
+
+    def _watch_cancel(self) -> None:
+        identity = (self.provider, self.session, self.active_response)
+        if self._cancel_wait is not None and self._cancel_wait[:3] == identity:
+            return  # another interruption must not move the original deadline
+        self._clear_cancel_wait()
+        self._cancel_wait = (*identity, self.clock() + CANCEL_TIMEOUT_SECONDS)
+        self._cancel_wake = asyncio.get_running_loop().call_later(
+            CANCEL_TIMEOUT_SECONDS, lambda: self._spawn(self.fill_idle()) if not self.closing else None)
+
+    def _check_cancel_wait(self) -> None:
+        if self._cancel_wait is None:
+            return
+        provider, session, response, deadline = self._cancel_wait
+        if (self.closing or self.recovering or provider is not self.provider
+                or session != self.session or response != self.active_response):
+            self._clear_cancel_wait()
+        elif self.clock() >= deadline:
+            self._clear_cancel_wait()
+            self._cancel_recovery_provider = provider
+            log.warning("voice cancellation overdue call=%s response=%s", self.call_id, response)
+            self._spawn(self._close_cancelled_session(provider))
+
+    async def _close_cancelled_session(self, provider) -> None:
+        # Closing ends its event stream; the existing provider pump alone owns
+        # recovery. Never forge response.done or create a second active reply.
+        try:
+            async with asyncio.timeout(CLOSE_WAIT_SECONDS + .1):
+                await provider.close()
+        except Exception as exc:
+            log.warning("voice cancellation recovery failed call=%s error=%s", self.call_id, type(exc).__name__)
+            if provider is self.provider and not self.closing:
+                self.failed.set()
 
     async def _on_user_stopped(self, event) -> None:
         if self._memory_pending:
@@ -354,6 +418,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             log.warning("voice transcript acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
             await self._settle(ref, {"status": "failed", "speech": phrases.speech_text("unavailable", self.lang)})
             return
+        self._handed_over(event.item_id)
         self._turn(ref, "accepted")
         if self._ack_at is None:
             self._ack_at = self.clock() + ACK_WAIT_SECONDS
@@ -375,6 +440,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                 or event.response_id in self._stale_responses):
             return  # a silent reply's "嗯": never part of the call
         await self._track_spoken_cards(event)
+        if (event.response_id or self.active_response) in self._stale_responses:
+            return  # placing these words may itself have discovered an obsolete claim
         self._said("assistant", event.text, event.item_id)
         if event.response_id:
             self._replies[event.response_id] = self._replies.get(event.response_id, "") + event.text
@@ -412,6 +479,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.spoken.item_created(event.item_id, event.role, event.item_type)
         if event.role == "user" and event.item_type == "message" and not event.text:
             self._last_user_item = event.item_id  # the user's audio; our notes carry text
+        elif self._carried_note and event.role == "user" and event.text == self._carried_note:
+            self._carried_item = event.item_id  # stands in for the lost audio item: never retired
         self._match_note(event)
 
     async def _on_item_deleted(self, event) -> None:
@@ -459,13 +528,17 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                 self._unverified_replies.add(event.response_id or "")
                 self._remember_stale_response(event.response_id)
                 self.followup_due = True
+                self._state_changed = self._state_changed or stale
                 self.interrupted = True
                 await self._command("cancel_response")
                 return
-            # Only explicit reads bind a playing reply. An unrelated background
-            # task changing must not restart every casual sentence in the call.
+            # Explicit reads, and the tasks the reply turns out to be about
+            # (voice/reply_focus.py), bind a playing reply. An unrelated
+            # background task changing must not restart every casual sentence.
             self._native_work_playing = self._native_work_pending
             self._native_work_pending = {}
+        else:
+            self._native_work_playing = {}  # a delivery or phrase: no earlier reply's reads bind it
         if self.unified and kind == "model":
             # Providers may automatically generate after VAD. Such speculative
             # answers must never be played or treated as shared facts.
@@ -483,13 +556,34 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._native_playing = self._native_pending if kind in ("model", "followup") else {}
         self._native_response = event.response_id if kind in ("model", "followup") else None
         self._native_sources = self._card_sources.copy() if self._native_response else {}
+        self._native_renderings = {identity: value for identity, value in self._renderings.items()
+                                   if self._native_versions.get(identity) == value[0]} if self._native_response else {}
+        # What this reply could be asking: the decisions pending as it starts,
+        # and those answered moments ago (its context may predate the answer).
+        self._native_decisions = dict(self._decisions) if self._native_response else {}
+        since = min(self.clock(), self._question_at or self.clock()) - REMOVED_DECISION_SECONDS
+        self._native_removed = [(identity, version, text) for identity, (version, text, at)
+                                in self._removed_decisions.items() if at >= since] if self._native_response else []
+        self._native_tasks = {key: (work_claim(row), reply_focus.describe_task(row))
+                              for key, row in self._work.items()} if self._native_response else {}
+        self._native_named = reply_focus.named(self._reply_words(event.response_id), {
+            key: f"{row.get('title') or ''} {row.get('project') or ''}" for key, row in self._work.items()}
+            ) if self._native_response and self._focus_tasks(event.response_id) else None
+        if self._native_named:
+            # It answers words naming this task, whatever meaning makes of it
+            # (measured 2026-10-27: Pause left "it is regenerating" playing).
+            self._native_work_playing = {**self._native_work_playing,
+                                         self._native_named: self._native_tasks[self._native_named][0]}
+        self._native_meaning, self._focus_chars, self._focus_final, self._focus_read = {}, 0, False, False
         self._native_text = ""
         if kind in ("model", "followup"):
             self._native_pending = {}
             self._playing_decision = None  # an older delivery does not own this new native reply
         if (self._native_playing and self._cards_epoch > self._native_read_epoch
                 and any(self._native_versions.get(k) != v for k, v in self._native_playing.items())):
+            # It answers from a card read before the card changed: never heard.
             self._native_playing.clear()
+            self._answer_again()
             await self._interrupt_playback(source="decision_changed")
             self._update_phase()
             return
@@ -549,6 +643,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.emit(events.cost(self.meter.snapshot()))
         if event.response_id and self.active_response and event.response_id != self.active_response:
             return  # an earlier reply, already replaced
+        self._clear_cancel_wait()
         kind, heard = self.response_kind, self.audio_sent
         self.active_response = self.response_kind = self._claimed = None
         self.state = "idle" if self.state == "responding" else self.state  # still user_speaking if interrupted
@@ -575,6 +670,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.handoff is not None:
             self.handoff.response_done(self._answering.get(event.response_id or "", ""), kind,
                                        event.status == "completed")
+        if kind in {"model", "followup"} and heard and event.status == "completed" and not self.interrupted:
+            self._answered_item = self._answering.get(event.response_id or "", "") or self._answered_item
         if (kind in {"model", "followup"} and heard and event.status == "completed"
                 and not self.followup_due and not self.pending_calls
                 and self._answering.get(event.response_id or "") == self._last_user_item):
@@ -612,7 +709,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             return
         kind, self.requested = self.requested, None
         if self.prepare_memory is not None and kind == "model":
-            self.failed.set()
+            self._retry_memory_answer(event.reason)
         if self.handoff is not None:
             self.handoff.refused(kind)
         if kind == "phrase:greeting":
@@ -627,10 +724,12 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         return self._memory_pending or (self.awaiting_since is not None and self.clock() - self.awaiting_since < REPLY_GRACE_SECONDS)
 
     def _can_inject(self) -> bool:
+        # A removal still in flight holds replies back; a failed one cannot hold
+        # the call forever (whoever depended on it has already decided).
         return (self.state == "idle" and self.requested is None and self.active_response is None
+                and self.provider is not self._cancel_recovery_provider
                 and not any(not value["done"].is_set() for value in self._memory_blocked.values())
-                and all(task.done() and not task.cancelled() and task.exception() is None and task.result()
-                        for task in self._memory_deletions.values())
+                and all(task.done() for task in self._memory_deletions.values())
                 and not self.closing and not self.swapping and not self.recovering and not self._awaiting_reply()
                 and (self._speech_until is None or self.clock() >= self._speech_until))
 
@@ -638,10 +737,14 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         """After every change and every second: at most one reply of ours, answers before reassurance, each once
         the client has played the last one; with nothing to say for a while, a silent one that keeps the provider
         session open."""
+        self._check_cancel_wait()
         if (self._memory_pending and self.state != "user_speaking" and self._memory_started is not None
-                and self.clock() - self._memory_started > 20):
-            self._memory_pending = False
-            self.failed.set()
+                and self.clock() - self._memory_started > DEGRADE_AFTER_SECONDS):
+            # Answer without new memory evidence rather than lose the user's turn.
+            self._memory_started = None
+            log.warning("voice memory preparation overdue call=%s", self.call_id)
+            self._spawn(self._memory_degrade(self._memory_utterance or self._last_user_item, self.utterance,
+                                             self._memory_generation, self.session, "overdue"))
             return
         if self.awaiting_since is not None and not self._awaiting_reply():
             self.awaiting_since = None
@@ -678,9 +781,13 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     def _next_reply(self):
         """The reply of ours that is due, answers before reassurance: something to await, or None."""
         if self._memory_ready:
+            if self._memory_retry_at is not None and self.clock() < self._memory_retry_at:
+                return None  # a refused answer waits for the provider's own reply to end
             return self._say_memory_answer
         if self.next_phrase:
             return self._say_next_phrase
+        if self._carry_due:
+            return self._say_carried
         # A read can finish between response.done and its function output.
         # Do not insert an unrelated task note into that answer's context.
         if self._direct:
@@ -702,13 +809,17 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         await self.say_phrase(key)
 
     async def _say_followup(self) -> None:
-        fresh = await self._read_answer_context()
+        # Answering again after an outdated reply: from the latest committed
+        # state, not the snapshot the stopped reply was checked against.
+        fresh = await (self._read_current_context() if self._state_changed else self._read_answer_context())
         if not self._can_inject():
             return
         self._native_context_changed = False
         self._freshness_notice_requested = not fresh
         self.followup_due, self.requested = False, "followup"
-        instructions = phrases.tool_result_instructions(self.lang)
+        instructions = (phrases.state_changed_instructions(self.lang, self._decided(), self._work_changes())
+                        if self._state_changed else phrases.tool_result_instructions(self.lang))
+        self._state_changed, self._just_answered = False, []
         if not fresh:
             instructions += "\n当前状态核验失败，只说明暂时无法核实进展；不得复用历史任务状态或要求重复确认。"
         receipts, self._tool_receipts = self._tool_receipts, []
@@ -829,11 +940,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             self.state, self.interrupted = "responding", False
 
     async def _unanswered(self) -> None:
+        """Neither started nor refused in time: given up (a result is told again later, three times at most)."""
         if self.prepare_memory is not None and self.requested == "model":
             self.requested = None
-            self.failed.set()
-            return  # visible failure; a missing response must never silently lose the user's turn
-        """Neither started nor refused in time: given up (a result is told again later, three times at most)."""
+            self._retry_memory_answer("unanswered")  # never silently lose the user's turn
+            return
         kind, self.requested = self.requested, None
         if self.handoff is not None:
             self.handoff.refused(kind)
@@ -882,9 +993,22 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.prepare_memory is not None:
             # Current profile + bounded evidence only. Existing navigation,
             # summaries and old card notes cannot bypass this turn's policy.
-            decisions = self.decision_context if self.memory_turn and self.memory_turn.read_policy == "allowed" else ""
+            packet = self.memory_packet if memory_packet is None else memory_packet
+            decisions = history = ""
+            if self.memory_turn and keeps_call_context(packet):
+                # A turn that keeps the call's context also keeps the decisions
+                # the call already presented answerable; its reads stay gated.
+                decisions = self.decision_context + self._open_decisions()
+                # And what the provider no longer holds: a restricted turn retires
+                # the earlier lines, a summary or a fresh session drops them. The
+                # call's own record comes back once a turn may use it (measured
+                # 2026-10-27: "which fruits did we talk about?" right after a
+                # restricted turn got "I don't have our previous conversation").
+                history = with_sections("", call_so_far=self.keeper.summary,
+                                        last_lines=self.spoken.unheld(self.keeper.covered))
+            work = self._turn_work if self.memory_turn else ""
             policy = self._response_policy(memory_packet) if include_response_policy else ""
-            return self.base_instructions + "\n" + self._memory_text + "\n" + decisions + policy
+            return self.base_instructions + "\n" + self._memory_text + "\n" + history + decisions + work + policy
         section = self.progress.section(list(self.pending_calls.values())) if self.progress is not None and not self.unified else ""
         base = self.opening_instructions if self.greeting and self.opening_instructions is not None else self.base_instructions
         if self.unified:
@@ -901,6 +1025,12 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                              last_lines=self.keeper.carried)
 
     async def _sync_instructions(self, *, force: bool = False, memory_packet=None):
+        if (self.provider is self._cancel_recovery_provider
+                or self._cancel_wait is not None and memory_packet is None and self.prepare_memory is not None):
+            # The cancelled response cannot speak. Its successor rechecks the
+            # committed context at its response boundary; do not hold up the
+            # event pump waiting for an ACK from the session being retired.
+            return False
         if self.prepare_memory is not None:
             if self._memory_pending and memory_packet is None and self.memory_packet is None:
                 # VAD clears the old packet before ASR/recall. Do not block the
@@ -983,6 +1113,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     def _swap_in(self, new, instructions: str):
         """A fresh session takes the call over (rotation or recovery); its conversation starts empty."""
         old, self.provider = self.provider, new
+        self._clear_cancel_wait()
+        self._cancel_recovery_provider = None
         self._memory_reset()
         self.session += 1
         self.spoken.reset_items()
@@ -993,6 +1125,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._unverified_replies.clear()
         self._tool_receipts.clear()
         self._keepalive_prompt = False
+        self._carried_note = self._carried_item = ""
+        self._carry_due = False
+        # The old session's replies and what they were about went with it.
+        self._native_response, self._native_playing, self._native_meaning = None, {}, {}
+        self._native_work_playing, self._native_work_pending = {}, {}
         self.keeper.rotated()
         self._sent_instructions, self._instructions_at = instructions, self.clock()
         return old
@@ -1015,11 +1152,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         log.info("voice call=%s provider stream ended code=%s reason=%s last_error=%s", self.call_id,
                  getattr(lost, "close_code", None), getattr(lost, "close_reason", "") or "-",
                  getattr(lost, "last_error", "") or "-")
-        why = ("not answered" if self.answered_at is None else "hanging up" if self.closing
-               else "limit" if self.limit_reason else "refused " + self.unrecoverable if self.unrecoverable
-               else "no opener" if self.opener is None else "too many" if self.recoveries >= RECOVERIES_PER_CALL
-               else "")
-        if why:
+        cancelled = lost is self._cancel_recovery_provider
+        if why := self._recovery_blocker(cancelled=cancelled):
             log.info("voice call=%s provider session lost recovered=no why=%s recoveries=%s", self.call_id, why,
                      self.recoveries)
             return False
@@ -1029,6 +1163,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             self.swapping = True
             if self.provider is not lost:
                 return True  # the rotation swapped a fresh session in just before
+            unanswered = self._unanswered_utterance()
             cut_off, speaking = await self._lose_session()
             self.keeper.carry_last_lines()
             instructions = self._instructions()
@@ -1040,9 +1175,13 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                          self.call_id, attempts, self.recoveries)
                 return False
             self._swap_in(new, instructions)
-            self.recoveries += 1
+            self.recoveries += not cancelled
             await self._resend_unsent(discard=speaking)
-            if cut_off and self.next_phrase is None:
+            if unanswered is not None and not speaking:
+                # A transcribed request the lost session never answered: answer
+                # it in the new one instead of asking the user to say it again.
+                await self._carry_utterance(*unanswered)
+            elif cut_off and self.next_phrase is None:
                 self.next_phrase = "reconnected"
             log.info("voice call=%s provider session recovered attempts=%s recoveries=%s cut_off=%s", self.call_id,
                      attempts, self.recoveries, cut_off)
@@ -1052,6 +1191,51 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._update_phase()
         await self.fill_idle()
         return True
+
+    def _recovery_blocker(self, *, cancelled: bool = False) -> str:
+        """Why a lost session could not be replaced by a fresh one; empty when it can."""
+        return ("not answered" if self.answered_at is None else "hanging up" if self.closing
+                else "limit" if self.limit_reason else "refused " + self.unrecoverable if self.unrecoverable
+                else "no opener" if self.opener is None
+                else "too many" if not cancelled and self.recoveries >= RECOVERIES_PER_CALL
+                else "")
+
+    def _unanswered_utterance(self) -> tuple[str, str] | None:
+        """(item, words) of the latest transcribed utterance no completed reply has answered."""
+        item = self._last_user_item
+        if not item or item not in self._user_utterances or item == self._answered_item:
+            return None
+        words = next((line.text for line in reversed(self.spoken.lines)
+                      if line.role == "user" and line.item_id == item), "")
+        return (item, words) if words else None
+
+    async def _carry_utterance(self, item: str, words: str) -> None:
+        note = phrases.carried_utterance(words, self.lang)
+        self._carried_note = note
+        if not await self._command("create_note", note):
+            self.next_phrase = "reconnected"
+            return
+        log.info("voice call=%s unanswered utterance carried into the new session", self.call_id)
+        if self.prepare_memory is not None:
+            # The same evidence/ACK barrier as spoken input; a text item has no
+            # VAD reply of its own to wait for.
+            self._memory_new_speech()
+            self._memory_expected_autos.pop()
+            self._memory_auto_seen.set()
+            self._memory_utterance = item
+            self._memory_started = self.clock()
+            event = ProviderEvent("user_transcript", item_id=item, text=words)
+            self._memory_task = self._spawn(self._prepare_memory(event, self._memory_generation, self.session))
+        else:
+            self._carry_due = True
+
+    async def _say_carried(self) -> None:
+        self._carry_due = False
+        if self._state_changed:
+            await self._say_followup()
+            return
+        self.requested = "model"
+        await self._create(None)
 
     async def _stop_rotation(self) -> None:
         """A rotation under way gives way (it may not even have started); the next one is due as before."""
@@ -1065,12 +1249,21 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         sentence, waiting for an answer, hearing a reply), and whether mid-sentence. A reply of ours nobody
         heard yet cut nobody off: it is simply said in the new session."""
         kind = self.response_kind if self.active_response else self.requested
-        response_id, heard = self.active_response, self.audio_sent and kind != "keepalive"
+        # audio_sent belongs to the last reply that started: a request that
+        # never started was not heard, whatever the reply before it played.
+        response_id = self.active_response
+        self._clear_cancel_wait()
+        heard = response_id is not None and self.audio_sent and kind != "keepalive"
         speaking = self.state == "user_speaking"
         cut_off = (speaking or self._awaiting_reply() or self.followup_due or bool(self._direct)
                    or (response_id is not None and (heard or kind in ("model", "followup"))))
         said, lost = self._replies.pop(response_id or "", ""), self._delivery(kind)
         covered = [ref for ref in self.deliveries if response_id and ref.covered_by == response_id]
+        if heard or self._playbacks or (self._playing_until is not None and self.clock() < self._playing_until):
+            # What the lost session sent may still be playing in the browser.
+            # It counts as unheard and is told again in the new session, so it
+            # stops here rather than be heard twice.
+            self.emit(events.playback_clear())
         self.meter.abandon()  # its usage never comes: counted once, from the audio received
         self.settled.set()
         if self.greeting:
@@ -1083,11 +1276,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         await self._cancel_playbacks()
         for ref in self.deliveries:  # the notes went with the session
             ref.note_item, ref.note_pending, ref.note_at = None, False, None
-        if lost is not None and lost.delivery in ("creating", "delivering"):
-            lost.interrupted = heard
-            await self._delivered(lost, False, said)
-        for ref in covered:
+        cut = [lost] if lost is not None and lost.delivery in ("creating", "delivering") else []
+        for ref in cut + [ref for ref in covered if ref is not lost]:
             ref.interrupted = heard
+            if not heard:
+                ref.attempts = max(ref.attempts - 1, 0)  # a lost socket is not a telling (turns._requeue)
             await self._delivered(ref, False, said)
         for ref in self.deliveries:  # whatever was on its way waits for the next quiet moment
             if ref.delivery not in ("queued", "paused"):
@@ -1150,6 +1343,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     async def close(self) -> None:
         """After the call: stop observing turns (the assistant keeps working) and record outcomes."""
         self.closing = self.link.closed = True
+        self._clear_cancel_wait()
         if self._memory_warm_task is not None:
             self._memory_warm_task.cancel()
         if self.progress is not None:
@@ -1169,6 +1363,10 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def _command(self, name: str, *args) -> bool:
         """A failure means the provider is gone; its pump recovers the call or ends it."""
+        if name == "cancel_response" and self.active_response and not self.closing:
+            # All tracked cancellations need a deadline, including stale
+            # replies caught before first PCM, not only interrupted playback.
+            self._watch_cancel()
         try:
             await getattr(self.provider, name)(*args)
             return True
@@ -1201,6 +1399,6 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._requested_at = self.clock()
         args = (instructions, scoped_policy) if scoped_policy else (instructions,)
         if not await self._command("create_response", *args):
-            if self.prepare_memory is not None and self.requested == "model":
-                self.failed.set()
+            # The session is gone: its pump recovers the call (asking a cut-off
+            # user to say it again) or ends it.
             self.requested = None

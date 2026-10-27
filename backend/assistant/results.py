@@ -157,10 +157,16 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
                 refs.append({"kind": kind, "session_id": execution.id, "message_id": message_id,
                              "part_id": part.id, "content_hash": part_hash(part)})
                 seen.add(part.id)
-    if actual_outcome == "succeeded" and not report_has_text:
+    empty_reply = actual_outcome == "succeeded" and not report_has_text
+    if empty_reply:
         actual_outcome = "error"
     from assistant.execution_errors import execution_error_text
     error_text = execution_error_text(message.error) if message else None
+    if empty_reply and not error_text:
+        # Say what happened instead of an empty summary that is reported as
+        # "failed with no recorded cause"; earlier results remain as they were.
+        error_text = execution_error_text({"code": "EMPTY_REPLY", "message": (
+            "The task's run ended without a reply or any new output; nothing was changed by this run.")})
     if error_text:
         report_texts.insert(0, error_text)
     from assistant.result_media import execution_media

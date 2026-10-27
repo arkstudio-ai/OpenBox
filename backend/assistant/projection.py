@@ -74,6 +74,36 @@ def _voice_context(message) -> dict | None:
     return None
 
 
+def voice_read_floor(bundle, message):
+    """A read restriction the voice turn established holds for the words it handed over.
+
+    The assistant judges those words again with its own recent history; a
+    weaker decision that reads history cannot lift what the call enforced
+    (voice/turns.py ``read_scope``). The floor only narrows: the turn reads
+    what both decisions permit (no_history and documents_only together: the
+    current input only), its reads are dropped, never added, and live task
+    tools keep following the combined policy.
+    """
+    from memory.read_contract import narrowest
+    if not bundle or not bundle.get("_semantic_packet") or message is None or not _voice_input(message):
+        return bundle
+    floor = ((_voice_context(message) or {}).get("read_scope") or {}).get("read_policy")
+    if floor not in {"no_history", "current_only", "documents_only", "uncertain"}:
+        return bundle  # the call enforced no restriction on these words
+    own = (bundle.get("route") or {}).get("read_policy")
+    held = narrowest(own, floor)
+    if held == own:
+        return bundle  # this turn already reads no more than the call allowed
+    from dataclasses import replace
+    floored = {"_semantic_packet": True, "_turn": replace(bundle["_turn"], read_policy=held, deferred_read=False),
+        "route": {"read_policy": held, "memory_forbidden": True, "reason_code": "voice_turn_restriction"},
+        "status": "restricted", "items": [], "stable_background": {"items": []}, "known_gaps": [], "budget": {},
+        "degraded_reasons": ["voice_turn_restriction"]}
+    floored.update({key: bundle[key] for key in ("_access_scope", "_read_budget", "context_version", "settings",
+                                                 "settings_details", "_revocation_epoch", "run_id") if key in bundle})
+    return floored
+
+
 def _block(identity, text):
     return SimpleNamespace(id=identity, role="user", parts=[{
         "type": "text", "origin": "system_recovery", "synthetic": True, "text": text}])
@@ -293,8 +323,13 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
                 if restricted and context:
                     # A no-history turn keeps its current request and exact
                     # action target, without reintroducing earlier call lines.
+                    # user_words are the user's own utterances for this same
+                    # request (the voice turn already dropped them under an
+                    # explicit restriction); without them a short follow-up
+                    # reaches the task as a fragment. Earlier requests of the
+                    # call are history and stay out.
                     context = {key: value for key, value in context.items() if key in {
-                        "heard", "request", "detail", "revision_request", "spoken_input_id"}}
+                        "heard", "request", "user_words", "detail", "revision_request", "spoken_input_id"}}
                 blocks.append(_block("assistant:voice-turn", voice_turn_block(context)))
     protected = {message.id for message in messages if message.role == "user" and message.id in current_ids}
     # A turn waiting on a card resumes in a new run. Its earlier steps (the

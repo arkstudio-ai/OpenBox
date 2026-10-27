@@ -335,3 +335,142 @@ async def test_user_speech_during_freshness_read_prevents_delivery_creation():
     release.set()
     await pending
     assert not provider.commands("create") and bridge.deliveries[0].delivery == "queued"
+
+
+PLACEMENT = {"card_id": "q-place", "kind": "assistant_placement", "header": "安排这件事",
+             "prompt": "放到「水果店宣传」还是新建项目？", "options": ["在「水果店宣传」里新建对话", "新建项目", "取消"],
+             "created_at": "2026-10-27T06:04:20+00:00", "expires_at": "2026-10-27T06:14:20+00:00"}
+
+
+class _Dying(ScriptedProvider):
+    """The socket dies while a card's note is being sent; the send fails after the pump noticed."""
+    def __init__(self):
+        super().__init__()
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+
+    async def create_note(self, text):
+        self.entered.set()
+        await self.release.wait()
+        raise ConnectionError("closed")
+
+    async def create_response(self, instructions=None, response_policy=None):
+        raise ConnectionError("closed")
+
+
+async def test_a_card_notice_cut_off_by_a_dropped_session_is_told_in_the_next_one():
+    """Measured 2026-10-27: the recovery settled the deliveries first, then the failed sends left the
+    placement card's notice "creating" for good, and the user never heard about the card."""
+    from tests.support.voice_fakes import drain
+    from tests.unit.test_voice_bridge import answered
+    clock, provider, link = FakeClock(), _Dying(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock)
+    fresh = await answered(bridge, provider, clock)
+    bridge.seed_waiting_cards([], [])
+    telling = asyncio.create_task(bridge.waiting_cards([PLACEMENT], []))
+    await asyncio.wait_for(provider.entered.wait(), 1)
+    provider.closed = True
+    provider.end()
+    recovering = asyncio.create_task(bridge.recover(provider))
+    await asyncio.sleep(0)   # the pump starts the recovery while the note is still being sent
+    provider.release.set()   # ... and only then does the send fail
+    await telling
+    assert await recovering
+    await bridge.fill_idle()
+    await drain()
+    [(_, note)] = fresh[0].commands("note")
+    assert "放到「水果店宣传」还是新建项目" in note and fresh[0].commands("create")
+    [notice] = bridge.deliveries
+    assert notice.attempts == 1  # the lost socket did not count as telling it
+
+
+async def test_a_notice_whose_reply_the_users_speech_quarantined_is_told_once_after_their_turn():
+    """Review 2026-10-27: the user spoke between our request and its reply; the quarantined reply left the
+    notice "creating" for good: never told, the phase stuck on working, the session never rotated."""
+    from tests.support.voice_fakes import drain
+    from tests.unit.test_voice_bridge import replay
+    from tests.unit.test_voice_memory_context import _heard, call, finish_tasks
+    bridge, provider, clock = call()
+    await _heard(bridge, "你好", "u1")
+    await bridge.fill_idle()
+    await drain()
+    await replay(bridge, started("a1"), audio("a1"), done("a1"))
+    clock.advance(5)
+    bridge.seed_waiting_cards([], [])
+    await bridge.waiting_cards([PLACEMENT], [])
+    [notice] = bridge.deliveries
+    [(_, note)] = provider.commands("note")
+    assert notice.delivery == "creating" and bridge.requested == f"delivery:{notice.id}"
+    await replay(bridge, item("note-1", text=note))
+    await replay(bridge, event("user_started", item_id="u2"), started("d1"))  # our notice's reply, quarantined
+    assert notice.delivery == "queued" and bridge.requested is None
+    assert ("delete", "note-1") in provider.sent  # its next telling adds the note once, not a second copy
+    await replay(bridge, done("d1", status="cancelled"), item("u2"), event("user_stopped"), started("auto"),
+                 done("auto", status="cancelled"), event("user_transcript", item_id="u2", text="今天天气怎么样"))
+    await finish_tasks(bridge)
+    await bridge.fill_idle()
+    await drain()
+    await replay(bridge, started("a2"), audio("a2"), done("a2"))
+    clock.advance(5)
+    await bridge.fill_idle()
+    await drain()
+    assert len(provider.commands("note")) == 2 and bridge.requested == f"delivery:{notice.id}"
+    assert notice.attempts == 1  # the quarantined request was not a telling
+    assert sum(line.role == "note" for line in bridge.spoken.lines) == 1  # nor a second line in the transcript
+    await bridge.close()
+
+
+async def test_a_notice_on_its_last_attempt_is_not_closed_unheard_by_a_dropped_session():
+    """Review 2026-10-27: a socket that dropped before any audio counted as a telling, so a notice on its last
+    attempt was closed as unheard and never told in the next session."""
+    from tests.support.voice_fakes import drain
+    from tests.unit.test_voice_bridge import answered
+    from voice.turns import DELIVERY_ATTEMPTS
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock)
+    fresh = await answered(bridge, provider, clock)
+    bridge.seed_waiting_cards([], [])
+    await bridge.waiting_cards([PLACEMENT], [])
+    [notice] = bridge.deliveries
+    assert bridge.requested == f"delivery:{notice.id}"
+    notice.attempts = DELIVERY_ATTEMPTS  # two tellings went unheard before; this is its last
+    provider.drop()
+    assert await bridge.recover(provider)
+    await bridge.fill_idle()
+    await drain()
+    assert notice in bridge.deliveries
+    [(_, note)] = fresh[0].commands("note")
+    assert "放到「水果店宣传」还是新建项目" in note and fresh[0].commands("create")
+    await bridge.close()
+
+
+async def test_a_restricted_turn_that_retires_an_untold_note_leaves_its_notice_to_add_it_again():
+    """Review 2026-10-27: the retired note's item stayed on the notice, so its retry asked for a reply with no
+    note in the conversation."""
+    from tests.support.voice_fakes import drain, provider_error
+    from tests.unit.test_voice_bridge import replay
+    from tests.unit.test_voice_memory_context import _heard, call, packet
+    policies = iter(["allowed", "no_history"])
+    async def prepare(scope, text, recent):
+        return packet(text, next(policies)), "fresh"
+    bridge, provider, clock = call(prepare)
+    await _heard(bridge, "你好", "u1")
+    await bridge.fill_idle()
+    await drain()
+    await replay(bridge, started("a1"), audio("a1"), done("a1"))
+    clock.advance(5)
+    bridge.seed_waiting_cards([], [])
+    await bridge.waiting_cards([PLACEMENT], [])
+    [notice] = bridge.deliveries
+    [(_, note)] = provider.commands("note")
+    await replay(bridge, item("note-1", text=note), provider_error("active_response"))
+    assert notice.delivery == "queued" and notice.note_item == "note-1"  # refused: its note kept for the retry
+    await _heard(bridge, "别用之前的记录，现在几点了", "u2")
+    assert ("delete", "note-1") in provider.sent and notice.note_item is None
+    await bridge.fill_idle()
+    await drain()
+    await replay(bridge, started("a2"), audio("a2"), done("a2"))
+    clock.advance(5)
+    await bridge.fill_idle()
+    await drain()
+    assert len(provider.commands("note")) == 2 and bridge.requested == f"delivery:{notice.id}"
+    await bridge.close()

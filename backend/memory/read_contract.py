@@ -1,5 +1,30 @@
 """Read capability shared by legacy tools and the bounded packet adapters."""
 
+# How much each policy lets a turn read (permits below). no_history keeps live
+# task state and documents_only uploaded documents: neither covers the other.
+READ_WIDTH = {"current_only": 0, "uncertain": 1, "no_history": 2, "documents_only": 2,
+              "action_only": 3, "allowed": 3}
+
+
+def narrowest(*policies):
+    """The policy permitting only what every given decision permits; None when none is given.
+
+    Two decisions about the same words (a voice turn and the assistant's own
+    judgement, a lost session and its replacement) combine this way: a later
+    decision may narrow an earlier restriction, never lift or loosen it.
+    """
+    known = {policy if policy in READ_WIDTH else "uncertain" for policy in policies if policy}
+    if not known:
+        return None
+    least = min(READ_WIDTH[policy] for policy in known)
+    tied = {policy for policy in known if READ_WIDTH[policy] == least}
+    if len(tied) == 1:
+        return tied.pop()
+    # Equal width, different reads: only the current input satisfies both
+    # restrictions; action_only also limits execution.
+    return "action_only" if tied == {"action_only", "allowed"} else "current_only"
+
+
 def permits(turn, kind, *, asset_ids=(), bounded=False):
     if turn is None:
         return False
@@ -15,8 +40,18 @@ def check(ctx, kind, *, consume=False, asset_ids=()):
     from core.config import get_config
     if not get_config().memory.enabled("semantic_recall", ctx.user_id):
         return None
-    if not permits(getattr(ctx, "memory_turn", None), kind, asset_ids=asset_ids):
-        return {"status": "restricted", "items": [], "reason": "turn_read_scope"}
+    turn = getattr(ctx, "memory_turn", None)
+    if not permits(turn, kind, asset_ids=asset_ids):
+        denied = {"status": "restricted", "items": [], "reason": "turn_read_scope"}
+        if getattr(turn, "deferred_read", False) and getattr(turn, "read_policy", None) == "uncertain":
+            # Not a refusal yet: memory.prepare decides this turn's scope. A
+            # call made in the same step as it once read as "no pending cards"
+            # and the assistant submitted the same task a second time.
+            denied.update(checked=False, read_scope="pending", instruction=(
+                "No read was performed: this turn's read scope is decided by memory.prepare. Call it first, "
+                "in its own step, then repeat this read. An empty list here is not evidence that nothing "
+                "exists; never create, submit or answer anything on that basis."))
+        return denied
     if consume and kind != "task_state":
         budget = getattr(ctx, "memory_read_budget", None)
         if budget is None or budget.batches and not budget.legacy_reads or budget.legacy_reads >= 2:

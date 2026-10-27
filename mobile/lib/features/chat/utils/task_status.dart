@@ -21,8 +21,7 @@ enum TaskTone { ok, warn, danger, muted, accent }
 const _live = {'busy', 'finalizing', 'retry', 'compacting'};
 const _trouble = {'error', 'resume_blocked', 'effect_unknown'};
 
-/// States that win over whatever the run is doing: stopped, waiting on you,
-/// paused.
+/// Human control wins over a retained question: stopped, paused, then waiting.
 TaskStatus? _held({
   String? sessionStatus,
   String? observedState,
@@ -34,15 +33,15 @@ TaskStatus? _held({
       observedState == 'canceling') {
     return TaskStatus.stopped;
   }
-  if (pendingQuestions > 0 ||
-      sessionStatus == 'waiting_input' ||
-      observedState == 'waiting_input') {
-    return TaskStatus.waiting;
-  }
   if (desiredState == 'paused' ||
       observedState == 'paused' ||
       observedState == 'pausing') {
     return TaskStatus.paused;
+  }
+  if (pendingQuestions > 0 ||
+      sessionStatus == 'waiting_input' ||
+      observedState == 'waiting_input') {
+    return TaskStatus.waiting;
   }
   return null;
 }

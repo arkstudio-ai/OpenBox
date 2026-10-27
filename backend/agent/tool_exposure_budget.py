@@ -11,8 +11,6 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Mapping
 
-from agent.tool_exposure import pack_precedence, pack_rank
-
 if TYPE_CHECKING:
     from agent.tool_exposure import EligibleCatalog, ExposurePlan
     from core.config import ToolExposureConfig
@@ -249,13 +247,21 @@ def apply_exposure_budget(
     config: "ToolExposureConfig | None" = None,
     *,
     budgets: ExposureBudgets | None = None,
+    reserved_chars: int = 0,
 ) -> ExposureBudgetResult:
     """Return a whole-item budgeted plan without mutating either input.
 
-    Resident and product-state-pinned tools are mandatory.  Explicit intent
-    may consume burst capacity up to the 32K hard boundary; historical reveals
-    and other candidates only fill the 24K soft target.  Anything removed is
-    added to discovery with a machine-readable reason.
+    Resident tools are mandatory.  A product-state pack's lead control comes
+    next, up to the hard boundary; the pack's other controls fill only the soft
+    target: the serialized-payload gate would otherwise abort every
+    continuation of an in-progress workflow before the model is reached
+    (measured 2026-10-26: 39569 > 32000).  Tools explicitly requested through
+    discovery and explicit intent may consume burst capacity up to the hard
+    boundary; a request may also retire those other controls when that is
+    what lets it fit.  Historical reveals and other candidates only fill the
+    soft target.  Anything removed is added to discovery with a
+    machine-readable reason.  ``reserved_chars`` is request-local definitions
+    (structured output) that share the same boundary.
     """
 
     if config is not None and budgets is not None:
@@ -263,7 +269,16 @@ def apply_exposure_budget(
     active_budgets = budgets or (
         ExposureBudgets.from_config(config) if config is not None else ExposureBudgets()
     )
+    if reserved_chars > 0:
+        hard = max(0, active_budgets.visible_hard_chars - reserved_chars)
+        active_budgets = replace(
+            active_budgets,
+            visible_hard_chars=hard,
+            visible_soft_chars=min(hard, max(0, active_budgets.visible_soft_chars - reserved_chars)),
+        )
     _validate_inputs(catalog, plan)
+
+    from agent.tool_exposure import pack_precedence, pack_rank
 
     original_reasons = dict(plan.reasons)
     classified = {
@@ -274,6 +289,8 @@ def apply_exposure_budget(
         tool_id: _pack_name(original_reasons.get(tool_id, ""), catalog.entries[tool_id])
         for tool_id in plan.direct_ids
     }
+    # Within a priority, each pack's most important members come first, so a
+    # budget that cannot hold every pack still keeps each one's lead control.
     candidates = sorted(
         plan.direct_ids,
         key=lambda tool_id: (
@@ -284,6 +301,7 @@ def apply_exposure_budget(
         ),
     )
     no_trim = (plan.strategy or "").lower() in _NO_TRIM_STRATEGIES
+    soft_pinned: list[str] = []  # admitted non-lead product controls, most important first
 
     kept: set[str] = set()
     trimmed: dict[str, str] = {}
@@ -297,11 +315,24 @@ def apply_exposure_budget(
         required = priority in {"resident", "product_pinned"}
         pack = _pack_name(original_reasons.get(tool_id, ""), entry)
 
+        if priority == "product_pinned" and not no_trim:
+            # A workflow's lead control may use the whole hard boundary; its
+            # other controls fill the soft target, leaving burst room for a
+            # tool the model explicitly requests. Overflow stays discoverable.
+            lead = pack_rank(tool_id, pack) == 0
+            limit = active_budgets.visible_hard_chars if lead else active_budgets.visible_soft_chars
+            if visible_chars + size > limit:
+                kind = "hard" if lead else "soft"
+                trimmed[tool_id] = f"product_pinned_{kind}_limit" + (f":{pack}" if pack else "")
+                continue
+
         if no_trim or required:
             kept.add(tool_id)
             visible_chars += size
             if pack:
                 pack_totals[pack] = pack_totals.get(pack, 0) + size
+            if priority == "product_pinned" and pack_rank(tool_id, pack) != 0:
+                soft_pinned.append(tool_id)
             continue
 
         if size > active_budgets.single_tool_hard_chars:
@@ -317,6 +348,26 @@ def apply_exposure_budget(
             if priority in {"requested", "explicit_intent"}
             else active_budgets.visible_soft_chars
         )
+        if visible_chars + size > total_limit and priority == "requested" and not no_trim:
+            # Discovery told the model it could load this tool. A pack's
+            # non-lead controls only ever filled the soft target, so the least
+            # important of them give way when that is what lets it fit; they
+            # stay discoverable. The hard boundary itself never moves.
+            freed, retire = 0, []
+            for other in reversed(soft_pinned):
+                if visible_chars - freed + size <= total_limit:
+                    break
+                retire.append(other)
+                freed += catalog.entries[other].schema_chars
+            if visible_chars - freed + size <= total_limit:
+                for other in retire:
+                    soft_pinned.remove(other)
+                    kept.discard(other)
+                    visible_chars -= catalog.entries[other].schema_chars
+                    other_pack = packs[other]
+                    if other_pack:
+                        pack_totals[other_pack] -= catalog.entries[other].schema_chars
+                    trimmed[other] = "product_pinned_soft_limit" + (f":{other_pack}" if other_pack else "")
         if visible_chars + size > total_limit:
             limit_name = "hard" if priority in {"requested", "explicit_intent"} else "soft"
             trimmed[tool_id] = f"initial_visible_{limit_name}_limit"

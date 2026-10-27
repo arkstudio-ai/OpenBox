@@ -7,6 +7,7 @@ import re
 import time
 import weakref
 from hashlib import sha256
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -156,6 +157,33 @@ def read_schema(*, voice=False):
     return {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}
 
 
+def _warm_targets(config):
+    """(model, HEAD url) per origin that read routing contacts.
+
+    Without a configured router model, routing is JEV first and then its
+    fallback model. Keying the warmup on the router model alone left that
+    path cold: every voice turn spent 1.2-2.3 s of JEV's 3 s deadline on a TLS
+    handshake (measured 2026-10-27), so JEV timed out and the fallback, now on
+    a fresh connection too, often missed its own deadline.
+    """
+    jev_routing = not config.read_router_model
+    router = config
+    if jev_routing:
+        from memory.read_routing import fallback_config
+        router = fallback_config(config)
+    targets = []
+    if router is not None and not _requires_native_protocol(router.read_router_model):
+        root, key = provider_settings(router)
+        if root and key:
+            targets.append((router.read_router_model, root + "/models"))
+    if jev_routing and config.jev_url:
+        targets.append((config.jev_model, config.jev_url))
+    unique = {}
+    for model, url in targets:
+        unique.setdefault(urlsplit(url)[:2], (model, url))
+    return list(unique.values())
+
+
 async def warm_connection(config):
     """Connect while the caller speaks, without sending input or calling a model.
 
@@ -163,13 +191,13 @@ async def warm_connection(config):
     never resolves read scope or proves model availability. Throttle per loop,
     origin and proxy policy; normal classification retains its own deadline.
     """
-    if not config.read_router_model or _requires_native_protocol(config.read_router_model):
-        return
-    root, key = provider_settings(config)
-    if not root or not key:
-        return
+    for model, url in _warm_targets(config):
+        await _warm(model, url, config.provider_trust_env)
+
+
+async def _warm(model, url, trust_env):
     starts = _WARM_STARTS.setdefault(asyncio.get_running_loop(), {})
-    identity = (root, config.provider_trust_env)
+    identity = (urlsplit(url)[:2], trust_env)
     at = time.monotonic()
     if identity in starts and at - starts[identity] < WARM_INTERVAL_SECONDS:
         return
@@ -177,12 +205,12 @@ async def warm_connection(config):
     if len(starts) > 32:
         del starts[min(starts, key=starts.get)]
     from agent.gateway import Observation
-    observation = Observation(config.read_router_model, "memory_transport_warmup")
+    observation = Observation(model, "memory_transport_warmup")
     outcome, error = "failed", None
     try:
         async with asyncio.timeout(WARM_TIMEOUT_SECONDS):
-            await shared_client(trust_env=config.provider_trust_env).head(
-                root + "/models", timeout=WARM_TIMEOUT_SECONDS,
+            await shared_client(trust_env=trust_env).head(
+                url, timeout=WARM_TIMEOUT_SECONDS,
                 follow_redirects=False, extensions={"trace": observation.trace})
         outcome = "completed"
     except (httpx.HTTPError, TimeoutError) as exc:
@@ -196,7 +224,8 @@ async def warm_connection(config):
 
 def schedule_transport_warmup(config):
     """One nonblocking, input-free handshake per process startup, no model call."""
-    if not (config.semantic_recall and config.route_jev and config.read_router_model):
+    if not (config.semantic_recall and config.route_jev
+            and (config.read_router_model or config.jev_fallback_model or config.jev_url)):
         return None
 
     async def warm():

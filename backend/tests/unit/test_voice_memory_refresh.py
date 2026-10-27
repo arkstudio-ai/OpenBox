@@ -206,7 +206,9 @@ async def test_failed_final_ack_keeps_the_old_version_and_never_answers():
     provider.update_instructions_confirmed = failed_ack
     await bridge._say_memory_answer()
     assert bridge.memory_packet is old and bridge.memory_applied_version == 1
-    assert bridge.failed.is_set() and not provider.commands("create")
+    assert not provider.commands("create")
+    # The call goes on: the same answer is requested again shortly.
+    assert not bridge.failed.is_set() and bridge._memory_ready and bridge._memory_retries == 1
     await bridge.close()
 
 

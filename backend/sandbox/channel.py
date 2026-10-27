@@ -261,6 +261,8 @@ class WuyingChannel:
             raise ChannelConfigError("WUYING_CHANNEL must be direct or ssh")
 
         # Repair new/pooled guests before starting their application channel.
+        from sandbox.stream_runtime import ensure_desktop_stream_output
+        await ensure_desktop_stream_output(desktop_id, authority_check=attempt.current)
         await ensure_desktop_browser_runtime(desktop_id, authority_check=attempt.current)
         # Pooled/golden images may predate the host's current workflow. Update
         # only the built-in bundle before exposing this guest to its user.

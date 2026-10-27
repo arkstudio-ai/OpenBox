@@ -217,6 +217,7 @@ async def test_install_can_rotate_action_key(monkeypatch):
     import sandbox.channel as channel_module
     from unittest.mock import AsyncMock
     monkeypatch.setattr(channel_module, "ensure_desktop_browser_runtime", AsyncMock())
+    monkeypatch.setattr("sandbox.stream_runtime.ensure_desktop_stream_output", AsyncMock())
 
     cfg = OpenBoxConfig(
         wuying_channel="direct",

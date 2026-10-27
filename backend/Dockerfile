@@ -18,9 +18,11 @@ RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirement
     rm /tmp/requirements.txt
 
 COPY backend/ .
+COPY container/action_server.py /container/action_server.py
 COPY container/dev-browser/ /container/dev-browser/
 # Verify the actual release artifact can construct every recovery payload.
 RUN python -c "from sandbox.browser_runtime import runtime_files; runtime_files()"
+RUN python -c "from sandbox.stream_runtime import patch; patch.stream_nodes(patch.LOCAL.read_text())"
 # Bytecode is compiled here, not on the first request: a recreated container
 # has no __pycache__, and importing the agent's dependency tree inside the
 # first turn blocked the event loop for a minute (five on a cold host) —

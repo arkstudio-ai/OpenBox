@@ -16,10 +16,6 @@ import json
 from pathlib import Path
 import textwrap
 
-from wuying_bootstrap import Desktop
-from wuying_deploy_action_server import read_env
-
-
 REMOTE = '/opt/action_server/action_server.py'
 LOCAL = Path(__file__).resolve().parents[2] / 'container/action_server.py'
 
@@ -92,6 +88,9 @@ STREAM_PATCH'''
 
 
 def main():
+    from wuying_bootstrap import Desktop
+    from wuying_deploy_action_server import read_env
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env-file', required=True, type=Path)
     parser.add_argument('--dry-run', action='store_true')

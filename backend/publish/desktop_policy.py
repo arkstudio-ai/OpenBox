@@ -20,7 +20,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 #: `publish_jobs.platform` for the desktop route (the QR route uses "douyin").
 DESKTOP_PLATFORM = "douyin_creator"
 #: Job statuses that count against the day's budget.
-COUNTED = ("pending", "published")
+COUNTED = ("pending", "submitted", "published", "unknown")
 
 
 @dataclass(frozen=True)

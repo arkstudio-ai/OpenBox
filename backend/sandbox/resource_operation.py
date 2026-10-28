@@ -397,8 +397,15 @@ async def _run_resource_scope(scope, operation):
         if scope.bound is not None:
             scope.bound.closed = True
             metadata = result.metadata if isinstance(result, ToolResult) else {}
-            failed = scope.active_clients > 0 or scope.bound.request_failed or bool(metadata.get("error")
-                or metadata.get("observation_error") or metadata.get("outcome_unknown"))
+            # This built-in composite has already joined its durable children
+            # and attached a fresh observation. An action error is a settled
+            # failure, not a command still running on the desktop. Do not trust
+            # the same claim from arbitrary dynamic tools or incomplete I/O.
+            known_browser_result = (scope.tool_id == "browser_action"
+                and metadata.get("execution_complete") is True)
+            failed = (scope.active_clients > 0 or scope.bound.request_failed
+                or bool(metadata.get("outcome_unknown"))
+                or (bool(metadata.get("error") or metadata.get("observation_error")) and not known_browser_result))
             # Admission crossed the durable send boundary, but every request
             # was then refused before leaving (none passed the final check and
             # none is in flight): provably nothing ran, so this is not unknown.
@@ -426,7 +433,8 @@ async def _run_resource_scope(scope, operation):
                     "metadata": {**result.metadata, "error": True, "resource_outcome": "outcome_unknown",
                         "resource_effect_id": scope.bound.claim.effect_id}})
             else:
-                await effects.settle_effect(scope.bound.claim, state="succeeded",
+                await effects.settle_effect(scope.bound.claim,
+                    state="failed" if metadata.get("error") else "succeeded",
                     receipt={"tool_part_id": ctx.part_id, "response_received": True,
                         "remote_exclusivity_verified": False})
         elif scope.request_failed:

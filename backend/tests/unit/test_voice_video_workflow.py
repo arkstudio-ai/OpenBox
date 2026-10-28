@@ -72,6 +72,31 @@ async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(t
         await lease.release(session_status="idle")
 
 
+async def test_retired_chat_model_keeps_answered_fast_tier_and_setup_identity(tiers):
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "做开业短片，快速档，其他按原来的来")
+    args = {"project_id": main.project_id, "title": "开业短片", "instructions": "做开业短片",
+        "source_message_ids": [human], "destination_confirmed": True, "work_type": "other_video",
+        "model": "test/model", "model_confirmed": True}
+    try:
+        asked, _ = await tool_call(ctx, "tasks.submit", args)
+        await q.reply(asked["suspended"], [["快速档"]], owner)
+        tiers["chat"] = [{"id": "test/replacement", "name": "Current task AI"}]
+        unavailable, _ = await tool_call(ctx, "tasks.submit", args)
+        assert unavailable["error"] == "ASSISTANT_MODEL_UNAVAILABLE"
+        replacement = {**args, "model": "test/replacement"}
+        receipt, _ = await tool_call(ctx, "tasks.submit", replacement)
+        assert receipt["state"] == "accepted"
+        assert (await tool_call(ctx, "tasks.submit", replacement))[0] == receipt
+        async with get_db_session() as db:
+            session = await db.get(Session, receipt["execution_session_id"])
+            assert session.model == "test/replacement"
+            assert (session.video_model, session.video_resolution) == ("MiniMax-H3-Max-Turbo", "768p")
+        assert (await counts(owner))[2] == 1
+    finally:
+        await lease.release(session_status="idle")
+
+
 async def test_changed_tier_mapping_cannot_silently_replace_an_answered_choice(tiers):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "做口播，档次我选")
@@ -115,7 +140,11 @@ def quiet(monkeypatch):
 
 
 @pytest.mark.parametrize("video_index", [0, 1])
-async def test_models_are_selected_before_creation_and_spoken_skill_is_preserved(video_index):
+@pytest.mark.parametrize("semantic_recall", [False, True])
+async def test_models_are_selected_before_creation_and_spoken_skill_is_preserved(video_index, semantic_recall, monkeypatch):
+    from core.config import get_config
+    monkeypatch.setattr(get_config().memory, "semantic_recall", semantic_recall)
+    monkeypatch.setattr(get_config().memory, "allowed_user_ids", [])
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "在默认空间新开对话，帮我制作一段视频")
     args = {"project_id": main.project_id, "title": "口播样片", "instructions": "做 5 秒咖啡口播",
@@ -139,7 +168,11 @@ async def test_models_are_selected_before_creation_and_spoken_skill_is_preserved
                 assert decisions[0]["task_title"] == "口播样片" and not decisions[0]["execution_confirmed"]
                 assert "Task AI" in setup_result(row.continuation[KIND], [["Task AI"]])["output"]
                 projected = await project_main_messages([], ctx=ctx)
-                assert any(m.id == "assistant:answered-decisions" and "test/model" in str(m.parts) for m in projected)
+                # Semantic recall replaces legacy background. Current bound-card
+                # receipts are covered separately with the resumed Driver turn.
+                has_legacy_answer = any(m.id == "assistant:answered-decisions" and "test/model" in str(m.parts)
+                                        for m in projected)
+                assert has_legacy_answer is not semantic_recall
         receipt, _ = await tool_call(ctx, "tasks.submit", args)
         assert receipt["state"] == "accepted"
         async with get_db_session() as db:

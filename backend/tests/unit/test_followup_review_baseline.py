@@ -79,3 +79,15 @@ async def test_clarifications_and_foreign_cards_do_not_become_review_baselines()
         card.user_id = other
         await db.flush()
         assert await bind_locked(db, session, "human", ref) == ref
+
+
+@pytest.mark.parametrize("status", ["answered", "dismissed", "expired"])
+async def test_settled_production_review_does_not_bind_new_publishing_action(status):
+    owner, workspace, session, card_id = await displayed_review()
+    async with get_db_session() as db:
+        card = await db.get(QuestionCheckpoint, card_id)
+        card.status = status
+    receipt = await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup",
+        prompt="成片已经做好了，帮我发布。", client_id="publish-completed-video",
+        origin="human", origin_ref={"actor_user_id": owner})
+    assert "review_baseline" not in receipt.origin_ref

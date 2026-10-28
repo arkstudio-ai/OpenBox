@@ -2,13 +2,13 @@
 import asyncio
 import json
 import re
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant import budget
 from assistant.inputs import accept_turn
 from assistant.results import deliver_task_result
@@ -36,7 +36,7 @@ async def runtime(monkeypatch, **limits):
     config.assistant.ordinary = AssistantTurnLimits(**limits)
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     async def tools(*args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)
@@ -326,7 +326,7 @@ async def test_report_budget_exhaustion_retries_reporting_without_reexecuting_ta
     config.compaction.auto = False
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     async def tools(*args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, main, accepted, execution, _ = await result_ready()
     await execution.release(session_status="idle")

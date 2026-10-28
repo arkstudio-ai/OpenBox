@@ -29,7 +29,7 @@ class PublishJob(Base):
     hashtags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     #: Douyin share_id: the correlation key for the create_video webhook.
     share_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    #: pending | published | failed | expired
+    #: pending | submitted | published | draft | failed | unknown | expired
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     item_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     video_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

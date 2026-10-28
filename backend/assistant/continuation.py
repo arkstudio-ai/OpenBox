@@ -54,6 +54,56 @@ def public_policy(task):
         "state", "max_followups", "followups_used", "expires_at", "last_result_id", "reason")}
 
 
+def current_human_quote(item, quote):
+    """Only current authenticated human input, including its same-request ASR.
+
+    Voice provenance is attached by the server, never accepted from public
+    message options. Already handed-over utterances, summaries and generated
+    restatements cannot mint a new standing grant.
+    """
+    if quote in item.prompt:
+        return True
+    from voice.prompt import VOICE_ENTRYPOINT
+    ref = item.origin_ref or {}
+    if ref.get("entrypoint") != VOICE_ENTRYPOINT or not ref.get("voice_call_id"):
+        return False
+    context = ref.get("voice_context") or {}
+    return any(isinstance(words, str) and quote in words for words in context.get("user_words") or [])
+
+
+async def confirmed_human_grant(db, main, task, source, refs, prompt, request):
+    """An answered setup card can retain its exact original human grant.
+
+    The recovery marker is not consent. Both the saved tool arguments and
+    the original authenticated user words must independently match.
+    """
+    from assistant.pending import current_answers
+    answers = await current_answers(db, main, run_id=source.run_id, generation=source.generation)
+    candidates = [call for answer in answers
+        for call in [answer["original_call"], *answer.get("deferred_operations", [])]]
+    for call in candidates:
+        args = call["arguments"]
+        if call["tool"] not in {"tasks.submit", "tasks.followup"} or args.get("instructions") != prompt:
+            continue
+        if call["tool"] == "tasks.followup" and args.get("task_id") != task.id:
+            continue
+        try:
+            saved = ContinuationRequest.model_validate(args.get("continuation"))
+        except ValidationError:
+            continue
+        if saved != request:
+            continue
+        ids = set(args.get("source_message_ids") or []) & {ref["message_id"] for ref in refs}
+        if not ids:
+            continue
+        humans = await db.scalars(select(AgentInboxItem).where(AgentInboxItem.session_id == main.id,
+            AgentInboxItem.user_id == main.user_id, AgentInboxItem.message_id.in_(ids),
+            AgentInboxItem.origin == "human", AgentInboxItem.generation < source.generation))
+        if any(current_human_quote(item, request.authorization_quote) for item in humans):
+            return True
+    return False
+
+
 async def grant_locked(db, main, task, command, inbox_id, prompt, request, *, source):
     """The ordinary input transaction owns creation of the retained authority."""
     from assistant.commands import command_digest
@@ -82,7 +132,8 @@ async def grant_locked(db, main, task, command, inbox_id, prompt, request, *, so
             AgentInboxItem.run_id == source.run_id, AgentInboxItem.generation == source.generation,
             AgentInboxItem.origin == "human", AgentInboxItem.state == "claimed"))).all())
         if not any(row.message_id in {ref["message_id"] for ref in refs}
-                   and request.authorization_quote in row.prompt for row in current):
+                   and current_human_quote(row, request.authorization_quote) for row in current) and not (
+                await confirmed_human_grant(db, main, task, source, refs, prompt, request)):
             raise unavailable("ASSISTANT_CONTINUATION_HUMAN_REQUIRED")
     elif request.authorization_quote not in prompt:
         raise unavailable("ASSISTANT_CONTINUATION_HUMAN_REQUIRED")

@@ -58,7 +58,7 @@ class PublishRefusal(Exception):
 _STEPS_AFTER_PUBLISH_CLICK = ("publish", "readback")
 
 RETRY_GUIDANCE = "这是我们这边的执行问题，不是账号问题：可以直接再试一次；仍失败就如实告诉用户这次没发出去、稍后再试。不要改用扫码投稿，不要出授权二维码。"
-UNCLEAR_GUIDANCE = "发布按钮已经点过，结果不明：先用 action=status 或让用户看创作者中心的内容管理，确认没发出去再重试，不要直接重发。"
+UNCLEAR_GUIDANCE = "无法确认发布动作是否成功：先用 action=status 或查看创作者中心的内容管理，确认没发出去再重试，不要直接重发。"
 
 
 @dataclass
@@ -173,11 +173,16 @@ async def _create_job(caller: Caller, spec: PublishSpec, account: PlatformAccoun
 
 
 async def _finish_job(job_id: str, *, status: str, error: str | None = None, item_id: str | None = None,
-                      details_update: dict | None = None, published: bool = False) -> None:
+                      details_update: dict | None = None, published: bool = False, verify_receipt: bool = False) -> None:
     async with get_db_session() as db:
-        job = await db.get(PublishJob, job_id)
+        job = await db.get(PublishJob, job_id, with_for_update=verify_receipt)
         if job is None:
             return
+        if verify_receipt and job.item_id and job.item_id != item_id:
+            raise PublishRefusal("The receipt belongs to a different platform item; the original attempt was preserved.",
+                                 job_id=job_id)
+        if verify_receipt and job.status == "published":
+            status = "published"  # Read-only rechecks cannot downgrade an already recorded outcome.
         job.status = status
         job.error = error
         if item_id:
@@ -285,14 +290,16 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
                "schedule_at": spec.schedule_at, "dry_run": spec.dry_run, "asset_name": asset.name,
                "desktop_id": record["desktop_id"]}
     job = await _create_job(caller, spec, pre.account, details)
+    runner_started = False
     try:
         client, path = await prepare_desktop(caller, record, asset)
         params = script.build_params(
             file_path=path, title=spec.title, intro=spec.intro or "", topics=spec.topics, declaration=spec.declaration,
             hot_word=spec.hot_word, visibility=spec.visibility, schedule_at=spec.schedule_at, dry_run=spec.dry_run,
             simulate_risk=spec.simulate_risk, risk_patterns=cfg.risk_patterns,
-            upload_timeout_seconds=cfg.upload_timeout_seconds, evidence_path=f"tmp/obx-publish-{job.id}.png",
+            upload_timeout_seconds=cfg.upload_timeout_seconds, evidence_path=f"/tmp/obx-publish-{job.id}.png",
         )
+        runner_started = True
         result = await run_script_on_desktop(caller, record, params, timeout_s=cfg.upload_timeout_seconds + 150)
     except PublishRefusal as exc:
         await _finish_job(job.id, status="failed", error=str(exc)[:400])
@@ -301,14 +308,20 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     except PrivateRuntimeUnavailable as exc:
         await _finish_job(job.id, status="failed", error=str(exc))
         raise PublishRefusal(str(exc), job_id=job.id) from exc
-    except Exception as exc:  # desktop unavailable / busy / transport — nothing was posted
-        await _finish_job(job.id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
-        raise PublishRefusal(f"云电脑上传或页面操作没完成（{type(exc).__name__}: {str(exc)[:160]}）。{RETRY_GUIDANCE}",
-                             retryable=True, job_id=job.id) from exc
+    except Exception as exc:  # Losing the runner receipt does not prove no submission occurred.
+        if not runner_started:
+            await _finish_job(job.id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+            raise PublishRefusal(f"云电脑上传准备没完成（{type(exc).__name__}: {str(exc)[:160]}）。{RETRY_GUIDANCE}",
+                                 retryable=True, job_id=job.id) from exc
+        await _finish_job(job.id, status="unknown", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+        raise PublishRefusal(f"云电脑操作结果尚未确认（{type(exc).__name__}: {str(exc)[:160]}）。{UNCLEAR_GUIDANCE}",
+                             retryable=False, job_id=job.id) from exc
     return await _settle(caller, job, spec, pre.account, result)
 
 
 async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: PlatformAccount | None, result: dict) -> dict:
+    if result.get("ok") and not spec.dry_run and not result.get("item_id"):
+        result = {**result, "ok": False, "step": "readback", "error": "Submission receipt has no item ID"}
     upd = {"steps": result.get("steps"), "upload": result.get("upload"), "summary": result.get("summary"),
            "evidence_path": result.get("evidence"), "final_url": result.get("final_url"),
            "declaration_row": result.get("declaration_row"), "visibility_check": result.get("visibility"),
@@ -333,9 +346,11 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
         raise PublishRefusal(f"{reason}；该账号自动发布已停用并已通知用户。这条改用 douyin_publish 出投稿码。",
                              degrade=True, job_id=job.id)
     if not result.get("ok"):
-        await _finish_job(job.id, status="failed", error=str(result.get("error") or "unknown")[:400], details_update=upd)
         step = str(result.get("step") or "")
-        if step in _STEPS_AFTER_PUBLISH_CLICK and not spec.dry_run:
+        uncertain = step in _STEPS_AFTER_PUBLISH_CLICK and not spec.dry_run
+        await _finish_job(job.id, status="unknown" if uncertain else "failed",
+            error=str(result.get("error") or "unknown")[:400], details_update=upd)
+        if uncertain:
             raise PublishRefusal(f"发布结果不明：{result.get('error') or 'unknown'}（步骤 {step}）。{UNCLEAR_GUIDANCE}", job_id=job.id)
         raise PublishRefusal(f"云电脑上传或页面操作没完成：{result.get('error') or 'unknown'}（步骤 {step}）。{RETRY_GUIDANCE}",
                              retryable=True, job_id=job.id)
@@ -345,20 +360,58 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
                 "declaration_row": result.get("declaration_row"), "visibility_check": result.get("visibility"),
                 "hot_word_attached": result.get("hot_word_attached"),
                 "hot_row": result.get("hot_row"), "upload": result.get("upload"), "evidence_path": result.get("evidence")}
-    await _finish_job(job.id, status="published", item_id=result.get("item_id"), details_update={**upd, "item_url": result.get("item_url")}, published=True)
-    await _notify(caller.workspace_id, NOTIFY_DONE, "视频已通过创作者中心发布",
-                  f"《{spec.title}》已发布（{script.VISIBILITY[spec.visibility]}）。" + (f" 作品 {result['item_id']}" if result.get("item_id") else ""))
-    return {"job_id": job.id, "status": "published", "item_id": result.get("item_id"), "item_url": result.get("item_url"),
+    await _finish_job(job.id, status="submitted", item_id=result.get("item_id"),
+        details_update={**upd, "item_url": result.get("item_url"), "publication_state": "submitted"})
+    await _notify(caller.workspace_id, NOTIFY_DONE, "视频已提交创作者中心",
+                  f"《{spec.title}》已提交，设置为{script.VISIBILITY[spec.visibility]}；审核通过及实际可见状态尚未确认。"
+                  + (f" 作品 {result['item_id']}" if result.get("item_id") else ""))
+    return {"job_id": job.id, "status": "submitted", "publication_state": "submitted",
+            "item_id": result.get("item_id"), "item_url": result.get("item_url"),
             "hot_word_attached": result.get("hot_word_attached"), "declaration_row": result.get("declaration_row"),
             "declaration": spec.declaration, "visibility": spec.visibility,
             "publish_ms": result.get("publish_ms"), "upload": result.get("upload"), "summary": result.get("summary"),
             "evidence_path": result.get("evidence"), "final_url": result.get("final_url")}
 
 
-async def recent_jobs(workspace_id: str, limit: int = 10) -> list[PublishJob]:
+async def verify_submission(caller: Caller, job_id: str) -> dict:
+    from platforms.desktop import service as desktop
+    from sandbox.privacy import require_shared_runtime
+    await require_shared_runtime(caller.session_id)
+    async with get_db_session() as db:
+        job = await db.scalar(select(PublishJob).where(PublishJob.id == job_id,
+            PublishJob.workspace_id == caller.workspace_id, PublishJob.user_id == caller.user_id,
+            PublishJob.platform == policy.DESKTOP_PLATFORM))
+        if job is None or (job.details or {}).get("dry_run"):
+            raise PublishRefusal("No owned publication attempt is available to verify.")
+        if job.status == "pending":
+            raise PublishRefusal("The publication attempt is still running; wait for its result before verifying.",
+                                 job_id=job_id)
+        title, asset_id, item_id = job.title, job.file_asset_id, job.item_id
+        original_desktop = (job.details or {}).get("desktop_id")
+        created = job.created_at if job.created_at.tzinfo else job.created_at.replace(tzinfo=timezone.utc)
+        settled = job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=timezone.utc)
+    record = await desktop.workspace_desktop(caller.workspace_id)
+    if not record or not original_desktop or record.get("desktop_id") != original_desktop:
+        raise PublishRefusal("The original desktop is unavailable; submission remains unverified.")
+    receipt = await desktop.run_command_on_desktop(record, script.verification_command(
+        title=title, created_after=int(created.timestamp()) - 5, page_name="obx-publish-check-" + job_id,
+        item_id=item_id, created_before=int(settled.timestamp()) + 5),
+        parse=script.parse_output, summary="Verify publication receipt", operation="publish.verify",
+        lease=True, timeout=50, lease_ttl=65, session_id=caller.session_id or "desktop-publish",
+        tool_call_id=caller.tool_call_id, allow_script_error=True)
+    if not receipt.get("ok") or not receipt.get("item_id"):
+        raise PublishRefusal(str(receipt.get("error") or "Submission receipt is unverified."), job_id=job_id)
+    await _finish_job(job_id, status="submitted", item_id=receipt["item_id"],
+        details_update={"publication_state": "submitted", "reconciled": True, "receipt": receipt}, verify_receipt=True)
+    return {"business_outcome": "succeeded", "business_target": asset_id,
+            "publication_state": "submitted", "item_id": receipt["item_id"], "job_id": job_id}
+
+
+async def recent_jobs(workspace_id: str, limit: int = 10, *, job_id=None) -> list[PublishJob]:
     async with get_db_session() as db:
         rows = (await db.execute(select(PublishJob).where(
             PublishJob.workspace_id == workspace_id, PublishJob.platform == policy.DESKTOP_PLATFORM,
+            *([PublishJob.id == job_id] if job_id else []),
         ).order_by(PublishJob.created_at.desc()).limit(limit))).scalars().all()
         for r in rows:
             db.expunge(r)

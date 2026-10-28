@@ -122,6 +122,66 @@ def cleared(bridge) -> bool:
     return any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
 
 
+@pytest.mark.parametrize("changed", [SUNSET, ORANGE])
+@pytest.mark.parametrize("buffered", [False, True])
+async def test_text_assistant_delivery_stops_only_for_its_spoken_card(call, changed, buffered):
+    from voice.assistant_link import VoiceTurnRef
+    bridge, provider, _, _ = call
+    bridge.playback_ack = True
+    bridge.focus = ReplyFocus(embed=Embedding())
+    await greeted(bridge, provider)
+    await bridge.waiting_cards([], [SUNSET, ORANGE])
+    bridge.deliveries.clear()
+    ref = VoiceTurnRef(id="main-reply", provider_call_id="answer", text="", transcript="", requested=0.0)
+    ref.status = "ok"
+    bridge.deliveries.append(ref)
+    bridge.requested = "delivery:main-reply"
+    # A delayed result can concern different work from the latest spoken question.
+    bridge._work = {"orange": {"session_id": "orange", "title": ORANGE["session_title"], "state": "waiting"},
+                    "sunset": {"session_id": "sunset", "title": SUNSET["session_title"] + " 海鸥", "state": "waiting"}}
+    bridge._reply_words = lambda response_id: ORANGE["session_title"]
+    await replay(bridge, started("main-speech"), audio("main-speech", size=480000),
+                 event("assistant_transcribing", response_id="main-speech", text=GULLS))
+    assert bridge._native_named is None
+    await settled(bridge)
+    if buffered:
+        await replay(bridge, done("main-speech"))
+    outbox(bridge)
+    await bridge.waiting_cards([], [q for q in [SUNSET, ORANGE] if q is not changed])
+    assert cleared(bridge) is (changed is SUNSET)
+    assert (ref.delivery == "superseded") is (changed is SUNSET)
+    await bridge.close()
+
+
+async def test_only_pending_card_cannot_capture_a_reply_about_different_work(call):
+    """Fruit-store narration must not be stopped by an unrelated copy-choice card.
+
+    A single candidate can be moderately similar to any business update;
+    task ownership must compete with that provisional embedding match.
+    """
+    bridge, provider, _, _ = call
+    bridge.playback_ack = True
+    bridge.focus = ReplyFocus(embed=Embedding(), read=reader(asks_about="not-mentioned"))
+    await greeted(bridge, provider)
+    await bridge.waiting_cards([], [ORANGE])
+    bridge.deliveries.clear()
+    bridge._work = {"sunset": {"title": SUNSET["session_title"], "state": "completed"},
+                    "orange": {"title": ORANGE["session_title"], "state": "waiting"}}
+    async def misleading_similarity(*args, **kwargs):
+        return [{"q-orange": "v1"}, {"sunset": "current"}]
+    bridge.focus.place = misleading_similarity
+    await replay(bridge, started("different-work"), audio("different-work", size=480000),
+                 event("assistant_transcribing", response_id="different-work",
+                       text="30秒日落海浪横屏短视频方案 is complete; here is the updated ending."))
+    await settled(bridge)
+    outbox(bridge)
+    await bridge.waiting_cards([], [])
+    assert not cleared(bridge)
+    assert "q-orange" not in bridge._native_meaning
+    assert "orange" not in bridge._native_work_playing
+    await bridge.close()
+
+
 def test_a_decision_is_described_by_its_task_question_and_options():
     text = describe(SUNSET)
     assert "30秒日落海浪横屏短视频方案" in text and "海鸥飞过放在哪个镜头" in text and "收尾镜头" in text

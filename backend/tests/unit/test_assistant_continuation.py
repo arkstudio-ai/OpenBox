@@ -26,6 +26,32 @@ from tool.tool import ToolContext
 
 QUOTE = "Keep working on this same text task until complete, with at most one followup."
 
+
+@pytest.mark.parametrize("source_key,allowed", [("user_words", True), ("earlier_user_words", False), ("request", False)])
+async def test_voice_grant_uses_only_authenticated_same_request_human_words(monkeypatch, source_key, allowed):
+    from tests.unit.test_assistant_sessions_v2 import assistant, main_turn, tool_call
+    from voice.prompt import VOICE_ENTRYPOINT
+    monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
+    monkeypatch.setattr("assistant.model_choices.catalogue", lambda: {
+        "chat": [{"id": "test/model", "name": "Task AI"}], "video": []})
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "That one, please.",
+        origin_ref={"entrypoint": VOICE_ENTRYPOINT, "voice_call_id": "same-call",
+            "voice_context": {source_key: QUOTE if source_key == "request" else [QUOTE]}})
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", {"project_id": main.project_id,
+            "title": "Original writing task", "instructions": "Write the two requested paragraphs.",
+            "source_message_ids": [human], "model": "test/model", "model_confirmed": True,
+            "destination_confirmed": True, "continuation": {"authorization_quote": QUOTE, "max_followups": 1}})
+        if allowed:
+            assert result["state"] == "accepted"
+            async with get_db_session() as db:
+                assert (await db.get(AssistantTask, result["task_id"])).continuation_policy["state"] == "active"
+        else:
+            assert result["error"] == "ASSISTANT_CONTINUATION_HUMAN_REQUIRED"
+    finally:
+        await lease.release(session_status="idle")
+
 async def call_part(ctx, operation, request):
     part = ToolPartData(tool=operation, canonical_tool_id=operation, call_id="call-" + command_digest(request)[:12],
         wire_tool_name=operation.replace(".", "_"), provider_binding_digest="b" * 64, provider_dialect="openai",

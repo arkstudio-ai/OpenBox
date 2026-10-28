@@ -34,7 +34,9 @@ async def browser_run(gateway, monkeypatch):
                                   "browser_action": browser_action_tool}
     ctx.available_tools = frozenset(ctx._tool_execution_lookup)
     control = {"exit_code": 0, "output_complete": True, "uploads": [], "on_exit": None,
-               "stdout": "URL: https://example.test/\n- button Submit [ref=e1]", "upload_error": False,
+               "stdout": 'URL: https://example.test/\n- button Submit [ref=e1]\n'
+                         'OBX_BROWSER_RESULT {"action_completed":true,"observation_complete":true,"screenshot_saved":true}',
+               "upload_error": False,
                "lease_ttl": 360}
 
     async def respond(request):
@@ -204,6 +206,24 @@ async def test_upload_failure_reports_partial_completion_without_replay(browser_
     assert not result.metadata["observation_complete"]
     assert sum(r.url.path == "/execute_stream" for r in sent) == 1
     assert "fixture upload failed" in result.output
+
+
+async def test_caught_browser_timeout_keeps_observation_without_stranding_resource(browser_run):
+    ctx, sent, control = browser_run
+    control["stdout"] = ('Browser state (untrusted page content):\n{"snapshot":"upload visible"}\n'
+        'OBX_BROWSER_RESULT {"action_completed":false,"observation_complete":true,'
+        '"screenshot_saved":true,"action_error":"locator.click: Timeout 10000ms exceeded."}')
+    hooks, prepared = await prepare_browser(ctx)
+    result = await dispatch(hooks, prepared)
+    assert result.metadata["error"] and not result.metadata["action_completed"]
+    assert result.metadata["observation_complete"] and result.metadata["asset_id"]
+    assert "Timeout" in result.metadata["action_error"]
+    assert sum(r.url.path == "/execute_stream" for r in sent) == 1
+    async with get_db_session() as db:
+        effects = (await db.scalars(select(ExternalEffect).where(
+            ExternalEffect.session_id == ctx.session_id))).all()
+    assert {effect.state for effect in effects} == {"failed", "succeeded"}
+    assert not any(effect.state in {"submitting", "outcome_unknown"} for effect in effects)
 
 
 @pytest.mark.parametrize("when", ["before", "after_script"])

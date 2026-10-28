@@ -20,6 +20,71 @@ from question import runtime
 KINDS = frozenset({"assistant_task_setup", "assistant_placement"})
 
 
+def never_dispatched(data):
+    meta = data.get("metadata") or {}
+    return data.get("status") == "error" and meta.get("blocked") and (
+        meta.get("failure_code") == "pending_question" or data.get("error") ==
+        "Not executed: answer the pending questions first, then re-evaluate this operation. No approval was granted.")
+
+
+def same_operation(candidate, part):
+    data, args = part.data or {}, candidate["arguments"]
+    if never_dispatched(data) or (part.canonical_tool_id or data.get("tool")) != candidate["tool"]:
+        return False
+    supplied = data.get("input") or {}
+    targets = {k: args[k] for k in ("task_id", "request_id", "session_id", "client_key") if args.get(k)}
+    return all(supplied.get(k) == v for k, v in targets.items()) if targets else supplied == args
+
+
+async def deferred_batch(db, main, rows):
+    """Follow only this answered card's recovery ancestry, never arbitrary history."""
+    pending = [row for row, _ in rows]
+    generations, messages, visited = set(), set(), set()
+    while pending:
+        row = pending.pop()
+        if row.id in visited:
+            continue
+        visited.add(row.id)
+        messages.add(row.message_id)
+        # Question generations and Driver generations are independent fences.
+        generation = await db.scalar(select(AgentEvent.generation).where(
+            AgentEvent.session_id == main.id, AgentEvent.user_id == main.user_id,
+            AgentEvent.part_id == row.part_id, AgentEvent.generation.is_not(None))
+            .order_by(AgentEvent.sequence).limit(1))
+        if generation is None or generation in generations:
+            continue
+        generations.add(generation)
+        inputs = await db.scalars(select(AgentInboxItem).where(
+            AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
+            AgentInboxItem.generation == generation, AgentInboxItem.origin == "system_recovery"))
+        for item in inputs:
+            ref = item.origin_ref or {}
+            target = None
+            if ref.get("entrypoint") == "question_answer" and type(ref.get("generation")) is int:
+                target = QuestionCheckpoint.generation == ref["generation"]
+            elif ref.get("entrypoint") == "assistant_card_answer" and ref.get("question_id"):
+                target = QuestionCheckpoint.id == ref["question_id"]
+            if target is not None:
+                pending.extend(await db.scalars(select(QuestionCheckpoint).where(
+                    QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.user_id == main.user_id,
+                    QuestionCheckpoint.id != row.id, QuestionCheckpoint.applied.is_(True),
+                    QuestionCheckpoint.status.in_(("answered", "rejected")), target)))
+    if not messages:
+        return []
+    parts = list(await db.scalars(select(Part).where(Part.session_id == main.id,
+        Part.user_id == main.user_id, Part.message_id.in_(messages), Part.type == "tool")))
+    candidates = [{"part_id": p.id, "tool": p.canonical_tool_id or p.data.get("tool"),
+        "arguments": p.data.get("input") or {}, "execution_outcome": "not_started"}
+        for p in parts if never_dispatched(p.data or {})]
+    # Include intervening calls in the same bound runs. A completed, failed or
+    # uncertain attempt is never replayed; only genuinely unstarted work remains.
+    attempts = list(await db.scalars(select(Part).where(Part.session_id == main.id, Part.user_id == main.user_id,
+        Part.type == "tool", Part.id.in_(select(AgentEvent.part_id).where(
+            AgentEvent.session_id == main.id, AgentEvent.user_id == main.user_id,
+            AgentEvent.generation.in_(generations))))))
+    return [candidate for candidate in candidates if not any(same_operation(candidate, p) for p in attempts)]
+
+
 def detachable(row, session) -> bool:
     continuation = row.continuation or {}
     return (session.kind == "assistant" and continuation.get("kind") == "question"
@@ -137,6 +202,7 @@ async def current_answers(db, main, *, run_id, generation):
         QuestionCheckpoint.status.in_(("answered", "rejected")), QuestionCheckpoint.applied.is_(True),
         Part.session_id == main.id, Part.user_id == main.user_id, Part.type == "tool",
         or_(*targets)).order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id))).all())
+    deferred = await deferred_batch(db, main, rows)
     receipts = []
     for row, part in rows:
         data = part.data or {}
@@ -146,6 +212,7 @@ async def current_answers(db, main, *, run_id, generation):
             "answers": row.answers, "original_call": {
                 "tool": part.canonical_tool_id or data.get("tool"), "arguments": data.get("input") or {}},
             "result": data.get("output"), "decision_only": detachable(row, main),
+            "deferred_operations": deferred if not receipts else [],
             **({"execution_confirmed": False} if detachable(row, main) else {})})
     return receipts
 

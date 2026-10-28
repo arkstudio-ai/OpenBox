@@ -235,6 +235,21 @@ async def test_semantic_check_accepts_work_bound_to_original_user_words(monkeypa
     assert await required("用那张图制作视频，先让我看方案", "assistant: 我已交办")
 
 
+async def test_contextual_recovery_keeps_raw_words_and_complete_request(monkeypatch):
+    request = "Continue both the opening video and the abstract short, retaining their confirmed choices."
+    async def complete(*args):
+        return json.dumps({"decision": "handoff", "operation": "task_change",
+            "authorization": "都接着做吧", "request": request})
+    monkeypatch.setattr("voice.summary.complete", complete)
+    bridge, provider, link = guarded(required)
+    await greeted(bridge, provider)
+    await utterance(bridge, "都接着做吧", "我来安排")
+    assert len(link.started) == 1
+    assert link.started[0].transcript == "都接着做吧"
+    assert link.started[0].text == request
+    await bridge.close()
+
+
 async def test_one_repair_and_duplicate_tool_calls_share_the_same_request():
     bridge, provider, link = guarded(needs_handoff)
     await greeted(bridge, provider)

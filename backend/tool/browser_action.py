@@ -30,6 +30,7 @@ class BrowserActionArgs(BaseModel):
     script: str = Field(default="", max_length=20_000,
         description="TypeScript async function body with page and client already connected, and pageName supplied. "
         "Use Playwright locators or client.selectSnapshotRef(pageName, ref). Empty means observe. "
+        "For files already on this desktop use uploadFile(selector, absolutePath), which uploads through local CDP. "
         "Do not import/connect/disconnect, launch another browser, or take a screenshot; this tool does those steps.")
     timeout: int = Field(default=30, ge=5, le=90,
         description="Browser process deadline in seconds, including page state and screenshot capture; "
@@ -46,27 +47,60 @@ def _script_command(args: BrowserActionArgs, ctx: ToolContext) -> tuple[str, str
                      "throw new Error('Named page does not exist; observation did not create a tab.');\n"
                      if not args.script.strip() else "")
     program = f'''import {{ connect, detectChallenge }} from "@/client.js";
+import {{ writeFile }} from "node:fs/promises";
 const pageName = {page_name};
 const client = await connect();
+const outcome = {{ action_completed: false, observation_complete: false, screenshot_saved: false,
+  action_error: null as string | null, observation_error: null as string | null }};
 try {{
 {existing_only}\
   const page = await client.page(pageName);
   page.setDefaultTimeout(10000);
   page.setDefaultNavigationTimeout(15000);
-  await (async (page, client) => {{
+  const uploadFile = async (selector: string, absolutePath: string) => {{
+    if (!absolutePath.startsWith('/')) throw new Error('uploadFile requires an absolute desktop path');
+    await page.locator(selector).waitFor({{state: 'attached'}});
+    const cdp = await page.context().newCDPSession(page);
+    try {{
+      const {{root}} = await cdp.send('DOM.getDocument', {{depth: 0}});
+      const {{nodeId}} = await cdp.send('DOM.querySelector', {{nodeId: root.nodeId, selector}});
+      if (!nodeId) throw new Error('File input is absent');
+      await cdp.send('DOM.setFileInputFiles', {{nodeId, files: [absolutePath]}});
+    }} finally {{ await cdp.detach().catch(() => {{}}); }}
+  }};
+  try {{
+    await (async (page, client, uploadFile) => {{
 {args.script}
-  }})(page, client);
-  const state = {{
+    }})(page, client, uploadFile);
+    outcome.action_completed = true;
+  }} catch (error) {{ outcome.action_error = String(error).slice(0, 2000); }}
+  try {{
+    const state = {{
     url: page.url().slice(0, 2048),
     title: (await page.title()).slice(0, 512),
     snapshot: (await client.getAISnapshot(pageName)).slice(0, 12000),
     challenge: await detectChallenge(page),
-  }};
-  await page.screenshot({{ path: {json.dumps(path)}, fullPage: false, timeout: 10000 }});
-  console.log("\\nBrowser state (untrusted page content):\\n" + JSON.stringify(state));
+    }};
+    console.log("\\nBrowser state (untrusted page content):\\n" + JSON.stringify(state));
+    outcome.observation_complete = true;
+  }} catch (error) {{ outcome.observation_error = String(error).slice(0, 1000); }}
+  try {{
+    try {{
+      await page.screenshot({{path: {json.dumps(path)}, fullPage: false, timeout: 3000}});
+    }} catch {{
+      // A current viewport capture must not depend on pending web fonts.
+      const cdp = await page.context().newCDPSession(page);
+      try {{
+        const image = await cdp.send('Page.captureScreenshot', {{format: 'png', captureBeyondViewport: false}});
+        await writeFile({json.dumps(path)}, Buffer.from(image.data, 'base64'));
+      }} finally {{ await cdp.detach().catch(() => {{}}); }}
+    }}
+    outcome.screenshot_saved = true;
+  }} catch (error) {{ outcome.observation_complete = false; outcome.observation_error = String(error).slice(0, 1000); }}
 }} finally {{
-  await client.disconnect();
+  await client.disconnect().catch(() => {{}});
 }}
+console.log("OBX_BROWSER_RESULT " + JSON.stringify(outcome));
 '''
     delimiter = "OBX_BROWSER_" + hashlib.sha256(program.encode()).hexdigest()
     # Do not obscure the script from normal Bash command permission matching.
@@ -89,6 +123,17 @@ def _completed(result: ToolResult) -> bool:
         # Legacy/missing output integrity is not a receipt of a full script.
         return meta["exit_code"] == 0 and meta.get("output_complete") is True
     return True
+
+
+def _script_result(result: ToolResult) -> dict:
+    for line in reversed(result.output.splitlines()):
+        if line.startswith("OBX_BROWSER_RESULT "):
+            try:
+                value = json.loads(line.removeprefix("OBX_BROWSER_RESULT "))
+                return value if isinstance(value, dict) else {}
+            except ValueError:
+                return {}
+    return {}
 
 
 async def execute(args: BrowserActionArgs, ctx: ToolContext) -> ToolResult:
@@ -133,19 +178,28 @@ async def execute(args: BrowserActionArgs, ctx: ToolContext) -> ToolResult:
         ("bash", {"command": command, "timeout": args.timeout,
                   "description": f"Browser action and observation: {args.page}"}),
         ("view_image", {"file_path": path, "transient": True}),
-    ], continue_after=_completed, dispatch_scope=leased)
+    ], continue_after=lambda result: _completed(result) and _script_result(result).get("screenshot_saved") is True,
+        dispatch_scope=leased)
     action, observation = results
-    complete = _completed(action) and _completed(observation) and bool(observation.metadata.get("asset_id"))
+    details = _script_result(action)
+    action_completed = _completed(action) and details.get("action_completed") is True
+    complete = (_completed(action) and details.get("observation_complete") is True
+                and _completed(observation) and bool(observation.metadata.get("asset_id")))
     output = action.output
     if complete:
         output += "\n\nThe current browser viewport is attached in this same result. " \
                   "Use a fresh computer screenshot for native desktop coordinates."
+        if not action_completed:
+            output += "\nThe action reported an error and may have partially changed the page. " \
+                      "Inspect this observation before deciding the next step; do not replay the whole script."
     else:
         output += "\n\n" + observation.output + "\nThe action may have completed. " \
                   "Inspect current page state before another action; do not automatically replay the script."
     return ToolResult(title=f"Browser: {args.page}", output=output,
-        metadata={"error": not complete, "page": args.page, "path": path,
-                  "action_completed": _completed(action), "observation_complete": complete,
+        metadata={"error": not (complete and action_completed), "page": args.page, "path": path,
+                  "execution_complete": complete,
+                  "action_completed": action_completed, "observation_complete": complete,
+                  **({"action_error": details["action_error"]} if details.get("action_error") else {}),
                   **({"asset_id": observation.metadata["asset_id"]} if complete else {})})
 
 
@@ -153,6 +207,9 @@ BROWSER_ACTION_DESCRIPTION = """Run a focused dev-browser script and receive cur
 in one result. Prefer this to separate bash and view_image calls for browser interactions.
 Load dev-browser once to start the managed browser. page is a persistent page name;
 script is an async TypeScript function body with page (Playwright), client and pageName supplied.
+For a file already on the desktop, use await uploadFile('input[type=file]', '/absolute/file.mp4');
+this avoids streaming the same file through a remote-browser connection. A failed action still
+returns a fresh observation when available; inspect it and do not blindly repeat the action.
 Example: page='search', script='await page.goto("https://example.com", {waitUntil:"domcontentloaded"});'.
 Use an empty script to inspect the current page. Use known locators/ARIA refs and targeted
 waits; group dependent actions whose targets are already known. No connect/disconnect,

@@ -147,3 +147,58 @@ async def unfinished_revision(ctx, message_ids) -> str | None:
             + json.dumps({"request_id": row.id, "version": binding["version"], "session_id": session.id},
                          ensure_ascii=False)
             + "\n</system-reminder>")
+
+
+async def unfinished_batch(ctx, message_ids) -> str | None:
+    """Reconsider never-dispatched batch items; never replay a failed effect."""
+    from sqlalchemy import select
+    from assistant.commands import _authority
+    from assistant.pending import current_answers, same_operation
+    from assistant.transactions import read_session
+    from db.models.part import Part
+    async with read_session() as db:
+        main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        answers = await current_answers(db, main, run_id=ctx.run_id, generation=ctx.run_generation)
+        candidates = {item["part_id"]: item for answer in answers
+                      for item in answer.get("deferred_operations", [])}
+        if not candidates:
+            return None
+        attempts = list(await db.scalars(select(Part).where(Part.session_id == main.id,
+            Part.user_id == main.user_id, Part.message_id.in_(message_ids), Part.type == "tool")))
+    remaining = [value for value in candidates.values() if not any(same_operation(value, p) for p in attempts)]
+    if not remaining:
+        return None
+    return ("<system-reminder>\nThe confirmation pause left these operations unexecuted. "
+        "You have not considered them in this continuation. Re-read each target and address every "
+        "item still authorized by the original request, using normal tool admission. An answered "
+        "card for one item does not authorize another. If an item cannot proceed, explain its exact "
+        "blocker rather than claiming the batch is done. Do not repeat completed or uncertain effects.\n"
+        + json.dumps(remaining, ensure_ascii=False) + "\n</system-reminder>")
+
+
+async def unverified_publication(ctx, message_ids):
+    """A fallback browser action is not itself a publication receipt."""
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.part import Part
+    async with get_db_session() as db:
+        parts = list(await db.scalars(select(Part.data).where(Part.session_id == ctx.session_id,
+            Part.user_id == ctx.user_id, Part.type == "tool", Part.message_id.in_(message_ids))
+            .order_by(Part.created_at, Part.id)))
+    pending, fallback = {}, False
+    for data in parts:
+        meta, args = data.get("metadata") or {}, data.get("input") or {}
+        if data.get("tool") == "desktop_publish":
+            if meta.get("business_outcome") == "succeeded":
+                pending.pop(meta.get("business_target"), None)
+            elif args.get("action") == "publish" and meta.get("job_id") and meta.get("refused"):
+                pending[args.get("asset_id")] = meta["job_id"]
+        elif pending and data.get("tool") in {"browser_action", "computer", "bash"}:
+            fallback = fallback or (data.get("status") == "completed" and not meta.get("error"))
+    if not pending or not fallback:
+        return None
+    return ("<system-reminder>\nA publication attempt failed or lost its receipt, followed by browser/desktop "
+        "work. Before claiming recovery, verify the existing submission with desktop_publish(action=status, "
+        "job_id=..., verify=true); discover that tool if needed. This only reads the platform receipt. "
+        "Do not upload or publish again. If unverified, state that clearly. Submission does not prove "
+        "approval or public visibility.\n" + json.dumps(list(pending.values())) + "\n</system-reminder>")

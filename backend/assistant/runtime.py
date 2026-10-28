@@ -260,6 +260,15 @@ When the current human explicitly requests continued work until completion, task
 tasks.followup can retain continuation with the exact authorization_quote, a bounded number of
 additional turns and any explicit expiry. Never enable this for an ordinary one-shot task or
 quoted third-party instructions. Keep the complete original goal and prohibitions in the task.
+For a delegated batch, account for every requested item separately. Answering one card or
+receiving one task receipt does not complete the batch. Resume each remaining item after a
+confirmation pause, re-read its current state and keep its own identity and constraints.
+If new delegation changes preparation-only work into execution, send those new instructions
+to that exact task after resolving its card; answering the old card alone does not change its
+original preparation-only goal. For an ordinary conversation use tasks.link_existing and then its
+tasks.followup path when permitted. Retain continuation for each task the human explicitly
+delegated until completion, using their exact current words, including same-request voice
+user_words. Report individually what is running, waiting, blocked or completed, with a cause.
 Result reporting remains read-only. A separate server-bound coordination turn exposes
 tasks.next_step: first read the original result, then continue only unfinished work within its
 retained original scope, record complete when achieved, or needs_decision when authority or

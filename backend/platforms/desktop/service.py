@@ -41,6 +41,10 @@ class BrowserNotRunning(PlatformError):
     code = "BROWSER_NOT_RUNNING"
 
 
+class DesktopExecutionError(PlatformError):
+    code = "DESKTOP_EXECUTION_FAILED"
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -129,8 +133,12 @@ async def run_command_on_desktop(
     async def _execute():
         result = await client.execute(command, timeout=timeout)
         if result.exit_code != 0:
-            text = (result.stderr or result.stdout or "").strip().splitlines()
-            raise BrowserNotRunning((text[-1] if text else f"exit {result.exit_code}")[:200])
+            from memory.redaction import redact_credentials
+            text = "\n".join(value.strip() for value in (result.stderr, result.stdout) if value)
+            # Keep the primary error, not only a trailing broken-pipe message.
+            # A process exit cannot establish whether the browser is running.
+            detail = redact_credentials(text)[:800] or "no process diagnostics"
+            raise DesktopExecutionError(f"exit {result.exit_code}: {detail}")
         return parse(result.stdout)
 
     async with span(

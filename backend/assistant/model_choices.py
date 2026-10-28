@@ -115,8 +115,14 @@ async def prepare(ctx, source, arguments):
                for key in (arguments.keys() | saved["input"].keys()) - CHOICE_FIELDS):
             continue
         restored, last_id = saved_choices(saved["input"], rows, inventory)
-        if last_id and all(arguments.get(key) in (saved["input"].get(key), restored.get(key))
+        available = {item["id"] for item in inventory["chat"]}
+        replacing_retired_model = (restored.get("model") not in available
+            and arguments.get("model") in available and arguments.get("model_confirmed") is True)
+        if last_id and all((replacing_retired_model and key in {"model", "model_confirmed"})
+                           or arguments.get(key) in (saved["input"].get(key), restored.get(key))
                            for key in arguments.keys() | saved["input"].keys() | restored.keys()):
+            if replacing_retired_model:
+                restored.update(model=arguments["model"], model_confirmed=True)
             original, values, setup_id = dict(saved["input"]), restored, last_id
             break
     if not values.get("model_confirmed") and not values.get("model_question") and default_model:

@@ -1,6 +1,6 @@
 """The Playwright script that drives 抖音创作者中心's upload form on the desktop.
 
-Runs on the desktop from `/opt/openbox/skills/dev-browser` (`npx tsx`), where
+Runs on the desktop from `/opt/openbox/skills/dev-browser` (its installed `tsx`), where
 `connect()` returns the desktop Chrome carrying the person's login state (the
 same runtime the dev-browser skill uses). Parameters are injected as JSON;
 the script prints exactly one JSON line and never throws past its own
@@ -30,6 +30,23 @@ VISIBILITY = {"public": "公开", "friends": "好友可见", "private": "仅自�
 UPLOAD_URL = "https://creator.douyin.com/creator-micro/content/upload"
 MANAGE_URL = "https://creator.douyin.com/creator-micro/content/manage"
 
+# Used inside page.evaluate by both initial readback and later verification.
+# A title prefix, a stale first match, or multiple distinct matching works is
+# not sufficient evidence to bind a publication attempt to a platform item.
+RECEIPT_SELECTOR = r'''(items, expected) => {
+  if (!Array.isArray(items)) return null;
+  const matches = items.filter(item => {
+    const id = String(item?.aweme_id || '');
+    const title = typeof item?.item_title === 'string' ? item.item_title : '';
+    const desc = typeof item?.desc === 'string' ? item.desc : '';
+    const sameTitle = title ? title === expected.title : desc === expected.title;
+    return id && sameTitle && Number(item.create_time) >= expected.created_after &&
+      Number(item.create_time) <= expected.created_before &&
+      (!expected.item_id || id === expected.item_id);
+  });
+  return new Set(matches.map(item => String(item.aweme_id))).size === 1 ? matches[0] : null;
+}'''
+
 SCRIPT = r'''import { connect, waitForPageLoad } from "@/client.js";
 const P = __PARAMS__;
 const out: any = { ok: false, step: "start", steps: [], risk: null, item_id: null, final_url: null, evidence: null };
@@ -46,7 +63,12 @@ async function main() {
   await waitForPageLoad(page); await page.waitForTimeout(2500);
   if (!/creator\.douyin\.com/.test(page.url()) || /login|passport/.test(page.url())) { out.error = "not logged in: " + page.url().slice(0, 120); out.login_expired = true; return; }
   let t = await bodyText(page); let r = riskIn(t); if (r) { out.risk = r; out.error = "risk signal on upload page: " + r; return; }
-  if (/是否继续编辑/.test(t)) { mark("discard_previous_draft"); await page.getByText('放弃', { exact: true }).first().click({ timeout: 8000 }).catch(() => {}); await page.waitForTimeout(1200); }
+  if (/是否继续编辑/.test(t)) {
+    mark("existing_draft");
+    out.error = "An existing draft needs a decision before a new upload; it has not been discarded or changed.";
+    out.existing_draft = true;
+    return;
+  }
   mark("upload");
   const t0 = Date.now();
   const fileInput = page.locator('input[type=file]').first();
@@ -64,8 +86,7 @@ async function main() {
     out.upload_method = 'cdp_local_path';
   } catch (e) {
     out.upload_cdp_error = String(e).slice(0, 160);
-    await fileInput.setInputFiles(P.file_path, { timeout: 180000 });  // relay transfer; only works under 50 MB
-    out.upload_method = 'set_input_files';
+    throw new Error("Local file upload failed: " + out.upload_cdp_error);
   } finally { await cdp.detach().catch(() => {}); }
   await page.locator('input[placeholder*="作品标题"]').waitFor({ state: 'visible', timeout: 120000 });
   mark("form", { ms: Date.now() - t0 });
@@ -149,6 +170,7 @@ async function main() {
     out.final_url = page.url(); out.ok = true; return;
   }
   mark("publish");
+  const submittedAfter = Math.floor(Date.now() / 1000) - 5;
   const before = page.url();
   await page.getByRole('button', { name: '发布', exact: true }).first().click({ timeout: 10000 });
   const tp = Date.now();
@@ -169,22 +191,29 @@ async function main() {
   // The manage page fetches /janus/douyin/creator/pc/work_list itself (signed URL);
   // replaying that exact URL in page context returns the newest works with aweme_id.
   for (let attempt = 0; attempt < 3 && !out.item_id; attempt++) {
-    const rb = await page.evaluate(async (title: string) => {
+    const rb = await page.evaluate(async (expected: any) => {
+      const pick = __RECEIPT_SELECTOR__;
       const urls = performance.getEntriesByType('resource').map(e => e.name).filter(u => /work_list/.test(u));
       const u = urls[urls.length - 1]; if (!u) return { error: 'no work_list request seen' };
+      if (new URL(u).origin !== location.origin) return { error: 'cross-origin work list ignored' };
       try {
-        const r = await fetch(u, { credentials: 'include' }); const j = await r.json();
+        const r = await fetch(u, { credentials: 'include' });
+        if (!r.ok) return { error: 'work list request failed', status: r.status };
+        const j = await r.json();
         const list = (j.aweme_list || []) as any[];
-        const hit = list.find(o => (o.item_title || '') === title || (o.desc || '').startsWith(title)) || null;
+        const hit = pick(list, expected);
         return { status: r.status, n: list.length, hit: hit ? { aweme_id: String(hit.aweme_id || ''), share_url: hit.share_url || null, status_value: hit.status_value, create_time: hit.create_time } : null, newest_title: list[0]?.item_title || null };
       } catch (e) { return { error: String(e).slice(0, 160) }; }
-    }, P.title);
+    }, {title:P.title, created_after:submittedAfter, created_before:Math.floor(Date.now()/1000)+5});
     out.readback = rb;
-    if (rb && rb.hit && rb.hit.aweme_id) { out.item_id = rb.hit.aweme_id; out.item_url = "https://www.douyin.com/video/" + rb.hit.aweme_id; out.share_url = rb.hit.share_url; out.item_status_value = rb.hit.status_value; break; }
+    if (rb && rb.hit && rb.hit.aweme_id && Number(rb.hit.create_time) >= submittedAfter) { out.item_id = rb.hit.aweme_id; out.item_url = "https://www.douyin.com/video/" + rb.hit.aweme_id; out.share_url = rb.hit.share_url; out.item_status_value = rb.hit.status_value; break; }
     await page.waitForTimeout(3000);
     await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); await page.waitForTimeout(4000);
   }
-  out.ok = !!out.item_id || out.listed || /发布成功|已发布|审核/.test(out.manage_text);
+  // A matching newly created item proves submission, not approval or visibility.
+  // Generic page labels and older videos with the same title prove neither.
+  out.ok = !!out.item_id;
+  if (out.ok) out.publication_state = "submitted";
   if (!out.ok) out.error = "publish outcome unclear: url=" + page.url().slice(0, 100);
 }
 main().catch(e => { out.error = (out.error ? out.error + " | " : "") + String(e).replace(/\n[\s\S]*/, "").slice(0, 300); })
@@ -206,19 +235,70 @@ def build_params(*, file_path: str, title: str, intro: str, topics: list[str], d
 
 
 def build_script(params: dict) -> str:
-    return SCRIPT.replace("__PARAMS__", json.dumps(params, ensure_ascii=False))
+    return SCRIPT.replace("__RECEIPT_SELECTOR__", RECEIPT_SELECTOR).replace(
+        "__PARAMS__", json.dumps(params, ensure_ascii=False))
 
 
 def build_command(params: dict, *, skill_dir: str = "/opt/openbox/skills/dev-browser", timeout_s: int = 600) -> str:
-    """One shell command: write the script to a temp file and run it with tsx from the skill dir."""
+    """Run the script on stdin; installed skills need only be readable."""
+    return _command(build_script(params), skill_dir=skill_dir, timeout_s=timeout_s)
+
+
+def verification_command(*, title: str, created_after: int, page_name: str, item_id: str | None = None,
+                         created_before: int | None = None) -> str:
+    """Read a receipt in a separate browser tab; never click upload or publish."""
+    import time
+
+    params = json.dumps({"title": title, "created_after": created_after, "item_id": item_id,
+        "created_before": created_before if created_before is not None else int(time.time()) + 5,
+        "page_name": page_name, "manage_url": MANAGE_URL}, ensure_ascii=False)
+    source = r'''import { connect, waitForPageLoad } from "@/client.js";
+const P = __PARAMS__;
+let client: any;
+const out: any = {ok:false};
+async function main() {
+  client = await connect();
+  const page = await client.page(P.page_name);
+  await page.goto(P.manage_url, {waitUntil:"domcontentloaded", timeout:30000});
+  await waitForPageLoad(page);
+  await page.waitForTimeout(2000);
+  if (!page.url().startsWith("https://creator.douyin.com/creator-micro/content/manage")) {
+    out.error="Creator content management is not available; receipt unverified"; return;
+  }
+  const receipt = await page.evaluate(async (p: any) => {
+    const pick = __RECEIPT_SELECTOR__;
+    const url = performance.getEntriesByType("resource").map(e=>e.name).filter(u=>/work_list/.test(u)).pop();
+    if (!url || new URL(url).origin !== location.origin) return null;
+    const response = await fetch(url, {credentials:"include"});
+    if (!response.ok) return null;
+    const data = await response.json();
+    const match = pick(data.aweme_list, p);
+    if (!match) return null;
+    return {item_id:String(match.aweme_id), publication_state:"submitted"};
+  }, P);
+  if (receipt) Object.assign(out, receipt, {ok:true});
+  else out.error="No unique matching submission receipt; do not assume publication or resubmit";
+}
+main().catch(e=>{out.error=String(e).slice(0,300);}).finally(async()=>{
+  try {await client?.disconnect();} catch {}
+  console.log("OBX_RESULT " + JSON.stringify(out));
+});'''.replace("__RECEIPT_SELECTOR__", RECEIPT_SELECTOR).replace("__PARAMS__", params)
+    return _command(source, skill_dir="/opt/openbox/skills/dev-browser", timeout_s=45)
+
+
+def _command(source: str, *, skill_dir: str, timeout_s: int) -> str:
     import base64
     import gzip
+    import shlex
 
-    encoded = base64.b64encode(gzip.compress(build_script(params).encode())).decode()
-    return (
-        f": obx-desktop-publish; cd {skill_dir} && mkdir -p tmp && printf %s {encoded} | base64 -d | gunzip > tmp/obx-publish.ts && "
-        f"PATH=/usr/local/bin:$PATH timeout {timeout_s} npx tsx tmp/obx-publish.ts 2>&1"
+    encoded = base64.b64encode(gzip.compress(source.encode())).decode()
+    command = (
+        f"set -o pipefail; cd {shlex.quote(skill_dir)} && "
+        f"printf %s {encoded} | base64 -d | gunzip | "
+        f"PATH=/usr/local/bin:$PATH timeout {int(timeout_s)} ./node_modules/.bin/tsx 2>&1"
     )
+    # The desktop executor uses /bin/sh, which need not implement pipefail.
+    return f": obx-desktop-publish; bash -c {shlex.quote(command)}"
 
 
 def parse_output(stdout: str) -> dict:

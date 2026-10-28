@@ -554,7 +554,10 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             self._update_phase()
             return
         self._native_playing = self._native_pending if kind in ("model", "followup") else {}
-        self._native_response = event.response_id if kind in ("model", "followup") else None
+        # A text-assistant result is spoken too. Its status/card claims must
+        # stop when the user changes the related work during playback.
+        self._native_delivery = self._delivery(kind)
+        self._native_response = event.response_id if kind in ("model", "followup") or self._native_delivery else None
         self._native_sources = self._card_sources.copy() if self._native_response else {}
         self._native_renderings = {identity: value for identity, value in self._renderings.items()
                                    if self._native_versions.get(identity) == value[0]} if self._native_response else {}
@@ -568,7 +571,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                               for key, row in self._work.items()} if self._native_response else {}
         self._native_named = reply_focus.named(self._reply_words(event.response_id), {
             key: f"{row.get('title') or ''} {row.get('project') or ''}" for key, row in self._work.items()}
-            ) if self._native_response and self._focus_tasks(event.response_id) else None
+            ) if self._native_response and not self._native_delivery and self._focus_tasks(event.response_id) else None
         if self._native_named:
             # It answers words naming this task, whatever meaning makes of it
             # (measured 2026-10-27: Pause left "it is regenerating" playing).

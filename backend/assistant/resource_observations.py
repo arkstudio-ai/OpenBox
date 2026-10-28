@@ -35,7 +35,10 @@ _MESSAGE = "Take a new screenshot before desktop input; the original request has
 
 
 def unavailable(reason="unspecified", **detail):
-    error = AssistantError(423, "RESOURCE_OBSERVATION_REQUIRED", _MESSAGE)
+    message = (_MESSAGE if not reason.startswith("competing:") else
+        "A previous desktop operation is unresolved. Inspect its outcome before sending more input; "
+        "taking repeated screenshots cannot settle that operation. Once resolved, capture a new frame.")
+    error = AssistantError(423, "RESOURCE_OBSERVATION_REQUIRED", message)
     error.reason = reason
     error.detail = {"reason": reason, **detail}
     return error

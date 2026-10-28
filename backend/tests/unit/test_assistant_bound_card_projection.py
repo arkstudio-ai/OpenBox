@@ -20,13 +20,28 @@ from tests.unit.test_assistant_sessions_v2 import main_turn, card, tool_call
 from tool.tool import ToolContext
 
 
-async def answered_choice(detached=True, kind="placement"):
+async def answered_choice(detached=True, kind="placement", deferred=False, grant=False):
     if kind == "model":
         from tests.unit.test_assistant_placement import prepare
-        owner, workspace, main, ctx, lease, arguments = await prepare()
+        owner, workspace, main, ctx, lease, arguments = await prepare(
+            "帮我写一份新品发布计划，交给你跟进到完成" if grant else "帮我写一份新品发布计划")
         arguments = {**arguments, "model_confirmed": False, "destination_confirmed": True}
+        if grant:
+            arguments["continuation"] = {"authorization_quote": "交给你跟进到完成", "max_followups": 2}
         asked, _ = await tool_call(ctx, "tasks.submit", arguments)
         identity = asked["suspended"]
+        if deferred:
+            from models.message import ToolPartData, ToolStatus
+            from session.session import save_part
+            await save_part(ToolPartData(tool="requests.answer", canonical_tool_id="requests.answer",
+                wire_tool_name="requests_answer", provider_binding_digest="d" * 64,
+                provider_dialect="openai", stream_seq=1,
+                call_id="deferred-second", status=ToolStatus.ERROR,
+                input={"request_id": "second-task-card", "answers": [["continue"]]},
+                error="Not executed: answer the pending questions first, then re-evaluate this operation. No approval was granted.",
+                metadata={"blocked": True, "failure_code": "pending_question", "execution_outcome": "not_started"},
+                session_id=ctx.session_id, message_id=ctx.message_id),
+                is_new=True, user_id=owner, run_fence=ctx.run_fence)
         await pause(ctx, lease)
     else:
         owner, workspace, main, arguments, identity, _ = await saved_request()
@@ -47,6 +62,56 @@ async def answered_choice(detached=True, kind="placement"):
     ctx = ToolContext(user_id=owner, workspace_id=workspace, session_id=main.id, project_id=main.project_id,
         agent_id="assistant", run_id=lease.run_id, run_generation=lease.generation, message_id=message.id)
     return ctx, lease, arguments, identity, choice
+
+
+@pytest.mark.parametrize("detached", [False, True])
+async def test_original_full_delegation_survives_its_answered_setup_card(detached):
+    from db.models.assistant import AssistantTask
+    ctx, lease, args, _, _ = await answered_choice(detached=detached, kind="model", grant=True)
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        assert result.get("state") == "accepted", result
+        async with get_db_session() as db:
+            policy = (await db.get(AssistantTask, result["task_id"])).continuation_policy
+            assert policy["state"] == "active" and policy["max_followups"] == 2
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_second_confirmation_still_carries_first_batches_unstarted_item():
+    from assistant.pending import deferred_batch
+    from db.models.question import QuestionCheckpoint
+    from db.models.part import Part
+    from db.models.session import Session
+    ctx, lease, args, _, _ = await answered_choice(detached=False, kind="model", deferred=True)
+    try:
+        # A different item requires another setup choice in the recovery run.
+        asked, part = await tool_call(ctx, "tasks.submit", {**args,
+            "title": "Third task", "instructions": "Write a different plan"})
+        assert "suspended" in asked
+        async with get_db_session() as db:
+            row = await db.get(QuestionCheckpoint, asked["suspended"])
+            main = await db.get(Session, ctx.session_id)
+            deferred = await deferred_batch(db, main, [(row, await db.get(Part, part.id))])
+            assert [x["arguments"]["request_id"] for x in deferred] == ["second-task-card"]
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_answered_first_card_retains_unexecuted_second_item_and_nudges_continuation():
+    from assistant.follow_through import unfinished_batch
+    ctx, lease, _, _, _ = await answered_choice(detached=False, kind="model", deferred=True)
+    try:
+        messages = await project(ctx)
+        block = next(m for m in messages if m.id == "assistant:answered-card")
+        payload = json.loads(block.parts[0]["text"].split("\n", 1)[1])
+        [second] = payload["items"][0]["deferred_operations"]
+        assert second["arguments"]["request_id"] == "second-task-card"
+        assert second["execution_outcome"] == "not_started"
+        reminder = await unfinished_batch(ctx, [ctx.message_id])
+        assert "second-task-card" in reminder and "normal tool admission" in reminder
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def project(ctx, **kwargs):

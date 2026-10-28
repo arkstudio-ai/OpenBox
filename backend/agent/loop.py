@@ -3072,6 +3072,10 @@ async def run_loop(
                 reminder = None
                 if assistant_view is not None and assistant_view["mode"] == "ordinary":
                     reminder = await follow_through.unfinished_revision(ctx, run_message_ids)
+                    if reminder is None:
+                        reminder = await follow_through.unfinished_batch(ctx, run_message_ids)
+                if reminder is None:
+                    reminder = await follow_through.unverified_publication(ctx, run_message_ids)
                 if reminder is None and await follow_through.needs_another_step(
                         session_kind=session.kind, text=collected_text, session_id=session_id,
                         user_id=user_id, message_ids=run_message_ids):

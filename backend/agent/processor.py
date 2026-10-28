@@ -1108,7 +1108,8 @@ async def process_step(
                     tool_part.status = ToolStatus.ERROR
                     tool_part.title = "Waiting for user input"
                     tool_part.error = "Not executed: answer the pending questions first, then re-evaluate this operation. No approval was granted."
-                    tool_part.metadata = {"blocked": True}
+                    tool_part.metadata = {"blocked": True, "failure_code": "pending_question",
+                                          "execution_outcome": "not_started"}
                     return ToolCallPreparation.ready(_ToolCallOutcome(tool_part, is_new=is_new))
                 await save_part(
                     tool_part,

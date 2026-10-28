@@ -119,6 +119,9 @@ class FreshnessMixin:
         self._note_changed_work()
         self._native_work_playing = {}
         self._answer_again()
+        if getattr(self, "_native_delivery", None) in self.deliveries:
+            await self._supersede(self._native_delivery, source="work_changed")
+            return True
         await self._interrupt_playback(source="work_changed")
         return True
 

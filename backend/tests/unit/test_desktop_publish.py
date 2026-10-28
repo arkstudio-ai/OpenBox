@@ -1,5 +1,8 @@
 """desktop_publish: mode switch, budget, breaker, degrade path, job records, script builder."""
 import uuid
+import json
+import shutil
+import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -13,6 +16,33 @@ from tool.desktop_publish import DesktopPublishArgs, execute
 from tool.tool import ToolContext
 
 SH = policy.SHANGHAI
+
+
+@pytest.mark.parametrize("items,expected,identity", [
+    ([{"aweme_id": "new", "item_title": "Shop launch", "create_time": 105}], {}, "new"),
+    ([{"aweme_id": "old", "item_title": "Shop launch", "create_time": 90},
+      {"aweme_id": "new", "item_title": "Shop launch", "create_time": 105}], {}, "new"),
+    ([{"aweme_id": "other", "item_title": "Shop launch preview", "desc": "Shop launch", "create_time": 105}], {}, None),
+    ([{"aweme_id": "other", "desc": "Shop launch preview", "create_time": 105}], {}, None),
+    ([{"aweme_id": "one", "item_title": "Shop launch", "create_time": 105},
+      {"aweme_id": "two", "item_title": "Shop launch", "create_time": 106}], {}, None),
+    ([{"aweme_id": "one", "item_title": "Shop launch", "create_time": 105},
+      {"aweme_id": "two", "item_title": "Shop launch", "create_time": 106}], {"item_id": "one"}, "one"),
+    ([{"aweme_id": "other", "item_title": "Shop launch", "create_time": 105}], {"item_id": "original"}, None),
+    ([{"aweme_id": "later", "item_title": "Shop launch", "create_time": 200}], {}, None),
+    ([None, {"aweme_id": "no-time", "item_title": "Shop launch"}], {}, None),
+])
+def test_receipt_selection_rejects_stale_similar_ambiguous_and_other_items(items, expected, identity):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is needed to execute the desktop's JavaScript receipt selector")
+    program = ("const data=JSON.parse(require('fs').readFileSync(0,'utf8')); const pick="
+               + script.RECEIPT_SELECTOR + "; const hit=pick(data.items,data.expected); "
+               "console.log(JSON.stringify(hit ? String(hit.aweme_id) : null));")
+    result = subprocess.run([node, "-e", program], input=json.dumps({"items": items,
+        "expected": {"title": "Shop launch", "created_after": 100, "created_before": 110, **expected}}),
+        text=True, capture_output=True, timeout=5, check=True)
+    assert json.loads(result.stdout) == identity
 
 
 @pytest.fixture
@@ -89,7 +119,8 @@ async def test_transport_failure_and_login_probe_errors_still_raise(publish_tran
         await desktop.run_on_desktop({"desktop_id": "ecd-test"}, {"action": "probe", "sites": []}, lease=True)
     w["exit_code"] = 7
     result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True), _ctx(w))
-    assert result.metadata["retryable"] is True and result.metadata["degrade"] is False
+    assert result.metadata["retryable"] is False and result.metadata["degrade"] is False
+    assert "DesktopExecutionError" in result.output and "exit 7" in result.output
 
 
 def _now_sh(hour: int) -> datetime:
@@ -168,11 +199,34 @@ def test_script_params_command_and_parse():
                             risk_patterns=["验证码"], upload_timeout_seconds=300, evidence_path="tmp/e.png")
     assert p["declaration_label"] == "内容由AI生成" and p["visibility_label"] == "仅自己可见" and p["upload_timeout_ms"] == 300000
     cmd = script.build_command(p)
-    assert cmd.startswith(": obx-desktop-publish; cd /opt/openbox/skills/dev-browser") and "npx tsx tmp/obx-publish.ts" in cmd
+    assert cmd.startswith(": obx-desktop-publish; bash -c ")
+    assert "./node_modules/.bin/tsx" in cmd and "tmp/obx-publish.ts" not in cmd
     assert len(cmd) < 8000  # gzip keeps it well under the action-server command limits
     assert script.parse_output("noise\nOBX_RESULT {\"ok\": true, \"item_id\": \"1\"}")["item_id"] == "1"
     with pytest.raises(ValueError):
         script.parse_output("nothing")
+
+
+def test_publish_script_runs_from_readonly_installation_without_writing(tmp_path):
+    import subprocess
+    skill = tmp_path / "skill's folder"
+    binary = skill / "node_modules" / ".bin" / "tsx"
+    binary.parent.mkdir(parents=True)
+    # Execute the real shell pipeline. The interpreter receives the full
+    # script over stdin even when no installation tmp directory exists.
+    binary.write_text('#!/usr/bin/env python3\nimport sys\ns=sys.stdin.read()\n'
+                      'assert "async function main()" in s\n'
+                      'print(\'OBX_RESULT {"ok":true}\')\n')
+    binary.chmod(0o555)
+    skill.chmod(0o555)
+    try:
+        proc = subprocess.run(script.build_command({}, skill_dir=str(skill)),
+            shell=True, executable="/bin/sh", capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        assert script.parse_output(proc.stdout)["ok"] is True
+        assert not (skill / "tmp").exists()
+    finally:
+        skill.chmod(0o755)
 
 
 def test_args_validation():
@@ -250,11 +304,16 @@ async def test_precheck_then_publish_records_job_and_counts_budget(world, monkey
     world["result"] = OK_RESULT
     r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题", intro="简介", topics=["装修"],
                                          visibility="private"), ctx)
-    assert r.metadata["status"] == "published" and r.metadata["item_id"] == "7681000000000000001"
+    assert r.metadata["status"] == "submitted" and r.metadata["item_id"] == "7681000000000000001"
+    assert "Approval and public visibility are not confirmed" in r.output
+    from db.models.publish_job import PublishJob
+    async with get_db_session() as db:
+        job = await db.get(PublishJob, r.metadata["job_id"])
+        assert job.status == "submitted" and job.published_at is None
     params = world["runs"][-1]
     assert params["file_path"] == "/workspace/uploads/final.mp4" and params["visibility_label"] == "仅自己可见" and params["topics"] == ["装修"]
     st = await execute(DesktopPublishArgs(action="status"), ctx)
-    assert st.metadata["jobs"][0]["status"] == "published" and st.metadata["jobs"][0]["item_id"] == "7681000000000000001"
+    assert st.metadata["jobs"][0]["status"] == "submitted" and st.metadata["jobs"][0]["item_id"] == "7681000000000000001"
     # the account's budget now shows one post today, and the interval blocks an immediate second post
     pre2 = await execute(DesktopPublishArgs(action="precheck"), ctx)
     assert pre2.metadata["budget"]["today"] == 1 and pre2.metadata["budget"]["allowed"] is False and "分钟" in pre2.metadata["budget"]["reason"]
@@ -280,14 +339,14 @@ async def test_ninety_minute_boundary_blocks_before_and_allows_at_boundary(world
     start = _now_sh(10)
     world["result"] = OK_RESULT
     args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="间隔验收", visibility="private")
-    assert (await execute(args, ctx)).metadata["status"] == "published"
+    assert (await execute(args, ctx)).metadata["status"] == "submitted"
     monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90) - timedelta(seconds=1))
     denied = await execute(args, ctx)
     assert denied.metadata["refused"] and not denied.metadata["degrade"]
     assert len(world["runs"]) == 1
     assert len((await execute(DesktopPublishArgs(action="status"), ctx)).metadata["jobs"]) == 1
     monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90))
-    assert (await execute(args, ctx)).metadata["status"] == "published"
+    assert (await execute(args, ctx)).metadata["status"] == "submitted"
     assert len(world["runs"]) == 2
 
 
@@ -299,7 +358,7 @@ async def test_fourth_daily_publish_is_refused_before_desktop_then_next_day_rese
     args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="日限额验收", visibility="private")
     for i in range(3):
         monkeypatch.setattr(svc, "_now", lambda i=i: start + timedelta(minutes=90 * i))
-        assert (await execute(args, ctx)).metadata["status"] == "published"
+        assert (await execute(args, ctx)).metadata["status"] == "submitted"
     monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90 * 3))
     pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
     assert pre.metadata["budget"]["today"] == 3
@@ -380,7 +439,7 @@ async def test_login_expired_and_package_default_and_foreign_asset(world, monkey
     # explicit auto from a template overrides the package default
     world["result"] = OK_RESULT
     r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题", mode="auto"), ctx)
-    assert r.metadata["status"] == "published"
+    assert r.metadata["status"] == "submitted"
     monkeypatch.setattr(get_config().desktop_publish, "default_mode", "auto")
 
 
@@ -409,8 +468,8 @@ def test_script_reads_the_video_from_the_desktop_over_cdp():
         upload_timeout_seconds=420, evidence_path="tmp/e.png"))
     # local path handed to Chrome — no relay transfer, no 50 MB ceiling
     assert "DOM.setFileInputFiles" in src and "files: [P.file_path]" in src
-    # the relay transfer stays only as a fallback, with a real timeout
-    assert "setInputFiles(P.file_path, { timeout:" in src
+    # Failed local attachment must not start an unbounded relay upload.
+    assert "setInputFiles(P.file_path" not in src
 
 
 async def test_transport_failure_is_retryable_and_never_degrades(world):
@@ -453,6 +512,83 @@ async def test_login_expired_never_points_at_the_qr_route(world):
     r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
     assert r.metadata["login_expired"] is True and r.metadata["retryable"] is False and r.metadata["degrade"] is False
     assert "douyin_publish(action=publish" not in r.output and "视频留着" in r.output
+
+
+async def test_status_verifies_existing_submission_without_republishing(world, monkeypatch):
+    from platforms.desktop import service as desktop
+    ctx = _ctx(world)
+    world["result"] = {"ok": False, "step": "readback", "error": "lost receipt"}
+    failed = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    job_id = failed.metadata["job_id"]
+    probes = []
+    original_command = script.verification_command
+    def bounded_command(**kwargs):
+        # A later same-title upload must not settle this earlier attempt.
+        assert kwargs["created_before"] == int(svc._now().timestamp()) + 5
+        return original_command(**kwargs)
+    monkeypatch.setattr(script, "verification_command", bounded_command)
+    async def verify(record, command, **kwargs):
+        probes.append(command)
+        assert kwargs["operation"] == "publish.verify"
+        return {"ok": True, "item_id": "matched-submission", "publication_state": "submitted"}
+    monkeypatch.setattr(desktop, "run_command_on_desktop", verify)
+    result = await execute(DesktopPublishArgs(action="status", job_id=job_id, verify=True), ctx)
+    assert result.metadata["business_outcome"] == "succeeded", result.output
+    assert result.metadata["business_target"] == world["aid"]
+    assert result.metadata["jobs"][0]["status"] == "submitted"
+    assert result.metadata["jobs"][0]["published_at"] is None
+    assert len(world["runs"]) == len(probes) == 1
+    foreign = await execute(DesktopPublishArgs(action="status", job_id=job_id, verify=True),
+        ToolContext(user_id="someone-else", workspace_id=world["ws"], session_id="s2"))
+    assert foreign.metadata["error"] and len(probes) == 1
+
+
+async def test_success_flag_without_platform_receipt_remains_unknown(world):
+    from db.base import get_db_session
+    from db.models.publish_job import PublishJob
+    world["result"] = {**OK_RESULT, "item_id": None}
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), _ctx(world))
+    assert result.metadata["error"] and not result.metadata["retryable"]
+    async with get_db_session() as db:
+        job = await db.get(PublishJob, result.metadata["job_id"])
+        assert job.status == "unknown" and job.published_at is None
+
+
+async def test_receipt_verification_cannot_replace_an_existing_item(world, monkeypatch):
+    from db.base import get_db_session
+    from db.models.publish_job import PublishJob
+    world["result"] = dict(OK_RESULT)
+    ctx = _ctx(world)
+    submitted = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    async def different_item(*args, **kwargs):
+        return {"ok": True, "item_id": "a-later-video-with-the-same-title"}
+    monkeypatch.setattr("platforms.desktop.service.run_command_on_desktop", different_item)
+    result = await execute(DesktopPublishArgs(action="status", job_id=submitted.metadata["job_id"], verify=True), ctx)
+    assert result.metadata.get("error") is True
+    async with get_db_session() as db:
+        job = await db.get(PublishJob, submitted.metadata["job_id"])
+        assert job.item_id == OK_RESULT["item_id"] and job.status == "submitted"
+
+
+async def test_running_publication_cannot_be_settled_by_a_readonly_probe(world, monkeypatch):
+    from db.base import get_db_session
+    from db.models.publish_job import PublishJob
+    world["result"] = dict(OK_RESULT)
+    ctx = _ctx(world)
+    submitted = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    async with get_db_session() as db:
+        job = await db.get(PublishJob, submitted.metadata["job_id"])
+        job.status, job.item_id = "pending", None
+    probes = []
+    async def verify(*args, **kwargs):
+        probes.append(kwargs)
+        return {"ok": True, "item_id": "unrelated"}
+    monkeypatch.setattr("platforms.desktop.service.run_command_on_desktop", verify)
+    result = await execute(DesktopPublishArgs(action="status", job_id=submitted.metadata["job_id"], verify=True), ctx)
+    assert result.metadata.get("error") is True and not probes
+    async with get_db_session() as db:
+        job = await db.get(PublishJob, submitted.metadata["job_id"])
+        assert job.status == "pending" and job.item_id is None
 
 
 async def test_publishing_hints_route_a_plain_request_to_the_desktop_skill():

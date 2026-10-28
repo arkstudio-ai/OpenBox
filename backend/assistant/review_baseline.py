@@ -34,5 +34,11 @@ async def bind_locked(db, session, origin, ref):
             continue
         questions = (data.get("input") or {}).get("questions", [])
         if any(q.get("purpose") == "review" and q.get("review_content") for q in questions):
+            # A settled proposal is historical context, not the baseline of
+            # every subsequent operation (e.g. publishing a completed video).
+            # Stop at the newest review instead of falling back to an older
+            # unanswered card. Explicit task revisions bind their own card.
+            if card.status not in {"pending", "superseded"}:
+                return ref
             return {**ref, "review_baseline": {"request_id": card.id, "content_hash": digest(card)}}
     return ref

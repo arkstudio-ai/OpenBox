@@ -15,13 +15,13 @@ from db.models.agent_inbox import AgentInboxItem
 from db.models.assistant import AssistantTask, TaskResult
 from db.models.part import Part
 from db.models.workspace import WorkspaceMember
-from models.message import TextPart
+from models.message import TextPart, ToolPartData, ToolStatus
 from session.session import create_assistant_message, save_part, update_message_info
 from tests.unit.test_assistant_commands import setup_task
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 
 
-async def result_ready(*, settle=True, finish="stop"):
+async def result_ready(*, settle=True, finish="stop", tool_outcomes=()):
     owner, _, workspace, main, kwargs = await setup_task()
     accepted = await accept_task_command(**kwargs)
     lease = await reserve_run(accepted["execution_session_id"], owner)
@@ -29,6 +29,13 @@ async def result_ready(*, settle=True, finish="stop"):
     fence = (lease.session_id, lease.run_id, lease.generation)
     message = await create_assistant_message(lease.session_id, batch.messages[0].id,
         model_id="test/model", agent="build", user_id=owner, run_fence=fence)
+    for index, (tool, args, metadata) in enumerate(tool_outcomes):
+        await save_part(ToolPartData(tool=tool, canonical_tool_id=tool, call_id=f"outcome-{index}",
+            wire_tool_name=tool, provider_binding_digest="d" * 64, provider_dialect="openai", stream_seq=index,
+            status=ToolStatus.ERROR if metadata.get("error") else ToolStatus.COMPLETED,
+            input=args, output="Publication failed" if metadata.get("error") else "Tool completed",
+            metadata=metadata, session_id=lease.session_id, message_id=message.id),
+            user_id=owner, is_new=True, run_fence=fence)
     await save_part(TextPart(session_id=lease.session_id, message_id=message.id,
                              text="The report is saved. Browser verification is still untested."),
                     user_id=owner, is_new=True, run_fence=fence)
@@ -37,6 +44,72 @@ async def result_ready(*, settle=True, finish="stop"):
     if settle:
         await inbox.settle_claimed_inbox_items(lease, result_message_id=message.id, outcome="succeeded")
     return owner, workspace, main, accepted, lease, message
+
+
+@pytest.mark.parametrize("last_action,expected", [("status", "error"), ("publish", "succeeded")])
+async def test_stopping_after_publish_refusal_is_not_business_success(last_action, expected):
+    outcomes = [("desktop_publish", {"action": "publish", "asset_id": "video-a"},
+                 {"error": True, "refused": True, "business_outcome": "failed", "business_target": "video-a"}),
+                ("desktop_publish", {"action": last_action, "asset_id": "video-a"},
+                 {"business_outcome": "succeeded", "business_target": "video-a"} if last_action == "publish" else {})]
+    owner, _, _, accepted, lease, _ = await result_ready(tool_outcomes=outcomes)
+    try:
+        async with get_db_session() as db:
+            result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+            task = await db.get(AssistantTask, accepted["task_id"])
+            assert result.outcome == expected
+            assert task.observed_state == ("completed" if expected == "succeeded" else "error")
+            if expected == "error":
+                assert "Publication failed" in result.summary
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("verified", [False, True])
+async def test_browser_fallback_needs_a_matching_receipt_before_success(verified):
+    from assistant.follow_through import unverified_publication
+    from tool.tool import ToolContext
+    outcomes = [("desktop_publish", {"action":"publish", "asset_id":"video-a"},
+        {"error":True, "refused":True, "job_id":"pub-a", "business_outcome":"failed", "business_target":"video-a"}),
+        ("browser_action", {"script":"await page.getByText('Publish').click()"}, {})]
+    if verified:
+        outcomes.append(("desktop_publish", {"action":"status", "job_id":"pub-a", "verify":True},
+            {"business_outcome":"succeeded", "business_target":"video-a", "publication_state":"submitted"}))
+    owner, _, _, accepted, lease, message = await result_ready(tool_outcomes=outcomes)
+    try:
+        reminder = await unverified_publication(ToolContext(user_id=owner, session_id=lease.session_id), [message.id])
+        assert (reminder is None) is verified
+        async with get_db_session() as db:
+            result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+            assert result.outcome == ("succeeded" if verified else "error")
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_review_or_browser_failure_followed_by_observation_is_not_completion():
+    _, _, _, accepted, lease, _ = await result_ready(tool_outcomes=[
+        ("question", {}, {"error": True}), ("computer", {"action": "screenshot"}, {})])
+    try:
+        async with get_db_session() as db:
+            result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+            assert result.outcome == "error"
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("target,expected", [("video-a", "succeeded"), ("other-video", "error")])
+async def test_receipt_can_resolve_uncertain_attempt_without_repeating_publish(target, expected):
+    _, _, _, accepted, lease, _ = await result_ready(tool_outcomes=[
+        ("desktop_publish", {"action": "publish", "asset_id": "video-a"},
+         {"error": True, "business_outcome": "failed", "business_target": "video-a"}),
+        ("desktop_publish", {"action": "status", "verify": True},
+         {"business_outcome": "succeeded", "business_target": target})])
+    try:
+        async with get_db_session() as db:
+            result = await db.scalar(select(TaskResult).where(TaskResult.task_id == accepted["task_id"]))
+            assert result.outcome == expected
+    finally:
+        await lease.release(session_status="idle")
 
 
 async def test_settlement_and_result_outbox_rollback_together(monkeypatch):

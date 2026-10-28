@@ -8,7 +8,7 @@ from trajectory.producers import activity_context, paused_in_tx
 from trajectory.types import canonical
 
 CONTEXT_KEY = "_trajectory_context"
-_TERMINAL = {"completed", "failed", "cancelled", "published", "draft", "expired", "unknown", "timed_out"}
+_TERMINAL = {"completed", "failed", "cancelled", "submitted", "published", "draft", "expired", "unknown", "timed_out"}
 
 
 async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None = None):

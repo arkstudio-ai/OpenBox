@@ -45,9 +45,12 @@ class DesktopPublishArgs(BaseModel):
     simulate_risk: bool = False
     #: status: one job; enable_auto: not needed.
     job_id: str | None = Field(default=None, max_length=96)
+    verify: bool = Field(default=False, description="For status with job_id: read the platform receipt after uncertain execution; never repost.")
 
     @model_validator(mode="after")
     def _by_action(self) -> "DesktopPublishArgs":
+        if self.verify and (self.action != "status" or not self.job_id):
+            raise ValueError("verify requires action=status and job_id")
         if self.action == "publish":
             if not self.asset_id or not self.title:
                 raise ValueError("publish requires asset_id and title")
@@ -115,7 +118,9 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
             lines.append(f"job_id={exc.job_id}")
         return ToolResult(title="Desktop publish refused" if not exc.degrade else "Desktop publish degraded",
                           output="\n".join(lines),
-                          metadata={"refused": True, "degrade": exc.degrade, "login_expired": exc.login_expired,
+                          metadata={"error": True, "refused": True, "business_outcome": "failed",
+                                    "business_target": args.asset_id,
+                                    "degrade": exc.degrade, "login_expired": exc.login_expired,
                                     "retryable": exc.retryable,
                                     "next_allowed_at": exc.next_allowed_at.isoformat() if exc.next_allowed_at else None, "job_id": exc.job_id})
     lines = [f"job_id={res['job_id']}", f"status={res['status']}"]
@@ -135,18 +140,27 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
         lines.append(f"evidence={res['evidence_path']} (on the desktop)")
     if res.get("dry_run"):
         lines.append("dry_run=true: form filled and saved as draft (暂存离开); nothing published.")
-    return ToolResult(title=f"Desktop publish · {res['status']}", output="\n".join(lines), metadata=res)
+    elif res.get("status") == "submitted":
+        lines.append("Submission received by the platform. Approval and public visibility are not confirmed; do not resubmit.")
+    return ToolResult(title=f"Desktop publish · {res['status']}", output="\n".join(lines),
+        metadata={**res, "business_outcome": "succeeded", "business_target": args.asset_id})
 
 
 async def _status(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
-    rows = await svc.recent_jobs(ctx.workspace_id, limit=10)
-    if args.job_id:
-        rows = [r for r in rows if r.id == args.job_id]
+    receipt = {}
+    if args.verify:
+        try:
+            receipt = await svc.verify_submission(_caller(ctx), args.job_id)
+        except Exception as exc:
+            from memory.redaction import redact_credentials
+            return ToolResult(title="Submission unverified", output=redact_credentials(str(exc))[:1000],
+                metadata={"error": True, "job_id": args.job_id, "retryable": False})
+    rows = await svc.recent_jobs(ctx.workspace_id, limit=10, job_id=args.job_id)
     items = [{"job_id": r.id, "status": r.status, "title": r.title, "item_id": r.item_id, "error": r.error,
               "created_at": r.created_at.isoformat(), "published_at": r.published_at.isoformat() if r.published_at else None,
               "visibility": (r.details or {}).get("visibility"), "dry_run": (r.details or {}).get("dry_run")} for r in rows]
     return ToolResult(title="Desktop publish jobs", output=json.dumps(items, ensure_ascii=False, indent=1) if items else "no desktop publish jobs",
-                      metadata={"jobs": items})
+                      metadata={"jobs": items, **receipt})
 
 
 async def _enable_auto(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
@@ -178,7 +192,9 @@ The video is read from the desktop itself, so size is not a limit. Actions:
 - publish: asset_id + title (≤30 chars) + intro (≤1000, topics become #chips) + declaration (AI content must be `ai`) \
 + visibility + optional hot_word / schedule_at ("YYYY-MM-DD HH:mm", 2h–14d ahead). `dry_run=true` fills the form, \
 screenshots and saves a draft without publishing. Returns job_id, status, item_id when the work is visible.
-- status: recent desktop publish jobs (publish_jobs, platform douyin_creator).
+- status: recent desktop publish jobs. With job_id and verify=true, read the creator-center receipt after \
+an uncertain attempt or a Dev Browser fallback. It never uploads or publishes. A verified submission \
+is not platform approval or public visibility. Verify before reporting a recovered publication as successful.
 - enable_auto: re-enable this account's auto publish after a person confirmed the account is fine.
 Rules the tool enforces: per-account daily limit and minimum interval, posting hours, one login state per workspace. \
 A refusal names its kind, and only one of them leads to douyin_publish: \

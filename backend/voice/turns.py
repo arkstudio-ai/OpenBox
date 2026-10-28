@@ -135,7 +135,8 @@ class TurnsMixin:
             context = {**self._call_context(words, source_item=source), "spoken_input_id": source,
                        "handover_source": handover_source}
             key = inbox_key("voice-handoff", self.call_id, self.session, source)
-            ref = VoiceTurnRef(id=key, provider_call_id=key, text=words, transcript=words,
+            request = guard.requests.get(source, words) if guard is not None else words
+            ref = VoiceTurnRef(id=key, provider_call_id=key, text=request, transcript=words,
                                requested=self.clock(), context=context)
             try:
                 await self.link.start(ref)
@@ -199,6 +200,7 @@ class TurnsMixin:
         self._native_renderings: dict[str, tuple[str, frozenset]] = {}
         self._native_text = ""
         self._native_response = None
+        self._native_delivery = None
         self._state_changed = False  # the next follow-up answers again after a reply went out of date
         self._answers_again = 0
         self._question_at = 0.0  # when the user's latest question began (bridge._on_user_started)
@@ -1059,6 +1061,9 @@ class TurnsMixin:
         self._native_meaning, self._native_decisions, self._native_removed = {}, {}, []
         self._native_sources, self._native_renderings, self._native_work_playing = {}, {}, {}
         self._answer_again()
+        if getattr(self, "_native_delivery", None) in self.deliveries:
+            await self._supersede(self._native_delivery, source="decision_changed")
+            return True
         await self._interrupt_playback(source="decision_changed")
         return True
 
@@ -1103,6 +1108,8 @@ class TurnsMixin:
 
     def _hands_over(self, response_id: str) -> bool:
         """The reply acknowledges work its own turn handed over or a decision it answered."""
+        if response_id == self._native_response and getattr(self, "_native_delivery", None):
+            return False  # A later result is not the original handover acknowledgement.
         return response_id in self._acks or self._answering.get(response_id, self._last_user_item) in self._spoken_actions
 
     async def _focus(self, response_id: str, text: str, final: bool) -> None:
@@ -1114,8 +1121,18 @@ class TurnsMixin:
             meaning, about = await self.focus.place(text, decisions, tasks, close=(1,))
             if response_id != self._native_response:
                 return
+            spoken_task = reply_focus.named(text, {key: description for key, (_, description) in tasks.items()})
+            if spoken_task:
+                about = {spoken_task: tasks[spoken_task][0]}
             if self._native_named in about:  # of tasks too close to tell apart, the one the user named
                 about = {self._native_named: about[self._native_named]}
+            # Similarity to the only pending card is not proof that a reply
+            # about different work asks for that card. Keep task identity in
+            # the provisional match; the final semantic reading can still
+            # identify a reply that discusses more than one decision.
+            if about:
+                meaning = {key: version for key, version in meaning.items()
+                           if self._decision_tasks.get(key) is None or self._decision_tasks[key] in about}
             if decisions and not self._focus_read:  # once the small model read the reply, its reading stands
                 self._native_meaning = meaning
                 self._bind_decision_tasks(meaning)

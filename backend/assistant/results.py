@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import exists, select, tuple_
 
 from agent.inbox import accept_inbox_item_locked
 from assistant.commands import _authority, task_locked
@@ -66,6 +66,58 @@ async def validate_source_asset(db, part: Part, *, user_id: str, workspace_id: s
         FileAsset.workspace_id == workspace_id, FileAsset.status == "ready", FileAsset.is_deleted.is_(False),
     )):
         raise AssistantError(410, "ASSISTANT_ASSET_UNAVAILABLE", "The original source asset is unavailable")
+
+
+async def unresolved_business_failures(db, execution, terminal):
+    """A stopped model is not a successful publication receipt.
+
+    Use typed execution outcomes within the settled logical turn, not keyword
+    guesses about the human's wording. Read-only status/prechecks cannot erase
+    a refused operation. A successful retry of that same target can.
+    """
+    if terminal is None:
+        return []
+    occurrence = select(AgentEvent.id).where(AgentEvent.session_id == execution.id,
+        AgentEvent.user_id == execution.user_id, AgentEvent.part_id == Part.id,
+        AgentEvent.message_id == Part.message_id, AgentEvent.sequence <= terminal.sequence,
+        AgentEvent.kind.in_(("tool.result", "tool.created", "tool.updated", "part.created", "part.updated")))
+    occurrence = occurrence.where(AgentEvent.turn_id == terminal.turn_id) if terminal.turn_id else occurrence.where(
+        AgentEvent.run_id == terminal.run_id, AgentEvent.generation == terminal.generation)
+    parts = list(await db.scalars(select(Part).where(Part.session_id == execution.id,
+        Part.user_id == execution.user_id, Part.type == "tool", exists(occurrence)).order_by(Part.created_at, Part.id)))
+    outcomes = {}
+    last_attempt_failure = None
+    for part in parts:
+        data = part.data or {}
+        meta, args = data.get("metadata") or {}, data.get("input") or {}
+        tool = part.canonical_tool_id or data.get("tool")
+        observation_only = (tool in {"read", "glob", "grep", "view_image", "webfetch", "websearch"}
+            or (tool == "computer" and args.get("action") in {"screenshot", "cursor_position", "wait"})
+            or (tool == "browser_action" and not str(args.get("script") or "").strip())
+            or (tool == "desktop_publish" and args.get("action") != "publish"))
+        if not observation_only:
+            failed = data.get("status") == "error" or data.get("error") or meta.get("error") or meta.get("blocked")
+            last_attempt_failure = ({"tool": tool, "part_id": part.id,
+                "error": redact_credentials(str(data.get("error") or data.get("output") or "Operation failed"))[:1000]}
+                if failed else None)
+        outcome = meta.get("business_outcome")
+        # Compatibility for stored publisher attempts before typed receipts.
+        if tool == "desktop_publish" and args.get("action") == "publish" and not outcome:
+            outcome = "failed" if meta.get("refused") or meta.get("error") or data.get("error") else None
+        if outcome not in {"failed", "succeeded"}:
+            continue
+        key = (tool, meta.get("business_target") or args.get("asset_id") or "")
+        if outcome == "succeeded":
+            resolved = outcomes.pop(key, None)
+            if resolved and last_attempt_failure and last_attempt_failure["part_id"] == resolved["part_id"]:
+                last_attempt_failure = None
+        else:
+            outcomes[key] = {"tool": tool, "part_id": part.id, "target": key[1],
+                "error": redact_credentials(str(data.get("error") or data.get("output") or "Operation failed"))[:1000]}
+    unresolved = list(outcomes.values())
+    if last_attempt_failure and last_attempt_failure["part_id"] not in {item["part_id"] for item in unresolved}:
+        unresolved.append(last_attempt_failure)
+    return unresolved
 
 
 async def record_execution_result_locked(db, execution, *, lease, result_message_id: str | None,
@@ -168,6 +220,11 @@ async def record_execution_result_locked(db, execution, *, lease, result_message
     empty_reply = actual_outcome == "succeeded" and not report_has_text
     if empty_reply:
         actual_outcome = "error"
+    business_failures = await unresolved_business_failures(db, execution, terminal) if actual_outcome == "succeeded" else []
+    if business_failures:
+        actual_outcome = "error"
+        report_texts.insert(0, "No successful receipt resolved these business operations; the model stopping "
+            "does not confirm completion: " + json.dumps(business_failures, ensure_ascii=False))
     from assistant.execution_errors import execution_error_text
     error_text = execution_error_text(message.error) if message else None
     if empty_reply and not error_text:

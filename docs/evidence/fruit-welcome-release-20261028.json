@@ -1,0 +1,104 @@
+{
+  "status": "deployed_verified",
+  "release": "20261028-fruit-welcome-e052edf7",
+  "source_commit": "e052edf759fc165e8db3d48aaa7fe0e5055446f9",
+  "images": {
+    "backend": {
+      "kind": "backend",
+      "source_commit": "e052edf759fc165e8db3d48aaa7fe0e5055446f9",
+      "image": "openbox-backend:20261028-fruit-welcome-e052edf7",
+      "image_id": "sha256:70dd4bfd47f2e4961eb84b816ef5cfc0aa13427c4c3e6895b8fecfe4bcf9095d",
+      "sha256": "53e080ff054727ebbd1ba0ee1662a954fc8eeca8448d8eb76cf852366c7c4665",
+      "bytes": 235118352
+    },
+    "frontend": {
+      "kind": "frontend",
+      "source_commit": "e052edf759fc165e8db3d48aaa7fe0e5055446f9",
+      "image": "openbox-frontend-v2:20261028-fruit-welcome-e052edf7",
+      "image_id": "sha256:c8eeaedcf0cc833854af44a7d32e2169f0dfcc4eae25c30f7cf452df9dde07c5",
+      "sha256": "687e9cdb10b8f8f59891e92b156a35d340d5cf5a85e22db2ff705c1339e4397f",
+      "bytes": 30912961
+    }
+  },
+  "source_files_verified_per_backend_container": 12,
+  "updated_services": [
+    "backend",
+    "trajectory-worker",
+    "frontend"
+  ],
+  "healthy_services": 6,
+  "application_restart_counts": 0,
+  "unchanged_containers": [
+    "postgres",
+    "redis",
+    "qdrant-memory"
+  ],
+  "routes": {
+    "voice": "official",
+    "text": "internal_gateway",
+    "embedding": "internal_gateway",
+    "rerank": "internal_gateway",
+    "memory_semantic_recall": false
+  },
+  "configuration_diff": "Only backend, trajectory-worker and frontend image references changed; other resolved Compose configuration and mounted configuration hashes preserved",
+  "database": {
+    "business_revision": "ph84a5b6c7d8",
+    "trace_revision": "t0007_turn_alerts",
+    "new_migrations": false,
+    "backups_validated": true,
+    "backup_method": "Custom-format pg_dump archives verified with pg_restore -l and SHA-256"
+  },
+  "rollback_directory": "/opt/openbox/releases/20261028-fruit-welcome-e052edf7",
+  "rollback_script": "rollback-application.sh",
+  "production_rollback_executed": false,
+  "cutover_guard": "Execution leases, active drivers, calls and in-flight videos all zero before cutover; rechecked before backend restart; no user tasks cancelled or resubmitted",
+  "public_checks": {
+    "/": {
+      "samples": 109,
+      "statuses": {
+        "200": 109
+      }
+    },
+    "/api/environment": {
+      "samples": 109,
+      "statuses": {
+        "200": 102,
+        "502": 7
+      },
+      "observed_failure_span_seconds": 19.6,
+      "bounded_unavailable_window_seconds": 26.2,
+      "stable_seconds_after_last_failure": 234
+    }
+  },
+  "public_build_id": "20261028-fruit-welcome-e052edf7",
+  "authenticated_browser": "Personal-assistant page loaded successfully, read-only acceptance",
+  "runtime_checks": {
+    "backend_tracebacks": 0,
+    "worker_tracebacks": 0,
+    "frontend_tracebacks": 0,
+    "error_level_lines": 0,
+    "worker_writer_db_spool_blob_store": true
+  },
+  "pre_release_tests": {
+    "task_and_legacy": 114,
+    "voice_handoff_delivery": 101,
+    "waiting_delivery_call_mode": 96,
+    "web": 20,
+    "groups_overlap": true,
+    "flutter_targeted": "Passed; six changed Dart files static analysis clean",
+    "full_suite": false
+  },
+  "apk": {
+    "version_name": "1.0.40",
+    "version_code": 51,
+    "sha256": "ca487a0efe5daa37d460fff47b06555c2397bbe0cb781d87da3bd69fbace9f49",
+    "production_origin": true,
+    "same_release_certificate": true
+  },
+  "limits": [
+    "Production acceptance was read-only; no new paid media jobs or public publishing were triggered",
+    "No Android hardware call acceptance in this packaging/deployment step",
+    "AOCI observe evidence reviews remain pending; full-system cognition and alignment are not claimed"
+  ],
+  "private_transfer_objects": "Retained under the release-specific private temporary prefix; signed download links expire after one hour"
+}

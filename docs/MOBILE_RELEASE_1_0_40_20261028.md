@@ -23,6 +23,10 @@ These server changes require a separate backend deployment. Building or installi
 this APK does not deploy the server or alter its configuration. No database schema
 migration or new mobile protocol is required for this change.
 
+The matching server and web release `20261028-fruit-welcome-e052edf7` has now been
+deployed and verified. See the [deployment evidence](evidence/fruit-welcome-release-20261028.json)
+for image identity, preserved model routing, database revisions and health checks.
+
 ## Focused validation
 
 The implementation was checked with targeted tests, not the full suite:

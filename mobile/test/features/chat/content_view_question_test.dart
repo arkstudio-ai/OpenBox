@@ -14,6 +14,25 @@ ChatMessage message(String finish, {String status = 'completed'}) =>
     });
 
 void main() {
+  test('a waiting card stops activity even before the busy status arrives', () {
+    final view = buildAssistantContentView([
+      message('tool_calls', status: 'waiting_input'),
+    ], true);
+    expect(view.awaitingInput, isTrue);
+    final resumed = ChatMessage.fromJson({
+      'id': 'resumed',
+      'session_id': 's',
+      'role': 'assistant',
+      'parts': <Map<String, dynamic>>[],
+    });
+    expect(
+      buildAssistantContentView([
+        message('waiting_input'),
+        resumed,
+      ], true).awaitingInput,
+      isFalse,
+    );
+  });
   test('waiting and queued asks are not incomplete final answers', () {
     expect(
       buildAssistantContentView([

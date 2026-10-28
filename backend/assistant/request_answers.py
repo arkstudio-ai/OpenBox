@@ -5,7 +5,7 @@ question identity, ownership, version, option labels and declared consequences.
 Human-only steps stay human-only. Reporting completion of a desktop takeover
 requires its exact completion option, a semantic completion flag and verified
 human source; the resumed tool re-checks the page. Confirmation derives from
-question metadata, attachments and workspace visibility, never incidental words
+question metadata and attachments, never workspace visibility or incidental words
 in a task title. Legacy questions with no consequence metadata remain gated.
 """
 from sqlalchemy import select
@@ -155,10 +155,10 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
             assets = await questions.validate_attachment_ownership(db, session, files) if any(files) else {}
         except ValueError as exc:
             raise AssistantError(400, "ASSISTANT_ANSWER_INVALID", str(exc)) from exc
-        title, visibility, saved = session.title or "", session.visibility, list(row.questions)
+        title, saved = session.title or "", list(row.questions)
         names = [[assets[asset_id].name for asset_id in ids] for ids in files]
     confirmation = None
-    if high_risk or requires_confirmation or visibility == "workspace":
+    if high_risk or requires_confirmation:
         from assistant.confirmations import CONFIRM_KIND, require_card
         texts = [title, *(str(item.get("question", "")) for item in saved),
                  *(str(option.get("label", "")) for item in saved for option in item.get("options") or []),
@@ -247,6 +247,6 @@ async def list_waiting(*, user_id: str, workspace_id: str, main_id: str, limit: 
                               for index, item in enumerate(row.questions or [])],
                 "assistant_may_answer": reason is None,
                 **({"user_only_reason": reason} if reason else
-                   {"high_risk": high_risk or session.visibility == "workspace"}),
+                   {"high_risk": high_risk}),
             })
         return items

@@ -1,8 +1,8 @@
 """Replace a pending task plan and persist its new input in one transaction.
 
 This is an explicit human-requested revision, not an answer or a permission
-grant. Ordinary delegated followups still wait behind cards. Existing shared
-conversation send consent, owner checks and execution fences remain in force.
+grant. Ordinary delegated followups still wait behind task decisions. Owner
+checks, execution fences and exact replay of legacy send cards remain in force.
 """
 import json
 
@@ -49,7 +49,7 @@ async def confirmed_revisions(db, ctx, *, scope_only=False):
     for row in rows:
         card = (row.continuation or {}).get(KIND) or {}
         # A runtime allowlist stays narrow after consumption/expiry too. This
-        # projection is not execution consent; require_card checks freshness
+        # projection is not execution consent; consume_card checks freshness
         # and the exact digest under the action's transaction.
         if (not card.get("request_id") or (card.get("consumed") and not scope_only)
                 or (row.answers or [[]])[0] != [card.get("confirm", CONFIRM)]):
@@ -61,13 +61,15 @@ async def confirmed_revisions(db, ctx, *, scope_only=False):
         saved = (part.data or {}).get("input") or {}
         if saved.get("request_id") != card["request_id"]:
             continue
-        confirmed.append({"confirmation_id": row.id, "tool": "requests.revise", "arguments": saved})
+        usable = not card.get("consumed") and runtime.utc(row.updated_at) >= runtime.now() - ANSWER_VALID_FOR
+        confirmed.append({"confirmation_id": row.id, "tool": "requests.revise", "arguments": saved,
+                          "usable": usable})
     return confirmed
 
 
 async def _check_confirmation_replay(db, ctx, arguments):
     """Diagnose model drift, never execute or silently substitute saved input."""
-    confirmed_items = await confirmed_revisions(db, ctx)
+    confirmed_items = await confirmed_revisions(db, ctx, scope_only=True)
     if confirmed_items and not any(item["arguments"].get("request_id") == arguments["request_id"]
                                    for item in confirmed_items):
         raise AssistantError(409, "ASSISTANT_CONFIRMATION_INPUT_CHANGED",
@@ -84,6 +86,18 @@ async def _check_confirmation_replay(db, ctx, arguments):
                 "The user already confirmed this exact revision. Replay the original arguments below unchanged; "
                 "do not add resources or create another confirmation. If a resource is missing, report the "
                 "problem rather than inventing an ID. " + json.dumps(expected, ensure_ascii=False))
+        if not confirmed["usable"]:
+            from assistant.identities import inbox_key
+            applied = await db.scalar(select(AssistantCommand.id).where(
+                AssistantCommand.actor_user_id == ctx.user_id,
+                AssistantCommand.workspace_id == ctx.workspace_id,
+                AssistantCommand.assistant_session_id == ctx.session_id,
+                AssistantCommand.idempotency_key == inbox_key(
+                    "question-revision", arguments["request_id"], arguments["version"])))
+            if applied is None:
+                raise AssistantError(409, "ASSISTANT_CONFIRMATION_UNAVAILABLE",
+                    "This old card confirmation was used or expired. No new action or confirmation was created. "
+                    "Report the current state; a new human request can continue the task directly.")
 
 
 async def target(db, main, request_id, *, lock=False):
@@ -162,7 +176,7 @@ async def prepare_locked(db, main, binding, command, now):
 
 async def revise(ctx, *, request_id, version, instructions, attachment_ids, source_message_ids):
     from assistant.commands import accept_task_command
-    from assistant.confirmations import require_card, release_confirmation
+    from assistant.confirmations import consume_card, release_confirmation
     from assistant.identities import inbox_key
     from agent.inbox import schedule_inbox_wake
     binding = RevisionTarget(request_id=request_id, version=version).model_dump()
@@ -173,33 +187,26 @@ async def revise(ctx, *, request_id, version, instructions, attachment_ids, sour
         await _check_confirmation_replay(db, ctx, {"request_id": request_id, "version": version,
             "instructions": instructions, "attachment_ids": attachment_ids,
             "source_message_ids": source_message_ids})
-        _, session = await target(db, main, request_id)
-        # Validate resources before asking a human to confirm the send. A
-        # hallucinated card ID is not an attachment and must not create a
-        # second confirmation that cannot possibly execute.
+        await target(db, main, request_id)
+        # A hallucinated card ID is not an attachment. Reject it before any
+        # existing confirmation receipt is consumed or task state is changed.
         from agent.inbox import _validate_owned_attachments_locked, InboxAttachmentError
         try:
-            assets = await _validate_owned_attachments_locked(db, user_id=main.user_id,
+            await _validate_owned_attachments_locked(db, user_id=main.user_id,
                 workspace_id=main.workspace_id, attachment_ids=attachment_ids)
         except InboxAttachmentError as exc:
             raise AssistantError(400, "ASSISTANT_ATTACHMENT_UNAVAILABLE",
                 "An attachment is missing, deleted, not ready or not owned. Read assets.list for the user's "
                 "selected resource IDs; task/question IDs cannot be used as attachments. No confirmation was created.") from exc
-        names = [assets[identity].name for identity in attachment_ids]
-        shared, title, session_id = session.visibility == "workspace", session.title, session.id
         replay = await db.scalar(select(AssistantCommand.id).where(
             AssistantCommand.actor_user_id == ctx.user_id,
             AssistantCommand.workspace_id == ctx.workspace_id,
             AssistantCommand.assistant_session_id == ctx.session_id,
             AssistantCommand.idempotency_key == inbox_key("question-revision", request_id, version)))
     confirmation = None
-    if shared and replay is None:
-        files = "\n\n附带文件（成员也能看到）：" + "、".join(names) if names else ""
-        confirmation = await require_card(ctx,
-            digest=command_digest({"revision": binding, "text": instructions, "attachments": attachment_ids}),
-            prompt=f"把这些修改发送到工作区可见的会话「{title}」吗？工作区成员能看到这条消息及所选附件。\n\n{instructions}{files}",
-            header="确认修改任务", description="更新原任务要求，重新规划，不同意旧方案的执行或费用",
-            target={"session_id": session_id, "request_id": request_id})
+    if replay is None:
+        confirmation = await consume_card(ctx,
+            digest=command_digest({"revision": binding, "text": instructions, "attachments": attachment_ids}))
     try:
         value = await accept_task_command(user_id=ctx.user_id, workspace_id=ctx.workspace_id,
             main_id=ctx.session_id, idempotency_key="revision", prompt=instructions,

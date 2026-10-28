@@ -78,6 +78,7 @@ class AssistantContentView {
     required this.resultGroups,
     required this.verification,
     required this.incomplete,
+    required this.awaitingInput,
   });
 
   final String finalText;
@@ -90,6 +91,9 @@ class AssistantContentView {
 
   /// The run stopped without ever producing an answer, yet it did work.
   final bool incomplete;
+
+  /// A durable card wins over a delayed busy/streaming status event.
+  final bool awaitingInput;
 }
 
 class _SegmentRecord {
@@ -525,5 +529,6 @@ AssistantContentView buildAssistantContentView(
     resultGroups: results,
     verification: verification,
     incomplete: !streaming && !hasFinal && hasWork && !suspended,
+    awaitingInput: suspended,
   );
 }

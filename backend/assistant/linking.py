@@ -2,7 +2,7 @@
 
 V2 (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 6): any top-level ordinary conversation the
 user owns can be watched, private or workspace-visible, with its own memory
-policy. Sending into a workspace-visible one needs the user's confirmation.
+policy. Authorized input is sent directly to the user's own conversation.
 """
 from datetime import datetime, timezone
 

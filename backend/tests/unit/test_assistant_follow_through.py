@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from agent import processor
 from assistant import follow_through
+from tests.unit.assistant_legacy_cards import legacy_send_cards
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.part import Part
@@ -77,7 +78,8 @@ async def test_confirmed_revision_runs_once_through_real_loop_without_history_lo
         yield {"type": "tool_call", "tool": wire, "args": dict(saved), "call_id": f"revise-{len(seen)}", "invalid": False}
         yield {"type": "finish", "reason": "tool_calls", "usage": {}}
     monkeypatch.setattr(processor, "stream_llm", stream)
-    await run(main, owner)
+    with legacy_send_cards():
+        await run(main, owner)
     async with get_db_session() as db:
         card = await db.scalar(select(QuestionCheckpoint).where(
             QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.status == "pending"))
@@ -87,8 +89,9 @@ async def test_confirmed_revision_runs_once_through_real_loop_without_history_lo
     assert await resume_main_through_inbox(main.id, owner, generation)
     phase = "resume"
     config = get_config()
-    config.memory.semantic_recall = config.memory.retrieval_v2 = True
-    config.memory.allowed_user_ids = []
+    monkeypatch.setattr(config.memory, "semantic_recall", True)
+    monkeypatch.setattr(config.memory, "retrieval_v2", True)
+    monkeypatch.setattr(config.memory, "allowed_user_ids", [])
     async def no_router(*_, **__):
         pytest.fail("Card continuation must not classify empty synthetic input")
     monkeypatch.setattr("memory.read_routing.route", no_router)
@@ -192,13 +195,9 @@ async def test_bound_revision_without_attempt_gets_one_step_and_preserves_consen
             AgentInboxItem.session_id == target.id, AgentInboxItem.origin == "assistant_delegation"))).all())
         cards = list((await db.scalars(select(QuestionCheckpoint).where(
             QuestionCheckpoint.session_id == main.id, QuestionCheckpoint.status == "pending"))).all())
-    if shared:
-        assert len(seen) == 2 and len(cards) == 1
-        assert row.status == "pending" and not delegated  # no implicit shared-send consent
-    else:
-        assert len(seen) == 3 and not cards
-        assert row.status == "superseded" and row.answers is None and len(delegated) == 1
-        assert "do not generate media" in delegated[0].prompt
+    assert len(seen) == 3 and not cards
+    assert row.status == "superseded" and row.answers is None and len(delegated) == 1
+    assert "do not generate media" in delegated[0].prompt
 
 
 @pytest.mark.parametrize("condition", ["changed", "expired", "foreign", "different_run", "failed_attempt"])

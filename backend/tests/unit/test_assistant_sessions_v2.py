@@ -1,8 +1,8 @@
-"""V2 P2 session management on real SQL: list, watch, read, archive, rename, confirm shared sends.
+"""V2 P2 session management on real SQL: list, watch, read, archive, rename, direct authorized sends.
 
 docs/PERSONAL_ASSISTANT_DESIGN_V2.md section 6: the assistant works in any top-level
-conversation the user owns; text sent into a workspace-visible one needs the user's
-confirmation on a card first (D4); a subagent conversation belongs to its parent (D2).
+conversation the user owns. Visibility does not add a send confirmation; a subagent
+conversation belongs to its parent (D2). Old card continuations remain supported.
 """
 import asyncio
 from dataclasses import replace
@@ -18,6 +18,7 @@ from agent import inbox
 from agent.driver import reserve_run
 from assistant.commands import ToolSource, accept_task_command
 from assistant.confirmations import CANCEL, CONFIRM, KIND, input_digest
+from tests.unit.assistant_legacy_cards import legacy_send_cards
 from assistant.history import read_history
 from assistant.linking import archive_task, candidate, link_existing
 from assistant.policy import AssistantError
@@ -498,7 +499,7 @@ async def test_rename_tool_requires_its_persisted_call_and_original_human_messag
         assert (await db.get(Session, mine.id)).title == "Snake v2"
 
 
-# 6. Confirmation before writing into a workspace-visible conversation (D4) ---
+# 6. Direct sends and compatibility with previously persisted send cards ------
 
 async def watched_conversation(owner, workspace, main, *, visibility="workspace", title="Team snake game"):
     session = await conversation(owner, workspace, main, title, visibility=visibility)
@@ -526,38 +527,23 @@ async def test_followup_into_a_private_conversation_needs_no_card():
             QuestionCheckpoint.session_id == main.id)) == 0
 
 
-async def test_followup_into_a_workspace_visible_conversation_sends_only_the_confirmed_text_once():
+async def test_authorized_workspace_followup_sends_once_without_a_second_confirmation():
     owner, _, workspace, main = await assistant()
-    session, linked = await watched_conversation(owner, workspace, main)
-    text = "Please switch the snake UI to a dark theme."
-    ctx, lease, human = await main_turn(owner, workspace, main, "Ask the team snake chat to switch to dark.")
+    session, linked = await watched_conversation(owner, workspace, main, title="水果店开业欢迎语")
+    text = "小丫精品鲜果方案已确认，开始制作15秒开业视频。"
+    ctx, lease, human = await main_turn(owner, workspace, main, "没有问题，开始推进。")
     try:
         args = followup(linked["task_id"], linked["task_revision"], text, human)
-        asked, part = await tool_call(ctx, "tasks.followup", args)
-        request = await card(asked["suspended"])
-        assert (request.session_id, request.status, request.part_id) == (main.id, "pending", part.id)
-        assert text in request.questions[0]["question"] and "Team snake game" in request.questions[0]["question"]
-        assert [option["label"] for option in request.questions[0]["options"]] == [CONFIRM, CANCEL]
-        assert request.continuation["kind"] == "question"
-        assert request.continuation[KIND] == {"task_id": linked["task_id"], "digest": input_digest(linked["task_id"], text),
-                                              "confirm": CONFIRM}
-        async with get_db_session() as db:
-            assert (await db.get(Part, part.id)).data["status"] == "waiting_input"
-            assert (await db.get(AssistantTask, linked["task_id"])).control_revision == linked["task_revision"]
-            assert await db.scalar(select(AssistantCommand.id).where(AssistantCommand.actor_user_id == owner,
-                AssistantCommand.action == "task_input")) is None
-        assert await inputs(session.id) == []
-        await q.reply(request.id, [[CONFIRM]], owner)
         sent, part = await tool_call(ctx, "tasks.followup", args)
         assert part.status == ToolStatus.COMPLETED and sent["state"] == "accepted"
+        replay, _ = await tool_call(ctx, "tasks.followup", args)
+        assert replay["error"] == "ASSISTANT_REVISION_CONFLICT"
         assert [(row.prompt, row.origin) for row in await inputs(session.id)] == [(text, "assistant_delegation")]
-        assert (await card(request.id)).continuation[KIND]["consumed"] is True
-        again, _ = await tool_call(ctx, "tasks.followup", {**args, "expected_revision": sent["task_revision"]})
-        assert "suspended" in again and again["suspended"] != request.id
-        assert len(await inputs(session.id)) == 1
+        async with get_db_session() as db:
+            assert not list(await db.scalars(select(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id)))
     finally:
         await lease.release(session_status="idle")
-
 
 async def test_an_answered_card_resumes_the_main_session_through_its_inbox(monkeypatch):
     """Every main turn binds one claimed input (assistant.budget): no raw resumed run."""
@@ -569,7 +555,8 @@ async def test_an_answered_card_resumes_the_main_session_through_its_inbox(monke
     ctx, lease, human = await main_turn(owner, workspace, main, "Ask the team snake chat to switch to dark.")
     try:
         args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
-        asked, part = await tool_call(ctx, "tasks.followup", args)
+        with legacy_send_cards():
+            asked, part = await tool_call(ctx, "tasks.followup", args)
     finally:
         await lease.release(session_status="waiting_input")
     await q.reply(asked["suspended"], [[CONFIRM]], owner)
@@ -603,7 +590,8 @@ async def test_a_card_answered_in_a_call_resumes_the_voice_turn_on_its_own_model
         model="openai/qwen3.8-flash", variant="low", origin_ref={"entrypoint": "assistant_voice"})
     try:
         args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
-        asked, _ = await tool_call(ctx, "tasks.followup", args)
+        with legacy_send_cards():
+            asked, _ = await tool_call(ctx, "tasks.followup", args)
     finally:
         await lease.release(session_status="waiting_input")
     await q.reply(asked["suspended"], [[CONFIRM]], owner)
@@ -628,7 +616,8 @@ async def test_a_card_answered_in_a_typed_turn_resumes_on_the_session_model(monk
         model="openai/qwen3.8-flash", variant="low")
     try:
         args = followup(linked["task_id"], linked["task_revision"], "Please switch to a dark theme.", human)
-        asked, _ = await tool_call(ctx, "tasks.followup", args)
+        with legacy_send_cards():
+            asked, _ = await tool_call(ctx, "tasks.followup", args)
     finally:
         await lease.release(session_status="waiting_input")
     await q.reply(asked["suspended"], [[CONFIRM]], owner)
@@ -644,43 +633,31 @@ async def test_a_card_answered_in_a_typed_turn_resumes_on_the_session_model(monk
     assert "voice" not in resumed.origin_ref
 
 
-async def test_cancel_never_sends_and_a_confirmation_covers_only_its_exact_text():
+async def test_canceling_a_legacy_send_card_does_not_dispatch_it():
     owner, _, workspace, main = await assistant()
     session, linked = await watched_conversation(owner, workspace, main)
-    ctx, lease, human = await main_turn(owner, workspace, main, "Send two notes to the team snake chat.")
+    ctx, lease, human = await main_turn(owner, workspace, main, "Send a note to the team chat.")
     try:
-        first = followup(linked["task_id"], linked["task_revision"], "First note for the team.", human)
-        asked, _ = await tool_call(ctx, "tasks.followup", first)
+        args = followup(linked["task_id"], linked["task_revision"], "First note for the team.", human)
+        with legacy_send_cards():
+            asked, _ = await tool_call(ctx, "tasks.followup", args)
         await q.reply(asked["suspended"], [[CANCEL]], owner)
-        retried, _ = await tool_call(ctx, "tasks.followup", first)
-        assert "suspended" in retried and retried["suspended"] != asked["suspended"]
         assert await inputs(session.id) == []
-        await q.reply(retried["suspended"], [[CONFIRM]], owner)
-        changed = {**first, "text": "A different note for the team."}
-        other, _ = await tool_call(ctx, "tasks.followup", changed)
-        assert "suspended" in other and await inputs(session.id) == []
-        sent, _ = await tool_call(ctx, "tasks.followup", first)
-        assert sent["state"] == "accepted"
-        assert [row.prompt for row in await inputs(session.id)] == ["First note for the team."]
-        rejected = await card(other["suspended"])
-        assert rejected.status == "pending" and rejected.continuation[KIND]["digest"] == input_digest(
-            linked["task_id"], "A different note for the team.")
+        assert (await card(asked["suspended"])).answers == [[CANCEL]]
     finally:
         await lease.release(session_status="idle")
 
-
-async def test_card_shows_the_complete_text_that_will_be_sent():
+async def test_direct_send_preserves_the_complete_authorized_text():
     owner, _, workspace, main = await assistant()
     session, linked = await watched_conversation(owner, workspace, main)
     text = "Visible start. " + "x" * 6000 + " HIDDEN_TAIL"
     ctx, lease, human = await main_turn(owner, workspace, main, "Send the long note to the team chat.")
     try:
-        asked, _ = await tool_call(ctx, "tasks.followup", followup(linked["task_id"], linked["task_revision"],
-                                                                   text, human))
-        assert "HIDDEN_TAIL" in (await card(asked["suspended"])).questions[0]["question"]
+        sent, _ = await tool_call(ctx, "tasks.followup", followup(linked["task_id"], linked["task_revision"], text, human))
+        assert sent["state"] == "accepted"
+        assert [row.prompt for row in await inputs(session.id)] == [text]
     finally:
         await lease.release(session_status="idle")
-
 
 async def test_a_failed_send_does_not_consume_the_confirmation():
     owner, _, workspace, main = await assistant()
@@ -688,7 +665,8 @@ async def test_a_failed_send_does_not_consume_the_confirmation():
     ctx, lease, human = await main_turn(owner, workspace, main, "Send a note to the team snake chat.")
     try:
         args = followup(linked["task_id"], linked["task_revision"], "A note for the team.", human)
-        asked, _ = await tool_call(ctx, "tasks.followup", args)
+        with legacy_send_cards():
+            asked, _ = await tool_call(ctx, "tasks.followup", args)
         await q.reply(asked["suspended"], [[CONFIRM]], owner)
         failed, _ = await tool_call(ctx, "tasks.followup", {**args, "expected_revision": linked["task_revision"] + 5})
         assert failed["error"] == "ASSISTANT_REVISION_CONFLICT"
@@ -698,7 +676,7 @@ async def test_a_failed_send_does_not_consume_the_confirmation():
         await lease.release(session_status="idle")
 
 
-async def test_attach_card_names_the_files_that_will_be_shared():
+async def test_authorized_attachment_is_delivered_without_a_send_card():
     owner, _, workspace, main = await assistant()
     session, linked = await watched_conversation(owner, workspace, main)
     asset_id = "pa-asset-" + uuid4().hex
@@ -708,17 +686,19 @@ async def test_attach_card_names_the_files_that_will_be_shared():
             size=10, status="ready", created_at=datetime.now(timezone.utc)))
     ctx, lease, human = await main_turn(owner, workspace, main, "Attach my spreadsheet to the team chat.")
     try:
-        asked, _ = await tool_call(ctx, "assets.attach", followup(linked["task_id"], linked["task_revision"],
+        sent, _ = await tool_call(ctx, "assets.attach", followup(linked["task_id"], linked["task_revision"],
             "Here is the file.", human, attachment_ids=[asset_id]))
-        question = (await card(asked["suspended"])).questions[0]["question"]
-        assert "salary-review.xlsx" in question
+        assert sent["state"] == "accepted"
     finally:
         await lease.release(session_status="idle")
-    assert await inputs(session.id) == []
+    [item] = await inputs(session.id)
+    assert item.attachments == [asset_id] and item.prompt == "Here is the file."
+    async with get_db_session() as db:
+        assert not list(await db.scalars(select(QuestionCheckpoint).where(QuestionCheckpoint.session_id == main.id)))
 
 
 async def test_automatic_continuation_is_refused_for_a_workspace_visible_conversation():
-    """Automatic steps cannot be confirmed one by one, so shared conversations get none (V2 D4)."""
+    """Direct user input does not expand the existing autonomous-continuation policy."""
     owner, _, workspace, main = await assistant()
     session, linked = await watched_conversation(owner, workspace, main)
     quote = "Keep improving the team snake game until it is done, with at most one more step."
@@ -726,13 +706,11 @@ async def test_automatic_continuation_is_refused_for_a_workspace_visible_convers
     try:
         args = followup(linked["task_id"], linked["task_revision"], "Add a pause button.", human,
                         continuation={"authorization_quote": quote, "max_followups": 1})
-        asked, _ = await tool_call(ctx, "tasks.followup", args)
-        await q.reply(asked["suspended"], [[CONFIRM]], owner)
         before = len(await inputs(session.id))
         refused, _ = await tool_call(ctx, "tasks.followup", args)
         assert refused["error"] == "ASSISTANT_CONTINUATION_SHARED"
         assert len(await inputs(session.id)) == before
-        # The refused send left the same text's confirmation usable without a grant.
+        # An ordinary authorized send still works without an autonomous grant.
         plain = followup(linked["task_id"], linked["task_revision"], "Add a pause button.", human)
         assert (await tool_call(ctx, "tasks.followup", plain))[0]["state"] == "accepted"
     finally:

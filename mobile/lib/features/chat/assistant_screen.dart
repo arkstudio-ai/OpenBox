@@ -197,6 +197,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               scope: widget.scope,
               sessionId: session.id,
               streaming: busy && index == rows.length - 1,
+              awaitingInput:
+                  session.status == SessionStatus.waitingInput &&
+                  index == rows.length - 1,
               answerWrapper: (id, child) => _VisibleAnswer(
                 key: ValueKey(id),
                 viewport: _viewport,

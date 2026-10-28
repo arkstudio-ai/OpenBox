@@ -43,6 +43,55 @@ def snapshot(state="running", revision=1, result="result-1", sequence=0):
         "version": f"{revision}:{state}:{result}"}], sequence)
 
 
+@pytest.mark.parametrize("current", [True, False])
+async def test_pending_handoff_cannot_replay_old_card_state_for_the_same_utterance(current):
+    bridge, provider, _, _ = make()
+    bridge._last_user_item = "start-video" if current else "another-question"
+    ref = VoiceTurnRef("request", "tool", "开始制作", "开始制作", 1000,
+                      inbox_id="accepted-inbox", context={"spoken_input_id": "start-video"})
+    bridge.pending_calls[ref.provider_call_id] = ref
+    bridge.followup_due, bridge._state_changed = True, True
+    bridge._tool_receipts = [{"status": "decision_recorded", "old_state": "暂时不制作"}]
+    await bridge._say_followup()
+    instructions = provider.commands("create")[-1][1]
+    if current:
+        assert bridge.requested == "progress"
+        assert "原话已保存" in instructions and "开始制作" in instructions
+        assert "暂时不制作" not in instructions
+        assert bridge._ack_at is None and not bridge._tool_receipts
+    else:
+        assert bridge.requested == "followup"
+        assert "原话已保存" not in instructions
+    await bridge.close()
+
+
+@pytest.mark.parametrize("submissions,check,expected", [
+    (None, "unavailable", ""),
+    ([], "verified", ""),
+    ([{"title": "水果店欢迎语", "state": "accepted", "outcome": None}],
+     "verified", "尚未开始执行"),
+    ([{"title": "水果店欢迎语", "state": "claimed", "outcome": None}],
+     "verified", "正在处理这条指令"),
+    ([{"title": "水果店欢迎语", "state": "settled", "outcome": "succeeded"}],
+     "verified", "本轮处理已结束"),
+])
+async def test_voice_gets_submission_evidence_separate_from_confident_model_prose(submissions, check, expected):
+    bridge, _, _, _ = make()
+    ref = VoiceTurnRef("request", "tool", "开始制作", "开始制作", 1000,
+                      inbox_id="inbox", submissions=submissions)
+    ref.speech = "已经开始制作了。"
+    ref.running = [{"title": "水果店欢迎语", "state": "queued"}]
+    ref.reason = "running"
+    body = json.loads(bridge._note_body(ref))
+    assert body["task_submission_check"] == check
+    assert expected in body["task_submission_facts"]
+    assert body["running_task_states"] == [{"title": "水果店欢迎语", "state": "queued"}]
+    assert "优先于回复" in body["submission_note"]
+    if not submissions:
+        assert body["task_submission_facts"] == ""
+    await bridge.close()
+
+
 @pytest.mark.parametrize("arrival", ["follow_first", "report_first", "both_waiting"])
 async def test_same_inbox_enters_speech_once_across_observers(arrival):
     bridge, provider, link, _ = make()

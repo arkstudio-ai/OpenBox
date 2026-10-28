@@ -128,6 +128,7 @@ class VoiceTurnRef:
     report: str | None = None     # a task report nobody asked for in this call: the task's title ("" unknown)
     asked: str = ""               # a report answering a request of this call that was passed on: the user's words
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
+    submissions: list | None = None  # None: unread; []: no task input; otherwise exact durable receipts
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
     lane: str = "assistant"       # assistant / remember: a main-session turn
@@ -281,6 +282,10 @@ class AssistantLink:
                               message_id=receipt.message_id or ref.message_id)
             cards = await self.cards(message_id=receipt.result_message_id)  # only this turn's decisions
             running = await self.running(ref)  # or it passed the work on: the task's result comes later
+            # A successful coordinator reply is not proof of a task submission.
+            # Keep the exact input receipts, including queued/blocked/settled,
+            # available to speech even when the model's prose sounds complete.
+            await self.read_submissions(ref)
             speech = clean(text, self.lang) or ("" if cards else phrases.phrase_text("result_in_text", self.lang))
             from voice.decisions import for_turn
             versions, stale = await for_turn(self.main_session_id, self.user_id, self.workspace_id, ref.inbox_id)
@@ -293,6 +298,7 @@ class AssistantLink:
         try:
             async with asyncio.timeout(3):
                 submissions = await for_inbox(self.main_session_id, self.user_id, ref.inbox_id)
+                ref.submissions = submissions
         except Exception as exc:
             log.warning("voice submission receipt unread call=%s error=%s", self.call_id, type(exc).__name__)
             await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
@@ -348,6 +354,16 @@ class AssistantLink:
         except Exception as exc:  # told as the assistant put it; the delivery check still applies (voice/turns.py)
             log.warning("voice running tasks unread call=%s error=%s", self.call_id, type(exc).__name__)
             return []
+
+    async def read_submissions(self, ref: VoiceTurnRef) -> None:
+        from assistant.receipts import for_inbox
+        try:
+            async with asyncio.timeout(3):
+                ref.submissions = await for_inbox(self.main_session_id, self.user_id, ref.inbox_id)
+        except Exception as exc:
+            # Unread is not evidence that nothing happened; never retry from it.
+            ref.submissions = None
+            log.warning("voice submission receipt unread call=%s error=%s", self.call_id, type(exc).__name__)
 
     async def done(self, ref: VoiceTurnRef, outcome: str, *, delivered: bool = False) -> None:
         """A turn's last word in this call: its outcome and one log line (times, never words)."""
@@ -425,7 +441,8 @@ async def running_tasks(session_id: str, user_id: str, inbox_id: str | None) -> 
             AssistantTask.user_id == user_id, AssistantTask.observed_state.in_(WORKING), ~waiting)
             .order_by(AssistantCommand.created_at))).all()
     from voice.work import task_version
-    return list({task.id: {"task_id": task.id, "title": task.title, "intent_revision": task.intent_revision,
+    return list({task.id: {"task_id": task.id, "title": task.title, "state": task.observed_state,
+                          "intent_revision": task.intent_revision,
                           "task_version": task_version(task)} for task in rows}.values())
 
 

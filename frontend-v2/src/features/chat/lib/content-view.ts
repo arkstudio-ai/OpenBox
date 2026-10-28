@@ -37,6 +37,7 @@ export interface AssistantContentView {
   resultGroups: ArtifactGroup[]
   verification: ArtifactGroup | null
   incomplete: boolean
+  awaitingInput: boolean
 }
 
 interface SegmentRecord {
@@ -441,5 +442,6 @@ export function buildAssistantContentView(
     resultGroups: results,
     verification,
     incomplete: !streaming && !hasFinal && hasWork && !suspended,
+    awaitingInput: suspended,
   }
 }

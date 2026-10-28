@@ -471,6 +471,35 @@ async def test_progress_is_one_line_per_request_after_twenty_quiet_seconds_and_a
     assert len(provider.response_purposes()) == 2  # one line per request, however long it takes
 
 
+@pytest.mark.parametrize("lang", ["zh", "en"])
+async def test_waiting_timer_does_not_reannounce_the_previous_card_result(call, lang):
+    bridge, provider, link, clock = call
+    bridge.lang = lang
+    await greeted(bridge, provider)
+    await asked(bridge, text="方案先确认保存，暂时不写完整稿")
+    # This result remains in the provider's history when the next request starts.
+    link.finish("call-1", status="ok", speech="思路已保存，暂时不写完整稿。")
+    await drain()
+    await replay(bridge, item("old-note", text=provider.commands("note")[-1][1]),
+                 started("old-result"), audio("old-result"), done("old-result"))
+    await asked(bridge, "new-request", "new-ack", "没问题，按新思路写完整稿")
+    provider.sent.clear()
+    clock.advance(bridge.late_after)
+    await bridge.fill_idle()
+    instructions = provider.commands("create")[-1][1]
+    assert bridge.requested == "progress"
+    assert not provider.commands("note")  # there is no new result to announce
+    assert "暂时不写完整稿" not in instructions
+    if lang == "zh":
+        assert "通话状态播报，不是业务回答" in instructions
+        assert "刚收到的后台事件" not in instructions
+    else:
+        assert "call-status announcement, not a business answer" in instructions
+        assert "background event just received" not in instructions
+    assert len(link.started) == 2  # waiting must not replay the action either
+    await bridge.close()
+
+
 async def test_the_prompt_only_says_what_is_still_being_done(call):
     bridge, provider, link, clock = call
     await greeted(bridge, provider)

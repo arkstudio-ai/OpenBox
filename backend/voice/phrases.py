@@ -76,7 +76,7 @@ def note_body(status, user_text, speech, lang, *, report_title=None, asked="", r
         "request": public_model_names(asked or user_text),
         "task": public_model_names(report_title) if report_title else report_title, "facts": public_model_names(speech),
         "running_tasks": list(running),
-        "state_note": "任务仍在执行，尚未取得成品；不能把计划或交办回执说成完成" if status == "running" else
+        "state_note": "交办尚未完成，尚未取得成品：按 running_task_states 中的实际状态区分排队、恢复中和运行中；排队不代表已开始执行，不能把计划或交办回执说成成品" if status == "running" else
                       "ok 仅表示这条回复已生成；仅依据 facts 中的实际结果判断任务完成情况，保留将来时与条件"}, ensure_ascii=False)
 
 
@@ -260,11 +260,12 @@ def notice_instructions(lang):
 
 
 def progress_instructions(step, lang):
-    return _delivery(lang) + ("这是一次等待提示，只用一句简短的话说明当前阶段。不要重复用户需求、图片用途、讲稿、字幕等已知选择，"
-        "不要再次询问确认，不预告尚未发生的制作或完成通知。当前事实：" if _lang(lang) == "zh" else
-        "This is a waiting update. Use one short sentence about the current stage, without repeating requirements, "
-        "assets, script or subtitle choices. Do not ask for confirmation again or promise later production or completion notices. Current facts: ") + (step or
-        ("请求仍在处理中，尚无结果或完成时间。" if _lang(lang) == "zh" else "Still processing; no result or ETA yet."))
+    # No new result note accompanies this timer. Reusing _delivery told the
+    # provider to repeat the last background result (often an old card answer).
+    return receipt_instructions(lang, delayed=True) + (
+        "这里只补充主助手当前处理阶段，不代表任务执行结果：" if _lang(lang) == "zh" else
+        "The main assistant's current processing stage below is not a task execution result: ") + (step or
+        ("仍在等待回复。" if _lang(lang) == "zh" else "Still awaiting its reply."))
 
 
 def receipt_instructions(lang, *, delayed=False):

@@ -57,7 +57,10 @@ async def answer(scope, arguments):
     async with desk.answer_lock:
         shown = desk.questions.get(args.request_id)
         if not shown or not args.version or shown.get("version") != args.version:
-            return {"status": "conflict", "this_call_applied": False, "next": "cards_pending"}
+            return {"status": "conflict", "this_call_applied": False, "next": "cards_pending",
+                    "reason": "question_not_read" if not shown else "question_version_changed",
+                    "note": "没有提交。先查询用户所指任务的当前卡片，核对ID、版本和完整选项，再处理本轮原话。"
+                            "普通问题已有明确选择时不必要求用户再说一遍；高风险决定仍需先展示再确认。"}
         if args.conversation != shown.get("conversation"):
             return {"status": "target_mismatch", "this_call_applied": False, "execution_confirmed": False,
                     "next": "cards_pending", "note": "目标任务名称与卡片不一致，没有提交。重新查询用户正在回答的任务，不沿用最近播报的卡片。"}
@@ -79,7 +82,7 @@ async def answer(scope, arguments):
             if args.conversation != session.title:
                 return {"status": "target_mismatch", "this_call_applied": False,
                         "execution_confirmed": False, "next": "cards_pending"}
-            reason, _ = await answerable(db, row, session)
+            reason, high_risk = await answerable(db, row, session)
             if reason:
                 return {"status": "human_only", "this_call_applied": False, "link": current["link"]}
             items = [q.Question(**item) for item in row.questions]
@@ -96,7 +99,12 @@ async def answer(scope, arguments):
                             "execution_confirmed": False, "request_id": row.id,
                             "attachment_ids": selected,
                             "note": "所选素材属于对原任务的修改，旧卡没有提交；交接完整原话和素材继续处理。"}
-                if count <= desk._question_shown.get(args.request_id, count):
+                shown_at = desk._question_shown.get(args.request_id)
+                # A user can choose a routine style on screen before the call
+                # reads that card. A fresh read in the same utterance need not
+                # make them repeat it. Consequential choices still require a
+                # subsequent answer; an older utterance never answers new data.
+                if shown_at is None or count < shown_at or (high_risk and count == shown_at):
                     return {"status": "need_user_answer", "this_call_applied": False}
                 if attachments and isinstance(attachments[0], str):
                     targets = [index for index, item in enumerate(items) if item.allow_attachments]

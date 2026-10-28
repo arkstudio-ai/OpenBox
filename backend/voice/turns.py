@@ -49,7 +49,17 @@ class TurnsMixin:
         guard = self.handoff
         if guard is None or source not in guard.required or not guard.current(source):
             return False
-        return bool(await self._pass_words_on(source, "verified_missing_handoff"))
+        accepted = bool(await self._pass_words_on(source, "verified_missing_handoff"))
+        if accepted and self._still_current(source):
+            # A read-only reply may already be describing the old task while
+            # the independent check accepts this newer execution request.
+            if self.requested == "followup":
+                self._native_work_stale = True
+            if (self.active_response and self.response_kind in {"model", "followup"}
+                    and self._answering.get(self.active_response) == source):
+                await self._interrupt_playback(source="handoff_accepted")
+                self.followup_due = True
+        return accepted
 
     async def _hand_over_unanswered(self, source: str, why: str) -> None:
         """No attempt to speak this turn's prepared answer started: keep the request.
@@ -524,6 +534,13 @@ class TurnsMixin:
             return
         if self.handoff is not None and decision and result.get("this_call_applied") is True:
             self.handoff.fulfilled.add(source)
+        elif (self.handoff is not None and decision and result.get("this_call_applied") is False
+                and result.get("status") in {"conflict", "target_mismatch", "invalid_arguments", "unknown_card"}
+                and result.get("operation_state") != "effect_unknown"):
+            # A rejected card call is not fulfillment. Let the semantic guard
+            # preserve a still-current explicit task request once. Timeouts and
+            # uncertain effects stay fenced; they must be observed, not replayed.
+            self.handoff.attempted.discard(source)
         if self.handoff is not None and not decision and source:
             # A read (including its failure) has its own answer path. This is
             # not fulfillment of a mixed read-and-execute request: a positive
@@ -567,6 +584,8 @@ class TurnsMixin:
             self._tool_receipts = self._tool_receipts[-5:]
         if await self._command("send_tool_output", event.call_id, result) and not exhausted:
             self.followup_due = True  # the model answers from the output in the next idle window
+        if self.handoff is not None and decision and source in self.handoff.finished:
+            self.handoff.check(source)
 
     def _context_withheld(self, source_item: str = "") -> bool:
         """The utterance's read policy forbids the call's earlier lines, its summary and the cards it showed.
@@ -809,6 +828,12 @@ class TurnsMixin:
         """A request of the user's still being done (a quiet "remember this" is none)."""
         return any(ref.lane != "remember" for ref in self.pending_calls.values())
 
+    def _pending_for_utterance(self) -> VoiceTurnRef | None:
+        """Only a durable handoff of the latest utterance, not an older task."""
+        return next((ref for ref in self.pending_calls.values()
+                     if ref.inbox_id and ref.lane != "remember" and self._last_user_item
+                     and (ref.context or {}).get("spoken_input_id") == self._last_user_item), None)
+
     async def _deliver(self, ref: VoiceTurnRef) -> None:
         """The note goes in, then our reply is asked for at once: nothing else can read the note first.
 
@@ -922,7 +947,18 @@ class TurnsMixin:
         body = json.loads(phrases.note_body(ref.reason, ref.transcript or ref.text, self._note_speech(ref), self.lang,
                           report_title=ref.report, asked=ref.asked,
                           running=[task["title"] for task in ref.running or []]))
+        body["running_task_states"] = [{key: task[key] for key in ("title", "state") if key in task}
+                                       for task in ref.running or []]
         body["request_id"] = ref.id
+        if ref.recorded:
+            from assistant.receipts import describe
+            body["task_submission_check"] = "unavailable" if ref.submissions is None else "verified"
+            body["task_submission_facts"] = (describe(ref.submissions, self.lang) if ref.submissions else "")
+            body["submission_note"] = (
+                "任务输入是否已送达及开始处理，以 task_submission_facts 为准，优先于回复中的安排或完成措辞。"
+                "verified 且为空表示本轮没有新投递；普通问答不需要投递，答卡恢复按决定回执和任务最新状态判断。"
+                "unavailable 表示未核实，不能推断已启动或未送达，更不能据此重复提交。"
+                "本轮处理结束不代表整个视频或最终交付已经完成。")
         if questions := (ref.context or {}).get("task_questions"):
             body["answer_context"] = questions
         return json.dumps(body, ensure_ascii=False)

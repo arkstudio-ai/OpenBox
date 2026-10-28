@@ -41,6 +41,7 @@ class AssistantPersonaTurn extends ConsumerWidget {
     required this.scope,
     required this.sessionId,
     required this.streaming,
+    this.awaitingInput = false,
     this.answerWrapper,
   });
 
@@ -50,6 +51,7 @@ class AssistantPersonaTurn extends ConsumerWidget {
 
   /// This is the live turn and the conversation is busy.
   final bool streaming;
+  final bool awaitingInput;
 
   /// Wraps the final answer, e.g. to learn when it was actually seen.
   final Widget Function(String messageId, Widget child)? answerWrapper;
@@ -63,13 +65,17 @@ class AssistantPersonaTurn extends ConsumerWidget {
     // A turn that is only the conversation tidying its own history has
     // nothing to say.
     if (replies.isEmpty) return const SizedBox.shrink();
-    final content = buildAssistantContentView(turn.messages, streaming);
+    final content = buildAssistantContentView(
+      turn.messages,
+      streaming,
+      awaitingInput: awaitingInput,
+    );
     final parts = [for (final message in replies) ...message.parts];
     final calls = [
       for (final part in parts)
         if (part is ToolPart || part is SubtaskPart) part,
     ];
-    final preAnswer = streaming && !content.hasFinal;
+    final preAnswer = streaming && !content.awaitingInput && !content.hasFinal;
     // A report and later coordination can share one visible turn; the
     // answer's actions belong to the message that holds it.
     final answer =

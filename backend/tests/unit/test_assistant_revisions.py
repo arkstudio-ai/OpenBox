@@ -8,6 +8,7 @@ from sqlalchemy import select
 from agent import inbox
 from agent.driver import reserve_run
 from assistant.history import read_history
+from tests.unit.assistant_legacy_cards import legacy_send_cards
 from assistant.requests import question_version
 from core.identifier import generate_id
 from db.base import get_db_session
@@ -40,8 +41,9 @@ async def setup(*, shared=False):
     return owner, other, workspace, main, session, ctx, lease, args
 
 
-async def test_revision_is_atomic_idempotent_and_runs_in_original_conversation():
-    owner, _, _, _, session, ctx, lease, args = await setup()
+@pytest.mark.parametrize("shared", [False, True])
+async def test_revision_is_atomic_idempotent_and_runs_in_original_conversation(shared):
+    owner, _, _, _, session, ctx, lease, args = await setup(shared=shared)
     try:
         first, _ = await tool_call(ctx, "requests.revise", args)
         assert first.get("state") == "accepted", first
@@ -114,7 +116,8 @@ async def test_invalid_attachment_never_creates_a_shared_send_confirmation():
 async def test_confirmation_resume_rejects_argument_drift_without_another_card(changed):
     owner, _, _, main, session, ctx, lease, args = await setup(shared=True)
     try:
-        result, _ = await tool_call(ctx, "requests.revise", args)
+        with legacy_send_cards():
+            result, _ = await tool_call(ctx, "requests.revise", args)
         from assistant.confirmations import CONFIRM
         await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
         async with get_db_session() as db:
@@ -163,7 +166,8 @@ async def test_current_confirmed_revision_survives_restricted_recall_after_resta
     from tests.unit.test_assistant_sessions_v2 import finish_turn
 
     owner, _, _, main, _, ctx, lease, args = await setup(shared=True)
-    result, _ = await tool_call(ctx, "requests.revise", args)
+    with legacy_send_cards():
+        result, _ = await tool_call(ctx, "requests.revise", args)
     await finish_turn(ctx, lease, "等待确认发送。")
     await lease.release(session_status="idle")
     await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
@@ -243,7 +247,7 @@ async def test_current_confirmed_revision_survives_restricted_recall_after_resta
         await resumed.release(session_status="idle")
 
 
-async def test_status_reads_and_shared_send_confirmation_leave_original_card_pending():
+async def test_read_leaves_card_pending_and_authorized_revision_replaces_it_directly():
     owner, _, _, _, session, ctx, lease, args = await setup(shared=True)
     try:
         result, _ = await tool_call(ctx, "requests.list", {"kind": "question"})
@@ -251,17 +255,50 @@ async def test_status_reads_and_shared_send_confirmation_leave_original_card_pen
         inspected, _ = await tool_call(ctx, "requests.get", {"kind": "question", "request_id": args["request_id"]})
         assert inspected["state"] == "pending" and inspected["task_id"] is None
         assert inspected["version"] == args["version"]
-        result, _ = await tool_call(ctx, "requests.revise", args)
-        assert "suspended" in result
         async with get_db_session() as db:
             assert (await db.get(QuestionCheckpoint, args["request_id"])).status == "pending"
             assert await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)) is None
-        from assistant.confirmations import CONFIRM
-        await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
         accepted, _ = await tool_call(ctx, "requests.revise", args)
         assert accepted.get("state") == "accepted", accepted
         replay, _ = await tool_call(ctx, "requests.revise", args)
         assert replay == accepted  # A retry must not ask for send consent twice.
+    finally:
+        await lease.release(session_status="idle")
+
+
+@pytest.mark.parametrize("unavailable", ["expired", "consumed"])
+async def test_old_revision_receipt_cannot_start_an_unapproved_replay(unavailable):
+    from datetime import timedelta
+    from assistant.confirmations import ANSWER_VALID_FOR, CONFIRM
+    from question import runtime
+    owner, _, _, main, session, ctx, lease, args = await setup(shared=True)
+    try:
+        with legacy_send_cards():
+            result, _ = await tool_call(ctx, "requests.revise", args)
+        await q.reply(result["suspended"], [[CONFIRM]], user_id=owner)
+        async with get_db_session() as db:
+            receipt = await db.get(QuestionCheckpoint, result["suspended"])
+            item = await db.scalar(select(AgentInboxItem).where(
+                AgentInboxItem.run_id == ctx.run_id, AgentInboxItem.generation == ctx.run_generation))
+            item.origin = "system_recovery"
+            item.origin_ref = {"entrypoint": "question_answer", "generation": receipt.generation}
+            if unavailable == "expired":
+                receipt.updated_at = runtime.now() - ANSWER_VALID_FOR - timedelta(seconds=1)
+            else:
+                receipt.continuation = {**receipt.continuation, "assistant_send": {
+                    **receipt.continuation["assistant_send"], "consumed": True}}
+        from assistant.policy import AssistantError
+        from assistant.revisions import _check_confirmation_replay
+        async with get_db_session() as db:
+            with pytest.raises(AssistantError) as denied:
+                await _check_confirmation_replay(db, ctx, args)
+            assert denied.value.code == "ASSISTANT_CONFIRMATION_UNAVAILABLE"
+        async with get_db_session() as db:
+            assert (await db.get(QuestionCheckpoint, args["request_id"])).status == "pending"
+            assert await db.scalar(select(AssistantTask.id).where(
+                AssistantTask.execution_session_id == session.id)) is None
+            assert len(list(await db.scalars(select(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id)))) == 1
     finally:
         await lease.release(session_status="idle")
 

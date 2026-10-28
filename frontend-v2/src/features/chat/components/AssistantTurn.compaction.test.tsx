@@ -52,6 +52,24 @@ function props(messages: MessageWithParts[], streaming: boolean) {
 const mainPage = { snapshot: { answers: [], session: { id: "s" } } as unknown as AssistantSnapshot, displayed: vi.fn() }
 
 describe("AssistantTurn context optimization", () => {
+  it("stops persona activity when the tool waits even if the session is still busy", () => {
+    const waiting: MessageWithParts = {
+      id: "waiting", role: "assistant", session_id: "s", created_at: "", finish: "tool_calls",
+      parts: [{ id: "send", type: "tool", tool: "tasks.followup", status: "waiting_input", input: {} }],
+    }
+    const { rerender } = render(<AssistantReadContext.Provider value={mainPage}>
+      <AssistantTurn {...props([waiting], true)} />
+    </AssistantReadContext.Provider>)
+    expect(screen.queryByText("assistant.activity.delegating")).toBeNull()
+    const answered: MessageWithParts = { ...waiting, finish: "waiting_input",
+      parts: [{ ...waiting.parts[0], status: "completed" } as MessageWithParts["parts"][number]] }
+    const resumed: MessageWithParts = { ...waiting, id: "resumed", finish: null,
+      parts: [{ id: "send-again", type: "tool", tool: "tasks.followup", status: "running", input: {} }] }
+    rerender(<AssistantReadContext.Provider value={mainPage}>
+      <AssistantTurn {...props([answered, resumed], true)} />
+    </AssistantReadContext.Provider>)
+    expect(screen.getByText("assistant.activity.delegating")).toBeTruthy()
+  })
   it("does not attach a later visible coordination step's badges to a saved report", async () => {
     const answer: MessageWithParts = {
       id: "report", role: "assistant", session_id: "s", created_at: "2026-10-05T00:00:00Z", finish: "stop",

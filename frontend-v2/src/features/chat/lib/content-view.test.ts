@@ -14,6 +14,13 @@ function message(finish: string, status: "waiting_input" | "completed" = "comple
 }
 
 describe("durable ask is not a failed final answer", () => {
+  it("suspends activity before the busy status catches up, then resumes with the next step", () => {
+    const waiting = message("tool_calls", "waiting_input")
+    expect(buildAssistantContentView([waiting], true).awaitingInput).toBe(true)
+    const answered = message("waiting_input", "completed")
+    const resumed = { ...message("tool_calls"), id: "resumed", finish: null, parts: [] }
+    expect(buildAssistantContentView([answered, resumed], true).awaitingInput).toBe(false)
+  })
   it("does not show an ended-without-answer warning while waiting", () => {
     expect(buildAssistantContentView([message("waiting_input", "waiting_input")], false).incomplete).toBe(
       false,

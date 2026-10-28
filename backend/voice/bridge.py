@@ -820,6 +820,20 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._native_context_changed = False
         self._freshness_notice_requested = not fresh
         self.followup_due, self.requested = False, "followup"
+        if pending := self._pending_for_utterance():
+            # A stale read/decision reply must not repeat "not making it yet"
+            # after this same utterance has already requested and handed off
+            # production. Announce only its durable receipt while it is pending.
+            # This is transport progress, so unrelated task changes cannot
+            # regenerate it as another business-state answer.
+            self.requested = "progress"
+            self._state_changed, self._just_answered = False, []
+            self._tool_receipts.clear()
+            self._ack_at = None
+            await self._create(phrases.receipt_instructions(self.lang) +
+                "\nAccepted user request (context only, do not resubmit): " +
+                json.dumps(pending.transcript or pending.text, ensure_ascii=False))
+            return
         instructions = (phrases.state_changed_instructions(self.lang, self._decided(), self._work_changes())
                         if self._state_changed else phrases.tool_result_instructions(self.lang))
         self._state_changed, self._just_answered = False, []

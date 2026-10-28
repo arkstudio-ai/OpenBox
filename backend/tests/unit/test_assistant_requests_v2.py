@@ -3,7 +3,7 @@
 docs/PERSONAL_ASSISTANT_DESIGN_V2.md 10 and 12: the assistant sees questions
 waiting in all the user's own conversations; it may answer an ordinary one for
 the user, shown there as "由个人助理代答"; decisions stay with the user, who
-gets a link; a workspace-visible conversation asks the user on a card first.
+gets a link; workspace visibility alone does not require another confirmation.
 """
 import pytest
 from sqlalchemy import select
@@ -131,33 +131,23 @@ async def test_decisions_and_actions_stay_with_the_user():
         assert (await card(request_id)).status == "pending"
 
 
-async def test_a_workspace_visible_conversation_is_answered_only_after_the_users_card():
+async def test_an_ordinary_workspace_question_is_answered_without_a_second_card():
     owner, _, workspace, main = await assistant()
     session = await conversation(owner, workspace, main, "团队配色", visibility="workspace")
     request_id, _ = await ask_in(session, owner)
-    ctx, lease, _ = await main_turn(owner, workspace, main, "团队配色那个会话帮我选深色。")
+    ctx, lease, human = await main_turn(owner, workspace, main, "团队配色那个会话帮我选深色。")
     try:
-        asked, part = await tool_call(ctx, "requests.answer", {"request_id": request_id, "answers": [["深色"]]})
-        confirmation = await card(asked["suspended"])
-        assert confirmation.session_id == main.id and "团队配色" in confirmation.questions[0]["question"]
-        assert "深色" in confirmation.questions[0]["question"]
-        await finish_turn(ctx, lease, "请在卡片上确认。")
+        listed, _ = await tool_call(ctx, "requests.list", {"kind": "question"})
+        [item] = [i for i in listed["other_conversations"] if i["id"] == request_id]
+        assert item["high_risk"] is False
+        value, _ = await tool_call(ctx, "requests.answer", {
+            "request_id": request_id, "answers": [["深色"]], "source_message_ids": [human]})
+        assert value["state"] == "answered" and (await card(request_id)).answers == [["深色"]]
+        async with get_db_session() as db:
+            assert not list(await db.scalars(select(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id)))
     finally:
         await lease.release(session_status="idle")
-    assert (await card(request_id)).status == "pending"
-    await q.reply(confirmation.id, [["确认代答"]], owner)
-    await QuestionContinuationWorker().tick()
-    # The card itself does nothing; its result tells the assistant to call again.
-    recorded = await question_part(confirmation.part_id)
-    assert recorded.data["metadata"]["confirmation"] == "confirmed"
-    assert "call the same tool again" in recorded.data["output"]
-    assert (await card(request_id)).status == "pending"
-    ctx, lease, _ = await main_turn(owner, workspace, main, "继续。")
-    try:
-        value, part = await tool_call(ctx, "requests.answer", {"request_id": request_id, "answers": [["深色"]]})
-    finally:
-        await lease.release(session_status="idle")
-    assert value["state"] == "answered" and (await card(request_id)).status == "answered"
 
 
 async def test_a_watched_task_question_is_answered_through_the_versioned_command():

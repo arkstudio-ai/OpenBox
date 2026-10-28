@@ -7,6 +7,7 @@ again. 1.3: a call lists the waiting cards (pending_cards) and answers them
 through question.question.reply with a voice source.
 """
 from dataclasses import replace
+from tests.unit.assistant_legacy_cards import legacy_send_cards
 from datetime import timedelta
 from itertools import count
 
@@ -172,8 +173,9 @@ async def test_pending_cards_lists_every_main_session_card_for_a_call():
     ctx, lease, human = await main_turn(owner, workspace, main, "把贪吃蛇项目删掉，再告诉团队换深色。")
     try:
         delete_card = await ask_confirm(await call_part(ctx))
-        sent, _ = await tool_call(ctx, "tasks.followup", {"task_id": linked["task_id"], "text": "换成深色主题。",
-            "expected_revision": linked["task_revision"], "source_message_ids": [human]})
+        with legacy_send_cards():
+            sent, _ = await tool_call(ctx, "tasks.followup", {"task_id": linked["task_id"], "text": "换成深色主题。",
+                "expected_revision": linked["task_revision"], "source_message_ids": [human]})
         memory_ctx = await call_part(ctx, "memory.remember")
         with pytest.raises(q.QuestionSuspended) as remembered:
             await q.ask(main.id, [q.Question(question="要我记住这条吗？\n「最近在吃降压药」", header="记忆确认", custom=False,
@@ -212,20 +214,22 @@ async def test_a_call_answers_a_main_session_card_with_a_voice_source(label):
         delete_card = await ask_confirm(await call_part(ctx))
         args = {"task_id": linked["task_id"], "text": "换成深色主题。", "expected_revision": linked["task_revision"],
                 "source_message_ids": [human]}
-        sent, _ = await tool_call(ctx, "tasks.followup", args)
+        with legacy_send_cards():
+            sent, _ = await tool_call(ctx, "tasks.followup", args)
         voice = {"kind": "voice", "call_id": "call-1", "display_id": "spoken-1"}
         await q.reply(delete_card, [[label]], owner, source_ref=voice)
         send_label = CONFIRM if label == "确认" else CANCEL
         await q.reply(sent["suspended"], [[send_label]], owner, source_ref=voice)
         assert (await card(delete_card)).answers == [[label]]
-        retried, _ = await tool_call(ctx, "tasks.followup", args)
         if label == "确认":
+            retried, _ = await tool_call(ctx, "tasks.followup", args)
             assert retried["state"] == "accepted"
             passed = await require_card(await call_part(ctx), kind=CONFIRM_KIND, digest="digest-1", prompt="…",
                                         header="…", description="…")
             assert passed == delete_card
         else:
-            assert "suspended" in retried and retried["suspended"] != sent["suspended"]
+            from tests.unit.test_assistant_sessions_v2 import inputs
+            assert await inputs(session.id) == []
     finally:
         await lease.release(session_status="idle")
     async with get_db_session() as db:

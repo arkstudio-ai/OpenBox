@@ -1,19 +1,10 @@
-"""The user confirms on a card before the assistant takes a high-risk action.
+"""Confirmation for consequential actions, and compatibility with old send cards.
 
-V2 decision D4 (docs/PERSONAL_ASSISTANT_DESIGN_V2.md 6.3): members can read a
-workspace-visible conversation, so text the assistant sends there is shown to
-the user first as a question card in the main session (``assistant_send``).
-docs/ASSISTANT_VOICE_FIX_PLAN.md 1 uses the same card for every other
-high-risk action (``assistant_confirm``): deleting a project, a conversation
-or a task, and a high-risk answer for the user. Its first line says what will
-be done, the second line the impact; the user answers on the card, or by voice
-in a call (pending_cards, then question.question.reply).
-
-Only an answered card for exactly this input lets the same input through,
-once, and only while it is fresh: a card unanswered for ten minutes expires,
-and the next call asks again; a confirmation not used within half an hour
-(the assistant resumes right after the answer) is no consent any more. A
-private conversation needs no send card.
+An authorized task input goes directly to the user's own conversation, whether
+private or workspace-visible. Visibility alone must not create a second
+"confirm sending" decision. Existing send-card continuations remain bound to
+their exact input and can consume their receipt once. High-risk actions still
+use a fresh card explaining the action and its impact.
 """
 from datetime import timedelta
 import json
@@ -114,20 +105,10 @@ def card_text(prompt: str, impact: str | None) -> str:
     return prompt if not impact else f"{prompt}\n影响：{impact}"
 
 
-async def require_card(ctx, *, digest: str, prompt: str, header: str, description: str,
-                       confirm: str | None = None, target: dict | None = None, kind: str = KIND,
-                       action: str | None = None, impact: str | None = None,
-                       high_risk: bool = True) -> str | None:
-    """Return the consumed confirmed card for exactly this input, or ask for one.
-
-    Asking suspends this tool call (QuestionSuspended). The user's answer
-    becomes the call's output; calling again with the same input then passes,
-    once. A confirmation older than ANSWER_VALID_FOR is no consent for now:
-    the call asks again.
-    """
+async def consume_card(ctx, *, digest: str, kind: str = KIND) -> str | None:
+    """Consume an existing exact, fresh receipt without creating another card."""
     if kind not in KINDS:
         raise ValueError("Unknown confirmation card")
-    confirm = confirm or (CONFIRM if kind == KIND else CONFIRM_ACTION)
     from question import runtime
     fresh_since = runtime.now() - ANSWER_VALID_FOR
     async with get_db_session() as db:
@@ -145,6 +126,18 @@ async def require_card(ctx, *, digest: str, prompt: str, header: str, descriptio
             if (row.answers or [[]])[0] == [card.get("confirm", CONFIRM)]:
                 row.continuation = {**row.continuation, kind: {**card, "consumed": True}}
                 return row.id
+    return None
+
+
+async def require_card(ctx, *, digest: str, prompt: str, header: str, description: str,
+                       confirm: str | None = None, target: dict | None = None, kind: str = KIND,
+                       action: str | None = None, impact: str | None = None,
+                       high_risk: bool = True) -> str | None:
+    """Consume an exact fresh confirmation, or suspend to ask for one."""
+    if consumed := await consume_card(ctx, digest=digest, kind=kind):
+        return consumed
+    confirm = confirm or (CONFIRM if kind == KIND else CONFIRM_ACTION)
+    from question import runtime
     from question.question import Question, QuestionOption, ask
     card = {**(target or {}), "digest": digest, "confirm": confirm}
     if kind == CONFIRM_KIND:
@@ -158,24 +151,13 @@ async def require_card(ctx, *, digest: str, prompt: str, header: str, descriptio
     return None
 
 
-async def require_shared_send_confirmation(ctx, *, task_id: str, text: str, attachments=()) -> str | None:
-    """A card before text goes into a workspace-visible task conversation; None for a private one."""
+async def consume_send_confirmation(ctx, *, task_id: str, text: str, attachments=()) -> str | None:
+    """Validate the destination and honor old receipts; ordinary sends need no card."""
     async with get_db_session() as db:
         await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
-        task, execution = await task_locked(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
-                                            main_id=ctx.session_id, task_id=task_id)
-        if execution.visibility != "workspace":
-            return None
-        title = execution.title or task.title
-        names = []
-        if attachments:
-            from db.models.file_asset import FileAsset
-            names = list((await db.scalars(select(FileAsset.name).where(FileAsset.id.in_(list(attachments)),
-                FileAsset.user_id == ctx.user_id, FileAsset.workspace_id == ctx.workspace_id))).all())
-    files = ("\n\n附带文件（成员也能看到）：" + "、".join(names)) if names else ""
-    return await require_card(ctx, digest=input_digest(task_id, text, attachments),
-        prompt=f"把下面这段话发送到工作区可见的会话「{title}」吗？工作区成员都能看到这条消息。\n\n{text}{files}",
-        header="确认发送", description="由个人助理代你发送这段话", target={"task_id": task_id})
+        await task_locked(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                          main_id=ctx.session_id, task_id=task_id)
+    return await consume_card(ctx, digest=input_digest(task_id, text, attachments))
 
 
 async def release_confirmation(ctx, question_id: str | None) -> None:

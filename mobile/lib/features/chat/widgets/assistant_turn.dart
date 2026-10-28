@@ -98,13 +98,16 @@ class AssistantTurn extends ConsumerWidget {
 
     // Hold each trace live for its whole phase rather than deriving it from
     // per-part activity flags, which flip many times within one turn.
-    final preAnswer = streaming && !content.hasFinal;
+    final preAnswer = streaming && !content.awaitingInput && !content.hasFinal;
     final thinkingLive =
         preAnswer &&
         !optimizing &&
         (turn.thinkingStreaming || turn.hasThinking);
     final toolsLive =
-        streaming && !optimizing && (turn.toolsStreaming || !content.hasFinal);
+        streaming &&
+        !content.awaitingInput &&
+        !optimizing &&
+        (turn.toolsStreaming || !content.hasFinal);
     final showFinalLabel =
         content.progress.isNotEmpty ||
         content.workEvents.isNotEmpty ||

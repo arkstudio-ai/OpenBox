@@ -19,6 +19,27 @@ async def needs_handoff(words, context, *request_words):
     return True
 
 
+@pytest.mark.parametrize("status,applied,expected", [
+    ("conflict", False, 1), ("target_mismatch", False, 1), ("invalid_arguments", False, 1),
+    ("decision_recorded", True, 0), ("effect_unknown", False, 0), ("unavailable", False, 0),
+])
+async def test_failed_card_attempt_does_not_swallow_explicit_task_request(monkeypatch, status, applied, expected):
+    bridge, provider, link = guarded(needs_handoff)
+    async def result(*args):
+        return {"status": status, "this_call_applied": applied}
+    monkeypatch.setattr("voice.tools.run", result)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("水果店方案我确认了，直接开始写完整稿。", "u1"),
+        started("r1"), tool_call("choose", name="task_question_answer", arguments="{}", response_id="r1"),
+        said("好的", "r1"), audio("r1"), done("r1"))
+    assert len(link.started) == expected
+    if expected:
+        assert link.started[0].transcript == "水果店方案我确认了，直接开始写完整稿。"
+        await bridge.fill_idle()
+        assert len(link.started) == 1
+    await bridge.close()
+
+
 async def test_reading_old_status_does_not_satisfy_a_modification(monkeypatch):
     bridge, provider, link = guarded(needs_handoff)
     async def overview(*args):
@@ -45,10 +66,32 @@ async def test_one_repair_and_late_native_tool_calls_share_the_same_request():
     assert len(link.started) == 1
     assert provider.commands("output")[-1][2]["request_id"] == link.started[0].id
     await bridge.fill_idle()
-    # Late tool receipts may need their normal acknowledgement, but never a
-    # second business handover or a repair generation.
-    assert bridge.requested == "followup"
+    # Acknowledge the accepted input, not the obsolete read/decision state;
+    # never create a second business handover or a repair generation.
+    assert bridge.requested == "progress"
     assert len(provider.commands("create")) == 1 and len(link.started) == 1
+    await bridge.close()
+
+
+@pytest.mark.parametrize("already_started", [True, False])
+async def test_recovered_request_invalidates_an_older_read_reply(already_started):
+    bridge, provider, link = guarded(needs_handoff)
+    await greeted(bridge, provider)
+    await replay(bridge, item("u1"), transcript("现在按方案开始制作", "u1"))
+    bridge.requested = "followup"
+    if already_started:
+        await replay(bridge, started("old-read"))
+    # The semantic check completes after a reply to the old read was requested.
+    bridge.handoff.required.add("u1")
+    assert await bridge._recover_handoff("u1")
+    if not already_started:
+        await replay(bridge, started("old-read"))
+    assert len(link.started) == 1 and provider.commands("cancel")
+    await replay(bridge, said("暂时不制作", "old-read"), audio("old-read"),
+                 done("old-read", status="cancelled"))
+    assert "暂时不制作" not in " ".join(line.text for line in bridge.spoken.lines)
+    assert bridge.requested == "progress"
+    assert "原话已保存" in provider.commands("create")[-1][1]
     await bridge.close()
 
 

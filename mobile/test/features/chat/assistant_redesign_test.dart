@@ -547,6 +547,41 @@ void main() {
   });
 
   testWidgets(
+    'a waiting card stops the activity even before the busy status catches up',
+    (tester) async {
+      final api = _Api()..sessionStatus = 'busy';
+      api.stored
+        ..clear()
+        ..addAll({
+          'm01': userMessage('m01'),
+          'm02': replyMessage(
+            'm02',
+            finish: null,
+            parts: [
+              {
+                'id': 'waiting-part',
+                'type': 'tool',
+                'tool': 'tasks.list',
+                'status': 'waiting_input',
+              },
+            ],
+          ),
+        });
+      api.newest = ['m01', 'm02'];
+      final f = await _mount(
+        tester,
+        const AssistantScreen(scope: scope),
+        server: api,
+        settle: false,
+      );
+      expect(find.text('Personal assistant'), findsOneWidget);
+      expect(find.text('Checking progress…'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await _unmount(tester, f);
+    },
+  );
+
+  testWidgets(
     'a task whose conversation was deleted reads plainly, not as an error',
     (tester) async {
       // Not in the main view's task list, so the card reads it by id.

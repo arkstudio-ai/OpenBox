@@ -236,6 +236,7 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
     waiting = asyncio.create_task(link.wait(ref))
     await answer(owner, main, [("已经帮你安排去查了，正在后台检索。", "final")], during=run)
     value = await waiting
+    assert [task["state"] for task in value["running"]] == ["queued", "running", "queued"]
     assert all(task["intent_revision"] == 1 and task["task_version"] for task in value["running"])
     assert {**value, "running": [{key: task[key] for key in ("task_id", "title")} for task in value["running"]]} == {
         "status": "ok", "speech": "已经帮你安排去查了，正在后台检索。", "running": [
@@ -244,6 +245,27 @@ async def test_a_turn_that_passed_the_work_to_a_task_says_which_tasks_are_still_
         {"task_id": made["revision"], "title": "改用新照片重新规划"}]}
     assert await assistant_link.running_tasks(main.id, "someone-else", ref.inbox_id) == []
     assert await assistant_link.running_tasks(main.id, owner, None) == []
+
+
+async def test_successful_reply_without_submission_does_not_prove_task_execution():
+    owner, main, link = await setup()
+    ref = new_ref("开始推进水果店的视频。")
+    await link.start(ref)
+    waiting = asyncio.create_task(link.wait(ref))
+    await answer(owner, main, [("正在执行。", "final")])
+    result = await waiting
+    assert result["status"] == "ok" and not result.get("running")
+    assert ref.submissions == []  # the successful prose is not a command receipt
+
+
+async def test_submission_read_failure_is_unknown_not_evidence_for_resending(monkeypatch):
+    owner, main, link = await setup()
+    ref = new_ref("继续原任务")
+    async def unavailable(*args):
+        raise TimeoutError("receipt database temporarily unavailable")
+    monkeypatch.setattr("assistant.receipts.for_inbox", unavailable)
+    await link.read_submissions(ref)
+    assert ref.submissions is None
 
 
 async def waiting_on_card(owner, task_id):

@@ -222,6 +222,26 @@ async def voice_form():
     return owner, other, workspace, main, request_id, heard, scope, item
 
 
+@pytest.mark.parametrize("high_risk", [False, True])
+async def test_same_utterance_can_answer_newly_read_routine_card_only(high_risk):
+    owner, _, workspace, main = await assistant()
+    session = await conversation(owner, workspace, main, "水果店欢迎语", visibility="workspace")
+    request_id = await ask(session, owner, questions=[q.Question(
+        question="选哪种风格？", options=[{"label": "温暖"}, {"label": "轻奢"}], custom=False,
+        requires_confirmation=high_risk)])
+    heard = Heard()
+    heard.say("我选温暖风，直接开始写完整稿。")
+    scope = CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id,
+                      call_id="style-voice", desk=CardDesk(heard))
+    [current] = await list_waiting(user_id=owner, workspace_id=workspace, main_id=main.id)
+    scope.desk.show_question(current, "zh")
+    result = await run("task_question_answer", scope, json.dumps({"request_id": request_id,
+        "version": current["version"], "conversation": session.title, "answers": [["温暖"]]}))
+    assert result["status"] == ("need_user_answer" if high_risk else "decision_recorded")
+    saved = await card(request_id)
+    assert saved.status == ("pending" if high_risk else "answered")
+
+
 async def test_voice_answers_full_form_with_chosen_owned_picture_without_duplicate_confirmation():
     owner, _, workspace, main, request_id, heard, scope, item = await voice_form()
     image = await asset(owner, workspace, main)

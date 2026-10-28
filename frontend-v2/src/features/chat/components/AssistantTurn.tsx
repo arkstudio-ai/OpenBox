@@ -153,7 +153,7 @@ function PersonaTurn({ messages, sessionId, meta, streaming, awaitingInput = fal
   const finalText = useMemo(() => hideInternalIds(content.finalText), [content.finalText])
   // A turn that is only the conversation tidying its own history has nothing to say.
   if (replyMessages.length === 0) return null
-  const preAnswer = streaming && !content.hasFinal
+  const preAnswer = streaming && !content.awaitingInput && !content.hasFinal
   return (
     <div className="group/msg flex w-full min-w-0 flex-col" data-testid="assistant-persona-turn">
       <div className="mb-1.5 flex items-center gap-2">
@@ -231,10 +231,10 @@ function WorkTurn({ messages, sessionId, meta, streaming, awaitingInput = false,
   // calls). Feeding those raw into the trace rows made titles flicker between
   // "正在思考" and "思考完成". Hold each trace live for its whole phase —
   // until the turn starts answering — instead.
-  const preAnswer = streaming && !content.hasFinal
+  const preAnswer = streaming && !content.awaitingInput && !content.hasFinal
   const optimizing = compactions.some((item) => item.status === "running")
   const thinkingLive = preAnswer && !optimizing && (view.thinkingStreaming || view.thinking.length > 0)
-  const toolsLive = streaming && !optimizing && (view.toolsStreaming || !content.hasFinal)
+  const toolsLive = streaming && !content.awaitingInput && !optimizing && (view.toolsStreaming || !content.hasFinal)
   const showFinalLabel = needsFinalLabel(content, view)
 
   // A compaction arriving before the first reply is already a process, even

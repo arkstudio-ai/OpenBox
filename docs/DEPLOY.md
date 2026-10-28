@@ -9,14 +9,26 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前阿里云前端：2026-10-21 20:47 `20261021-desktop-input-d0c0e956`（远程桌面输入开关）
+## 当前应用后端：2026-10-28 `20261028-voice-delegation-21ed11e9`（语音委托、批量续接与发布回执）
+
+- PR [#102](https://github.com/arkstudio-ai/OpenBox/pull/102) 已合入 `main@21ed11e9`。修复确认卡暂停后遗漏未启动的批量任务、语音播报旧状态，以及发布失败或不明结果被误报成功；保留用户原始意图和授权，不重复执行不确定的外部操作。
+- 发布回执按精确标题、作品身份和原尝试时间范围核验，拒绝多候选、相似标题或后来同名上传；只读核验不会覆盖原作品编号或重发视频。桌面执行支持只读安装目录、本地文件上传及超时后的页面观察，保留已有草稿。
+- 本机从合并提交的干净归档构建 `linux/amd64` 镜像。装载前校验压缩包 SHA-256，装载后及运行中分别校验 24 个变更源码文件；backend 与 trajectory-worker 更新为同一镜像，前端保留 `openbox-frontend-v2:20261028-voice-runtime-e56ab5d3`，其余四项服务容器 ID 保持不变。六项服务健康，两个新容器重启次数均为 0。
+- 生产配置仅改变上述两项镜像引用；完整 Compose 解析结果及配置哈希核验通过。语音通话保持官方直连，文字、向量和排序保持内部网关，`memory.semantic_recall=false` 沿用发布前配置。
+- 无新增迁移：业务库 `ph84a5b6c7d8`，轨迹库 `t0007_turn_alerts`。配置、两库 dump、可读目录清单、旧镜像和回滚脚本保留在 `/opt/openbox/releases/20261028-voice-delegation-21ed11e9/`。切换前等待执行租约、Driver、通话和在途视频任务全部归零，没有取消或重新提交用户任务。
+- 发布前定向验收：后端 336 项；最后回执加固后相关发布/业务结果组 58 项（与前组重叠）；前端 57 项。内置浏览器真实模拟麦克风验收覆盖两项旧任务批量修订、人工卡片确认及后续语音状态。未跑全量测试。发布后只读验证线上个人助理页面成功加载；未发起新的视频公开发布或审核验收。
+- 公网切换采样：首页全部 200；environment API 有 6 次 502，失败样本跨度 16.3 秒，相邻成功样本界定的不可用窗口不超过约 23.8 秒，随后持续恢复。单实例切换不宣称零停机。
+- 回滚：先确认业务空闲，再执行上述发布目录的 `rollback-application.sh`；脚本核对当前 override 摘要、恢复原应用镜像，逐项等健康并 reload Nginx，保留当前数据库数据。此次没有在生产执行回滚。私有中转对象已清理，本地和服务器镜像包保留。
+- AOCI 既有 observe 证据审查积压仍在，未冒充完整系统认知或索引对齐。详见[脱敏发布证据](evidence/voice-delegation-release-20261028.json)。
+
+## 历史阿里云前端：2026-10-21 20:47 `20261021-desktop-input-d0c0e956`（远程桌面输入开关）
 
 - 修复“允许操控”已勾选但键鼠无响应：固定版本的无影 SDK 中，`enableInput` 控制 live engine，`setInputEnabled` 修改 local config，两者不是新旧替代 API。开关和重连时同步更新两者，保留默认只读、键盘/IME、触屏与 Client 鼠标模式。
 - 6 项桌面组件定向测试、两份 TypeScript 配置检查和 Vite 生产构建通过。源码 `d0c0e956`；此前 `main` 的前端与实际生产基底 `be75d22d` 无差异。基于生产前端镜像覆盖新构建静态文件，保留已有 Nginx 配置与旧哈希资源，其他服务未重建。无数据库变更。
 - 配置备份 `backups/20261021-desktop-input-d0c0e956/activation-20261021T124649Z/`；空闲门禁全为 0 后只切 frontend，healthy、重启 0，Nginx 检查通过，公网 build-id 匹配、environment 200。
 - 已在 andrewwang 网页账号重载新版本，实测勾选后鼠标切换标签页、键盘输入 `123`，取消勾选后鼠标和键盘均不生效，重新勾选恢复。此前按用户明确授权重启其云电脑，未重置镜像或删除文件；旧网页在重启后仍复现，最终通过 SDK 开关修复。详见 [修复说明](DESKTOP_INPUT_FIX_20261021.md) 与 [证据](evidence/desktop-input-release-20261021.json)。回滚仅恢复 frontend 到 `20261021-assistant-be75d22d`。
 
-## 当前阿里云后端：2026-10-21 18:36 `20261021-question-anchor-27dfeb87`（问答续接轮次修复）
+## 历史阿里云后端：2026-10-21 18:36 `20261021-question-anchor-27dfeb87`（问答续接轮次修复）
 
 - 问答续接从模型实际可见的 canonical user 选择轮次锚点，避免将等待确认时被拒绝的 SQL user 当作触发消息，导致 `Assistant parent crosses its logical turn` 并持续阻塞恢复。保留严格跨轮校验。相关 96 项定向测试通过。
 - 基于实际线上 `20261021-voice-address-131cb413` 镜像，仅替换 `agent/loop.py`，源码提交 `27dfeb87`，生产哈希一致。配置与两库备份在 `backups/20261021-question-anchor-27dfeb87/activation-20261021T102640Z/`，两份 dump 已验证可读。空闲门禁后只切 backend，healthy 后 reload Nginx；无迁移，其余服务容器不变。

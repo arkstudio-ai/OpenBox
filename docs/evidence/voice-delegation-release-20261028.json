@@ -1,0 +1,70 @@
+{
+  "status": "deployed_verified",
+  "source_commit": "21ed11e965018e9a26d8abdb176d6d534f2a1dc7",
+  "repair_commit": "9b48749d41a455276ca54233115da2ea095f3cb1",
+  "pull_request": "https://github.com/arkstudio-ai/OpenBox/pull/102",
+  "image": "openbox-backend:20261028-voice-delegation-21ed11e9",
+  "image_id": "sha256:80f6ee06caf36360b5d4deda5c5bd150c7f6c70a1003d487fb9499d32bd4c7b7",
+  "artifact_sha256": "b4122553947a8e3bf1b380ca5ba3df98e6a370acf2f7a70fe42b2fe0a85b76b6",
+  "source_files_verified": 24,
+  "updated_services": [
+    "backend",
+    "trajectory-worker"
+  ],
+  "healthy_services": 6,
+  "unchanged_containers": [
+    "frontend",
+    "postgres",
+    "redis",
+    "qdrant-memory"
+  ],
+  "backend_worker_restart_counts": 0,
+  "routes": {
+    "voice": "official",
+    "text": "internal_gateway",
+    "embedding": "internal_gateway",
+    "rerank": "internal_gateway",
+    "memory_semantic_recall": false
+  },
+  "configuration_diff": "Only backend and trajectory-worker image references changed",
+  "database": {
+    "business_revision": "ph84a5b6c7d8",
+    "trace_revision": "t0007_turn_alerts",
+    "new_migrations": false,
+    "backups_validated": true
+  },
+  "rollback_directory": "/opt/openbox/releases/20261028-voice-delegation-21ed11e9",
+  "rollback_script": "rollback-application.sh",
+  "cutover_guard": "Execution leases, active drivers, calls and in-flight video jobs all zero before the switch",
+  "public_checks": {
+    "/": {
+      "samples": 105,
+      "statuses": {
+        "200": 105
+      }
+    },
+    "/api/environment": {
+      "samples": 105,
+      "statuses": {
+        "200": 99,
+        "502": 6
+      },
+      "observed_failure_span_seconds": 16.3,
+      "bounded_unavailable_window_seconds": 23.8,
+      "stable_seconds_after_last_failure": 182
+    }
+  },
+  "browser": "Authenticated personal-assistant page loaded; read-only acceptance",
+  "pre_release_tests": {
+    "backend_regression": 336,
+    "final_receipt_outcome_group": 58,
+    "groups_overlap": true,
+    "web": 57,
+    "full_suite": false
+  },
+  "limits": [
+    "No new public video publication or moderation acceptance was attempted",
+    "Full-system AOCI cognition and governance alignment are not claimed; 63 observed-evidence reviews remain outstanding"
+  ],
+  "private_transfer_object": "Removed after server-side verification; local and server release artifacts retained"
+}

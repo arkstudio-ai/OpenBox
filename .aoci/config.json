@@ -6060,6 +6060,30 @@
         "created_by": "codex-host-model-density-review",
         "order": 1413,
         "enabled": true
+      },
+      {
+        "rule_id": "browser-action-contract",
+        "action": "index",
+        "pattern": "backend/tool/browser_action.py",
+        "pattern_kind": "file",
+        "reason": "浏览器动作与观察的独立工具契约：当前步子工具权限、持久化执行、桌面租约、截图归属及未知效果恢复边界需保留在主索引。",
+        "decision_basis": "semantic_density",
+        "source": "user",
+        "created_by": "codex-host-model-index-update",
+        "order": 3000,
+        "enabled": true
+      },
+      {
+        "rule_id": "mobile-audio-focus-test-support",
+        "action": "observe",
+        "pattern": "mobile/integration_test/support/audio_focus_probe/**",
+        "pattern_kind": "glob",
+        "reason": "已逐文件审查：独立 Android 音频焦点验收探针、清单与运行说明只用于模拟器测试，不进入正式 APK；运行契约保留于现有语音协议和控制器条目，测试实现由 Safe Inventory 跟踪。",
+        "decision_basis": "test_responsibility_delegation",
+        "source": "user",
+        "created_by": "codex",
+        "order": 7000,
+        "enabled": true
       }
     ]
   },

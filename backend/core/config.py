@@ -338,7 +338,8 @@ class VideoGenerationConfig(BaseModel):
     # Optional whitelist for per-segment model overrides; empty = any model the
     # routing predicates accept.
     allowed_models: list[str] = []
-    # Cross-user prompt-hash reuse of identical completed segments.
+    # Content fingerprinting for in-flight duplicate protection. Completed
+    # outputs are never substituted for a new take; same-key retries remain idempotent.
     dedupe: bool = True
     #: Per-user daily ceiling on paid generation submits. 0 disables the check.
     #: A stand-in for the shared credits ledger: it is back-pressure, not an

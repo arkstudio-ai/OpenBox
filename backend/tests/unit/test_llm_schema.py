@@ -21,7 +21,7 @@ PERMANENT_MEDIA_TOOLS = (
 
 EXPECTED_ACTIONS = {
     "video_generate": {
-        "models", "estimate", "quote_plan", "submit", "status", "wait", "cancel", "fetch", "attach",
+        "models", "validate", "submit", "status", "wait", "cancel", "fetch", "attach",
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {
@@ -151,14 +151,9 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     assert generate["input_assets"]["maxItems"] == 8
     assert generate["seed"]["minimum"] == 0
 
-    plan = generate["plan_items"]
-    assert plan["type"] == "array"
-    assert plan["maxItems"] == 64
-    assert plan["items"]["required"] == ["kind", "seconds"]
-    plan_fields = plan["items"]["properties"]
-    assert set(plan_fields["kind"]["enum"]) == {"generation", "transcribe", "compose"}
-    assert plan_fields["seconds"]["exclusiveMinimum"] == 0
-    assert plan_fields["seconds"]["maximum"] == 3600
+    assert "plan_items" not in generate  # billing plans are no longer an agent argument
+    assert "fresh take" in generate["idempotency_key"]["description"]
+    assert generate["allow_duplicate"]["default"] is False
 
     for name in ("video_generate", "video_transcribe"):
         properties = schemas[name]["properties"]

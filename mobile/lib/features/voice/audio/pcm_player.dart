@@ -85,6 +85,7 @@ class PcmPlayer {
 
   /// Loudness of what is being fed, for the orb while the assistant talks.
   final level = ValueNotifier<double>(0);
+  final playing = ValueNotifier<bool>(false);
 
   bool _open = false;
   bool _waiting = false;
@@ -93,6 +94,7 @@ class PcmPlayer {
   Int16List? _ring;
   int? _oddByte;
   Timer? _stuck;
+  Timer? _playbackTail;
   final _drained = <Completer<void>>[];
 
   bool get _empty => _call.isEmpty && _tones.isEmpty;
@@ -109,6 +111,7 @@ class PcmPlayer {
   /// messages; the odd byte waits for its partner.
   void enqueue(Uint8List bytes) {
     if (bytes.isEmpty) return;
+    _playbackTail?.cancel();
     var data = bytes;
     if (_oddByte != null) {
       data = Uint8List(bytes.length + 1)
@@ -118,6 +121,7 @@ class PcmPlayer {
     }
     if (data.length.isOdd) _oddByte = data.last;
     _call.add(int16FromBytes(data));
+    if (_call.isNotEmpty) playing.value = true;
     _pump();
   }
 
@@ -147,7 +151,9 @@ class PcmPlayer {
 
   /// `playback.clear`: drop the server audio not yet handed to the device.
   void clear() {
+    _playbackTail?.cancel();
     _call.clear();
+    playing.value = false;
     _oddByte = null;
     if (_tones.isEmpty) level.value = 0;
   }
@@ -161,7 +167,9 @@ class PcmPlayer {
   }
 
   Future<void> close() async {
+    _playbackTail?.cancel();
     _open = false;
+    playing.value = false;
     _ring = null;
     _stuck?.cancel();
     _call.clear();
@@ -204,8 +212,20 @@ class PcmPlayer {
   void _onFeed(int remaining) {
     _stuck?.cancel();
     _waiting = false;
+    // Native callbacks ask for more PCM before the last samples have played.
+    // No further callback is guaranteed once our queue is empty.
+    _playbackTail?.cancel();
+    if (_call.isEmpty) {
+      _playbackTail = Timer(
+        Duration(microseconds: math.max(0, remaining) * 1000000 ~/ sampleRate),
+        () {
+          if (_call.isEmpty && !_waiting) playing.value = false;
+        },
+      );
+    }
     if (remaining == 0 && _empty) {
       level.value = 0;
+      playing.value = false;
       _settleDrained();
     }
     _pump();

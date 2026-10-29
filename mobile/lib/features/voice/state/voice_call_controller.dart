@@ -83,7 +83,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   // Timings from docs/VOICE_CALL_SPEC.md §5.6 and the mobile document §4.
   static const connectTimeout = Duration(seconds: 25);
   static const silenceLimit = Duration(seconds: 30);
-  static const pauseLimit = Duration(seconds: 60);
+  static const resumeRetryDelay = Duration(seconds: 2);
   static const hangUpGrace = Duration(seconds: 4);
 
   /// The closing phrase after `limit`, then `ended`, should take seconds.
@@ -112,6 +112,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   Timer? _connectTimer;
   Timer? _silenceTimer;
   Timer? _pauseTimer;
+  Future<void> _pausing = Future.value();
+  bool _resuming = false;
+  bool _systemInterrupted = false;
+  int _pauseEpoch = 0;
   Timer? _zeroTimer;
   Timer? _closingTimer;
   Timer? _graceTimer;
@@ -164,6 +168,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _speakerChosen = false;
     _ensured = false;
     _hungUpAt = null;
+    _systemInterrupted = false;
+    _resuming = false;
+    _pausing = Future.value();
+    _pauseEpoch++;
     state = VoiceCallState(
       status: VoiceCallStatus.requestingMic,
       expanded: state.expanded,
@@ -222,8 +230,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         case SystemVoiceAction.open:
           break; // The global host owns navigation.
         case SystemVoiceAction.interrupted:
+          _systemInterrupted = true;
           _pause(VoicePauseCause.interruption);
         case SystemVoiceAction.resumed:
+          _systemInterrupted = false;
           unawaited(_resume(VoicePauseCause.interruption));
       }
     });
@@ -497,6 +507,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
   void _onAudioEvent(CallAudioEvent event) {
     switch (event) {
+      case CallAudioPlayback(:final playing):
+        if (state.active) state = state.copyWith(playing: playing);
       case CallAudioInterruption(begin: true):
         _pause(VoicePauseCause.interruption);
       case CallAudioInterruption(begin: false):
@@ -523,35 +535,77 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   /// A real audio interruption (phone call, Siri, another app). Merely
   /// backgrounding the app never pauses or ends a native call.
   void _pause(VoicePauseCause cause) {
+    if (state.status == VoiceCallStatus.paused) {
+      _pauseEpoch++;
+      _pauseTimer?.cancel();
+      return;
+    }
     if (state.status != VoiceCallStatus.connected) return;
+    _pauseEpoch++;
     state = state.copyWith(status: VoiceCallStatus.paused, pauseCause: cause);
     micLevel.value = 0;
-    unawaited(_audio?.pause());
+    _pausing = (_audio?.pause() ?? Future.value()).catchError((Object _) {});
+    _socket?.sendAudioState('paused');
     _zeroTimer?.cancel();
     _zeroTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => _socket?.sendAudio(_silence),
     );
     _pauseTimer?.cancel();
-    _pauseTimer = Timer(pauseLimit, () => _finish(VoiceEndReason.error));
   }
 
-  Future<void> _resume(VoicePauseCause cause) async {
-    if (state.status != VoiceCallStatus.paused || state.pauseCause != cause) {
+  /// Explicit recovery when another app did not return audio focus. CallKit
+  /// remains authoritative while an actual system interruption is active.
+  Future<void> resumeAudio() => _resume(VoicePauseCause.interruption);
+
+  Future<void> _resume(VoicePauseCause cause, {int attempt = 0}) async {
+    if (state.status != VoiceCallStatus.paused ||
+        state.pauseCause != cause ||
+        _systemInterrupted ||
+        _resuming) {
       return;
     }
+    _pauseTimer?.cancel();
     final generation = _generation;
-    final resumed = await (_audio?.resume() ?? Future.value(false)).catchError(
-      (Object _) => false,
-    );
-    if (!_current(generation) ||
-        state.status != VoiceCallStatus.paused ||
-        !resumed) {
-      return; // Still held elsewhere: the pause limit decides.
+    final epoch = _pauseEpoch;
+    final audio = _audio;
+    _resuming = true;
+    bool resumed = false;
+    try {
+      await _pausing;
+      if (!_current(generation) ||
+          epoch != _pauseEpoch ||
+          _systemInterrupted ||
+          state.status != VoiceCallStatus.paused) {
+        return;
+      }
+      resumed = await (audio?.resume() ?? Future.value(false)).catchError(
+        (Object _) => false,
+      );
+    } finally {
+      if (_current(generation)) _resuming = false;
+    }
+    if (!_current(generation) || state.status != VoiceCallStatus.paused) return;
+    if (epoch != _pauseEpoch || _systemInterrupted) {
+      if (resumed) {
+        _pausing = (audio?.pause() ?? Future.value()).catchError((Object _) {});
+      }
+      return;
+    }
+    if (!resumed) {
+      _socket?.sendAudioState('resume_failed');
+      if (attempt < 3) {
+        _pauseTimer = Timer(
+          resumeRetryDelay,
+          () => unawaited(_resume(cause, attempt: attempt + 1)),
+        );
+      }
+      return;
     }
     _zeroTimer?.cancel();
     _pauseTimer?.cancel();
     state = state.copyWith(status: VoiceCallStatus.connected, pauseCause: null);
+    _socket?.sendAudioState('resumed');
     // The interruption may have moved the route.
     await _route(speaker: state.speakerOn);
   }

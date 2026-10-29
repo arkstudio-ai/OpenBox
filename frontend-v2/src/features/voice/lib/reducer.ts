@@ -30,6 +30,8 @@ export const initialCall: CallState = {
   working: false,
   late: false,
   playing: false,
+  hearing: false,
+  handoffUnavailable: false,
   callId: null,
   startedAt: null,
   stoppedAt: null,
@@ -122,12 +124,27 @@ function onServerEvent(state: CallState, event: ServerEvent, at: number): CallSt
         : state
     case "phase":
       return state.status === "connected" && PHASES.has(event.value)
-        ? { ...state, phase: event.value, working: event.working === true, late: event.late === true }
+        ? {
+            ...state,
+            phase: event.value,
+            working: event.working === true,
+            late: event.late === true,
+            hearing: event.hearing === true,
+            handoffUnavailable: event.hearing ? false : state.handoffUnavailable,
+          }
+        : state
+    case "notice":
+      return state.status === "connected" && event.code === "handoff_check_unavailable"
+        ? { ...state, handoffUnavailable: true }
         : state
     case "turn": {
       const messageId = event.message_id ?? state.turns[event.turn_id]?.messageId
       const turn = messageId ? { state: event.state, messageId } : { state: event.state }
-      return { ...state, turns: { ...state.turns, [event.turn_id]: turn } }
+      return {
+        ...state,
+        turns: { ...state.turns, [event.turn_id]: turn },
+        handoffUnavailable: event.state === "accepted" ? false : state.handoffUnavailable,
+      }
     }
     case "cost":
       return { ...state, cost: event }

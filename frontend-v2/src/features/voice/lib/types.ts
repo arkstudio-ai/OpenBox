@@ -76,7 +76,8 @@ export interface ErrorEvent {
 
 export type ServerEvent =
   | ReadyEvent
-  | { type: "phase"; value: Phase; working?: boolean; late?: boolean }
+  | { type: "phase"; value: Phase; working?: boolean; late?: boolean; hearing?: boolean }
+  | { type: "notice"; code: string; message?: string }
   | { type: "playback.clear" }
   | { type: "playback.started" | "playback.finished"; response_id: string }
   | { type: "phrase"; key: PhraseKey }
@@ -109,6 +110,8 @@ export interface CallState {
   late: boolean
   /** Model audio is still coming out of the speaker. */
   playing: boolean
+  hearing: boolean
+  handoffUnavailable: boolean
   callId: string | null
   /** Epoch ms of `ready`: the call clock starts there. */
   startedAt: number | null

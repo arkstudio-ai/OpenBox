@@ -44,12 +44,12 @@ void main() {
     clock.advance(const Duration(seconds: 5));
     final bar = _Bar(StubVoiceController(connectedCall(at: at), clock));
     await bar.pump(tester);
-    expect(_text(tester), '通话中 · 00:05 · 我在听');
+    expect(_text(tester), '通话中 · 00:05 · 随时可以说话');
     expect(tester.getSize(find.byKey(const Key('voice-banner'))).height, 44);
 
     clock.advance(const Duration(seconds: 2));
     await tester.pump(const Duration(seconds: 1));
-    expect(_text(tester), '通话中 · 00:07 · 我在听');
+    expect(_text(tester), '通话中 · 00:07 · 随时可以说话');
 
     bar.stub.set(
       connectedCall(at: at).copyWith(

@@ -19,22 +19,16 @@ CHOICE_FIELDS = frozenset({"model", "model_confirmed", "work_type", "video_model
 
 
 def business_video_tiers(config, videos):
-    """Reuse deployment presets and capabilities, never infer tiers from model names.
-
-    Older composer presets have more than three levels. Present one configured
-    representative per business tier; explicit model selections remain valid.
-    """
+    """Expose every configured preset with the same labels as web and mobile."""
     from api.metadata import _model_tiers
-    presets = {row["tier"]: row for row in _model_tiers(config)["video"]}
+    from core.model_tiers import video_label
+    presets = _model_tiers(config)["video"]
     offered = {row["id"]: row for row in videos}
     result = []
-    for key, label, candidates in (("fast", "快速档", ("fast",)),
-                                    ("standard", "标准档", ("medium", "low")),
-                                    ("premium", "极致档", ("ultra", "high"))):
-        row = next((presets[name] for name in candidates if name in presets), None)
-        if row is None or row["model"] not in offered:
+    for row in presets:
+        if row["model"] not in offered:
             continue
-        result.append({"id": key, "name": label, "model": row["model"],
+        result.append({"id": row["tier"], "name": video_label(row["tier"], row.get("label", "")), "model": row["model"],
                        "resolution": row["resolution"], "resolutions": row["resolutions"],
                        "description": row["description"],
                        "capabilities": offered[row["model"]]})
@@ -75,6 +69,13 @@ def resolve_video_tier(values, inventory):
     if not values.get("video_tier") or not values.get("video_tier_confirmed"):
         return
     tier = next((row for row in inventory.get("video_tiers", []) if row["id"] == values["video_tier"]), None)
+    # Previously persisted cards used these aggregate IDs. Their exact model
+    # remains binding; never silently reinterpret a confirmed historical choice.
+    if tier is None and values["video_tier"] in {"standard", "premium"}:
+        candidates = ("medium", "low") if values["video_tier"] == "standard" else ("ultra", "high")
+        tier = next((row for key in candidates for row in inventory.get("video_tiers", [])
+                     if row["id"] == key and (not values.get("video_model")
+                                              or row["model"] == values["video_model"])), None)
     if tier is None:
         raise AssistantError(400, "ASSISTANT_VIDEO_TIER_UNAVAILABLE", "Read status.models and choose an available video tier")
     if values.get("video_model") and values["video_model"] != tier["model"]:

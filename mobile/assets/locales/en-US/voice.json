@@ -8,7 +8,8 @@
     "requestingMic": "Allow the microphone",
     "connecting": "Connecting…",
     "greeting": "Connected",
-    "listening": "Listening",
+    "listening": "Ready when you are",
+    "hearing": "Listening to you",
     "muted": "Microphone muted",
     "mutedShort": "Muted",
     "thinking": "Thinking…",
@@ -17,9 +18,11 @@
     "late": "Still waiting for the reply…",
     "ending": "Hanging up…",
     "reconnecting": "Reconnecting…",
-    "paused": "Call paused"
+    "paused": "Call paused",
+    "handoffUnavailable": "Task handoff could not be verified. Check the text conversation for receipt."
   },
   "controls": {
+    "resume": "Resume call",
     "mute": "Mute",
     "unmute": "Unmute",
     "muteHint": "Mute your microphone; the call and assistant audio continue",
@@ -91,6 +94,7 @@
     "openSettings": "Open settings"
   },
   "interruption": {
+    "audio": "Another app is using audio. The call resumes when it is released, or tap Resume call.",
     "phoneCall": "Incoming phone call; the call is paused",
     "resumed": "Call resumed",
     "background": "Return to the app to continue the call"

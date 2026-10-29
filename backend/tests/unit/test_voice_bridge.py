@@ -544,3 +544,15 @@ async def test_without_pacing_a_result_goes_in_as_soon_as_the_reply_is_done(call
     link.finish("call-1")
     await drain()
     assert [command[0] for command in provider.sent if command[0] in ("note", "create")] == ["note", "create"]
+
+
+async def test_idle_and_detected_human_speech_have_distinct_hearing_flags(call):
+    bridge, provider, _, _ = call
+    await greeted(bridge, provider)
+    await replay(bridge, event('user_started'))
+    phases = of_type(outbox(bridge), 'phase')
+    assert phases[-1]['value'] == 'listening' and phases[-1]['hearing'] is True
+    await replay(bridge, event('user_stopped'), started('r'), audio('r'), done('r'))
+    phases = of_type(outbox(bridge), 'phase')
+    assert phases[-1]['hearing'] is False
+    await bridge.close()

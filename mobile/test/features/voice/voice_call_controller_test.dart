@@ -357,7 +357,9 @@ void main() {
     call.dispose();
   });
 
-  testWidgets('a pause longer than a minute ends the call', (tester) async {
+  testWidgets('a long interruption stays recoverable without ending the call', (
+    tester,
+  ) async {
     final rig = VoiceRig();
     final call = _Call(rig);
     await call.connect(tester);
@@ -376,7 +378,118 @@ void main() {
       await tester.pump();
     }
     await call.wait(tester, const Duration(seconds: 10));
-    expect(call.state.end!.reason, VoiceEndReason.error);
+    expect(call.state.status, VoiceCallStatus.paused);
+    expect(call.state.end, isNull);
+    rig.audio.resumes = true;
+    await call.controller.resumeAudio();
+    expect(call.state.status, VoiceCallStatus.connected);
+    expect(call.socket.jsonSent.last, {
+      'type': 'client.audio',
+      'state': 'resumed',
+    });
+    call.dispose();
+  });
+
+  testWidgets('focus regain retries a temporarily rejected resume', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.rig.audio
+      ..resumes = false
+      ..emit(const CallAudioInterruption(begin: true));
+    await tester.pump();
+    call.rig.audio.emit(const CallAudioInterruption(begin: false));
+    await tester.pump();
+    expect(call.rig.audio.resumeCalls, 1);
+    expect(call.state.status, VoiceCallStatus.paused);
+    call.rig.audio.resumes = true;
+    await call.wait(tester, VoiceCallController.resumeRetryDelay);
+    expect(call.rig.audio.resumeCalls, 2);
+    expect(call.state.status, VoiceCallStatus.connected);
+    call.dispose();
+  });
+
+  testWidgets('a system call cannot be resumed over and releases cleanly', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.rig.systemCall.events.add(SystemVoiceAction.interrupted);
+    await tester.pump();
+    await call.controller.resumeAudio();
+    expect(call.rig.audio.resumeCalls, 0);
+    call.rig.systemCall.events.add(SystemVoiceAction.resumed);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.connected);
+    call.dispose();
+  });
+
+  testWidgets('a new interruption wins over an in-flight resume', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.rig.audio.emit(const CallAudioInterruption(begin: true));
+    await tester.pump();
+    call.rig.audio.resumeGate = Completer<bool>();
+    unawaited(call.controller.resumeAudio());
+    await tester.pump();
+    call.rig.audio.emit(const CallAudioInterruption(begin: true));
+    await tester.pump();
+    call.rig.audio.resumeGate!.complete(true);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.paused);
+    expect(call.rig.audio.paused, isTrue);
+    call.rig.audio.resumeGate = null;
+    call.rig.audio.emit(const CallAudioInterruption(begin: false));
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.connected);
+    call.dispose();
+  });
+
+  testWidgets('hangup wins over an in-flight resume', (tester) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.rig.audio.emit(const CallAudioInterruption(begin: true));
+    await tester.pump();
+    call.rig.audio.resumeGate = Completer<bool>();
+    unawaited(call.controller.resumeAudio());
+    await tester.pump();
+    await call.controller.hangUp();
+    call.rig.audio.resumeGate!.complete(true);
+    await tester.pump();
+    expect(call.state.status, VoiceCallStatus.ending);
+    expect(call.rig.audio.closed, isTrue);
+    expect(call.socket.jsonSent.where((e) => e['state'] == 'resumed'), isEmpty);
+    call.dispose();
+  });
+
+  testWidgets('actual playback overrides an early server idle phase', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.rig.audio.emit(const CallAudioPlayback(true));
+    call.socket.event({
+      'type': 'phase',
+      'value': 'listening',
+      'hearing': false,
+    });
+    await tester.pump();
+    expect(call.state.displayPhase, VoicePhase.speaking);
+    expect(call.state.hearing, isFalse);
+    call.rig.audio.emit(const CallAudioPlayback(false));
+    await tester.pump();
+    expect(call.state.displayPhase, VoicePhase.listening);
+    call.socket.event({'type': 'notice', 'code': 'handoff_check_unavailable'});
+    await tester.pump();
+    expect(call.state.handoffUnavailable, isTrue);
+    expect(call.state.status, VoiceCallStatus.connected);
+    call.socket.event({'type': 'phase', 'value': 'listening', 'hearing': true});
+    await tester.pump();
+    expect(call.state.hearing, isTrue);
+    expect(call.state.handoffUnavailable, isFalse);
     call.dispose();
   });
 

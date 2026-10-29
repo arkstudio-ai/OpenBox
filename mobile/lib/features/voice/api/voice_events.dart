@@ -35,6 +35,7 @@ sealed class VoiceServerEvent {
             VoicePhase.listening,
         working: json['working'] == true,
         late: json['late'] == true,
+        hearing: json['hearing'] == true,
       ),
       'playback.clear' => const VoicePlaybackClearEvent(),
       'phrase' => VoicePhraseEvent(asString(json['key']) ?? ''),
@@ -49,6 +50,7 @@ sealed class VoiceServerEvent {
       'cost' => VoiceCostEvent(VoiceCost.fromJson(json)),
       'heartbeat' => VoiceHeartbeatEvent(asInt(json['elapsed_seconds']) ?? 0),
       'limit' => VoiceLimitEvent(asString(json['reason']) ?? 'credits'),
+      'notice' => VoiceNoticeEvent(asString(json['code']) ?? ''),
       'error' => VoiceErrorEvent(
         code: asString(json['code']) ?? 'internal',
         message: asString(json['message']),
@@ -84,11 +86,13 @@ final class VoicePhaseEvent extends VoiceServerEvent {
     required this.phase,
     this.working = false,
     this.late = false,
+    this.hearing = false,
   });
 
   final VoicePhase phase;
   final bool working;
   final bool late;
+  final bool hearing;
 }
 
 /// The user started talking or a reply was cancelled: drop queued audio.
@@ -129,6 +133,13 @@ final class VoiceLimitEvent extends VoiceServerEvent {
   const VoiceLimitEvent(this.reason);
 
   final String reason;
+}
+
+/// A recoverable problem; unlike `error`, it does not end the call.
+final class VoiceNoticeEvent extends VoiceServerEvent {
+  const VoiceNoticeEvent(this.code);
+
+  final String code;
 }
 
 /// The server gave up; it closes the socket next.

@@ -55,7 +55,8 @@ class CallAudioSession {
       usage: AndroidAudioUsage.voiceCommunication,
     ),
     androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransient,
-    androidWillPauseWhenDucked: true,
+    // A notification asking us to duck is not an exclusive audio interruption.
+    androidWillPauseWhenDucked: false,
   );
 
   AudioSession? _session;

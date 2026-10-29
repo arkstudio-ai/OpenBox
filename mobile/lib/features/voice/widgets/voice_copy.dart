@@ -17,9 +17,11 @@ abstract final class VoiceCopy {
       };
 
   static String phase(I18nState i18n, VoiceCallState call) =>
-      call.phase == VoicePhase.working
+      call.displayPhase == VoicePhase.working
       ? i18n.t(call.late ? 'voice:state.late' : 'voice:state.working')
-      : i18n.t('voice:state.${call.phase.name}');
+      : call.displayPhase == VoicePhase.listening
+      ? i18n.t(call.hearing ? 'voice:state.hearing' : 'voice:state.listening')
+      : i18n.t('voice:state.${call.displayPhase.name}');
 
   /// The small second line: a request still with the assistant while the
   /// call does something else, or what paused the call.
@@ -28,8 +30,11 @@ abstract final class VoiceCopy {
       return i18n.t(
         call.pauseCause == VoicePauseCause.background
             ? 'voice:interruption.background'
-            : 'voice:interruption.phoneCall',
+            : 'voice:interruption.audio',
       );
+    }
+    if (call.status == VoiceCallStatus.connected && call.handoffUnavailable) {
+      return i18n.t('voice:state.handoffUnavailable');
     }
     if (call.status == VoiceCallStatus.connected &&
         call.working &&

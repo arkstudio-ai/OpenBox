@@ -11,6 +11,8 @@ export interface CallFacts {
   phase: Phase
   working: boolean
   late: boolean
+  hearing?: boolean
+  handoffUnavailable?: boolean
   muted: boolean
   startedAt: number | null
   cost: CostSnapshot | null
@@ -39,6 +41,7 @@ export interface CallControls {
 
 function statusKey(call: CallFacts): string {
   if (call.status === "connected" && call.muted && call.phase === "listening") return "state.muted"
+  if (call.status === "connected" && call.phase === "listening" && call.hearing) return "state.hearing"
   if (call.status === "connected")
     return call.phase === "working" && call.late ? LATE_COPY : PHASE_COPY[call.phase]
   if (call.status === "requesting_mic" || call.status === "connecting" || call.status === "ending")
@@ -58,7 +61,14 @@ export function callView(call: CallFacts, elapsedMs: number): CallView {
     muted: call.muted,
     clock: clocked ? formatClock(elapsedMs / 1000) : null,
     statusKey: statusKey(call),
-    noteKey: working ? (call.late ? LATE_COPY : PHASE_COPY.working) : null,
+    noteKey:
+      connected && call.handoffUnavailable
+        ? "state.handoffUnavailable"
+        : working
+          ? call.late
+            ? LATE_COPY
+            : PHASE_COPY.working
+          : null,
     cost: call.cost,
     showHint: connected && elapsedMs < HINT_MS,
   }

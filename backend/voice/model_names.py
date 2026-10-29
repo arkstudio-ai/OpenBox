@@ -1,5 +1,6 @@
 """Spoken names from deployment presets; execution IDs and stored decisions stay intact."""
 import re
+from core.model_tiers import video_label
 
 
 def labels(config):
@@ -7,8 +8,7 @@ def labels(config):
             for row in config.model_tiers.chat}
     video = {}
     for row in config.model_tiers.video:
-        video.setdefault(row.model, {"fast": "快速档", "low": "标准档", "medium": "标准档",
-                                     "high": "极致档", "ultra": "极致档"}[row.tier])
+        video.setdefault(row.model, video_label(row.tier, row.label))
     return chat, video
 
 

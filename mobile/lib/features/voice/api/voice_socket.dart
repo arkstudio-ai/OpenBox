@@ -104,6 +104,13 @@ class VoiceSocket {
     if (!_closed) _channel.sink.add(jsonEncode({'type': 'stop'}));
   }
 
+  /// Bounded diagnostics, without microphone content or device identifiers.
+  void sendAudioState(String state) {
+    if (!_closed) {
+      _channel.sink.add(jsonEncode({'type': 'client.audio', 'state': state}));
+    }
+  }
+
   void sendView(String? sessionId) {
     if (!_closed) {
       _channel.sink.add(jsonEncode({'type': 'view', 'session_id': sessionId}));

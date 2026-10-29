@@ -306,7 +306,7 @@ class SubmitArgs(Arguments):
         description="Semantic intent: video if video type is unresolved; spoken_video for confirmed talking-head work; "
         "other_video for another confirmed video type. General excludes video production.")
     video_kind_question: str | None = Field(default=None, max_length=500)
-    video_tier: Literal["fast", "standard", "premium"] | None = Field(default=None,
+    video_tier: Literal["fast", "low", "medium", "high", "ultra", "standard", "premium"] | None = Field(default=None,
         description="Business tier ID from status.models.video_tiers; the server resolves its model and resolution.")
     video_tier_confirmed: bool = Field(default=False, strict=True,
         description="True only for the user's contextual tier choice or explicit delegation, never your recommendation alone.")

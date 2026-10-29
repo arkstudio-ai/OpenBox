@@ -38,8 +38,9 @@ def ready(call_id: str, model: str, price_date: str) -> dict:
             "playback_ack": True}
 
 
-def phase(value: str, *, working: bool, late: bool) -> dict:
-    return {"type": "phase", "value": _member(value, PHASES, "phase"), "working": bool(working), "late": bool(late)}
+def phase(value: str, *, working: bool, late: bool, hearing: bool = False) -> dict:
+    return {"type": "phase", "value": _member(value, PHASES, "phase"), "working": bool(working),
+            "late": bool(late), "hearing": bool(hearing)}
 
 
 def playback_clear() -> dict:

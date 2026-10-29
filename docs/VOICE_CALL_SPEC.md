@@ -84,7 +84,7 @@ idle ──start()──► requesting_mic ──granted──► connecting ─
 
 客户端本地标记：`muted`（静音：客户端改发静音帧，不通知服务端）、`speakerOn`（仅手机）、`expanded`（PC 悬浮窗/手机通话页是否展开）。
 
-手机端多一个本地状态 `paused`（来电或系统中断：暂停采集与播放、继续发零帧保持连接；中断结束回到 `connected`，超过 60 秒则结束 `error`），见移动端文档 §4。
+手机端多一个本地状态 `paused`（来电或系统中断：暂停采集与播放、继续发零帧保持连接；中断结束回到 `connected`，取消固定 60 秒结束；恢复失败最多自动重试 3 次，并提供手动恢复按钮），见移动端文档 §4。
 
 `ended.reason` 枚举：`hangup`（用户挂断）、`error`（服务端 `error` 后关闭）、`limit`（仅解码历史事件）、`quota`（积分不足）、`concurrent`（别处已在通话）、`mic_lost`（麦克风断开）、`network`（连接断开）、`unsupported`（浏览器/设备不支持）、`mic_denied`、`mic_missing`、`mic_busy`。
 
@@ -130,7 +130,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | type | 字段 | 说明 |
 | --- | --- | --- |
 | `ready` | `call_id`, `model`, `input_sample_rate` (16000), `output_sample_rate` (24000), `max_seconds`, `price_date`, `playback_ack` | 握手完成；`max_seconds=null`，无通话时长上限；`playback_ack=true` 表示支持可选的播放回执协商 |
-| `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool) | 界面状态唯一来源 |
+| `phase` | `value` ∈ greeting/listening/thinking/speaking/working, `working` (bool), `late` (bool), `hearing` (bool，可选，默认 false) | 服务端状态；listening + hearing=false 表示待命，true 表示检测到用户语音。客户端实际播放未排空时仍显示 speaking |
 | `playback.clear` | — | 用户开口或回复被取消：客户端立即清空播放队列并停止当前播放 |
 | `playback.started` | `response_id` | 协商回执后，在该回复首个 PCM 帧之前发送；ID 包含供应商会话代次 |
 | `playback.finished` | `response_id` | 该回复生成完成，等待真实播放结束；不是“用户已听完” |
@@ -377,3 +377,10 @@ Audio 3.1 通话使用云端 `server_vad`，沿用 `vad_threshold` 和 `silence_
 - **P1**：后端 + 网页悬浮窗，QA 环境可打电话；验收 1–14（网页）。
 - **P2**：手机端（iOS 优先，Android 跟进）；验收 1–14（手机）+ 来电中断、锁屏、耳机切换、断线恢复。
 - **P3**：后台任务结果主动播报（通话中有新任务结果时在空闲窗口播）、拖动悬浮窗位置记忆、通话记录回看、费用进计费中心。逐字口播已由 response 级指令在 P1 实现。
+
+### 2026-10-29 音频恢复与交办提示补充
+
+- 客户端可发送 `client.audio`，state 仅允许 `paused` / `resumed` / `resume_failed`；服务端只记录状态用于诊断，不接收音频内容或设备标识。旧服务端可以忽略该事件。
+- 服务端可发送非终止 `notice`，`code=handoff_check_unavailable` 表示当前语音交办检查两次均未成功；客户端显示提示，保持通话，不据此创建任务或确认卡片。下一次用户发言或新交办已接收时清除提示。
+- 交办检查使用 `authorization_source` 指向当前允许读取的用户发言；服务端绑定原话。旧的 authorization 原文格式仍接受严格校验。无效 JSON/来源可重试一次，始终检查当前发言身份与幂等状态。
+- 视频业务档位逐项遵守配置名称，保留快速、灵活、标准、质量、极致各自模型绑定。历史 standard/premium 选择保留其明确记录的模型，不改变已创建任务。

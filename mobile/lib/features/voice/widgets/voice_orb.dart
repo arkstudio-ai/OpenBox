@@ -36,8 +36,8 @@ class _VoiceOrbState extends State<VoiceOrb>
     final call = widget.call;
     return call.dialling ||
         (call.status == VoiceCallStatus.connected &&
-            (call.phase == VoicePhase.thinking ||
-                call.phase == VoicePhase.working));
+            (call.displayPhase == VoicePhase.thinking ||
+                call.displayPhase == VoicePhase.working));
   }
 
   @override
@@ -71,7 +71,7 @@ class _VoiceOrbState extends State<VoiceOrb>
   Color _color(BossipTokens t) {
     final call = widget.call;
     return switch (call.status) {
-      VoiceCallStatus.connected => switch (call.phase) {
+      VoiceCallStatus.connected => switch (call.displayPhase) {
         VoicePhase.listening => call.muted ? t.n500 : t.s600,
         VoicePhase.thinking => t.n500,
         VoicePhase.greeting || VoicePhase.speaking => t.accent,
@@ -87,7 +87,7 @@ class _VoiceOrbState extends State<VoiceOrb>
     if (MediaQuery.of(context).disableAnimations) return 1;
     if (_breathing) return 1 + 0.08 * Curves.easeInOut.transform(_breath.value);
     if (call.status != VoiceCallStatus.connected) return 1;
-    return switch (call.phase) {
+    return switch (call.displayPhase) {
       VoicePhase.listening => call.muted ? 1 : 1 + 0.3 * widget.micLevel.value,
       VoicePhase.greeting ||
       VoicePhase.speaking => 1 + 0.3 * widget.outputLevel.value,

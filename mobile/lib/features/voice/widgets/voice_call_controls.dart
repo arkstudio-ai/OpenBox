@@ -8,7 +8,7 @@ import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
 
 /// The row of round buttons under the orb (mobile §3): mute · hang up ·
-/// speaker while connected, a grey cancel while dialling, hang-up alone
+/// speaker while connected, a grey cancel while dialling, resume and hang-up
 /// while paused, everything inert while hanging up.
 class VoiceCallControls extends ConsumerWidget {
   const VoiceCallControls({super.key, required this.call, this.onHangUp});
@@ -39,6 +39,23 @@ class VoiceCallControls extends ConsumerWidget {
       foreground: Colors.white,
       onPressed: call.status == VoiceCallStatus.ending ? null : hangUp,
     );
+    if (call.status == VoiceCallStatus.paused) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          VoiceRoundButton(
+            key: const Key('voice-resume'),
+            icon: Icons.play_arrow,
+            label: i18n.t('voice:controls.resume'),
+            background: t.n200,
+            foreground: t.ink,
+            onPressed: controller.resumeAudio,
+          ),
+          hangUpButton,
+        ],
+      );
+    }
     if (call.status != VoiceCallStatus.connected) {
       return Center(child: hangUpButton);
     }

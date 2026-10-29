@@ -72,7 +72,7 @@ void main() {
         connectedCall(at: at, cost: const VoiceCost(totalYuan: 0.0035)),
         clock: clock,
       );
-      expect(_status(tester), '我在听');
+      expect(_status(tester), '随时可以说话');
       expect(tester.widget<Text>(_button('voice-timer')).data, '00:03');
       expect(find.text('直接说话就好，随时可以打断。'), findsOneWidget);
       expect(find.text('本次消耗 0.0035 积分'), findsOneWidget);
@@ -102,7 +102,7 @@ void main() {
         clock: clock,
       );
       expect(_status(tester), '在说话');
-      expect(find.text('在办，稍等…'), findsOneWidget);
+      expect(find.text('已收到，正在处理…'), findsOneWidget);
       stub.set(
         connectedCall(
           at: clock.now,
@@ -110,7 +110,7 @@ void main() {
         ).copyWith(working: true, late: true),
       );
       await tester.pump();
-      expect(_status(tester), '还在办…');
+      expect(_status(tester), '回复还在处理中…');
       expect(_button('voice-detail'), findsNothing);
     });
 
@@ -125,7 +125,9 @@ void main() {
       },
     );
 
-    testWidgets('paused: why, and only hang-up', (tester) async {
+    testWidgets('paused: explains audio interruption and offers recovery', (
+      tester,
+    ) async {
       final clock = FakeClock();
       await _page(
         tester,
@@ -136,8 +138,9 @@ void main() {
         clock: clock,
       );
       expect(_status(tester), '通话已暂停');
-      expect(find.text('有来电，通话已暂停'), findsOneWidget);
+      expect(find.text('音频被其他应用占用，释放后自动恢复，也可点击恢复通话'), findsOneWidget);
       expect(find.text('挂断'), findsOneWidget);
+      expect(_button('voice-resume'), findsOneWidget);
       expect(_button('voice-mute'), findsNothing);
     });
 

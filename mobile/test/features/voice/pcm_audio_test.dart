@@ -161,6 +161,45 @@ void main() {
   });
 
   group('player', () {
+    testWidgets(
+      'playing remains true through the final native buffered samples',
+      (tester) async {
+        final output = _Output();
+        final player = PcmPlayer(output);
+        await player.open();
+        player.enqueue(_pcm(2400, 100));
+        expect(player.playing.value, isTrue);
+        output.report(1600);
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(player.playing.value, isTrue);
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(player.playing.value, isFalse);
+        player.enqueue(_pcm(2400, 200));
+        expect(player.playing.value, isTrue);
+        player.clear();
+        expect(player.playing.value, isFalse);
+        await player.close();
+      },
+    );
+
+    testWidgets('an old drain callback cannot clear newly queued speech', (
+      tester,
+    ) async {
+      final output = _Output();
+      final player = PcmPlayer(output);
+      await player.open();
+      player.enqueue(_pcm(2400, 100));
+      output.report(1600);
+      await tester.pump(const Duration(milliseconds: 40));
+      player.enqueue(_pcm(4800, 200));
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(player.playing.value, isTrue);
+      output.report(1600);
+      output.report(0);
+      expect(player.playing.value, isFalse);
+      await player.close();
+    });
+
     test('keeps the device buffer short and feeds on demand', () async {
       final output = _Output();
       final player = PcmPlayer(output);

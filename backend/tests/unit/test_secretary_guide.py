@@ -136,3 +136,21 @@ async def test_failed_context_reads_do_not_invent_first_contact_or_logout(monkey
     monkeypatch.setattr("assistant.status_tools.platforms", AsyncMock(side_effect=TimeoutError()))
     facts = await front_context(user_id="u", workspace_id="w", main_session_id="m")
     assert facts.first_call is False and facts.platforms is None
+
+
+def test_every_configured_video_tier_is_distinct_and_legacy_cards_keep_exact_models(monkeypatch):
+    from assistant.model_choices import business_video_tiers, resolve_video_tier
+    rows = [{'tier': key, 'label': label, 'model': model, 'resolution': '720p', 'resolutions': ['720p'],
+             'description': ''} for key, label, model in (
+        ('fast', '快速', 'turbo'), ('low', '灵活', 'h3'), ('medium', '标准', 'wan'),
+        ('high', '质量', 'seedance'), ('ultra', '极致', 'seedance-2.5'))]
+    monkeypatch.setattr('api.metadata._model_tiers', lambda _: {'video': rows})
+    tiers = business_video_tiers(object(), [{'id': row['model']} for row in rows])
+    assert [r['name'] for r in tiers] == ['快速档', '灵活档', '标准档', '质量档', '极致档']
+    for key, model in [('low', 'h3'), ('medium', 'wan'), ('standard', 'h3'), ('premium', 'seedance')]:
+        values = {'video_tier': key, 'video_model': model, 'video_tier_confirmed': True}
+        resolve_video_tier(values, {'video_tiers': tiers})
+        assert values['video_model'] == model and values['video_model_confirmed']
+    with pytest.raises(AssistantError):
+        resolve_video_tier({'video_tier': 'low', 'video_model': 'wan', 'video_tier_confirmed': True},
+                           {'video_tiers': tiers})

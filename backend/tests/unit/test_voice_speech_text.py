@@ -63,3 +63,15 @@ def test_final_speech_uses_configured_business_tiers_without_changing_execution_
     assert '专业' in spoken and '快速档' in spoken and '两段15秒' in spoken
     assert config.video_generation.model == 'video-a'
     assert public_model_names('专业（openai/task-a）', config) == '专业（专业）'
+
+
+def test_flexible_and_standard_keep_their_configured_labels():
+    from core.config import OpenBoxConfig
+    from voice.model_names import labels, public_model_names
+    config = OpenBoxConfig(video_generation={'model': 'MiniMax-H3', 'models': [
+        {'id': 'MiniMax-H3', 'name': 'MiniMax H3'}, {'id': 'wan3.0', 'name': 'Wan 3.0'}]},
+        model_tiers={'video': [{'tier': 'low', 'label': '灵活', 'model': 'MiniMax-H3'},
+                               {'tier': 'medium', 'label': '标准', 'model': 'wan3.0'}]})
+    assert labels(config)[1] == {'MiniMax-H3': '灵活档', 'wan3.0': '标准档'}
+    assert public_model_names('MiniMax H3 与 Wan 3.0', config) == '灵活档 与 标准档'
+    assert config.video_generation.model == 'MiniMax-H3'

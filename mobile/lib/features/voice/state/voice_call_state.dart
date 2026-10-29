@@ -173,6 +173,9 @@ class VoiceCallState {
   const VoiceCallState({
     this.status = VoiceCallStatus.idle,
     this.phase = VoicePhase.greeting,
+    this.hearing = false,
+    this.playing = false,
+    this.handoffUnavailable = false,
     this.working = false,
     this.late = false,
     this.callId,
@@ -190,6 +193,12 @@ class VoiceCallState {
 
   final VoiceCallStatus status;
   final VoicePhase phase;
+  final bool hearing;
+  final bool playing;
+  final bool handoffUnavailable;
+
+  /// The server may finish generating before the native speaker drains.
+  VoicePhase get displayPhase => playing ? VoicePhase.speaking : phase;
 
   /// A request is still with the text assistant (shown beside the phase).
   final bool working;
@@ -235,6 +244,9 @@ class VoiceCallState {
   VoiceCallState copyWith({
     VoiceCallStatus? status,
     VoicePhase? phase,
+    bool? hearing,
+    bool? playing,
+    bool? handoffUnavailable,
     bool? working,
     bool? late,
     Object? callId = _keep,
@@ -251,6 +263,9 @@ class VoiceCallState {
   }) => VoiceCallState(
     status: status ?? this.status,
     phase: phase ?? this.phase,
+    hearing: hearing ?? this.hearing,
+    playing: playing ?? this.playing,
+    handoffUnavailable: handoffUnavailable ?? this.handoffUnavailable,
     working: working ?? this.working,
     late: late ?? this.late,
     callId: identical(callId, _keep) ? this.callId : callId as String?,

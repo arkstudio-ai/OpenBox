@@ -8,7 +8,8 @@
     "requestingMic": "请允许使用麦克风",
     "connecting": "正在接通…",
     "greeting": "已接通",
-    "listening": "我在听",
+    "listening": "随时可以说话",
+    "hearing": "在听你说",
     "muted": "麦克风已静音",
     "mutedShort": "已静音",
     "thinking": "想一下…",
@@ -17,9 +18,11 @@
     "late": "回复还在处理中…",
     "ending": "正在挂断…",
     "reconnecting": "正在重新连接…",
-    "paused": "通话已暂停"
+    "paused": "通话已暂停",
+    "handoffUnavailable": "本次语音交办核查暂不可用，请在文字对话查看任务是否已收到。"
   },
   "controls": {
+    "resume": "恢复通话",
     "mute": "静音",
     "unmute": "取消静音",
     "muteHint": "关闭麦克风，通话和助手播报继续",
@@ -91,6 +94,7 @@
     "openSettings": "去设置"
   },
   "interruption": {
+    "audio": "音频被其他应用占用，释放后自动恢复，也可点击恢复通话",
     "phoneCall": "有来电，通话已暂停",
     "resumed": "通话已恢复",
     "background": "回到应用继续通话"

@@ -58,7 +58,7 @@
 | `requesting_mic` | `voice:state.requestingMic` | 仅“取消” |
 | `connecting` | `voice:state.connecting` | 仅“取消” |
 | `connected` | `voice:state.<phase>` (+ working 小字) | 静音、挂断、扬声器 |
-| `paused`（来电/后台中断） | `voice:state.paused` + `voice:interruption.*` | 挂断 |
+| `paused`（系统音频中断） | `voice:state.paused` + `voice:interruption.*` | 恢复通话、挂断 |
 | `ending` | `voice:state.ending` | 禁用 |
 | `ended` | 结束面板 | 重拨/关闭 |
 
@@ -70,7 +70,7 @@
 | 平台声明 | `Info.plist`：`NSMicrophoneUsageDescription`（文案同 `voice:permission.body`）、`UIBackgroundModes: [audio, voip]` | `AndroidManifest.xml`：`RECORD_AUDIO`、`MODIFY_AUDIO_SETTINGS`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK`、`SYSTEM_ALERT_WINDOW`、`WAKE_LOCK` |
 | 音频会话 | `audio_session`：`playAndRecord` + `defaultToSpeaker`（无耳机时）+ `allowBluetooth` + `voiceChat` 模式（启用系统回声消除） | `audio_session` 的 `AndroidAudioAttributes(usage: voiceCommunication)`，`AudioManager` 通信模式 |
 | 锁屏/切后台 | CallKit 激活音频后继续通话，系统通话入口返回同一通话 | 在前台启动麦克风/播放前台服务，后台持续采集；授权悬浮窗时显示电话图标；返回或隐藏悬浮窗不挂断 |
-| 来电/Siri 等中断 | `audio_session.interruptionEventStream`：开始 → 暂停采集与播放、发零帧保持连接、状态 `paused`；结束 → 恢复；暂停超过 60 秒 → 挂断（`error`） | 同左（`AudioFocus` 丢失） |
+| 来电/Siri 等中断 | `audio_session.interruptionEventStream`：开始 → 暂停采集与播放、发零帧保持连接、状态 `paused`；结束 → 恢复；失败后最多自动重试 3 次，提供手动恢复，无固定暂停时限 | 同左（独占 `AudioFocus` 丢失；duck 不暂停） |
 | 耳机/蓝牙切换 | `audio_session.devicesChangedEventStream`：插入耳机自动关扬声器，拔出自动开；用户手动切过则尊重手动 | 同左 |
 | 扬声器/听筒 | 默认：无耳机时扬声器；切换用 `audio_session` 的 `setActive` + 路由覆盖 | 同左 |
 | 网络切换 | WS 断 → P2 内 20 秒重连一次（服务端 P2 支持恢复），失败则 `network` 结束 | 同左 |
@@ -176,3 +176,11 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 个人助手 Markdown 中的 `/app/s/:id` 和第一方绝对链接进入原生 `GoRouter`，保留消息查询与锚点，并可返回个人助手。外部站点交给浏览器，知识库自定义链接处理保留。只将当前 API/Web origin 和 `https://ai.bossipai.com.cn` 上的合法会话链接转换为应用路由。
 
 平台参考：[Apple CallKit](https://developer.apple.com/documentation/callkit/making-and-receiving-voip-calls)、[Android microphone/mediaPlayback 前台服务](https://developer.android.com/develop/background-work/services/fgs/service-types)。
+
+## 2026-10-29 音频中断恢复验收
+
+本节更新旧版来电/暂停描述：Android 短暂 duck 请求不视为来电、不暂停语音；真正独占音频时才暂停采集与播放，继续发送零帧维持连接。界面提示音频被占用并提供“恢复通话”；取消暂停满 60 秒自动结束，系统释放后自动恢复，失败时 2 秒间隔重试 3 次。CallKit 系统中断未结束时手动恢复不能抢占真实来电。
+
+待命显示“随时可以说话”，服务端 hearing=true 时显示“在听你说”；真实 PCM 播放未排空时仍显示“在说话”。麦克风是否静音与后台任务是否处理中仍是独立状态。
+
+定向验证：controller/reducer/PCM/page/banner 92 项；Android API 36 上由独立测试进程实际请求 CAN_DUCK、70 秒 TRANSIENT、永久 GAIN，验证继续通话、超过一分钟保留通话、自动恢复和点击恢复。测试源码 `integration_test/voice_audio_focus_test.dart`，外部焦点探针不打包到正式 APK。iOS 系统中断及恢复竞态有定向自动化覆盖，本轮未在实体手机上测试运营商来电。

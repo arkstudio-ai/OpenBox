@@ -8,7 +8,7 @@
     "requestingMic": "Allow the microphone",
     "connecting": "Connecting…",
     "greeting": "Connected",
-    "listening": "Listening",
+    "listening": "Ready when you are",
     "muted": "Microphone muted",
     "mutedShort": "Muted",
     "thinking": "Thinking…",
@@ -17,7 +17,9 @@
     "late": "Still waiting for the reply…",
     "ending": "Hanging up…",
     "reconnecting": "Reconnecting…",
-    "paused": "Call paused"
+    "paused": "Call paused",
+    "hearing": "Listening to you",
+    "handoffUnavailable": "Task handoff could not be verified. Check the text conversation for receipt."
   },
   "controls": {
     "mute": "Mute",

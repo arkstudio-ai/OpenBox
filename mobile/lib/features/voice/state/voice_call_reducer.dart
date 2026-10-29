@@ -33,6 +33,8 @@ VoiceCallState reduceVoiceEvent(
       if (!state.live) return state;
       return state.copyWith(
         phase: event.phase,
+        hearing: event.hearing,
+        handoffUnavailable: event.hearing ? false : state.handoffUnavailable,
         working: event.working || event.phase == VoicePhase.working,
         late: event.late,
       );
@@ -40,7 +42,16 @@ VoiceCallState reduceVoiceEvent(
       if (state.status == VoiceCallStatus.idle || event.turnId.isEmpty) {
         return state;
       }
-      return state.copyWith(turns: {...state.turns, event.turnId: event.turn});
+      return state.copyWith(
+        turns: {...state.turns, event.turnId: event.turn},
+        handoffUnavailable: event.turn.state == 'accepted'
+            ? false
+            : state.handoffUnavailable,
+      );
+    case VoiceNoticeEvent():
+      return state.live && event.code == 'handoff_check_unavailable'
+          ? state.copyWith(handoffUnavailable: true)
+          : state;
     case VoiceCostEvent():
       if (state.status == VoiceCallStatus.idle) return state;
       if (state.status == VoiceCallStatus.ended) {

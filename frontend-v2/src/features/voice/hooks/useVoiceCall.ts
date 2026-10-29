@@ -27,6 +27,8 @@ export function useVoiceCall() {
       phase: displayPhase(state.call),
       working: state.call.working,
       late: state.call.late,
+      hearing: state.call.hearing,
+      handoffUnavailable: state.call.handoffUnavailable,
       startedAt: state.call.startedAt,
       stoppedAt: state.call.stoppedAt,
       cost: state.call.cost,

@@ -669,3 +669,51 @@ async def test_words_already_acted_on_are_neither_answered_on_a_card_again_nor_f
     bridge, link, seen = await _told_card_then(checker, applies=None)
     assert seen and not link.started and "u1" not in bridge.handoff.required
     await bridge.close()
+
+
+async def test_invalid_check_retries_and_forwards_the_human_request_only_once():
+    calls = []
+    async def checker(words, context, *args):
+        calls.append(words)
+        if len(calls) == 1:
+            raise ValueError('unbound handoff authorization')
+        return True
+    bridge, provider, link = guarded(checker)
+    await greeted(bridge, provider)
+    await utterance(bridge, '刚才说错了，用灵活档做这个视频', '好的，我来安排')
+    assert len(calls) == 2 and len(link.started) == 1
+    assert link.started[0].transcript == '刚才说错了，用灵活档做这个视频'
+    await bridge.fill_idle()
+    assert len(link.started) == 1
+    await bridge.close()
+
+
+async def test_failed_validation_is_visible_but_never_authorizes_work():
+    from tests.support.voice_fakes import outbox, of_type
+    calls = []
+    async def checker(*args):
+        calls.append(1)
+        raise ValueError('unknown_authorization_source')
+    bridge, provider, link = guarded(checker)
+    await greeted(bridge, provider)
+    await utterance(bridge, '帮我做一份完整欢迎词文档', '我来安排')
+    assert len(calls) == 2 and not link.started
+    assert [e['code'] for e in of_type(outbox(bridge), 'notice')] == ['handoff_check_unavailable']
+    assert not provider.commands('create')
+    await bridge.close()
+
+
+@pytest.mark.parametrize('source,earlier,accepted', [
+    ('latest_user', (), True), ('prior_0', ('制作一个短视频',), True),
+    ('prior_0', (), False), ('assistant', (), False), ('context', (), False),
+])
+async def test_authorization_source_resolves_only_to_permitted_human_words(monkeypatch, source, earlier, accepted):
+    async def complete(*args):
+        return json.dumps({'decision': 'handoff', 'operation': 'artifact',
+                           'authorization_source': source, 'request': '按用户选定的档位制作短视频'})
+    monkeypatch.setattr('voice.summary.complete', complete)
+    if accepted:
+        assert await required('用灵活档制作', '', earlier)
+    else:
+        with pytest.raises(ValueError, match='unknown_authorization_source'):
+            await required('用灵活档制作', 'assistant: 制作一个短视频', earlier)

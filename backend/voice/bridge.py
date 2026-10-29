@@ -170,11 +170,12 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                  else "thinking" if ((responding and self.response_kind == "model") or self._awaiting_reply()
                                       or self.followup_due or self._cancel_recovery_provider is not None)
                  else "working" if working else "listening")
-        if (value, working, late) != self._phase:
-            self._phase = (value, working, late)
+        hearing = self.state == "user_speaking"
+        if (value, working, late, hearing) != self._phase:
+            self._phase = (value, working, late, hearing)
             log.debug("voice phase call=%s value=%s state=%s pending=%d", self.call_id, value,
                       self.state, len(self.pending_calls))
-            self.emit(events.phase(value, working=working, late=late))
+            self.emit(events.phase(value, working=working, late=late, hearing=hearing))
 
     async def start(self) -> None:
         """An interruptible opening after the client is ready to speak and listen."""

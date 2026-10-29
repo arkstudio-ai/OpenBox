@@ -134,6 +134,8 @@ class FakeCallAudio implements CallAudio {
   CallTone? closeTone;
   bool external = false;
   bool resumes = true;
+  int resumeCalls = 0;
+  Completer<bool>? resumeGate;
   Object? openError;
 
   void emit(CallAudioEvent event) => _events.add(event);
@@ -186,8 +188,10 @@ class FakeCallAudio implements CallAudio {
 
   @override
   Future<bool> resume() async {
-    if (resumes) paused = false;
-    return resumes;
+    resumeCalls++;
+    final result = resumeGate == null ? resumes : await resumeGate!.future;
+    if (result) paused = false;
+    return result;
   }
 
   @override

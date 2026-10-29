@@ -263,6 +263,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 raise CallEnded("hangup")
             if kind == "ping":
                 bridge.emit(events.heartbeat(time.monotonic() - started))
+            elif kind == "client.audio" and payload.get("state") in {"paused", "resumed", "resume_failed"}:
+                log.info("voice client audio call=%s state=%s", call_id, payload["state"])
             elif kind == "view":
                 from voice.view_context import session_hint
                 bridge.scope = dataclasses.replace(bridge.scope,

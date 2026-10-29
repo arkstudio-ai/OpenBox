@@ -205,3 +205,15 @@ describe("callReducer", () => {
     })
   })
 })
+
+it("shows a nonfatal handoff notice and clears it when a request is accepted", () => {
+  let call = callReducer(connected(), server({ type: "notice", code: "handoff_check_unavailable" }))
+  expect(call.status).toBe("connected")
+  expect(call.handoffUnavailable).toBe(true)
+  call = callReducer(call, server({ type: "turn", turn_id: "t1", state: "accepted" }))
+  expect(call.handoffUnavailable).toBe(false)
+  call = callReducer(call, server({ type: "phase", value: "listening", hearing: true }))
+  expect(call.hearing).toBe(true)
+  call = callReducer(call, server({ type: "phase", value: "listening", hearing: false }))
+  expect(call.hearing).toBe(false)
+})

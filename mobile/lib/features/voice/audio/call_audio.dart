@@ -16,6 +16,11 @@ sealed class CallAudioEvent {
   const CallAudioEvent();
 }
 
+final class CallAudioPlayback extends CallAudioEvent {
+  const CallAudioPlayback(this.playing);
+  final bool playing;
+}
+
 /// A phone call, Siri or another app took the audio ([begin]) or gave it
 /// back.
 final class CallAudioInterruption extends CallAudioEvent {
@@ -130,6 +135,7 @@ class DeviceCallAudio implements CallAudio {
   @override
   Future<void> open({required void Function(Uint8List packet) onPacket}) async {
     _onPacket = onPacket;
+    _player.playing.addListener(_playbackChanged);
     try {
       _tones = await CallTones.load();
     } catch (_) {
@@ -150,7 +156,7 @@ class DeviceCallAudio implements CallAudio {
     }
     if (!active) throw const CallAudioFailure(VoiceEndReason.micBusy);
     _interruptions = _session.interruptions.listen((event) {
-      // Android "duck" (with pause-when-ducked set it arrives as pause).
+      // Ducking allows speech to continue; it is not a phone-call signal.
       if (event.type == AudioInterruptionType.duck) return;
       _events.add(CallAudioInterruption(begin: event.begin));
     });
@@ -174,6 +180,10 @@ class DeviceCallAudio implements CallAudio {
       );
     }
     _watchdog = Timer.periodic(const Duration(seconds: 1), (_) => _check());
+  }
+
+  void _playbackChanged() {
+    if (!_closed) _events.add(CallAudioPlayback(_player.playing.value));
   }
 
   /// The stream failed or ended: let the watchdog try to bring it back.
@@ -235,16 +245,20 @@ class DeviceCallAudio implements CallAudio {
   Future<bool> resume() async {
     if (_closed) return false;
     if (!await _session.reactivate()) return false;
+    if (_closed) return false;
     try {
       await _capture.resume();
     } catch (_) {
+      if (_closed) return false;
       try {
         await _capture.stop();
+        if (_closed) return false;
         await _capture.start(onPacket: _onPacket!, onLost: _micLost);
       } catch (_) {
         return false;
       }
     }
+    if (_closed) return false;
     _paused = false;
     return true;
   }
@@ -259,6 +273,7 @@ class DeviceCallAudio implements CallAudio {
   Future<void> close({CallTone? tone}) async {
     if (_closed) return;
     _closed = true;
+    _player.playing.removeListener(_playbackChanged);
     _watchdog?.cancel();
     await _interruptions?.cancel();
     await _devices?.cancel();

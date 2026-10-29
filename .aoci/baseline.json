@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-14T14:19:43Z",
-  "updated_at": "2026-10-29T10:46:18Z",
+  "updated_at": "2026-10-29T11:30:37Z",
   "files": {
     ".dockerignore": {
       "role": "index",
@@ -11928,6 +11928,12 @@
       "sha256": "0a201ede6c96760d5a11804a2049ac7e24fcab9fb24a5ae768f8145b9de965fa",
       "size": 9904,
       "normalized_sha256": "0a201ede6c96760d5a11804a2049ac7e24fcab9fb24a5ae768f8145b9de965fa"
+    },
+    "docs/evidence/video-fresh-generation-release-20261029.json": {
+      "role": "observe",
+      "sha256": "d13ad6dd298337c824d80f8b548d61765d0ea3369d073c59102c9ebe6d7df86b",
+      "size": 4501,
+      "normalized_sha256": "d13ad6dd298337c824d80f8b548d61765d0ea3369d073c59102c9ebe6d7df86b"
     },
     "docs/evidence/voice-address-release-20261021.json": {
       "role": "observe",

@@ -1,0 +1,126 @@
+{
+  "status": "deployed_verified",
+  "release": "20261029-video-fresh-e9340556",
+  "patch_commit": "e934055618a09d2dd2404cfc20fc52c2539daf2f",
+  "merge_commit": "d1b9a6377af7aa0392cb138cfa0e02d8a210d22b",
+  "pull_request": "https://github.com/arkstudio-ai/OpenBox/pull/103",
+  "build": {
+    "local_docker": true,
+    "platform": "linux/amd64",
+    "base_image": "openbox-backend:20261028-fruit-welcome-e052edf7",
+    "base_image_id": "sha256:70dd4bfd47f2e4961eb84b816ef5cfc0aa13427c4c3e6895b8fecfe4bcf9095d",
+    "patch_files": [
+      "core/config.py",
+      "tool/video_production.py",
+      "tool/video_providers.py"
+    ],
+    "other_python_sources_unchanged": true,
+    "artifact": {
+      "kind": "backend",
+      "source_commit": "e934055618a09d2dd2404cfc20fc52c2539daf2f",
+      "image": "openbox-backend:20261029-video-fresh-e9340556",
+      "image_id": "sha256:d3997d1b8b96e58a737dae8f9cc7737c6c9a480b8eae21b375286cede116d8ff",
+      "sha256": "57926133bb20c030c93b8fd8ff1d7f9ccc456b461c96f3dc0847d1312cdcbe91",
+      "bytes": 235339086
+    }
+  },
+  "updated_services": [
+    "backend",
+    "trajectory-worker"
+  ],
+  "unchanged_containers": [
+    "frontend",
+    "postgres",
+    "redis",
+    "qdrant-memory"
+  ],
+  "healthy_services": 6,
+  "application_restart_counts": 0,
+  "runtime_patch_file_checks_per_container": 3,
+  "completed_content_cache_removed": true,
+  "same_key_retry_protection_retained": true,
+  "configuration_preserved": true,
+  "routes": {
+    "professional": "gemini-4-argon-high",
+    "fast": "gemini-3.8-flash-high",
+    "voice": "official",
+    "other_models": "internal_gateway",
+    "memory_semantic_recall": false
+  },
+  "database": {
+    "business": "ph84a5b6c7d8",
+    "trajectory": "t0007_turn_alerts",
+    "migration_required": false,
+    "backups_validated": true
+  },
+  "cutover": {
+    "idle_verified_twice_before_backend_restart": true,
+    "user_tasks_cancelled": false,
+    "backend_first_then_trace_worker": true
+  },
+  "validation": {
+    "targeted_test_count": 143,
+    "production_base_compatibility_test_count": 143,
+    "test_groups_overlap": true,
+    "full_suite_run": false,
+    "local_browser_real_minimax_fresh_take": "passed_same_prompt_different_provider_jobs_and_output_bytes",
+    "explicit_reattach": "passed_without_new_generation",
+    "production_authenticated_browser": "passed",
+    "production_paid_generation_started_by_release": false
+  },
+  "runtime_log_checks": {
+    "initial_backend_tracebacks": 0,
+    "initial_backend_error_lines": 0,
+    "later_backend_tracebacks": 3,
+    "later_backend_error_events": 2,
+    "worker_tracebacks": 0,
+    "worker_error_lines": 0,
+    "later_error_classification": [
+      {
+        "module": "sandbox.desktop_activation",
+        "exception": "ChromeUnavailable / BrowserRuntimeUnavailable",
+        "summary": "A desktop browser did not open its debug port during activation."
+      },
+      {
+        "module": "sandbox.desktop_activation",
+        "exception": "PurchaseUncertain",
+        "summary": "A desktop renewal outcome was not yet visible."
+      }
+    ],
+    "affected_modules_changed_by_this_patch": false,
+    "video_generation_patch_errors_observed": 0,
+    "separate_desktop_repairs_performed": false
+  },
+  "rollback": {
+    "directory": "/opt/openbox/releases/20261029-video-fresh-e9340556",
+    "script": "rollback-application.sh",
+    "prepared": true,
+    "production_exercised": false,
+    "database_restore_required": false
+  },
+  "limits": [
+    "Backend hotfix only; the earlier unactivated mobile voice candidate is not activated by this patch.",
+    "Existing user videos are preserved and are not automatically regenerated.",
+    "Full-system AOCI cognition is not claimed.",
+    "Two desktop activation errors were observed during post-release monitoring and recorded separately; those account/browser/renewal issues were not repaired as part of this video hotfix."
+  ],
+  "followup_release_constraint": "Future releases must rebuild from main including e9340556 and bind the current image/config state. Do not activate the older unactivated 98091a2c candidate over this hotfix.",
+  "public_checks": {
+    "/": {
+      "samples": 525,
+      "statuses": {
+        "200": 525
+      }
+    },
+    "/api/environment": {
+      "samples": 525,
+      "statuses": {
+        "200": 518,
+        "502": 7
+      },
+      "observed_failure_span_seconds": 19.3,
+      "bounded_unavailable_window_seconds": 25.8,
+      "stable_seconds_after_last_failure": 297.0
+    }
+  }
+}

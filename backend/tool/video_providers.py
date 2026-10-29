@@ -1303,14 +1303,14 @@ def compute_prompt_hash(
     inputs: list[dict[str, Any]] | None,
     extra_params: dict[str, Any] | None,
 ) -> str:
-    """Cross-user content key over everything that shapes the output.
+    """Content fingerprint over everything that shapes the output.
 
-    Deliberately excludes user/session/trace/time (cross-user reuse is the
-    point) and deliberately INCLUDES inputs and extra_params — same prompt
+    Excludes user/session/trace/time; the caller enforces ownership when
+    checking in-flight duplicates. INCLUDES inputs and extra_params — same prompt
     with a different reference image, or generate_audio true vs false, must
     never collide (both were real false-hit bugs in the reference system).
     Inputs are identified by content digest ("etag:size"), not per-user asset
-    ids, so identical bytes match across users.
+    ids. Equal fingerprints do not authorize reusing a completed video for a new take.
 
     A person reference is an ordinary image input. Its content digest already
     participates in this key, while provider-side materialization is owned by

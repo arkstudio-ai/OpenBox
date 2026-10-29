@@ -115,7 +115,10 @@ class VideoInputRef(BaseModel):
 class VideoGenerateArgs(BaseModel):
     action: Literal["models", "validate", "submit", "status", "wait", "cancel", "fetch", "attach"]
     job_id: str | None = Field(default=None, max_length=96)
-    idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
+    idempotency_key: str | None = Field(default=None, min_length=3, max_length=180, description=(
+        "Stable per take/shot: reuse for retries; use a new key for a requested fresh take, "
+        "even with unchanged prompt/model. Same key always returns the original job."
+    ))
     # ── describe the shot directly ──
     #: Describe the shot. Supplying it means an open generation.
     prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
@@ -158,8 +161,10 @@ class VideoGenerateArgs(BaseModel):
         "no assets for text-to-video, explicit first_frame/last_frame for image-to-video; no generic "
         "image/video/audio references."
     ))
-    #: Pay twice for a second take of a request already in flight.
-    allow_duplicate: bool = False
+    allow_duplicate: bool = Field(default=False, description=(
+        "Allow a requested second take while identical content is still running. "
+        "Requires a new idempotency_key; never bypasses same-key retry protection."
+    ))
     #: For action="fetch": the owned asset to deliver to the workspace.
     #: For action="attach": the owned asset to show again on this reply.
     asset_id: str | None = Field(default=None, max_length=512)
@@ -1401,6 +1406,19 @@ async def _finalize_segment(
     return await _owned_job(job.id, ctx, "segment")
 
 
+def _reuse_origin_lines(job) -> list[str]:
+    """Keep legacy content-cache receipts honest without exposing their source owner."""
+    result = getattr(job, "result_data", None)
+    if not isinstance(result, dict) or result.get("reuse") is not True:
+        return []
+    return [
+        "generation_origin=reused_existing",
+        "new_generation=false",
+        "generation_instruction=This job copied an existing video; no new provider generation "
+        "was performed. Do not describe it as regenerated. A requested fresh take needs a new submit key.",
+    ]
+
+
 def _job_lines(
     job,
     asset=None,
@@ -1408,7 +1426,7 @@ def _job_lines(
     queue_position: int | None = None,
     retry_after: int | None = 5,
 ) -> list[str]:
-    lines = [f"job_id={job.id}", f"status={job.status}"]
+    lines = [f"job_id={job.id}", f"status={job.status}", *_reuse_origin_lines(job)]
     production_id = getattr(job, "production_id", None)
     segment_id = getattr(job, "segment_id", None)
     if production_id:
@@ -1625,67 +1643,6 @@ async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]]
             }
         )
     return digests
-
-
-async def _find_reusable_segment(prompt_hash: str) -> tuple[Any, Any] | None:
-    """Newest completed job with identical content, any user (cross-user reuse)."""
-    from db.base import get_db_session
-    from db.models.file_asset import FileAsset
-    from db.models.video_job import VideoJob
-
-    async with get_db_session() as db:
-        row = (
-            await db.execute(
-                select(VideoJob, FileAsset)
-                .join(FileAsset, FileAsset.id == VideoJob.output_asset_id)
-                .where(
-                    VideoJob.prompt_hash == prompt_hash,
-                    VideoJob.kind == "segment",
-                    VideoJob.status == "completed",
-                    VideoJob.output_asset_id.is_not(None),
-                    FileAsset.status == "ready",
-                    FileAsset.is_deleted.is_(False),
-                )
-                .order_by(VideoJob.completed_at.desc())
-                .limit(1)
-            )
-        ).first()
-    return (row[0], row[1]) if row else None
-
-
-async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) -> Any | None:
-    """Fulfil a reserved job by OSS server-side copy instead of a paid call.
-
-    The new user gets their own FileAsset row and OSS key — asset rows and
-    keys are never shared across users (a later soft-delete removes the OSS
-    object). Returns the completed job, or None so the caller falls back to
-    the normal paid path.
-    """
-    from core.oss import get_oss
-
-    asset = await _job_asset(job)
-    if not asset:
-        return None
-    try:
-        head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
-    except Exception:
-        head = None
-    if not head or not head.get("size"):
-        return None
-    now = datetime.now(timezone.utc)
-    await _mark_asset(job.output_asset_id, status="ready", size=head["size"])
-    await _update_job(
-        job.id,
-        status="completed",
-        # Audit only: the source identifiers stay in result_data and are never
-        # printed in tool output (they can belong to another user).
-        result_data={"reuse": True, "reused_from_job": source_job.id, "bytes": head["size"]},
-        attempt=1,
-        started_at=now,
-        completed_at=now,
-        error=None,
-    )
-    return await _owned_job(job.id, ctx, "segment")
 
 
 # ── open generation: resolving a request that carries its own content ───────
@@ -2212,6 +2169,8 @@ async def _execute_attach(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResu
         role="final" if (asset.mime or "").startswith("video/") else "result",
         metadata={"job_id": job.id if job else None},
     )
+    if not (result.metadata or {}).get("error"):
+        result.output += "\nnew_generation=false\ninstruction=This action attached an existing asset; it did not generate a new video."
     if not (result.metadata or {}).get("error") and ctx.message_id:
         # The job's output is now shown: the conversation listing says so and
         # the completion sweep stops offering it (recovery attached the same
@@ -2463,6 +2422,7 @@ async def _execute_list(ctx: ToolContext) -> ToolResult:
             fields.append(f"asset_id={asset.id}")
         fields.append(f"shown_in_chat={'true' if job.attached_message_id else 'false'}")
         lines.append(" ".join(fields))
+        lines.extend(_reuse_origin_lines(job))
         prompt = " ".join(str(job.prompt or "").split())
         if prompt:
             lines.append("  prompt=" + (prompt if len(prompt) <= _LIST_PROMPT_CHARS
@@ -2472,10 +2432,12 @@ async def _execute_list(ctx: ToolContext) -> ToolResult:
         rows.append({"job_id": job.id, "status": job.status, "shot": request.get("shot"),
                      "asset_id": asset.id if ready else None})
     lines.append(
-        "instruction=These are the real jobs of this conversation. A completed job already holds its paid "
+        "instruction=These are the real jobs of this conversation. During recovery, a completed job holds its "
         "output: show it with action=attach (asset_id) unless shown_in_chat=true (already shown; do not attach it "
         "again unless the person asks), or fetch it into the workspace with action=fetch; never resubmit a "
-        "completed or still-running job. Submit only shots that have no job or whose job failed. "
+        "completed or still-running job. An explicit request for a fresh take is different: submit with a "
+        "new idempotency_key even if the prompt/model are unchanged; if the old take is still running, "
+        "also set allow_duplicate=true. Never invent a fresh-take request to recover an uncertain submission. "
         "The prompts and shot numbers are the confirmed storyboard; do not ask the person for it again.")
     return ToolResult(title=f"{len(jobs)} video job(s) in this conversation", output="\n".join(lines),
                       metadata={"jobs": rows})
@@ -2628,8 +2590,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             "roles": list(roles),
                         },
                     )
+            # Same-key reconciliation takes precedence over a different take
+            # still running with identical content (possibly in another chat).
+            admitted = await _existing_job_for_key(ctx, "segment", args.idempotency_key or "")
             if (
                 prompt_hash
+                and admitted is None
                 and not args.allow_duplicate
                 and getattr(settings, "refuse_duplicate_in_flight", True)
             ):
@@ -2659,7 +2625,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             # when its row was created and is not charged against the cap again.
             from billing import credit_cap as _credit_cap
 
-            admitted = await _existing_job_for_key(ctx, "segment", args.idempotency_key or "")
             async with _credit_cap.reserve(ctx.session_id, step="generation", credits=_quote.credits,
                                            note=f"{target.model} {resolution} {duration}s",
                                            already_admitted=admitted is not None):
@@ -2701,31 +2666,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     },
                 )
 
-            if prompt_hash:
-                reusable = await _find_reusable_segment(prompt_hash)
-                if reusable:
-                    source_job, source_asset = reusable
-                    reused_job = await _complete_from_reuse(job, source_job, source_asset, ctx)
-                    if reused_job is not None:
-                        # No paid call happened. The spend approval remains
-                        # hash-bound audit evidence; source identifiers stay
-                        # out of the output.
-                        await _attach_completed(reused_job, ctx)
-                        reused_asset = await _job_asset(reused_job)
-                        return ToolResult(
-                            title="Video segment ready (reused identical generation)",
-                            output="\n".join(_job_lines(reused_job, reused_asset)),
-                            metadata={
-                                "job_id": reused_job.id,
-                                "status": reused_job.status,
-                                "asset_id": (
-                                    reused_asset.id
-                                    if reused_asset and reused_asset.status == "ready"
-                                    else None
-                                ),
-                                "reused": True,
-                            },
-                        )
+            # A new key denotes a new take, including identical prompts. Only
+            # same-key retries return existing work above. Content similarity
+            # must never silently replace a paid generation with an old clip.
 
             from core.config import get_config as _get_config
 
@@ -3446,7 +3389,8 @@ Before paying, clarify ambiguous asset selection or purpose. If a model cannot u
 explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
 Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \
 fetch re-delivers an owned video to the workspace; attach shows an owned asset card without a sandbox; never write an asset link. \
-status without job_id lists this conversation's jobs, shots and finished assets: use it to resume before submitting again. \
+status without job_id lists this conversation's jobs, shots and finished assets: use it to recover existing work. \
+For a requested fresh take, submit with a new key; do not attach old footage or call it regenerated. \
 Different jobs may run together; never parallelize mutations of one job. \
 After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 

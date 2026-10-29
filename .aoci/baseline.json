@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-14T14:19:43Z",
-  "updated_at": "2026-10-29T07:11:48Z",
+  "updated_at": "2026-10-29T07:45:15Z",
   "files": {
     ".dockerignore": {
       "role": "index",
@@ -47,9 +47,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "3ab1b7dccfb4fdcc32a07b75f43df5f68eb76b0e2d98917d7919f113d681861a",
-      "size": 175857,
-      "normalized_sha256": "3ab1b7dccfb4fdcc32a07b75f43df5f68eb76b0e2d98917d7919f113d681861a"
+      "sha256": "f0e658a49bbe269bd9ef0869bfda538ac47acbe853f25338ef53d6027a114b0e",
+      "size": 175881,
+      "normalized_sha256": "f0e658a49bbe269bd9ef0869bfda538ac47acbe853f25338ef53d6027a114b0e"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -10396,9 +10396,9 @@
     },
     "docs/DEPLOY.md": {
       "role": "index",
-      "sha256": "5bcd4b9422375f2cda6960c9722f27a3853991a83f6a2057a837d532648f7f12",
-      "size": 246939,
-      "normalized_sha256": "5bcd4b9422375f2cda6960c9722f27a3853991a83f6a2057a837d532648f7f12"
+      "sha256": "fa490a746f519002f9eff214997351054fbda962b3e8750e7d71f7caad55abb0",
+      "size": 249093,
+      "normalized_sha256": "fa490a746f519002f9eff214997351054fbda962b3e8750e7d71f7caad55abb0"
     },
     "docs/DESKTOP_INPUT_FIX_20261021.md": {
       "role": "observe",
@@ -11838,6 +11838,12 @@
       "sha256": "742f7e501b62b70d1fcbf7542268b4e292f0d150e81fd9c3c2b438c6f6412b5f",
       "size": 4462,
       "normalized_sha256": "742f7e501b62b70d1fcbf7542268b4e292f0d150e81fd9c3c2b438c6f6412b5f"
+    },
+    "docs/evidence/mobile-voice-recovery-release-20261029.json": {
+      "role": "observe",
+      "sha256": "41921d15cc886d059695554f8dd8744cc17c93fa9ef43cef023d915bdda90ff7",
+      "size": 3289,
+      "normalized_sha256": "41921d15cc886d059695554f8dd8744cc17c93fa9ef43cef023d915bdda90ff7"
     },
     "docs/evidence/question-anchor-release-20261021.json": {
       "role": "observe",

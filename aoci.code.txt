@@ -394,7 +394,7 @@ docker-compose.trajectory.yml[FV8T]: F:将轨迹采集、读取及存储迁移�
 pg-backup.sh[OR7S]: F:导出业务及轨迹Postgres备份并上传OSS校验大小与摘要 | R:code:backend/trajectory/ops/backup.py,code:deploy/gw2/scripts/lib.sh | A:--database/--local-dir/--keep-local | S:默认真实执行；业务库旧轨迹表仅备份结构；pg_restore --list不证明完整可恢复；--keep-local和失败残留仍受mtime超过3天清理
 
 ===/Volumes/fanxiang/workspace2/OpenBox/docs/===
-DEPLOY.md[SV7L]: F:记录部署拓扑、逐版证据、桌面兼容顺序和服务回退流程 | R:code:deploy/gaode/README.md,code:docs/WUYING_SANDBOX.md | A:配置对照、发布、健康核验、备份与回退 | S:历史记录非实时状态；本地Compose不覆盖生产；先升级旧桌面回执再启用新后端；单实例切换有中断；不重建或整体回退已继续写入的业务库
+DEPLOY.md[SV7L]: F:记录部署拓扑、逐版证据、桌面兼容顺序和服务回退流程 | R:code:deploy/gaode/README.md,code:docs/WUYING_SANDBOX.md | A:配置对照、发布、健康核验、备份与回退 | S:历史记录非实时状态，候选镜像非上线；本地Compose不覆盖生产；先升级旧桌面回执再启用新后端；单实例切换有中断；不重建或整体回退已继续写入的业务库
 MOBILE_WEB_PARITY.md[SU7L]: F:维护Web与Flutter跨端功能、差异、完成记录及验收清单 | R:code:mobile/scripts/check_locales.sh,code:docs/PERSONAL_ASSISTANT_IMPLEMENTATION.json | A:待对齐/完成/有意省略状态与同变更维护要求 | S:Web locale是唯一源，移动逐字节同步；后端兼容默认不等于权限/缓存对齐；合入、模拟器和真机/发布证据分别登记
 TOOL_SCHEMA_DEFERRED_LOADING_PLAN.md[SG8L]: F:记录工具Schema延迟物化、双平面能力分层及2026-08-31验收 | R:code:docs/SKILL_TOOL_DECOUPLING_PLAN.md | A:资格/物化/可执行/reveal四集合与分阶段手册 | S:Skill正文不能赋权或物化；授权不跨用户缓存且执行时重验；首个provider事件后禁止重放；native须真实binding协议证据，历史共享桌面描述不能当当前归属事实
 WUYING_SANDBOX.md[SR8L]: F:说明无影执行平面、工作区桌面与通道运维，提供组件分批更新和回滚手册 | R:code:backend/sandbox/wuying.py,code:backend/scripts/wuying_patch_stream_output.py,code:container/storage_migration.py | A:配置、bootstrap、排障、控制存储迁移及组件发布流程 | S:per_user实际一workspace一桌面；隔离须显式启用并离线迁移；旧桌面、池及模板须验证输出完整回执和技能后准入，仅版本号不够；journal更换不清未知效果，close不证原生通道排空；包月或未知资费ghost不自动删除

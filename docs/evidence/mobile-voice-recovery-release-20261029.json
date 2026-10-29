@@ -1,0 +1,94 @@
+{
+  "release": "20261029-mobile-voice-98091a2c",
+  "source_commit": "98091a2c56091884a53a7c0fee3593e97c0accc7",
+  "documentation_commit": "4740fd0108b3f0cfc907a87c1625923db15688dd",
+  "release_status": "blocked_by_active_mobile_call",
+  "production_release": "20261028-fruit-welcome-e052edf7",
+  "server_activation_verified": false,
+  "database_migration_required": false,
+  "environment_change_required": false,
+  "production_config_preserved": true,
+  "voice_channel": "official_direct",
+  "other_model_channels": "internal_gateway",
+  "database_heads": {
+    "business": "ph84a5b6c7d8",
+    "trajectory": "t0007_turn_alerts"
+  },
+  "staging": {
+    "local_linux_amd64_build": true,
+    "remote_image_hash_check": true,
+    "shipping_backend_source_files_checked": 10,
+    "config_backup_verified": true,
+    "two_database_dumps_verified": true,
+    "compose_diff": "three application image references only",
+    "rollback_script_prepared": true,
+    "live_rollback_performed": false
+  },
+  "validation": {
+    "full_suite_run": false,
+    "backend_related_passed": 179,
+    "backend_prompt_regression_passed": 27,
+    "web_passed": 37,
+    "web_typecheck": "passed",
+    "flutter_passed": 92,
+    "flutter_analysis": "passed",
+    "android_native_focus_integration_passed": 1,
+    "browser_real_voice_with_synthetic_microphone": "passed",
+    "browser_plan_only_video_jobs_created": 0,
+    "physical_cellular_call_tested": false,
+    "ios_simulator_retested": false
+  },
+  "android": {
+    "application_id": "com.bossip.bipmobile",
+    "version": "1.0.41",
+    "build_number": 52,
+    "signed_with_existing_production_certificate": true,
+    "production_origins_verified": true,
+    "debuggable": false,
+    "apk_sha256": "d3179f26f7ae08e296b67847da5056a26beecacc458f32935980f3391179dc45",
+    "archive_sha256": "24899dec145f4f50d2ab9e3a56ca1a3f72af1b94ac5386482a3917ce61d23132",
+    "archive_integrity": "passed"
+  },
+  "distribution": {
+    "destination": "existing Feishu product group",
+    "apk_archive": "sent_and_verified",
+    "release_notes": "sent_and_verified",
+    "server_pending_disclosed": true,
+    "server_activation_followup_sent": false,
+    "server_pending_followup_sent": true,
+    "group_acknowledgement_visible": true
+  },
+  "aoci": {
+    "source_bound_review": true,
+    "full_system_cognition_verified": false,
+    "entry_updates_applied": 13,
+    "verify_passed": true,
+    "aggregate_check_passed": true,
+    "guide_complete": true
+  },
+  "blocking_condition": "A real mobile voice call is still connected. Replacing the single backend would disconnect it; no application switch was performed.",
+  "completed_idle_waits": 4,
+  "production_services_healthy": 6,
+  "deployment_check": "Current application images and all original config hashes verified unchanged.",
+  "idle_wait_exit_codes": [
+    75,
+    75,
+    75,
+    75
+  ],
+  "idle_wait_scripts_still_running": false,
+  "final_activity": {
+    "executions": 0,
+    "drivers": 0,
+    "video_jobs": 0,
+    "active_mobile_calls": 1,
+    "mobile_call_age_seconds": 551,
+    "renewed_lock_ttl_seconds": 55
+  },
+  "public_probes": {
+    "samples": 2176,
+    "non_200_or_errors": 0,
+    "continuous_coverage_claimed": false,
+    "note": "Separate bounded monitoring runs; no application cutover occurred."
+  }
+}

@@ -200,7 +200,8 @@
     "allowance": "Plan allowance",
     "topup": "Paid top-up",
     "usage": "Usage",
-    "grant": "Credit grant"
+    "grant": "Credit grant",
+    "signup_gift": "Welcome gift"
   },
   "operations": {
     "title": "Admin activity",

@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
+from light import first_video
 
 log = create_logger("video.recovery")
 
@@ -155,6 +156,10 @@ async def sweep() -> int:
                 if len(_failed_once) > 500:
                     _failed_once.clear()
     await resume_unattached_completions()
+    try:
+        await first_video.sweep_unfinished()
+    except Exception as exc:  # first videos must not stall the segment sweep
+        log.warning(f"First video recovery sweep failed: {type(exc).__name__}")
     return advanced
 
 
@@ -179,6 +184,8 @@ async def resume_unattached_completions() -> None:
         VideoJob.kind == "segment", VideoJob.status == "completed",
         type_coerce(VideoJob.result_data, JSON)["completion_delivery_pending"].as_boolean().is_(True),
         VideoJob.output_asset_id.isnot(None), VideoJob.attached_message_id.is_(None),
+        # First videos are delivered by light/first_video.py, never by waking the agent.
+        ~VideoJob.idempotency_key.like(first_video.KEY_PREFIX + "%"),
         VideoJob.completed_at >= now - timedelta(days=LOOKBACK_DAYS),
         VideoJob.completed_at < now - timedelta(seconds=STALE_AFTER_SECONDS),
         Session.is_deleted.is_(False),
@@ -270,7 +277,12 @@ async def _recover_job(job) -> bool:
         if done:
             log.info(f"Recovered stranded video job {job.id} to {refreshed.status}")
             if refreshed.status == "completed":
-                await resume_conversation(refreshed)
+                if first_video.is_first_video_job(refreshed):
+                    await first_video.on_job_settled(refreshed)
+                else:
+                    await resume_conversation(refreshed)
+            elif first_video.is_first_video_job(refreshed):
+                await first_video.on_job_settled(refreshed)
         return done
 
     if state in ("failed", "cancelled"):
@@ -284,6 +296,10 @@ async def _recover_job(job) -> bool:
         )
         await vp._mark_asset(job.output_asset_id, status="failed")
         log.info(f"Settled stranded video job {job.id} as {state}")
+        if first_video.is_first_video_job(job):
+            settled = await _load(job.id)
+            if settled is not None:
+                await first_video.on_job_settled(settled)
         return True
 
     # Provider still working: refresh status/updated_at so staleness stays honest.

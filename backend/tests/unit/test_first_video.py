@@ -135,6 +135,20 @@ async def test_submit_runs_once_per_workspace_and_records_the_form(monkeypatch):
     assert (await profile.load(user["id"])).business == "food"
 
 
+async def test_offer_marks_new_accounts_and_reads_as_not_started():
+    user = await _user()
+    await first_video.offer(user["id"])
+    pref = (await PgPreferenceRepo().get(user["id"]))["extra"]["first_video"]
+    assert pref["status"] == "offered"
+    assert (await first_video.state(user["id"], user["default_workspace_id"]))["status"] == "none"
+    # A later offer never overwrites progress, and a legacy account simply has no record.
+    await first_video._write_pref(user["id"], status="skipped")
+    await first_video.offer(user["id"])
+    assert (await first_video._pref(user["id"]))["status"] == "skipped"
+    legacy = await _user()
+    assert await first_video._pref(legacy["id"]) == {}
+
+
 async def test_submit_refuses_a_reference_that_is_not_the_users_image():
     user = await _user()
     app = _app(user)

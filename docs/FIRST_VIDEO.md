@@ -24,6 +24,7 @@ POST body: { "industry": "food"|"beauty"|"retail"|"other",   // 缺省 other
 
 - 行业会回写 `assistant_profile.business`（只接受 food / beauty / retail）。
 - 状态存在 `user_preferences.extra.first_video`（独立键；不进 `onboarding`，那张表被手机整体替换）。App 跳过整个流程时写 `PUT /api/auth/me/preferences {"extra":{"first_video":{"status":"skipped"}}}`。
+- **谁进六屏**：注册时后端写 `extra.first_video = {"status":"offered"}`；App 只在 `status == "offered"` 时进六屏。**没有这个键的是上线前的老账号，视为已跳过**，不用回填。`GET /api/first-video` 对 `offered` 返回 `status="none"`。
 - 完成/失败各推一条通知：kind `first_video_ready` / `first_video_failed`，链接是成片所在会话。
 - 错误：`400 FIRST_VIDEO_INVALID`（参考图不是本人的图片等）。余额从不成为拒绝理由（见下）。
 

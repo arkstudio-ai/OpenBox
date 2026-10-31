@@ -34,6 +34,9 @@ PREF_KEY = "first_video"
 SESSION_TITLE = "我的第一条视频"
 ENTRYPOINT = "first_video"
 TERMINAL = ("ready", "failed")
+#: ``offered`` is written at registration: the account is new enough to get the flow.
+#: An account with no record at all predates the feature and is treated as skipped.
+OFFERED = "offered"
 STATUSES = ("none", "skipped", "submitted", "running", "ready", "failed")
 MAX_GENERATION_SECONDS = 20 * 60
 MAX_OVERLAY_SECONDS = 5 * 60
@@ -95,10 +98,21 @@ async def _write_pref(user_id: str, **changes) -> dict:
     return current
 
 
+async def offer(user_id: str) -> None:
+    """Registration hook: mark a new account as eligible. Never fails the registration."""
+    try:
+        if not await _pref(user_id):
+            await _write_pref(user_id, status=OFFERED)
+    except Exception as exc:
+        log.warning("first video: offer not recorded user=%s error=%s", user_id, type(exc).__name__)
+
+
 async def state(user_id: str, workspace_id: str) -> dict:
     pref = await _pref(user_id)
     status = pref.get("status") or "none"
-    if status not in STATUSES:
+    if status == OFFERED:
+        status = "none"
+    elif status not in STATUSES:
         status = "running"
     return {
         "status": status,

@@ -2,7 +2,7 @@
   "version": "openbox-2026-09-18-restored-prices",
   "currency": "CNY",
   "plans": [
-    { "id": "free", "prices_fen": { "monthly": 0, "yearly": 0 }, "credits": "10", "credit_period": "weekly", "recommended": false },
+    { "id": "free", "prices_fen": { "monthly": 0, "yearly": 0 }, "credits": "10", "credit_period": "weekly", "recommended": false, "signup_gift_credits": "4" },
     { "id": "pro", "prices_fen": { "monthly": 49900, "yearly": 598800 }, "credits": "280", "credit_period": "monthly", "recommended": true },
     { "id": "max", "prices_fen": { "monthly": 199900, "yearly": 2398800 }, "credits": "1680", "credit_period": "monthly", "recommended": false }
   ],

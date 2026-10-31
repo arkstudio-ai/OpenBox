@@ -200,7 +200,8 @@
     "allowance": "套餐积分",
     "topup": "支付充值",
     "usage": "使用扣费",
-    "grant": "积分发放"
+    "grant": "积分发放",
+    "signup_gift": "新人首条视频"
   },
   "operations": {
     "title": "管理操作记录",

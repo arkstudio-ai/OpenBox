@@ -771,8 +771,9 @@ class _SendButton extends StatelessWidget {
     final showStop = busy && onStop != null;
     final enabled = showStop || canSend;
     return Material(
-      color: (showStop && stopTask ? t.danger : t.ink)
-          .withValues(alpha: enabled ? 1 : 0.4),
+      color: (showStop && stopTask ? t.danger : t.ink).withValues(
+        alpha: enabled ? 1 : 0.4,
+      ),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),

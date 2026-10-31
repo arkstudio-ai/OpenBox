@@ -85,8 +85,11 @@ class _ExecutionEffectNoticeState extends ConsumerState<ExecutionEffectNotice> {
       if (!mounted) return;
       _key = null;
       ref
-          .read(executionEffectAckRequestedProvider(widget.sessionId).notifier)
-          .state = false;
+              .read(
+                executionEffectAckRequestedProvider(widget.sessionId).notifier,
+              )
+              .state =
+          false;
       toast.info(
         i18n.t(
           receipt['remaining_unresolved'] == true

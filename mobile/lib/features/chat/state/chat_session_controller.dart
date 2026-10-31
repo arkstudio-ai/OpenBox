@@ -613,8 +613,9 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
       // "我已核对，继续" right here instead of pointing at a card elsewhere.
       if (apiErrorOf(error)?.code == 'ASSISTANT_EFFECT_UNRESOLVED') {
         ref
-            .read(executionEffectAckRequestedProvider(_sessionId).notifier)
-            .state = true;
+                .read(executionEffectAckRequestedProvider(_sessionId).notifier)
+                .state =
+            true;
       }
       ref
           .read(toastProvider.notifier)

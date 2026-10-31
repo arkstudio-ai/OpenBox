@@ -175,8 +175,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   !readOnly &&
                   sessionState.session?.assistantManaged != true,
               onStop: busy && index == rows.length - 1
-                  ? () =>
-                        _requestStop(sessionState.session)
+                  ? () => _requestStop(sessionState.session)
                   : null,
               onReview: () =>
                   context.push(Paths.workbench(sessionId, tab: 'review')),
@@ -222,8 +221,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
               ),
               TextButton(
-                onPressed: () =>
-                    _requestStop(sessionState.session),
+                onPressed: () => _requestStop(sessionState.session),
                 child: Text(
                   ref.watch(i18nProvider).t('chat:question.cancelWaiting'),
                 ),
@@ -282,8 +280,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ExecutionEffectNotice(
           sessionId: sessionId,
           session: sessionState.session,
-          onAcknowledged: () =>
-              ref.read(chatSessionProvider(sessionId).notifier).refreshSession(),
+          onAcknowledged: () => ref
+              .read(chatSessionProvider(sessionId).notifier)
+              .refreshSession(),
         ),
         if (readOnly)
           SafeArea(
@@ -324,10 +323,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               onSend: (text, attachments) => ref
                   .read(chatSessionProvider(sessionId).notifier)
                   .send(text, attachments: attachments),
-              onStop: busy
-                  ? () =>
-                        _requestStop(sessionState.session)
-                  : null,
+              onStop: busy ? () => _requestStop(sessionState.session) : null,
             ),
           ),
       ],

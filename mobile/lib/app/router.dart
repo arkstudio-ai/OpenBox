@@ -10,6 +10,7 @@ import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/state/config_providers.dart';
+import '../features/chat/widgets/assistant_requests.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
@@ -164,7 +165,20 @@ final routerProvider = Provider<GoRouter>((ref) {
           // one still slides away, it must be a new page, not that one.
           key: state.pageKey,
           fullscreenDialog: true,
-          child: const VoiceCallPage(),
+          child: Consumer(
+            builder: (context, ref, _) {
+              final scope = ref.watch(assistantScopeProvider);
+              return VoiceCallPage(
+                cards: scope == null
+                    ? null
+                    : (beforeOpen) => AssistantRequests(
+                        scope: scope,
+                        deck: true,
+                        beforeOpen: beforeOpen,
+                      ),
+              );
+            },
+          ),
         ),
       ),
       GoRoute(

@@ -552,6 +552,9 @@
     "tasks": "任务列表",
     "noTasks": "暂无任务，可以让助理帮你开始。",
     "requests": {
+      "previous": "上一张",
+      "next": "下一张",
+      "position": "第 {{index}} / {{count}} 张",
       "title": "有 {{count}} 件事需要你处理",
       "label": "需要你处理的事",
       "openTask": "打开对话",

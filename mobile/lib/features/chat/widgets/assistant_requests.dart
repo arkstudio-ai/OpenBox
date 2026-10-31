@@ -39,9 +39,19 @@ class _Requests {
 /// plus questions waiting in the user's other conversations. Only a reply
 /// that failed gets a line; nothing renders when nothing waits.
 class AssistantRequests extends ConsumerStatefulWidget {
-  const AssistantRequests({super.key, required this.scope, this.beforeOpen});
+  const AssistantRequests({
+    super.key,
+    required this.scope,
+    this.beforeOpen,
+    this.deck = false,
+  });
   final AssistantScope scope;
   final VoidCallback? beforeOpen;
+
+  /// One card at a time with previous/next, for the call page: the parent
+  /// bounds the height and the person swipes between what needs them while
+  /// still on the phone. The list layout (default) is the assistant page's.
+  final bool deck;
   @override
   ConsumerState<AssistantRequests> createState() => _AssistantRequestsState();
 }
@@ -55,6 +65,8 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
   Timer? _timer;
   StreamSubscription<WsEvent>? _ws;
   StreamSubscription<AppEvent>? _bus;
+  final _deckPage = PageController();
+  int _deckIndex = 0;
   bool get _current =>
       mounted && ref.read(assistantScopeProvider) == widget.scope;
 
@@ -98,6 +110,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
     _timer?.cancel();
     unawaited(_ws?.cancel());
     unawaited(_bus?.cancel());
+    _deckPage.dispose();
     super.dispose();
   }
 
@@ -198,6 +211,172 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
     }
   }
 
+  /// The call page's deck: the same cards, one per page, with a position line
+  /// and previous/next. Cards taller than the deck scroll inside their page.
+  Widget _buildDeck(
+    BuildContext context,
+    I18nState i18n,
+    _Requests questions,
+    _Requests permissions,
+    Object? error,
+    int count,
+  ) {
+    final t = context.tokens;
+    final pages = <Widget>[
+      if (error != null)
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              errorText(i18n, error),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.dangerInk),
+            ),
+            _TextLink(
+              label: i18n.t('chat:assistant.reload'),
+              onTap: () => unawaited(_loadAll()),
+            ),
+          ],
+        )
+      else ...[
+        for (final item in questions.items)
+          _Request(
+            key: ValueKey(
+              'question:${item['id']}:${asMap(item['assistant'])['request_revision']}',
+            ),
+            scope: widget.scope,
+            kind: 'question',
+            item: item,
+            onOpen: _openConversation,
+          ),
+        for (final item in permissions.items)
+          _Request(
+            key: ValueKey(
+              'permission:${item['id']}:${asMap(item['assistant'])['request_revision']}',
+            ),
+            scope: widget.scope,
+            kind: 'permission',
+            item: item,
+            onOpen: _openConversation,
+          ),
+        for (final item in _waiting)
+          _Waiting(
+            key: ValueKey('waiting:${item['id']}'),
+            item: item,
+            onOpen: _openConversation,
+          ),
+        if (questions.cursor != null || permissions.cursor != null)
+          Center(
+            child: _TextLink(
+              label: i18n.t('chat:assistant.requests.more'),
+              onTap: questions.loading || permissions.loading
+                  ? null
+                  : () {
+                      if (questions.cursor != null)
+                        _load('question', more: true);
+                      if (permissions.cursor != null) {
+                        _load('permission', more: true);
+                      }
+                    },
+            ),
+          ),
+      ],
+    ];
+    if (pages.isEmpty) return const SizedBox.shrink();
+    // A card answered elsewhere shrinks the deck under the current page.
+    final index = _deckIndex.clamp(0, pages.length - 1);
+    void go(int target) {
+      if (target < 0 || target >= pages.length) return;
+      _deckPage.animateToPage(
+        target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    }
+
+    return Semantics(
+      container: true,
+      label: i18n.t('chat:assistant.requests.label'),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+        decoration: BoxDecoration(
+          color: t.a100,
+          borderRadius: BorderRadius.circular(Radii.xl),
+          border: Border.all(color: t.hair),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.notifications_active_outlined,
+                  size: 17,
+                  color: t.dangerInk,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    count == 0
+                        ? i18n.t('chat:assistant.requests.label')
+                        : i18n.t(
+                            'chat:assistant.requests.title',
+                            vars: {'count': count},
+                          ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: FontSizes.base,
+                      fontWeight: FontWeight.w500,
+                      color: t.dangerInk,
+                    ),
+                  ),
+                ),
+                if (pages.length > 1) ...[
+                  IconButton(
+                    key: const Key('requests-deck-previous'),
+                    tooltip: i18n.t('chat:assistant.requests.previous'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: index == 0 ? null : () => go(index - 1),
+                    icon: const Icon(Icons.chevron_left, size: 20),
+                  ),
+                  Text(
+                    i18n.t(
+                      'chat:assistant.requests.position',
+                      vars: {'index': index + 1, 'count': pages.length},
+                    ),
+                    key: const Key('requests-deck-position'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+                  ),
+                  IconButton(
+                    key: const Key('requests-deck-next'),
+                    tooltip: i18n.t('chat:assistant.requests.next'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: index == pages.length - 1
+                        ? null
+                        : () => go(index + 1),
+                    icon: const Icon(Icons.chevron_right, size: 20),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: PageView.builder(
+                controller: _deckPage,
+                itemCount: pages.length,
+                onPageChanged: (value) => setState(() => _deckIndex = value),
+                itemBuilder: (context, i) => SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: pages[i],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openConversation(String sessionId) {
     final router = GoRouter.of(context);
     widget.beforeOpen?.call();
@@ -226,6 +405,9 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
         questions.cursor == null &&
         permissions.cursor == null) {
       return const SizedBox.shrink();
+    }
+    if (widget.deck) {
+      return _buildDeck(context, i18n, questions, permissions, error, count);
     }
     final muted = TextStyle(fontSize: FontSizes.sm, color: t.n700);
     return Semantics(

@@ -41,5 +41,6 @@
   "ASSISTANT_STILL_STOPPING": "The previous run is still stopping. This request was not accepted. Wait a moment, then try again.",
   "ASSISTANT_TASK_NOT_RUNNING": "This task cannot accept input yet. If it is paused, resume it from its task card before sending your message.",
   "ASSISTANT_TASK_HELD": "This task is paused, stopped or unavailable. Check its current state on the task card before continuing.",
-  "ASSISTANT_EFFECT_UNRESOLVED": "Some earlier actions have unverified outcomes. Check the cloud desktop, then confirm the outcomes on the task card before continuing."
+  "ASSISTANT_EFFECT_UNRESOLVED": "One step's outcome was not confirmed when the task stopped. Check it, press \"I've checked — continue\", then send this message again.",
+  "ASSISTANT_DUPLICATE_TASK": "This work already has a task. Continue in that task instead."
 }

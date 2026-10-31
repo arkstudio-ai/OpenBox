@@ -482,6 +482,14 @@ class AssistantController
         'expected_run': task.run,
       }, (body) => _api.control(task.id, body));
 
+  /// "我已核对，继续" on a task card (web `AssistantEffectAcknowledge`): one key
+  /// per (task, inspected revision), so a lost response is retried as it was.
+  Future<void> acknowledgeEffects(AssistantTask task) => _command(
+    'ack:${task.id}:${task.revision}',
+    {'expected_revision': task.revision},
+    (body) => _api.acknowledgeEffects(task.id, body),
+  );
+
   Future<void> linkExisting(String sessionId, String version) => _command(
     'link:$sessionId',
     {'session_id': sessionId, 'expected_version': version},

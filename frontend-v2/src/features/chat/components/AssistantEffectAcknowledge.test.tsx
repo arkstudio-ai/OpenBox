@@ -53,8 +53,9 @@ describe("unverified outcome acknowledgment", () => {
     mount({ observed_state: "paused" })
     expect(screen.queryByRole("button")).toBeNull()
     cleanup()
+    // A stopped task must be confirmed before a new message may reopen it.
     mount({ desired_state: "canceled" })
-    expect(screen.queryByRole("button")).toBeNull()
+    expect(screen.getByRole("button", { name: "assistant.card.effectAck.action" })).toBeTruthy()
     cleanup()
     mount()
     expect(screen.getByText("assistant.card.effectAck.hint")).toBeTruthy()

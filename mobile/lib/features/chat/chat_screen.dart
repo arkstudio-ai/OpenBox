@@ -19,6 +19,7 @@ import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
+import 'widgets/execution_effect_notice.dart';
 import 'widgets/interruption_divider.dart';
 import 'widgets/run_error_notice.dart';
 import 'widgets/turn_actions_sheet.dart';
@@ -42,6 +43,18 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _historyController = ScrollController();
+  // In a task-linked conversation "stop" cancels the assistant's whole task
+  // and may leave it waiting for the owner to confirm outcomes, so it asks
+  // once, inline, before doing it.
+  bool _confirmStop = false;
+
+  void _requestStop(Session? session) {
+    if (session?.assistantManaged == true) {
+      setState(() => _confirmStop = true);
+      return;
+    }
+    ref.read(chatSessionProvider(sessionId).notifier).stop();
+  }
 
   /// The user message the transcript opened on. Rows above it are history
   /// loaded by scrolling up, which [ChatFlow] lays out upwards from it so a
@@ -163,7 +176,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   sessionState.session?.assistantManaged != true,
               onStop: busy && index == rows.length - 1
                   ? () =>
-                        ref.read(chatSessionProvider(sessionId).notifier).stop()
+                        _requestStop(sessionState.session)
                   : null,
               onReview: () =>
                   context.push(Paths.workbench(sessionId, tab: 'review')),
@@ -210,7 +223,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
               TextButton(
                 onPressed: () =>
-                    ref.read(chatSessionProvider(sessionId).notifier).stop(),
+                    _requestStop(sessionState.session),
                 child: Text(
                   ref.watch(i18nProvider).t('chat:question.cancelWaiting'),
                 ),
@@ -258,6 +271,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             onDismiss: () =>
                 ref.read(chatStreamProvider.notifier).clearRunError(sessionId),
           ),
+        if (_confirmStop && busy)
+          StopTaskNotice(
+            onConfirm: () {
+              setState(() => _confirmStop = false);
+              ref.read(chatSessionProvider(sessionId).notifier).stop();
+            },
+            onKeep: () => setState(() => _confirmStop = false),
+          ),
+        ExecutionEffectNotice(
+          sessionId: sessionId,
+          session: sessionState.session,
+          onAcknowledged: () =>
+              ref.read(chatSessionProvider(sessionId).notifier).refreshSession(),
+        ),
         if (readOnly)
           SafeArea(
             top: false,
@@ -299,7 +326,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   .send(text, attachments: attachments),
               onStop: busy
                   ? () =>
-                        ref.read(chatSessionProvider(sessionId).notifier).stop()
+                        _requestStop(sessionState.session)
                   : null,
             ),
           ),

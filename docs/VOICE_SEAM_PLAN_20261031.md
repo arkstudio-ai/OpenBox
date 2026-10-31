@@ -98,7 +98,7 @@
 
 这三处不是语音改动，但 3.2 和 3.3 把用户往执行页引的概率更高，不补会再出一次今天的事故。
 
-1. **错误文案**：`frontend-v2/src/locales/*/errors.json` 与 `mobile/assets/locales` 镜像补 `ASSISTANT_EFFECT_UNRESOLVED`、`ASSISTANT_TASK_NOT_RUNNING`、`ASSISTANT_TASK_HELD`、`ASSISTANT_STILL_STOPPING`、`ASSISTANT_CONTROL_CONFLICT`。文案说"要做什么"，不说"刷新重试"。
+1. **错误文案**：核实后更正：`ASSISTANT_EFFECT_UNRESOLVED`、`ASSISTANT_TASK_NOT_RUNNING`、`ASSISTANT_TASK_HELD`、`ASSISTANT_STILL_STOPPING` 的文案 10-22 已随 `84a76b69` 进入 main 与线上 Web，10-31 用户 iPad 上看到通用"操作冲突"是因为 App 安装包早于该版本（文案随 App 二进制打包）。本次只补 `ASSISTANT_DUPLICATE_TASK`，并把 `ASSISTANT_EFFECT_UNRESOLVED` 的文案改成指向本页按钮；App 需随下次发版带上。
 2. **App 缺核对入口**：`mobile/lib/features/chat/widgets/assistant_task_card.dart` 现在只在 `desired=paused` 时给"继续"按钮，取消加待核对的任务什么按钮都没有；执行页发送撞 `ASSISTANT_EFFECT_UNRESOLVED` 时也没有任何引导。对齐 Web：任务卡在 `observed=effect_unknown` 时给"我已核对，继续"，执行页发送失败时给同一个入口。Web 执行页的发送路径 `frontend-v2/src/features/chat/hooks/useSendChat.ts` 也没有处理这个码，一并补。
 3. **任务会话里的停止按钮**：`mobile/lib/features/chat/widgets/composer/composer.dart` 的发送/停止变形按钮在任务会话里代价是取消整个任务并可能进入待核对。在 `assistantManaged` 会话里：停止态用明确的"停止任务"样式而非与发送同形的方块，点击先弹一次确认，文案说明"会停下整个任务"。Web `frontend-v2/src/features/chat/components/Composer.tsx` 的 `SendButton` 同样处理。
 
@@ -188,3 +188,11 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 ### 9.5 与前文的关系
 
 第 3 节四项填缝和第 8 节两条闸门是任务间模式的地基，不是被它替代：没有核对工具房间续不上，没有分裂闸门全局助理照样开第二间，没有控制事件通道跨房间插播无从谈起。任务间模式只是把这些能力收进一个用户看得见的形态里。
+
+
+## 10. P0 实施记录（2026-10-31，分支 `feat/voice-seam-p0`）
+
+- 后端：新增助理工具 `tasks.acknowledge_effects`（`backend/tool/assistant_tools.py`，复用 `assistant/control.py` `acknowledge_effects`，带 `source` 绑定原始人类消息并记入命令 `source_ref`）；`effect_unresolved_message` 改为同时面向模型与客户端的指引，不再把人支到任务卡；`assistant/commands.py` 新增 `similar_task_title` 与 `ASSISTANT_DUPLICATE_TASK` 闸门（仅对助理工具发起的新建生效，`tasks.submit` 新增 `new_despite_similar`）；`assistant/runtime.py` 助理提示补两条规则。测试：`tests/unit/test_task_title_similarity.py`、`test_assistant_commands.py` 新增重复任务用例；相关套件 111 项通过，`test_delegated_real_loop_runs_with_the_shared_sandbox` 在未改动的检出上同样失败，与本次无关。
+- Web：执行页新增 `ExecutionEffectNotice`（任务 `effect_unknown` 或本页发送被 `ASSISTANT_EFFECT_UNRESOLVED` 拒绝时，在输入框上方给"我已核对，继续"）；任务卡的核对按钮对已取消任务也显示；任务会话的停止改为红色方块 + 内联二次确认（`useStopWithConfirm`、`StopTaskNotice`）。vitest 新增 4 项、调整 1 项；`AssistantTurn.timing` 与 `AssistantWelcome` 两个文件在 main 上本就失败（缺 QueryClientProvider），与本次无关。
+- App：镜像 locales；`AssistantApi.acknowledgeEffects`、`AssistantController.acknowledgeEffects`、任务卡"我已核对，继续"菜单项；执行页 `ExecutionEffectNotice` 与 `StopTaskNotice`；任务会话停止键红色 + 确认；发送被拒时置 `executionEffectAckRequestedProvider`。`flutter analyze` 改动文件无问题；新增 widget 测试 3 项通过。`check_locales.sh` 的 knowledge/settings/voice 漂移为 main 既有问题。
+- 未做：3.1 执行页提交进通话、3.2 控制事件进通话、3.4 焦点段、第 8 节链式收口（P1/P2）。

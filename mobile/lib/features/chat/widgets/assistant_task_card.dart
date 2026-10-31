@@ -181,6 +181,11 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
           () => _controller.control(task, choice),
           done: 'chat:assistant.card.controlDone.$choice',
         );
+      case 'acknowledge':
+        _run(
+          () => _controller.acknowledgeEffects(task),
+          done: 'chat:assistant.card.effectAck.done',
+        );
       case 'unfollow':
         _run(
           () => _controller.archive(task),
@@ -400,6 +405,10 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
           false,
         ),
       if (canRetry) ('retry', i18n.t('chat:assistant.card.retryReport'), false),
+      // A stopped task with an unverified step: the owner confirms here, the
+      // same control the web card offers, before anything can continue.
+      if (task.observed == 'effect_unknown' && !task.archived)
+        ('acknowledge', i18n.t('chat:assistant.card.effectAck.action'), false),
       // A control whose answer was lost is sent again as it was, before
       // anything else can be asked of the task.
       if (pending != null && _controlKeys.containsKey(pending))

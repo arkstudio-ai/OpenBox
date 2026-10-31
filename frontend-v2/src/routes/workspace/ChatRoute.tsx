@@ -8,6 +8,8 @@ import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, Ses
 import {
   ChatFlow,
   Composer,
+  ExecutionEffectNotice,
+  StopTaskNotice,
   RunErrorNotice,
   PermissionCard,
   QuestionDock,
@@ -25,6 +27,7 @@ import {
 } from "@/features/chat"
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatHistory } from "@/features/chat/hooks/useChatHistory"
+import { useStopWithConfirm } from "@/features/chat/hooks/useStopWithConfirm"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { usePanelStore } from "@/features/workbench"
@@ -246,9 +249,10 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
 
   const send = useSendChat(sessionId, sendRequest)
   const abort = useAbortSession(sessionId, session.data)
-  const stop = () => {
+  const stopping = useStopWithConfirm(session.data, busy, () => {
     if (!abort.isPending) abort.mutate(undefined, { onError: (error) => toast("error", errorMessage(error)) })
-  }
+  })
+  const stop = stopping.stop
 
   // Which agent this conversation answers as. The session record is the
   // truth — the backend writes it on every switch, including the model's own
@@ -322,6 +326,8 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
       <WaitingForInput status={recoveredStatus} onCancel={stop} />
+      <StopTaskNotice open={stopping.showConfirm} pending={abort.isPending} onConfirm={stopping.confirm} onKeep={stopping.keep} />
+      <ExecutionEffectNotice sessionId={sessionId} session={session.data} />
       {runError && (
         <RunErrorNotice
           message={runError}
@@ -342,6 +348,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
             return send(text, { ...opts, agent: sessionAgent })
           }}
           onStop={stop}
+          stopTask={stopping.stopsTask}
           sessionModel={session.data?.model}
           sessionVariant={session.data?.variant}
           sessionVideoModel={session.data?.video_model}

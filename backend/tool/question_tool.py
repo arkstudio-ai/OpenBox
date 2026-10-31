@@ -45,6 +45,9 @@ class QuestionItem(BaseModel):
     multiple: bool = False
     custom: bool = Field(default=True, description="Allow free-text answers; set false to require one of the offered options")
     allow_attachments: bool = Field(default=False, description="Offer resource-library selection and local upload for this question")
+    step_id: str | None = Field(default=None, max_length=32, pattern=r"^[a-z][a-z0-9_]*$", description=(
+        "Light mode only: the id of the guided page step this card belongs to, from the step list in the system prompt; "
+        "the interface lights that step up. Omit outside Light mode."))
 
     @model_validator(mode="after")
     def review_is_visible(self):
@@ -72,16 +75,10 @@ async def _interaction_timeout(session_id: str) -> int | None:
         return None
 
 
-async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
-    """Ask the user questions and wait for answers."""
-    from question.question import ask, Question as QModel, QuestionOption as QOpt
-
-    from assistant.review_guard import guard_review
-    rejection = await guard_review(args, ctx)
-    if rejection is not None:
-        return rejection
-
-    questions = [
+def to_questions(args: QuestionArgs) -> list:
+    """The durable questions behind the tool arguments; a Light ``step_id`` rides in ``detail``."""
+    from question.question import Question as QModel, QuestionOption as QOpt
+    return [
         QModel(
             question=(q.review_content.strip() + "\n\n" + q.question) if q.purpose == "review" else q.question,
             header=q.header,
@@ -91,9 +88,22 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
             custom=q.custom,
             allow_attachments=q.allow_attachments,
             requires_confirmation=q.requires_confirmation,
+            detail={"light": {"step_id": q.step_id}} if q.step_id else None,
         )
         for q in args.questions
     ]
+
+
+async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
+    """Ask the user questions and wait for answers."""
+    from question.question import ask
+
+    from assistant.review_guard import guard_review
+    rejection = await guard_review(args, ctx)
+    if rejection is not None:
+        return rejection
+
+    questions = to_questions(args)
 
     # Unattended callers (API keys) get a deadline from their key policy;
     # an expired card counts as rejected and the run carries on.

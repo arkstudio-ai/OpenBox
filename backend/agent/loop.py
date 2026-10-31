@@ -1887,6 +1887,14 @@ async def run_loop(
                 session_kind=session.kind,
                 memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
             )
+            try:
+                from light.prompt import light_mode_fragment
+                light_fragment = await light_mode_fragment(user_id, session)
+            except Exception as exc:  # the guided chrome is optional; the chat must still run
+                light_fragment = ""
+                log.warning(f"light prompt fragment skipped: {type(exc).__name__}")
+            if light_fragment:
+                system.append(light_fragment)
             if revision_repair:
                 system.append(repair_instruction(revision_repair))
             if task_recovery:

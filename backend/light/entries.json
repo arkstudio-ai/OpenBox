@@ -1,0 +1,397 @@
+{
+  "version": "2026-10-31",
+  "entries": [
+    {
+      "id": "video",
+      "title": "做一条视频",
+      "subtitle": "店内环境 / 餐品展示 / 探店",
+      "kind": "primary",
+      "skill": "video-production",
+      "default_tier": "low",
+      "price_hint": "15 秒省钱档约 4 积分",
+      "requires": {},
+      "steps": [
+        {
+          "id": "topic",
+          "label": "选主题"
+        },
+        {
+          "id": "photos",
+          "label": "拍照片"
+        },
+        {
+          "id": "confirm",
+          "label": "定讲稿"
+        },
+        {
+          "id": "generate",
+          "label": "生成"
+        },
+        {
+          "id": "deliver",
+          "label": "保存发布"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "dish",
+          "label": "餐品展示",
+          "samples": [
+            {
+              "id": "dish_closeup",
+              "label": "烟火气特写",
+              "description": "刚出锅的热气与酱汁光泽，一道菜讲到底",
+              "needs": "1–3 张菜品照片"
+            },
+            {
+              "id": "dish_dark",
+              "label": "高级感暗调",
+              "description": "深色背景、侧光，适合主打菜与套餐",
+              "needs": "1–2 张菜品照片"
+            },
+            {
+              "id": "dish_fast",
+              "label": "快节奏多菜",
+              "description": "七八道菜轮着上，热闹丰盛",
+              "needs": "3 张以上菜品照片"
+            }
+          ]
+        },
+        {
+          "id": "shop",
+          "label": "店内环境",
+          "samples": [
+            {
+              "id": "shop_evening",
+              "label": "傍晚亮灯",
+              "description": "从门头推进店内，人气与灯光",
+              "needs": "门头和店内各 1 张"
+            },
+            {
+              "id": "shop_clean",
+              "label": "明亮整洁",
+              "description": "白天自然光，突出干净与座位",
+              "needs": "店内 1–2 张"
+            },
+            {
+              "id": "shop_busy",
+              "label": "满座人气",
+              "description": "用餐高峰的热闹（人物只用中远景）",
+              "needs": "店内 1 张"
+            }
+          ]
+        },
+        {
+          "id": "visit",
+          "label": "探店",
+          "samples": [
+            {
+              "id": "visit_walk",
+              "label": "边走边吃",
+              "description": "门头 → 点餐 → 上菜 → 收尾的第一视角",
+              "needs": "门头、菜品各 1 张"
+            },
+            {
+              "id": "visit_recommend",
+              "label": "三道必点",
+              "description": "三道菜各给一句推荐理由",
+              "needs": "3 张菜品照片"
+            },
+            {
+              "id": "visit_price",
+              "label": "人均多少",
+              "description": "围绕价格与分量的实惠感",
+              "needs": "菜品与小票照片"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "先挑一个样子，或者直接拍 1–3 张照片（菜品或门头都行）；没有照片也可以用文字说。",
+        "chips": [
+          "我拍好了，看这几张",
+          "没照片，用文字描述",
+          "先看看别的样子"
+        ],
+        "text_with_sample": "好，做一条「{sample}」风格的视频。先拍 1–3 张照片（菜品或门头都行），没有照片也可以用文字说。"
+      },
+      "sample_media": []
+    },
+    {
+      "id": "menu",
+      "title": "做菜单",
+      "subtitle": "拍旧菜单，出新菜单",
+      "kind": "primary",
+      "skill": "imagegen",
+      "default_tier": null,
+      "price_hint": "约 1 积分 / 版",
+      "requires": {},
+      "steps": [
+        {
+          "id": "style",
+          "label": "选样式"
+        },
+        {
+          "id": "items",
+          "label": "菜名价格"
+        },
+        {
+          "id": "review",
+          "label": "核对"
+        },
+        {
+          "id": "layout",
+          "label": "尺寸"
+        },
+        {
+          "id": "deliver",
+          "label": "出图"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "menu_style",
+          "label": "样式",
+          "samples": [
+            {
+              "id": "menu_mono",
+              "label": "简约黑白",
+              "description": "干净利落，适合快餐与咖啡",
+              "needs": "菜名与价格"
+            },
+            {
+              "id": "menu_red",
+              "label": "烟火红",
+              "description": "红底金字，适合中餐与夜宵",
+              "needs": "菜名与价格"
+            },
+            {
+              "id": "menu_chalk",
+              "label": "手写粉笔",
+              "description": "黑板风，适合小吃与甜品",
+              "needs": "菜名与价格"
+            },
+            {
+              "id": "menu_dark",
+              "label": "深色高级",
+              "description": "深色底、细线分栏，适合正餐",
+              "needs": "菜名与价格"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "把旧菜单拍一张给我，或者直接把菜名和价格打出来，我来排版。",
+        "chips": [
+          "拍旧菜单",
+          "我打字发菜名价格",
+          "改上次那版"
+        ],
+        "text_with_sample": "做一版「{sample}」菜单。把旧菜单拍一张给我，或者直接把菜名和价格打出来，我来排版。"
+      },
+      "sample_media": []
+    },
+    {
+      "id": "poster",
+      "title": "做海报",
+      "subtitle": "新品 / 节日 / 开业 / 团购",
+      "kind": "primary",
+      "skill": "imagegen",
+      "default_tier": null,
+      "price_hint": "每张约 0.5 积分",
+      "requires": {},
+      "steps": [
+        {
+          "id": "purpose",
+          "label": "用途"
+        },
+        {
+          "id": "copy",
+          "label": "一句话"
+        },
+        {
+          "id": "title",
+          "label": "选标题"
+        },
+        {
+          "id": "deliver",
+          "label": "出图"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "poster_style",
+          "label": "样式",
+          "samples": [
+            {
+              "id": "poster_bold",
+              "label": "大字促销",
+              "description": "大标题、价格醒目",
+              "needs": "活动一句话"
+            },
+            {
+              "id": "poster_photo",
+              "label": "实拍主图",
+              "description": "用你的菜品照做主图",
+              "needs": "1 张菜品照片"
+            },
+            {
+              "id": "poster_fresh",
+              "label": "手绘清新",
+              "description": "插画风，适合甜品饮品",
+              "needs": "活动一句话"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "这次海报是为了什么？说一句活动内容就行，有菜的照片也发我。",
+        "chips": [
+          "新品上市",
+          "节日活动",
+          "开业",
+          "团购"
+        ],
+        "text_with_sample": "做一张「{sample}」海报。这次是为了什么？说一句活动内容就行，有菜的照片也发我。"
+      },
+      "sample_media": []
+    },
+    {
+      "id": "douyin_publish",
+      "title": "发到抖音",
+      "subtitle": "选成片、写标题、定时间",
+      "kind": "secondary",
+      "skill": "douyin-desktop-publish",
+      "default_tier": null,
+      "price_hint": "套餐内免费",
+      "requires": {
+        "desktop": true
+      },
+      "steps": [
+        {
+          "id": "pick",
+          "label": "选成片"
+        },
+        {
+          "id": "caption",
+          "label": "标题话题"
+        },
+        {
+          "id": "when",
+          "label": "什么时候发"
+        },
+        {
+          "id": "check",
+          "label": "前置检查"
+        },
+        {
+          "id": "publish",
+          "label": "发布"
+        }
+      ],
+      "subtypes": [],
+      "opening_card": {
+        "text": "把哪一条发到抖音？从最近做的里挑一条，或者从相册传。",
+        "chips": [
+          "最近做的那条",
+          "从相册传一条"
+        ]
+      },
+      "sample_media": []
+    },
+    {
+      "id": "review",
+      "title": "成绩复盘",
+      "subtitle": "发布后的数据与账号健康",
+      "kind": "secondary",
+      "skill": "business-operations",
+      "default_tier": null,
+      "price_hint": "套餐内免费",
+      "requires": {
+        "desktop": true,
+        "binding": "douyin"
+      },
+      "steps": [
+        {
+          "id": "health",
+          "label": "账号健康"
+        },
+        {
+          "id": "insight",
+          "label": "这周看下来"
+        },
+        {
+          "id": "next",
+          "label": "下一条做什么"
+        }
+      ],
+      "subtypes": [],
+      "opening_card": {
+        "text": "我去看一下你抖音近 7 天每条视频的播放、点赞、评论和完播，再告诉你下一条做什么。",
+        "chips": [
+          "开始看",
+          "只看待回评论"
+        ]
+      },
+      "sample_media": []
+    },
+    {
+      "id": "shopkeeper",
+      "title": "掌柜",
+      "subtitle": "上下架 / 回评价 / 看数据",
+      "kind": "secondary",
+      "skill": "business-operations",
+      "default_tier": null,
+      "price_hint": "套餐内免费",
+      "requires": {
+        "desktop": true
+      },
+      "steps": [
+        {
+          "id": "status",
+          "label": "店况"
+        },
+        {
+          "id": "ask",
+          "label": "要做什么"
+        },
+        {
+          "id": "confirm",
+          "label": "确认"
+        },
+        {
+          "id": "done",
+          "label": "结果"
+        }
+      ],
+      "subtypes": [],
+      "opening_card": {
+        "text": "今天店里要办哪件事？一句话说就行，比如「小龙虾套餐先下架，周六再上」。",
+        "chips": [
+          "上下架",
+          "回评价",
+          "改团购",
+          "看数据"
+        ]
+      },
+      "sample_media": []
+    },
+    {
+      "id": "footage_edit",
+      "title": "你拍我剪",
+      "subtitle": "自己拍的素材也能出片",
+      "kind": "coming_soon",
+      "skill": "footage-edit",
+      "default_tier": null,
+      "price_hint": "按成片条数计费",
+      "requires": {},
+      "steps": [],
+      "subtypes": [],
+      "opening_card": {
+        "text": "即将上线。",
+        "chips": []
+      },
+      "sample_media": []
+    }
+  ]
+}

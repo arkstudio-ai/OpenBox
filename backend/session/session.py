@@ -74,6 +74,7 @@ class Session(BaseModel):
     project_id: str = "default"
     parent_id: str | None = None  # Links child (subtask) sessions to their parent
     kind: str = "normal"  # "normal" | "cron" (cron run transcript)
+    light_entry: str | None = None  # Light home entry id for a guided topic chat
     visibility: str = "workspace"
     memory_policy: str = Field(default="standard", exclude=True)
     # Never serialize private reveal/fallback state through REST, SSE, forks,
@@ -105,6 +106,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         project_id=row.project_id or "default",
         parent_id=row.parent_id,
         kind=getattr(row, "kind", None) or "normal",
+        light_entry=getattr(row, "light_entry", None) or None,
         visibility=getattr(row, "visibility", None) or "workspace",
         memory_policy=getattr(row, "memory_policy", None) or "standard",
         tool_exposure_state=getattr(row, "tool_exposure_state", None) or {},

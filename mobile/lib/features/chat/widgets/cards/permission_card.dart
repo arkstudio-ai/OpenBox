@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -32,7 +33,39 @@ class PermissionCard extends ConsumerStatefulWidget {
 
 class _PermissionCardState extends ConsumerState<PermissionCard> {
   bool _submitting = false;
+  bool _expired = false;
+  Timer? _expiry;
   PermissionRequest get request => widget.request;
+
+  @override
+  void initState() {
+    super.initState();
+    _armExpiry();
+  }
+
+  @override
+  void didUpdateWidget(covariant PermissionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.request.expiresAt != widget.request.expiresAt) _armExpiry();
+  }
+
+  @override
+  void dispose() {
+    _expiry?.cancel();
+    super.dispose();
+  }
+
+  /// A card left on screen stops offering buttons the moment the server would
+  /// answer them with 410, instead of surfacing a raw English error.
+  void _armExpiry() {
+    _expiry?.cancel();
+    final at = widget.request.expiresAt;
+    _expired = widget.request.isExpired;
+    if (at == null || _expired) return;
+    _expiry = Timer(at.difference(DateTime.now()), () {
+      if (mounted) setState(() => _expired = true);
+    });
+  }
 
   Future<void> _reply(String action) async {
     if (_submitting) return;
@@ -71,8 +104,18 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
       await pending.refreshAll();
     } catch (error) {
       if (!current()) return;
+      final apiError = apiErrorOf(error);
+      if (apiError != null && (apiError.status == 404 || apiError.status == 410)) {
+        // The request is gone (expired, closed or superseded): retire the card
+        // like web `useReplyPermission` does and say so in plain words.
+        pending.removePermission(request.id);
+        if (mounted) setState(() => _expired = true);
+        toast.info(errorText(i18n, error));
+        await pending.refreshAll();
+        return;
+      }
       toast.error(
-        apiErrorOf(error)?.code == 'ASSISTANT_SEND_UNCERTAIN'
+        apiError?.code == 'ASSISTANT_SEND_UNCERTAIN'
             ? i18n.t('chat:assistant.requests.replyUncertain')
             : errorText(i18n, error),
       );
@@ -155,11 +198,18 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
               ),
             ),
           ],
+          if (_expired) ...[
+            Text(
+              i18n.t('chat:permission.expired'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+            ),
+            const SizedBox(height: 8),
+          ],
           Wrap(
             spacing: 8,
             children: [
               FilledButton(
-                onPressed: _submitting ? null : () => _reply('once'),
+                onPressed: _submitting || _expired ? null : () => _reply('once'),
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
                   foregroundColor: t.bg,
@@ -178,7 +228,7 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
               ),
               const SizedBox(width: 8),
               OutlinedButton(
-                onPressed: _submitting ? null : () => _reply('always'),
+                onPressed: _submitting || _expired ? null : () => _reply('always'),
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: t.hair),
                   foregroundColor: t.ink,
@@ -197,7 +247,7 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: _submitting ? null : () => _reply('reject'),
+                onPressed: _submitting || _expired ? null : () => _reply('reject'),
                 child: Text(
                   i18n.t('chat:permission.deny'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.danger),

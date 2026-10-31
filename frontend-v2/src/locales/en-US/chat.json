@@ -106,7 +106,8 @@
     "deny": "Deny",
     "targets": "Targets for this call: {{targets}}",
     "alwaysScope": "Always allow saves an account-wide {{tool}} grant for: {{patterns}}",
-    "details": "View full operation details"
+    "details": "View full operation details",
+    "expired": "This approval request expired (no reply within 5 minutes). The assistant continued without it; nothing more to do here."
   },
   "question": {
     "title": "The agent wants to confirm",

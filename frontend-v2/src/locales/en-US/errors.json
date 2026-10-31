@@ -8,6 +8,7 @@
   "SESSION_READ_ONLY": "This conversation belongs to another member and is read-only.",
   "INVITATION_EXPIRED": "This workspace invitation has expired.",
   "HTTP_404": "We couldn't find what you asked for.",
+  "PERMISSION_GONE": "This approval request has expired or was already handled; the assistant has moved on.",
   "HTTP_409": "That conflicted with another change. Refresh and retry.",
   "HTTP_422": "The request was malformed.",
   "HTTP_500": "The server hit an error. Please try again shortly.",

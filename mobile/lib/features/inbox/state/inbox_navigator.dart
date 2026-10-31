@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/api/workspace_scope.dart';
+import '../../../shared/models/first_video.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/router/paths.dart';
@@ -24,6 +25,9 @@ enum InboxOpen { opened, unavailable }
 /// belongs to the target workspace (and can still see the session), switch
 /// scope, then route. Unknown kinds land in the inbox itself; nothing here
 /// ever opens a URL the server did not vet.
+///
+/// [kind] is the row's notification kind: a first-video notice carries a
+/// `session` link but lands on the result page, not in that chat.
 class InboxNavigator {
   const InboxNavigator(this._read, this.router);
 
@@ -32,6 +36,7 @@ class InboxNavigator {
 
   Future<InboxOpen> open(
     InboxLink? link, {
+    String? kind,
     bool Function()? stillCurrent,
   }) async {
     final actor = _read(authProvider).user?.id;
@@ -60,7 +65,7 @@ class InboxNavigator {
       case 'cron':
       case 'auth_center':
       case 'skills':
-        return _openInWorkspace(link, current);
+        return _openInWorkspace(link, current, kind: kind);
       default:
         unawaited(router.push(Paths.inbox));
         return InboxOpen.opened;
@@ -69,8 +74,9 @@ class InboxNavigator {
 
   Future<InboxOpen> _openInWorkspace(
     InboxLink link,
-    bool Function() current,
-  ) async {
+    bool Function() current, {
+    String? kind,
+  }) async {
     final workspaceId = link.workspaceId;
     if (workspaceId == null || workspaceId.isEmpty) {
       return InboxOpen.unavailable;
@@ -127,6 +133,12 @@ class InboxNavigator {
           ).toString(),
         );
       case 'session':
+        if (firstVideoNotificationKinds.contains(kind)) {
+          // The finished (or failed) first video: its own result page,
+          // which re-reads the job rather than trusting the push.
+          router.go(Paths.firstVideoResult);
+          return InboxOpen.opened;
+        }
         // Same shape as a takeover card: the chat, optionally with the
         // desktop panel and input control on.
         if (link.panel == 'desktop') {

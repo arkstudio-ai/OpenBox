@@ -13,6 +13,7 @@ import '../shared/api/auth_store.dart';
 import '../shared/api/providers.dart';
 import '../shared/events/app_lifecycle.dart';
 import '../shared/i18n/i18n.dart';
+import '../shared/models/first_video.dart';
 import '../shared/models/inbox.dart';
 import '../shared/notifications/push_controller.dart';
 import '../shared/notifications/system_notifications.dart';
@@ -281,7 +282,9 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
       await ref.read(activeWorkspaceProvider.notifier).select(workspaceId);
       if (!current()) return;
       final type = payload['type']?.toString() ?? '';
-      if (sessionId is String && sessionId.isNotEmpty) {
+      if (firstVideoNotificationKinds.contains(type)) {
+        ref.read(routerProvider).go(Paths.firstVideoResult);
+      } else if (sessionId is String && sessionId.isNotEmpty) {
         ref.read(routerProvider).go(Paths.chat(sessionId));
       } else if (type.startsWith('cron_')) {
         ref.read(routerProvider).go(Paths.cron);
@@ -315,8 +318,11 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
     final id = payload['notificationId'];
     if (id is! String || id.isEmpty) return false;
     InboxLink? link;
+    String? kind;
     try {
-      link = (await ref.read(inboxApiProvider).markRead(id)).link;
+      final item = await ref.read(inboxApiProvider).markRead(id);
+      link = item.link;
+      kind = item.kind;
     } catch (_) {
       // A revoked private result must not fall back to the stale push target.
       if (payload['type']?.toString().startsWith('assistant_result_') ??
@@ -329,7 +335,11 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
     if (!current()) return true;
     ref.invalidate(inboxUnreadProvider);
     final navigator = InboxNavigator(ref.read, ref.read(routerProvider));
-    final result = await navigator.open(link, stillCurrent: current);
+    final result = await navigator.open(
+      link,
+      kind: kind,
+      stillCurrent: current,
+    );
     if (result == InboxOpen.unavailable && current()) {
       unawaited(ref.read(routerProvider).push(Paths.inbox));
       ref

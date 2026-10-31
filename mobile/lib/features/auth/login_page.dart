@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/api/first_video_entry.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -60,7 +61,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             acceptedLegal: _accepted,
           );
       if (mounted) {
-        context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
+        context.go(
+          Paths.postAuthDestination(
+            GoRouterState.of(context).uri,
+            entry: ref.read(firstVideoEntryProvider),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

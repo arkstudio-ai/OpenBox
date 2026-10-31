@@ -1,0 +1,108 @@
+{
+  "free": "本条免费 · 之后约 4 积分/条",
+  "skip": "跳过",
+  "back": "返回",
+  "next": "下一步",
+  "leave": {
+    "title": "先不做了？",
+    "body": "这条视频免费，随时可以回来做。",
+    "stay": "继续做",
+    "confirm": "先不做了"
+  },
+  "shop": {
+    "title": "先说说你的店",
+    "lede": "视频会围绕它来做。都可以先跳过。",
+    "industry": "行业",
+    "industries": {
+      "food": "餐饮",
+      "beauty": "美业",
+      "retail": "零售",
+      "other": "其他"
+    },
+    "name": "店名",
+    "namePlaceholder": "例如：巷口小馆",
+    "headline": "最想推的一样东西",
+    "headlinePlaceholder": "招牌菜 / 主推项目 / 爆款商品",
+    "headlineHint": "一样就够，第一条视频只讲它"
+  },
+  "template": {
+    "title": "选一个模板",
+    "lede": "都是 15 秒竖屏，叠上你的店名",
+    "confirm": "就这个",
+    "selected": "已选",
+    "note": "选哪个都能出片，做完还能换风格再做。",
+    "fallback": {
+      "signature": {
+        "label": "招牌推荐",
+        "description": "招牌特写，现做现上的那一下，最适合第一条"
+      },
+      "ambience": {
+        "label": "门店氛围",
+        "description": "灯光、满座、烟火气，让人想进来坐坐"
+      },
+      "promo": {
+        "label": "活动促销",
+        "description": "今天的优惠一句话说清，叫人马上来"
+      }
+    }
+  },
+  "photo": {
+    "title": "拍一张「{{headline}}」",
+    "titlePlain": "拍一张你的店",
+    "lede": "视频会围绕这张照片来做。正对主体，光线亮一点。",
+    "frame": "取景框",
+    "frameHint": "把主体放进框里",
+    "album": "从相册选",
+    "camera": "拍照",
+    "textOnly": "不拍，用文字",
+    "retake": "换一张",
+    "use": "就用这张，开始做",
+    "uploading": "正在上传照片…",
+    "submitting": "正在交给 bossip…",
+    "pickFailed": "没拿到照片，再试一次"
+  },
+  "making": {
+    "title": "正在做你的第一条视频",
+    "length": "15 秒",
+    "stage": "生成画面",
+    "remaining": "预计还要 {{time}}",
+    "remainingSoon": "马上就好",
+    "remainingUnknown": "正在排队",
+    "minutes": "{{m}} 分 {{s}} 秒",
+    "seconds": "{{s}} 秒",
+    "background": "做好了会通知你，可以先去别处看看",
+    "meanwhile": "等的时候，看看之后还能做什么",
+    "cards": [
+      {
+        "title": "做好后一键发到抖音",
+        "body": "云电脑替你登录创作者中心，标题话题都写好"
+      },
+      {
+        "title": "每天定时帮你做一条",
+        "body": "追热点、改编、出片，每天早上做好等你"
+      },
+      {
+        "title": "你拍我剪，实拍也能出片",
+        "body": "随手拍的素材发过来，剪成能直接发的成片"
+      }
+    ],
+    "leave": "在后台等，先去首页看看"
+  },
+  "result": {
+    "title": "你的第一条视频",
+    "publish": "发到抖音",
+    "publishLocked": "发布需要云电脑",
+    "publishHint": "在对话里说一句「发到抖音」就行",
+    "save": "保存到相册",
+    "again": "换个风格再做一条",
+    "home": "去首页看看还能做什么",
+    "playFailed": "视频加载失败，再试一次",
+    "retry": "再试一次"
+  },
+  "failed": {
+    "title": "这条没做成",
+    "lede": "可能是网络或素材的问题。进对话里说一声，bossip 会再试一次。",
+    "home": "去首页",
+    "chat": "进对话看看"
+  }
+}

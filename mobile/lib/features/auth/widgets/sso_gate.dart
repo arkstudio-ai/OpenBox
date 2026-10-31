@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../shared/api/first_video_entry.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -54,7 +55,12 @@ class _SsoGateState extends ConsumerState<SsoGate> {
             acceptedLegal: _accepted,
           );
       if (mounted) {
-        context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
+        context.go(
+          Paths.postAuthDestination(
+            GoRouterState.of(context).uri,
+            entry: ref.read(firstVideoEntryProvider),
+          ),
+        );
       }
     } on PlatformException catch (e) {
       // Dismissing the sheet is a decision, not a failure: leave the screen as

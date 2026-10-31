@@ -9,7 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 待发布候选：2026-10-29 `20261029-mobile-voice-98091a2c`（移动语音恢复与视频档位）
+## 当前应用版本：2026-10-31 15:31 `20261031-permexpiry-30423d0a`（死循环不弹卡、过期权限卡置灰）
+
+- PR [#104](https://github.com/arkstudio-ai/OpenBox/pull/104) 合并至 `main@30423d0a`。起因：10-31 武侠短片会话里模型把省略号截断的路径连传三次给 `share_file`，触发 doom loop 守卫向用户弹出 `doom_loop` 权限卡；卡 5 分钟过期后 App 仍可点，点「允许」弹英文 410。改动：后端 `agent/hooks.py` 死循环直接拦截并指示模型改参数，不再问用户；Web/App 权限卡按 `expires_at` 到点置灰并提示已过期，404/410 回复收起卡片并用中文 `errors.PERMISSION_GONE`。
+- **线上后端不是 main 的产物**：切换前比对发现当时线上镜像 `20261029-cache-13294d27`（标签 base `e052edf7` + patch `video-fresh-generation`，再叠 10-29「managed cache」补丁，`backend.env` 有 `OPENBOX_MANAGED_CACHE=true`）相对 `main@30423d0a` 有 25 个文件不同、4 个文件（`sandbox/cache_recovery.py`、`sandbox/cache_runtime.py`、`sandbox/managed_cache.py`、`snapshot/storage.py`）只在线上，其中 19 个文件的线上版本在 git 任何分支都找不到。因此后端**没有**从 main 重建，而是在 gw2 上以线上镜像为底只覆盖 `agent/hooks.py`（sha `f43870f9…`，与 main 一致）打成 `openbox-backend:20261031-permexpiry-30423d0a`（容器内全树比对仅此一文件不同，alembic heads 仍 `ph84a5b6c7d8`）。前端从 `main@30423d0a` 干净归档本机 buildx amd64 构建（相对线上 `e052edf7` 只多 #104 与 `98091a2c` 语音文案），经 `oss://bossip/_deploy-tmp/` 中转，`sha256sum -c` 后装载，中转对象已删。**未入库的 managed cache 代码需要其作者尽快合回 main，否则下次任何从 main 的后端发布都会把它冲掉。**
+- 切换 `releases/20261031-permexpiry-30423d0a/activate.sh`：配置快照 + 两库 dump（业务 123 表、轨迹 39 表，`backups/20261031-permexpiry-30423d0a/activation-20261031T0721*Z/`）→ 空闲门禁（租约/driver/通话/在途视频合计从 6 等到 0，约 7 分钟）→ backend 35 s → worker 9 s → frontend 15 s healthy，07:30:05–07:31:13 UTC。无迁移、无配置变更；解析后 compose 只有三处镜像引用变化，基础设施容器未重建。
+- 验证：`/health` ok，公网首页 200 且 app-build 为新 tag，`/api/environment`、Logto 配置 200，`/api/agent/permission` 匿名 401；前端资源含 `PERMISSION_GONE`，容器内 hooks.py 哈希一致且 `OPENBOX_MANAGED_CACHE=true` 仍在。未做真实死循环复现。App 端需随下次发版带上。
+- 回滚：恢复 `releases/20261031-permexpiry-30423d0a/before/docker-compose.override.yml`（backend/worker `20261029-cache-13294d27`、frontend `20261028-fruit-welcome-e052edf7`），依次 `docker compose up -d --no-deps backend / trajectory-worker / frontend`；无库回滚。AWS 与高德未发布。
+
+## 已发布（随 20261031 带上）：2026-10-29 `20261029-mobile-voice-98091a2c`（移动语音恢复与视频档位）
 
 - 修复源码 `98091a2c56091884a53a7c0fee3593e97c0accc7` 已合并并推送 main。Android `1.0.41（52）` 的正式签名 APK 已压缩为 7z，连同更新说明发送至既有飞书产品交流群；群内已明确说明配套服务端尚待切换。
 - 本地 `linux/amd64` Docker 构建完成，新 backend、trajectory-worker 与 frontend 镜像已在服务器装载并核验摘要、10 个后端交付源码文件、数据库 head 和网页 build-id。配置和两库备份可读性及摘要已验证，候选 Compose 与现行配置仅有三个应用镜像引用不同。
@@ -18,7 +26,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 发布材料与已审查脚本位于 `/opt/openbox/releases/20261029-mobile-voice-98091a2c/`。继续发布前应重新核验配置 CAS、镜像和备份，再在业务空闲时运行 `activate.sh`；脚本在重启后端前再次检查空闲，并对异常切换恢复旧应用镜像。完成后必须运行运行中源码、配置、公网和稳定性核验；本记录不代表这些上线后步骤已完成。
 - 回滚脚本已经准备，本轮未在生产执行回滚；数据库数据不回退。签名、定向测试、真实本地浏览器和 Android 原生焦点验收见 [Android 1.0.41 发布说明](MOBILE_RELEASE_1_0_41_20261029.md)，[脱敏交付证据](evidence/mobile-voice-recovery-release-20261029.json)明确区分 APK 已发送与服务端未激活。
 
-## 当前应用版本：2026-10-28 `20261028-fruit-welcome-e052edf7`（语音确认后推进原任务）
+## 历史应用版本：2026-10-28 `20261028-fruit-welcome-e052edf7`（语音确认后推进原任务）
 
 - 修复源码 `main@e052edf759fc165e8db3d48aaa7fe0e5055446f9` 已推送远程。已授权的普通任务交办不再仅因会话属于项目而重复询问“是否发送”；确认后的新指令进入原任务，已知无副作用的卡片拒绝允许恢复一次，不重放结果不明的操作。语音根据实际投递和执行回执播报进度，等待提示不再复用旧卡片回复。网页和 Flutter 在等待卡片操作时停止“正在执行”显示。
 - 本机从干净 Git 归档构建 `linux/amd64` 后端与网页镜像，基础镜像沿用此前发布的固定摘要。backend、trajectory-worker、frontend 均更新至本标签。传输包 SHA-256、镜像身份、两项迁移 head、Nginx 配置与网页 build-id 核验通过；装载后、运行中的后端和 worker 均校验了 12 个变更源码文件。

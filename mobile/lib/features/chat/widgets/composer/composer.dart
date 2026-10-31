@@ -679,6 +679,7 @@ class _ComposerState extends ConsumerState<Composer> {
                   canSend: _canSend,
                   onSend: _submit,
                   onStop: widget.onStop,
+                  stopTask: widget.session?.assistantManaged == true,
                 ),
               ],
             ),
@@ -752,6 +753,7 @@ class _SendButton extends StatelessWidget {
     required this.canSend,
     required this.onSend,
     this.onStop,
+    this.stopTask = false,
   });
 
   final bool busy;
@@ -759,13 +761,19 @@ class _SendButton extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback? onStop;
 
+  /// Stopping cancels an assistant task (not just this generation): the stop
+  /// state is red, not the same black square as "stop generating".
+  final bool stopTask;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final showStop = busy && onStop != null;
     final enabled = showStop || canSend;
     return Material(
-      color: t.ink.withValues(alpha: enabled ? 1 : 0.4),
+      color: (showStop && stopTask ? t.danger : t.ink).withValues(
+        alpha: enabled ? 1 : 0.4,
+      ),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),

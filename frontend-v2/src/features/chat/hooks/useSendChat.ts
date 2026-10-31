@@ -11,6 +11,7 @@ import { ApiError } from "@/shared/api/http"
 import { requestDesktopPanel } from "@/shared/events/desktop"
 import { usePendingStore } from "../stores/pending"
 import { useSendReceiptStore } from "../stores/send-receipts"
+import { requestEffectAcknowledgeForSession } from "../stores/effect-acknowledge"
 
 export interface SendOpts {
   model?: string
@@ -93,6 +94,11 @@ export function useSendChat(sessionId: string, submit?: SendRequest): (text: str
         receipt(refused ? null : "uncertain")
         if (err instanceof ApiError && err.code === "DESKTOP_NOT_READY") {
           requestDesktopPanel()
+        }
+        // The task behind this page stopped with an unverified outcome: offer
+        // "我已核对，继续" right here instead of pointing at a card elsewhere.
+        if (err instanceof ApiError && err.code === "ASSISTANT_EFFECT_UNRESOLVED") {
+          requestEffectAcknowledgeForSession(sessionId)
         }
         // Definite validation refusals permit an edited request. Unknown
         // outcomes keep their original key until a durable receipt arrives.

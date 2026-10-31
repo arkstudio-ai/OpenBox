@@ -39,10 +39,19 @@ MAX_ACKNOWLEDGED_PARTS = 256
 
 
 def effect_unresolved_message(task_id):
-    """Where a blocked continuation is released: the owner's acknowledgment."""
-    return ("Some external outcomes of this task are unverified. Check them on the desktop, then confirm "
-            "with \"我已核对，继续\" on the task card (POST /api/assistant/tasks/"
-            f"{task_id}/effects/acknowledge) before continuing")
+    """Where a blocked continuation is released: the owner's acknowledgment.
+
+    Read by the model (tool error) and by clients (409 body), so it says what
+    each of them can do. Only the user releases unknown outcomes: through the
+    assistant tool after an explicit spoken or typed confirmation, or through
+    the "我已核对，继续" control on the execution page or task card.
+    """
+    return ("Some external outcomes of this task are unverified; only the user can release them. "
+            "If the user has explicitly said they checked and want to continue (for example 我已核对，继续), "
+            "call tasks.acknowledge_effects with the current task revision and then tasks.resume. "
+            "Otherwise tell the user in plain words that one step's result could not be confirmed and ask them "
+            "to confirm; the execution page and the task card offer \"我已核对，继续\" "
+            f"(POST /api/assistant/tasks/{task_id}/effects/acknowledge). Never submit a replacement task.")
 
 
 async def session_tree_locked(db, execution):
@@ -416,7 +425,8 @@ def publish_task_changed(user_id: str, workspace_id: str, session_id: str) -> No
 
 
 async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, task_id: str,
-                              idempotency_key: str, expected_revision: int):
+                              idempotency_key: str, expected_revision: int,
+                              source: ToolSource | None = None):
     """The owner checked the desktop: release this task's parked unknown outcomes.
 
     Releases only what nothing else can resolve: desktop effects the ledger
@@ -427,16 +437,23 @@ async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, 
     """
     if type(expected_revision) is not int or expected_revision < 1:
         raise ValueError("A positive task revision is required")
+    if source is not None:
+        # The assistant tool: one command per persisted call, bound to the
+        # human messages in which the user said they checked the outcomes.
+        idempotency_key = tool_command_key(main_id, source.part_id)
     if not idempotency_key or len(idempotency_key) > 64:
         raise ValueError("command key must be 1..64 characters")
     digest = command_digest({"action": "acknowledge_effects", "task_id": task_id,
-                             "expected_revision": expected_revision})
+                             "expected_revision": expected_revision,
+                             **({"source": {"part_id": source.part_id,
+                                            "source_message_ids": list(source.source_message_ids)}}
+                                if source else {})})
     async with get_db_session() as db:
         await begin_session_write(db)
-        await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
+        main = await _authority(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id)
         await lock_actor(db, user_id)
         from session.internal_parts import _lock_fenced
-        await _lock_fenced(db, main_id, user_id)
+        main = await _lock_fenced(db, main_id, user_id)
         await require_membership(db, user_id, workspace_id)
         command = await db.scalar(select(AssistantCommand).where(
             AssistantCommand.actor_user_id == user_id, AssistantCommand.workspace_id == workspace_id,
@@ -447,6 +464,8 @@ async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, 
                 raise AssistantError(409, "ASSISTANT_COMMAND_CONFLICT", "Command key was used for different input")
             await task_locked(db, user_id=user_id, workspace_id=workspace_id, main_id=main_id, task_id=task_id)
             return dict(command.receipt)
+        source_ref = (await _tool_source_locked(db, main, source, ACKNOWLEDGE_ACTION) if source else
+                      {"actor_user_id": user_id, "entrypoint": "assistant_command"})
         task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                             main_id=main_id, task_id=task_id, lock=True)
         if task.control_revision != expected_revision:
@@ -470,8 +489,7 @@ async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, 
         command = AssistantCommand(id=command_id, actor_user_id=user_id, workspace_id=workspace_id,
             assistant_session_id=main_id, idempotency_key=idempotency_key, action=ACKNOWLEDGE_ACTION,
             target_type="task", target_id=task.id, payload_digest=digest, expected_revision=expected_revision,
-            source_ref={"actor_user_id": user_id, "entrypoint": "assistant_command",
-                        "acknowledged_effect_ids": effect_ids, "acknowledged_part_ids": part_ids},
+            source_ref={**source_ref, "acknowledged_effect_ids": effect_ids, "acknowledged_part_ids": part_ids},
             state="applied", receipt={}, created_at=now, updated_at=now)
         db.add(command)
         await db.flush()

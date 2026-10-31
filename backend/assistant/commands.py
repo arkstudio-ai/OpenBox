@@ -6,6 +6,8 @@ not a second input. No provider, sandbox or network call runs in this lock.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -41,6 +43,26 @@ class ToolSource:
     source_message_ids: tuple[str, ...]
     coordination_inbox_id: str | None = None
     continuation_request_digest: str | None = None
+
+
+_TITLE_NOISE = re.compile(r"[（(【\[][^）)】\]]*[）)】\]]|[^\w\u4e00-\u9fff]+")
+
+
+def _title_key(title: str) -> str:
+    """Bracketed variants ("（标准档）", "(MiniMax H3 重跑)") and punctuation never make a new piece of work."""
+    return _TITLE_NOISE.sub("", title or "").lower()
+
+
+def similar_task_title(first: str, second: str) -> bool:
+    """Two titles that name the same piece of work: one contains the other, or most character bigrams match."""
+    a, b = _title_key(first), _title_key(second)
+    if len(a) < 4 or len(b) < 4:
+        return False
+    if a in b or b in a:
+        return True
+    grams = lambda key: {key[i:i + 2] for i in range(len(key) - 1)}
+    ga, gb = grams(a), grams(b)
+    return len(ga & gb) / len(ga | gb) >= 0.5
 
 
 def tool_command_key(main_id: str, part_id: str) -> str:
@@ -308,7 +330,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               expected_run: dict | None = None, command_action: str | None = None,
                               continuation: dict | None = None, placement_id: str | None = None,
                               placement: dict | None = None, workflow: str | None = None,
-                              setup_id: str | None = None, revision_request: dict | None = None) -> dict:
+                              setup_id: str | None = None, revision_request: dict | None = None,
+                              allow_similar: bool = False) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -500,6 +523,27 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         else:
             if not project_id:
                 raise ValueError("creating a task requires a project")
+            if source is not None and not allow_similar:
+                # The assistant may not open a second task for work that already has
+                # one here (2026-10-31 audit: 12 of 40 tasks were such re-submissions,
+                # each after a continuation failed). Continue the existing task instead;
+                # only the user's explicit "another, separate one" passes allow_similar.
+                existing = (await db.scalars(select(AssistantTask).where(
+                    AssistantTask.assistant_session_id == main.id, AssistantTask.user_id == user_id,
+                    AssistantTask.archived_at.is_(None),
+                ).order_by(AssistantTask.created_at.desc()).limit(50))).all()
+                duplicate = next((row for row in existing if similar_task_title(row.title, title)), None)
+                if duplicate is not None:
+                    raise AssistantError(409, "ASSISTANT_DUPLICATE_TASK", (
+                        f"A task for this work already exists in this conversation: 「{duplicate.title}」 "
+                        f"({duplicate.desired_state}/{duplicate.observed_state}, task_id {duplicate.id}). Continue it "
+                        "instead of creating another: tasks.get, then tasks.followup while it runs, tasks.resume when it "
+                        "is paused or stopped, and tasks.acknowledge_effects first when its outcomes are unverified. "
+                        "Only when the user explicitly asked for a new, separate task repeat tasks.submit with "
+                        "new_despite_similar=true."), details={
+                            "existing_task_id": duplicate.id, "existing_title": duplicate.title,
+                            "desired_state": duplicate.desired_state, "observed_state": duplicate.observed_state,
+                            "execution_session_id": duplicate.execution_session_id})
             task, execution, new_session = await create_task_locked(db, main, project_id=project_id,
                 title=title, now=now, model=model, variant=variant, variant_explicit=variant_explicit,
                 video_model=video_model, video_resolution=video_resolution)

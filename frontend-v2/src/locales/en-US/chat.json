@@ -375,6 +375,7 @@
     "dropTitle": "Drop to upload into the sandbox",
     "send": "Send",
     "stop": "Stop generating",
+    "stopTask": "Stop task",
     "tools": "More",
     "uploadFile": "Upload a file",
     "screenshot": "Capture screen",
@@ -458,6 +459,21 @@
       "other": "human verification"
     }
   },
+  "execution": {
+    "stopTask": {
+      "title": "Stop the whole task?",
+      "body": "This task was handed out by the assistant. Stopping cancels it; to continue later you first confirm its outcomes, then send your message again.",
+      "confirm": "Stop task",
+      "keep": "Keep running"
+    },
+    "effectAck": {
+      "title": "One step's outcome was not confirmed",
+      "body": "When the task stopped, an external action's outcome was left unconfirmed. Check it, then press the button; after that, send one more message and the task carries on.",
+      "action": "I've checked — continue",
+      "done": "Confirmed. Send one more message and the task carries on.",
+      "pending": "Some outcomes are still being checked; try again shortly."
+    }
+  },
   "transcript": {
     "loadFailed": "Could not load the transcript",
     "empty": "Nothing here yet"
@@ -536,6 +552,9 @@
     "tasks": "Tasks",
     "noTasks": "No tasks yet. Ask your assistant to start one.",
     "requests": {
+      "previous": "Previous card",
+      "next": "Next card",
+      "position": "{{index}} of {{count}}",
       "title": "{{count}} things need you",
       "label": "Things that need you",
       "openTask": "Open conversation",

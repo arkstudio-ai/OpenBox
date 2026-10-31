@@ -57,6 +57,8 @@ interface Props {
   /** May return a promise; the draft is only discarded once it resolves. */
   onSubmit: (text: string, opts: ComposerSubmit) => void | Promise<void>
   onStop?: () => void
+  /** Stopping cancels an assistant task (not just this generation). */
+  stopTask?: boolean
   autoFocus?: boolean
   /** The model this conversation last used. Each session carries its own, so
    *  reopening one restores that choice rather than the global default. */
@@ -103,15 +105,19 @@ const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */
-function SendButton({ stop, disabled, onClick }: { stop: boolean; disabled: boolean; onClick?: () => void }) {
+function SendButton({ stop, stopTask, disabled, onClick }: { stop: boolean; stopTask?: boolean; disabled: boolean; onClick?: () => void }) {
   const { t } = useTranslation("chat")
+  // In a task-linked conversation stop cancels the whole task, so the stop
+  // state is red and named for what it does, not the same black square as
+  // "stop generating".
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label={stop ? t("composer.stop") : t("send")}
-      className="bg-ink text-bg ms-auto flex size-10 flex-none items-center justify-center rounded-full transition-opacity disabled:opacity-40 sm:ms-0"
+      aria-label={stop ? t(stopTask ? "composer.stopTask" : "composer.stop") : t("send")}
+      className={cn("text-bg ms-auto flex size-10 flex-none items-center justify-center rounded-full transition-opacity disabled:opacity-40 sm:ms-0",
+        stop && stopTask ? "bg-danger" : "bg-ink")}
     >
       {stop ? (
         <Square className="size-3.5 fill-current" strokeWidth={0} />
@@ -140,6 +146,7 @@ export function Composer({
   historyScrollRef,
   onSubmit,
   onStop,
+  stopTask = false,
   autoFocus,
   mentionSlot,
   sessionModel,
@@ -390,6 +397,7 @@ export function Composer({
 
             <SendButton
               stop={showStop}
+              stopTask={stopTask}
               disabled={!showStop && !canSend}
               onClick={showStop ? onStop : submit}
             />

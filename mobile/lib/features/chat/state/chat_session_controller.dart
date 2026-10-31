@@ -20,6 +20,7 @@ import '../api/assistant_api.dart';
 import '../api/chat_api.dart';
 import '../utils/reasoning.dart';
 import 'config_providers.dart';
+import 'effect_ack.dart';
 import 'pending_store.dart';
 import 'session_stop.dart';
 import 'stream_store.dart';
@@ -608,6 +609,14 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
           'sessionId': _sessionId,
         });
       }
+      // The task behind this page stopped with an unverified outcome: offer
+      // "我已核对，继续" right here instead of pointing at a card elsewhere.
+      if (apiErrorOf(error)?.code == 'ASSISTANT_EFFECT_UNRESOLVED') {
+        ref
+                .read(executionEffectAckRequestedProvider(_sessionId).notifier)
+                .state =
+            true;
+      }
       ref
           .read(toastProvider.notifier)
           .error(errorText(ref.read(i18nProvider), error));
@@ -632,6 +641,10 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
       pick: ref.read(pickedVariantProvider(reasoningKey(_sessionId, modelId))),
     ).value;
   }
+
+  /// Re-read the session row (task state, status) without entering the
+  /// loading state; used after an action elsewhere changed it.
+  Future<void> refreshSession() => _refetch();
 
   /// Manual retry from the error state.
   Future<void> reload() async {

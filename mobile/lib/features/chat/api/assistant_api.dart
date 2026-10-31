@@ -196,6 +196,16 @@ class AssistantApi {
     body,
   );
 
+  /// The owner's "我已核对，继续": release a task's unverified outcomes so it can
+  /// continue (web `useAcknowledgeTaskEffects`). Nothing is resent.
+  Future<Map<String, dynamic>> acknowledgeEffects(
+    String taskId,
+    Map<String, dynamic> body,
+  ) => _post(
+    '/api/assistant/tasks/${Uri.encodeComponent(taskId)}/effects/acknowledge',
+    body,
+  );
+
   /// Stop following a conversation; the conversation itself is unchanged.
   Future<Map<String, dynamic>> archive(
     String taskId,

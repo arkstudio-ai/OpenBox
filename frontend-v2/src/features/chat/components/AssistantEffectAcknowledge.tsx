@@ -17,7 +17,9 @@ import { useEffectAcknowledgeRequests } from "../stores/effect-acknowledge"
 export function AssistantEffectAcknowledge({ value }: { value: AssistantTaskView }) {
   const { task } = value
   const requested = useEffectAcknowledgeRequests((state) => state.taskIds.has(task.id))
-  if ((task.observed_state !== "effect_unknown" && !requested) || task.desired_state === "canceled" || task.archived_at) return null
+  // A stopped (canceled) task needs the same confirmation before a new message
+  // may reopen it, so the control stays available there too.
+  if ((task.observed_state !== "effect_unknown" && !requested) || task.archived_at) return null
   return <AcknowledgeAction task={task} />
 }
 

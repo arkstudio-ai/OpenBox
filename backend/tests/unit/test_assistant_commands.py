@@ -225,3 +225,48 @@ async def test_tool_command_key_and_source_are_bound_to_persisted_call():
         assert changed.value.code == "ASSISTANT_SOURCE_UNVERIFIED"
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_similar_title_submission_is_refused_unless_the_user_asked_for_a_separate_task():
+    from assistant.commands import ToolSource
+    from models.message import ToolPartData, ToolStatus
+    from session.session import create_assistant_message, save_part
+    owner, _, _, main, kwargs = await setup_task()
+    await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="做一条艾薇兰小红瓶的国风视频", origin="human", origin_ref={"actor_user_id": owner})
+    lease = await reserve_run(main.id, owner)
+    try:
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        fence = (main.id, lease.run_id, lease.generation)
+        message = await create_assistant_message(main.id, batch.messages[0].id, agent="assistant",
+            model_id="test/model", user_id=owner, run_fence=fence)
+        calls = []
+        for index in range(3):
+            part = ToolPartData(tool="tasks.submit", canonical_tool_id="tasks.submit", call_id=f"call-{index}",
+                wire_tool_name="tasks_submit", provider_binding_digest="a" * 64, provider_dialect="openai",
+                stream_seq=index, status=ToolStatus.RUNNING, input={}, session_id=main.id, message_id=message.id)
+            await save_part(part, is_new=True, user_id=owner, run_fence=fence)
+            calls.append(ToolSource(part.id, lease.run_id, lease.generation, (batch.messages[0].id,)))
+        first = await accept_task_command(**kwargs, title="艾薇兰小红瓶调研与1分钟国风视频策划", source=calls[0])
+        # A re-submission of the same work under a variant title is refused and names the task to continue.
+        with pytest.raises(AssistantError) as refused:
+            await accept_task_command(**{**kwargs, "prompt": "重新制作"}, title="艾薇兰小红瓶1分钟国风视频制作（标准档）",
+                                      source=calls[1])
+        assert refused.value.code == "ASSISTANT_DUPLICATE_TASK"
+        assert refused.value.details["existing_task_id"] == first["task_id"]
+        assert refused.value.details["execution_session_id"] == first["execution_session_id"]
+        async with get_db_session() as db:
+            assert await db.scalar(select(func.count()).select_from(AssistantTask).where(AssistantTask.user_id == owner)) == 1
+        # The user's explicit "another, separate one" passes the gate; so does unrelated work.
+        separate = await accept_task_command(**{**kwargs, "prompt": "另开一条"}, title="艾薇兰小红瓶1分钟国风视频制作（标准档）",
+                                             source=calls[1], allow_similar=True)
+        assert separate["task_id"] != first["task_id"]
+        other = await accept_task_command(**{**kwargs, "prompt": "导出记录"}, title="导出本次通话对话记录Word文档",
+                                          source=calls[2])
+        assert other["task_id"] not in {first["task_id"], separate["task_id"]}
+    finally:
+        await lease.release(session_status="idle")
+    # Direct human submissions are not gated: the UI, not the model, decides there.
+    human = await accept_task_command(**{**kwargs, "idempotency_key": "human-2", "prompt": "再来一条"},
+                                      title="艾薇兰小红瓶1分钟国风视频制作")
+    assert human["task_id"] not in {first["task_id"], separate["task_id"], other["task_id"]}

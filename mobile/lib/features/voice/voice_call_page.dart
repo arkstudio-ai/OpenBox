@@ -27,7 +27,13 @@ import 'widgets/voice_ticker.dart';
 /// "只听不看字": nothing said in the call is shown here, only a one-line
 /// hint for the first ten seconds.
 class VoiceCallPage extends ConsumerStatefulWidget {
-  const VoiceCallPage({super.key});
+  const VoiceCallPage({super.key, this.cards});
+
+  /// What needs the person right now, shown under the orb while the call is
+  /// on (the app layer supplies the assistant's request deck; features do not
+  /// import each other). It receives the call page's collapse, to run before
+  /// a card opens its conversation. Nothing pending renders nothing.
+  final Widget Function(VoidCallback beforeOpen)? cards;
 
   /// How long `voice:hint.start` stays after connecting.
   static const hintDuration = Duration(seconds: 10);
@@ -161,12 +167,26 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
                           ),
                   ),
                   Expanded(
-                    child: Center(
-                      child: VoiceOrb(
-                        call: call,
-                        micLevel: _controller.micLevel,
-                        outputLevel: _controller.outputLevel,
-                      ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: Center(
+                            child: VoiceOrb(
+                              call: call,
+                              micLevel: _controller.micLevel,
+                              outputLevel: _controller.outputLevel,
+                            ),
+                          ),
+                        ),
+                        if (widget.cards != null && end == null)
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight:
+                                  MediaQuery.sizeOf(context).height * 0.42,
+                            ),
+                            child: widget.cards!(_leave),
+                          ),
+                      ],
                     ),
                   ),
                   if (end != null)

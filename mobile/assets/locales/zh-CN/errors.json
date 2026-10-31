@@ -41,5 +41,6 @@
   "ASSISTANT_STILL_STOPPING": "上一轮执行正在停止，本次请求尚未接受。请稍等片刻后重试。",
   "ASSISTANT_TASK_NOT_RUNNING": "任务暂时无法接收输入。如果任务已暂停，请先在任务卡片中恢复，再发送消息。",
   "ASSISTANT_TASK_HELD": "任务已暂停、已停止或暂不可用，请先查看任务卡片中的最新状态。",
-  "ASSISTANT_EFFECT_UNRESOLVED": "之前部分操作的结果尚未确认。请核对云桌面，并在任务卡片中确认结果后继续。"
+  "ASSISTANT_EFFECT_UNRESOLVED": "任务停下时有一步的结果没来得及确认。请核对后点「我已核对，继续」，再发送这条消息。",
+  "ASSISTANT_DUPLICATE_TASK": "这件事已经有一个任务在做了，请在原任务里继续。"
 }

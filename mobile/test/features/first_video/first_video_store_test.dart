@@ -194,17 +194,26 @@ void main() {
   });
 
   group('sign-in entry', () {
-    test('absent → the guided flow; in flight → making; else settled', () {
-      expect(firstVideoEntryFromPreferences({}), FirstVideoEntry.fresh);
+    test('only "offered" opens the flow; in flight → making; else settled', () {
+      expect(
+        firstVideoEntryFromPreferences({
+          'extra': {
+            'first_video': {'status': 'offered'},
+          },
+        }),
+        FirstVideoEntry.fresh,
+      );
+      // No record: an account from before the flow existed, never replayed.
+      expect(firstVideoEntryFromPreferences({}), FirstVideoEntry.settled);
       expect(
         firstVideoEntryFromPreferences({'extra': <String, dynamic>{}}),
-        FirstVideoEntry.fresh,
+        FirstVideoEntry.settled,
       );
       expect(
         firstVideoEntryFromPreferences({
           'extra': {'first_video': 'junk'},
         }),
-        FirstVideoEntry.fresh,
+        FirstVideoEntry.settled,
       );
       for (final status in ['submitted', 'running']) {
         expect(

@@ -117,7 +117,8 @@ class AuthFlow {
               .data;
     } catch (_) {
       // Best-effort, same as web: an unreadable profile lands on the chat
-      // home rather than in the guided flow.
+      // home rather than in the guided flow (only a readable `offered`
+      // record opens it).
     }
     _ref.read(firstVideoEntryProvider.notifier).state = prefs == null
         ? FirstVideoEntry.settled

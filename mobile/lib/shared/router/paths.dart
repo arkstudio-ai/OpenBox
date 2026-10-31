@@ -39,8 +39,9 @@ abstract final class Paths {
 
   /// Where a sign-in lands. A deep link's `redirect` keeps its destination;
   /// otherwise the account's first-video state decides (docs
-  /// `LIGHT_MODE_IMPL_PLAN.md` A2): never started → the guided flow, in
-  /// flight → its making page, anything else → the chat home.
+  /// `FIRST_VIDEO.md`): offered at sign-up and untouched → the guided flow,
+  /// in flight → its making page, anything else (including accounts from
+  /// before the flow, which have no record) → the chat home.
   static String postAuthDestination(
     Uri uri, {
     FirstVideoEntry entry = FirstVideoEntry.settled,

@@ -54,8 +54,9 @@ Future<ProviderContainer> _mount(
   bool acceptPolicies = true,
   bool consentFail = false,
   List<RequestOptions>? requests,
-  // A brand-new account: no first-video record in its preferences, so the
-  // sign-in lands in the guided flow rather than on the chat home.
+  // A brand-new account: sign-up wrote `extra.first_video.status = offered`,
+  // so the sign-in lands in the guided flow rather than on the chat home.
+  // The default (no record) is an account from before the flow existed.
   bool freshAccount = false,
 }) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'en-US'});
@@ -108,12 +109,12 @@ Future<ProviderContainer> _mount(
               statusCode: 200,
               data: options.path.endsWith('/preferences')
                   ? (freshAccount
-                        ? <String, dynamic>{}
-                        : <String, dynamic>{
+                        ? <String, dynamic>{
                             'extra': {
-                              'first_video': {'status': 'skipped'},
+                              'first_video': {'status': 'offered'},
                             },
-                          })
+                          }
+                        : <String, dynamic>{})
                   : response ??
                         {
                           'access_token': 'test-token',

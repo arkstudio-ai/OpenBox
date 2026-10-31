@@ -121,8 +121,9 @@ class FirstVideoCatalog {
 }
 
 /// `extra.first_video` of `GET /api/auth/me/preferences`. The server writes
-/// every status but `skipped`, which the app sets when the person leaves the
-/// flow for good. Absent on an account that never started.
+/// `offered` at sign-up and every job status after; the app only ever sets
+/// `skipped`, when the person leaves the flow for good. Absent on an account
+/// that predates the flow — treated as already skipped.
 class FirstVideoPrefs {
   const FirstVideoPrefs({
     required this.status,
@@ -163,6 +164,10 @@ class FirstVideoPrefs {
 
   bool get inFlight => status == 'submitted' || status == 'running';
 
+  /// Sign-up made the offer and nothing has happened since: the one state
+  /// that opens the guided flow.
+  bool get offered => status == 'offered';
+
   Map<String, dynamic> toJson() => {
     'status': status,
     'session_id': ?sessionId,
@@ -196,23 +201,24 @@ class FirstVideoPrefs {
 }
 
 /// What a fresh sign-in learned about the account's first video, and so where
-/// it lands (`Paths.postAuthDestination`).
+/// it lands (`Paths.postAuthDestination`; docs/FIRST_VIDEO.md).
 enum FirstVideoEntry {
-  /// `extra.first_video` absent: the guided flow, from its first screen.
+  /// `extra.first_video.status == "offered"` (written at sign-up): the
+  /// guided flow, from its first screen.
   fresh,
 
   /// Submitted or running: straight to the making page.
   making,
 
-  /// Ready, failed, skipped — or the preferences could not be read: the
-  /// regular destination.
+  /// Ready, failed, skipped, a record absent (an account from before the
+  /// flow existed) or preferences that could not be read: the regular
+  /// destination.
   settled,
 }
 
 FirstVideoEntry firstVideoEntryFromPreferences(Map<String, dynamic> prefs) {
-  final extra = asMap(prefs['extra']);
-  if (!extra.containsKey('first_video')) return FirstVideoEntry.fresh;
-  final saved = FirstVideoPrefs.fromJson(extra['first_video']);
-  if (saved == null) return FirstVideoEntry.fresh;
+  final saved = FirstVideoPrefs.fromJson(asMap(prefs['extra'])['first_video']);
+  if (saved == null) return FirstVideoEntry.settled;
+  if (saved.offered) return FirstVideoEntry.fresh;
   return saved.inFlight ? FirstVideoEntry.making : FirstVideoEntry.settled;
 }

@@ -2,12 +2,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/auth_store.dart';
+import '../../../shared/api/first_video_entry.dart';
 import '../../../shared/api/logto_session.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/appearance/appearance_store.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/legal/legal_links.dart';
 import '../../../shared/models/auth_user.dart';
+import '../../../shared/models/first_video.dart';
 import '../../../shared/models/json.dart';
 
 /// Login/register orchestration, mirroring frontend-v2
@@ -74,8 +76,10 @@ class AuthFlow {
     await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
   }
 
-  /// setAuth → best-effort prefs fetch → appearance hydrate (web
-  /// `useCompleteAuth`). Navigation is the caller's concern.
+  /// Best-effort prefs fetch → first-video entry → setAuth → appearance
+  /// hydrate (web `useCompleteAuth`). The prefs come first because the
+  /// router's auth guard fires on setAuth and reads the entry right then.
+  /// Navigation is the caller's concern.
   Future<void> _completeAuth(
     Map<String, dynamic> tokenResponse, {
     required bool acceptedLegal,
@@ -99,6 +103,25 @@ class AuthFlow {
             options: Options(headers: {'Authorization': 'Bearer $token'}),
           );
     }
+    Map<String, dynamic>? prefs;
+    try {
+      prefs =
+          (await _ref
+                  .read(apiDioProvider)
+                  .get<Map<String, dynamic>>(
+                    '/api/auth/me/preferences',
+                    options: Options(
+                      headers: {'Authorization': 'Bearer $token'},
+                    ),
+                  ))
+              .data;
+    } catch (_) {
+      // Best-effort, same as web: an unreadable profile lands on the chat
+      // home rather than in the guided flow.
+    }
+    _ref.read(firstVideoEntryProvider.notifier).state = prefs == null
+        ? FirstVideoEntry.settled
+        : firstVideoEntryFromPreferences(prefs);
     _ref
         .read(authProvider.notifier)
         .setAuth(
@@ -106,13 +129,9 @@ class AuthFlow {
           user,
           mobileSessionId: asString(tokenResponse['mobile_session_id']),
         );
+    if (prefs == null) return;
     try {
-      final prefs = await _ref
-          .read(apiDioProvider)
-          .get<Map<String, dynamic>>('/api/auth/me/preferences');
-      _ref
-          .read(appearanceProvider.notifier)
-          .hydrateFromServer(prefs.data ?? const {});
+      _ref.read(appearanceProvider.notifier).hydrateFromServer(prefs);
     } catch (_) {
       // Best-effort, same as web.
     }

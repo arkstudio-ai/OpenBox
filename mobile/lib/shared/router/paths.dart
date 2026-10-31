@@ -1,3 +1,5 @@
+import '../models/first_video.dart';
+
 /// Route path constants, mirroring frontend-v2 `shared/router/paths.ts`.
 /// Mobile addition: the workbench panel becomes a routed screen (`/app/w/…`).
 abstract final class Paths {
@@ -35,12 +37,32 @@ abstract final class Paths {
         : '$path?redirect=${Uri.encodeComponent(destination)}';
   }
 
-  static String postAuthDestination(Uri uri) {
+  /// Where a sign-in lands. A deep link's `redirect` keeps its destination;
+  /// otherwise the account's first-video state decides (docs
+  /// `LIGHT_MODE_IMPL_PLAN.md` A2): never started → the guided flow, in
+  /// flight → its making page, anything else → the chat home.
+  static String postAuthDestination(
+    Uri uri, {
+    FirstVideoEntry entry = FirstVideoEntry.settled,
+  }) {
     final destination = uri.queryParameters['redirect'];
-    return destination != null && destination.startsWith('/')
-        ? destination
-        : app;
+    if (destination != null && destination.startsWith('/')) return destination;
+    return switch (entry) {
+      FirstVideoEntry.fresh => firstVideo,
+      FirstVideoEntry.making => firstVideoMaking,
+      FirstVideoEntry.settled => app,
+    };
   }
+
+  /// Mobile-only guided first video (Light 模式 M1). Root-navigator routes
+  /// outside the workspace shell; `firstVideo` itself forwards to the first
+  /// screen.
+  static const String firstVideo = '/app/first-video';
+  static const String firstVideoShop = '/app/first-video/shop';
+  static const String firstVideoTemplate = '/app/first-video/template';
+  static const String firstVideoPhoto = '/app/first-video/photo';
+  static const String firstVideoMaking = '/app/first-video/making';
+  static const String firstVideoResult = '/app/first-video/result';
 
   static String chat(String sessionId) => '/app/s/$sessionId';
 

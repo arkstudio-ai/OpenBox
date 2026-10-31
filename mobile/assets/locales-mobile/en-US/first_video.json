@@ -1,0 +1,108 @@
+{
+  "free": "This one is free · about 4 credits each after",
+  "skip": "Skip",
+  "back": "Back",
+  "next": "Next",
+  "leave": {
+    "title": "Not now?",
+    "body": "This video is free; you can come back to it any time.",
+    "stay": "Keep going",
+    "confirm": "Not now"
+  },
+  "shop": {
+    "title": "Tell us about your shop",
+    "lede": "The video is built around it. Every field can wait.",
+    "industry": "Industry",
+    "industries": {
+      "food": "Food",
+      "beauty": "Beauty",
+      "retail": "Retail",
+      "other": "Other"
+    },
+    "name": "Shop name",
+    "namePlaceholder": "e.g. Corner Kitchen",
+    "headline": "The one thing to push",
+    "headlinePlaceholder": "Signature dish / main service / best seller",
+    "headlineHint": "One is enough; the first video is about it alone"
+  },
+  "template": {
+    "title": "Pick a template",
+    "lede": "All 15 seconds, portrait, with your shop name on top",
+    "confirm": "This one",
+    "selected": "Selected",
+    "note": "Any of them makes a video; you can redo it in another style after.",
+    "fallback": {
+      "signature": {
+        "label": "Signature pick",
+        "description": "A close-up of what you are known for, the moment it is served"
+      },
+      "ambience": {
+        "label": "Shop ambience",
+        "description": "Lights, full tables, the buzz that makes people walk in"
+      },
+      "promo": {
+        "label": "Promotion",
+        "description": "Today's offer in one line, so people come now"
+      }
+    }
+  },
+  "photo": {
+    "title": "Take a photo of \"{{headline}}\"",
+    "titlePlain": "Take a photo of your shop",
+    "lede": "The video is built around this photo. Face the subject, keep it bright.",
+    "frame": "Viewfinder",
+    "frameHint": "Put the subject inside the frame",
+    "album": "From album",
+    "camera": "Take photo",
+    "textOnly": "No photo, text only",
+    "retake": "Choose another",
+    "use": "Use this one, start",
+    "uploading": "Uploading the photo…",
+    "submitting": "Handing it to bossip…",
+    "pickFailed": "No photo came through, try again"
+  },
+  "making": {
+    "title": "Making your first video",
+    "length": "15 s",
+    "stage": "Generating",
+    "remaining": "About {{time}} left",
+    "remainingSoon": "Almost there",
+    "remainingUnknown": "In the queue",
+    "minutes": "{{m}} min {{s}} s",
+    "seconds": "{{s}} s",
+    "background": "You will be notified when it is ready; feel free to look around",
+    "meanwhile": "While you wait, here is what comes next",
+    "cards": [
+      {
+        "title": "Publish to Douyin in one tap",
+        "body": "The cloud desktop signs in to Creator Center; title and tags are written for you"
+      },
+      {
+        "title": "A new video every day, on schedule",
+        "body": "Trends, variations, finished clips waiting for you each morning"
+      },
+      {
+        "title": "You shoot, we cut",
+        "body": "Send rough footage and get a clip ready to post"
+      }
+    ],
+    "leave": "Wait in the background, go to the home page"
+  },
+  "result": {
+    "title": "Your first video",
+    "publish": "Publish to Douyin",
+    "publishLocked": "Publishing needs the cloud desktop",
+    "publishHint": "Just say \"publish to Douyin\" in the chat",
+    "save": "Save to album",
+    "again": "Redo in another style",
+    "home": "See what else you can do",
+    "playFailed": "The video did not load, try again",
+    "retry": "Try again"
+  },
+  "failed": {
+    "title": "This one did not come out",
+    "lede": "Probably the network or the material. Say so in the chat and bossip will try again.",
+    "home": "Home",
+    "chat": "Open the chat"
+  }
+}

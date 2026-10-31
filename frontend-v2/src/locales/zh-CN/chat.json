@@ -106,7 +106,8 @@
     "deny": "拒绝",
     "targets": "本次目标：{{targets}}",
     "alwaysScope": "始终允许会记住此账号的 {{tool}} 授权，范围：{{patterns}}",
-    "details": "查看完整操作参数"
+    "details": "查看完整操作参数",
+    "expired": "这条授权请求已过期（5 分钟内未处理），助手已按未授权继续，不需要再点。"
   },
   "question": {
     "title": "agent 想确认",

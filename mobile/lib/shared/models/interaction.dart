@@ -10,6 +10,7 @@ class PermissionRequest {
     this.input,
     this.title,
     this.createdAt,
+    this.expiresAt,
     this.assistant,
     this.patterns = const [],
     this.always = const [],
@@ -24,6 +25,7 @@ class PermissionRequest {
         input: json['input'],
         title: asString(json['title']),
         createdAt: asDate(json['created_at']),
+        expiresAt: asDate(json['expires_at']),
         assistant: json['assistant'] is Map<String, dynamic>
             ? asMap(json['assistant'])
             : null,
@@ -38,9 +40,18 @@ class PermissionRequest {
   final dynamic input;
   final String? title;
   final DateTime? createdAt;
+
+  /// Server-side expiry of an assistant-linked request (5 minutes); after it
+  /// the backend answers every reply with 410 and the agent has moved on.
+  final DateTime? expiresAt;
   final Map<String, dynamic>? assistant;
   final List<String> patterns;
   final List<String> always;
+
+  bool get isExpired {
+    final at = expiresAt;
+    return at != null && !at.isAfter(DateTime.now());
+  }
 }
 
 /// Mirrors `QuestionItem` / `QuestionRequest` (`shared/types/api.ts:278-286`).

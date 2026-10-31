@@ -8,6 +8,7 @@
   "SESSION_READ_ONLY": "此会话由其他成员发起，当前为只读。",
   "INVITATION_EXPIRED": "该工作空间邀请已过期。",
   "HTTP_404": "找不到请求的内容。",
+  "PERMISSION_GONE": "这条授权请求已过期或已处理，助手已继续，不需要再点。",
   "HTTP_409": "操作冲突，请刷新后重试。",
   "HTTP_422": "请求参数有误。",
   "HTTP_500": "服务器出错了，请稍后重试。",
@@ -36,5 +37,9 @@
   "ASSISTANT_PRELINK_INPUT": "此消息已在关联前保存，请刷新原会话查看，不必重复提交。",
   "ASSISTANT_LINK_CHANGED": "会话状态已变化，请刷新后重试。",
   "ASSISTANT_TASK_CONTROL_REQUIRED": "请刷新执行页，或在原任务卡中停止任务。",
-  "ASSISTANT_STOP_TARGET_CHANGED": "要停止的任务已变化，请刷新对话后重试。"
+  "ASSISTANT_STOP_TARGET_CHANGED": "要停止的任务已变化，请刷新对话后重试。",
+  "ASSISTANT_STILL_STOPPING": "上一轮执行正在停止，本次请求尚未接受。请稍等片刻后重试。",
+  "ASSISTANT_TASK_NOT_RUNNING": "任务暂时无法接收输入。如果任务已暂停，请先在任务卡片中恢复，再发送消息。",
+  "ASSISTANT_TASK_HELD": "任务已暂停、已停止或暂不可用，请先查看任务卡片中的最新状态。",
+  "ASSISTANT_EFFECT_UNRESOLVED": "之前部分操作的结果尚未确认。请核对云桌面，并在任务卡片中确认结果后继续。"
 }

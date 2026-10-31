@@ -830,28 +830,26 @@ class ToolHooks:
                         metadata={"blocked": True},
                     )
 
-        # Doom loop detection (check BEFORE normal permission)
-        is_doom = self._check_doom_loop(tool_id, args)
-        if is_doom:
-            try:
-                await perm_mod.ask(
-                    session_id=self.session_id,
-                    permission="doom_loop",
-                    patterns=[tool_id],
-                    input_data=args,
-                    metadata={"tool": tool_id, "input": args},
-                    config_rules=self.config_rules,
-                    authority_rulesets=self.authority_rule_planes,
-                    authority_guard_rulesets=self.authority_guard_planes,
-                    is_doom_loop=True,
-                    user_id=self.user_id,
-                )
-            except (perm_mod.PermissionDeniedError, perm_mod.PermissionRejectedError, perm_mod.PermissionUnavailableError):
-                return ToolResult(
-                    title="Doom loop detected",
-                    output=f"The same tool call ({tool_id}) was repeated {DOOM_LOOP_THRESHOLD} times with identical arguments. Execution was blocked.",
-                    metadata={"blocked": True, "doom_loop": True},
-                )
+        # Doom loop detection (check BEFORE normal permission). The repeat is
+        # the model's own mistake (2026-10-31: share_file called three times
+        # with a path truncated by an ellipsis), so asking the person to
+        # "allow" it only shows them tool names they cannot act on, and the
+        # 5-minute card then expires under them. Block it and tell the model
+        # what to change instead.
+        if self._check_doom_loop(tool_id, args):
+            log.warning("Doom loop blocked: %s repeated %d times with identical arguments",
+                        tool_id, DOOM_LOOP_THRESHOLD)
+            return ToolResult(
+                title="Doom loop detected",
+                output=(
+                    f"The same tool call ({tool_id}) was repeated {DOOM_LOOP_THRESHOLD} times "
+                    "with identical arguments and was blocked without asking the user. Do not "
+                    "repeat it again. Re-read the previous error, correct the arguments (for "
+                    "example a complete path instead of one shortened with '...'), or stop and "
+                    "explain the problem to the user in plain words without tool names."
+                ),
+                metadata={"blocked": True, "doom_loop": True},
+            )
 
         # Evaluate the ordered trusted rules (defaults/config first, then the
         # current Agent's refinements). Read-like search tools retain their own

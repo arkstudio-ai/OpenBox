@@ -34,7 +34,7 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 ## 域名与证书
 
 - `https://light-test.bossipai.com.cn` → 腾讯 lighthouse 106.52.167.53（`nginx-gateway`，TLS 终结）→ `http://106.15.130.199`（回源 Host 写 IP）。配置 `/opt/nginx/conf.d/light-test.conf`。
-- **DNS 在 DNSPod，由用户加 A 记录 → 106.52.167.53。** lighthouse 上 `light-test-dns-watch.timer` 每 5 分钟探一次：解析指到本机后自动 `certbot certonly --webroot`、拷证书到 `/opt/nginx/ssl/light-test/`、追加 443 块、reload，然后自我禁用。续期 `bossip-light-test-cert-renew.timer`（照 gaode-test 复制）。
+- DNS 在 DNSPod（用户 2026-11-01 加 A 记录 → 106.52.167.53）。证书 Let's Encrypt ECDSA，2026-11-01 签发，到 2027-01-30，续期 `bossip-light-test-cert-renew.timer`（照 gaode-test 复制）。当时的自举定时器 `light-test-dns-watch.timer` 已自我禁用，脚本留在 `/usr/local/sbin/light-test-dns-watch.sh`（再建一台可照抄）。
 - HTTP 直连 IP 不可用（安全组只放 lighthouse；而且前端 SSO 的 PKCE 用 `crypto.subtle`，非安全上下文起不来），一律走 HTTPS 域名。
 - Logto（bossip 共用 auth.bossipai.com.cn）bossip-web 应用 `m9383f921ea87ocylm40p` 回调白名单已加 `https://light-test.bossipai.com.cn/callback` 与退出跳转（直接改 RDS logto 库 `applications.oidc_client_metadata`，备份 bossip-gw-1 `/root/logto-backups/bossip-web-oidc-20261101T112530.json`）。Logto 账号池与 gw2 共用，业务数据不相通。抖音开放平台的回调域名未加，测试机上抖音授权预计不可用。
 
@@ -42,7 +42,7 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 
 - 探针用户 `light-probe-11011930`（本地注册），密码在机上 `/opt/openbox/secrets/accounts.txt`（root 600）。
 - 注册即验证：`extra.first_video.status=offered`、`extra.ui_mode=light`、`credit_ledger` 一行 `signup_gift` 4 积分；`GET /api/light/entries` 7 个入口（video/menu/poster `ok`，douyin_publish/review/shopkeeper `needs_desktop`，footage_edit `coming_soon`）；`GET /api/first-video` `status=none, eta_seconds=110`；`/templates` 4 行业 × 3 模板；`/api/light/recent` 200；`/api/environment` `staging`；首页 `app-build` = 镜像 tag；匿名访问 Light 接口 401。
-- 未做：公网 HTTPS 验证（等 DNS）、真机 App 联调、首条视频真实出片（会消耗 H3 积分）。
+- 公网 HTTPS（2026-11-01 20:35）：`/` 200、`/api/environment` staging、首页 `app-build` = 镜像 tag、`/api/auth/logto/config` 的回调 = `https://light-test.bossipai.com.cn/callback`、匿名 Light 接口 401、HTTP 301 到 HTTPS；浏览器打开首页角标「内测环境」、登录页出 SSO 按钮。未做：真实 SSO 登录（需用户账号）、真机 App 联调、首条视频真实出片（会消耗 H3 积分）。
 
 ## 发布（只从 `light-mode` 或其 PR 分支构建，不从 main）
 

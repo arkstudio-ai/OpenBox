@@ -1,0 +1,121 @@
+{
+  "tabs": {
+    "home": "首页",
+    "chat": "对话",
+    "inbox": "消息",
+    "me": "我的"
+  },
+  "home": {
+    "greeting": "{{name}}",
+    "defaultShop": "我的店",
+    "taglines": [
+      "今天给店里拍一条视频吧",
+      "新菜上了？做张海报发出去",
+      "菜单换季了，重排一版",
+      "看看这周的成绩，下一条做什么",
+      "门头、餐品、探店，挑一样做视频",
+      "团购活动一句话，海报就有了",
+      "周末人多，先把菜单印好"
+    ],
+    "credits": "{{value}} 积分",
+    "creditsUnavailable": "积分读取失败",
+    "section": {
+      "todo": "今天可以做",
+      "more": "还能做",
+      "recent": "最近做的"
+    },
+    "ok": "可以开始",
+    "needsPlan": "需要开通套餐",
+    "needsDesktop": "需要云电脑",
+    "needsBinding": "需要先授权抖音",
+    "comingSoon": "即将上线",
+    "goPlan": "去开通 ›",
+    "goDesktop": "去开云电脑 ›",
+    "goBinding": "去授权 ›",
+    "banner": {
+      "title": "所有事都能省心托管",
+      "body": "出片、发布、回评价，定好时间自动做"
+    },
+    "recentEmpty": "还没有做过东西，从上面挑一件开始",
+    "recentFailed": "最近做的读不出来",
+    "outputs_other": "{{count}} 个产出",
+    "ask": "有别的事，直接说"
+  },
+  "gallery": {
+    "lede": "先挑一个样子，选定后进入对话，一步一步做。",
+    "needs": "需要准备：{{needs}}",
+    "pick": "就做这种",
+    "skip": "不挑了，直接开始",
+    "start": "开始",
+    "starting": "正在开始…",
+    "stepsTitle": "会这样进行",
+    "noSamples": "样片正在准备中，直接开始也可以。",
+    "unavailable": "这个入口现在用不了：{{reason}}",
+    "missing": "没有这个入口"
+  },
+  "topic": {
+    "input": {
+      "hint": "有话直接说",
+      "camera": "拍照",
+      "album": "相册",
+      "send": "发送",
+      "stop": "停止",
+      "uploading": "正在上传照片…",
+      "photosSent": "我拍好了，看这几张"
+    }
+  },
+  "card": {
+    "confirm": "就这样",
+    "next": "下一步",
+    "skip": "先跳过",
+    "typeHint": "也可以直接打字",
+    "pageOf": "第 {{current}} / {{count}} 步"
+  },
+  "tool": {
+    "doing": "正在做：{{action}}",
+    "done_other": "做了 {{count}} 步",
+    "video": "生成视频",
+    "compose": "合成视频",
+    "image": "生成图片",
+    "transcribe": "识别语音",
+    "publish": "发布",
+    "desktop": "操作云电脑",
+    "schedule": "安排定时",
+    "question": "向你提问",
+    "skill": "准备技能",
+    "search": "查资料",
+    "fetch": "读网页",
+    "files": "整理素材",
+    "plan": "列计划",
+    "task": "分派子任务",
+    "working": "处理中"
+  },
+  "conversations": {
+    "assistant": "助理",
+    "all": "全部对话",
+    "empty": "还没有对话。从首页挑一件事开始，或者直接和助理说。",
+    "untitled": "未命名对话",
+    "watched": "助理在跟",
+    "topic": "专题"
+  },
+  "me": {
+    "title": "我的",
+    "billing": "订购与积分",
+    "authCenter": "授权中心",
+    "desktop": "云电脑",
+    "resources": "资源",
+    "settings": "设置",
+    "admin": "超管系统",
+    "signOut": "退出登录",
+    "signOutTitle": "确定退出登录？",
+    "cancel": "取消"
+  },
+  "uiMode": {
+    "title": "界面模式",
+    "light": "Light",
+    "lightBody": "首页按钮直达：做视频、做菜单、做海报",
+    "pro": "专业",
+    "proBody": "完整工作台：对话、项目、云电脑、技能",
+    "failed": "切换失败，请重试"
+  }
+}

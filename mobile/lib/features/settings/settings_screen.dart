@@ -18,9 +18,16 @@ import 'widgets/voice_section.dart';
 /// desktop-scope; billing has its own routed screen like web. 语音通话 shows
 /// only where the deployment takes calls (`voice_enabled`).
 class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({super.key, this.initialTab = 'appearance'});
+  const SettingsScreen({
+    super.key,
+    this.initialTab = 'appearance',
+    this.embedded = false,
+  });
 
   final String initialTab;
+
+  /// Hosted inside another page (a Light 模式 tab): no back button of its own.
+  final bool embedded;
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
@@ -55,7 +62,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        titleSpacing: 0,
+        titleSpacing: widget.embedded ? 16 : 0,
+        automaticallyImplyLeading: !widget.embedded,
         title: Text(
           i18n.t('settings:title'),
           style: TextStyle(

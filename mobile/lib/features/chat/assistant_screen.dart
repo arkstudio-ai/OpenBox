@@ -46,6 +46,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
     this.taskId,
     this.resultId,
     this.intro,
+    this.embedded = false,
   });
   final AssistantScope scope;
   final ComposerResourceSlot? resources;
@@ -55,6 +56,11 @@ class AssistantScreen extends ConsumerStatefulWidget {
   /// `all`: opened from Settings' "重新认识一下" to go through the first
   /// meeting again.
   final String? intro;
+
+  /// Hosted as the Light 模式 「对话」 tab rather than inside the workspace
+  /// shell: the screen has no chrome of its own there, and what it navigates
+  /// to stays on the tab.
+  final bool embedded;
   @override
   ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
@@ -292,7 +298,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               !state.sending,
           onPick: _fill,
           requested: widget.intro,
-          onRequestDone: () => GoRouter.maybeOf(context)?.go(Paths.assistant),
+          onRequestDone: () => GoRouter.maybeOf(
+            context,
+          )?.go(widget.embedded ? Paths.lightAssistant : Paths.assistant),
         ),
         SafeArea(
           top: false,

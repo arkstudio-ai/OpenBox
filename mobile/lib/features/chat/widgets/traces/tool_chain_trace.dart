@@ -8,6 +8,8 @@ import '../../../../shared/models/message_part.dart';
 import '../../../../shared/widgets/spinner.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/turn_view.dart';
+import '../light_chat_scope.dart';
+import 'light_tool_line.dart';
 import 'subagent_line.dart';
 import 'tool_output.dart';
 import 'trace_shell.dart';
@@ -51,6 +53,10 @@ class ToolChainTrace extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A Light topic page folds the whole chain to one plain-words line.
+    if (LightChatScope.isLight(context)) {
+      return LightToolLine(turn: turn, active: active);
+    }
     final i18n = ref.watch(i18nProvider);
     return TraceShell(
       title: active

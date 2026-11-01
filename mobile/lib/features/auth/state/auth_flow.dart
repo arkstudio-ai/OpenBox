@@ -5,12 +5,14 @@ import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/first_video_entry.dart';
 import '../../../shared/api/logto_session.dart';
 import '../../../shared/api/providers.dart';
+import '../../../shared/api/ui_mode_store.dart';
 import '../../../shared/appearance/appearance_store.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/legal/legal_links.dart';
 import '../../../shared/models/auth_user.dart';
 import '../../../shared/models/first_video.dart';
 import '../../../shared/models/json.dart';
+import '../../../shared/models/ui_mode.dart';
 
 /// Login/register orchestration, mirroring frontend-v2
 /// `features/auth/api/auth.ts` (`useLogin`/`useRegister`/`useCompleteAuth`).
@@ -50,7 +52,11 @@ class AuthFlow {
             if (email != null && email.isNotEmpty) 'email': email,
           },
         );
-    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
+    await _completeAuth(
+      resp.data ?? const {},
+      acceptedLegal: acceptedLegal,
+      registered: true,
+    );
   }
 
   /// Sign in through Logto's hosted pages and come back with a session.
@@ -73,16 +79,25 @@ class AuthFlow {
           '/api/auth/logto/id-token',
           data: {'id_token': idToken},
         );
-    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
+    await _completeAuth(
+      resp.data ?? const {},
+      acceptedLegal: acceptedLegal,
+      registered: register,
+    );
   }
 
-  /// Best-effort prefs fetch → first-video entry → setAuth → appearance
-  /// hydrate (web `useCompleteAuth`). The prefs come first because the
-  /// router's auth guard fires on setAuth and reads the entry right then.
-  /// Navigation is the caller's concern.
+  /// Best-effort prefs fetch → first-video entry + interface mode → setAuth
+  /// → appearance hydrate (web `useCompleteAuth`). The prefs come first
+  /// because the router's auth guard fires on setAuth and reads both right
+  /// then. Navigation is the caller's concern.
+  ///
+  /// [registered]: the account was just created. The server writes
+  /// `ui_mode=light` for it (docs `LIGHT_MODE_BACKEND.md`); if the
+  /// preferences cannot be read, Light is still what a new account gets.
   Future<void> _completeAuth(
     Map<String, dynamic> tokenResponse, {
     required bool acceptedLegal,
+    bool registered = false,
   }) async {
     final token = asString(tokenResponse['access_token']) ?? '';
     final user = AuthUser.fromJson(asMap(tokenResponse['user']));
@@ -123,6 +138,13 @@ class AuthFlow {
     _ref.read(firstVideoEntryProvider.notifier).state = prefs == null
         ? FirstVideoEntry.settled
         : firstVideoEntryFromPreferences(prefs);
+    final uiMode = prefs == null
+        ? (registered ? UiMode.light : UiMode.pro)
+        : uiModeFromPreferences(prefs);
+    // The mode store rebuilds for the new account on setAuth and reads its
+    // device cache first, so the cache is primed before and the live state
+    // confirmed after.
+    _ref.read(uiModeProvider.notifier).prime(user.id, uiMode);
     _ref
         .read(authProvider.notifier)
         .setAuth(
@@ -130,6 +152,7 @@ class AuthFlow {
           user,
           mobileSessionId: asString(tokenResponse['mobile_session_id']),
         );
+    _ref.read(uiModeProvider.notifier).adopt(uiMode);
     if (prefs == null) return;
     try {
       _ref.read(appearanceProvider.notifier).hydrateFromServer(prefs);

@@ -119,5 +119,6 @@
     "pro": "Pro",
     "proBody": "The full workbench: chats, projects, cloud desktop, skills",
     "failed": "Could not switch, please retry"
-  }
+  },
+  "testBuild": "TEST BUILD"
 }

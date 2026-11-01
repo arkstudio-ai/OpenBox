@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/api/auth_store.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
+import '../../shared/config/env.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/format.dart';
@@ -238,7 +239,11 @@ class LightMeScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           Center(
             child: Text(
-              'bossip',
+              Env.isProduction
+                  ? 'bossip'
+                  : 'bossip · ${i18n.t('light:testBuild')} · ${Env.apiHost}',
+              key: const Key('light-me-build'),
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
             ),
           ),

@@ -180,6 +180,6 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 
 - 集成分支 `light-mode`，2026-11-01 从 origin/main `2a58d1f8` 切出。PR #105、#106、#107、#108 的 base 已改为 `light-mode`；#110 仍叠在 `feat/first-video-backend` 上，#107 合入 `light-mode` 后 GitHub 会自动把它改到 `light-mode`。后续所有 Light 相关 PR 一律以 `light-mode` 为 base，合并由用户在 GitHub 上操作。
 - `light-mode` 只单向吸收 main（需要主线修复时 `git merge origin/main`），不反向合并；main 上不出现任何 Light 代码、迁移与文档。
-- 测试环境与 gw2 生产隔离，具体环境待定（建议 AWS dev：10-12 已追平 gw2 镜像，不对客户）。迁移、`openbox.json` 档位 label 改名、`LIGHT_*_FILE` 挂载都只在该环境做。
+- 测试环境与 gw2 生产隔离：**独立测试机 `openbox-light-test`**（2026-11-01 建，4c8g，包月一个月不续，`https://light-test.bossipai.com.cn`，细节见 `deploy/light-test/README.md`）。迁移 `pi95b6c7d8e9`、`openbox.json` 档位 label 改名已在该机生效；首版镜像 `20261101-light-050fa783`（feat/light-mode-backend@050fa783）。DNS A 记录待用户在 DNSPod 添加。
 - App 测试包只从 `light-mode` 构建，版本号或构建说明标注 Light 线，不与主线发版混。
 - 主工作树被 Codex 共用，提交照旧走临时 worktree。

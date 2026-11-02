@@ -94,7 +94,7 @@ class LightHomeScreen extends ConsumerWidget {
                     LightBanner(
                       title: i18n.t('light:home.banner.title'),
                       body: i18n.t('light:home.banner.body'),
-                      onTap: () => context.push(Paths.cron),
+                      onTap: () => context.push(Paths.lightAutopilot),
                     ),
                     const SizedBox(height: 24),
                     const LightRecentSection(),

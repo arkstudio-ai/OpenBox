@@ -63,6 +63,12 @@ class LightMeScreen extends ConsumerWidget {
         const Key('light-me-billing'),
       ),
       (
+        'light:me.autopilot',
+        Icons.autorenew,
+        Paths.lightAutopilot,
+        const Key('light-me-autopilot'),
+      ),
+      (
         'light:me.authCenter',
         Icons.verified_user_outlined,
         Paths.authCenter(),
@@ -203,7 +209,11 @@ class LightMeScreen extends ConsumerWidget {
                       i18n.t(key),
                       style: TextStyle(fontSize: FontSizes.base, color: t.ink),
                     ),
-                    trailing: Icon(Icons.chevron_right, size: 18, color: t.n500),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: t.n500,
+                    ),
                     onTap: () => context.push(path),
                   ),
                 ],

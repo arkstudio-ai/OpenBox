@@ -13,6 +13,7 @@ import '../../chat/state/chat_session_controller.dart';
 import '../../chat/utils/content_view.dart';
 import '../state/light_providers.dart';
 import '../state/light_start.dart';
+import 'autopilot_switch.dart';
 
 /// The result card's own buttons on a Light topic page (docs
 /// `LIGHT_MODE_PLAN.md` §4.3 ④ 成片卡): save to the album, publish to Douyin
@@ -101,32 +102,42 @@ class _LightResultActionsState extends ConsumerState<LightResultActions> {
     final video = media.mime.startsWith('video/');
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ActionChip(
-            key: const Key('light-result-save'),
-            icon: Icons.download_outlined,
-            label: i18n.t('light:result.save'),
-            primary: true,
-            busy: _saving,
-            onTap: () => _save(media.assetId, media.mime),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ActionChip(
+                key: const Key('light-result-save'),
+                icon: Icons.download_outlined,
+                label: i18n.t('light:result.save'),
+                primary: true,
+                busy: _saving,
+                onTap: () => _save(media.assetId, media.mime),
+              ),
+              if (video)
+                _ActionChip(
+                  key: const Key('light-result-publish'),
+                  icon: Icons.upload_outlined,
+                  label: i18n.t('light:result.publish'),
+                  onTap: _sending ? null : _publish,
+                ),
+              _ActionChip(
+                key: const Key('light-result-again'),
+                icon: Icons.refresh,
+                label: i18n.t('light:result.again'),
+                onTap: _sending
+                    ? null
+                    : () => _say(i18n.t('light:result.againPrompt')),
+              ),
+            ],
           ),
-          if (video)
-            _ActionChip(
-              key: const Key('light-result-publish'),
-              icon: Icons.upload_outlined,
-              label: i18n.t('light:result.publish'),
-              onTap: _sending ? null : _publish,
-            ),
-          _ActionChip(
-            key: const Key('light-result-again'),
-            icon: Icons.refresh,
-            label: i18n.t('light:result.again'),
-            onTap: _sending
-                ? null
-                : () => _say(i18n.t('light:result.againPrompt')),
+          LightAutopilotSwitch(
+            sessionId: widget.sessionId,
+            assetId: media.assetId,
+            isVideo: video,
           ),
         ],
       ),

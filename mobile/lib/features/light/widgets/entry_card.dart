@@ -183,8 +183,7 @@ class LightEntryCard extends StatelessWidget {
   );
 }
 
-/// 「所有事都能省心托管」 — the black band under the entries. Points at the
-/// scheduled-tasks page until M2.5 gives 托管 its own list.
+/// 「所有事都能省心托管」 — the black band under the entries; opens 托管中的事.
 class LightBanner extends StatelessWidget {
   const LightBanner({
     super.key,

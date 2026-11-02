@@ -7,10 +7,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
+import '../../../shared/api/ui_mode_store.dart';
 import '../../../shared/api/workspace_scope.dart';
 import '../../../shared/models/first_video.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/models/json.dart';
+import '../../../shared/models/ui_mode.dart';
 import '../../../shared/router/paths.dart';
 import '../../workspace/state/active_workspace_store.dart';
 
@@ -152,6 +154,10 @@ class InboxNavigator {
               ),
             ),
           );
+        } else if (_read(uiModeProvider).mode == UiMode.light) {
+          // Light: the conversation on its topic page, where a result keeps
+          // its save / publish / 省心托管 actions (a 托管 run lands here).
+          router.go(Paths.lightChat(link.sessionId!));
         } else {
           router.go(Paths.chat(link.sessionId!));
         }

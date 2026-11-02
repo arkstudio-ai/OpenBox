@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/light.dart';
+import '../../../shared/models/light_autopilot.dart';
 import '../../../shared/models/session.dart';
 
 /// Transport for Light 模式 (backend `api/light.py`, docs
@@ -44,6 +45,51 @@ class LightApi {
     return LightStartResult.fromJson(resp.data ?? const {});
   }
 
+  /// 省心托管 jobs of this workspace.
+  Future<List<LightAutopilot>> autopilots() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/light/autopilot');
+    return [
+      for (final item in asList(resp.data?['items']))
+        ?LightAutopilot.fromJson(item),
+    ];
+  }
+
+  /// Keep making the result [assetId] of [sessionId]. 409
+  /// `LIGHT_AUTOPILOT_NEEDS_DESKTOP` (with `availability`) for publishing on
+  /// a plan without a cloud desktop. Creating twice returns the same job.
+  Future<LightAutopilot> createAutopilot({
+    required String sessionId,
+    String? assetId,
+    String? task,
+    required LightAutopilotChoice choice,
+  }) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/light/autopilot',
+      data: {
+        'session_id': sessionId,
+        'asset_id': ?assetId,
+        'task': ?task,
+        'repeat': choice.repeat,
+        'time': choice.time,
+        'mode': choice.mode,
+        'credits_cap': choice.creditsCap,
+      },
+    );
+    return LightAutopilot.fromJson(resp.data)!;
+  }
+
+  Future<LightAutopilot> setAutopilotEnabled(String id, bool enabled) async {
+    final resp = await _dio.patch<Map<String, dynamic>>(
+      '/api/light/autopilot/${Uri.encodeComponent(id)}',
+      data: {'enabled': enabled},
+    );
+    return LightAutopilot.fromJson(resp.data)!;
+  }
+
+  Future<void> cancelAutopilot(String id) async {
+    await _dio.delete<void>('/api/light/autopilot/${Uri.encodeComponent(id)}');
+  }
+
   Future<List<LightRecentGroup>> recent({int limit = 8}) async {
     final resp = await _dio.get<Map<String, dynamic>>(
       '/api/light/recent',
@@ -77,7 +123,9 @@ class LightApi {
       '/api/assistant/sessions',
       queryParameters: {'limit': 50},
     );
-    return asList(resp.data?['items']).whereType<Map<String, dynamic>>().toList();
+    return asList(
+      resp.data?['items'],
+    ).whereType<Map<String, dynamic>>().toList();
   }
 
   /// The shop name the first-video flow recorded, for the home heading

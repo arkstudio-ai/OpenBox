@@ -107,7 +107,11 @@ async def ensure_not_cron_session(session_id: str) -> None:
 
 
 def validate_template(template: dict | None) -> None:
-    """A marketing-autopilot template must parse strictly; {} / None means no template."""
+    """A template must parse strictly for its kind; {} / None means no template.
+
+    ``light_autopilot`` is 省心托管 (light/autopilot.py); anything else is the
+    marketing-autopilot budget template.
+    """
     if not template:
         return
     from pydantic import ValidationError
@@ -115,6 +119,10 @@ def validate_template(template: dict | None) -> None:
     from autopilot.template import parse_template
 
     try:
+        if template.get("kind") == "light_autopilot":
+            from light.autopilot import LightAutopilotTemplate
+            LightAutopilotTemplate.model_validate(template)
+            return
         parse_template(template)
     except ValidationError as exc:
         first = exc.errors()[0]

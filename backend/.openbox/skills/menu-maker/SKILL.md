@@ -114,10 +114,10 @@ the second image is still wrong, deliver the better one and list the wrong
 lines in plain words so the owner can tell you to try again; never claim it
 is correct when it is not.
 
-Finish with a short line (no technical words) and a `question` card on
-`deliver`: `保存好了` / `换个样式再做一版` / `做一张同款海报` / `改几道菜`.
-The image card already lets the owner save it; do not call `share_file` on
-`image_gen` results.
+Finish with one short line and no question card — the image card already
+has 保存 / 再做一条, and an open question would sit in the owner's to-do list.
+Mention the other next steps in that line, e.g. 「排好了，菜名和价格都对过一遍。要换个样式、
+改几道菜，或者做一张同款海报，直接说。」 Do not call `share_file` on `image_gen` results.
 
 ## Light mode
 

@@ -50,6 +50,7 @@ def test_entries_config_is_complete():
     video = config.entry("video")
     assert [sub.id for sub in video.subtypes] == ["dish", "shop", "visit"]
     assert "「餐品展示 · 烟火气特写」" in video.opening("dish", "dish_closeup").text
+    assert "「烟火红」" in config.entry("menu").opening("menu_style", "menu_red").text
     assert "{sample}" not in video.opening().text and "「" not in video.opening().text
     assert config.entry("review").requires.binding == "douyin" and config.entry("douyin_publish").requires.desktop
 

@@ -91,10 +91,16 @@ class Entry(BaseModel):
         sample = next((item for item in (subtype.samples if subtype else []) if item.id == sample_id), None)
         return subtype, sample
 
+    def picked_label(self, subtype_id: str | None, sample_id: str | None) -> str:
+        """「餐品展示 · 烟火气特写」; the subtype is left out when the entry has only one."""
+        subtype, sample = self.sample(subtype_id, sample_id)
+        if len(self.subtypes) <= 1:
+            subtype = None
+        return " · ".join(part.label for part in (subtype, sample) if part is not None)
+
     def opening(self, subtype_id: str | None = None, sample_id: str | None = None) -> OpeningCard:
         """The first assistant message, with the chosen style named when there is one."""
-        subtype, sample = self.sample(subtype_id, sample_id)
-        chosen = " · ".join(part.label for part in (subtype, sample) if part is not None)
+        chosen = self.picked_label(subtype_id, sample_id)
         text = self.opening_card.text
         if chosen and self.opening_card.text_with_sample:
             text = self.opening_card.text_with_sample.replace("{sample}", chosen)

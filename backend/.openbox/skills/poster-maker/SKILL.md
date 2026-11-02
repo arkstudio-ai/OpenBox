@@ -71,9 +71,11 @@ Look at the result. Every character of the headline, the price and the dates
 must match. If one is wrong, regenerate once with `Fix: <what was wrong>`; if
 it is still wrong, deliver it and say plainly which words are off.
 
-Finish with a `question` card on `deliver`: `保存好了` / `再要一张横版（店内屏）`
-/ `换个标题` / `做成视频`. `做成视频` continues in this conversation with the
-`video-production` skill using this poster's photo and headline.
+Finish with one short line and no question card — the image card already
+has 保存 / 再做一条, and an open question would sit in the owner's to-do list:
+e.g. 「做好了。要横版（店内屏）、换个标题，或者做成一条视频，直接说。」 A request to
+make it a video continues here with the `light-video` skill, using this
+poster's photo and headline.
 
 ## Light mode
 

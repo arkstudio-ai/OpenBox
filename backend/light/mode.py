@@ -139,7 +139,7 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
     )
     await session_mod.update_session(session.id, user_id=user_id, light_entry=entry.id, **selection)
     opening = entry.opening(subtype, sample)
-    picked = " · ".join(part.label for part in (chosen_subtype, chosen_sample) if part is not None)
+    picked = entry.picked_label(subtype, sample)
     user_text = f"【{entry.title}】" + (f"选了「{picked}」" if picked else "开始")
     await chat.exchange(session.id, user_id, user_text=user_text, assistant_text=opening.text,
                         agent=session.agent, model=model, entrypoint=ENTRYPOINT)

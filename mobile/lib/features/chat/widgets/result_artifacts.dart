@@ -188,6 +188,15 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
 
   String _title(I18nState i18n) {
     final group = widget.group;
+    if (LightChatScope.isLight(context)) {
+      // Light pages name the deliverable, never a file.
+      final video = group.parts.any(
+        (p) => (p.mimeType ?? '').startsWith('video/'),
+      );
+      return i18n.t(
+        video ? 'chat:artifacts.finalVideo' : 'chat:artifacts.result',
+      );
+    }
     switch (group.artifactKind) {
       case 'video_final':
         return group.label ?? i18n.t('chat:artifacts.finalVideo');

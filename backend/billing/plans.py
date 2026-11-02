@@ -15,6 +15,9 @@ class Plan(BaseModel):
     credits: Decimal = Field(gt=0)
     credit_period: Literal["weekly", "monthly"]
     recommended: bool = False
+    #: Welcome credits posted once when a workspace is created (billing/signup_gift.py);
+    #: 0 disables the gift. Only the free plan is read.
+    signup_gift_credits: Decimal = Field(default=Decimal("0"), ge=0)
 
     @model_validator(mode="after")
     def validate_prices(self):

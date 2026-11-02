@@ -28,6 +28,7 @@ CATEGORY_FOR_KIND = {
     "skill_pending": "system", "skill_listed": "system", "skill_rejected": "system", "skill_delisted": "system",
     "announcement": "notice", "system_test": "system",
     "assistant_result_ready": "session", "assistant_result_failed": "session", "assistant_result_stopped": "session",
+    "first_video_ready": "session", "first_video_failed": "session",
 }
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.

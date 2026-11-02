@@ -57,6 +57,9 @@ class Session(Base):
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,
     # and reaped on their own retention schedule.
     kind: Mapped[str] = mapped_column(String(16), server_default="normal")
+    #: The Light home entry this guided session was started from (light/mode.py);
+    #: NULL for ordinary chats. Read by the system prompt and the question cards.
+    light_entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
     visibility: Mapped[str] = mapped_column(String(16), nullable=False, server_default="workspace")
     memory_policy: Mapped[str] = mapped_column(String(32), nullable=False, server_default="standard")
     parent_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("sessions.id"), nullable=True)

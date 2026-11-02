@@ -39,7 +39,7 @@ READING_VERSION = 1
 _readings: dict[str, asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
-FRAME_WIDTH = 480
+FRAME_WIDTH = 360
 SNAPSHOT_LINK_SECONDS = 3600
 
 PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一段素材的截帧，每张标了它在素材里的秒数。
@@ -65,11 +65,12 @@ class FootageRefusal(Exception):
 
 
 def _frame_times(duration: float) -> list[float]:
-    """About one frame every 2.5 s, 4–6 frames, never on the very first or last frame.
+    """About one frame every 3 s, 4–5 frames, never on the very first or last frame.
 
-    Six frames read a 15 s clip as well as ten did and the call is a third faster.
+    Five small frames read a 15 s clip as well as ten did, and with five clips
+    read at once each call stays around 15 s instead of 30.
     """
-    count = max(4, min(6, math.ceil(duration / 2.5)))
+    count = max(4, min(5, math.ceil(duration / 3)))
     step = duration / count
     return [round(step * (i + 0.5), 2) for i in range(count)]
 
@@ -95,14 +96,34 @@ async def _vision(frames: list[tuple[float, str]], *, duration: float, orientati
     for at_sec, url in frames:
         content.append({"type": "text", "text": f"第 {at_sec:g} 秒："})
         content.append({"type": "image_url", "image_url": {"url": url}})
-    response = await litellm.acompletion(model=cfg.model, messages=[{"role": "user", "content": content}],
-                                         temperature=0.2, max_tokens=1500, timeout=cfg.timeout_seconds,
-                                         **_get_provider_kwargs(cfg.model))
-    text = response.choices[0].message.content or ""
-    match = re.search(r"\{.*\}", text, re.S)
-    if not match:
-        raise FootageRefusal("the picture reading returned no result")
-    return json.loads(match.group(0))
+    last_error: Exception | None = None
+    for attempt in range(2):
+        # A thinking model spends part of the budget before it writes; 4000 keeps the JSON whole.
+        response = await litellm.acompletion(model=cfg.model, messages=[{"role": "user", "content": content}],
+                                             temperature=0.2, max_tokens=4000, timeout=cfg.timeout_seconds,
+                                             **_get_provider_kwargs(cfg.model))
+        try:
+            return parse_picture(response.choices[0].message.content or "")
+        except ValueError as exc:  # one more try; a second bad answer is reported, not guessed
+            last_error = exc
+            log.info("footage picture reading unparseable (attempt %d): %s", attempt + 1, exc)
+    raise FootageRefusal(f"the picture reading returned no usable result: {last_error}")
+
+
+def parse_picture(text: str) -> dict:
+    """The JSON object in a model reply: fences, prose around it and trailing commas tolerated."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON object in the reply")
+    body = text[start:end + 1]
+    for candidate in (body, re.sub(r",\s*([}\]])", r"\1", body)):
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("the JSON object in the reply does not parse")
 
 
 async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:

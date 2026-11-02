@@ -48,7 +48,8 @@ the amount (`analysis_credits=`). Do not call it again for the same clips.
 
 ## 3. The plan (`plan`)
 
-Build the cut from the structure for the type (references/structure-templates.md):
+Build the cut from the structure for the type (the four below are the whole
+reference; do not open the references file during a cut):
 
 - 探店: 门头 → 环境 → 招牌菜 → 价格/活动 → 收尾
 - 新品上市: 成品亮相 → 制作或细节 → 吃的瞬间 → 价格 → 收尾

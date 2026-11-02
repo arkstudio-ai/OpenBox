@@ -116,8 +116,14 @@ async def _watch(job_id: str) -> None:
             await asyncio.sleep(BUSY_RECHECK_SECONDS)
         async with get_db_session() as db:
             job = await db.get(VideoJob, job_id)
-        if job is not None:
-            await wake_for(job)
+        if job is None or job.attached_message_id:
+            return
+        from billing.footage import is_footage_session
+        if job.status == "completed" and await is_footage_session(job.session_id):
+            # 你拍我剪: the finished cut goes straight into the chat, no agent turn.
+            if await deliver(job):
+                return
+        await wake_for(job)
     except Exception as exc:  # the sweep still covers it
         log.warning(f"compose watcher for {job_id} stopped: {type(exc).__name__}: {exc}")
 
@@ -130,3 +136,37 @@ async def _session_busy(session_id: str | None) -> bool:
     async with get_db_session() as db:
         session = await db.get(Session, session_id)
     return bool(session is not None and str(getattr(session, "status", "") or "") in ("busy", "retry", "compacting", "queued"))
+
+
+DELIVERED_TEXT = "剪好了，可以保存或者发到抖音；想换个开头、改字幕，直接说。"
+
+
+async def deliver(job) -> bool:
+    """Attach a finished cut to its conversation under a fixed line; False when it cannot."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.message import Message
+    from db.models.session import Session
+    from light import chat
+    from session import session as session_mod
+    from tool import video_production as vp
+    from tool.tool import ToolContext
+
+    async with get_db_session() as db:
+        session = await db.get(Session, job.session_id)
+        parent = await db.scalar(select(Message.id).where(Message.session_id == job.session_id,
+                                                          Message.role == "user")
+                                 .order_by(Message.created_at.desc()).limit(1))
+    if session is None or parent is None:
+        return False
+    assistant = await session_mod.create_assistant_message(job.session_id, parent, model_id=None,
+                                                           agent=session.agent, user_id=job.user_id)
+    ctx = ToolContext(session_id=job.session_id, user_id=job.user_id, workspace_id=session.workspace_id,
+                      project_id=session.project_id or "", message_id=assistant.id)
+    attached = await vp._attach_completed(job, ctx)
+    await chat.say(job.session_id, assistant.id, job.user_id,
+                   DELIVERED_TEXT if attached else "成片已经在上面了。")
+    await chat.finish(job.session_id, assistant.id, job.user_id)
+    log.info(f"Delivered composition {job.id} to {job.session_id} without an agent turn")
+    return True

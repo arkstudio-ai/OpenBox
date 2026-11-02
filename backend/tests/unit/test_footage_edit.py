@@ -10,6 +10,7 @@ from billing import footage
 from db.base import get_db_session
 from db.models.billing import UsageEvent
 from db.models.file_asset import FileAsset
+from db.models.message import Message
 from db.repository.user_repo import PgUserRepo
 from video.media_probe import meta_from_media_info
 
@@ -97,7 +98,7 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
         return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}]}
 
     async def fake_vision(frames, *, duration, orientation, speech):
-        assert len(frames) == 6 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
+        assert len(frames) == 5 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}]}
 
     class FakeOss:
@@ -159,7 +160,7 @@ def test_footage_skill_and_entry_ship():
     assert (root / "SKILL.md").is_file() and (root / "references" / "structure-templates.md").is_file()
 
 
-@pytest.mark.parametrize("duration,expected", [(8, 4), (15, 6), (60, 6)])
+@pytest.mark.parametrize("duration,expected", [(8, 4), (15, 5), (60, 5)])
 def test_frame_times_spread_over_the_clip(duration, expected):
     from tool.footage_analyze import _frame_times
     times = _frame_times(duration)
@@ -219,6 +220,42 @@ def test_cutting_words_and_clips_open_the_video_tools():
     assert "video" in route_explicit_intent_packs(ExposureSignals(user_task_text="就这么剪"))
     assert "video" in route_explicit_intent_packs(ExposureSignals(user_task_text="看看", attachment_kinds=("video",)))
     assert "video" not in route_explicit_intent_packs(ExposureSignals(user_task_text="明天天气"))
+
+
+def test_picture_replies_are_read_despite_fences_prose_and_trailing_commas():
+    from tool.footage_analyze import parse_picture
+    reply = '好的，下面是结果：\n```json\n{"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3,},],}\n```'
+    assert parse_picture(reply) == {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3}]}
+    with pytest.raises(ValueError):
+        parse_picture("没有结果")
+    with pytest.raises(ValueError):
+        parse_picture('{"subject": "门头", "segments": [')
+
+
+async def test_a_finished_footage_cut_is_delivered_without_an_agent_turn():
+    from video import compose_recovery as cr
+    user, session, ids = await _owner_with_clips([15], audio=[False])
+    from session.session import create_user_message
+    await create_user_message(session_id=session.id, text="就这么剪", agent="build", model=None, user_id=user["id"])
+    now = datetime.now(timezone.utc)
+    out = "asset_" + uuid4().hex[:20]
+    async with get_db_session() as db:
+        db.add(FileAsset(id=out, user_id=user["id"], workspace_id=user["default_workspace_id"], session_id=session.id,
+                         name="cut.mp4", oss_key=f"assets/{user['id']}/cut.mp4", mime="video/mp4", size=1,
+                         status="ready", created_at=now))
+        from db.models.video_job import VideoJob
+        job = VideoJob(id="video_" + uuid4().hex[:20], user_id=user["id"], session_id=session.id, kind="compose",
+                       idempotency_key="cut:1", request_hash="h", status="completed", model="ims", output_asset_id=out,
+                       request_data={}, result_data={}, attempt=1, created_at=now, updated_at=now, completed_at=now)
+        db.add(job)
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, job.id)
+    assert await cr.deliver(job) is True
+    async with get_db_session() as db:
+        fresh = await db.get(VideoJob, job.id)
+        messages = (await db.scalars(select(Message).where(Message.session_id == session.id,
+                                                           Message.role == "assistant"))).all()
+    assert fresh.attached_message_id and fresh.attached_message_id in {m.id for m in messages}
 
 
 async def test_a_watched_cut_wakes_its_chat_once_it_settles(monkeypatch):

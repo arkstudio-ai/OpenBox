@@ -18,7 +18,7 @@ GET /api/light/entries →
 { "version", "ui_mode": "light"|"pro", "plan_id", "desktop": bool,
   "entries": [ { "id", "title", "subtitle", "kind": "primary"|"secondary"|"coming_soon",
                  "skill", "default_tier", "price_hint", "requires": {plan, desktop, binding},
-                 "steps": [{id,label}], "subtypes": [{id,label,samples:[{id,label,description,needs,media_url}]}],
+                 "steps": [{id,label}], "subtypes": [{id,label,samples:[{id,label,description,needs,media_url,poster_url}]}],
                  "opening_card": {text, text_with_sample, chips[]}, "sample_media": [],
                  "availability": "ok"|"needs_plan"|"needs_desktop"|"needs_binding"|"coming_soon" } ] }
 
@@ -35,6 +35,7 @@ GET /api/light/recent →
 - `start` 之后 App 走现有 `POST /api/agent/session/{id}/prompt_async`。开场卡的 `chips` 由 App 画在输入条上，点一下就是第一句话；转录里开场卡是一条真实助理消息，前面有一条合成的用户气泡「【做一条视频】选了「餐品展示 · 烟火气特写」」。
 - 会话有 `light_entry`（新列），agent 的系统提示词据此拿到入口、技能与步骤表；每张 `question` 卡的 `detail.light.step_id` 告诉 App 点亮哪一步（`question.asked` 事件与问题快照里都有）。
 - `recent` 只收 `relation.role` 为 `final` / `result` 且 `mime` 为图或视频的 FilePart；中间产物（分镜段、上传素材）不算。
+- 样片：`media_url` 是样片本身（视频 `.mp4` 或图片），`poster_url` 是小图（视频的截帧、图片的缩略图）。两者在 `entries.json` 里写 `oss:<key>`（私有桶），接口返回时换成 12 小时有效的签名链接（`light/media.py`）；没有 OSS 时为 `null`，App 画色块。
 - 新注册用户 `extra.ui_mode="light"`；老用户为空读作 `pro`。App 冷启动要自己取一次。
 
 ## 配置
@@ -45,9 +46,24 @@ GET /api/light/recent →
 
 ## 技能层
 
-`video-production/SKILL.md` 加了「Light mode」段：一卡 review、每卡 `step_id`、不复问开场卡选过的样子、不报价。`C5_VIDEO_SKILL_ALIGNMENT.md` §7 记为例外。做菜单 / 做海报暂时指向 `imagegen` 技能；`menu-maker` 专用技能与样片素材是后续工作。
+| 入口 | 技能 | 要点 |
+|---|---|---|
+| 做一条视频 | `light-video`（2026-11-02 新） | 不用云桌面：样子 + 0–3 张照片 → 一张 review 卡（画面 / 15 秒 / 店名）→ `video_generate` → 有店名时 `video_compose` 叠字。免费档可用。生成或叠字超出一轮的等待预算时，结束本轮，完成后由补扫唤醒对话贴片（见下） |
+| 做菜单 | `menu-maker`（新） | 识别旧菜单照片或打字 → 一张菜品表 review 卡 → 尺寸卡 → `image_gen`（quality high）→ 对着菜品表逐行核对，错一次重画一次 |
+| 做海报 | `poster-maker`（新） | 用途 → 一句话 → 三个标题 → `image_gen` 竖版；横版按需再出 |
+
+- 三个技能都不以 `question` 卡收尾：结果卡自带「保存 / 发到抖音（视频）/ 再做一条」，悬而未答的卡会进「需要你处理」。
+- 系统提示词：Light 会话带入口与步骤表；`extra.first_video` 里有店名 / 主打时加一句「这家店：店名「…」，主打「…」」，供叠字用。没有云桌面时的系统提示补了一句「不需要桌面的云端工具（video_generate / video_compose / image_gen / question）照常可用」。
+- `video-production/SKILL.md` 的「Light mode」段仍在（专业用户的口播片），C5 §7 例外不变；它依赖桌面脚本，Light 的做视频入口已不再指向它。
+
+## 合成完成后唤醒对话（F5，2026-11-02）
+
+`video/compose_recovery.py`：补扫把一条 compose 作业推进到 completed / failed 时，如果它没有贴到任何消息（说明发起它的那一轮已经放弃等待），就用与生成相同的 inbox 续接机制唤醒对话：完成 → 「用 video_compose status 取回成片」（取回即贴片），失败 → 「看原因、先交付原片、用白话说明」。首条视频的叠字（`first_video_text:`）与省心托管（`light_autopilot:`）由各自流程交付，不唤醒。`credit_cap.IN_FLIGHT_JOB_KINDS` 加了 `compose`。
+
+## 样片（2026-11-02）
+
+16 条样片（做视频 9 条 15 秒 H3、菜单 4 张、海报 3 张）在 light-test 上用 `backend/scripts/light_samples.py` 走真实链路生成（账号 `light-full-samples`），拷到 `oss://bossip/light/samples/20261102/`：`<id>.mp4` / `<id>.jpg`（样片）、`<id>.jpg`（视频截帧）、`<id>_thumb.jpg`（图片缩略图）。花费：视频 9 × ¥1.35 + 图片约 ¥4，合计约 ¥16。重做样片：在测试机后端容器里跑该脚本（`--only` 选 id、`--prefix` 换目录），再改 `entries.json` 里的 key。
 
 ## 未做
 
-- `entries.json` 的 `sample_media` / `media_url` 还是空的，样片画廊要等素材。
-- 「省心托管」（结果卡开关 + 三问卡 + 托管列表）是 M2.5，不在本次。
+- 「省心托管」（结果卡开关 + 三问卡 + 托管列表）是 M2.5。

@@ -46,9 +46,27 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 
 - **首条视频出片闭环（2026-11-02，公网 API 直驱）**：新注册用户 `light-e2e-1102a`（密码不入库，见会话记录），餐饮 × 门店氛围，店名「老王牛肉面」+ 主打「手工拉面 现熬牛骨汤」，无参考图。`POST /api/first-video` 07:54:15Z → H3 作业 07:54:16 建、07:55:49 完成（约 91 秒，含拷 OSS）→ IMS 花字 compose 07:55:49→07:56:10（21 秒）→ 07:56:18 轮询见 `ready`，端到端约 2 分钟，在「3 分钟」验收线内。成片 720×1280、15.0 秒、4.7 MB、带音轨，两行花字在画面下方；账本 `usage` −3.75（15 s × 0.25）+ −0.045（compose 按整分钟），余额 14 → 10.205；通知 `first_video_ready` 带会话链接；占位助理消息 `finish=stop`，挂 intermediate 原片（12.5 MB）与 final 成片两条 FilePart，固定文案 + 3 条建议。两点发现：新注册实际余额 14（`signup_gift` 4 + 首次读余额即发的每周 `allowance` 10），「余额不足补差」在当前免费档规则下不会触发；门店氛围模板会生成人物，H3 把人脸糊掉了，演示观感要看一眼。同日此前 `hjk`（其他 × 招牌推荐，无店名，75 秒）与 `jm`（餐饮 × 招牌推荐，带参考图，115 秒）各出过一条，均未走花字。
 
+## 脚本（`deploy/light-test/scripts/`，2026-11-02）
+
+- `ecsrun.sh <script> [timeout]`：云助手 RunCommand + 轮询，打印输出；客户端超时会按命令名找回已受理的调用，不会重发。脚本须以 `#!` 开头、base64 后 ≤ 16 KB。同一台机器不要并发两条。
+- `ecssend.sh <file> <dir>`：云助手 SendFile（≤ 24 KB），给大于 RunCommand 上限的脚本用。
+- `release.sh [ref]`：下面「发布」四步一条命令（构建、上传、签名链接、机上装载与换 override、健康检查、删 OSS 中转）；`--ship <tag>` 只重跑机上部分。签名链接只写进本机临时目录的 `remote.sh`，不进 git。一次约 4–5 分钟（构建有缓存时）。
+
 ## 发布（只从 `light-mode` 或其 PR 分支构建，不从 main）
 
 1. 本机：`git archive <ref> backend container frontend-v2 | tar -x -C <dir>`；`docker buildx build --platform linux/amd64 --load -f backend/Dockerfile -t openbox-backend:<tag> .`（上下文是归档根，含 `container/`）；`docker buildx build --platform linux/amd64 --load --build-arg VITE_BUILD_ID=<tag> -t openbox-frontend-v2:<tag> frontend-v2`。tag 规范 `YYYYMMDD-light-<sha8>`。
 2. `docker save | gzip -1` → `aliyun oss cp … oss://bossip/_deploy-tmp/<tag>/ --endpoint oss-cn-shanghai.aliyuncs.com --force`（本机经代理只有约 300KB/s，242MB 要 15 分钟；首次上传会卡死，kill 重传即可）→ `aliyun oss sign` 出链接。
 3. 机上（云助手）：`curl` + `sha256sum -c` + `docker load` → 改 override 三行 image → `docker compose up -d`（backend 启动自跑 alembic）→ 看 `docker ps` healthy、`alembic current`、`/api/environment`。
 4. 收尾删 `_deploy-tmp/<tag>/`。
+
+## 发布记录
+
+| 时间 | 镜像 tag | 源码 | 内容 |
+|---|---|---|---|
+| 2026-11-01 | `20261101-light-050fa783` | feat/light-mode-backend@050fa783 | 首版：#107 + #110，迁移 `pi95b6c7d8e9` |
+| 2026-11-02 16:34 | `20261102-light-75538957` | light-full | menu-maker / poster-maker、样片签名（`light/media.py`） |
+| 2026-11-02 16:48 | `20261102-light-8883666d` | light-full | `light-video` 技能（免费档做视频不再卡在云桌面）、Light 提示词带店名 |
+| 2026-11-02 17:09 | `20261102-light-eb7e7262` | light-full | F5：合成完成后唤醒对话；compose 计入在途 |
+| 2026-11-02 17:20 | `20261102-light-520b4184` | light-full | 单子类样式名、菜单/海报不以问题卡收尾 |
+
+账号（密码在机上 `/opt/openbox/secrets/accounts.txt`，不入库）：`light-full-samples`（样片，超管 grant 了 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（密码在会话记录，不入库）。

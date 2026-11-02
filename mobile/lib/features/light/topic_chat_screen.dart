@@ -15,6 +15,7 @@ import '../chat/widgets/composer/resource_slot.dart';
 import 'state/light_providers.dart';
 import 'utils/light_steps.dart';
 import 'widgets/light_input_bar.dart';
+import 'widgets/light_result_actions.dart';
 import 'widgets/step_bar.dart';
 
 /// A topic chat (docs `LIGHT_MODE_PLAN.md` §4.4): the entry's step bar over
@@ -45,8 +46,7 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
   /// Furthest step the agent has asked about (0-based), -1 before the first.
   int _reached = -1;
 
-  void _back() =>
-      context.canPop() ? context.pop() : context.go(Paths.home);
+  void _back() => context.canPop() ? context.pop() : context.go(Paths.home);
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +77,10 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
     );
     final busy = isBusyStatus(liveStatus ?? sessionState.session?.status);
     final working =
-        busy && questions.isEmpty && _reached >= 0 && _reached < steps.length - 1
+        busy &&
+            questions.isEmpty &&
+            _reached >= 0 &&
+            _reached < steps.length - 1
         ? _reached + 1
         : -1;
 
@@ -85,7 +88,10 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        leading: BackButton(key: const Key('light-chat-back'), onPressed: _back),
+        leading: BackButton(
+          key: const Key('light-chat-back'),
+          onPressed: _back,
+        ),
         titleSpacing: 0,
         title: Text(
           title.isEmpty ? i18n.t('light:conversations.untitled') : title,
@@ -116,6 +122,8 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
         sessionId: sessionId,
         resources: widget.resources,
         light: true,
+        lightResultActions: (context, group) =>
+            lightResultActionsFor(sessionId, context, group),
         inputBuilder: (context, state) =>
             LightInputBar(state: state, chips: chips),
       ),

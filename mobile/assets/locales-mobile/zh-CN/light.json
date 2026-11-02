@@ -51,7 +51,9 @@
     "stepsTitle": "会这样进行",
     "noSamples": "样片正在准备中，直接开始也可以。",
     "unavailable": "这个入口现在用不了：{{reason}}",
-    "missing": "没有这个入口"
+    "missing": "没有这个入口",
+    "play": "看样片",
+    "playFailed": "样片播放失败"
   },
   "topic": {
     "input": {
@@ -118,5 +120,13 @@
     "proBody": "完整工作台：对话、项目、云电脑、技能",
     "failed": "切换失败，请重试"
   },
-  "testBuild": "测试版"
+  "testBuild": "测试版",
+  "result": {
+    "save": "保存",
+    "publish": "发到抖音",
+    "again": "再做一条",
+    "againPrompt": "再做一条，换个样子",
+    "publishPrompt": "把这条发到抖音",
+    "publishLocked": "发布需要云电脑，开通套餐后就能一键发到抖音"
+  }
 }

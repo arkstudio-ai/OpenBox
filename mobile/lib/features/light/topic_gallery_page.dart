@@ -8,6 +8,7 @@ import '../../shared/i18n/i18n.dart';
 import '../../shared/models/light.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
+import '../../shared/widgets/sample_player.dart';
 import '../../shared/widgets/section_tabs.dart';
 import 'state/light_providers.dart';
 import 'state/light_start.dart';
@@ -15,10 +16,10 @@ import 'widgets/entry_card.dart';
 
 /// The front page of a topic (docs `LIGHT_MODE_PLAN.md` §4.7 #16): the
 /// sample gallery, by subtype, with a one-line description and what to
-/// prepare for each look. 「就做这种」 starts the chat with the pick written
-/// into its opening card; 「不挑了，直接开始」 starts it plain. An entry with
-/// no samples yet (every one today — `sample_media` is still empty) shows
-/// its steps and price instead and starts straight away.
+/// prepare for each look; a clip sample plays full screen from its tile.
+/// 「就做这种」 starts the chat with the pick written into its opening card;
+/// 「不挑了，直接开始」 starts it plain. An entry without subtypes shows its
+/// steps and price instead and starts straight away.
 class LightTopicGalleryPage extends ConsumerStatefulWidget {
   const LightTopicGalleryPage({super.key, required this.entryId});
 
@@ -34,8 +35,7 @@ class _LightTopicGalleryPageState extends ConsumerState<LightTopicGalleryPage> {
   String? _sampleId;
   bool _starting = false;
 
-  void _back() =>
-      context.canPop() ? context.pop() : context.go(Paths.home);
+  void _back() => context.canPop() ? context.pop() : context.go(Paths.home);
 
   Future<void> _start(
     LightEntry entry, {
@@ -98,14 +98,15 @@ class _LightTopicGalleryPageState extends ConsumerState<LightTopicGalleryPage> {
             (s) => s.id == _subtypeId,
             orElse: () => subtypes.first,
           );
-    final sample = subtype?.samples
-        .where((s) => s.id == _sampleId)
-        .firstOrNull;
+    final sample = subtype?.samples.where((s) => s.id == _sampleId).firstOrNull;
     final gallery = subtype != null;
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        leading: BackButton(key: const Key('light-gallery-back'), onPressed: _back),
+        leading: BackButton(
+          key: const Key('light-gallery-back'),
+          onPressed: _back,
+        ),
         titleSpacing: 0,
         title: Text(
           entry.title,
@@ -152,6 +153,7 @@ class _LightTopicGalleryPageState extends ConsumerState<LightTopicGalleryPage> {
                         'light:gallery.needs',
                         vars: {'needs': item.needs},
                       ),
+                      failedText: i18n.t('light:gallery.playFailed'),
                       onTap: () => setState(() => _sampleId = item.id),
                     ),
                   ]
@@ -183,8 +185,7 @@ class _LightTopicGalleryPageState extends ConsumerState<LightTopicGalleryPage> {
                       children: [
                         FilledButton(
                           key: const Key('light-gallery-start'),
-                          onPressed:
-                              _starting || (gallery && sample == null)
+                          onPressed: _starting || (gallery && sample == null)
                               ? null
                               : () => _start(
                                   entry,
@@ -246,6 +247,7 @@ class _SampleCard extends StatelessWidget {
     required this.shade,
     required this.selected,
     required this.needsLabel,
+    required this.failedText,
     required this.onTap,
   });
 
@@ -253,6 +255,7 @@ class _SampleCard extends StatelessWidget {
   final int shade;
   final bool selected;
   final String needsLabel;
+  final String failedText;
   final VoidCallback onTap;
 
   @override
@@ -275,21 +278,18 @@ class _SampleCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // The sample still goes here once `media_url` is filled; until
-              // then a tinted portrait tile keeps the card's shape.
-              ClipRRect(
-                borderRadius: BorderRadius.circular(Radii.md),
-                child: SizedBox(
-                  width: 72,
-                  height: 108,
-                  child: sample.mediaUrl != null
-                      ? Image.network(
-                          sample.mediaUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => _tile(t),
-                        )
-                      : _tile(t),
-                ),
+              SampleThumb(
+                key: Key('light-sample-thumb-${sample.id}'),
+                thumbUrl: sample.thumbUrl,
+                isVideo: sample.isVideo,
+                shade: shade,
+                onPlay: sample.isVideo
+                    ? () => showSamplePlayer(
+                        context,
+                        sample.mediaUrl!,
+                        failedText: failedText,
+                      )
+                    : null,
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -325,10 +325,7 @@ class _SampleCard extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                         needsLabel,
-                        style: TextStyle(
-                          fontSize: FontSizes.xs,
-                          color: t.n600,
-                        ),
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
                       ),
                     ],
                   ],
@@ -340,11 +337,6 @@ class _SampleCard extends StatelessWidget {
       ),
     );
   }
-
-  Widget _tile(BossipTokens t) => ColoredBox(
-    color: [t.n900, t.n800, t.n700][shade % 3],
-    child: Icon(Icons.play_arrow_rounded, color: t.n100, size: 26),
-  );
 }
 
 /// An entry without a gallery: its steps as a preview, so the person knows

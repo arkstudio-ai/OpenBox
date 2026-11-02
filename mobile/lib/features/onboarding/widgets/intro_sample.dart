@@ -5,11 +5,11 @@ import 'package:video_player/video_player.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 
-/// Bundled sample clip for the intro (portrait, muted, looping). Drop the
-/// file at this path — `assets/onboarding/` is already in the bundle — and
-/// the intro plays it; until then the poster stands in.
+/// Bundled sample clip for the intro (portrait, muted, looping): a real
+/// first-video-style clip made on the Light test machine (餐品展示 ·
+/// 烟火气特写, 540×944 H.264, no audio). The poster is its first second.
 const introSampleVideoAsset = 'assets/onboarding/intro-sample.mp4';
-const introSamplePosterAsset = 'assets/onboarding/intro-1.jpg';
+const introSamplePosterAsset = 'assets/onboarding/intro-sample.jpg';
 
 /// A finished-looking 9:16 card: the sample video when the app ships one,
 /// the poster otherwise, with the shop-name overlay the real videos carry.

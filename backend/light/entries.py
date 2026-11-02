@@ -22,13 +22,19 @@ class Step(BaseModel):
     label: str = Field(min_length=1, max_length=20)
 
 
+from light.media import MEDIA_PATTERN as MEDIA
+
+
 class Sample(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=40, pattern=ID)
     label: str = Field(min_length=1, max_length=20)
     description: str = Field(default="", max_length=120)
     needs: str = Field(default="", max_length=60)
-    media_url: str | None = Field(default=None, max_length=1024)
+    #: The sample itself: a 9:16 clip (``.mp4``) or an image.
+    media_url: str | None = Field(default=None, max_length=1024, pattern=MEDIA)
+    #: A still for the gallery tile when ``media_url`` is a clip.
+    poster_url: str | None = Field(default=None, max_length=1024, pattern=MEDIA)
 
 
 class Subtype(BaseModel):
@@ -94,8 +100,16 @@ class Entry(BaseModel):
             text = self.opening_card.text_with_sample.replace("{sample}", chosen)
         return OpeningCard(text=text, chips=list(self.opening_card.chips))
 
-    def public(self) -> dict:
-        return self.model_dump(mode="json")
+    def public(self, sign=None) -> dict:
+        """The entry as the App receives it; ``sign`` (``light.media.sign_media``) turns ``oss:`` keys into links."""
+        data = self.model_dump(mode="json")
+        if sign is None:
+            return data
+        for subtype in data["subtypes"]:
+            for sample in subtype["samples"]:
+                for field in ("media_url", "poster_url"):
+                    sample[field] = sign(sample.get(field))
+        return data
 
 
 class LightEntries(BaseModel):

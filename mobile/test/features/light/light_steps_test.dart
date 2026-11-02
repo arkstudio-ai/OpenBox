@@ -115,6 +115,32 @@ void main() {
       expect(view.byId('footage_edit')!.isComingSoon, isTrue);
       expect(view.byId('nope'), isNull);
     });
+
+    test('a clip sample shows its still; an image sample shows itself', () {
+      final clip = LightSample.fromJson({
+        'id': 'dish_closeup',
+        'label': '烟火气特写',
+        'media_url':
+            'https://oss.example/light/dish_closeup.mp4?Expires=1&Signature=x',
+        'poster_url': 'https://oss.example/light/dish_closeup.jpg?Expires=1',
+      })!;
+      expect(clip.isVideo, isTrue);
+      expect(clip.thumbUrl, contains('dish_closeup.jpg'));
+      final bare = LightSample.fromJson({
+        'id': 'dish_dark',
+        'label': '暗调',
+        'media_url': 'https://oss.example/light/dish_dark.mp4',
+      })!;
+      expect(bare.isVideo, isTrue);
+      expect(bare.thumbUrl, isNull);
+      final image = LightSample.fromJson({
+        'id': 'menu_red',
+        'label': '烟火红',
+        'media_url': 'https://oss.example/light/menu_red.jpg',
+      })!;
+      expect(image.isVideo, isFalse);
+      expect(image.thumbUrl, image.mediaUrl);
+    });
   });
 
   testWidgets('the step bar lights done, current and working steps', (

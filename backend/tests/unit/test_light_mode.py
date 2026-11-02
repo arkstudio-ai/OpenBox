@@ -54,6 +54,26 @@ def test_entries_config_is_complete():
     assert config.entry("review").requires.binding == "douyin" and config.entry("douyin_publish").requires.desktop
 
 
+def test_private_sample_media_is_signed_when_served():
+    from light.entries import Entry
+    entry = Entry.model_validate({
+        "id": "video", "title": "做一条视频", "kind": "primary", "skill": "video-production",
+        "steps": [{"id": "topic", "label": "选主题"}], "opening_card": {"text": "hi"},
+        "subtypes": [{"id": "dish", "label": "餐品", "samples": [
+            {"id": "a", "label": "A", "media_url": "oss:light/samples/a.mp4", "poster_url": "oss:light/samples/a.jpg"},
+            {"id": "b", "label": "B", "media_url": "https://cdn.example/b.jpg"},
+        ]}],
+    })
+    samples = entry.public(lambda v: v and v.replace("oss:", "https://signed/"))["subtypes"][0]["samples"]
+    assert samples[0]["media_url"] == "https://signed/light/samples/a.mp4"
+    assert samples[0]["poster_url"] == "https://signed/light/samples/a.jpg"
+    assert samples[1]["media_url"] == "https://cdn.example/b.jpg" and samples[1]["poster_url"] is None
+    assert entry.public()["subtypes"][0]["samples"][0]["media_url"] == "oss:light/samples/a.mp4"
+    with pytest.raises(ValueError):
+        Entry.model_validate({**entry.model_dump(), "subtypes": [{"id": "x", "label": "X", "samples": [
+            {"id": "c", "label": "C", "media_url": "http://plain/c.mp4"}]}]})
+
+
 def test_every_entry_skill_ships_with_the_backend():
     """An entry pointing at a skill that is not on disk would leave the agent with nothing to read."""
     from pathlib import Path

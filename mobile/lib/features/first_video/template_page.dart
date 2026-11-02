@@ -7,6 +7,7 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/first_video.dart';
 import '../../shared/router/paths.dart';
+import '../../shared/widgets/sample_player.dart';
 import 'api/first_video_api.dart';
 import 'state/first_video_flow.dart';
 import 'widgets/flow_chrome.dart';
@@ -72,6 +73,7 @@ class FirstVideoTemplatePage extends ConsumerWidget {
               shade: index,
               selected: draft.template == option.id,
               selectedLabel: i18n.t('first_video:template.selected'),
+              playFailed: i18n.t('first_video:result.playFailed'),
               onTap: () => ref
                   .read(firstVideoDraftProvider.notifier)
                   .setTemplate(option.id),
@@ -96,6 +98,7 @@ class _TemplateCard extends StatelessWidget {
     required this.shade,
     required this.selected,
     required this.selectedLabel,
+    required this.playFailed,
     required this.onTap,
   });
 
@@ -103,6 +106,7 @@ class _TemplateCard extends StatelessWidget {
   final int shade;
   final bool selected;
   final String selectedLabel;
+  final String playFailed;
   final VoidCallback onTap;
 
   @override
@@ -125,21 +129,24 @@ class _TemplateCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Sample stills slot in here once they exist
-              // (`assets/first_video/<template>.jpg`); until then a tinted
-              // portrait tile keeps the card's shape.
-              Container(
+              // A still from a real sample of this template is bundled
+              // (`assets/first_video/<template>.jpg`); the clip itself plays
+              // from the server's signed link.
+              SampleThumb(
+                key: Key('fv-template-thumb-${option.id}'),
+                thumbUrl: null,
+                assetStill: 'assets/first_video/${option.id}.jpg',
+                isVideo: option.sampleUrl != null,
+                shade: shade,
                 width: 76,
                 height: 128,
-                decoration: BoxDecoration(
-                  color: [t.n900, t.n800, t.n700][shade % 3],
-                  borderRadius: BorderRadius.circular(Radii.md),
-                ),
-                child: const Icon(
-                  Icons.play_arrow_rounded,
-                  color: Colors.white,
-                  size: 28,
-                ),
+                onPlay: option.sampleUrl == null
+                    ? null
+                    : () => showSamplePlayer(
+                        context,
+                        option.sampleUrl!,
+                        failedText: playFailed,
+                      ),
               ),
               const SizedBox(width: 14),
               Expanded(

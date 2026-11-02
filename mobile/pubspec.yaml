@@ -100,6 +100,7 @@ flutter:
     - assets/locales-mobile/zh-CN/
     - assets/locales-mobile/en-US/
     - assets/onboarding/
+    - assets/first_video/
     # Voice-call tones (assets/sounds/README.md has the ffmpeg commands).
     # Listed one by one so the README stays out of the app bundle.
     - assets/sounds/call_ringback.wav

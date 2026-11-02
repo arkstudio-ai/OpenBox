@@ -13,6 +13,7 @@ from typing import Any
 
 from core.log import create_logger
 from light.entries import Entry, light_entries
+from light.media import sign_media
 
 log = create_logger(__name__)
 
@@ -59,6 +60,7 @@ async def default_mode_for_new_user(user_id: str) -> None:
 
 # --- availability -------------------------------------------------------------
 
+
 async def _workspace_facts(workspace_id: str) -> dict:
     from sqlalchemy import select
     from billing.service import now
@@ -99,7 +101,8 @@ async def entries_view(user_id: str, workspace_id: str) -> dict:
         "ui_mode": await ui_mode(user_id),
         "plan_id": facts["plan_id"],
         "desktop": facts["desktop"],
-        "entries": [{**entry.public(), "availability": availability(entry, facts)} for entry in config.entries],
+        "entries": [{**entry.public(sign_media), "availability": availability(entry, facts)}
+                    for entry in config.entries],
     }
 
 
@@ -142,7 +145,7 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
                         agent=session.agent, model=model, entrypoint=ENTRYPOINT)
     return {
         "session_id": session.id,
-        "entry": entry.public(),
+        "entry": entry.public(sign_media),
         "opening_card": opening.model_dump(),
         "steps": [step.model_dump() for step in entry.steps],
         "video_model": selection.get("video_model"),

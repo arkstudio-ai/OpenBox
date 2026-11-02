@@ -42,6 +42,7 @@ class LightSample {
     this.description = '',
     this.needs = '',
     this.mediaUrl,
+    this.posterUrl,
   });
 
   static LightSample? fromJson(dynamic json) {
@@ -49,12 +50,14 @@ class LightSample {
     final id = asString(json['id']);
     if (id == null || id.isEmpty) return null;
     final media = asString(json['media_url']);
+    final poster = asString(json['poster_url']);
     return LightSample(
       id: id,
       label: asString(json['label']) ?? id,
       description: asString(json['description']) ?? '',
       needs: asString(json['needs']) ?? '',
       mediaUrl: media == null || media.isEmpty ? null : media,
+      posterUrl: poster == null || poster.isEmpty ? null : poster,
     );
   }
 
@@ -63,8 +66,21 @@ class LightSample {
   final String description;
   final String needs;
 
-  /// Still empty on the server today; the gallery shows a placeholder tile.
+  /// The sample itself (a signed link): a 9:16 clip or an image. Null
+  /// while the server has none; the gallery then shows a tinted tile.
   final String? mediaUrl;
+
+  /// A still for the tile when [mediaUrl] is a clip.
+  final String? posterUrl;
+
+  bool get isVideo {
+    final path = Uri.tryParse(mediaUrl ?? '')?.path.toLowerCase() ?? '';
+    return path.endsWith('.mp4') || path.endsWith('.mov');
+  }
+
+  /// What the tile shows: the small still when there is one, else an image
+  /// sample itself (never a clip URL).
+  String? get thumbUrl => posterUrl ?? (isVideo ? null : mediaUrl);
 }
 
 class LightSubtype {
@@ -322,10 +338,9 @@ class LightRecentGroup {
       title: asString(json['title']) ?? '',
       entryId: entryId == null || entryId.isEmpty ? null : entryId,
       updatedAt: asDate(json['updated_at']),
-      outputs: asList(json['outputs'])
-          .map(LightRecentOutput.fromJson)
-          .whereType<LightRecentOutput>()
-          .toList(),
+      outputs: asList(
+        json['outputs'],
+      ).map(LightRecentOutput.fromJson).whereType<LightRecentOutput>().toList(),
     );
   }
 
@@ -340,7 +355,6 @@ class LightRecentGroup {
 }
 
 List<LightRecentGroup> lightRecentGroupsFromJson(Map<String, dynamic> json) =>
-    asList(json['groups'])
-        .map(LightRecentGroup.fromJson)
-        .whereType<LightRecentGroup>()
-        .toList();
+    asList(
+      json['groups'],
+    ).map(LightRecentGroup.fromJson).whereType<LightRecentGroup>().toList();

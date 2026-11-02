@@ -12,9 +12,9 @@
     { "id": "other", "label": "其他" }
   ],
   "templates": [
-    { "id": "signature", "label": "招牌推荐", "description": "最拿手的那一样，特写给人看" },
-    { "id": "ambience", "label": "门店氛围", "description": "从门头到店里，有人气有环境" },
-    { "id": "promo", "label": "活动促销", "description": "节日、新店、折扣的热闹劲" }
+    { "id": "signature", "label": "招牌推荐", "description": "最拿手的那一样，特写给人看", "sample_url": "oss:light/samples/20261102/dish_closeup.mp4" },
+    { "id": "ambience", "label": "门店氛围", "description": "从门头到店里，有人气有环境", "sample_url": "oss:light/samples/20261102/shop_evening.mp4" },
+    { "id": "promo", "label": "活动促销", "description": "节日、新店、折扣的热闹劲", "sample_url": "oss:light/samples/20261102/dish_fast.mp4" }
   ],
   "prompts": {
     "food": {

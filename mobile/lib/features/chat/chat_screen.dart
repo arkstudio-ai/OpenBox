@@ -65,6 +65,7 @@ class ChatScreen extends ConsumerStatefulWidget {
     this.resources,
     this.inputBuilder,
     this.light = false,
+    this.lightResultActions,
   });
 
   final String sessionId;
@@ -80,6 +81,9 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// Light skin for the transcript itself: tool traces fold to one line and
   /// tagged question cards use big chips (see [LightChatScope]).
   final bool light;
+
+  /// Light: the actions under a finished result card (see [LightChatScope]).
+  final LightResultActionsBuilder? lightResultActions;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -393,7 +397,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
       ],
     );
-    return widget.light ? LightChatScope(child: body) : body;
+    return widget.light
+        ? LightChatScope(resultActions: widget.lightResultActions, child: body)
+        : body;
   }
 }
 

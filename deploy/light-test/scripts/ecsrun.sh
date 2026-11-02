@@ -18,6 +18,8 @@ TIMEOUT=${2:-300}
 head -1 "$SCRIPT" | grep -q '^#!' || { echo "script must start with a #! line" >&2; exit 2; }
 
 B64=$(base64 < "$SCRIPT" | tr -d '\n')
+# RunCommand refuses content over ~16 KB after base64; ship big files with ecssend.sh first.
+[ ${#B64} -le 16000 ] || { echo "script is ${#B64} bytes after base64 (limit ~16000); send large files with ecssend.sh" >&2; exit 2; }
 NAME="ecsrun-$(date +%Y%m%d%H%M%S)-$$"
 OUT=$(aliyun ecs RunCommand --RegionId "$REGION" --InstanceId.1 "$INSTANCE" --Type RunShellScript \
   --Name "$NAME" --CommandContent "$B64" --ContentEncoding Base64 --Timeout "$TIMEOUT" \
@@ -26,8 +28,11 @@ INVOKE=$(printf '%s' "$OUT" | python3 -c 'import sys,json; print(json.load(sys.s
 if [ -z "$INVOKE" ]; then
   # Client-side timeout: the command may have been accepted anyway. Find it by name.
   sleep 5
-  INVOKE=$(aliyun ecs DescribeInvocations --RegionId "$REGION" --InstanceId "$INSTANCE" --CommandName "$NAME" \
-    --read-timeout 60 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin)["Invocations"]["Invocation"]; print(d[0]["InvokeId"] if d else "")' 2>/dev/null)
+  INVOKE=$(aliyun ecs DescribeInvocations --RegionId "$REGION" --InstanceId "$INSTANCE" --PageSize 10 \
+    --read-timeout 60 2>/dev/null | NAME="$NAME" python3 -c '
+import os, sys, json
+rows = json.load(sys.stdin)["Invocations"]["Invocation"]
+print(next((r["InvokeId"] for r in rows if r.get("CommandName") == os.environ["NAME"]), ""))' 2>/dev/null)
   [ -n "$INVOKE" ] || { echo "RunCommand failed: $(printf '%s' "$OUT" | head -c 600)" >&2; exit 1; }
   echo "[ecsrun] RunCommand timed out on the client but was accepted: $INVOKE" >&2
 fi

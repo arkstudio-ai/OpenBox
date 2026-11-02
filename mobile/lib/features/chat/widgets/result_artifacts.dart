@@ -12,6 +12,7 @@ import '../../../shared/widgets/fold.dart';
 import '../utils/content_view.dart';
 import 'attachment_gallery.dart';
 import 'audio_preview.dart';
+import 'light_chat_scope.dart';
 import 'traces/douyin_tool_actions.dart';
 
 /// Materials precede the final deliverable. Only an attached final video
@@ -342,6 +343,10 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
               compact: !widget.hero,
             ),
           ],
+          if (media.isNotEmpty &&
+              (group.role == 'final' || group.role == 'result') &&
+              group.artifactKind != 'video_segment')
+            ?LightChatScope.of(context)?.resultActions?.call(context, group),
           if (group.artifactKind == 'qr_code' &&
               group.sourceTool?.tool == 'douyin_publish') ...[
             const SizedBox(height: 8),

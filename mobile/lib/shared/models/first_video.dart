@@ -79,22 +79,28 @@ class FirstVideoOption {
     required this.id,
     required this.label,
     this.description = '',
+    this.sampleUrl,
   });
 
   static FirstVideoOption? fromJson(dynamic json) {
     if (json is! Map<String, dynamic>) return null;
     final id = asString(json['id']);
     if (id == null || id.isEmpty) return null;
+    final sample = asString(json['sample_url']);
     return FirstVideoOption(
       id: id,
       label: asString(json['label']) ?? id,
       description: asString(json['description']) ?? '',
+      sampleUrl: sample == null || sample.isEmpty ? null : sample,
     );
   }
 
   final String id;
   final String label;
   final String description;
+
+  /// A real sample clip of this template (signed link), templates only.
+  final String? sampleUrl;
 }
 
 class FirstVideoCatalog {

@@ -579,7 +579,8 @@
       "askMe": "Or just tell me the answer and I'll reply for you.",
       "reminder": "{{count}} items need you · View in My tasks",
       "reviewTasks": "View reminders in My tasks",
-      "dismissReminder": "Dismiss reminder (items stay in My tasks)"
+      "dismissReminder": "Dismiss reminder (items stay in My tasks)",
+      "deckIdle": "Conversation and tasks"
     },
     "moreTasks": "Load more tasks",
     "earlierResult": "This result is from an earlier request and does not include the latest input.",

@@ -24,8 +24,9 @@ import 'widgets/voice_ticker.dart';
 /// any way — the chevron, back, a downward swipe — only collapses the call
 /// into the top call bar. Hanging up ends the call and leaves too.
 ///
-/// "只听不看字": nothing said in the call is shown here, only a one-line
-/// hint for the first ten seconds.
+/// The call's words and cards live in the panel under the orb
+/// ([VoiceCardPanel]); the page itself only shows the state line and the
+/// first-ten-seconds hint.
 class VoiceCallPage extends ConsumerStatefulWidget {
   const VoiceCallPage({super.key, this.cards});
 
@@ -179,13 +180,7 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
                           ),
                         ),
                         if (widget.cards != null && end == null)
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxHeight:
-                                  MediaQuery.sizeOf(context).height * 0.42,
-                            ),
-                            child: widget.cards!(_leave),
-                          ),
+                          VoiceCardPanel(child: widget.cards!(_leave)),
                       ],
                     ),
                   ),
@@ -276,6 +271,97 @@ class _Hint extends ConsumerWidget {
                     )
                   : const SizedBox.shrink(),
             ),
+    );
+  }
+}
+
+/// The cards' panel under the orb: drag its handle to make it taller or
+/// shorter, tap the chevron to hide it (a small pill brings it back). The
+/// size is remembered for the app's life, not across launches.
+class VoiceCardPanel extends StatefulWidget {
+  const VoiceCardPanel({super.key, required this.child});
+
+  final Widget child;
+
+  /// Share of the screen height the panel takes; dragging moves it between
+  /// [minFraction] and [maxFraction].
+  static double fraction = 0.42;
+  static bool hidden = false;
+  static const minFraction = 0.16;
+  static const maxFraction = 0.78;
+
+  @override
+  State<VoiceCardPanel> createState() => _VoiceCardPanelState();
+}
+
+class _VoiceCardPanelState extends State<VoiceCardPanel> {
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ProviderScope.containerOf(context).read(i18nProvider);
+    final height = MediaQuery.sizeOf(context).height;
+    if (VoiceCardPanel.hidden) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 16, bottom: 6),
+          child: ActionChip(
+            key: const Key('voice-cards-show'),
+            avatar: Icon(Icons.expand_less, size: 18, color: t.a700),
+            label: Text(
+              i18n.t('voice:cards.show'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.a700),
+            ),
+            onPressed: () => setState(() => VoiceCardPanel.hidden = false),
+          ),
+        ),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          key: const Key('voice-cards-handle'),
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragUpdate: (details) => setState(() {
+            VoiceCardPanel.fraction =
+                (VoiceCardPanel.fraction - details.delta.dy / height).clamp(
+                  VoiceCardPanel.minFraction,
+                  VoiceCardPanel.maxFraction,
+                );
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Spacer(),
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: t.n300,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  key: const Key('voice-cards-hide'),
+                  tooltip: i18n.t('voice:cards.hide'),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 28,
+                  ),
+                  onPressed: () => setState(() => VoiceCardPanel.hidden = true),
+                  icon: Icon(Icons.expand_more, size: 20, color: t.n600),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(height: height * VoiceCardPanel.fraction, child: widget.child),
+      ],
     );
   }
 }

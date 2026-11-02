@@ -579,7 +579,8 @@
       "askMe": "也可以直接告诉我答案，我帮你回复。",
       "reminder": "有 {{count}} 件待处理事项，前往「我的任务」查看",
       "reviewTasks": "前往「我的任务」查看提醒",
-      "dismissReminder": "收起提醒（待处理事项保留在我的任务中）"
+      "dismissReminder": "收起提醒（待处理事项保留在我的任务中）",
+      "deckIdle": "对话与任务"
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",

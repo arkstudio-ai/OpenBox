@@ -119,5 +119,9 @@
     "openRoom": "Talk in this room",
     "taskDoing": "The task is {{step}}; I will tell you when it is done",
     "inRoom": "You are talking in this room: what you say goes to this task; say “back” to return"
+  },
+  "cards": {
+    "show": "Show cards",
+    "hide": "Hide cards"
   }
 }

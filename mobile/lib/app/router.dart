@@ -38,10 +38,10 @@ import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
-import 'voice_conversation_card.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
 import 'knowledge_routes.dart';
+import 'voice_conversation_card.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:

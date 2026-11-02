@@ -48,6 +48,13 @@ class _VoiceConversationCardState extends ConsumerState<VoiceConversationCard> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    // Entering a room by voice opens its channel; leaving returns to the call.
+    ref.listen(
+      voiceCallControllerProvider.select((s) => s.focus?.bound ?? false),
+      (previous, bound) {
+        if (previous != bound) setState(() => _channel = bound ? 1 : 0);
+      },
+    );
     final call = ref.watch(voiceCallControllerProvider);
     final focus = call.focus;
     String? roomSession = focus?.sessionId;
@@ -97,6 +104,15 @@ class _VoiceConversationCardState extends ConsumerState<VoiceConversationCard> {
               ],
             ],
           ),
+          if (focus?.bound ?? false)
+            Padding(
+              key: const Key('voice-conversation-in-room'),
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                i18n.t('voice:transcript.inRoom'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
+              ),
+            ),
           const SizedBox(height: 6),
           if (channel == 0)
             _CallLines(call: call, i18n: i18n)
@@ -109,6 +125,7 @@ class _VoiceConversationCardState extends ConsumerState<VoiceConversationCard> {
             _RoomLines(
               sessionId: roomSession,
               i18n: i18n,
+              progress: focus?.progress ?? '',
               onOpen: () {
                 widget.beforeOpen?.call();
                 GoRouter.of(context).push(Paths.chat(roomSession!));
@@ -222,11 +239,15 @@ class _RoomLines extends ConsumerWidget {
     required this.sessionId,
     required this.i18n,
     required this.onOpen,
+    this.progress = '',
   });
 
   final String sessionId;
   final I18nState i18n;
   final VoidCallback onOpen;
+
+  /// The server's own word on what the room is doing now (`focus.progress`).
+  final String progress;
 
   static const _recentRows = 8;
 
@@ -263,7 +284,9 @@ class _RoomLines extends ConsumerWidget {
           ),
         },
     ].where((line) => line is! _Line || line.text.isNotEmpty).toList();
-    final note = isBusyStatus(status)
+    final note = progress.isNotEmpty
+        ? i18n.t('voice:transcript.taskDoing', vars: {'step': progress})
+        : isBusyStatus(status)
         ? i18n.t('voice:transcript.taskBusy')
         : status == SessionStatus.waitingInput
         ? i18n.t('voice:transcript.taskWaiting')

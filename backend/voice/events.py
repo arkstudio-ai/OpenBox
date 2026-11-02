@@ -66,11 +66,15 @@ def transcript(role: str, text: str, *, item_id: str, final: bool, at: float) ->
             "item_id": item_id, "final": bool(final), "at": round(float(at), 3)}
 
 
-def focus(task: dict | None) -> dict:
-    """The task this call is about right now, or none: the conversation card opens that task's room."""
+def focus(task: dict | None, *, bound: bool = False) -> dict:
+    """The task this call is about right now, or none: the conversation card opens that task's room.
+
+    ``bound``: the call is inside that room (voice/room.py): what the user says goes to the task."""
     value = ({"task_id": str(task["task_id"]), "title": str(task.get("title") or ""),
-              "session_id": task.get("session_id")} if task else None)
-    return {"type": "focus", "task": value}
+              "session_id": task.get("session_id"),
+              # What the room is doing right now, as a phrase ("在生成第二镜"); "" when idle or unknown.
+              "progress": str(task.get("progress") or "")} if task else None)
+    return {"type": "focus", "task": value, "bound": bool(bound and value is not None)}
 
 
 def cost(snapshot: dict) -> dict:

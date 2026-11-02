@@ -200,9 +200,10 @@ class FakeLink:
         self.on_message = None
         self.waiting_cards: list[dict] = []  # the main session's pending cards (assistant.confirmations shape)
 
-    async def start(self, ref):
+    async def start(self, ref, *, room=None):
         if self.fail_start:
             raise ValueError("Input text is required")
+        ref.room = dict(room) if room else None
         self.started.append(ref)
         ref.inbox_id = f"inbox-{len(self.started)}"
 

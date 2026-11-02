@@ -46,6 +46,7 @@ export const initialCall: CallState = {
   ended: null,
   transcript: [],
   focus: null,
+  bound: false,
   level: SILENT,
 }
 
@@ -176,7 +177,7 @@ function onServerEvent(state: CallState, event: ServerEvent, at: number): CallSt
 function onContent(state: CallState, event: ServerEvent): CallState {
   if (state.status !== "connected") return state
   if (event.type === "transcript") return { ...state, transcript: withLine(state.transcript, event) }
-  if (event.type === "focus") return { ...state, focus: event.task ?? null }
+  if (event.type === "focus") return { ...state, focus: event.task ?? null, bound: event.bound === true && !!event.task }
   return state
 }
 

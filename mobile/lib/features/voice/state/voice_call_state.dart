@@ -145,6 +145,8 @@ class VoiceFocusTask {
     required this.taskId,
     required this.title,
     this.sessionId,
+    this.progress = '',
+    this.bound = false,
   });
 
   final String taskId;
@@ -152,6 +154,12 @@ class VoiceFocusTask {
 
   /// The task's execution conversation, when the server knew it.
   final String? sessionId;
+
+  /// What the room is doing right now ("在生成视频"); empty when idle or unknown.
+  final String progress;
+
+  /// The call is inside this task's room: what the user says goes to the task.
+  final bool bound;
 }
 
 /// Lines kept for the conversation card; older ones fall off the top.

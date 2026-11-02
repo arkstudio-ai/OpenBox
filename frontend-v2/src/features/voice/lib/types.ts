@@ -90,11 +90,15 @@ export interface FocusTask {
   task_id: string
   title: string
   session_id?: string | null
+  /** What the room is doing right now, as a phrase; empty when idle or unknown. */
+  progress?: string
 }
 
 export interface FocusEvent {
   type: "focus"
   task: FocusTask | null
+  /** The call is inside that task's room: what the user says goes to the task. */
+  bound?: boolean
 }
 
 export interface TranscriptLine {
@@ -160,6 +164,8 @@ export interface CallState {
   transcript: TranscriptLine[]
   /** The task this call is about right now, when the server named one. */
   focus: FocusTask | null
+  /** Inside the focus task's room (voice/room.py). */
+  bound: boolean
   /** Live loudness, 0–1, of the microphone and of the model's voice. */
   level: { mic: number; out: number }
 }

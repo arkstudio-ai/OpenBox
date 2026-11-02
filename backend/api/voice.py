@@ -26,9 +26,10 @@ from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
-from voice.progress import Progress
+from voice.progress import Progress, RoomProgress
 from voice.control_notes import ControlWatcher
 from voice.reports import ReportWatcher
+from voice.room import RoomWatcher
 from voice.updates import CallUpdates
 from voice.provider import RealtimeProvider
 
@@ -198,7 +199,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,
-                    focus=ReplyFocus(), focus_task=facts.focus)
+                    focus=ReplyFocus(), focus_task=facts.focus,
+                    room_progress=RoomProgress(user_id=user_id, rooms=lambda: shared_context.rooms, lang=lang))
     updates = CallUpdates(scope, rooms=lambda: shared_context.rooms)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
@@ -214,6 +216,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     async def deliver_controls(notes):
         for note in notes:
             await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
+
+    async def deliver_room(replies):
+        for reply in replies:
+            await bridge.room_reply(reply.inbox_id, reply.title, reply.text, reply.result_id)
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
@@ -322,6 +328,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             if now - renew >= LOCK_RENEW_SECONDS:
                 renew = now
                 await calls.renew_lock(user_id)
+            await bridge.refresh_room_progress()
             await bridge.fill_idle()
 
     async def memory_updates():
@@ -380,8 +387,11 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
     controls = ControlWatcher(user_id=user_id, main_session_id=main_id, workspace_id=workspace_id, call_id=call_id,
                               lang=lang)
+    room_watcher = RoomWatcher(user_id=user_id, workspace_id=workspace_id, call_id=call_id,
+                               room=lambda: bridge.room, lang=lang)
     try:
         bridge.progress.start()
+        bridge.room_progress.start()
         await reports.start()
         await controls.start()
         # Answer as soon as the provider is configured. Both audio directions
@@ -396,6 +406,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             bridge_to_client(), timers(), pending_cards(), memory_updates(),
             updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
             updates.watch(updates.controls, controls.poll, deliver_controls, name="controls"),
+            updates.watch(updates.rooms, room_watcher.poll, deliver_room, name="room"),
             updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()

@@ -15,8 +15,8 @@ import { useVoiceStore } from "../store"
 
 export function VoiceTranscript({ className }: { className?: string }) {
   const { t } = useTranslation("voice")
-  const { lines, focus, hearing, phase } = useVoiceStore(
-    useShallow((state) => ({ lines: state.call.transcript, focus: state.call.focus, hearing: state.call.hearing, phase: state.call.phase })),
+  const { lines, focus, bound, hearing, phase } = useVoiceStore(
+    useShallow((state) => ({ lines: state.call.transcript, focus: state.call.focus, bound: state.call.bound, hearing: state.call.hearing, phase: state.call.phase })),
   )
   const navigate = useNavigate()
   const end = useRef<HTMLDivElement>(null)
@@ -39,6 +39,7 @@ export function VoiceTranscript({ className }: { className?: string }) {
           )
         )}
       </div>
+      {bound && <p className="text-a700 mb-1 text-xs">{t("transcript.inRoom")}</p>}
       <div className="max-h-48 space-y-1 overflow-y-auto pe-1 text-sm" role="log" aria-live="off">
         {lines.length === 0 && <p className="text-n600 text-xs">{t("transcript.empty")}</p>}
         {lines.map((line) => (

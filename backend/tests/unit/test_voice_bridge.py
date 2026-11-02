@@ -656,3 +656,27 @@ async def test_what_the_focus_tasks_room_is_doing_reaches_the_instructions_and_t
         assert rooms.step("room-1") == ""  # too old to be "now"
     finally:
         rooms.stop()
+
+
+async def test_inside_a_room_handovers_go_to_the_task_and_other_results_are_only_announced(call):
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await bridge.enter_room({"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"})
+    focus = of_type(outbox(bridge), "focus")
+    assert focus[-1]["bound"] is True and focus[-1]["task"]["task_id"] == "t1"
+    assert "你现在在「艾薇兰调研」这间" in bridge._instructions()
+    await replay(bridge, started("r1"), event("user_transcript", text="第二镜换成夜景", item_id="u1"),
+                 tool_call("call-1", "第二镜换成夜景"))
+    assert link.started[-1].room == {"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"}
+    # Another task's result while inside: one line, not the report.
+    bridge.state = "user_speaking"
+    await bridge.report("酒吧视频", "酒吧视频的三条成片都做好了，已经发到素材库。", "inbox-9", "t2")
+    other = [ref for ref in bridge.deliveries if ref.task_id == "t2"]
+    assert len(other) == 1 and other[0].speech == "「酒吧视频」那间出结果了，要过去看看吗？"
+    # The room's own reply is told whatever the report setting; leaving unbinds.
+    bridge.tell_reports = False
+    await bridge.room_reply("inbox-7", "艾薇兰调研", "第二镜已经换成夜景，成片两分钟后出。", "result-7")
+    assert [ref.speech for ref in bridge.deliveries if ref.provider_call_id == "room:inbox-7"] == ["第二镜已经换成夜景，成片两分钟后出。"]
+    await bridge.leave_room()
+    assert of_type(outbox(bridge), "focus")[-1]["bound"] is False and bridge.room is None
+    assert "你现在在「" not in bridge._instructions()

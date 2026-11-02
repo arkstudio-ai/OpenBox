@@ -29,6 +29,7 @@ from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress, RoomProgress
 from voice.control_notes import ControlWatcher
 from voice.reports import ReportWatcher
+from voice.room import RoomWatcher
 from voice.updates import CallUpdates
 from voice.provider import RealtimeProvider
 
@@ -216,6 +217,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
         for note in notes:
             await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
 
+    async def deliver_room(replies):
+        for reply in replies:
+            await bridge.room_reply(reply.inbox_id, reply.title, reply.text, reply.result_id)
+
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
         if (event.get("data") or {}).get("userId") != user_id or bridge.closing:
@@ -382,6 +387,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
     controls = ControlWatcher(user_id=user_id, main_session_id=main_id, workspace_id=workspace_id, call_id=call_id,
                               lang=lang)
+    room_watcher = RoomWatcher(user_id=user_id, workspace_id=workspace_id, call_id=call_id,
+                               room=lambda: bridge.room, lang=lang)
     try:
         bridge.progress.start()
         bridge.room_progress.start()
@@ -399,6 +406,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             bridge_to_client(), timers(), pending_cards(), memory_updates(),
             updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
             updates.watch(updates.controls, controls.poll, deliver_controls, name="controls"),
+            updates.watch(updates.rooms, room_watcher.poll, deliver_room, name="room"),
             updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()

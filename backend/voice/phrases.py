@@ -16,6 +16,7 @@ PHRASES = {
 }
 SPEECHES = {
     "timeout": {"zh": "暂时还没有处理结果，后续可以在对话里查看。", "en": "No result yet; check the conversation for updates."},
+    "room_pending": {"zh": "交给这间了，做好了我叫你。", "en": "It is with the task now; I will tell you when it is done."},
     "failed": {"zh": "没有取得可确认的结果，请在对话里查看处理情况。", "en": "No verified result is available; check the conversation for its status."},
     "unavailable": {"zh": "没能提交给个人助理。", "en": "The request could not be submitted to the assistant."},
 }
@@ -303,3 +304,10 @@ async def user_language(user_id):
     except Exception:
         return "zh"
     return "en" if locale.lower().startswith("en") else "zh"
+
+
+def room_interjection(title, lang):
+    """Another task's result while the call is inside a room: one line, not the result."""
+    name = f"「{title}」" if title else ("另一间" if _lang(lang) == "zh" else "another task")
+    return (f"{name}那间出结果了，要过去看看吗？" if _lang(lang) == "zh" else
+            f"{name} has a result in its room. Want to go over?")

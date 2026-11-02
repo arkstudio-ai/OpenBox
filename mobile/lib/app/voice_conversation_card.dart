@@ -48,6 +48,13 @@ class _VoiceConversationCardState extends ConsumerState<VoiceConversationCard> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    // Entering a room by voice opens its channel; leaving returns to the call.
+    ref.listen(
+      voiceCallControllerProvider.select((s) => s.focus?.bound ?? false),
+      (previous, bound) {
+        if (previous != bound) setState(() => _channel = bound ? 1 : 0);
+      },
+    );
     final call = ref.watch(voiceCallControllerProvider);
     final focus = call.focus;
     String? roomSession = focus?.sessionId;
@@ -97,6 +104,15 @@ class _VoiceConversationCardState extends ConsumerState<VoiceConversationCard> {
               ],
             ],
           ),
+          if (focus?.bound ?? false)
+            Padding(
+              key: const Key('voice-conversation-in-room'),
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                i18n.t('voice:transcript.inRoom'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
+              ),
+            ),
           const SizedBox(height: 6),
           if (channel == 0)
             _CallLines(call: call, i18n: i18n)

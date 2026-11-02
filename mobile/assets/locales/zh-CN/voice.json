@@ -117,6 +117,7 @@
     "taskBusy": "任务助理正在处理…",
     "taskWaiting": "等你回答",
     "openRoom": "进这间说",
-    "taskDoing": "任务正{{step}}，好了会叫你"
+    "taskDoing": "任务正{{step}}，好了会叫你",
+    "inRoom": "你在这间说话：说的话直接给这个任务；说“回去”回到总助理"
   }
 }

@@ -288,3 +288,13 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - 客户端：`focus.task.progress` 字段（空串表示空闲）；App 对话卡任务通道底部显示"任务正{step}，好了会叫你"，Web 通话窗同句；文案 `voice.transcript.taskDoing`，App 逐字节镜像。
 - 测试：`test_voice_bridge.py` 一项（房间事件→指令与 focus 事件各一次、非房间与他人事件忽略、回到 idle 清空、未知工具"在处理"、过期不算）。
 - 未在本轮：确认卡/权限卡在房间语境下的专门口播（现有 `card_instructions`/`question_instructions` 已点名任务，未再加）。
+
+**轮 E（2026-11-02，分支 `feat/task-rooms-step3`，第 9.4 节步 3）**
+
+- 进门与出门：`voice/room.py`。前台快读 `room_enter(task_id|title)`（用户说"进艾薇兰那间""到那个任务里说"时）把这通电话绑到该任务的房间：`Bridge.enter_room` 记下 `room`，设焦点，发 `focus(bound=true)`，会话指令加 `room_section`（"你现在在「X」这间：用户说的话都是给这个任务的……说'回去'就 room_leave……别的任务出结果只提一句"）。`room_leave` 解绑并发 `focus(bound=false)`。挂断即解绑，不持久化。`CallScope` 新增 `call` 字段供这两个工具回到桥接对象；只是切换，不改任务本身。
+- 房间内的交办：`AssistantLink.start(ref, room=)` 在绑定时改走 `inputs.accept_session_input(执行会话, text, client_id=voice-room:…)`，即任务页打字同一条路（取消的任务也会被它重开），不经全局助理；`wait()` 读执行会话的答复，不读主会话的卡片/回执/决定；超时话术改为"交给这间了，做好了我叫你"（`room_pending`）。三处 `link.start` 调用都带 `room=self.room`。
+- 房间的回复直接播：`RoomWatcher` 轮询绑定房间执行会话的收件箱（`updates.rooms` 由房间的 `agent.inbox.updated`/`session.status` 唤醒），进门后新结算且成功的运行其答复成为 `RoomReply`，`TurnsMixin.room_reply` 不看 `tell_reports` 直接排队播；带 `result_id`（`TaskResult.result_message_id` 反查），全局助理随后对同一结果的报告被 `_claim_delivery` 去重。
+- 跨房间插播：`report()` 在绑定且报告的是别的任务时只说"「X」那间出结果了，要过去看看吗？"（`phrases.room_interjection`），不展开，不自动切换。
+- 客户端：`focus.bound`；App 对话卡监听它自动切"任务间"通道并显示"你在这间说话：……说'回去'回到总助理"，Web 通话窗同句；`docs/VOICE_CALL_SPEC.md` 的 `focus` 行补 `progress`/`bound`。
+- 测试：`test_voice_room.py`（口头标题进出、无 call 不可用、房间回复进门后才播且只播一次）；`test_voice_bridge.py` 一项（进门后交办带 room、别的任务只插播、房间回复不看 tell_reports、出门解绑）；`FakeLink.start` 接受 `room`。
+- 未在本轮：房间内"停"的三义确认（停播报/停这一轮/取消任务）仍走现有停止确认与核对流程；PC 悬浮窗无独立进门入口（Web 通话窗只显示状态）。

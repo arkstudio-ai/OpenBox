@@ -121,6 +121,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._keepalives: dict[str, set[str]] = {}  # silent replies of ours → their output items
         self._partials: dict[str, str] = {}      # reply item → its transcript so far, shown live on the client
         self.focus_task: dict | None = dict(focus_task) if focus_task else None  # the task this call is about (events.focus)
+        self.room: dict | None = None    # the task room this call is inside (voice/room.py), else the global layer
         self.room_progress = room_progress  # voice/progress.py RoomProgress: what the focus task's room is doing
         self._room_progress_seen = (-1, "")  # (RoomProgress.version, phrase) last put into instructions and told
         self._keepalive_at: float | None = None
@@ -480,8 +481,24 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if (self.room_progress.version, doing) == self._room_progress_seen:
             return
         self._room_progress_seen = (self.room_progress.version, doing)
-        self.emit(events.focus({**self.focus_task, "progress": doing}))
+        self.emit(events.focus({**self.focus_task, "progress": doing}, bound=self.room is not None))
         await self._sync_instructions()
+
+    async def enter_room(self, room: dict) -> None:
+        """Bind the call to one task's room: handovers go there, its replies come back here (voice/room.py)."""
+        self.room = {key: room.get(key) for key in ("task_id", "title", "session_id")}
+        self.set_focus_task(dict(self.room))
+        self.emit(events.focus(self._focus_with_progress(), bound=True))
+        log.info("voice room entered call=%s task=%s", self.call_id, self.room["task_id"])
+        await self._sync_instructions(force=True)
+
+    async def leave_room(self) -> None:
+        if self.room is None:
+            return
+        log.info("voice room left call=%s task=%s", self.call_id, self.room["task_id"])
+        self.room = None
+        self.emit(events.focus(self._focus_with_progress(), bound=False))
+        await self._sync_instructions(force=True)
 
     def set_focus_task(self, task: dict | None) -> None:
         """What this call is about now: the task a request was passed to, the one just reported, or the one whose
@@ -496,7 +513,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             return
         self.focus_task = dict(task) if task else None
         self._room_progress_seen = (-1, "")
-        self.emit(events.focus(self._focus_with_progress()))
+        self.emit(events.focus(self._focus_with_progress(), bound=self.room is not None))
 
     def _said(self, speaker: str, text: str, item_id: str = "") -> bool:
         added = self.spoken.add(speaker, text, item_id)
@@ -1092,6 +1109,9 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             base += "\n当前任务状态核验失败；历史信息不能作为当前进展或待确认事项的证据。明确说暂时无法核实。"
         if self.decision_context:
             base += "\n" + self.decision_context
+        if self.room:
+            from voice.room import room_section
+            base += "\n" + room_section(self.room, self.lang)
         return with_sections(base, call_so_far=self.keeper.summary, progress=section,
                              last_lines=self.keeper.carried, focus=self._focus_with_progress())
 

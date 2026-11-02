@@ -82,6 +82,8 @@ class CallScope:
     context_kept: bool = False
     # Client navigation hint only; SQL authority is resolved anew per utterance.
     viewed_session_id: str | None = None
+    # The call itself (voice/bridge.py), for the room tools; never read for authority.
+    call: object = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -275,6 +277,16 @@ async def task_blocker(scope: CallScope, arguments: dict) -> dict:
     return await blocker(scope, arguments)
 
 
+async def room_enter(scope: CallScope, arguments: dict) -> dict:
+    from voice.room import enter
+    return await enter(scope, arguments)
+
+
+async def room_leave(scope: CallScope, arguments: dict) -> dict:
+    from voice.room import leave
+    return await leave(scope, arguments)
+
+
 async def credits(scope: CallScope, arguments: dict) -> dict:
     """What ``status.credits`` reads: the workspace balance and the user's own use this month."""
     from assistant.status_tools import credits as read_credits
@@ -344,6 +356,14 @@ DIRECT: dict[str, DirectTool] = {
         "只是查看；要恢复、继续、核对或取消必须用 assistant_ask 转交。", task_blocker,
         {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
                                            "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
+    "room_enter": DirectTool(
+        "用户明确要进入某个任务里说话时调用（“进艾薇兰那间”“到那个任务里说”“我们聊聊酒吧视频这个”）：之后用户的话直接交给该任务，"
+        "它的回复直接告诉用户。给 task_id 或标题。只是切换，不改任务本身；用户只是问进度不用进。", room_enter,
+        {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
+                                           "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
+    "room_leave": DirectTool(
+        "用户说“回去”“回到总助理”“出来”或要聊别的事时调用：离开当前任务间，回到总助理这一层。", room_leave,
+        _no_parameters(), timeout=2.0),
 }
 
 

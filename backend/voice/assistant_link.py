@@ -138,6 +138,7 @@ class VoiceTurnRef:
     decision_versions: dict | None = None  # exact decisions read by this turn, never the global pending list
     result_id: str = ""            # durable task result, shared by retry reports
     task_id: str = ""
+    room: dict | None = None       # the task room this turn was handed to (voice/room.py), else the main session
     task_revision: int | None = None
     control_revision: int | None = None  # pause/resume/cancel count its report was read at
     interrupted: bool = False
@@ -199,8 +200,9 @@ class AssistantLink:
             log.warning("voice memory status unavailable call=%s error=%s", self.call_id, type(exc).__name__)
             return unavailable_status()
 
-    async def start(self, ref: VoiceTurnRef) -> None:
-        """Accept the request as a main-session turn and record the voice turn."""
+    async def start(self, ref: VoiceTurnRef, *, room: dict | None = None) -> None:
+        """Accept the request as a main-session turn and record the voice turn; inside a room (voice/room.py),
+        as that task's own input instead."""
         if ref.lane == "remember" and self.native_memory_enabled:
             raise ValueError("Native memory status does not create an assistant turn")
         from agent.inbox import schedule_inbox_wake
@@ -209,6 +211,26 @@ class AssistantLink:
 
         words = " ".join((ref.transcript or "").split())
         text = words or ref.text  # the user's own words; a card's answer or a report has only the request
+        if room and room.get("session_id") and ref.lane != "remember":
+            ref.room = dict(room)
+            from assistant.identities import inbox_key
+            from session.session import get_session
+            try:
+                session = await get_session(room["session_id"], user_id=self.user_id)
+                receipt = await inputs.accept_session_input(session, user_id=self.user_id, text=text,
+                    client_id=inbox_key("voice-room", self.call_id, ref.provider_call_id))
+                if receipt is None:
+                    raise ValueError("The room's task no longer takes input")
+            except Exception:
+                await self._add(ref, outcome="failed")
+                raise
+            if receipt.get("state") == "accepted":
+                schedule_inbox_wake(room["session_id"], self.user_id)
+            ref.inbox_id, ref.message_id = receipt.get("inbox_id"), receipt.get("message_id")
+            await self._add(ref, inbox_id=ref.inbox_id, message_id=ref.message_id)
+            log.info("voice room handover accepted call=%s turn=%s room=%s chars=%s", self.call_id, ref.id,
+                     room["session_id"], len(text))
+            return
         context = dict(ref.context or {})
         from voice.memory_capture import forwarded_hash
         native = self._native_sources.get(context.get("spoken_input_id"))
@@ -264,9 +286,11 @@ class AssistantLink:
                 break
             except TimeoutError:
                 if loop.time() >= deadline:
-                    # The turn goes on; its result reaches the conversation, not this call.
+                    # The turn goes on; its result reaches the conversation, not this call (a room's reply
+                    # still does, through voice/room.py RoomWatcher).
                     await self.record(ref, outcome="late")
-                    return {"status": "timeout", "speech": phrases.speech_text("timeout", self.lang)}
+                    return {"status": "timeout",
+                            "speech": phrases.speech_text("room_pending" if ref.room else "timeout", self.lang)}
             if on_message is not None and not ref.message_id:
                 current = await get_inbox_item(ref.inbox_id, user_id=self.user_id)
                 if current is not None and current.message_id:
@@ -276,10 +300,14 @@ class AssistantLink:
         else:
             return None
         if receipt.state == "settled" and receipt.outcome == "succeeded":
-            text = (await reply_text(self.main_session_id, receipt.result_message_id, self.user_id)
+            session_id = ref.room["session_id"] if ref.room else self.main_session_id
+            text = (await reply_text(session_id, receipt.result_message_id, self.user_id)
                     if receipt.result_message_id else "")
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
+            if ref.room:
+                # The room's own reply: no main-session cards, receipts or decisions belong to it.
+                return {"status": "ok", "speech": clean(text, self.lang) or phrases.phrase_text("result_in_text", self.lang)}
             cards = await self.cards(message_id=receipt.result_message_id)  # only this turn's decisions
             running = await self.running(ref)  # or it passed the work on: the task's result comes later
             # A successful coordinator reply is not proof of a task submission.

@@ -142,7 +142,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `error` | `code`, `message` | `message` 已是可直接显示的用户语言文案；随后关闭连接 |
 | `ended` | `reason` (同 4.1 枚举), `duration_seconds`, `pending_turns`, `cost` | 通话结束的最终事件；之后服务端关闭 1000 |
 | `transcript` | `role` ∈ user/assistant, `text`, `item_id`, `final` (bool), `at` (epoch 秒) | 2026-11-02 起：本通电话里用户说的和前台答的，供通话页"对话卡"显示（VOICE_SEAM_PLAN §11.2）。`final=false` 是同一 `item_id` 的前台回复到目前为止的全文，最终行替换它。后台备注、静音保活回复不下发。旧客户端忽略 |
-| `focus` | `task` = `{task_id, title, session_id}` 或 `null` | 2026-11-02 起：这通电话当前在说哪个任务：某次交办把工作交给了它、刚播了它的结果、或用户正开着它的执行页（`view`）。每次变化发一次；对话卡据此打开"任务间"通道 |
+| `focus` | `task` = `{task_id, title, session_id, progress}` 或 `null`，`bound` (bool) | 2026-11-02 起：这通电话当前在说哪个任务：某次交办把工作交给了它、刚播了它的结果、或用户正开着它的执行页（`view`）；接通时若 24 小时内有动过的任务也会发。`progress` 是该任务房间此刻在做的一步（"在生成视频"，空串表示空闲），变化时再发一次。`bound=true` 表示用户已口头进入这间（VOICE_SEAM_PLAN §9.4 步 3）：之后说的话直接交给该任务；对话卡据此自动切到"任务间"通道，`false` 切回通话 |
 
 转写只发给本通电话自己的客户端，仍不写入任何可被其他人读到的地方；服务端另用于 `VoiceTurn.transcript`、通话小结和调试日志（默认关）。
 

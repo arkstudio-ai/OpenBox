@@ -606,7 +606,7 @@ void main() {
         server: api,
       );
       expect(
-        find.text("This task's conversation has been deleted."),
+        find.text("The work's conversation has been deleted."),
         findsOneWidget,
       );
       expect(find.textContaining('ASSISTANT_'), findsNothing);
@@ -651,7 +651,7 @@ void main() {
       expect(find.text('In progress'), findsOneWidget);
       expect(find.text('Snake game · 2 hours ago'), findsOneWidget);
       expect(find.text('The build failed on step 3.'), findsOneWidget);
-      expect(find.text('Open conversation'), findsOneWidget);
+      expect(find.text('Go to the work'), findsOneWidget);
       for (final id in ['cmd-secret', 'execution', 'result', 'run-1']) {
         expect(find.textContaining(id), findsNothing, reason: id);
       }
@@ -689,14 +689,12 @@ void main() {
       ];
       f.container.invalidate(assistantWatchProvider(scope));
       await tester.pumpAndSettle();
-      expect(find.text('Needs your reply'), findsOneWidget);
+      expect(find.text('Needs you'), findsOneWidget);
       expect(
-        find.text(
-          "It's waiting for your reply — open the conversation to carry on.",
-        ),
+        find.textContaining('The helper is waiting'),
         findsOneWidget,
       );
-      expect(find.text('Reply'), findsOneWidget);
+      expect(find.text('It is asking you'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await _unmount(tester, f);
     },

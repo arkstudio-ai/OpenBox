@@ -297,3 +297,25 @@ describe("assistant task receipts", () => {
     expect(taskReceipt({ ...part, output: "Task t was accepted" })).toBeNull()
   })
 })
+
+describe("one primary action per card", () => {
+  it("offers another round when the work is done, and resume with a way in when it is paused", () => {
+    api.task.mockReturnValue({ data: { ...value, task: { ...value.task, observed_state: "completed" },
+      latest_result: { ...value.latest_result!, outcome: "succeeded" } }, error: null })
+    render(<MemoryRouter><AssistantTaskCard taskId={value.task.id} /></MemoryRouter>)
+    expect(screen.getByRole("link", { name: /assistant.card.again/ })).toBeTruthy()
+    cleanup()
+    api.task.mockReturnValue({ data: { ...value, task: { ...value.task, desired_state: "paused", observed_state: "paused" } }, error: null })
+    render(<MemoryRouter><AssistantTaskCard taskId={value.task.id} /></MemoryRouter>)
+    expect(screen.getByRole("button", { name: "assistant.card.resume" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: /assistant.card.open/ })).toBeTruthy()
+  })
+
+  it("shows what the helper is asking on the card itself", () => {
+    api.task.mockReturnValue({ data: { ...value, task: { ...value.task, observed_state: "waiting_input" },
+      blocked_by: { request_id: "q1", kind: "question", host: "", title: "Prepare the report", link: "/app/s/execution", question: "用哪张图？" } }, error: null })
+    render(<MemoryRouter><AssistantTaskCard taskId={value.task.id} /></MemoryRouter>)
+    expect(screen.getByText("assistant.card.helperAsks")).toBeTruthy()
+    expect(screen.getByRole("link", { name: /assistant.card.answer/ })).toBeTruthy()
+  })
+})

@@ -25,13 +25,13 @@ class RoomReply:
 def room_section(room: dict, lang: str = "zh") -> str:
     title = room.get("title") or ""
     if lang == "en":
-        return (f"You are inside the room of “{title}”: what the user says is input for that task and assistant_ask "
-                "hands it straight there; its replies are told to the user as they come. A reply takes minutes: "
+        return (f"You are watching the work of “{title}”: what the user says is input for that task and assistant_ask "
+                "hands it straight there; the helper's replies are told to the user as they come. A reply takes minutes: "
                 "acknowledge, say it will be told when done, do not re-ask. When the user wants out (“回去”, "
-                "“back to the assistant”), call room_leave. Another task's result is only announced, not told.")
-    return (f"你现在在「{title}」这间：用户说的话都是给这个任务的，assistant_ask 会直接交到这间，它的回复一到就告诉用户。"
-            "这间一轮是分钟级：接收后说一句好了会叫他，不追问。用户说“回去”“回到总助理”就调用 room_leave。"
-            "别的任务出了结果只提一句要不要过去，不在这间展开。")
+                "“back”), call room_leave. Another task's result is only announced, not told.")
+    return (f"正在盯「{title}」的现场：用户说的话都是给这件活的，assistant_ask 会直接交给它，帮手的回复一到就告诉用户。"
+            "帮手一轮是分钟级：接收后说一句好了会叫他，不追问。用户说“回去”“不盯了”就调用 room_leave。"
+            "别的活出了结果只提一句要不要看，不在这里展开。对用户只说“帮手”“现场”“任务单”，不说房间、任务间、执行会话。")
 
 
 async def _find_task(scope, arguments: dict):
@@ -60,11 +60,11 @@ async def enter(scope, arguments: dict) -> dict:
     task, rows = await _find_task(scope, arguments)
     if task is None:
         return {"status": "not_found", "known_titles": [row.title for row in rows[:8]],
-                "note": "没找到这个任务；可以用 known_titles 里的标题再试，或问用户是哪一件。"}
+                "note": "没找到这件活；可以用 known_titles 里的标题再试，或问用户是哪一件。"}
     room = {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id}
     await call.enter_room(room)
-    say = (f"好，进「{task.title}」这间了，你说的话我直接交给它；说“回去”就回到总助理。" if scope.lang != "en" else
-           f"Okay, we are in the room of “{task.title}”: what you say goes straight to it. Say “back” to return.")
+    say = (f"好，盯着「{task.title}」的现场，你说的话我直接给这件活；说“回去”就回来。" if scope.lang != "en" else
+           f"Okay, watching the work of “{task.title}”: what you say goes straight to it. Say “back” to return.")
     return {"status": "ok", **room, "say": say}
 
 
@@ -75,7 +75,7 @@ async def leave(scope, arguments: dict) -> dict:
         return {"status": "unavailable"}
     was = call.room
     await call.leave_room()
-    say = ("好，回到总助理这边了。" if scope.lang != "en" else "Okay, back with the assistant.")
+    say = ("好，回来了。" if scope.lang != "en" else "Okay, back with me.")
     return {"status": "ok", "left": (was or {}).get("title"), "say": say}
 
 

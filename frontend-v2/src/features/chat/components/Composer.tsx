@@ -59,6 +59,8 @@ interface Props {
   onStop?: () => void
   /** Stopping cancels an assistant task (not just this generation). */
   stopTask?: boolean
+  /** A task's own conversation (the work): the placeholder says what typing here does. */
+  room?: boolean
   autoFocus?: boolean
   /** The model this conversation last used. Each session carries its own, so
    *  reopening one restores that choice rather than the global default. */
@@ -129,8 +131,9 @@ function SendButton({ stop, stopTask, disabled, onClick }: { stop: boolean; stop
 }
 
 
-function placeholderKey(dragging: boolean, busy: boolean, assistant: boolean): string {
+function placeholderKey(dragging: boolean, busy: boolean, assistant: boolean, room = false): string {
   if (dragging) return "composer.dropTitle"
+  if (room && !busy) return "composer.placeholderRoom"
   const prefix = assistant ? "assistant.composer" : "composer"
   return `${prefix}.${busy ? "placeholderRunning" : "placeholder"}`
 }
@@ -147,6 +150,7 @@ export function Composer({
   onSubmit,
   onStop,
   stopTask = false,
+  room = false,
   autoFocus,
   mentionSlot,
   sessionModel,
@@ -315,7 +319,7 @@ export function Composer({
     pickFiles(files)
   }
 
-  const placeholder = t(placeholderKey(drop.dragging, busy, assistant))
+  const placeholder = t(placeholderKey(drop.dragging, busy, assistant, room))
 
   return (
     <div className={cn(

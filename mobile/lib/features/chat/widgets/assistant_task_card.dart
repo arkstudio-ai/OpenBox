@@ -304,9 +304,28 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
                             style: body,
                           ),
                         ),
-                      if (status == TaskStatus.waiting)
+                      if (status == TaskStatus.waiting &&
+                          task.blockedBy['kind'] != 'desktop_takeover' &&
+                          (task.blockedBy['question'] as String? ?? '')
+                              .isNotEmpty)
                         _Line(
-                          i18n.t('chat:assistant.card.waitingHint'),
+                          i18n.t(
+                            'chat:assistant.card.helperAsks',
+                            vars: {'question': task.blockedBy['question']},
+                          ),
+                          style: TextStyle(
+                            fontSize: FontSizes.sm,
+                            height: 1.5,
+                            color: t.ink,
+                          ),
+                        )
+                      else if (status == TaskStatus.waiting)
+                        _Line(
+                          i18n.t(
+                            task.blockedBy['kind'] == 'desktop_takeover'
+                                ? 'chat:assistant.card.takeoverHint.${task.blockedBy['browser'] == 'extension' ? 'extension' : 'desktop'}'
+                                : 'chat:assistant.card.waitingHint',
+                          ),
                           style: body,
                         ),
                       if (following)
@@ -349,20 +368,54 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
                 ),
               ],
             ),
-            Padding(
-              padding: const EdgeInsets.only(left: 18, top: 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: _OpenButton(
-                  label: i18n.t(
-                    status == TaskStatus.waiting
-                        ? 'chat:assistant.card.answer'
-                        : 'chat:assistant.card.open',
-                  ),
-                  onTap: _open,
+            // One primary action per card (VOICE_SEAM_PLAN §12.2); checking
+            // unverified outcomes has its own entry in the menu.
+            if (task.observed != 'effect_unknown')
+              Padding(
+                padding: const EdgeInsets.only(left: 18, top: 10),
+                child: Row(
+                  children: [
+                    // Resume only once the stop or pause has landed (the menu's
+                    // rule): a task still pausing has nothing to resume yet.
+                    if (const {
+                          'paused',
+                          'resume_blocked',
+                          'canceled',
+                        }.contains(task.observed) &&
+                        task.desired != 'running' &&
+                        !task.archived) ...[
+                      _OpenButton(
+                        key: const Key('task-primary-resume'),
+                        label: i18n.t('chat:assistant.card.resume'),
+                        filled: true,
+                        onTap: _busy
+                            ? null
+                            : () => _run(
+                                () => _controller.control(task, 'resume'),
+                                done: 'chat:assistant.card.controlDone.resume',
+                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      _OpenButton(
+                        label: i18n.t('chat:assistant.card.open'),
+                        onTap: _open,
+                      ),
+                    ] else
+                      _OpenButton(
+                        key: const Key('task-primary'),
+                        label: i18n.t(
+                          status == TaskStatus.waiting
+                              ? 'chat:assistant.card.answer'
+                              : status == TaskStatus.done
+                              ? 'chat:assistant.card.again'
+                              : 'chat:assistant.card.open',
+                        ),
+                        filled: status == TaskStatus.waiting,
+                        onTap: _open,
+                      ),
+                  ],
                 ),
               ),
-            ),
             if (_showResult && result['result_id'] is String)
               Padding(
                 padding: const EdgeInsets.only(left: 18),
@@ -577,17 +630,25 @@ class _TaskMenu extends ConsumerWidget {
 }
 
 class _OpenButton extends StatelessWidget {
-  const _OpenButton({required this.label, required this.onTap});
+  const _OpenButton({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.filled = false,
+  });
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+
+  /// The card's primary action: filled, like the composer's send button.
+  final bool filled;
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Material(
-      color: Colors.transparent,
+      color: filled ? t.ink : Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.full),
-        side: BorderSide(color: t.hair),
+        side: BorderSide(color: filled ? t.ink : t.hair),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -599,10 +660,13 @@ class _OpenButton extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n800),
+                style: TextStyle(
+                  fontSize: FontSizes.sm,
+                  color: filled ? t.card : t.n800,
+                ),
               ),
               const SizedBox(width: 4),
-              Icon(Icons.north_east, size: 13, color: t.n800),
+              Icon(Icons.north_east, size: 13, color: filled ? t.card : t.n800),
             ],
           ),
         ),

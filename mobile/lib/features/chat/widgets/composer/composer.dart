@@ -586,8 +586,14 @@ class _ComposerState extends ConsumerState<Composer> {
                 contentPadding: EdgeInsets.zero,
                 border: InputBorder.none,
                 hintText: i18n.t(
-                  '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
-                  '.${widget.busy ? 'placeholderRunning' : 'placeholder'}',
+                  // A task's own conversation (the work): say what typing
+                  // here does (VOICE_SEAM_PLAN §12.3).
+                  widget.session?.assistantManaged == true &&
+                          widget.session?.kind != 'assistant' &&
+                          !widget.busy
+                      ? 'chat:composer.placeholderRoom'
+                      : '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
+                            '.${widget.busy ? 'placeholderRunning' : 'placeholder'}',
                 ),
                 hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
               ),

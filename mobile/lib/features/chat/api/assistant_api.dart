@@ -37,6 +37,9 @@ class AssistantTask {
   String get desired => asString(task['desired_state']) ?? 'running';
   int get revision => asInt(task['control_revision']) ?? 0;
   Map<String, dynamic> get result => asMap(data['latest_result']);
+
+  /// The card the work waits on (a question, a desktop verification), when any.
+  Map<String, dynamic> get blockedBy => asMap(data['blocked_by']);
   Map<String, dynamic> get submission => asMap(data['latest_submission']);
 
   /// The execution conversation's live status (busy, waiting_input, idle…).

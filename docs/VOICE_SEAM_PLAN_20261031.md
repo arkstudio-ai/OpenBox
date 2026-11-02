@@ -1,6 +1,6 @@
 # 语音前台与任务执行页之间的缝：填缝方案（2026-10-31 草案）
 
-状态：**方案，未拍板，未开工**。第 1–7 节是填缝方案，只改主会话与通话链路内部，不改通话与会话的绑定关系，不改三端语音协议的音频部分，不改任务治理的闸门语义。第 8 节是 10-31 多任务审计及其对方案的两条增补；第 9 节是填缝之后的目标形态（全局助理 + 任务间）与分步路径。
+状态：**P0 已于 2026-10-31 上线（第 10 节）；P1/P2 与第 9 节步 1–3 在 2026-11-02 起按第 11 节顺序实施**。第 1–7 节是填缝方案，只改主会话与通话链路内部，不改通话与会话的绑定关系，不改三端语音协议的音频部分，不改任务治理的闸门语义。第 8 节是 10-31 多任务审计及其对方案的两条增补；第 9 节是填缝之后的目标形态（全局助理 + 任务间）与分步路径。
 
 ## 1. 为什么是这条缝
 
@@ -197,3 +197,73 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - App：镜像 locales；`AssistantApi.acknowledgeEffects`、`AssistantController.acknowledgeEffects`、任务卡"我已核对，继续"菜单项；执行页 `ExecutionEffectNotice` 与 `StopTaskNotice`；任务会话停止键红色 + 确认；发送被拒时置 `executionEffectAckRequestedProvider`。`flutter analyze` 改动文件无问题；新增 widget 测试 3 项通过。`check_locales.sh` 的 knowledge/settings/voice 漂移为 main 既有问题。
 - App 通话页卡片栏（同日追加，用户提出"通话里要能看到并切换卡片"）：`AssistantRequests` 新增 `deck` 布局，一页一张，头部显示"第 k / N 张"与上一张/下一张；`VoiceCallPage` 新增 `cards` 插槽，由 `app/router.dart` 注入（features 之间不互相 import），通话中球体下方最多占屏高 42%，无待处理时不占位；卡片打开对话前先收起通话页。复用助理页同一套读取（问题、权限、其他对话的等待），所以语音念到的卡和看到的卡是同一份。widget 测试 1 项。这是第 9 节第 2 步的可视部分先行落地；执行会话卡片的语音化仍在第 2 步。
 - 未做：3.1 执行页提交进通话、3.2 控制事件进通话、3.4 焦点段、第 8 节链式收口（P1/P2）、第 9 节第 2 步的语音化部分。
+
+## 11. 界面层辨识度：对话卡与任务间头部（2026-11-02 增补，并定全部剩余阶段的实施顺序）
+
+状态：用户 2026-11-02 提出两条需求并要求"把方案实施完"。本节把两条需求写成设计，并给出 P1、P2、第 9 节步 1–3 的实施顺序。
+
+### 11.1 两条需求
+
+1. **任务卡旁边加一张"对话卡"。** 通话页"只听不看字"，用户回看不了刚才说了什么，也确认不了助理此刻在说什么。要一张纯文字的卡：上面是已经说过的历史轮次（用户说的、助理答的），底部是正在进行的这一轮实时刷出来。用户确认两种内容都要：**通话本身的转写**，和**当前任务那间执行会话里的来往**（任务助理在做什么、输出了什么、问了什么）。
+2. **主助理和子任务助理的切换不明显。** 从任务卡点进执行会话，页面和主助理会话长得一样（同样的气泡、同样的输入框，只换了标题），用户说话时不清楚是在对全局助理说还是对某个任务的助理说；切换那一刻也没有任何动静。要"我现在在和谁说话"一眼可见，"切过去了 / 切回来了"有感知。
+
+这两条都是第 9 节"全局助理 + 任务间"形态的界面层：第 1 条让任务间里发生的事看得见，第 2 条让用户知道自己站在哪一层。第 2 条就是第 9.4 节步 1 的"执行页头部与回到总助理"；第 1 条是方案此前没写的新增项。
+
+### 11.2 对话卡
+
+**位置。** App 通话页卡片栏（第 10 节的 `AssistantRequests(deck: true)`）的第一页，常驻：没有待处理请求时卡片栏只剩这一页，不再整体消失。Web 通话窗展开态加同一内容的字幕区。两端读同一份数据。
+
+**两个通道，一个分段控件切换。**
+
+| 通道 | 显示什么 | 数据来源 | 底部"正在进行"行 |
+| --- | --- | --- | --- |
+| 通话 | 本通电话里用户说的和前台答的，按时间顺序 | 新增服务端→客户端事件 `transcript`：`{role: user\|assistant, text, item_id, final, at}`，由 `backend/voice/bridge.py` `_said` 在每条最终转写落地时发出；`_on_assistant_transcribing` 的增量以 `final=false` 发出，客户端按 `item_id` 覆盖 | 前台正在说的话（partial），或"正在听…"（phase=listening 且 hearing） |
+| 任务间：「{标题}」 | 当前焦点任务执行会话里最近的来往：用户在执行页发的、任务助理最终答复的正文、任务助理提的问题 | 客户端现有执行会话读取（App `chatSessionProvider(execution_session_id)` / Web `useSessionQuery` + 消息查询），只取文本正文，不取工具轨迹 | 该会话 `status` 忙碌时显示最后一轮的流式正文；有待回答卡片时显示"等你回答" |
+
+通道默认跟随层级：没有焦点任务时只有"通话"；有焦点任务时默认停在"通话"，分段控件出现第二项，用户手动切；第 9.4 节步 3 语音进门落地后，进门时自动切到任务通道。
+
+**焦点任务的来源。** 新增服务端→客户端事件 `focus`：`{task_id, title, session_id}` 或 `null`。服务端在三处更新焦点并发事件：某次 `assistant_ask` 的结果带 `running`（`TurnsMixin._settle` 写 `_passed_on`）、`ReportWatcher` 播了某任务的报告、客户端 `view` 消息指向某任务的执行会话（现有 `scope.viewed_session_id`）。这同一个焦点就是第 3.4 节"当前任务焦点"段的来源，P2 直接复用，不另存一份。
+
+**规则。** 对话卡只显示，不是指令入口：卡上不放输入框，想对任务说话就点卡进那间（已有 `beforeOpen` 收起通话页的路径）。后台备注（`note` 角色的注入）不显示。通话通道只保留本通电话，最多 200 行，重连后从 `live_context` 的最近 12 行补；任务通道最多显示最近 8 轮。
+
+**协议边界。** `transcript` 与 `focus` 都是加法事件，旧客户端按"未知类型忽略"处理（App `VoiceUnknownEvent`、Web 的 `default` 分支），不改音频、不改握手；写进 `docs/VOICE_CALL_SPEC.md` §5.3。服务端原来"转写绝不发给客户端"的注释随之改为"只发给本通电话的客户端"。
+
+### 11.3 任务间头部与"带你进去"（第 9.4 节步 1）
+
+**执行页头部（Web + App）。** 执行会话（`assistant_managed && kind != assistant && task_control != null`）的对话区顶部常驻一条横幅：左侧房间图标 + "你在任务间：「{任务标题}」"，中间任务状态短语（运行中 / 已暂停 / 待核对 / 已停止 / 已完成），右侧按钮"回到总助理"（Web `navigate(paths.assistant)`，App `context.go(Paths.assistant)`）。横幅用与主助理会话不同的底色，让两类页面一眼可分。主助理会话不显示它。
+
+**服务端补字段。** `GET /api/agent/session/{id}` 的 `task_control` 加 `task_title` 与 `archived`（`backend/assistant/session_control.py` `target_for_session`），客户端不再依赖会话标题猜任务标题。
+
+**进出有感知。** 从主助理进入执行页（任务卡、助理回复里的链接、通话页卡片）都走现有 `/app/s/{id}` 路径；进入后横幅在，退出靠横幅按钮。App 在进入执行页的瞬间弹一次轻提示"已进入「{标题}」"，Web 不弹（横幅本身可见）。
+
+**全局助理识别到旧事时"带你进去"。** 现在的受理回执没有链接，助理回复只能转述。改三处：`tasks.submit` / `tasks.followup` 回执加 `url: /app/s/{execution_session_id}`；`ASSISTANT_DUPLICATE_TASK` 的 `details` 加 `url`，文案改成"用链接把用户带回那间，或 tasks.followup 追加"；`backend/assistant/runtime.py` 助理提示加规则：用户提到一件已有的事而不是下达新指令时，一句话说明现状并给进入那间的链接，不转述历史、不新建任务。
+
+### 11.4 任务列表按链折叠与链式收口（第 9.4 节步 1 的第三项 + 第 8 节 P1）
+
+- **折叠。** `GET /api/assistant/watch`（`backend/assistant/task_context.py`）按 `similar_task_title` 把同一主会话的同链任务折成一项，保留 `updated_at` 最新的，附 `chain: {count, task_ids}`。Web `AssistantTasks` 与 App `AssistantTasksSheet` 在卡片上显示"共 {count} 轮，显示最新"。`tasks.list` 不折叠，助理仍能看到全部。
+- **归档。** 新建任务时（`accept_task_command` 创建分支，含人工路径），同一主会话里标题相似、且**不在运行**（`desired_state=canceled`，或 `observed_state` 属于 completed / error / idle）的旧任务自动归档并写 `superseded_by_task_id`（新增列，迁移 `ph95b6c7d8e9_assistant_task_superseded.py`，桌面 SQLite 列补丁同步）。运行中或等待输入的旧任务不动，只在 `chain` 里计数。
+- **提醒关闭。** `watch` 项加 `stale: true`：`observed_state=error` 超过 24 小时且其间执行会话没有新的人工输入。卡片显示"出错超过一天，建议关闭"，操作仍是现有"不再跟进"。
+- **口播按链合并。** 归档的任务其结果投递本来就被拦（`results.py` `task_archived`），`ReportWatcher` 不需要改。
+
+### 11.5 实施顺序与验收
+
+| 轮 | 内容 | 验收 |
+| --- | --- | --- |
+| A（本轮，PR 一个） | 11.2 对话卡（含 `transcript`/`focus` 事件）+ 11.3 头部与带你进去 + 11.4 折叠与归档 | App 通话里能读到自己和前台刚说的话，助理正在说的字实时出现；点进任务能看到那间最近来往；执行页顶部始终能看到在哪间并一键回去；助理对"那个艾薇兰的事怎么样了"回一句现状加链接而不是新建；任务列表里艾薇兰 4 个任务只显示一项并标"共 4 轮" |
+| B | 第 5 节 P1：3.1 执行页提交进共享上下文 + 3.2 控制事件进通话（`ControlWatcher`） | 第 5 节 P1 验收 |
+| C | 第 5 节 P2：3.4 焦点段（复用 11.2 的焦点）+ `task_blocker` 快读 | 第 5 节 P2 验收 |
+| D | 第 9.4 节步 2：`progress.py` 覆盖执行会话；房间语境下卡片口播与应答 | 第 9.4 节步 2 验收 |
+| E | 第 9.4 节步 3：语音进门、电话内切换、出门、跨房间插播；对话卡随进门自动切通道 | 第 9.4 节步 3 验收 |
+
+每轮独立 PR、独立上线、独立回退。gw2 后端继续叠补丁发布（第 6 节最后一条）；App 文案随 Web 逐字节镜像，随下次发版带上。
+
+### 11.6 实施记录
+
+**轮 A（2026-11-02，分支 `feat/task-rooms-step1`）**
+
+- 后端语音：`voice/events.py` 新增 `transcript`（role/text/item_id/final/at）与 `focus`（task 或 null）两个加法事件；`Bridge._said` 对用户与前台的最终转写发 `final=true`，`_on_assistant_transcribing` 按 item 累积后发 `final=false`，保活与未验证回复不发，后台备注不发；`Bridge.set_focus_task` 只在变化时发事件，三处调用：`TurnsMixin._settle`（交办带 running 的第一个任务）、`TurnsMixin.report`（播报的任务）、`api/voice.py` 的 `view` 消息（`task_of_session` 查执行会话对应任务）。`docs/VOICE_CALL_SPEC.md` §5.3 补两行并改掉"不下发转写"的说明。测试：`test_voice_bridge.py` 新增 3 项；`test_a_dropped_session…` 的"outbox 为空"断言改为排除 transcript。`test_voice_turns.py::test_assistant_ask_is_acknowledged_at_once…` 在 main 上本就因 `phase.hearing` 字段失败，与本次无关。
+- 后端任务：`assistant_tasks` 新增列 `superseded_by_task_id`（迁移 `ph95b6c7d8e9`，桌面 SQLite 列补丁同步）；`commands.supersede_chain_locked` 在创建任务时把同主会话、标题相似、且已停止或已结束（`REPLACEABLE_OBSERVED`）的旧任务归档并记下接替者，运行中或等待输入的不动；受理回执加 `url` 与 `superseded_task_ids`；`ASSISTANT_DUPLICATE_TASK` 的 `details` 加 `url`，文案加"用户只是想看或聊那件事时给链接带回去"；`task_context.fold_chains` 只用于 `GET /api/assistant/watch`（客户端列表），模型读的环境列表不折叠；`watch` 项加 `stale`（error 超过 24 小时未动）；`task_control` 加 `task_title`、`archived`；助理提示加"提到旧事不下新指令就带进去"规则。测试：`test_assistant_commands.py`、`test_assistant_task_context.py`、`test_assistant_session_control.py` 各加一项。
+- Web：`TaskRoomBanner`（执行页顶部，`lib/room-state.ts` 判状态词，`回到总助理` 链到 `/app/assistant`）；`AssistantTasks` 卡下显示"共 N 轮，显示最新"与"出错超过一天"提示；通话窗展开态新增 `VoiceTranscript`（通话行、进行中斜体、焦点任务可点进执行页）；reducer 新增 `transcript`/`focus` 处理（最多 200 行，最终行覆盖 partial，迟到 partial 不回退）。vitest 新增 6 项。
+- App：`VoiceTranscriptEvent`/`VoiceFocusEvent` 与 `VoiceLine`/`VoiceFocusTask` 状态；`TaskRoomBanner`（执行页顶部，进入时弹一次"已进入「…」"）；`AssistantRequests` 新增 `leading` 页，有它时卡片栏不再因无待办而消失；`app/voice_conversation_card.dart` 在应用层组合语音状态与聊天存储：两个通道"通话 / 任务间：「…」"，任务通道读执行会话最近 8 轮正文、忙碌与等待提示、"进这间说"按钮；`router.dart` 注入为卡片栏首页；任务列表卡下显示链数与过期提示。widget/单元测试新增 7 项。
+- 文案：`chat.json` 新增 `room.*`、`assistant.taskList.chain/stale`；`voice.json` 新增 `transcript.*`；App 逐字节镜像。`check_locales.sh` 仍报 knowledge/settings 漂移，为 main 既有问题。
+- 未在本轮：通话里"进门"后对话卡自动切通道（轮 E）；任务通道的"正在进行"只到会话忙碌态，工具级进度在轮 D。

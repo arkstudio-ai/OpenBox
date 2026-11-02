@@ -217,3 +217,32 @@ it("shows a nonfatal handoff notice and clears it when a request is accepted", (
   call = callReducer(call, server({ type: "phase", value: "listening", hearing: false }))
   expect(call.hearing).toBe(false)
 })
+
+describe("transcript and focus", () => {
+  const line = (text: string, item_id: string, final: boolean, role: "user" | "assistant" = "assistant"): ServerEvent => ({
+    type: "transcript", role, text, item_id, final, at: 1.5,
+  })
+  it("keeps the call's lines in order, replacing a reply's partials with its final text", () => {
+    let call = callReducer(connected(), server(line("你好", "u1", true, "user")))
+    call = callReducer(call, server(line("你好", "a1", false)))
+    call = callReducer(call, server(line("你好呀", "a1", false)))
+    expect(call.transcript.map((l) => [l.role, l.text, l.final])).toEqual([["user", "你好", true], ["assistant", "你好呀", false]])
+    call = callReducer(call, server(line("你好呀！", "a1", true)))
+    call = callReducer(call, server(line("late", "a1", false)))  // a straggling delta never undoes the final line
+    expect(call.transcript.map((l) => [l.text, l.final])).toEqual([["你好", true], ["你好呀！", true]])
+    expect(callReducer(call, server(line("  ", "a2", true))).transcript).toHaveLength(2)
+  })
+  it("ignores lines before the call is connected and bounds how many it keeps", () => {
+    expect(run({ type: "start" }, server(line("x", "a", true))).transcript).toEqual([])
+    let call = connected()
+    for (let i = 0; i < 205; i += 1) call = callReducer(call, server(line(`l${i}`, `i${i}`, true)))
+    expect(call.transcript).toHaveLength(200)
+    expect(call.transcript[0].text).toBe("l5")
+  })
+  it("takes the focused task from the server and clears it explicitly", () => {
+    let call = callReducer(connected(), server({ type: "focus", task: { task_id: "t1", title: "艾薇兰", session_id: "s1" } }))
+    expect(call.focus).toEqual({ task_id: "t1", title: "艾薇兰", session_id: "s1" })
+    call = callReducer(call, server({ type: "focus", task: null }))
+    expect(call.focus).toBeNull()
+  })
+})

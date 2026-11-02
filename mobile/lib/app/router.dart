@@ -38,6 +38,7 @@ import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
+import 'voice_conversation_card.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
 import 'knowledge_routes.dart';
@@ -175,6 +176,10 @@ final routerProvider = Provider<GoRouter>((ref) {
                         scope: scope,
                         deck: true,
                         beforeOpen: beforeOpen,
+                        leading: VoiceConversationCard(
+                          scope: scope,
+                          beforeOpen: beforeOpen,
+                        ),
                       ),
               );
             },

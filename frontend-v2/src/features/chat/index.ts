@@ -2,6 +2,7 @@
 export { ChatFlow } from "./components/ChatFlow"
 export { RunErrorNotice } from "./components/RunErrorNotice"
 export { ExecutionEffectNotice, StopTaskNotice } from "./components/ExecutionEffectNotice"
+export { TaskRoomBanner } from "./components/TaskRoomBanner"
 export { Composer } from "./components/Composer"
 export { EmptyState } from "./components/EmptyState"
 export { PermissionCard } from "./components/PermissionCard"

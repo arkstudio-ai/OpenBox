@@ -329,7 +329,8 @@ async def test_a_dropped_session_is_replaced_and_the_call_goes_on_unnoticed(call
     assert bridge.provider is fresh[0] and bridge.recoveries == 1 and not (bridge.recovering or bridge.swapping)
     assert fresh[0].commands("audio") == [("audio", 3200, b"\x10\x00\x10\x00")]  # what the user said meanwhile
     assert "用户：先等一下" in fresh[0].instructions  # the call's last lines carry over, as in a rotation
-    assert not fresh[0].commands("create") and not outbox(bridge)  # nobody was cut off: nothing said, no event
+    # nobody was cut off: nothing said, no event (the user's own line is echoed to their conversation card)
+    assert not fresh[0].commands("create") and not [e for e in outbox(bridge) if e.get("type") != "transcript"]
     await bridge.feed_audio(SPEECH)
     assert len(fresh[0].commands("audio")) == 2
 
@@ -556,3 +557,38 @@ async def test_idle_and_detected_human_speech_have_distinct_hearing_flags(call):
     phases = of_type(outbox(bridge), 'phase')
     assert phases[-1]['hearing'] is False
     await bridge.close()
+
+
+async def test_the_callers_own_lines_reach_the_client_as_transcripts_and_notes_never_do(call):
+    bridge, provider, link, clock = call
+    await replay(bridge, event("user_transcript", text="你好", item_id="i1"),
+                 event("assistant_transcribing", text="你好", item_id="i2", response_id="r1"),
+                 event("assistant_transcribing", text="呀", item_id="i2", response_id="r1"),
+                 event("assistant_transcript", text="你好呀", item_id="i2", response_id="r1"),
+                 event("assistant_transcript", text="你好呀", item_id="i2", response_id="r1"))
+    bridge._said("note", "（后台事件）任务好了", "n1")
+    lines = of_type(outbox(bridge), "transcript")
+    assert [(line["role"], line["text"], line["final"]) for line in lines] == [
+        ("user", "你好", True), ("assistant", "你好", False), ("assistant", "你好呀", False), ("assistant", "你好呀", True)]
+    assert all(line["item_id"] and isinstance(line["at"], float) for line in lines)
+
+
+async def test_a_silent_keepalive_is_never_shown_as_a_transcript(call):
+    bridge, provider, link, clock = call
+    bridge._keepalives["r9"] = {"k1"}
+    await replay(bridge, event("assistant_transcribing", text="嗯", item_id="k1", response_id="r9"),
+                 event("assistant_transcript", text="嗯", item_id="k1", response_id="r9"))
+    assert not of_type(outbox(bridge), "transcript")
+
+
+async def test_focus_is_told_once_per_change_and_cleared_explicitly(call):
+    bridge, provider, link, clock = call
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研"})
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研"})
+    bridge.set_focus_task({"task_id": "t2", "title": "酒吧视频", "session_id": "s2"})
+    bridge.set_focus_task(None)
+    bridge.set_focus_task(None)
+    focus = of_type(outbox(bridge), "focus")
+    assert [item["task"] and item["task"]["task_id"] for item in focus] == ["t1", "t2", None]
+    assert focus[1]["task"] == {"task_id": "t2", "title": "酒吧视频", "session_id": "s2"}
+    assert focus[0]["task"]["session_id"] is None

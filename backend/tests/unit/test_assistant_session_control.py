@@ -130,6 +130,7 @@ async def test_queued_stop_prevents_admission_and_preserves_input_receipt():
     session = await get_session(created['execution_session_id'], user_id=owner)
     target = await target_for_session(session, owner)
     assert target['expected_run'] is None
+    assert target['task_title'] == session.title and target['archived'] is False
     body = StopBody.model_validate({'task_control': {k: target[k] for k in (
         'task_id', 'expected_revision', 'expected_run')} | {'idempotency_key': 'queued-stop'}})
     first, second = await asyncio.gather(stop_task(session, owner, body), stop_task(session, owner, body))

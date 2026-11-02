@@ -9,8 +9,12 @@ import type {
   ErrorKey,
   Phase,
   ServerEvent,
+  TranscriptLine,
   TurnState,
 } from "./types"
+
+/** Lines kept for the conversation card; older ones fall off the top. */
+export const TRANSCRIPT_LINES = 200
 
 export type CallAction =
   | { type: "start" }
@@ -40,6 +44,8 @@ export const initialCall: CallState = {
   turns: {},
   cost: null,
   ended: null,
+  transcript: [],
+  focus: null,
   level: SILENT,
 }
 
@@ -162,9 +168,16 @@ function onServerEvent(state: CallState, event: ServerEvent, at: number): CallSt
         errorMessage: null,
       })
     default:
-      // Unknown events are ignored (spec §5.3); heartbeats only keep the line alive.
-      return state
+      return onContent(state, event)
   }
+}
+
+/** The conversation card's events; anything else is ignored (spec §5.3) and heartbeats only keep the line alive. */
+function onContent(state: CallState, event: ServerEvent): CallState {
+  if (state.status !== "connected") return state
+  if (event.type === "transcript") return { ...state, transcript: withLine(state.transcript, event) }
+  if (event.type === "focus") return { ...state, focus: event.task ?? null }
+  return state
 }
 
 function toEnded(state: CallState, ended: CallEnd): CallState {
@@ -196,4 +209,20 @@ function localEnd(
     errorKey: limited ? null : errorKey,
     errorMessage,
   }
+}
+
+/** A partial reply replaces its earlier partial; a final line replaces both. Empty text drops nothing. */
+function withLine(lines: TranscriptLine[], event: Extract<ServerEvent, { type: "transcript" }>): TranscriptLine[] {
+  const text = (event.text ?? "").trim()
+  if (!text || !event.item_id) return lines
+  const line: TranscriptLine = { role: event.role, text, itemId: event.item_id, final: event.final === true, at: event.at }
+  const index = lines.findIndex((known) => known.itemId === event.item_id && known.role === event.role)
+  if (index >= 0) {
+    if (lines[index].final && !line.final) return lines
+    const next = lines.slice()
+    next[index] = line
+    return next
+  }
+  const next = [...lines, line]
+  return next.length > TRANSCRIPT_LINES ? next.slice(next.length - TRANSCRIPT_LINES) : next
 }

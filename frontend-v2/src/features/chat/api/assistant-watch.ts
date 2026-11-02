@@ -23,6 +23,10 @@ export interface AssistantWatchItem {
   latest_result?: { result_id: string; outcome: string; delivery_state: string; created_at: string; summary: string; is_current?: boolean } | null
   /** The card the conversation waits on, when it waits on one (servers that report it). */
   blocked_by?: AssistantBlockingCard | null
+  /** Older tasks for the same work folded under this row (VOICE_SEAM_PLAN §11.4). */
+  chain?: { count: number; task_ids: string[] } | null
+  /** Errored a day ago or more and nobody touched it since: worth closing. */
+  stale?: boolean
 }
 
 export interface AssistantWatchPage {

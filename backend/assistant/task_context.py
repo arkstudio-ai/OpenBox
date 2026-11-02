@@ -5,7 +5,7 @@ task with its latest result summary, and one grouped read counts pending
 questions. Earlier snapshots are history, never re-validated or replayed as
 current state.
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import aliased
@@ -17,6 +17,7 @@ from memory.redaction import redact_credentials
 
 MAX_CONTEXT_TASKS = 12
 SUMMARY_PREVIEW = 600
+STALE_ERROR_HOURS = 24  # an errored task nobody touched for this long: the list suggests closing it
 
 
 def _iso(value):
@@ -57,6 +58,11 @@ async def task_context(db, main) -> dict:
                 "desired_state": task.desired_state, "observed_state": task.observed_state,
                 "revision": task.control_revision, "updated_at": _iso(task.updated_at),
                 "pending_questions": pending.get(task.execution_session_id, 0)}
+        if task.observed_state == "error" and isinstance(task.updated_at, datetime):
+            # updated_at moves with every input and control; an old error nobody touched is just clutter.
+            age = datetime.now(timezone.utc) - (task.updated_at if task.updated_at.tzinfo else task.updated_at.replace(tzinfo=timezone.utc))
+            if age >= timedelta(hours=STALE_ERROR_HOURS):
+                item["stale"] = True
         if task.execution_session_id in blocked:
             # Input given to this task waits until the user handles this card there.
             card = blocked[task.execution_session_id]
@@ -76,3 +82,28 @@ async def task_context(db, main) -> dict:
     return {"items": items, "has_more": len(rows) > MAX_CONTEXT_TASKS,
             "read_more": "Use tasks.list for the full list; tasks.get, results.read or history.read for details.",
             "untrusted_data": True, "grants_authority": False}
+
+
+def fold_chains(items: list[dict]) -> list[dict]:
+    """Collapse tasks of the same work into one row for the task list (VOICE_SEAM_PLAN §11.4).
+
+    Two items in the same project whose titles ``similar_task_title`` keeps the one listed first (the list is
+    already ordered by urgency and recency) and records the others under ``chain``. A task waiting for the
+    user is never hidden behind another: it stays its own row."""
+    from assistant.commands import similar_task_title
+    folded: list[dict] = []
+    for item in items:
+        if item.get("observed_state") == "waiting_input" or item.get("pending_questions"):
+            folded.append(dict(item))
+            continue
+        head = next((row for row in folded
+                     if row.get("observed_state") != "waiting_input" and not row.get("pending_questions")
+                     and (row.get("project") or {}).get("id") == (item.get("project") or {}).get("id")
+                     and similar_task_title(row.get("title", ""), item.get("title", ""))), None)
+        if head is None:
+            folded.append(dict(item))
+            continue
+        chain = head.setdefault("chain", {"count": 1, "task_ids": [head["task_id"]]})
+        chain["count"] += 1
+        chain["task_ids"].append(item["task_id"])
+    return folded

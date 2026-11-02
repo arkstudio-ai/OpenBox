@@ -44,6 +44,9 @@ export interface Session {
     expected_run: { run_id: string; generation: number } | null
     desired_state: "running" | "paused" | "canceled"
     observed_state: string
+    /** The task's own title and whether it is still watched (servers from 2026-11-02). */
+    task_title?: string
+    archived?: boolean
   } | null
   additions?: number
   deletions?: number

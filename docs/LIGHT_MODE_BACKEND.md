@@ -80,6 +80,10 @@ GET /api/light/recent →
 - **直接发 / 店务**（付费档）：走普通 cron agent 路径（需要桌面），执行时对临时会话 `set_cap(上限)`，付费工具超限即停。套餐过期时这类运行记 `skipped`（原来是 error，会退避直到自动停用）。
 - 实测（light-test，11-02）：手动触发一次 79 秒出片，对话里多一条带店名的成片，账本扣 3.75 + 0.045，通知 +1。
 
+## 你拍我剪（M3）
+
+见 `LIGHT_FOOTAGE_EDIT.md`：新工具 `footage_analyze`（无桌面读素材）、`file_assets.meta`（迁移 `pj06c7d8e9f0`）、`Timeline.audio` / `Shot.volume`、`billing/footage.py` 两行计价、技能 `footage-edit`、通知 `footage_edit_ready/failed`。入口 `footage_edit` 已转主入口（免费档可用）。
+
 ## 未做
 
 - 已经打开的 Light 对话不会实时刷出托管运行的新消息（重新进入或点通知即可看到）。

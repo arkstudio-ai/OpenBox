@@ -70,5 +70,8 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-02 17:20 | `20261102-light-520b4184` | light-full | 单子类样式名、菜单/海报不以问题卡收尾 |
 | 2026-11-02 17:34 | `20261102-light-6e10c68b` | light-full-autopilot | M2.5 省心托管（`/api/light/autopilot`、只出片无桌面执行）|
 | 2026-11-02 17:45 | `20261102-light-20e41c94` | light-full-autopilot | 托管小修 + 文档；对应 Android 1.1.0 (102) |
+| 2026-11-02 18:01 | `20261102-light-6c2d97f0` | light-full-footage | M3 你拍我剪（迁移 `pj06c7d8e9f0` file_assets.meta）；验收见 `docs/LIGHT_FOOTAGE_EDIT.md` §3 |
 
-账号（密码在机上 `/opt/openbox/secrets/accounts.txt`，不入库）：`light-full-samples`（样片，超管 grant 了 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（密码在会话记录，不入库）。
+账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
+
+到期提醒：包月到 **2026-12-01 16:00 UTC（北京 12-02 00:00）**，不自动续费；续费或在此前把测试结论搬走。

@@ -67,8 +67,11 @@ Rules for picking:
 - Target length: what the owner asked for, else 30–60 s; never longer than
   the usable footage allows. Do not stretch shots to reach a length.
 
-Captions: one line per spoken sentence, ≤ 14 characters per line (split long
-sentences), timed to the sentence; no captions over silent shots. Banner
+Captions: ≤ 12 Chinese characters per cue — split every longer sentence at
+its commas into several cues and share the sentence's time between them in
+proportion to their length (a 30-character sentence is three cues); a longer
+line runs off the 720-px frame. Time cues to the sentence timings; no captions
+over silent shots. Banner
 texts: the shop name for the whole cut at the bottom (`y: 0.76`, size 60),
 and at most two short 花字 (the dish name, the price) on their shots.
 

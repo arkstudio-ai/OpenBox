@@ -269,6 +269,12 @@ async def cards_answer(scope: CallScope, arguments: dict) -> dict:
     return await cards.answer(scope, arguments)
 
 
+async def task_blocker(scope: CallScope, arguments: dict) -> dict:
+    """Where one task is and what it waits for (voice/focus.py): the answer to "怎么还没动" in a second."""
+    from voice.focus import blocker
+    return await blocker(scope, arguments)
+
+
 async def credits(scope: CallScope, arguments: dict) -> dict:
     """What ``status.credits`` reads: the workspace balance and the user's own use this month."""
     from assistant.status_tools import credits as read_credits
@@ -332,6 +338,12 @@ DIRECT: dict[str, DirectTool] = {
         "目标或选择不明确时先澄清，多个卡片不能凭最近顺序猜。用户补充所选新项目的名称仍属于本卡片，填 project_name；"
         "改变待执行事项的内容或范围才另用 assistant_ask。返回 decision_recorded 只代表回答已记录，后续执行结果另行返回。",
         cards_answer, CardAnswerArguments.model_json_schema(), timeout=8.0),
+    "task_blocker": DirectTool(
+        "用户问某个任务“怎么还没动”“卡在哪”“现在什么情况”时查它当前卡在哪、要谁做什么。"
+        "给 task_id 或标题，都不给则查最近在跟进的那个；返回的 say 可直接口播。"
+        "只是查看；要恢复、继续、核对或取消必须用 assistant_ask 转交。", task_blocker,
+        {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
+                                           "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
 }
 
 

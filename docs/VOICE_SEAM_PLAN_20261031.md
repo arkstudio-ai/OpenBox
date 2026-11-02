@@ -274,3 +274,9 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - 3.1 执行页提交：`SharedContextWatcher._read` 的人工输入从只查主会话扩成主会话 + 该用户未归档任务的执行会话，任务页条目带 `task_id`、`task_title`、`where=task_page`，前缀加"内容已在那个任务里，不要再要、不要重发"；`CallUpdates` 对任务房间的 `agent.inbox.updated` 置 `context`（房间集合来自 watcher 每次读取）。
 - 测试：`test_voice_control_notes.py`（判定、口播稿、真实库里任务页停止→一条备注→不重复→通话中新建任务不播）、`test_voice_updates.py`、`test_voice_bridge.py`（合并与 tell_reports）、`test_assistant_assets.py`（任务页输入进共享上下文）各加一项。
 - 未在本轮：3.2 的"同一任务 10 秒内多次变化只播最后一次"以"未播出前合并"实现，已播出后的再次变化会再播一次。
+
+**轮 C（2026-11-02，分支 `feat/task-rooms-p2`，第 5 节 P2）**
+
+- 3.4 焦点段：新模块 `voice/focus.py`。`state_phrase` 把 desired/observed（含等待的卡片问题）说成一句人话，三处共用；`recent_focus` 取主会话 24 小时内最近动过的未归档任务，作为 `FrontFacts.focus`（`prompt.front_context` 并行读取，失败留空）；`phrases.greeting_instructions(focus=)` 在开场招呼后接一句"上次在跟进的事：「X」，状态"（关闭回顾、首次使用、unified 不加）；`prompt.with_sections(focus=)` 加"当前在跟进：「X」，状态。涉及任务的回复第一句先点名；所指不明先问清是哪一件再转交，不猜"。`Bridge(focus_task=)` 以它初始化焦点并在开场前发 `focus` 事件；`set_focus_task` 接受 `state`，状态变化只更新指令不重发事件；交办（"刚交办过去，正在做"）、报告（"刚出了结果"）、控制备注（备注原文）都带状态。
+- `task_blocker` 快读：`DIRECT` 新增，按 `task_id` 或口头标题（包含或相似）找任务，不给则取最近在跟进的；返回 `say`（可直接口播）与 `waiting_on_card`，注明恢复/核对必须经 `assistant_ask`。注册在 `DIRECT` 末尾，不改既有工具顺序。
+- 测试：`test_voice_focus.py` 三项（状态句无字段名、开场与指令点名、真实库里 task_blocker 从排队到停止、陌生人 not_found、下一通电话的 recent_focus）；`test_voice_bridge.py` 一项（接通即点名、发 focus、状态变化不重发）。

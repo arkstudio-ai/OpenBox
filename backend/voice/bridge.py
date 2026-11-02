@@ -69,7 +69,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
                  context_sink=None, context_reader=None,
-                 prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None):
+                 prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None, focus_task=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.unified = unified
         self.shared_context = ""
@@ -119,7 +119,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._cancel_recovery_provider = None
         self._keepalives: dict[str, set[str]] = {}  # silent replies of ours → their output items
         self._partials: dict[str, str] = {}      # reply item → its transcript so far, shown live on the client
-        self.focus_task: dict | None = None      # the task this call is about now (events.focus)
+        self.focus_task: dict | None = dict(focus_task) if focus_task else None  # the task this call is about (events.focus)
         self._keepalive_at: float | None = None
         self._keepalive_prompt = False          # Audio said the conversation has no user message: prompt first
         self.awaiting_since: float | None = None
@@ -187,8 +187,10 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             await self._sync_instructions(force=True)
             return
         self._update_phase()
+        if self.focus_task:
+            self.emit(events.focus(self.focus_task))  # the conversation card opens on the task the call resumes
         if not await self.say_phrase("greeting", phrases.greeting_instructions(
-                self.lang, recap=self.recap, first_call=self.first_call, unified=self.unified)):
+                self.lang, recap=self.recap, first_call=self.first_call, unified=self.unified, focus=self.focus_task)):
             self._greeting_over()
             await self._sync_instructions(force=True)
 
@@ -467,8 +469,9 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if task is not None and not task.get("task_id"):
             return
         if (task or {}).get("task_id") == current and (task is None) == (self.focus_task is None):
-            if task is not None and task.get("title") and task.get("title") != self.focus_task.get("title"):
-                self.focus_task = {**self.focus_task, **task}
+            if task is not None and any(task.get(key) and task.get(key) != self.focus_task.get(key)
+                                        for key in ("title", "state", "session_id")):
+                self.focus_task = {**self.focus_task, **{k: v for k, v in task.items() if v}}
             return
         self.focus_task = dict(task) if task else None
         self.emit(events.focus(self.focus_task))
@@ -1068,7 +1071,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.decision_context:
             base += "\n" + self.decision_context
         return with_sections(base, call_so_far=self.keeper.summary, progress=section,
-                             last_lines=self.keeper.carried)
+                             last_lines=self.keeper.carried, focus=self.focus_task)
 
     async def _sync_instructions(self, *, force: bool = False, memory_packet=None):
         if (self.provider is self._cancel_recovery_provider

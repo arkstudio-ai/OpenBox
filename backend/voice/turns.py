@@ -778,7 +778,8 @@ class TurnsMixin:
         if ref.status == "ok" and ref.running and not ref.cards:
             ref.reason = "running"  # passed on: told as such, and the task's report answers the request
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
-            self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", "")})
+            self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", ""),
+                                 "state": "刚交办过去，正在做" if self.lang != "en" else "just handed over, in progress"})
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if not self._request_pending():
@@ -1022,7 +1023,8 @@ class TurnsMixin:
             return
         self._passed_on.pop(task_id, None)
         if task_id:
-            self.set_focus_task({"task_id": task_id, "title": title})
+            self.set_focus_task({"task_id": task_id, "title": title,
+                                 "state": "刚出了结果" if self.lang != "en" else "just reported a result"})
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
@@ -1046,7 +1048,7 @@ class TurnsMixin:
         ref.status, ref.speech, ref.reason, ref.settled = "ok", text, "control", self.clock()
         if not self._claim_delivery(ref):
             return
-        self.set_focus_task({"task_id": task_id, "title": title})
+        self.set_focus_task({"task_id": task_id, "title": title, "state": text})
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()

@@ -609,3 +609,16 @@ async def test_a_control_note_is_told_unasked_and_later_changes_of_the_same_task
     bridge.tell_reports = False
     await bridge.control_note("t2", "酒吧视频", "「酒吧视频」接着做了。", 2)
     assert not [ref for ref in bridge.deliveries if ref.provider_call_id == "control:t2"]
+
+
+async def test_a_call_that_resumes_a_task_names_it_in_the_greeting_the_instructions_and_to_the_client():
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    focus = {"task_id": "t1", "title": "艾薇兰调研", "session_id": "s1", "state": "正在做，没有卡住"}
+    bridge = Bridge(provider, link, clock=clock, instructions="BASE", focus_task=focus)
+    await bridge.start()
+    await drain()
+    assert of_type(outbox(bridge), "focus")[0]["task"]["task_id"] == "t1"
+    assert "「艾薇兰调研」，正在做" in provider.commands("create")[0][1]
+    assert "当前在跟进：「艾薇兰调研」" in bridge._instructions()
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研", "state": "已停止，要继续跟我说一声"})
+    assert "已停止" in bridge._instructions() and not of_type(outbox(bridge), "focus")  # a state change is not a new focus

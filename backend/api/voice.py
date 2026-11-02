@@ -198,7 +198,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,
-                    focus=ReplyFocus())
+                    focus=ReplyFocus(), focus_task=facts.focus)
     updates = CallUpdates(scope, rooms=lambda: shared_context.rooms)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()

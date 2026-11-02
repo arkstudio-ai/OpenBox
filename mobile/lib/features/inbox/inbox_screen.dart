@@ -19,9 +19,17 @@ import 'widgets/inbox_item_tile.dart';
 /// a cursor-paged feed, pull to refresh, "mark all read", and taps that mark
 /// the row read before routing through [InboxNavigator].
 class InboxScreen extends ConsumerStatefulWidget {
-  const InboxScreen({super.key, this.initialCategory});
+  const InboxScreen({
+    super.key,
+    this.initialCategory,
+    this.embedded = false,
+  });
 
   final String? initialCategory;
+
+  /// Shown as a Light 模式 tab: the bar keeps its title and actions but draws
+  /// no back button — the tab bar is the way out.
+  final bool embedded;
 
   @override
   ConsumerState<InboxScreen> createState() => _InboxScreenState();
@@ -98,7 +106,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       }
     }
     if (!mounted) return;
-    final result = await navigator.open(link, stillCurrent: () => mounted);
+    final result = await navigator.open(
+      link,
+      kind: item.kind,
+      stillCurrent: () => mounted,
+    );
     if (result == InboxOpen.unavailable && mounted) {
       ref
           .read(toastProvider.notifier)
@@ -123,7 +135,8 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        titleSpacing: 0,
+        titleSpacing: widget.embedded ? 16 : 0,
+        automaticallyImplyLeading: !widget.embedded,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

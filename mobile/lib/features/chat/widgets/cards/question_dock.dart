@@ -17,6 +17,7 @@ import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
 import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
+import 'light_question_card.dart';
 import 'question_resources.dart';
 import 'video_approval_detail.dart';
 
@@ -165,6 +166,32 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     if (draft.answered(page) && page < _count - 1) _goTo(page + 1);
   }
 
+  /// Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.4): a single choice on a
+  /// one-question card is the whole answer, so the tap sends it; on a longer
+  /// card it turns the page as the pro chips do.
+  Future<void> _pickLight(
+    int index,
+    QuestionItem question,
+    String label,
+    bool on,
+  ) async {
+    final drafts = ref.read(questionDraftProvider.notifier);
+    drafts.toggle(
+      widget.request.id,
+      _count,
+      index,
+      label,
+      multiple: question.multiple,
+      on: on,
+    );
+    if (!on || question.multiple || question.allowAttachments) return;
+    if (_count == 1) {
+      await _submit(drafts.of(widget.request.id, _count));
+    } else {
+      _completePage(index);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -191,6 +218,30 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         }
       },
     );
+    // A card the agent tagged for Light 模式 wears the big-chip skin.
+    final question = widget.request.questions[page];
+    if (question.detail?['light'] is Map<String, dynamic>) {
+      final busy = draft.submitting || draft.transferring;
+      return LightQuestionCard(
+        key: ValueKey('${widget.request.id}:$page:light'),
+        request: widget.request,
+        page: page,
+        draft: draft,
+        custom: _custom[page],
+        submitError: _submitError,
+        onPick: busy
+            ? null
+            : (label, on) => _pickLight(page, question, label, on),
+        onCustom: (text) => ref
+            .read(questionDraftProvider.notifier)
+            .write(widget.request.id, _count, page, text),
+        onSubmit: canContinue && !busy
+            ? () => isLastPage ? _submit(draft) : _completePage(page)
+            : null,
+        onReject: busy ? null : _reject,
+        onPage: _goTo,
+      );
+    }
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       padding: const EdgeInsets.all(14),

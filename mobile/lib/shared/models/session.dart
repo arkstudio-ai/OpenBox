@@ -52,6 +52,7 @@ class Session {
     this.kind = 'chat',
     this.assistantManaged = false,
     this.taskControl,
+    this.lightEntry,
   });
 
   factory Session.fromJson(Map<String, dynamic> json) => Session(
@@ -84,6 +85,7 @@ class Session {
     taskControl: json['task_control'] is Map<String, dynamic>
         ? Map<String, dynamic>.unmodifiable(asMap(json['task_control']))
         : null,
+    lightEntry: asString(json['light_entry']),
   );
 
   final String id;
@@ -123,6 +125,11 @@ class Session {
   final bool assistantManaged;
   final Map<String, dynamic>? taskControl;
 
+  /// The Light home entry this conversation was started from (`POST
+  /// /api/light/start`), null for an ordinary chat. Such a conversation opens
+  /// as a topic page with its step bar.
+  final String? lightEntry;
+
   bool get isCron => kind == 'cron';
 
   bool get isLive =>
@@ -161,6 +168,7 @@ class Session {
     kind: kind,
     assistantManaged: assistantManaged,
     taskControl: taskControl,
+    lightEntry: lightEntry,
   );
 }
 

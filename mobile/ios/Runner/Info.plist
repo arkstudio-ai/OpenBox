@@ -45,6 +45,8 @@
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍一张你的店或招牌，做成你的第一条视频。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>和个人助理通话需要麦克风。只在通话时收音，不保存录音。</string>
 	<key>NSPhotoLibraryUsageDescription</key>

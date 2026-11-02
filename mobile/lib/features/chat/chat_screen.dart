@@ -21,21 +21,65 @@ import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/execution_effect_notice.dart';
 import 'widgets/interruption_divider.dart';
+import 'widgets/light_chat_scope.dart';
 import 'widgets/run_error_notice.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
 
+/// What a replacement input bar gets instead of the [Composer]: the run
+/// state, the send and the stop, plus enough of the transcript to know
+/// whether the person has spoken yet.
+class ChatInputState {
+  const ChatInputState({
+    required this.busy,
+    required this.onSend,
+    required this.userTurns,
+    required this.hasPendingInput,
+    this.onStop,
+    this.status,
+  });
+
+  final bool busy;
+  final Future<void> Function(String text, List<String> attachments) onSend;
+  final VoidCallback? onStop;
+  final SessionStatus? status;
+
+  /// User messages in the transcript so far (the synthetic opener of a Light
+  /// topic chat counts as one).
+  final int userTurns;
+
+  /// A question or permission card is waiting at the end of the transcript.
+  final bool hasPendingInput;
+}
+
+typedef ChatInputBuilder =
+    Widget Function(BuildContext context, ChatInputState state);
+
 /// Live chat pane for one session (web `ChatRoute`): flow + pending prompts
 /// + composer. The screen chrome (app bar/drawer) lives in the app shell.
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.sessionId, this.resources});
+  const ChatScreen({
+    super.key,
+    required this.sessionId,
+    this.resources,
+    this.inputBuilder,
+    this.light = false,
+  });
 
   final String sessionId;
 
   /// Resource centre, handed down by the app layer (§分层: features never
   /// import each other, the composition layer wires them together).
   final ComposerResourceSlot? resources;
+
+  /// Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.4): a topic page supplies its
+  /// own input bar in place of the composer, fed what the composer would be.
+  final ChatInputBuilder? inputBuilder;
+
+  /// Light skin for the transcript itself: tool traces fold to one line and
+  /// tagged question cards use big chips (see [LightChatScope]).
+  final bool light;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -231,7 +275,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
     ];
 
-    return Column(
+    final body = Column(
       children: [
         Expanded(
           child: sessionState.loading && messages.isEmpty
@@ -303,6 +347,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ),
           )
+        else if (widget.inputBuilder != null)
+          SafeArea(
+            top: false,
+            child: widget.inputBuilder!(
+              context,
+              ChatInputState(
+                busy: busy,
+                status: status,
+                userTurns: rows.whereType<UserRowData>().length,
+                hasPendingInput: permissions.isNotEmpty || questions.isNotEmpty,
+                onSend: (text, attachments) => ref
+                    .read(chatSessionProvider(sessionId).notifier)
+                    .send(text, attachments: attachments),
+                onStop: busy
+                    ? () => ref
+                          .read(chatSessionProvider(sessionId).notifier)
+                          .stop()
+                    : null,
+              ),
+            ),
+          )
         else
           SafeArea(
             top: false,
@@ -328,6 +393,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
       ],
     );
+    return widget.light ? LightChatScope(child: body) : body;
   }
 }
 

@@ -1,0 +1,124 @@
+{
+  "tabs": {
+    "home": "Home",
+    "chat": "Chat",
+    "inbox": "Inbox",
+    "me": "Me"
+  },
+  "home": {
+    "greeting": "{{name}}",
+    "defaultShop": "My shop",
+    "taglines": [
+      "Shoot a video of your place today",
+      "New dish? Make a poster and post it",
+      "New season, new menu layout",
+      "Check this week's numbers and what to make next",
+      "Storefront, dishes or a visit: pick one for a video",
+      "One line about the deal and the poster is done",
+      "Busy weekend ahead: get the menu printed"
+    ],
+    "credits": "{{value}} credits",
+    "creditsUnavailable": "Credits unavailable",
+    "section": {
+      "todo": "Today you can",
+      "more": "Also",
+      "recent": "Recently made"
+    },
+    "ok": "Ready",
+    "needsPlan": "Needs a plan",
+    "needsDesktop": "Needs a cloud desktop",
+    "needsBinding": "Link Douyin first",
+    "comingSoon": "Coming soon",
+    "goPlan": "Get a plan ›",
+    "goDesktop": "Open the desktop ›",
+    "goBinding": "Link it ›",
+    "banner": {
+      "title": "Anything can run on autopilot",
+      "body": "Videos, posts, review replies — on a schedule, hands off"
+    },
+    "recentEmpty": "Nothing made yet. Pick something above to start.",
+    "recentFailed": "Recent work could not be loaded",
+    "outputs_one": "{{count}} result",
+    "outputs_other": "{{count}} results",
+    "ask": "Something else? Just say it"
+  },
+  "gallery": {
+    "lede": "Pick a look first; the chat then walks you through it step by step.",
+    "needs": "You'll need: {{needs}}",
+    "pick": "Make this one",
+    "skip": "Skip the look, just start",
+    "start": "Start",
+    "starting": "Starting…",
+    "stepsTitle": "How it goes",
+    "noSamples": "Samples are on their way; you can start right away.",
+    "unavailable": "This isn't available right now: {{reason}}",
+    "missing": "No such entry"
+  },
+  "topic": {
+    "input": {
+      "hint": "Say anything",
+      "camera": "Camera",
+      "album": "Album",
+      "send": "Send",
+      "stop": "Stop",
+      "uploading": "Uploading photos…",
+      "photosSent": "Here are my photos"
+    }
+  },
+  "card": {
+    "confirm": "That's it",
+    "next": "Next",
+    "skip": "Skip for now",
+    "typeHint": "Or type it",
+    "pageOf": "Step {{current}} / {{count}}"
+  },
+  "tool": {
+    "doing": "Working on: {{action}}",
+    "done_one": "{{count}} step done",
+    "done_other": "{{count}} steps done",
+    "video": "generating the video",
+    "compose": "composing the video",
+    "image": "generating the image",
+    "transcribe": "transcribing audio",
+    "publish": "publishing",
+    "desktop": "working on the cloud desktop",
+    "schedule": "scheduling",
+    "question": "asking you",
+    "skill": "loading a skill",
+    "search": "searching",
+    "fetch": "reading a page",
+    "files": "organizing material",
+    "plan": "planning",
+    "task": "delegating a task",
+    "working": "working"
+  },
+  "conversations": {
+    "assistant": "Assistant",
+    "all": "All chats",
+    "empty": "No chats yet. Pick something on the home tab, or just talk to the assistant.",
+    "untitled": "Untitled chat",
+    "watched": "Assistant following",
+    "topic": "Topic"
+  },
+  "me": {
+    "title": "Me",
+    "billing": "Plans & credits",
+    "authCenter": "Authorization center",
+    "desktop": "Cloud desktop",
+    "resources": "Resources",
+    "settings": "Settings",
+    "admin": "Admin console",
+    "signOut": "Sign out",
+    "signOutTitle": "Sign out?",
+    "cancel": "Cancel"
+  },
+  "uiMode": {
+    "title": "Interface",
+    "light": "Light",
+    "lightBody": "Home buttons go straight to video, menu and poster",
+    "pro": "Pro",
+    "proBody": "The full workbench: chats, projects, cloud desktop, skills",
+    "failed": "Could not switch, please retry"
+  },
+  "testBuild": "TEST BUILD"
+}

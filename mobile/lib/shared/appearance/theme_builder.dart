@@ -95,6 +95,30 @@ ThemeData buildBossipTheme(BossipThemeName name, Brightness brightness) {
       selectionHandleColor: t.accent,
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(color: t.a700),
+    // Light 模式's four tabs (and the admin console) — the same card ground
+    // and accent indicator the admin console drew for itself.
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: t.card,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: t.a200,
+      elevation: 0,
+      height: 64,
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => TextStyle(
+          fontSize: FontSizes.xs,
+          fontWeight: states.contains(WidgetState.selected)
+              ? FontWeight.w600
+              : FontWeight.w500,
+          color: states.contains(WidgetState.selected) ? t.ink : t.n600,
+        ),
+      ),
+      iconTheme: WidgetStateProperty.resolveWith(
+        (states) => IconThemeData(
+          size: 22,
+          color: states.contains(WidgetState.selected) ? t.ink : t.n600,
+        ),
+      ),
+    ),
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStatePropertyAll(t.n400),
       radius: const Radius.circular(Radii.full),

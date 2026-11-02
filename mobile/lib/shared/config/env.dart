@@ -36,4 +36,15 @@ abstract final class Env {
   /// WS origin derives from the HTTP origin (`http→ws`, `https→wss`),
   /// same as web `wsBase()`.
   static String get wsBase => apiBase.replaceFirst(RegExp('^http'), 'ws');
+
+  /// The production origin the app ships against by default.
+  static const String productionBase = 'https://ai.bossipai.com.cn';
+
+  /// A build pointed anywhere else is a test build: the brand mark and the
+  /// Light 「我的」 footer say so, with the host, so a tester can tell which
+  /// backend a screenshot came from.
+  static bool get isProduction => apiBase == productionBase;
+
+  /// Host of [apiBase], for the test-build label.
+  static String get apiHost => Uri.tryParse(apiBase)?.host ?? apiBase;
 }

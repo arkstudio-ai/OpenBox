@@ -11,6 +11,7 @@ import '../features/onboarding/state/onboarding_store.dart';
 import '../features/onboarding/widgets/coach_mark.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../features/workspace/widgets/session_drawer.dart';
+import '../shared/api/ui_mode_store.dart';
 import '../shared/appearance/tokens.dart';
 import '../shared/appearance/type_scale.dart';
 import '../shared/events/bus.dart';
@@ -173,6 +174,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               0;
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final light = ref.watch(uiModeProvider.select((s) => s.isLight));
     final workspace = ref.watch(workspaceProvider).valueOrNull;
     final session = widget.sessionId == null
         ? null
@@ -198,6 +200,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         if (didPop || ModalRoute.of(context)?.isCurrent != true) return;
         if (MediaQuery.viewInsetsOf(context).bottom > 0) {
           FocusManager.instance.primaryFocus?.unfocus();
+          return;
+        }
+        // Light 模式 has no drawer to speak of: a root chat reached by a deep
+        // link goes back to the Light home instead (docs
+        // `LIGHT_MODE_IMPL_PLAN.md` §4.2 T2).
+        if (light) {
+          context.go(Paths.home);
           return;
         }
         _scaffoldKey.currentState?.openDrawer();

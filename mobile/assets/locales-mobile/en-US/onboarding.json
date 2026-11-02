@@ -1,21 +1,15 @@
 {
   "intro": {
-    "skip": "Skip",
-    "next": "Next",
-    "signIn": "Sign in",
-    "register": "Create account",
-    "s1": {
-      "title": "An AI partner that's always on",
-      "lede": "Marketing, publishing, the small chores of running a shop: say it once, hand it over."
-    },
-    "s2": {
-      "title": "It works on its own cloud computer",
-      "lede": "Douyin, Laike, Xiaohongshu: it opens the sites on its own cloud desktop to publish and pull numbers. You only see results."
-    },
-    "s3": {
-      "title": "Results and reminders come back to your phone",
-      "lede": "Finished videos, tidy numbers, anything that needs your call: all delivered here."
-    }
+    "brand": "BOSSIP",
+    "title": "Your shop deserves a video of its own",
+    "lede": "One photo, a 15-second clip. The first one is free.",
+    "sampleTag": "Sample · a small eatery",
+    "sampleShop": "Corner Kitchen",
+    "sampleLine": "Garlic crayfish, wok to table · 15 s",
+    "sampleCaption": "Autoplays · with the shop name on top",
+    "cta": "Make a free video of your shop",
+    "ctaHint": "Sign in after tapping; it takes 30 seconds",
+    "signIn": "Already have an account? Go in"
   },
   "welcome": {
     "title": "Hi {{name}}.",

@@ -778,7 +778,8 @@ class TurnsMixin:
         if ref.status == "ok" and ref.running and not ref.cards:
             ref.reason = "running"  # passed on: told as such, and the task's report answers the request
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
-            self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", "")})
+            self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", ""),
+                                 "state": "刚交办过去，正在做" if self.lang != "en" else "just handed over, in progress"})
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if not self._request_pending():
@@ -1022,12 +1023,36 @@ class TurnsMixin:
             return
         self._passed_on.pop(task_id, None)
         if task_id:
-            self.set_focus_task({"task_id": task_id, "title": title})
+            self.set_focus_task({"task_id": task_id, "title": title,
+                                 "state": "刚出了结果" if self.lang != "en" else "just reported a result"})
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
         if not self._report_batch:
             await self.fill_idle()
+
+    async def control_note(self, task_id: str, title: str, text: str, control_revision: int) -> None:
+        """A task was stopped, paused, released or resumed while the call is on (voice/control_notes.py): one
+        short note with the next step, told unasked at the next quiet moment. Several changes of the same task
+        before the first is told collapse into the latest one."""
+        if not text or self.closing or not self.tell_reports:
+            return
+        key = f"control:{task_id}"
+        queued = next((ref for ref in self.deliveries if ref.provider_call_id == key and ref.delivery == "queued"), None)
+        if queued is not None:
+            queued.speech, queued.inbox_id, queued.control_revision = text, f"{key}:{control_revision}", control_revision
+            return
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=key, text=title, transcript="",
+                           requested=self.clock(), report=title, asked="", inbox_id=f"{key}:{control_revision}",
+                           task_id=task_id, control_revision=control_revision)
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", text, "control", self.clock()
+        if not self._claim_delivery(ref):
+            return
+        self.set_focus_task({"task_id": task_id, "title": title, "state": text})
+        ref.delivery = "queued"
+        self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
 
     def seed_waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
         """A connection is not a request to replay pre-existing decisions.

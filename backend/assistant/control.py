@@ -402,6 +402,7 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         await append_agent_event_locked(db, execution, kind="assistant.control.accepted", payload=receipt,
                                          idempotency_key=f"assistant-control:{command.id}")
     publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
+    publish_task_control(user_id, workspace_id, task, reason=f"{action}:{'assistant' if source else 'user'}")
     # SQL already owns the interruption. This is only the exact local fast path.
     from agent.driver import request_abort
     for target in targets:
@@ -411,6 +412,19 @@ async def accept_control_command(*, user_id: str, workspace_id: str, main_id: st
         except Exception:
             log.exception("Task control interruption deferred command_id=%s", receipt["command_id"])
     return receipt
+
+
+def publish_task_control(user_id: str, workspace_id: str, task, *, reason: str) -> None:
+    """After the commit: a task was paused, resumed, cancelled, blocked or released (VOICE_SEAM_PLAN §3.2).
+
+    Carries state, not text: a call in progress reads the task again and tells the user in its own words."""
+    from bus import bus
+    from bus.events import ASSISTANT_TASK_CONTROL
+    bus.publish(ASSISTANT_TASK_CONTROL, {
+        "userId": user_id, "workspaceId": workspace_id, "sessionId": task.assistant_session_id,
+        "executionSessionId": task.execution_session_id, "taskId": task.id,
+        "desiredState": task.desired_state, "observedState": task.observed_state,
+        "controlRevision": task.control_revision, "reason": reason})
 
 
 def publish_task_changed(user_id: str, workspace_id: str, session_id: str) -> None:
@@ -507,6 +521,7 @@ async def acknowledge_effects(*, user_id: str, workspace_id: str, main_id: str, 
                                          idempotency_key=f"assistant-control:{command.id}")
     log.info("Unknown outcomes acknowledged task_id=%s command_id=%s effects=%d tool_outcomes=%d remaining=%s",
         task_id, receipt["command_id"], len(effect_ids), len(part_ids), remaining)
+    publish_task_control(user_id, workspace_id, task, reason="acknowledged")
     return receipt
 
 
@@ -619,6 +634,7 @@ async def block_resume(snapshot, code):
         await append_agent_event_locked(db, execution, kind="assistant.control.blocked", payload={
             "command_id": command.id, "task_id": task.id, "code": code, "task_revision": task.control_revision,
         }, idempotency_key=f"assistant-control-blocked:{command.id}")
+    publish_task_control(snapshot.actor_user_id, snapshot.workspace_id, task, reason=f"blocked:{code}")
 
 
 #: Where the periodic control scan resumes. A bounded scan still reaches every

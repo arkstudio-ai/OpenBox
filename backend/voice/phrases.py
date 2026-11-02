@@ -47,7 +47,18 @@ def phrase_instructions(key, lang):
     return lead + phrase_text(key, lang)
 
 
-def greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
+def greeting_instructions(lang, recap=True, *, first_call=False, unified=False, focus=None):
+    text = _greeting_instructions(lang, recap, first_call=first_call, unified=unified)
+    if focus and focus.get("title") and recap and not unified and not first_call:
+        # The call picks up where the last one left off: the task touched most recently, with its state.
+        state = f"，{focus['state']}" if focus.get("state") else ""
+        text += (f" 招呼之后接一句上次在跟进的事：「{focus['title']}」{state}；只这一句，不展开，不问要不要继续。"
+                 if _lang(lang) == "zh" else
+                 f" After the greeting, one sentence on the task last worked on: “{focus['title']}”{state}; one sentence only, no follow-up question.")
+    return text
+
+
+def _greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
     if unified:
         # A previous call's recap can predate a result delivered in text. Only
         # the main assistant may reconcile business state across channels.

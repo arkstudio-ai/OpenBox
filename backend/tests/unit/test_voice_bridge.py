@@ -592,3 +592,33 @@ async def test_focus_is_told_once_per_change_and_cleared_explicitly(call):
     assert [item["task"] and item["task"]["task_id"] for item in focus] == ["t1", "t2", None]
     assert focus[1]["task"] == {"task_id": "t2", "title": "酒吧视频", "session_id": "s2"}
     assert focus[0]["task"]["session_id"] is None
+
+
+async def test_a_control_note_is_told_unasked_and_later_changes_of_the_same_task_collapse_into_it(call):
+    bridge, provider, link, clock = call
+    bridge.state = "user_speaking"  # nothing is told while the user talks: the notes wait, and collapse
+    await bridge.control_note("t1", "艾薇兰调研", "「艾薇兰调研」刚刚被停下了。要继续的话跟我说一声。", 3)
+    await bridge.control_note("t1", "艾薇兰调研", "「艾薇兰调研」停下时有一步的结果没来得及确认。", 4)
+    queued = [ref for ref in bridge.deliveries if ref.provider_call_id == "control:t1"]
+    assert len(queued) == 1 and queued[0].control_revision == 4 and "没来得及确认" in queued[0].speech
+    assert queued[0].report == "艾薇兰调研" and not queued[0].asked
+    assert [f["task"]["task_id"] for f in of_type(outbox(bridge), "focus")] == ["t1"]
+    # The same revision again is a duplicate; a call whose user turned reports off hears none of these.
+    await bridge.control_note("t1", "艾薇兰调研", "重复", 4)
+    assert len([ref for ref in bridge.deliveries if ref.provider_call_id == "control:t1"]) == 1
+    bridge.tell_reports = False
+    await bridge.control_note("t2", "酒吧视频", "「酒吧视频」接着做了。", 2)
+    assert not [ref for ref in bridge.deliveries if ref.provider_call_id == "control:t2"]
+
+
+async def test_a_call_that_resumes_a_task_names_it_in_the_greeting_the_instructions_and_to_the_client():
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    focus = {"task_id": "t1", "title": "艾薇兰调研", "session_id": "s1", "state": "正在做，没有卡住"}
+    bridge = Bridge(provider, link, clock=clock, instructions="BASE", focus_task=focus)
+    await bridge.start()
+    await drain()
+    assert of_type(outbox(bridge), "focus")[0]["task"]["task_id"] == "t1"
+    assert "「艾薇兰调研」，正在做" in provider.commands("create")[0][1]
+    assert "当前在跟进：「艾薇兰调研」" in bridge._instructions()
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研", "state": "已停止，要继续跟我说一声"})
+    assert "已停止" in bridge._instructions() and not of_type(outbox(bridge), "focus")  # a state change is not a new focus

@@ -267,3 +267,16 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - App：`VoiceTranscriptEvent`/`VoiceFocusEvent` 与 `VoiceLine`/`VoiceFocusTask` 状态；`TaskRoomBanner`（执行页顶部，进入时弹一次"已进入「…」"）；`AssistantRequests` 新增 `leading` 页，有它时卡片栏不再因无待办而消失；`app/voice_conversation_card.dart` 在应用层组合语音状态与聊天存储：两个通道"通话 / 任务间：「…」"，任务通道读执行会话最近 8 轮正文、忙碌与等待提示、"进这间说"按钮；`router.dart` 注入为卡片栏首页；任务列表卡下显示链数与过期提示。widget/单元测试新增 7 项。
 - 文案：`chat.json` 新增 `room.*`、`assistant.taskList.chain/stale`；`voice.json` 新增 `transcript.*`；App 逐字节镜像。`check_locales.sh` 仍报 knowledge/settings 漂移，为 main 既有问题。
 - 未在本轮：通话里"进门"后对话卡自动切通道（轮 E）；任务通道的"正在进行"只到会话忙碌态，工具级进度在轮 D。
+
+**轮 B（2026-11-02，分支 `feat/task-rooms-p1`，第 5 节 P1）**
+
+- 3.2 控制事件：总线新增 `assistant.task.control`（`bus/events.py`），`assistant/control.py` `publish_task_control` 在 `accept_control_command`（reason `cancel:user` / `pause:assistant` 等）、`acknowledge_effects`（`acknowledged`）、`block_resume`（`blocked:<code>`）提交后发出，`commands.accept_task_command` 在取消后被任务页输入重开时发 `reopened:user`。`voice/updates.py` 新增 `controls` 事件并订阅它；`voice/control_notes.py` `ControlWatcher` 记录通话开始时每个任务的控制修订，之后修订增大的任务按 `kind_of` 判定取消 / 待核对 / 暂停 / 恢复 / 受阻，用 `note_text` 生成口播稿（无字段名），取消时查最近一条 `task_cancel` 命令无工具来源即说"是你在任务页按了停止"。`TurnsMixin.control_note` 把它当未被要求的报告排队（走 `_next_delivery` 的"等用户说完、随答案带出"规则），同一任务未播出的多次变化只留最后一次，尊重 `tell_reports`，并设焦点。
+- 3.1 执行页提交：`SharedContextWatcher._read` 的人工输入从只查主会话扩成主会话 + 该用户未归档任务的执行会话，任务页条目带 `task_id`、`task_title`、`where=task_page`，前缀加"内容已在那个任务里，不要再要、不要重发"；`CallUpdates` 对任务房间的 `agent.inbox.updated` 置 `context`（房间集合来自 watcher 每次读取）。
+- 测试：`test_voice_control_notes.py`（判定、口播稿、真实库里任务页停止→一条备注→不重复→通话中新建任务不播）、`test_voice_updates.py`、`test_voice_bridge.py`（合并与 tell_reports）、`test_assistant_assets.py`（任务页输入进共享上下文）各加一项。
+- 未在本轮：3.2 的"同一任务 10 秒内多次变化只播最后一次"以"未播出前合并"实现，已播出后的再次变化会再播一次。
+
+**轮 C（2026-11-02，分支 `feat/task-rooms-p2`，第 5 节 P2）**
+
+- 3.4 焦点段：新模块 `voice/focus.py`。`state_phrase` 把 desired/observed（含等待的卡片问题）说成一句人话，三处共用；`recent_focus` 取主会话 24 小时内最近动过的未归档任务，作为 `FrontFacts.focus`（`prompt.front_context` 并行读取，失败留空）；`phrases.greeting_instructions(focus=)` 在开场招呼后接一句"上次在跟进的事：「X」，状态"（关闭回顾、首次使用、unified 不加）；`prompt.with_sections(focus=)` 加"当前在跟进：「X」，状态。涉及任务的回复第一句先点名；所指不明先问清是哪一件再转交，不猜"。`Bridge(focus_task=)` 以它初始化焦点并在开场前发 `focus` 事件；`set_focus_task` 接受 `state`，状态变化只更新指令不重发事件；交办（"刚交办过去，正在做"）、报告（"刚出了结果"）、控制备注（备注原文）都带状态。
+- `task_blocker` 快读：`DIRECT` 新增，按 `task_id` 或口头标题（包含或相似）找任务，不给则取最近在跟进的；返回 `say`（可直接口播）与 `waiting_on_card`，注明恢复/核对必须经 `assistant_ask`。注册在 `DIRECT` 末尾，不改既有工具顺序。
+- 测试：`test_voice_focus.py` 三项（状态句无字段名、开场与指令点名、真实库里 task_blocker 从排队到停止、陌生人 not_found、下一通电话的 recent_focus）；`test_voice_bridge.py` 一项（接通即点名、发 focus、状态变化不重发）。

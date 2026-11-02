@@ -380,3 +380,23 @@ async def test_accepted_asset_revoked_before_claim_never_becomes_a_text_only_exe
             assert task.observed_state == "idle" and task.control_revision == args["expected_revision"] + 2
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_an_open_call_sees_what_was_typed_on_a_task_page_as_that_tasks_input():
+    from types import SimpleNamespace
+    from assistant.commands import accept_task_command
+    from assistant.inputs import accept_session_input
+    from session.session import get_session
+    from tests.unit.test_assistant_sessions_v2 import assistant
+    from voice.shared_context import SharedContextWatcher
+    owner, other, workspace, main = await assistant()
+    watcher = SharedContextWatcher(SimpleNamespace(user_id=owner, workspace_id=workspace,
+        main_session_id=main.id, call_id="call"))
+    await watcher.poll()
+    created = await accept_task_command(user_id=owner, workspace_id=workspace, main_id=main.id,
+        project_id=main.project_id, idempotency_key="create-1", prompt="做一条艾薇兰国风视频", title="艾薇兰小红瓶调研")
+    session = await get_session(created["execution_session_id"], user_id=owner)
+    await accept_session_input(session, user_id=owner, text="参考图发你了，按这个风格", client_id="page-1")
+    value = (await watcher.poll()).text
+    assert "参考图发你了" in value and "艾薇兰小红瓶调研" in value and '"where": "task_page"' in value
+    assert "不要再向用户要" in value

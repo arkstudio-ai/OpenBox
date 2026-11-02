@@ -265,6 +265,7 @@ class FrontFacts:
     recent: str = ""      # the latest typed replies in the main session
     last_call: str = ""   # the previous call's summary, within a day
     finished: str = ""    # watched work that finished since the previous call
+    focus: dict | None = None  # the open task touched most recently (voice/focus.py): the greeting names it
     native_memory: bool = False  # semantic_recall mode: captured ASR, no remember handover
 
 
@@ -363,7 +364,18 @@ def user_lines(facts: FrontFacts, *, unified: bool = False) -> list[str]:
     return lines
 
 
-def with_sections(base: str, *, call_so_far: str = "", progress: str = "", last_lines: str = "") -> str:
+def focus_section(focus: dict | None) -> str:
+    """The task this call is about (VOICE_SEAM_PLAN §3.4): every task reply names it first; two open tasks
+    mean asking which one before handing anything over."""
+    if not focus or not focus.get("title"):
+        return ""
+    state = f"，{focus['state']}" if focus.get("state") else ""
+    return (f"当前在跟进：「{focus['title']}」{state}。涉及任务的回复第一句先点名这个标题；"
+            "用户同时有别的进行中任务且所指不明时，先问清是哪一件再转交，不猜。")
+
+
+def with_sections(base: str, *, call_so_far: str = "", progress: str = "", last_lines: str = "",
+                  focus: dict | None = None) -> str:
     """The session prompt with what the call keeps current; empty sections are left out.
 
     ``progress`` is only what is still being done ("还在办：…", voice/progress.py): with the assistant's
@@ -371,6 +383,7 @@ def with_sections(base: str, *, call_so_far: str = "", progress: str = "", last_
     """
     sections = [f"\n本通电话到目前为止：{call_so_far}" if call_so_far else "",
                 f"\n刚才最后几句：\n{last_lines}" if last_lines else "",
+                f"\n{focus_section(focus)}" if focus_section(focus) else "",
                 f"\n{progress}" if progress else ""]
     return base + "".join(sections)
 
@@ -403,13 +416,15 @@ async def front_context(*, user_id: str, workspace_id: str, main_session_id: str
                                              guarded(first_call(user_id), False))
         return FrontFacts(**{**user, "native_memory": True}, first_call=initial)
     from assistant.status_tools import platforms
-    user, profile, recent, (last_call, finished), initial, accounts = await asyncio.gather(
+    from voice.focus import recent_focus
+    user, profile, recent, (last_call, finished), initial, accounts, focus = await asyncio.gather(
         guarded(user_facts(user_id, workspace_id, offer=True), {}), guarded(core_memories(user_id, workspace_id)),
         guarded(recent_summary(user_id, main_session_id)), guarded(since_last_call(user_id, workspace_id), ("", "")),
         guarded(first_call(user_id), False),
-        guarded(platforms(user_id=user_id, workspace_id=workspace_id, main_id=main_session_id), None))
+        guarded(platforms(user_id=user_id, workspace_id=workspace_id, main_id=main_session_id), None),
+        guarded(recent_focus(user_id, workspace_id, main_session_id), None))
     return FrontFacts(**user, profile=profile, recent=recent, last_call=last_call, finished=finished,
-                      first_call=initial, platforms=accounts)
+                      first_call=initial, platforms=accounts, focus=focus or None)
 
 
 async def user_facts(user_id: str, workspace_id: str, *, offer: bool = False, asking: bool = False) -> dict:

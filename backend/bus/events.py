@@ -43,6 +43,11 @@ TOAST = "toast"
 # Message centre: unread counts changed for `userId`; clients refetch.
 INBOX_UPDATED = "inbox.updated"
 
+# A task's desired/observed state changed (assistant/control.py publish_task_control): a call in progress
+# tells the user (voice/control_notes.py). Payload: userId, workspaceId, sessionId (the main session),
+# executionSessionId, taskId, desiredState, observedState, controlRevision, reason.
+ASSISTANT_TASK_CONTROL = "assistant.task.control"
+
 # The assistant profile of `userId` changed (Settings, or the assistant in chat: assistant/profile.py);
 # every open client and a call in progress use `profile` at once (name "" is the default name).
 ASSISTANT_PROFILE_UPDATED = "assistant.profile.updated"

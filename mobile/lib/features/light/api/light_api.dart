@@ -158,16 +158,25 @@ class LightApi {
 
   /// Same three steps for a file read as a stream (a phone clip can be
   /// hundreds of megabytes; it never sits in memory whole).
+  ///
+  /// [sessionId] files the upload under the conversation; on a 你拍我剪 page
+  /// the server starts reading a clip as soon as it lands.
   Future<String> uploadStream({
     required String name,
     required String mime,
     required int length,
     required Stream<List<int>> Function() stream,
     void Function(double fraction)? onProgress,
+    String? sessionId,
   }) async {
     final ticket = await _dio.post<Map<String, dynamic>>(
       '/api/assets',
-      data: {'name': name, 'mime': mime, 'size': length},
+      data: {
+        'name': name,
+        'mime': mime,
+        'size': length,
+        'session_id': ?sessionId,
+      },
     );
     final data = ticket.data ?? const <String, dynamic>{};
     final putUrl = asString(data['putUrl']) ?? '';

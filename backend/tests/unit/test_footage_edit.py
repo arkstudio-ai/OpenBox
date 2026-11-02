@@ -97,7 +97,7 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
         return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}]}
 
     async def fake_vision(frames, *, duration, orientation, speech):
-        assert len(frames) == 8 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
+        assert len(frames) == 6 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}]}
 
     class FakeOss:
@@ -159,8 +159,102 @@ def test_footage_skill_and_entry_ship():
     assert (root / "SKILL.md").is_file() and (root / "references" / "structure-templates.md").is_file()
 
 
-@pytest.mark.parametrize("duration,expected", [(8, 4), (15, 8), (60, 10)])
+@pytest.mark.parametrize("duration,expected", [(8, 4), (15, 6), (60, 6)])
 def test_frame_times_spread_over_the_clip(duration, expected):
     from tool.footage_analyze import _frame_times
     times = _frame_times(duration)
     assert len(times) == expected and 0 < times[0] < times[-1] < duration
+
+
+async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
+    """Clips on a 你拍我剪 page are read as they land; the tool then only collects."""
+    from tool import footage_analyze as fa
+    from tool import video_production as vp
+    from tool.tool import ToolContext
+
+    user, session, ids = await _owner_with_clips([15, 15], audio=[True, False])
+    calls = {"asr": 0, "vision": 0}
+
+    async def fake_asr(target, url):
+        calls["asr"] += 1
+        return {"text": "欢迎光临", "sentences": [{"from_sec": 0, "to_sec": 1.5, "text": "欢迎光临"}]}
+
+    async def fake_vision(frames, *, duration, orientation, speech):
+        calls["vision"] += 1
+        assert "转写" not in speech  # picture and speech are read side by side, not in sequence
+        return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}]}
+
+    class FakeOss:
+        host = "bossip.oss-cn-shanghai.aliyuncs.com"
+
+        def presign_get(self, key, expires_sec=3600, **_):
+            return f"https://{self.host}/{key}?sig"
+
+        def _presign(self, method, key, expires, subresource=None):
+            return f"https://{self.host}/{key}?x-oss-process={subresource['x-oss-process']}"
+
+    monkeypatch.setattr("core.oss.get_oss", lambda: FakeOss())
+    monkeypatch.setattr(vp, "_configured_transcription_target", lambda: object())
+    monkeypatch.setattr(vp, "_provider_transcribe", fake_asr)
+    monkeypatch.setattr(fa, "_vision", fake_vision)
+
+    for asset_id in ids:
+        fa.prepare_in_background(asset_id, user["id"])
+    result = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=ids), ToolContext(
+        session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"]))
+    clips = result.metadata["clips"]
+    assert [c["subject"] for c in clips] == ["门头", "门头"] and clips[0]["transcript"] == "欢迎光临"
+    assert calls == {"asr": 1, "vision": 2}  # once per clip, on upload; the tool reused it
+    async with get_db_session() as db:
+        stored = await db.get(FileAsset, ids[0])
+    assert stored.meta["reading"]["v"] == fa.READING_VERSION
+    again = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=ids), ToolContext(
+        session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"]))
+    assert calls == {"asr": 1, "vision": 2} and again.metadata["clips"][1]["segments"]
+
+
+def test_cutting_words_and_clips_open_the_video_tools():
+    from agent.tool_exposure import ExposureSignals, route_explicit_intent_packs
+    assert "video" in route_explicit_intent_packs(ExposureSignals(user_task_text="素材传好了，帮我剪"))
+    assert "video" in route_explicit_intent_packs(ExposureSignals(user_task_text="就这么剪"))
+    assert "video" in route_explicit_intent_packs(ExposureSignals(user_task_text="看看", attachment_kinds=("video",)))
+    assert "video" not in route_explicit_intent_packs(ExposureSignals(user_task_text="明天天气"))
+
+
+async def test_a_watched_cut_wakes_its_chat_once_it_settles(monkeypatch):
+    from types import SimpleNamespace
+
+    from video import compose_recovery as cr
+
+    states = iter(["in_progress", "completed"])
+    woken = []
+
+    class _Db:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, model, job_id):
+            return SimpleNamespace(id=job_id, status="in_progress", session_id="s1", attached_message_id=None,
+                                   idempotency_key="k")
+
+    async def fake_poll(job):
+        return SimpleNamespace(id=job.id, status=next(states), session_id="s1", attached_message_id=None,
+                               idempotency_key="k")
+
+    async def not_busy(session_id):
+        return False
+
+    async def fake_wake(job):
+        woken.append(job.id)
+        return True
+
+    monkeypatch.setattr(cr, "WATCH_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr("db.base.get_db_session", lambda: _Db())
+    monkeypatch.setattr("tool.video_compose.poll_compose_job", fake_poll)
+    monkeypatch.setattr(cr, "_session_busy", not_busy)
+    monkeypatch.setattr(cr, "wake_for", fake_wake)
+    await cr._watch("video_w1")
+    assert woken == ["video_w1"]

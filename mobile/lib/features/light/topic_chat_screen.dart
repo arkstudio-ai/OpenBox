@@ -134,6 +134,7 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
           // 你拍我剪 takes 3–10 phone clips (plan §5.1).
           allowVideo: entryId == 'footage_edit',
           maxPhotos: entryId == 'footage_edit' ? 10 : 3,
+          sessionId: sessionId,
         ),
       ),
     );

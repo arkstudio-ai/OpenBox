@@ -39,7 +39,8 @@ on `upload`: 「从相册选 3–10 段（总共不超过 5 分钟），想突�
 
 ## 2. Read the clips
 
-Call `footage_analyze` **once** with every clip's asset id, in the order sent.
+Call `footage_analyze` **once**, straight away, with every clip's asset id in
+the order sent (the clips were already being read while they uploaded).
 It returns per clip: duration, orientation, sound, transcript with sentence
 timings, and usable segments (`from_sec`/`to_sec`, what the shot shows,
 quality). It also charges the 素材分析 fee for the whole batch and tells you
@@ -64,8 +65,10 @@ Rules for picking:
   their natural sound too.
 - Landscape clips are fine: `fit: "cover"` centre-crops them to 9:16; pick
   segments whose subject is in the middle.
-- Target length: what the owner asked for, else 30–60 s; never longer than
-  the usable footage allows. Do not stretch shots to reach a length.
+- Target length: what the owner asked for, else **40–60 s**, never longer
+  than the usable footage allows. With 3 or more clips, use every clip that
+  has a usable segment at least once — the owner shot them to see them. Do not
+  stretch shots to reach a length.
 
 Captions: ≤ 12 Chinese characters per cue — split every longer sentence at
 its commas into several cues and share the sentence's time between them in
@@ -97,8 +100,8 @@ changes and show the card again only when the length or the price changed.
 
 ## 4. Compose (`compose`)
 
-`video_compose(action="schema")` once if unsure of the format, then
-`validate`, then `submit` with:
+The format is below; do not call `action="schema"`. Call `validate` once, then
+`submit`:
 
 ```json
 {"version": 1,
@@ -109,9 +112,11 @@ changes and show the card again only when the length or the price changed.
 ```
 
 Caption times are on the cut's timeline (add up the shots before it), not the
-source clip's. Then `wait` on the job. If polling pauses, end the turn with one
-line (「正在合成，好了会自动出现在这里并通知你」) — the finished cut wakes this
-conversation by itself.
+source clip's.
+
+After `submit`, **do not call `wait`**: a 你拍我剪 cut is watched for you and
+attaches itself to this chat the moment it is ready (the submit result says
+`delivery=automatic`). End the turn right away with one line: 「开始合成了，一般一两分钟，好了会自动出现在这里并通知你。」
 
 ## 5. Deliver (`deliver`)
 

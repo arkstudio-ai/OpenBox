@@ -289,8 +289,16 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         return ToolResult(title="Composition submit failed", output=_public(exc), metadata={"job_id": job.id})
     await vp._update_job(job.id, status="in_progress", provider_task_id=provider_job_id, started_at=_now(), attempt=1)
     job = await vp._owned_job(job.id, ctx, KIND)
+    extra = [f"warning={w}" for w in compiled.warnings]
+    from billing.footage import is_footage_session
+    if await is_footage_session(job.session_id):
+        # 你拍我剪: the cut is watched from here and lands in the chat by itself.
+        from video.compose_recovery import watch
+        watch(job.id)
+        extra.append("delivery=automatic: this cut is watched and attaches itself to the chat when it is done; "
+                     "end the turn now with one short line, do not call wait")
     return await _status_result(job, asset, ctx, is_wait=False, args=args, title="Composition submitted",
-                                extra=[f"warning={w}" for w in compiled.warnings])
+                                extra=extra)
 
 
 async def _execute_job_action(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:

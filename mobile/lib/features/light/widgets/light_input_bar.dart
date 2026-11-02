@@ -91,6 +91,7 @@ class LightInputBar extends ConsumerStatefulWidget {
     this.chips = const [],
     this.maxPhotos = 3,
     this.allowVideo = false,
+    this.sessionId,
   });
 
   final ChatInputState state;
@@ -100,6 +101,9 @@ class LightInputBar extends ConsumerStatefulWidget {
   /// 你拍我剪: the album picks videos too, and clips upload one by one with
   /// their own progress.
   final bool allowVideo;
+
+  /// The conversation clips are uploaded into (the server reads them early).
+  final String? sessionId;
 
   @override
   ConsumerState<LightInputBar> createState() => _LightInputBarState();
@@ -203,6 +207,7 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
                   length: await photo.length(),
                   stream: photo.openRead,
                   onProgress: progress,
+                  sessionId: widget.sessionId,
                 )
               : await api!.uploadImage(
                   name: name,

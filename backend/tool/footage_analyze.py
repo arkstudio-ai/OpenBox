@@ -10,6 +10,12 @@ Billing is one line for the whole batch — 素材分析, 1 credit per started m
 of footage (billing/footage.py) — charged when the analysis completes, before
 the plan card, and idempotent on the batch: the same clips analysed twice in a
 conversation are charged once. Vision and ASR tokens are inside that price.
+
+Speed: a clip uploaded on a 你拍我剪 page is read as soon as its upload
+completes (:func:`prepare_in_background`, from ``/api/assets/{id}/complete``),
+so by the time the agent asks, the work is done or under way; the result is
+kept on ``file_assets.meta["reading"]``. Within a clip, speech and picture are
+read at the same time.
 """
 from __future__ import annotations
 
@@ -28,13 +34,16 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.footage_analyze")
 
 MAX_CLIPS = 10
+#: Bump when what a clip reading contains changes, so old cached readings are redone.
+READING_VERSION = 1
+_readings: dict[str, asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
 FRAME_WIDTH = 480
 SNAPSHOT_LINK_SECONDS = 3600
 
 PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一段素材的截帧，每张标了它在素材里的秒数。
-素材时长 {duration} 秒，{orientation}；{speech}
+素材时长 {duration} 秒，{orientation}；{speech}（人声内容另行转写，这里只看画面。）
 
 请按画面把这段素材切成可用的片段，严格只输出 JSON，不要任何解释：
 {{"subject": "这段主要拍的是什么（≤15字）",
@@ -56,8 +65,11 @@ class FootageRefusal(Exception):
 
 
 def _frame_times(duration: float) -> list[float]:
-    """About one frame every 2 s, 4–10 frames, never on the very first or last frame."""
-    count = max(4, min(10, math.ceil(duration / 2)))
+    """About one frame every 2.5 s, 4–6 frames, never on the very first or last frame.
+
+    Six frames read a 15 s clip as well as ten did and the call is a third faster.
+    """
+    count = max(4, min(6, math.ceil(duration / 2.5)))
     step = duration / count
     return [round(step * (i + 0.5), 2) for i in range(count)]
 
@@ -93,10 +105,78 @@ async def _vision(frames: list[tuple[float, str]], *, duration: float, orientati
     return json.loads(match.group(0))
 
 
+async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
+    """Speech and picture of one clip, read at the same time; cached on its meta."""
+    from tool.video_production import _configured_transcription_target, _provider_transcribe
+
+    duration = float(meta["duration_sec"])
+    orientation = {"portrait": "竖拍", "landscape": "横拍（成片会居中裁成竖屏）", "square": "方形"}.get(
+        meta.get("orientation") or "", "方向未知")
+
+    async def speech() -> dict[str, Any]:
+        if not (transcribe and meta.get("has_audio")):
+            return {}
+        try:
+            return await _provider_transcribe(_configured_transcription_target(),
+                                              oss.presign_get(row.oss_key, expires_sec=SNAPSHOT_LINK_SECONDS))
+        except Exception as exc:  # silence or noise is not a failure: the picture still counts
+            log.info("footage %s: no transcript (%s)", row.id, type(exc).__name__)
+            return {"error": str(exc)[:120]}
+
+    async def picture() -> dict[str, Any]:
+        frames = [(at, snapshot_url(oss, row.oss_key, at)) for at in _frame_times(duration)]
+        try:
+            return await _vision(frames, duration=duration, orientation=orientation,
+                                 speech="有声音" if meta.get("has_audio") else "没有声音")
+        except Exception as exc:
+            log.warning("footage %s: picture reading failed: %s", row.id, type(exc).__name__)
+            return {"subject": "", "segments": [], "error": "画面没读出来"}
+
+    heard, seen = await asyncio.gather(speech(), picture())
+    reading = {
+        "v": READING_VERSION, "transcript": str(heard.get("text") or "").strip() or None,
+        "sentences": heard.get("sentences") or [], "subject": seen.get("subject"),
+        "segments": seen.get("segments") or [], "best": seen.get("best"),
+        **({"note": seen["error"]} if seen.get("error") else {}),
+    }
+    if not seen.get("error"):
+        from db.base import get_db_session
+        from db.models.file_asset import FileAsset
+        async with get_db_session() as db:
+            fresh = await db.get(FileAsset, row.id)
+            if fresh is not None:
+                fresh.meta = {**(fresh.meta or meta), "reading": reading}
+    return reading
+
+
+async def _prepare(asset_id: str, user_id: str) -> dict | None:
+    from core.oss import get_oss
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from video.media_probe import ensure_meta
+
+    meta = await ensure_meta(asset_id, user_id=user_id)
+    if not meta or not meta.get("duration_sec") or float(meta["duration_sec"]) > MAX_CLIP_SECONDS:
+        return None
+    async with get_db_session() as db:
+        row = await db.get(FileAsset, asset_id)
+    if row is None:
+        return None
+    return await read_clip(row, meta, get_oss(), transcribe=True)
+
+
+def prepare_in_background(asset_id: str, user_id: str) -> None:
+    """Upload hook on a 你拍我剪 page: read the clip now, while the owner uploads the rest."""
+    if asset_id in _readings and not _readings[asset_id].done():
+        return
+    task = asyncio.create_task(_prepare(asset_id, user_id))
+    _readings[asset_id] = task
+    task.add_done_callback(lambda _t: _readings.pop(asset_id, None) if _readings.get(asset_id) is _t else None)
+
+
 async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: bool) -> dict:
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
-    from tool.video_production import _configured_transcription_target, _provider_transcribe
     from video.media_probe import ensure_meta
 
     async with get_db_session() as db:
@@ -105,40 +185,32 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
         raise FootageRefusal(f"clip {index + 1} ({asset_id}) is not a ready upload of yours")
     if not str(row.mime or "").startswith("video/"):
         raise FootageRefusal(f"clip {index + 1} is {row.mime}; only videos can be cut")
+    pending = _readings.get(asset_id)
+    if pending is not None:
+        # Read on upload and still running here: wait for it rather than paying twice.
+        try:
+            await asyncio.shield(pending)
+        except Exception:
+            pass
+        async with get_db_session() as db:
+            row = await db.get(FileAsset, asset_id)
     meta = await ensure_meta(asset_id, user_id=ctx.user_id)
     if not meta or not meta.get("duration_sec"):
         raise FootageRefusal(f"clip {index + 1}: the video could not be read")
     duration = float(meta["duration_sec"])
     if duration > MAX_CLIP_SECONDS:
         raise FootageRefusal(f"clip {index + 1} is {duration:.0f}s; one clip may be at most {MAX_CLIP_SECONDS}s")
-    orientation = {"portrait": "竖拍", "landscape": "横拍（成片会居中裁成竖屏）", "square": "方形"}.get(
-        meta.get("orientation") or "", "方向未知")
-
-    speech: dict[str, Any] = {}
-    if transcribe and meta.get("has_audio"):
-        try:
-            speech = await _provider_transcribe(_configured_transcription_target(),
-                                                oss.presign_get(row.oss_key, expires_sec=SNAPSHOT_LINK_SECONDS))
-        except Exception as exc:  # silence or noise is not a failure: the picture still counts
-            log.info("footage %s: no transcript (%s)", asset_id, type(exc).__name__)
-            speech = {"error": str(exc)[:120]}
-    words = str(speech.get("text") or "").strip()
-    speech_line = f"有人声，说的是：「{words[:300]}」" if words else ("有声音但没听出人声" if meta.get("has_audio") else "没有声音")
-
-    frames = [(at, snapshot_url(oss, row.oss_key, at)) for at in _frame_times(duration)]
-    try:
-        picture = await _vision(frames, duration=duration, orientation=orientation, speech=speech_line)
-    except Exception as exc:
-        log.warning("footage %s: picture reading failed: %s", asset_id, type(exc).__name__)
-        picture = {"subject": "", "segments": [], "error": "画面没读出来"}
+    reading = (row.meta or {}).get("reading") if isinstance(row.meta, dict) else None
+    if not isinstance(reading, dict) or reading.get("v") != READING_VERSION:
+        reading = await read_clip(row, meta, oss, transcribe=transcribe)
     return {
         "clip": index + 1, "asset_id": asset_id, "name": row.name,
         "duration_sec": round(duration, 2), "orientation": meta.get("orientation"),
         "width": meta.get("width"), "height": meta.get("height"), "codec": meta.get("codec"),
         "has_audio": bool(meta.get("has_audio")),
-        "transcript": words or None, "sentences": speech.get("sentences") or [],
-        "subject": picture.get("subject"), "segments": picture.get("segments") or [],
-        "best": picture.get("best"), **({"note": picture["error"]} if picture.get("error") else {}),
+        "transcript": reading.get("transcript"), "sentences": reading.get("sentences") or [],
+        "subject": reading.get("subject"), "segments": reading.get("segments") or [],
+        "best": reading.get("best"), **({"note": reading["note"]} if reading.get("note") else {}),
     }
 
 

@@ -36,6 +36,7 @@ class _Api extends LightApi {
   _Api() : super(Dio());
 
   final uploads = <(String, String, int)>[];
+  final uploadSessions = <String?>[];
 
   @override
   Future<String> uploadStream({
@@ -44,8 +45,10 @@ class _Api extends LightApi {
     required int length,
     required Stream<List<int>> Function() stream,
     void Function(double fraction)? onProgress,
+    String? sessionId,
   }) async {
     await stream().drain<void>();
+    uploadSessions.add(sessionId);
     onProgress?.call(1);
     uploads.add((name, mime, length));
     return 'asset_${uploads.length}';
@@ -54,7 +57,6 @@ class _Api extends LightApi {
 
 XFile _clip(String name, int bytes) =>
     XFile.fromData(Uint8List(bytes), path: '/picked/$name', length: bytes);
-
 
 void main() {
   testWidgets('你拍我剪 picks clips from the album and uploads each one', (
@@ -90,6 +92,7 @@ void main() {
                 const Spacer(),
                 LightInputBar(
                   allowVideo: true,
+                  sessionId: 'session_1',
                   maxPhotos: 10,
                   state: ChatInputState(
                     busy: false,
@@ -120,6 +123,7 @@ void main() {
       ('shop.mp4', 'video/mp4'),
     ]);
     expect(api.uploads.length, 3);
+    expect(api.uploadSessions, ['session_1', 'session_1', 'session_1']);
     expect(sent.single.$1, '素材传好了，帮我剪');
     expect(sent.single.$2, ['asset_1', 'asset_2', 'asset_3']);
   });

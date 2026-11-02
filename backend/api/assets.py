@@ -338,8 +338,15 @@ async def complete_asset(
         if probe_video:
             # Duration, orientation, codec and sound for the footage flow
             # (video/media_probe.py); in the background, the upload is done.
-            from video.media_probe import probe_in_background
-            probe_in_background(row.id, row.user_id)
+            # On a 你拍我剪 page the whole clip is read now (speech + picture),
+            # while the owner is still uploading the rest.
+            from billing.footage import is_footage_session
+            if await is_footage_session(row.session_id):
+                from tool.footage_analyze import prepare_in_background
+                prepare_in_background(row.id, row.user_id)
+            else:
+                from video.media_probe import probe_in_background
+                probe_in_background(row.id, row.user_id)
         return _to_item(row, oss)
 
 

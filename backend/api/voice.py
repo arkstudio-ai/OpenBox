@@ -27,6 +27,7 @@ from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
 from voice.progress import Progress
+from voice.control_notes import ControlWatcher
 from voice.reports import ReportWatcher
 from voice.updates import CallUpdates
 from voice.provider import RealtimeProvider
@@ -198,7 +199,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,
                     focus=ReplyFocus())
-    updates = CallUpdates(scope)
+    updates = CallUpdates(scope, rooms=lambda: shared_context.rooms)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
     memory_changed = asyncio.Event()
@@ -209,6 +210,10 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     async def deliver_context(fresh):
         if fresh:
             await bridge.refresh_shared_context(fresh)
+
+    async def deliver_controls(notes):
+        for note in notes:
+            await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
@@ -373,9 +378,12 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
 
     tasks, ending, answered = [], CallEnded("network", close=None), False
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
+    controls = ControlWatcher(user_id=user_id, main_session_id=main_id, workspace_id=workspace_id, call_id=call_id,
+                              lang=lang)
     try:
         bridge.progress.start()
         await reports.start()
+        await controls.start()
         # Answer as soon as the provider is configured. Both audio directions
         # run before requesting the opening, so the very first words can interrupt it.
         started = last_audio = time.monotonic()
@@ -387,6 +395,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
             bridge_to_client(), timers(), pending_cards(), memory_updates(),
             updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
+            updates.watch(updates.controls, controls.poll, deliver_controls, name="controls"),
             updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()

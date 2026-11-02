@@ -267,3 +267,10 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - App：`VoiceTranscriptEvent`/`VoiceFocusEvent` 与 `VoiceLine`/`VoiceFocusTask` 状态；`TaskRoomBanner`（执行页顶部，进入时弹一次"已进入「…」"）；`AssistantRequests` 新增 `leading` 页，有它时卡片栏不再因无待办而消失；`app/voice_conversation_card.dart` 在应用层组合语音状态与聊天存储：两个通道"通话 / 任务间：「…」"，任务通道读执行会话最近 8 轮正文、忙碌与等待提示、"进这间说"按钮；`router.dart` 注入为卡片栏首页；任务列表卡下显示链数与过期提示。widget/单元测试新增 7 项。
 - 文案：`chat.json` 新增 `room.*`、`assistant.taskList.chain/stale`；`voice.json` 新增 `transcript.*`；App 逐字节镜像。`check_locales.sh` 仍报 knowledge/settings 漂移，为 main 既有问题。
 - 未在本轮：通话里"进门"后对话卡自动切通道（轮 E）；任务通道的"正在进行"只到会话忙碌态，工具级进度在轮 D。
+
+**轮 B（2026-11-02，分支 `feat/task-rooms-p1`，第 5 节 P1）**
+
+- 3.2 控制事件：总线新增 `assistant.task.control`（`bus/events.py`），`assistant/control.py` `publish_task_control` 在 `accept_control_command`（reason `cancel:user` / `pause:assistant` 等）、`acknowledge_effects`（`acknowledged`）、`block_resume`（`blocked:<code>`）提交后发出，`commands.accept_task_command` 在取消后被任务页输入重开时发 `reopened:user`。`voice/updates.py` 新增 `controls` 事件并订阅它；`voice/control_notes.py` `ControlWatcher` 记录通话开始时每个任务的控制修订，之后修订增大的任务按 `kind_of` 判定取消 / 待核对 / 暂停 / 恢复 / 受阻，用 `note_text` 生成口播稿（无字段名），取消时查最近一条 `task_cancel` 命令无工具来源即说"是你在任务页按了停止"。`TurnsMixin.control_note` 把它当未被要求的报告排队（走 `_next_delivery` 的"等用户说完、随答案带出"规则），同一任务未播出的多次变化只留最后一次，尊重 `tell_reports`，并设焦点。
+- 3.1 执行页提交：`SharedContextWatcher._read` 的人工输入从只查主会话扩成主会话 + 该用户未归档任务的执行会话，任务页条目带 `task_id`、`task_title`、`where=task_page`，前缀加"内容已在那个任务里，不要再要、不要重发"；`CallUpdates` 对任务房间的 `agent.inbox.updated` 置 `context`（房间集合来自 watcher 每次读取）。
+- 测试：`test_voice_control_notes.py`（判定、口播稿、真实库里任务页停止→一条备注→不重复→通话中新建任务不播）、`test_voice_updates.py`、`test_voice_bridge.py`（合并与 tell_reports）、`test_assistant_assets.py`（任务页输入进共享上下文）各加一项。
+- 未在本轮：3.2 的"同一任务 10 秒内多次变化只播最后一次"以"未播出前合并"实现，已播出后的再次变化会再播一次。

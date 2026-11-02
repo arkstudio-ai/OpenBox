@@ -509,6 +509,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             source_ref["revision_request"] = revision_request
             command.source_ref = dict(source_ref)
         superseded: list[str] = []
+        reopened = False
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                                 main_id=main_id, task_id=task_id, lock=True)
@@ -527,6 +528,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 source_ref["reopened_from"] = {"desired_state": task.desired_state,
                                                "control_revision": task.control_revision}
                 await reopen_canceled_for_input_locked(db, task, execution)
+                reopened = True
                 command.source_ref = dict(source_ref)
             elif task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING",
@@ -659,8 +661,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
-    from assistant.control import publish_task_changed
+    from assistant.control import publish_task_changed, publish_task_control
     publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
+    if reopened:
+        publish_task_control(user_id, workspace_id, task, reason="reopened:user")
     from agent.driver import request_abort
     for target in interruption_targets:
         try:

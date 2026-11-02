@@ -1177,13 +1177,17 @@ async def _dashscope_transcribe(
         for transcript in transcripts if isinstance(transcript, dict)
         for item in (transcript.get("sentences") or []) if isinstance(item, dict) and item.get("text")
     ]
-    return {
+    result = {
         "text": text,
         "duration_ms": duration_ms,
-        "sentences": sentences,
         "model": target.model,
         "provider": "dashscope",
     }
+    if sentences:
+        # Sentence timings (footage_analyze cuts on them); absent when the
+        # engine reports none, so the plain result keeps its shape.
+        result["sentences"] = sentences
+    return result
 
 
 async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str) -> dict[str, Any]:

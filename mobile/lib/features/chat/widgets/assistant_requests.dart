@@ -45,6 +45,7 @@ class AssistantRequests extends ConsumerStatefulWidget {
     this.beforeOpen,
     this.deck = false,
     this.leading,
+    this.taskCard,
   });
   final AssistantScope scope;
   final VoidCallback? beforeOpen;
@@ -52,6 +53,9 @@ class AssistantRequests extends ConsumerStatefulWidget {
   /// A card that is always the deck's first page (the call page's
   /// conversation card). With it the deck stays even when nothing waits.
   final Widget? leading;
+
+  /// The task the call is about, as its card (the deck's second page).
+  final Widget? taskCard;
 
   /// One card at a time with previous/next, for the call page: the parent
   /// bounds the height and the person swipes between what needs them while

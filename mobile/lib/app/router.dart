@@ -11,6 +11,7 @@ import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_requests.dart';
+import '../features/chat/widgets/assistant_task_card.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
@@ -25,6 +26,7 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
+import '../features/voice/state/voice_call_controller.dart';
 import '../features/voice/voice_call_page.dart';
 import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
@@ -169,6 +171,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           child: Consumer(
             builder: (context, ref, _) {
               final scope = ref.watch(assistantScopeProvider);
+              // The task the call is about gets its own card page: what the
+              // assistant arranged is visible without leaving the call.
+              final focusTask = ref.watch(
+                voiceCallControllerProvider.select((s) => s.focus?.taskId),
+              );
               return VoiceCallPage(
                 cards: scope == null
                     ? null
@@ -180,6 +187,14 @@ final routerProvider = Provider<GoRouter>((ref) {
                           scope: scope,
                           beforeOpen: beforeOpen,
                         ),
+                        taskCard: focusTask == null
+                            ? null
+                            : AssistantTaskById(
+                                key: ValueKey('call-task-$focusTask'),
+                                scope: scope,
+                                taskId: focusTask,
+                                beforeOpen: beforeOpen,
+                              ),
                       ),
               );
             },

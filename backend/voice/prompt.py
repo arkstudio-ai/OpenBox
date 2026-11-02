@@ -369,9 +369,11 @@ def focus_section(focus: dict | None) -> str:
     mean asking which one before handing anything over."""
     if not focus or not focus.get("title"):
         return ""
-    state = f"，{focus['state']}" if focus.get("state") else ""
-    return (f"当前在跟进：「{focus['title']}」{state}。涉及任务的回复第一句先点名这个标题；"
-            "用户同时有别的进行中任务且所指不明时，先问清是哪一件再转交，不猜。")
+    doing = focus.get("progress")
+    state = f"，正{doing}" if doing else (f"，{focus['state']}" if focus.get("state") else "")
+    rhythm = ("它一轮是分钟级：用户问进度就按这一步答一句，说好了会叫他，不追问也不替他催。" if doing else "")
+    return (f"当前在跟进：「{focus['title']}」{state}。涉及任务的回复第一句先点名这个标题；{rhythm}"
+            "用户同时有别的进行中任务且所指不明时，先问清是哪一件再转交，不猜。待答卡片属于哪个任务以卡片自己标的任务名为准。")
 
 
 def with_sections(base: str, *, call_so_far: str = "", progress: str = "", last_lines: str = "",

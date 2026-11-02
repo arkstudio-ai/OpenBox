@@ -590,7 +590,7 @@ async def test_focus_is_told_once_per_change_and_cleared_explicitly(call):
     bridge.set_focus_task(None)
     focus = of_type(outbox(bridge), "focus")
     assert [item["task"] and item["task"]["task_id"] for item in focus] == ["t1", "t2", None]
-    assert focus[1]["task"] == {"task_id": "t2", "title": "酒吧视频", "session_id": "s2"}
+    assert focus[1]["task"] == {"task_id": "t2", "title": "酒吧视频", "session_id": "s2", "progress": ""}
     assert focus[0]["task"]["session_id"] is None
 
 
@@ -622,3 +622,37 @@ async def test_a_call_that_resumes_a_task_names_it_in_the_greeting_the_instructi
     assert "当前在跟进：「艾薇兰调研」" in bridge._instructions()
     bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研", "state": "已停止，要继续跟我说一声"})
     assert "已停止" in bridge._instructions() and not of_type(outbox(bridge), "focus")  # a state change is not a new focus
+
+
+async def test_what_the_focus_tasks_room_is_doing_reaches_the_instructions_and_the_card_once_per_step():
+    from bus import bus
+    from bus.events import SESSION_STATUS, TOOL_RUNNING
+    from voice.progress import RoomProgress
+    clock = FakeClock()
+    rooms = RoomProgress(user_id="u", rooms=lambda: {"room-1"}, clock=clock)
+    rooms.start()
+    try:
+        bridge = Bridge(ScriptedProvider(), FakeLink(), clock=clock, instructions="BASE", room_progress=rooms,
+                        focus_task={"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1", "state": "正在做"})
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "room-1", "tool": "video_dashscope"})
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "other", "tool": "image_gen"})  # not a room
+        bus.publish(TOOL_RUNNING, {"userId": "x", "sessionId": "room-1", "tool": "image_gen"})  # not this user
+        await drain()
+        await bridge.refresh_room_progress()
+        await bridge.refresh_room_progress()
+        focus = of_type(outbox(bridge), "focus")
+        assert [item["task"]["progress"] for item in focus] == ["在生成视频"]
+        assert "「艾薇兰调研」，正在生成视频" in bridge._instructions() and "好了会叫他" in bridge._instructions()
+        bus.publish(SESSION_STATUS, {"userId": "u", "sessionId": "room-1", "status": "idle"})
+        await drain()
+        await bridge.refresh_room_progress()
+        assert [item["task"]["progress"] for item in of_type(outbox(bridge), "focus")] == [""]
+        assert "正在做" in bridge._instructions() and "生成视频" not in bridge._instructions()
+        clock.advance(400)
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "room-1", "tool": "unknown_tool"})
+        await drain()
+        assert rooms.step("room-1") == "在处理"
+        clock.advance(400)
+        assert rooms.step("room-1") == ""  # too old to be "now"
+    finally:
+        rooms.stop()

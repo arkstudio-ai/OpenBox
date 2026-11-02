@@ -116,6 +116,7 @@
     "taskEmpty": "这间还没有来往",
     "taskBusy": "任务助理正在处理…",
     "taskWaiting": "等你回答",
-    "openRoom": "进这间说"
+    "openRoom": "进这间说",
+    "taskDoing": "任务正{{step}}，好了会叫你"
   }
 }

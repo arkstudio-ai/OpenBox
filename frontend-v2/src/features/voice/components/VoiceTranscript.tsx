@@ -48,6 +48,7 @@ export function VoiceTranscript({ className }: { className?: string }) {
           </p>
         ))}
         {live && <p className="text-n600 text-xs italic">{live}</p>}
+        {focus?.progress && <p className="text-n600 text-xs italic">{t("transcript.taskDoing", { step: focus.progress })}</p>}
         <div ref={end} />
       </div>
     </section>

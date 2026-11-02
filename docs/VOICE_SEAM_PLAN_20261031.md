@@ -280,3 +280,11 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - 3.4 焦点段：新模块 `voice/focus.py`。`state_phrase` 把 desired/observed（含等待的卡片问题）说成一句人话，三处共用；`recent_focus` 取主会话 24 小时内最近动过的未归档任务，作为 `FrontFacts.focus`（`prompt.front_context` 并行读取，失败留空）；`phrases.greeting_instructions(focus=)` 在开场招呼后接一句"上次在跟进的事：「X」，状态"（关闭回顾、首次使用、unified 不加）；`prompt.with_sections(focus=)` 加"当前在跟进：「X」，状态。涉及任务的回复第一句先点名；所指不明先问清是哪一件再转交，不猜"。`Bridge(focus_task=)` 以它初始化焦点并在开场前发 `focus` 事件；`set_focus_task` 接受 `state`，状态变化只更新指令不重发事件；交办（"刚交办过去，正在做"）、报告（"刚出了结果"）、控制备注（备注原文）都带状态。
 - `task_blocker` 快读：`DIRECT` 新增，按 `task_id` 或口头标题（包含或相似）找任务，不给则取最近在跟进的；返回 `say`（可直接口播）与 `waiting_on_card`，注明恢复/核对必须经 `assistant_ask`。注册在 `DIRECT` 末尾，不改既有工具顺序。
 - 测试：`test_voice_focus.py` 三项（状态句无字段名、开场与指令点名、真实库里 task_blocker 从排队到停止、陌生人 not_found、下一通电话的 recent_focus）；`test_voice_bridge.py` 一项（接通即点名、发 focus、状态变化不重发）。
+
+**轮 D（2026-11-02，分支 `feat/task-rooms-step2`，第 9.4 节步 2）**
+
+- 执行会话进度进通话：`voice/progress.py` 新增 `RoomProgress`，订阅 `tool.running` / `message.text_delta` / `session.status`，只收该用户任务房间（集合来自 `SharedContextWatcher.rooms`）的事件，把 build 智能体的工具换成口播短语（`ROOM_STEPS`：在生成视频、在发布到抖音、在等你接管云桌面……；未知工具只说"在处理"，不念工具名；会话回到 idle/waiting_input/error 即清掉；超过 180 秒的旧步骤不算"现在"）。`Bridge.refresh_room_progress` 每秒由 `timers()` 调一次：焦点任务房间的步骤变了，就更新指令并发一次带 `progress` 的 `focus` 事件，同一步骤不重复。
+- 房间语境口播：`prompt.focus_section` 在有进度时写成"「X」，正在生成视频"，并加节奏规则"它一轮是分钟级：用户问进度就按这一步答一句，说好了会叫他，不追问也不替他催"；待答卡片归属以卡片自己标的任务名为准（`question_instructions` 原有规则不动）。
+- 客户端：`focus.task.progress` 字段（空串表示空闲）；App 对话卡任务通道底部显示"任务正{step}，好了会叫你"，Web 通话窗同句；文案 `voice.transcript.taskDoing`，App 逐字节镜像。
+- 测试：`test_voice_bridge.py` 一项（房间事件→指令与 focus 事件各一次、非房间与他人事件忽略、回到 idle 清空、未知工具"在处理"、过期不算）。
+- 未在本轮：确认卡/权限卡在房间语境下的专门口播（现有 `card_instructions`/`question_instructions` 已点名任务，未再加）。

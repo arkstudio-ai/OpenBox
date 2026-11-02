@@ -90,6 +90,8 @@ export interface FocusTask {
   task_id: string
   title: string
   session_id?: string | null
+  /** What the room is doing right now, as a phrase; empty when idle or unknown. */
+  progress?: string
 }
 
 export interface FocusEvent {

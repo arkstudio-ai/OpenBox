@@ -26,7 +26,7 @@ from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
-from voice.progress import Progress
+from voice.progress import Progress, RoomProgress
 from voice.control_notes import ControlWatcher
 from voice.reports import ReportWatcher
 from voice.updates import CallUpdates
@@ -198,7 +198,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,
-                    focus=ReplyFocus(), focus_task=facts.focus)
+                    focus=ReplyFocus(), focus_task=facts.focus,
+                    room_progress=RoomProgress(user_id=user_id, rooms=lambda: shared_context.rooms, lang=lang))
     updates = CallUpdates(scope, rooms=lambda: shared_context.rooms)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
@@ -322,6 +323,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             if now - renew >= LOCK_RENEW_SECONDS:
                 renew = now
                 await calls.renew_lock(user_id)
+            await bridge.refresh_room_progress()
             await bridge.fill_idle()
 
     async def memory_updates():
@@ -382,6 +384,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                               lang=lang)
     try:
         bridge.progress.start()
+        bridge.room_progress.start()
         await reports.start()
         await controls.start()
         # Answer as soon as the provider is configured. Both audio directions

@@ -66,6 +66,7 @@ sealed class VoiceServerEvent {
                 taskId: asString(asMap(json['task'])['task_id']) ?? '',
                 title: asString(asMap(json['task'])['title']) ?? '',
                 sessionId: asString(asMap(json['task'])['session_id']),
+                progress: asString(asMap(json['task'])['progress']) ?? '',
               )
             : null,
       ),

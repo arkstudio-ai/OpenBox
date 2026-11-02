@@ -116,6 +116,7 @@
     "taskEmpty": "Nothing in this room yet",
     "taskBusy": "The task assistant is working…",
     "taskWaiting": "Waiting for your answer",
-    "openRoom": "Talk in this room"
+    "openRoom": "Talk in this room",
+    "taskDoing": "The task is {{step}}; I will tell you when it is done"
   }
 }

@@ -69,7 +69,9 @@ def transcript(role: str, text: str, *, item_id: str, final: bool, at: float) ->
 def focus(task: dict | None) -> dict:
     """The task this call is about right now, or none: the conversation card opens that task's room."""
     value = ({"task_id": str(task["task_id"]), "title": str(task.get("title") or ""),
-              "session_id": task.get("session_id")} if task else None)
+              "session_id": task.get("session_id"),
+              # What the room is doing right now, as a phrase ("在生成第二镜"); "" when idle or unknown.
+              "progress": str(task.get("progress") or "")} if task else None)
     return {"type": "focus", "task": value}
 
 

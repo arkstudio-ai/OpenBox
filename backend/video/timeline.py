@@ -45,6 +45,8 @@ class Shot(BaseModel):
     #: (black bars, on purpose), ``fill`` stretches.
     fit: Literal["cover", "contain", "fill"] = "cover"
     transition_out: Transition | None = None
+    #: The clip's own sound: 1 keeps it as recorded, 0 mutes it (an image has none).
+    volume: float = Field(default=1.0, ge=0, le=2)
 
 
 class TextStyle(BaseModel):
@@ -110,6 +112,33 @@ class Cue(BaseModel):
         return self
 
 
+class AudioClip(BaseModel):
+    """A sound bed under the picture (BGM, voice-over): a file placed on the timeline.
+
+    Rendered on its own track(s), mixed with each shot's own sound. 你拍我剪 keeps
+    the recorded sound and adds BGM only once a licensed library is in place.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Same forms as ``Shot.asset``: an owned asset id or the account's OSS object.
+    asset: str = Field(min_length=1, max_length=2048)
+    #: Where it starts and ends on the timeline.
+    from_sec: float = Field(default=0.0, ge=0)
+    to_sec: float | None = Field(default=None, gt=0)
+    #: Where it starts inside the source file.
+    in_sec: float = Field(default=0.0, ge=0)
+    volume: float = Field(default=0.3, ge=0, le=2)
+    fade_in_sec: float = Field(default=0.0, ge=0, le=10)
+    fade_out_sec: float = Field(default=0.0, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "AudioClip":
+        if self.to_sec is not None and self.to_sec <= self.from_sec:
+            raise ValueError("audio clip: to_sec must exceed from_sec")
+        return self
+
+
 class CaptionStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,6 +158,7 @@ class Timeline(BaseModel):
     captions: list[Cue] = Field(default_factory=list)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     texts: list[TextClip] = Field(default_factory=list)
+    audio: list[AudioClip] = Field(default_factory=list, max_length=4)
 
     @property
     def duration_sec(self) -> float | None:

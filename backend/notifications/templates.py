@@ -17,6 +17,8 @@ TEMPLATES = {
     'publish_failed': ('发布失败', '《{name}》发布失败，请检查。', 'Publish failed', '“{name}” failed to publish. Review it.'),
     'first_video_ready': ('你的第一条视频做好了', '15 秒竖屏短片已出片，点开看看，还能一键发到抖音。', 'Your first video is ready', 'The 15-second vertical clip is done. Open it, then post it to Douyin in one tap.'),
     'first_video_failed': ('第一条视频没做成', '这次生成没有成功，点开看看怎么办。', 'Your first video did not finish', 'Generation did not succeed. Open the chat to continue.'),
+    'footage_edit_ready': ('你拍我剪：成片好了', '你拍的素材剪好了，点开看看，可以保存或发到抖音。', 'Your cut is ready', 'Your footage has been cut. Open it to save or post it.'),
+    'footage_edit_failed': ('你拍我剪：没剪成', '这次合成没有成功，点开看看怎么办。', 'Your cut did not finish', 'The cut did not succeed. Open the chat to continue.'),
     'trajectory_turn_failed': ('有一轮对话失败', '{name}，点开看哪一步出了问题。', 'A conversation turn failed', '{name}. See which step broke.'),
 }
 PLATFORMS = {'douyin': ('抖音', 'Douyin'), 'douyin_creator': ('抖音创作者中心', 'Douyin Creator'),

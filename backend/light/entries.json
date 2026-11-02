@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-02",
+  "version": "2026-11-02.2",
   "entries": [
     {
       "id": "video",
@@ -411,17 +411,43 @@
     {
       "id": "footage_edit",
       "title": "你拍我剪",
-      "subtitle": "自己拍的素材也能出片",
-      "kind": "coming_soon",
+      "subtitle": "自己拍的素材，剪成一条",
+      "kind": "primary",
       "skill": "footage-edit",
       "default_tier": null,
-      "price_hint": "按成片条数计费",
+      "price_hint": "60 秒内成片 5 积分 + 素材每分钟 1 积分",
       "requires": {},
-      "steps": [],
+      "steps": [
+        {
+          "id": "type",
+          "label": "成片类型"
+        },
+        {
+          "id": "upload",
+          "label": "传素材"
+        },
+        {
+          "id": "plan",
+          "label": "剪辑方案"
+        },
+        {
+          "id": "compose",
+          "label": "合成"
+        },
+        {
+          "id": "deliver",
+          "label": "成片"
+        }
+      ],
       "subtypes": [],
       "opening_card": {
-        "text": "即将上线。",
-        "chips": []
+        "text": "剪成哪种？从相册选 3–10 段你拍的视频（总共不超过 5 分钟），横拍竖拍都行，我来挑镜头、配字幕、加店名。",
+        "chips": [
+          "探店",
+          "新品上市",
+          "活动促销",
+          "日常记录"
+        ]
       },
       "sample_media": []
     }

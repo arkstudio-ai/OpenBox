@@ -357,6 +357,14 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
     """Record (and in enforce, charge) one finished composition. Idempotent on job id."""
     if asset is None:
         return None
+    from billing import footage
+    if duration_sec is not None and await footage.is_footage_session(job.session_id):
+        # 你拍我剪 is priced by the finished cut, not IMS minutes (billing/footage.py).
+        price = footage.quote_compose(duration_sec)
+        return await settle(key=f"compose:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
+                            session_id=job.session_id, price=price, kind=USAGE_KIND, quantity_known=True,
+                            tokens={"duration_sec": duration_sec, "tier": price.tier},
+                            default_title="成片", title="成片")
     from billing.partner import quote_compose_for_session
 
     price = await quote_compose_for_session(job.session_id, width, height, duration_sec)

@@ -324,6 +324,7 @@ async def complete_asset(
         row.status = "ready"
         from assets.descriptions import queue
         queue(row)
+        probe_video = str(row.mime or "").startswith("video/")
         if row.session_id:
             from trajectory.producers import activity_context, paused_in_tx
             from trajectory.artifacts import capture_asset_in_tx
@@ -334,6 +335,11 @@ async def complete_asset(
                 await capture_asset_in_tx(db, trace, row, role="input")
         await db.commit()
         _updated(row)
+        if probe_video:
+            # Duration, orientation, codec and sound for the footage flow
+            # (video/media_probe.py); in the background, the upload is done.
+            from video.media_probe import probe_in_background
+            probe_in_background(row.id, row.user_id)
         return _to_item(row, oss)
 
 

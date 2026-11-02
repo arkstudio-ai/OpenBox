@@ -63,7 +63,10 @@
       "send": "发送",
       "stop": "停止",
       "uploading": "正在上传照片…",
-      "photosSent": "我拍好了，看这几张"
+      "photosSent": "我拍好了，看这几张",
+      "clipsSent": "素材传好了，帮我剪",
+      "clipTooBig": "单段视频不能超过 200 MB，已跳过太大的",
+      "uploadingOf": "正在上传第 {{n}}/{{total}} 段…"
     }
   },
   "card": {

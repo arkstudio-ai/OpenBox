@@ -45,6 +45,9 @@ class SampleThumb extends StatelessWidget {
               Image.network(
                 thumbUrl!,
                 fit: BoxFit.cover,
+                // The tint holds the tile while the still downloads.
+                frameBuilder: (_, child, frame, sync) =>
+                    sync || frame != null ? child : tint,
                 errorBuilder: (_, _, _) => tint,
               )
             else if (assetStill != null)

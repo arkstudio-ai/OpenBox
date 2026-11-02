@@ -81,8 +81,10 @@ video_generate(action="submit", prompt=<prompt>, duration=15, ratio="9:16",
 ```
 
 Do not pass `model` or `resolution` (the page fixed them). Then
-`video_generate(action="wait", job_id=…)` until it completes; while waiting say
-nothing technical. If the generation is refused because of the photo (a face,
+`video_generate(action="wait", job_id=…, wait_seconds=25)` until it completes;
+while waiting say nothing technical. If the tool says polling is paused, end
+the turn with one line (「片子还在做，做好了会自动出现在这里」): the clip — and later the
+name overlay — wakes this conversation by itself when it lands. If the generation is refused because of the photo (a face,
 a hand), drop the photo and submit once more from text; tell the owner in one
 plain line.
 

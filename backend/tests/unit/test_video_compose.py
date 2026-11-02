@@ -367,3 +367,32 @@ async def test_validate_omits_quote_but_completion_still_records_shadow_usage(en
     async with get_db_session() as db:
         event = (await db.execute(select(UsageEvent).where(UsageEvent.idempotency_key == f"compose:{job_id}"))).scalar_one()
     assert event.status == "shadow" and event.workspace_id == ctx.workspace_id and event.kind == "video_compose"
+
+
+async def test_a_composition_that_settles_after_its_turn_wakes_the_conversation(monkeypatch):
+    """F5: nobody shows a cut that finished after the turn stopped waiting, unless the sweep wakes the chat."""
+    from types import SimpleNamespace
+    from video import compose_recovery, job_recovery
+
+    woken: list[tuple[str, str]] = []
+
+    async def fake_resume(job, prompt=job_recovery.RESUME_PROMPT):
+        woken.append((job.id, prompt))
+        return True
+
+    monkeypatch.setattr(job_recovery, "resume_conversation", fake_resume)
+
+    def job(**kw):
+        base = {"id": "video_c1", "status": "completed", "attached_message_id": None,
+                "idempotency_key": "light_video_compose:x"}
+        return SimpleNamespace(**{**base, **kw})
+
+    assert await compose_recovery.wake_for(job()) is True
+    assert woken[-1] == ("video_c1", job_recovery.COMPOSE_RESUME_PROMPT)
+    assert await compose_recovery.wake_for(job(id="video_c2", status="failed")) is True
+    assert woken[-1] == ("video_c2", job_recovery.COMPOSE_FAILED_PROMPT)
+    assert await compose_recovery.wake_for(job(id="video_c3", attached_message_id="msg_1")) is False
+    assert await compose_recovery.wake_for(job(id="video_c4", idempotency_key="first_video_text:video_x")) is False
+    assert await compose_recovery.wake_for(job(id="video_c5", status="in_progress")) is False
+    assert len(woken) == 2
+    assert "{job_id}" not in job_recovery.COMPOSE_RESUME_PROMPT.format(job_id="video_c1")

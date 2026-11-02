@@ -164,7 +164,7 @@ class LightMeScreen extends ConsumerWidget {
                                   : i18n.t(
                                       'workspace:creditBalance',
                                       vars: {
-                                        'value': formatCredits(
+                                        'value': formatCreditsBrief(
                                           credits.valueOrNull?.balance,
                                         ),
                                       },

@@ -92,7 +92,7 @@ class LightHomeHeader extends ConsumerWidget {
                           : i18n.t(
                               'light:home.credits',
                               vars: {
-                                'value': formatCredits(
+                                'value': formatCreditsBrief(
                                   credits.valueOrNull?.balance,
                                 ),
                               },

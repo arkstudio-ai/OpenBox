@@ -64,6 +64,23 @@ GET /api/light/recent →
 
 16 条样片（做视频 9 条 15 秒 H3、菜单 4 张、海报 3 张）在 light-test 上用 `backend/scripts/light_samples.py` 走真实链路生成（账号 `light-full-samples`），拷到 `oss://bossip/light/samples/20261102/`：`<id>.mp4` / `<id>.jpg`（样片）、`<id>.jpg`（视频截帧）、`<id>_thumb.jpg`（图片缩略图）。花费：视频 9 × ¥1.35 + 图片约 ¥4，合计约 ¥16。重做样片：在测试机后端容器里跑该脚本（`--only` 选 id、`--prefix` 换目录），再改 `entries.json` 里的 key。
 
+## 省心托管（M2.5，2026-11-02）
+
+结果卡右下角「以后省心托管这个」→ 三问（什么时候 / 只出片还是直接发 / 每次最多花，默认 每天 10:00 · 只出片 · 10 积分）→ 一条普通 cron 任务，`template.kind="light_autopilot"`（`light/autopilot.py`）。
+
+| 调用 | 作用 |
+|---|---|
+| `GET /api/light/autopilot` | 本工作空间的托管列表（`items[]`：id、task、mode、enabled、repeat、time、credits_cap_per_run、shop_name、next_run_at、last_status…） |
+| `POST /api/light/autopilot {session_id, asset_id?, task?, repeat, time, mode, credits_cap}` | 从一个结果开托管；同一结果重复开返回同一条（`created=false`）。409 `LIGHT_AUTOPILOT_NEEDS_DESKTOP`（带 `availability`）= 免费档选了「直接发」或上下架 / 回评价 / 成绩复盘 |
+| `PATCH /api/light/autopilot/{id} {enabled?, repeat?, time?, credits_cap?}` | 暂停 / 继续 / 改时间与上限 |
+| `DELETE /api/light/autopilot/{id}` | 取消（软删） |
+
+- **recipe**：开托管时从结果读出「怎么再做一条」：视频取生成作业的提示词（去掉上一次的镜头变化句）、参考图、时长、比例；名字叠字的合成作业再取店名和主打。图片取 `image_gen` 调用的提示词和尺寸。
+- **只出片**（免费档唯一可选）：不需要云桌面、不跑 agent。执行器把这类任务交给 `light/autopilot.run`：先按会话档位报价，超出上限或余额不足就在对话里说一句并记 `skipped`；否则在原 Light 对话里落一条「【省心托管】每天 10:00，做一条视频」，用 `light/pipeline.py`（与首条视频共用）生成一条新片（每次换一个镜头变化句，避开跨用户内容复用）并叠店名，结果卡、`cron_completed` 通知都指向这个对话。
+- **直接发 / 店务**（付费档）：走普通 cron agent 路径（需要桌面），执行时对临时会话 `set_cap(上限)`，付费工具超限即停。套餐过期时这类运行记 `skipped`（原来是 error，会退避直到自动停用）。
+- 实测（light-test，11-02）：手动触发一次 79 秒出片，对话里多一条带店名的成片，账本扣 3.75 + 0.045，通知 +1。
+
 ## 未做
 
-- 「省心托管」（结果卡开关 + 三问卡 + 托管列表）是 M2.5。
+- 已经打开的 Light 对话不会实时刷出托管运行的新消息（重新进入或点通知即可看到）。
+- 「直接发」与店务模板只做了服务端与 App 选项，测试机没有云桌面，未实测。

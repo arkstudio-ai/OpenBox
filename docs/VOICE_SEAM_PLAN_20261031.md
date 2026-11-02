@@ -298,3 +298,5 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - 客户端：`focus.bound`；App 对话卡监听它自动切"任务间"通道并显示"你在这间说话：……说'回去'回到总助理"，Web 通话窗同句；`docs/VOICE_CALL_SPEC.md` 的 `focus` 行补 `progress`/`bound`。
 - 测试：`test_voice_room.py`（口头标题进出、无 call 不可用、房间回复进门后才播且只播一次）；`test_voice_bridge.py` 一项（进门后交办带 room、别的任务只插播、房间回复不看 tell_reports、出门解绑）；`FakeLink.start` 接受 `room`。
 - 未在本轮：房间内"停"的三义确认（停播报/停这一轮/取消任务）仍走现有停止确认与核对流程；PC 悬浮窗无独立进门入口（Web 通话窗只显示状态）。
+
+**上线（2026-11-02）**：五轮合并为 `main@a9278fd2`（PR #113/#115/#117），gw2 `20261102-rooms-a9278fd2` 17:37 切换，带迁移 `ph95b6c7d8e9`；App 1.0.44 (55) 双端同日出包，iOS 17:40 上传 TestFlight。发布细节与验收要点见 docs/DEPLOY.md 与 docs/MOBILE_RELEASE_1_0_44_20261102.md。真实通话验收未做。

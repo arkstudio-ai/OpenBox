@@ -241,6 +241,13 @@ class LightQuestionCard extends ConsumerWidget {
   }
 }
 
+/// The model's "(Recommended)" convention, in either script; the Light card
+/// shows it as a small 推荐 mark instead of English in the label.
+final _recommended = RegExp(
+  r'\s*[（(](recommended|推荐)[)）]\s*$',
+  caseSensitive: false,
+);
+
 /// One option, full width, tall enough for a thumb.
 class _BigChip extends StatelessWidget {
   const _BigChip({
@@ -259,6 +266,8 @@ class _BigChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final hasDescription = description?.trim().isNotEmpty ?? false;
+    final recommended = _recommended.hasMatch(label);
+    final shown = recommended ? label.replaceFirst(_recommended, '') : label;
     return Material(
       color: selected ? t.a700 : t.bg,
       borderRadius: BorderRadius.circular(Radii.lg),
@@ -279,8 +288,17 @@ class _BigChip extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      label,
+                    Text.rich(
+                      TextSpan(
+                        text: shown,
+                        children: [
+                          if (recommended)
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: _RecommendedMark(selected: selected),
+                            ),
+                        ],
+                      ),
                       style: TextStyle(
                         fontSize: FontSizes.lg,
                         fontWeight: FontWeight.w600,
@@ -309,6 +327,33 @@ class _BigChip extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecommendedMark extends ConsumerWidget {
+  const _RecommendedMark({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: selected ? t.bg : t.a100,
+        borderRadius: BorderRadius.circular(Radii.full),
+      ),
+      child: Text(
+        ref.watch(i18nProvider).t('light:card.recommended'),
+        style: TextStyle(
+          fontSize: FontSizes.xs,
+          fontWeight: FontWeight.w600,
+          color: t.a800,
         ),
       ),
     );

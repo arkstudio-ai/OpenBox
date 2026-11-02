@@ -87,7 +87,7 @@ Future<void> showSamplePlayer(
   return Navigator.of(context, rootNavigator: true).push(
     PageRouteBuilder<void>(
       opaque: false,
-      barrierColor: context.tokens.mediaShadow,
+      barrierColor: context.tokens.term.withValues(alpha: 0.94),
       barrierDismissible: true,
       pageBuilder: (_, _, _) =>
           _SamplePlayerPage(url: url, failedText: failedText),

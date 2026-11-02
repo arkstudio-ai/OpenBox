@@ -72,6 +72,10 @@ class _LightTopicChatScreenState extends ConsumerState<LightTopicChatScreen> {
       questions.isEmpty ? null : lightStepIdOf(questions.last),
     );
     if (asked > _reached) _reached = asked;
+    final delivered = lightResultDelivered(
+      ref.watch(chatStreamProvider.select((s) => s.messagesOf(sessionId))),
+    );
+    if (delivered && steps.isNotEmpty) _reached = steps.length - 1;
     final liveStatus = ref.watch(
       chatStreamProvider.select((s) => s.statusOf(sessionId)),
     );

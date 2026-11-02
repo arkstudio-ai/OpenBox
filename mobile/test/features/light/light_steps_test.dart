@@ -3,6 +3,8 @@ import 'package:bossip_mobile/features/light/widgets/step_bar.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/light.dart';
+import 'package:bossip_mobile/shared/models/message.dart';
+import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -141,6 +143,50 @@ void main() {
       expect(image.isVideo, isFalse);
       expect(image.thumbUrl, image.mediaUrl);
     });
+  });
+
+  test('a delivered final video or image counts as the last step', () {
+    ChatMessage message(String role, List<MessagePart> parts) =>
+        ChatMessage(id: 'm-$role', sessionId: 's', role: role, parts: parts);
+    const photo = FilePart(
+      id: 'p1',
+      path: 'uploads/dish.jpg',
+      mimeType: 'image/jpeg',
+      assetId: 'asset_photo',
+    );
+    const segment = FilePart(
+      id: 'p2',
+      path: 'seg.mp4',
+      mimeType: 'video/mp4',
+      assetId: 'asset_seg',
+      relation: FileRelation(role: 'intermediate'),
+    );
+    const clip = FilePart(
+      id: 'p3',
+      path: 'final.mp4',
+      mimeType: 'video/mp4',
+      assetId: 'asset_final',
+      relation: FileRelation(role: 'final'),
+    );
+    expect(
+      lightResultDelivered([
+        message('user', [photo]),
+      ]),
+      isFalse,
+    );
+    expect(
+      lightResultDelivered([
+        message('assistant', [segment]),
+      ]),
+      isFalse,
+    );
+    expect(
+      lightResultDelivered([
+        message('user', [photo]),
+        message('assistant', [segment, clip]),
+      ]),
+      isTrue,
+    );
   });
 
   testWidgets('the step bar lights done, current and working steps', (

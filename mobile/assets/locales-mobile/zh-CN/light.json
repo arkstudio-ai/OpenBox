@@ -71,7 +71,8 @@
     "next": "下一步",
     "skip": "先跳过",
     "typeHint": "也可以直接打字",
-    "pageOf": "第 {{current}} / {{count}} 步"
+    "pageOf": "第 {{current}} / {{count}} 步",
+    "recommended": "推荐"
   },
   "tool": {
     "doing": "正在做：{{action}}",

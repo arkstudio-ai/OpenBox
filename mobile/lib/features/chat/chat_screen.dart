@@ -250,8 +250,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // could not be scrolled at all while the run waited.
       for (final question in questions)
         QuestionDock(key: ValueKey(question.id), request: question),
+      // A Light page's card is the whole prompt; the "agent is waiting"
+      // line (and its cancel) is pro-chat furniture there.
       if (!readOnly &&
-          (status == SessionStatus.waitingInput ||
+          ((status == SessionStatus.waitingInput && !widget.light) ||
               status == SessionStatus.queued))
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

@@ -207,3 +207,15 @@ async def test_recent_groups_results_by_conversation(monkeypatch):
     assert list(groups) == [newer, older]
     assert [o["kind"] for o in groups[newer]["outputs"]] == ["video_final"] and groups[newer]["entry_id"] == "video"
     assert [o["kind"] for o in groups[older]["outputs"]] == ["generated_image"] and groups[older]["title"] == "海报"
+
+
+async def test_prompt_fragment_names_the_shop_from_the_first_video_form():
+    from db.repository.preference_repo import PgPreferenceRepo
+    from session.session import create_session, update_session
+    user = await _user()
+    guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=user["default_workspace_id"])
+    guided = await update_session(guided.id, user_id=user["id"], light_entry="video")
+    assert "店名" not in await light_mode_fragment(user["id"], guided)
+    await PgPreferenceRepo().upsert(user["id"], extra={"first_video": {"status": "ready", "shop_name": "巷口面馆", "headline": "红烧牛肉面"}})
+    fragment = await light_mode_fragment(user["id"], guided)
+    assert "店名「巷口面馆」" in fragment and "主打「红烧牛肉面」" in fragment and "light-video" in fragment

@@ -72,7 +72,8 @@
     "next": "Next",
     "skip": "Skip for now",
     "typeHint": "Or type it",
-    "pageOf": "Step {{current}} / {{count}}"
+    "pageOf": "Step {{current}} / {{count}}",
+    "recommended": "Suggested"
   },
   "tool": {
     "doing": "Working on: {{action}}",

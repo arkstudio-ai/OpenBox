@@ -69,105 +69,112 @@ class _SheetState extends ConsumerState<_Sheet> {
         ],
       ),
     );
+    // Scrolls when the three questions outgrow the sheet (large text, short
+    // phones); the sheet itself never takes more than 90% of the screen.
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              i18n.t('light:autopilot.sheetTitle'),
-              style: TextStyle(
-                fontSize: FontSizes.xl,
-                fontWeight: FontWeight.w700,
-                color: t.ink,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              i18n.t('light:autopilot.sheetLede'),
-              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
-            ),
-            section('when', [
-              for (final repeat in lightAutopilotRepeats)
-                _Chip(
-                  key: Key('light-autopilot-repeat-$repeat'),
-                  label: i18n.t('light:autopilot.repeat.$repeat'),
-                  selected: _choice.repeat == repeat,
-                  onTap: () => setState(
-                    () => _choice = _choice.copyWith(repeat: repeat),
-                  ),
-                ),
-              for (final time in lightAutopilotTimes)
-                _Chip(
-                  key: Key('light-autopilot-time-$time'),
-                  label: time,
-                  selected: _choice.time == time,
-                  onTap: () =>
-                      setState(() => _choice = _choice.copyWith(time: time)),
-                ),
-            ]),
-            section('how', [
-              _Chip(
-                key: const Key('light-autopilot-mode-make'),
-                label: i18n.t('light:autopilot.mode.make_only'),
-                selected: _choice.mode == 'make_only',
-                onTap: () => setState(
-                  () => _choice = _choice.copyWith(mode: 'make_only'),
-                ),
-              ),
-              if (widget.allowPublish)
-                _Chip(
-                  key: const Key('light-autopilot-mode-publish'),
-                  label: widget.canPublish
-                      ? i18n.t('light:autopilot.mode.make_and_publish')
-                      : i18n.t('light:autopilot.mode.publishLocked'),
-                  selected: _choice.mode == 'make_and_publish',
-                  onTap: widget.canPublish
-                      ? () => setState(
-                          () => _choice = _choice.copyWith(
-                            mode: 'make_and_publish',
-                          ),
-                        )
-                      : null,
-                ),
-            ]),
-            section('cap', [
-              for (final cap in lightAutopilotCaps)
-                _Chip(
-                  key: Key('light-autopilot-cap-$cap'),
-                  label: i18n.t(
-                    'light:autopilot.capValue',
-                    vars: {'value': cap},
-                  ),
-                  selected: _choice.creditsCap == cap,
-                  onTap: () => setState(
-                    () => _choice = _choice.copyWith(creditsCap: cap),
-                  ),
-                ),
-            ]),
-            const SizedBox(height: 22),
-            FilledButton(
-              key: const Key('light-autopilot-confirm'),
-              onPressed: () => Navigator.of(context).pop(_choice),
-              style: FilledButton.styleFrom(
-                backgroundColor: t.a700,
-                foregroundColor: t.bg,
-                minimumSize: const Size.fromHeight(52),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(Radii.full),
-                ),
-              ),
-              child: Text(
-                i18n.t('light:autopilot.confirm'),
-                style: const TextStyle(
-                  fontSize: FontSizes.lg,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                i18n.t('light:autopilot.sheetTitle'),
+                style: TextStyle(
+                  fontSize: FontSizes.xl,
                   fontWeight: FontWeight.w700,
+                  color: t.ink,
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Text(
+                i18n.t('light:autopilot.sheetLede'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+              ),
+              section('when', [
+                for (final repeat in lightAutopilotRepeats)
+                  _Chip(
+                    key: Key('light-autopilot-repeat-$repeat'),
+                    label: i18n.t('light:autopilot.repeat.$repeat'),
+                    selected: _choice.repeat == repeat,
+                    onTap: () => setState(
+                      () => _choice = _choice.copyWith(repeat: repeat),
+                    ),
+                  ),
+                for (final time in lightAutopilotTimes)
+                  _Chip(
+                    key: Key('light-autopilot-time-$time'),
+                    label: time,
+                    selected: _choice.time == time,
+                    onTap: () =>
+                        setState(() => _choice = _choice.copyWith(time: time)),
+                  ),
+              ]),
+              section('how', [
+                _Chip(
+                  key: const Key('light-autopilot-mode-make'),
+                  label: i18n.t('light:autopilot.mode.make_only'),
+                  selected: _choice.mode == 'make_only',
+                  onTap: () => setState(
+                    () => _choice = _choice.copyWith(mode: 'make_only'),
+                  ),
+                ),
+                if (widget.allowPublish)
+                  _Chip(
+                    key: const Key('light-autopilot-mode-publish'),
+                    label: widget.canPublish
+                        ? i18n.t('light:autopilot.mode.make_and_publish')
+                        : i18n.t('light:autopilot.mode.publishLocked'),
+                    selected: _choice.mode == 'make_and_publish',
+                    onTap: widget.canPublish
+                        ? () => setState(
+                            () => _choice = _choice.copyWith(
+                              mode: 'make_and_publish',
+                            ),
+                          )
+                        : null,
+                  ),
+              ]),
+              section('cap', [
+                for (final cap in lightAutopilotCaps)
+                  _Chip(
+                    key: Key('light-autopilot-cap-$cap'),
+                    label: i18n.t(
+                      'light:autopilot.capValue',
+                      vars: {'value': cap},
+                    ),
+                    selected: _choice.creditsCap == cap,
+                    onTap: () => setState(
+                      () => _choice = _choice.copyWith(creditsCap: cap),
+                    ),
+                  ),
+              ]),
+              const SizedBox(height: 22),
+              FilledButton(
+                key: const Key('light-autopilot-confirm'),
+                onPressed: () => Navigator.of(context).pop(_choice),
+                style: FilledButton.styleFrom(
+                  backgroundColor: t.a700,
+                  foregroundColor: t.bg,
+                  minimumSize: const Size.fromHeight(52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(Radii.full),
+                  ),
+                ),
+                child: Text(
+                  i18n.t('light:autopilot.confirm'),
+                  style: const TextStyle(
+                    fontSize: FontSizes.lg,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

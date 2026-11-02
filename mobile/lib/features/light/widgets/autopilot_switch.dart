@@ -103,7 +103,7 @@ class _LightAutopilotSwitchState extends ConsumerState<LightAutopilotSwitch> {
               textAlign: TextAlign.end,
               style: TextStyle(
                 fontSize: FontSizes.sm,
-                color: on ? t.a800 : t.n700,
+                color: on ? t.ink : t.n700,
                 fontWeight: on ? FontWeight.w600 : FontWeight.w400,
               ),
             ),

@@ -469,7 +469,7 @@ void main() {
       f.api.revision = 3;
       await tester.runAsync(f.controller.refresh);
       await tester.pumpAndSettle();
-      expect(find.text('Paused'), findsOneWidget);
+      expect(find.text('Stopped'), findsOneWidget);
       await tester.tap(find.byTooltip('More'));
       await tester.pumpAndSettle();
       // Resume waits until the task has actually paused.
@@ -482,7 +482,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('More'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Resume'));
+      await tester.tap(find.text('Resume').last);
       await tester.pumpAndSettle();
       expect(f.api.controls.single['expected_revision'], 3);
       expect(f.api.controls.single['action'], 'resume');

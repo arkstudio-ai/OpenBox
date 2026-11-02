@@ -76,7 +76,7 @@ void main() {
       ),
     );
     expect(find.text('在听你说…'), findsOneWidget);
-    expect(find.textContaining('任务间：「艾薇兰调研」'), findsOneWidget);
+    expect(find.textContaining('「艾薇兰调研」现场'), findsOneWidget);
     expect(
       find.byKey(const Key('voice-conversation-channel-room')),
       findsOneWidget,

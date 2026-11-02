@@ -110,15 +110,15 @@
     "you": "你",
     "assistant": "助理",
     "hearing": "在听你说…",
-    "room": "任务间：「{{title}}」",
+    "room": "「{{title}}」现场",
     "call": "通话",
     "task": "任务间",
-    "taskEmpty": "这间还没有来往",
-    "taskBusy": "任务助理正在处理…",
-    "taskWaiting": "等你回答",
-    "openRoom": "进这间说",
-    "taskDoing": "任务正{{step}}，好了会叫你",
-    "inRoom": "你在这间说话：说的话直接给这个任务；说“回去”回到总助理"
+    "taskEmpty": "现场还没有动静",
+    "taskBusy": "帮手正在处理…",
+    "taskWaiting": "帮手等你回答",
+    "openRoom": "去现场",
+    "taskDoing": "帮手正{{step}}，好了会叫你",
+    "inRoom": "正在盯现场：说的话直接给这件活；说“回去”回到助理"
   },
   "cards": {
     "show": "显示卡片",

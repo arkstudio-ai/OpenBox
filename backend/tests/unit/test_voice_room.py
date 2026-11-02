@@ -28,12 +28,12 @@ async def test_the_room_tools_bind_and_release_the_call_by_spoken_title():
     missing = await tools.run("room_enter", scope, '{"title": "不存在"}')
     assert missing["status"] == "not_found" and missing["known_titles"] == ["艾薇兰小红瓶调研"] and call.room is None
     entered = await tools.run("room_enter", scope, '{"title": "艾薇兰"}')
-    assert entered["status"] == "ok" and entered["say"].startswith("好，进「艾薇兰小红瓶调研」这间了")
+    assert entered["status"] == "ok" and entered["say"].startswith("好，盯着「艾薇兰小红瓶调研」的现场")
     assert call.room == {"task_id": created["task_id"], "title": "艾薇兰小红瓶调研",
                          "session_id": created["execution_session_id"]}
-    assert "你现在在「艾薇兰小红瓶调研」这间" in room_section(call.room)
+    assert "正在盯「艾薇兰小红瓶调研」的现场" in room_section(call.room)
     left = await tools.run("room_leave", scope, "{}")
-    assert left == {"status": "ok", "left": "艾薇兰小红瓶调研", "say": "好，回到总助理这边了。"}
+    assert left == {"status": "ok", "left": "艾薇兰小红瓶调研", "say": "好，回来了。"}
     assert call.room is None
     # Without the call itself (another read path), the tools do nothing.
     assert (await tools.run("room_enter", CallScope(user_id=owner, workspace_id=workspace, main_session_id=main.id),

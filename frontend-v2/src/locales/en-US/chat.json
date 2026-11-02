@@ -400,7 +400,8 @@
       "hintEnter": "Enter to send · Shift+Enter for newline",
       "hintModEnter": "⌘/Ctrl+Enter to send · Enter for newline"
     },
-    "resourceCenter": "Resources"
+    "resourceCenter": "Resources",
+    "placeholderRoom": "Add to this task…"
   },
   "diff": {
     "unmodified_one": "{{count}} unmodified line",
@@ -834,20 +835,20 @@
       "dialogTitle": "Get to know each other"
     },
     "status": {
-      "waiting": "Needs your reply",
+      "waiting": "Needs you",
       "running": "In progress",
-      "queued": "Queued",
-      "paused": "Paused",
+      "queued": "In progress",
+      "paused": "Stopped",
       "done": "Done",
-      "failed": "Ran into a problem",
+      "failed": "Failed",
       "stopped": "Stopped",
-      "idle": "Standing by"
+      "idle": "Stopped"
     },
     "card": {
       "label": "Task: {{title}}",
       "loading": "Loading the task…",
       "loadingResult": "Loading the full result…",
-      "noResultText": "No written result this time — open the conversation to see what happened.",
+      "noResultText": "No written result this time; have a look at the work.",
       "moreResult": "Keep reading",
       "more": "More",
       "showResult": "Show full result",
@@ -858,12 +859,12 @@
       "cancel": "Cancel task",
       "unfollow": "Stop following",
       "unfollowed": "Done — I'll stop following this. The conversation stays as it is.",
-      "open": "Open conversation",
-      "answer": "Reply",
-      "waitingHint": "It's waiting for your reply — open the conversation to carry on.",
+      "open": "Go to the work",
+      "answer": "It is asking you",
+      "waitingHint": "The helper is waiting for your reply; go to the work to answer.",
       "takeoverHint": {
-        "desktop": "It's waiting for you to finish a verification on the cloud desktop — open the conversation, then pick \"我已完成，继续\" when you're done.",
-        "extension": "It's waiting for you to finish a verification in your own browser — then come back to the conversation and pick \"我已完成，继续\"."
+        "desktop": "The helper is waiting for you to finish verification on the cloud desktop; then tap “Done, continue” at the work.",
+        "extension": "The helper is waiting for you to finish verification in your own browser; then go back to the work and tap “Done, continue”."
       },
       "followingUp": "I'll keep at it until it's done ({{used}}/{{limit}} follow-ups used)",
       "continuation": {
@@ -894,15 +895,17 @@
       },
       "checkEffects": "Some outcomes still need checking; until then it can't continue or count as undone.",
       "changed": "The task just changed and has been refreshed — take another look and try again.",
-      "waitingOnCard": "This task is waiting for you on a card in its conversation (such as a cloud desktop verification), so it can't be changed from here. Open the task conversation to handle or dismiss that card.",
-      "openTaskConversation": "Open the task conversation",
-      "gone": "This task's conversation has been deleted."
+      "waitingOnCard": "This work is waiting for you to handle a card at the work (such as a cloud desktop verification); it cannot be controlled from here. Go to the work to handle or cancel that card.",
+      "openTaskConversation": "Go to the work",
+      "gone": "The work's conversation has been deleted.",
+      "again": "Another round",
+      "helperAsks": "Helper asks: {{question}}"
     },
     "taskList": {
       "title": "My tasks",
       "button": "My tasks",
       "buttonWaiting": "My tasks, {{count}} waiting for your reply",
-      "description": "Everything you handed me is here. Open a conversation to see the details.",
+      "description": "Everything you handed to the assistant, one task card each; “Go to the work” shows the process.",
       "close": "Close",
       "followExisting": "Let the assistant follow an existing conversation",
       "emptyTitle": "Nothing handed to me yet",
@@ -914,23 +917,23 @@
       },
       "more": "There are older tasks — ask me \"list all my tasks\" to see them.",
       "pendingCount": "Needs you {{count}}",
-      "chain": "{{count}} rounds, newest shown",
+      "chain": "Round {{count}}",
       "stale": "Failed over a day ago; consider unfollowing"
     }
   },
   "room": {
-    "here": "You are in the room of “{{title}}”",
+    "here": "“{{title}}” · the work",
     "back": "Back to the assistant",
-    "entered": "Entered “{{title}}”: what you say here goes to this task",
+    "entered": "You are at the work of “{{title}}”: what you say here goes to this task",
     "state": {
-      "running": "Running",
-      "queued": "Queued",
-      "waiting": "Waiting for you",
-      "paused": "Paused",
-      "effect_unknown": "Needs your check",
-      "canceled": "Stopped",
-      "completed": "Done",
-      "error": "Failed"
+      "running": "helper at work",
+      "queued": "helper queued",
+      "waiting": "helper needs you",
+      "paused": "stopped",
+      "effect_unknown": "needs your check",
+      "canceled": "stopped",
+      "completed": "done",
+      "error": "failed"
     }
   }
 }

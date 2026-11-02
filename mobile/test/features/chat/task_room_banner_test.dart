@@ -53,10 +53,10 @@ void main() {
     'names the room by its task title, with its state and a way back',
     (tester) async {
       await _pump(tester, _room());
-      expect(find.textContaining('你在任务间：「艾薇兰小红瓶调研」'), findsOneWidget);
-      expect(find.textContaining('运行中'), findsOneWidget);
+      expect(find.textContaining('「艾薇兰小红瓶调研」现场'), findsOneWidget);
+      expect(find.textContaining('帮手在做'), findsOneWidget);
       await tester.tap(find.byKey(const Key('task-room-back')));
-      expect(find.text('回到总助理'), findsOneWidget);
+      expect(find.text('回助理'), findsOneWidget);
     },
   );
 

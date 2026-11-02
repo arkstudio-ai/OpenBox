@@ -110,15 +110,15 @@
     "you": "You",
     "assistant": "Assistant",
     "hearing": "Listening…",
-    "room": "Room: “{{title}}”",
+    "room": "“{{title}}” · the work",
     "call": "Call",
     "task": "Room",
-    "taskEmpty": "Nothing in this room yet",
-    "taskBusy": "The task assistant is working…",
-    "taskWaiting": "Waiting for your answer",
-    "openRoom": "Talk in this room",
-    "taskDoing": "The task is {{step}}; I will tell you when it is done",
-    "inRoom": "You are talking in this room: what you say goes to this task; say “back” to return"
+    "taskEmpty": "Nothing at the work yet",
+    "taskBusy": "The helper is working…",
+    "taskWaiting": "The helper is waiting for your answer",
+    "openRoom": "Go to the work",
+    "taskDoing": "The helper is {{step}}; I will tell you when it is done",
+    "inRoom": "Watching the work: what you say goes to this task; say “back” to return"
   },
   "cards": {
     "show": "Show cards",

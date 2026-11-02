@@ -74,8 +74,41 @@ export interface ErrorEvent {
   message: string
 }
 
+/** One line of the call as it was said, for the conversation card (spec §5.3, 2026-11-02). */
+export interface TranscriptEvent {
+  type: "transcript"
+  role: "user" | "assistant"
+  text: string
+  item_id: string
+  /** False: the reply so far for this `item_id`; the final line replaces it. */
+  final: boolean
+  /** Epoch seconds on the server. */
+  at: number
+}
+
+export interface FocusTask {
+  task_id: string
+  title: string
+  session_id?: string | null
+}
+
+export interface FocusEvent {
+  type: "focus"
+  task: FocusTask | null
+}
+
+export interface TranscriptLine {
+  role: "user" | "assistant"
+  text: string
+  itemId: string
+  final: boolean
+  at: number
+}
+
 export type ServerEvent =
   | ReadyEvent
+  | TranscriptEvent
+  | FocusEvent
   | { type: "phase"; value: Phase; working?: boolean; late?: boolean; hearing?: boolean }
   | { type: "notice"; code: string; message?: string }
   | { type: "playback.clear" }
@@ -123,6 +156,10 @@ export interface CallState {
   turns: Record<string, TurnProgress>
   cost: CostSnapshot | null
   ended: CallEnd | null
+  /** What was said in this call, oldest first; at most TRANSCRIPT_LINES. */
+  transcript: TranscriptLine[]
+  /** The task this call is about right now, when the server named one. */
+  focus: FocusTask | null
   /** Live loudness, 0–1, of the microphone and of the model's voice. */
   level: { mic: number; out: number }
 }

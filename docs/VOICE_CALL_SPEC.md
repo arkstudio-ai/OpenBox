@@ -141,8 +141,10 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `limit` | `reason` = credits, `elapsed_seconds` | 积分耗尽：服务端先说明积分不足，再发 `ended{reason:quota}` |
 | `error` | `code`, `message` | `message` 已是可直接显示的用户语言文案；随后关闭连接 |
 | `ended` | `reason` (同 4.1 枚举), `duration_seconds`, `pending_turns`, `cost` | 通话结束的最终事件；之后服务端关闭 1000 |
+| `transcript` | `role` ∈ user/assistant, `text`, `item_id`, `final` (bool), `at` (epoch 秒) | 2026-11-02 起：本通电话里用户说的和前台答的，供通话页"对话卡"显示（VOICE_SEAM_PLAN §11.2）。`final=false` 是同一 `item_id` 的前台回复到目前为止的全文，最终行替换它。后台备注、静音保活回复不下发。旧客户端忽略 |
+| `focus` | `task` = `{task_id, title, session_id}` 或 `null` | 2026-11-02 起：这通电话当前在说哪个任务：某次交办把工作交给了它、刚播了它的结果、或用户正开着它的执行页（`view`）。每次变化发一次；对话卡据此打开"任务间"通道 |
 
-服务端不下发实时转写：通话界面不显示对话文字，转写只在服务端用于 `VoiceTurn.transcript` 和调试日志（默认关）。
+转写只发给本通电话自己的客户端，仍不写入任何可被其他人读到的地方；服务端另用于 `VoiceTurn.transcript`、通话小结和调试日志（默认关）。
 
 ### 5.4 客户端 → 服务端 JSON 事件
 

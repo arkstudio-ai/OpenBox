@@ -288,7 +288,7 @@ class AssistantTasksSheet extends ConsumerWidget {
                                         ),
                                       ),
                                     ),
-                                    for (final item in rows)
+                                    for (final item in rows) ...[
                                       AssistantTaskById(
                                         key: ValueKey(item.taskId),
                                         scope: scope,
@@ -296,6 +296,38 @@ class AssistantTasksSheet extends ConsumerWidget {
                                         beforeOpen: () =>
                                             Navigator.of(sheetContext).pop(),
                                       ),
+                                      if (item.chainCount > 1 || item.stale)
+                                        Padding(
+                                          key: ValueKey('chain:${item.taskId}'),
+                                          padding: const EdgeInsets.fromLTRB(
+                                            6,
+                                            0,
+                                            6,
+                                            8,
+                                          ),
+                                          child: Text(
+                                            [
+                                              if (item.chainCount > 1)
+                                                i18n.t(
+                                                  'chat:assistant.taskList.chain',
+                                                  vars: {
+                                                    'count': item.chainCount,
+                                                  },
+                                                ),
+                                              if (item.stale)
+                                                i18n.t(
+                                                  'chat:assistant.taskList.stale',
+                                                ),
+                                            ].join(' · '),
+                                            style: TextStyle(
+                                              fontSize: FontSizes.xs,
+                                              color: item.stale
+                                                  ? t.dangerInk
+                                                  : t.n600,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ],
                                 ),
                               ),

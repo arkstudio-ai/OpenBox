@@ -33,7 +33,8 @@
     "collapse": "收起",
     "expand": "展开",
     "cost": "本次消耗",
-    "move": "拖动"
+    "move": "拖动",
+    "resume": "恢复通话"
   },
   "banner": {
     "inCall": "通话中",
@@ -95,11 +96,26 @@
   "interruption": {
     "phoneCall": "有来电，通话已暂停",
     "resumed": "通话已恢复",
-    "background": "回到应用继续通话"
+    "background": "回到应用继续通话",
+    "audio": "音频被其他应用占用，释放后自动恢复，也可点击恢复通话"
   },
   "overlay": {
     "title": "开启通话悬浮窗",
     "body": "允许 BossIP 显示在其他应用上层，切到后台后会显示电话图标，点按即可返回通话。暂不开启也能继续通话，可从通知返回。",
     "later": "暂不开启，继续通话"
+  },
+  "transcript": {
+    "title": "对话",
+    "empty": "通话内容会显示在这里",
+    "you": "你",
+    "assistant": "助理",
+    "hearing": "在听你说…",
+    "room": "任务间：「{{title}}」",
+    "call": "通话",
+    "task": "任务间",
+    "taskEmpty": "这间还没有来往",
+    "taskBusy": "任务助理正在处理…",
+    "taskWaiting": "等你回答",
+    "openRoom": "进这间说"
   }
 }

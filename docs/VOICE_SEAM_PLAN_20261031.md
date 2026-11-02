@@ -259,4 +259,11 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 
 ### 11.6 实施记录
 
-（随各轮填写。）
+**轮 A（2026-11-02，分支 `feat/task-rooms-step1`）**
+
+- 后端语音：`voice/events.py` 新增 `transcript`（role/text/item_id/final/at）与 `focus`（task 或 null）两个加法事件；`Bridge._said` 对用户与前台的最终转写发 `final=true`，`_on_assistant_transcribing` 按 item 累积后发 `final=false`，保活与未验证回复不发，后台备注不发；`Bridge.set_focus_task` 只在变化时发事件，三处调用：`TurnsMixin._settle`（交办带 running 的第一个任务）、`TurnsMixin.report`（播报的任务）、`api/voice.py` 的 `view` 消息（`task_of_session` 查执行会话对应任务）。`docs/VOICE_CALL_SPEC.md` §5.3 补两行并改掉"不下发转写"的说明。测试：`test_voice_bridge.py` 新增 3 项；`test_a_dropped_session…` 的"outbox 为空"断言改为排除 transcript。`test_voice_turns.py::test_assistant_ask_is_acknowledged_at_once…` 在 main 上本就因 `phase.hearing` 字段失败，与本次无关。
+- 后端任务：`assistant_tasks` 新增列 `superseded_by_task_id`（迁移 `ph95b6c7d8e9`，桌面 SQLite 列补丁同步）；`commands.supersede_chain_locked` 在创建任务时把同主会话、标题相似、且已停止或已结束（`REPLACEABLE_OBSERVED`）的旧任务归档并记下接替者，运行中或等待输入的不动；受理回执加 `url` 与 `superseded_task_ids`；`ASSISTANT_DUPLICATE_TASK` 的 `details` 加 `url`，文案加"用户只是想看或聊那件事时给链接带回去"；`task_context.fold_chains` 只用于 `GET /api/assistant/watch`（客户端列表），模型读的环境列表不折叠；`watch` 项加 `stale`（error 超过 24 小时未动）；`task_control` 加 `task_title`、`archived`；助理提示加"提到旧事不下新指令就带进去"规则。测试：`test_assistant_commands.py`、`test_assistant_task_context.py`、`test_assistant_session_control.py` 各加一项。
+- Web：`TaskRoomBanner`（执行页顶部，`lib/room-state.ts` 判状态词，`回到总助理` 链到 `/app/assistant`）；`AssistantTasks` 卡下显示"共 N 轮，显示最新"与"出错超过一天"提示；通话窗展开态新增 `VoiceTranscript`（通话行、进行中斜体、焦点任务可点进执行页）；reducer 新增 `transcript`/`focus` 处理（最多 200 行，最终行覆盖 partial，迟到 partial 不回退）。vitest 新增 6 项。
+- App：`VoiceTranscriptEvent`/`VoiceFocusEvent` 与 `VoiceLine`/`VoiceFocusTask` 状态；`TaskRoomBanner`（执行页顶部，进入时弹一次"已进入「…」"）；`AssistantRequests` 新增 `leading` 页，有它时卡片栏不再因无待办而消失；`app/voice_conversation_card.dart` 在应用层组合语音状态与聊天存储：两个通道"通话 / 任务间：「…」"，任务通道读执行会话最近 8 轮正文、忙碌与等待提示、"进这间说"按钮；`router.dart` 注入为卡片栏首页；任务列表卡下显示链数与过期提示。widget/单元测试新增 7 项。
+- 文案：`chat.json` 新增 `room.*`、`assistant.taskList.chain/stale`；`voice.json` 新增 `transcript.*`；App 逐字节镜像。`check_locales.sh` 仍报 knowledge/settings 漂移，为 main 既有问题。
+- 未在本轮：通话里"进门"后对话卡自动切通道（轮 E）；任务通道的"正在进行"只到会话忙碌态，工具级进度在轮 D。

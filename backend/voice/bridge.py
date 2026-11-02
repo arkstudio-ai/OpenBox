@@ -118,6 +118,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._cancel_wake: asyncio.TimerHandle | None = None
         self._cancel_recovery_provider = None
         self._keepalives: dict[str, set[str]] = {}  # silent replies of ours → their output items
+        self._partials: dict[str, str] = {}      # reply item → its transcript so far, shown live on the client
+        self.focus_task: dict | None = None      # the task this call is about now (events.focus)
         self._keepalive_at: float | None = None
         self._keepalive_prompt = False          # Audio said the conversation has no user message: prompt first
         self.awaiting_since: float | None = None
@@ -449,9 +451,35 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def _on_assistant_transcribing(self, event) -> None:
         await self._track_spoken_cards(event, partial=True)
+        response = event.response_id or self.active_response
+        if response in self._keepalives or response in self._unverified_replies or response in self._stale_responses:
+            return
+        if event.item_id and event.text:
+            if len(self._partials) > 8:
+                self._partials.pop(next(iter(self._partials)))
+            self._partials[event.item_id] = text = self._partials.get(event.item_id, "") + event.text
+            self.emit(events.transcript("assistant", text, item_id=event.item_id, final=False, at=time.time()))
+
+    def set_focus_task(self, task: dict | None) -> None:
+        """What this call is about now: the task a request was passed to, the one just reported, or the one whose
+        page the user has open. Told to the client once per change; the same task again is not a change."""
+        current = (self.focus_task or {}).get("task_id")
+        if task is not None and not task.get("task_id"):
+            return
+        if (task or {}).get("task_id") == current and (task is None) == (self.focus_task is None):
+            if task is not None and task.get("title") and task.get("title") != self.focus_task.get("title"):
+                self.focus_task = {**self.focus_task, **task}
+            return
+        self.focus_task = dict(task) if task else None
+        self.emit(events.focus(self.focus_task))
 
     def _said(self, speaker: str, text: str, item_id: str = "") -> bool:
         added = self.spoken.add(speaker, text, item_id)
+        if added and speaker in events.TRANSCRIPT_ROLES:
+            # The caller's own words and the replies they heard, for the call page's conversation card.
+            self._partials.pop(item_id, None)
+            self.emit(events.transcript(speaker, self.spoken.lines[-1].text, item_id=item_id, final=True,
+                                        at=time.time()))
         if added and speaker in {"user", "assistant"} and self.context_sink and not self.closing:
             self._context_dirty = True
             if self._context_task is None or self._context_task.done():

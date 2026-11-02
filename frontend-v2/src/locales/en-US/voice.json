@@ -33,7 +33,8 @@
     "collapse": "Collapse",
     "expand": "Expand",
     "cost": "This call",
-    "move": "Move"
+    "move": "Move",
+    "resume": "Resume call"
   },
   "banner": {
     "inCall": "In call",
@@ -95,11 +96,26 @@
   "interruption": {
     "phoneCall": "Incoming phone call; the call is paused",
     "resumed": "Call resumed",
-    "background": "Return to the app to continue the call"
+    "background": "Return to the app to continue the call",
+    "audio": "Another app is using audio. The call resumes when it is released, or tap Resume call."
   },
   "overlay": {
     "title": "Enable the floating call button",
     "body": "Allow BossIP to display over other apps. A phone button will appear while the app is in the background; tap it to return to your call. Calls continue without this permission, and you can return using the notification.",
     "later": "Continue without it"
+  },
+  "transcript": {
+    "title": "Conversation",
+    "empty": "What is said appears here",
+    "you": "You",
+    "assistant": "Assistant",
+    "hearing": "Listening…",
+    "room": "Room: “{{title}}”",
+    "call": "Call",
+    "task": "Room",
+    "taskEmpty": "Nothing in this room yet",
+    "taskBusy": "The task assistant is working…",
+    "taskWaiting": "Waiting for your answer",
+    "openRoom": "Talk in this room"
   }
 }

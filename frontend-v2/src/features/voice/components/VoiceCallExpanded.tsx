@@ -6,6 +6,7 @@ import { CostTag } from "./CostTag"
 import { HangUpButton } from "./HangUpButton"
 import { MuteButton } from "./MuteButton"
 import { VoiceOrb } from "./VoiceOrb"
+import { VoiceTranscript } from "./VoiceTranscript"
 
 export interface VoiceCallExpandedProps {
   view: CallView
@@ -58,6 +59,7 @@ export function VoiceCallExpanded({ view, controls }: VoiceCallExpandedProps) {
         {view.noteKey && <span className="text-n600 ms-auto flex-none text-xs">{t(view.noteKey)}</span>}
       </div>
       {view.showHint && <p className="text-n600 mt-0.5 text-xs">{t("hint.start")}</p>}
+      {connected && <VoiceTranscript />}
       <div className="border-hair mt-3 flex items-center gap-2 border-t pt-3">
         {connected && <MuteButton muted={view.muted} onClick={controls.onToggleMute} compact />}
         <span className="min-w-0 flex-1" />

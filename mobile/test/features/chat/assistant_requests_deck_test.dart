@@ -107,4 +107,47 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
+
+  testWidgets('a leading card keeps the deck up when nothing waits', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final f = (await tester.runAsync(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final bundle = await I18nBundle.load();
+      return Fixture(
+        prefs,
+        server: TestApi(),
+        i18n: I18nState(language: 'zh-CN', bundle: bundle),
+      );
+    }))!;
+    addTearDown(f.close);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: f.container,
+        child: MaterialApp(
+          theme: ThemeData(
+            extensions: [
+              BossipTokens.resolve(BossipThemeName.default_, Brightness.light),
+            ],
+          ),
+          home: Scaffold(
+            body: SizedBox(
+              height: 420,
+              child: AssistantRequests(
+                scope: scope,
+                deck: true,
+                leading: const Text('LEADING CARD'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('LEADING CARD'), findsOneWidget);
+    expect(find.byKey(const Key('requests-deck-position')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 }

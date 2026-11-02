@@ -912,7 +912,24 @@
         "finished": "最近完成"
       },
       "more": "还有更早的任务，问我“列出我所有的任务”就能看到。",
-      "pendingCount": "待处理 {{count}}"
+      "pendingCount": "待处理 {{count}}",
+      "chain": "共 {{count}} 轮，显示最新",
+      "stale": "出错超过一天，建议不再跟进"
+    }
+  },
+  "room": {
+    "here": "你在任务间：「{{title}}」",
+    "back": "回到总助理",
+    "entered": "已进入「{{title}}」，这里说的话都是给这个任务的",
+    "state": {
+      "running": "运行中",
+      "queued": "排队中",
+      "waiting": "等你回复",
+      "paused": "已暂停",
+      "effect_unknown": "待核对",
+      "canceled": "已停止",
+      "completed": "已完成",
+      "error": "出错了"
     }
   }
 }

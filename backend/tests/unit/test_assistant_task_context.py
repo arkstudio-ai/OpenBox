@@ -185,3 +185,24 @@ async def test_a_card_that_is_no_longer_current_stops_showing_its_task_as_waitin
         assert item["pending_questions"] == 1
     finally:
         await lease.release(session_status="idle")
+
+
+def test_the_task_list_folds_a_chain_but_never_hides_a_task_waiting_for_the_user():
+    from assistant.task_context import fold_chains
+    project = {"id": "p1", "name": "店"}
+    items = [
+        {"task_id": "t4", "title": "艾薇兰小红瓶1分钟国风视频制作", "project": project, "observed_state": "running",
+         "pending_questions": 0},
+        {"task_id": "t3", "title": "艾薇兰小红瓶调研与1分钟国风视频策划", "project": project, "observed_state": "waiting_input",
+         "pending_questions": 1},
+        {"task_id": "t2", "title": "艾薇兰小红瓶1分钟国风视频制作（标准档）", "project": project, "observed_state": "error",
+         "pending_questions": 0},
+        {"task_id": "t1", "title": "艾薇兰小红瓶国风视频", "project": {"id": "p2", "name": "另一家店"}, "observed_state": "error",
+         "pending_questions": 0},
+        {"task_id": "t0", "title": "酒吧视频", "project": project, "observed_state": "completed", "pending_questions": 0},
+    ]
+    folded = fold_chains(items)
+    assert [row["task_id"] for row in folded] == ["t4", "t3", "t1", "t0"]
+    assert folded[0]["chain"] == {"count": 2, "task_ids": ["t4", "t2"]}
+    assert "chain" not in folded[1] and "chain" not in folded[2] and "chain" not in folded[3]
+    assert "chain" not in items[0]  # the ambient list the model reads is left as it was

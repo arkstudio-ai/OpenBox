@@ -1,6 +1,6 @@
 """The call as it was said, kept on the server: user words, replies and background notes.
 
-Never sent to a client. It feeds the summaries (mid-call, so long calls stay
+Only this call's own client sees it, line by line (events.transcript); nothing else does. It feeds the summaries (mid-call, so long calls stay
 small; after hang-up, so the next call can pick up where this one ended) and
 the QA debug log. It also tracks the provider session's conversation items in
 creation order: after a summary the early ones are deleted in that order.

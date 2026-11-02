@@ -44,9 +44,14 @@ class AssistantRequests extends ConsumerStatefulWidget {
     required this.scope,
     this.beforeOpen,
     this.deck = false,
+    this.leading,
   });
   final AssistantScope scope;
   final VoidCallback? beforeOpen;
+
+  /// A card that is always the deck's first page (the call page's
+  /// conversation card). With it the deck stays even when nothing waits.
+  final Widget? leading;
 
   /// One card at a time with previous/next, for the call page: the parent
   /// bounds the height and the person swipes between what needs them while
@@ -223,6 +228,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
   ) {
     final t = context.tokens;
     final pages = <Widget>[
+      if (widget.leading != null) widget.leading!,
       if (error != null)
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,7 +409,8 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
         count == 0 &&
         failed.isEmpty &&
         questions.cursor == null &&
-        permissions.cursor == null) {
+        permissions.cursor == null &&
+        !(widget.deck && widget.leading != null)) {
       return const SizedBox.shrink();
     }
     if (widget.deck) {

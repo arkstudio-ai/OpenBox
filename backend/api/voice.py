@@ -269,6 +269,9 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 from voice.view_context import session_hint
                 bridge.scope = dataclasses.replace(bridge.scope,
                     viewed_session_id=session_hint(payload.get("session_id")))
+                focused = await task_of_session(bridge.scope.viewed_session_id, user_id)
+                if focused is not None:
+                    bridge.set_focus_task(focused)
             elif kind == "capabilities" and payload.get("playback_ack") is True:
                 bridge.playback_ack = True
             elif kind == "playback.completed" and isinstance(payload.get("response_id"), str):
@@ -456,6 +459,23 @@ def _ending(task: asyncio.Task, call_id: str) -> CallEnded:
         return CallEnded("error", close=4003)
     log.error("voice call=%s failed error=%s", call_id, type(exc).__name__ if exc else "pump returned")
     return CallEnded("error", close=1011, error="internal")
+
+
+async def task_of_session(session_id: str | None, user_id: str) -> dict | None:
+    """The task whose room the user is looking at, if that page is a task's execution page."""
+    if not session_id:
+        return None
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.assistant import AssistantTask
+    try:
+        async with get_db_session() as db:
+            task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session_id,
+                                                                AssistantTask.user_id == user_id))
+    except Exception as exc:  # a hint, never a reason to drop the call
+        log.warning("voice focus lookup failed session=%s error=%s", session_id, type(exc).__name__)
+        return None
+    return {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id} if task else None
 
 
 async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_id, lang, client, duration,

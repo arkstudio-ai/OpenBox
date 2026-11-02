@@ -912,7 +912,24 @@
         "finished": "Recently finished"
       },
       "more": "There are older tasks — ask me \"list all my tasks\" to see them.",
-      "pendingCount": "Needs you {{count}}"
+      "pendingCount": "Needs you {{count}}",
+      "chain": "{{count}} rounds, newest shown",
+      "stale": "Failed over a day ago; consider unfollowing"
+    }
+  },
+  "room": {
+    "here": "You are in the room of “{{title}}”",
+    "back": "Back to the assistant",
+    "entered": "Entered “{{title}}”: what you say here goes to this task",
+    "state": {
+      "running": "Running",
+      "queued": "Queued",
+      "waiting": "Waiting for you",
+      "paused": "Paused",
+      "effect_unknown": "Needs your check",
+      "canceled": "Stopped",
+      "completed": "Done",
+      "error": "Failed"
     }
   }
 }

@@ -8,6 +8,7 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
+import '../../shared/widgets/toast.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
 import 'state/stream_store.dart';
@@ -22,6 +23,7 @@ import 'widgets/composer/resource_slot.dart';
 import 'widgets/execution_effect_notice.dart';
 import 'widgets/interruption_divider.dart';
 import 'widgets/run_error_notice.dart';
+import 'widgets/task_room_banner.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
@@ -47,6 +49,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // and may leave it waiting for the owner to confirm outcomes, so it asks
   // once, inline, before doing it.
   bool _confirmStop = false;
+  // Said once per visit: "已进入「…」", so the switch from the assistant to a
+  // task's room is felt, not just seen.
+  bool _roomAnnounced = false;
 
   void _requestStop(Session? session) {
     if (session?.assistantManaged == true) {
@@ -231,8 +236,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
     ];
 
+    if (!_roomAnnounced && TaskRoomBanner.visible(sessionState.session)) {
+      _roomAnnounced = true;
+      final title = TaskRoomBanner.titleOf(sessionState.session!);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref
+            .read(toastProvider.notifier)
+            .info(
+              ref
+                  .read(i18nProvider)
+                  .t('chat:room.entered', vars: {'title': title}),
+            );
+      });
+    }
     return Column(
       children: [
+        TaskRoomBanner(
+          session: sessionState.session,
+          onBack: () => context.go(Paths.assistant),
+        ),
         Expanded(
           child: sessionState.loading && messages.isEmpty
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))

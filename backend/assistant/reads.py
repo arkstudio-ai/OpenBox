@@ -40,7 +40,8 @@ def execution_settings(session) -> dict:
 
 def task_view(task) -> dict:
     value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
-        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at")}
+        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at",
+        "superseded_by_task_id")}
     # Where the user opens the work: a link the assistant can show instead of an ID.
     value["url"] = f"/app/s/{task.execution_session_id}"
     if task.continuation_policy:
@@ -252,4 +253,5 @@ async def watch_list(*, user_id, workspace_id) -> dict:
         if main is None:
             return {"items": [], "has_more": False}
         value = await task_context(db, main)
-        return {"items": value["items"], "has_more": value["has_more"]}
+        from assistant.task_context import fold_chains
+        return {"items": fold_chains(value["items"]), "has_more": value["has_more"]}

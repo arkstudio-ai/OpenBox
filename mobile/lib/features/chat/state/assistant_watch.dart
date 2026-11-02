@@ -24,6 +24,12 @@ class AssistantWatchItem {
   String? get desiredState => asString(data['desired_state']);
   String? get observedState => asString(data['observed_state']);
   int get pendingQuestions => asInt(data['pending_questions']) ?? 0;
+
+  /// Older tasks for the same work folded under this row (VOICE_SEAM_PLAN §11.4).
+  int get chainCount => asInt(asMap(data['chain'])['count']) ?? 1;
+
+  /// Errored a day ago or more and nobody touched it since.
+  bool get stale => data['stale'] == true;
   Map<String, dynamic> get latestResult => asMap(data['latest_result']);
 
   /// The newest result's summary as plain words, when it said anything.

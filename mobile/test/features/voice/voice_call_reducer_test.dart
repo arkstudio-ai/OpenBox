@@ -19,6 +19,7 @@ VoiceCallState _connected() => reduceVoiceEvent(
 );
 
 void main() {
+  _conversationCard();
   group('server events parse to the contract', () {
     test('every type, unknown types and junk', () {
       expect(
@@ -376,5 +377,89 @@ void main() {
     expect(formatCallDuration(3725), '1:02:05');
     expect(formatCallDuration(-3), '00:00');
     expect(formatYuan(0.00349), '0.0035');
+  });
+}
+
+void _conversationCard() {
+  group('conversation card events', () {
+    VoiceServerEvent line(
+      String text,
+      String item, {
+      bool isFinal = true,
+      String role = 'assistant',
+    }) => _event({
+      'type': 'transcript',
+      'role': role,
+      'text': text,
+      'item_id': item,
+      'final': isFinal,
+      'at': 1.5,
+    });
+
+    test('keeps the lines in order and replaces partials with the final', () {
+      var state = reduceVoiceEvent(
+        _connected(),
+        line('你好', 'u1', role: 'user'),
+        now: _t0,
+      );
+      state = reduceVoiceEvent(
+        state,
+        line('你好', 'a1', isFinal: false),
+        now: _t0,
+      );
+      state = reduceVoiceEvent(
+        state,
+        line('你好呀', 'a1', isFinal: false),
+        now: _t0,
+      );
+      expect(
+        state.transcript.map((l) => (l.role, l.text, l.isFinal)).toList(),
+        [('user', '你好', true), ('assistant', '你好呀', false)],
+      );
+      state = reduceVoiceEvent(state, line('你好呀！', 'a1'), now: _t0);
+      final settled = state;
+      // A straggling delta never undoes the final line; blank text is dropped.
+      state = reduceVoiceEvent(
+        state,
+        line('late', 'a1', isFinal: false),
+        now: _t0,
+      );
+      expect(state, same(settled));
+      state = reduceVoiceEvent(state, line('  ', 'a2'), now: _t0);
+      expect(state.transcript.map((l) => l.text).toList(), ['你好', '你好呀！']);
+    });
+
+    test('ignores lines before ready and bounds how many it keeps', () {
+      expect(
+        reduceVoiceEvent(_connecting(), line('x', 'a'), now: _t0).transcript,
+        isEmpty,
+      );
+      var state = _connected();
+      for (var i = 0; i < voiceTranscriptLines + 5; i++) {
+        state = reduceVoiceEvent(state, line('l$i', 'i$i'), now: _t0);
+      }
+      expect(state.transcript.length, voiceTranscriptLines);
+      expect(state.transcript.first.text, 'l5');
+    });
+
+    test('takes the focused task from the server and clears it', () {
+      var state = reduceVoiceEvent(
+        _connected(),
+        _event({
+          'type': 'focus',
+          'task': {'task_id': 't1', 'title': '艾薇兰', 'session_id': 's1'},
+        }),
+        now: _t0,
+      );
+      expect(state.focus?.taskId, 't1');
+      expect(state.focus?.title, '艾薇兰');
+      expect(state.focus?.sessionId, 's1');
+      state = reduceVoiceEvent(
+        state,
+        _event({'type': 'focus', 'task': null}),
+        now: _t0,
+      );
+      expect(state.focus, isNull);
+    });
   });
 }

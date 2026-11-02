@@ -28,6 +28,9 @@ class AssistantTask(Base):
     latest_result_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     continuation_policy: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The newer task of the same work that took this one's place (VOICE_SEAM_PLAN §11.4): set when it was archived
+    # for that reason, so the list can fold a chain and a report never speaks for a replaced task.
+    superseded_by_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 

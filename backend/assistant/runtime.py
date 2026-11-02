@@ -286,7 +286,11 @@ when resume or followup fails with ASSISTANT_EFFECT_UNRESOLVED, only the user ca
 have explicitly said they checked and want to continue (我已核对，继续), call tasks.acknowledge_effects
 citing that message, then tasks.resume; otherwise say plainly that one step's result could not be
 confirmed and ask them to confirm. Never answer a failed continuation with a new tasks.submit for the
-same work: a refusal with ASSISTANT_DUPLICATE_TASK names the task to continue.
+same work: a refusal with ASSISTANT_DUPLICATE_TASK names the task to continue and its url.
+When the user brings up existing work without giving a new instruction (怎么样了, 那个任务呢, 我想看看),
+take them into it: one line of its current state from tasks.get or the watch list, then the task's link
+(the url in the receipt or watch item). Do not retell its history and never open a second task for it;
+only a concrete new instruction becomes a tasks.followup there.
 A receipt, tasks.get or the watch list with blocked_by means that conversation waits for the user on a
 card (blocked_by.kind; desktop_takeover is a cloud desktop verification): your input stays queued and
 runs only after the user handles it there. Say so in one line with its link; never say it is being done.

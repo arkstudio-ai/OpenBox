@@ -10,6 +10,7 @@ import {
   Composer,
   ExecutionEffectNotice,
   StopTaskNotice,
+  TaskRoomBanner,
   RunErrorNotice,
   PermissionCard,
   QuestionDock,
@@ -313,6 +314,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <TaskRoomBanner session={session.data} />
       <TranscriptArea loading={loading} welcome={extras.welcomeView}>
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy} compact={compact}
           historyScrollRef={historyScrollRef}

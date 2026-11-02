@@ -54,6 +54,16 @@ def test_entries_config_is_complete():
     assert config.entry("review").requires.binding == "douyin" and config.entry("douyin_publish").requires.desktop
 
 
+def test_every_entry_skill_ships_with_the_backend():
+    """An entry pointing at a skill that is not on disk would leave the agent with nothing to read."""
+    from pathlib import Path
+    skills = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
+    for entry in light_entries().entries:
+        if entry.kind == "coming_soon":
+            continue
+        assert (skills / entry.skill / "SKILL.md").is_file(), entry.skill
+
+
 def test_availability_follows_plan_desktop_and_bindings():
     config = light_entries()
     free = {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
@@ -132,7 +142,7 @@ async def test_prompt_fragment_only_for_light_sessions():
     guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=user["default_workspace_id"])
     guided = await update_session(guided.id, user_id=user["id"], light_entry="menu")
     fragment = await light_mode_fragment(user["id"], guided)
-    assert "界面模式：Light" in fragment and "entry_id=menu" in fragment and "style(选样式)" in fragment and "imagegen" in fragment
+    assert "界面模式：Light" in fragment and "entry_id=menu" in fragment and "style(选样式)" in fragment and "menu-maker" in fragment
     await light_mode.set_ui_mode(user["id"], "light")
     plain_light = await light_mode_fragment(user["id"], plain)
     assert "界面模式：Light" in plain_light and "entry_id=" not in plain_light

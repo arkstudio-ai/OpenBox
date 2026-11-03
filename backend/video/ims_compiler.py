@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -96,17 +97,21 @@ def compile_ims(
     if timeline.captions:
         caption_clips = []
         for index, cue in enumerate(timeline.captions):
-            clip = _caption_clip(f"captions[{index}]", cue, timeline, total, problems, warnings)
-            if clip is not None:
-                caption_clips.append(clip)
+            pieces = _fit_line(cue, timeline)
+            if len(pieces) > 1:
+                warnings.append(f"captions[{index}]: split into {len(pieces)} cues to fit one line")
+            for piece in pieces:
+                clip = _caption_clip(f"captions[{index}]", piece, timeline, total, problems, warnings)
+                if clip is not None:
+                    caption_clips.append(clip)
         _check_overlaps(timeline.captions, problems)
         if caption_clips:
             subtitle_tracks.append({"SubtitleTrackClips": caption_clips})
 
     audio_tracks = [
-        {"AudioTrackClips": [clip]}
+        {"AudioTrackClips": clips}
         for index, item in enumerate(timeline.audio)
-        if (clip := _audio_clip(index, item, total, oss_region, problems, warnings)) is not None
+        if (clips := _audio_clips(index, item, timeline, total, oss_region, problems, warnings))
     ]
 
     out_url = _normalise_asset(output_url, oss_region, problems, what="output_url")
@@ -154,35 +159,104 @@ def _video_clip(index: int, shot: Shot, canvas: Canvas, region: str | None,
     return clip
 
 
-def _audio_clip(index: int, item: AudioClip, total: float | None, region: str | None,
-                problems: list[str], warnings: list[str]) -> dict[str, Any] | None:
+#: Ducking: a pause shorter than this keeps the bed down; it dips just before a line and rises after.
+_DUCK_JOIN_SEC = 0.8
+_DUCK_LEAD_SEC = 0.2
+_DUCK_TAIL_SEC = 0.3
+#: A repeated track fades out and back in around each seam instead of jumping;
+#: it does not start again for less than this, but ends (fading) where it ran out.
+_LOOP_FADE_SEC = 0.6
+_LOOP_MIN_TAIL_SEC = 4.0
+_EPS = 0.05
+
+
+def _audio_clips(index: int, item: AudioClip, timeline: Timeline, total: float | None, region: str | None,
+                 problems: list[str], warnings: list[str]) -> list[dict[str, Any]]:
+    """One sound bed as the clips of its track: split where it repeats and where it ducks."""
     where = f"audio[{index}]"
     end = item.to_sec if item.to_sec is not None else total
     if total is not None and item.from_sec >= total:
         problems.append(f"{where}: starts at {item.from_sec}s, after the cut ends ({total}s)")
-        return None
+        return []
     if total is not None and end is not None and end > total:
         warnings.append(f"{where}: to_sec {end}s clamped to the cut's end ({total}s)")
         end = total
-    clip: dict[str, Any] = {
-        "MediaURL": _normalise_asset(item.asset, region, problems, what=f"{where}.asset"),
-        "TimelineIn": _sec(item.from_sec),
-    }
-    if end is not None:
-        clip["TimelineOut"] = _sec(end)
-        clip["Out"] = _sec(item.in_sec + (end - item.from_sec))
-    if item.in_sec:
-        clip["In"] = _sec(item.in_sec)
+    if item.library_id:
+        media: dict[str, Any] = {"MediaId": item.library_id}
+    else:
+        media = {"MediaURL": _normalise_asset(item.asset or "", region, problems, what=f"{where}.asset")}
+    if end is None:  # open-ended: nothing to repeat or duck against
+        clip = {**media, "TimelineIn": _sec(item.from_sec)}
+        if item.in_sec:
+            clip["In"] = _sec(item.in_sec)
+        effects = _audio_effects(item.volume, item.fade_in_sec, item.fade_out_sec)
+        return [{**clip, "Effects": effects} if effects else clip]
+
+    period = (item.source_sec - item.in_sec) if item.source_sec else None
+    seams: list[float] = []
+    if period:
+        at = item.from_sec + period
+        while at < end - _EPS:
+            seams.append(at)
+            at += period
+        if seams and end - seams[-1] < _LOOP_MIN_TAIL_SEC:
+            end = seams.pop()  # a few seconds of the song again sound like a mistake: end it there
+    ducks = _duck_spans(timeline.captions, item.from_sec, end) if item.duck_under_captions else []
+    points: list[float] = []
+    for point in sorted({item.from_sec, end, *seams, *(p for span in ducks for p in span)}):
+        if points and point - points[-1] < _EPS:
+            if point == end:
+                points[-1] = end
+            continue
+        points.append(point)
+
+    clips = []
+    for a, b in zip(points, points[1:]):
+        offset = a - item.from_sec
+        if period:
+            offset = round(offset % period, 3)
+            if offset > period - _EPS:
+                offset = 0.0
+        src_in = item.in_sec + offset
+        ducked = any(da - _EPS <= a and b <= db + _EPS for da, db in ducks)
+        fade_in = item.fade_in_sec if a == item.from_sec else (_LOOP_FADE_SEC if _near(a, seams) else 0.0)
+        fade_out = item.fade_out_sec if b == end else (_LOOP_FADE_SEC if _near(b, seams) else 0.0)
+        half = (b - a) / 2
+        clip = {**media, "TimelineIn": _sec(a), "TimelineOut": _sec(b), "Out": _sec(src_in + b - a)}
+        if src_in:
+            clip["In"] = _sec(src_in)
+        effects = _audio_effects(item.duck_volume if ducked else item.volume, min(fade_in, half), min(fade_out, half))
+        clips.append({**clip, "Effects": effects} if effects else clip)
+    return clips
+
+
+def _audio_effects(volume: float, fade_in: float, fade_out: float) -> list[dict[str, Any]]:
     effects: list[dict[str, Any]] = []
-    if item.volume != 1.0:
-        effects.append({"Type": "Volume", "Gain": round(item.volume, 3)})
-    if item.fade_in_sec:
-        effects.append({"Type": "AFade", "SubType": "In", "Duration": _sec(item.fade_in_sec)})
-    if item.fade_out_sec:
-        effects.append({"Type": "AFade", "SubType": "Out", "Duration": _sec(item.fade_out_sec)})
-    if effects:
-        clip["Effects"] = effects
-    return clip
+    if volume != 1.0:
+        effects.append({"Type": "Volume", "Gain": round(volume, 3)})
+    if fade_in:
+        effects.append({"Type": "AFade", "SubType": "In", "Duration": _sec(fade_in)})
+    if fade_out:
+        effects.append({"Type": "AFade", "SubType": "Out", "Duration": _sec(fade_out)})
+    return effects
+
+
+def _duck_spans(cues: list[Cue], start: float, end: float) -> list[tuple[float, float]]:
+    """Where the bed goes down: each caption, a little wider, nearby ones joined."""
+    spans: list[tuple[float, float]] = []
+    for cue in sorted(cues, key=lambda c: c.from_sec):
+        a, b = max(start, cue.from_sec - _DUCK_LEAD_SEC), min(end, cue.to_sec + _DUCK_TAIL_SEC)
+        if b <= a:
+            continue
+        if spans and a - spans[-1][1] < _DUCK_JOIN_SEC:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], b))
+        else:
+            spans.append((a, b))
+    return spans
+
+
+def _near(value: float, points: list[float]) -> bool:
+    return any(abs(value - p) < _EPS for p in points)
 
 
 def _text_clip(where: str, text: TextClip, canvas: Canvas, total: float | None,
@@ -212,6 +286,47 @@ def _text_clip(where: str, text: TextClip, canvas: Canvas, total: float | None,
     clip.update(_style(where, text.style, problems, warnings))
     clip.update(_motion(where, text.motion, problems, warnings))
     return clip
+
+
+#: Width of a character as a share of the font size: CJK fills it, Latin and digits take about half.
+_NARROW = 0.55
+_PHRASE_END = re.compile(r"(?<=[，,。！!？?；;、：:])")
+
+
+def _fit_line(cue: Cue, timeline: Timeline) -> list[Cue]:
+    """A caption that fits one line, or several that do, each timed by its share of the text.
+
+    IMS's AutoWrap does not wrap Chinese: a long cue runs off the frame
+    (light-test, 2026-11-03, a 17-character line on a 720-px canvas). So a cue
+    wider than the line splits at its punctuation, and a phrase still too wide
+    splits evenly.
+    """
+    cs = timeline.caption_style
+    room = timeline.canvas.width * cs.max_width / cs.style.size
+    if _width(cue.text) <= room:
+        return [cue]
+    lines: list[str] = []
+    for phrase in (p for p in _PHRASE_END.split(cue.text) if p.strip()):
+        if lines and _width(lines[-1] + phrase) <= room:
+            lines[-1] += phrase
+        elif _width(phrase) <= room:
+            lines.append(phrase)
+        else:
+            parts = math.ceil(_width(phrase) / room)
+            size = math.ceil(len(phrase) / parts)
+            lines.extend(phrase[i:i + size] for i in range(0, len(phrase), size))
+    lines = [line.rstrip("，,、") or line for line in lines]
+    total = sum(_width(line) for line in lines)
+    pieces, at = [], cue.from_sec
+    for index, line in enumerate(lines):
+        end = cue.to_sec if index == len(lines) - 1 else round(at + (cue.to_sec - cue.from_sec) * _width(line) / total, 2)
+        pieces.append(Cue(from_sec=at, to_sec=end, text=line))
+        at = end
+    return pieces
+
+
+def _width(text: str) -> float:
+    return sum(_NARROW if ord(ch) < 0x2E80 else 1.0 for ch in text)
 
 
 def _caption_clip(where: str, cue: Cue, timeline: Timeline, total: float | None,

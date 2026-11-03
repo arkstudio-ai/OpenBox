@@ -122,6 +122,14 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
         shots.append(shot.model_copy(update={"asset": url}))
     audio = []
     for index, item in enumerate(timeline.audio):
+        if item.library_id:
+            from video.bgm_library import track
+
+            found = await track(item.library_id)
+            if found is None:
+                raise ComposeRefusal(f"audio[{index}].library_id {item.library_id!r} is not in the music library")
+            audio.append(item.model_copy(update={"source_sec": found.sec}))
+            continue
         url = _owned_oss_url(item.asset, ctx, oss)
         if url is None:
             row = await _find_owned_asset(item.asset, ctx)
@@ -154,7 +162,7 @@ async def _execute_schema() -> ToolResult:
         "shots[].asset: an asset_id you own (from video_generate or share_file), or your own oss:// / OSS https object",
         "shots[].fit: cover (default, crops to fill) | contain (black bars) | fill (stretch); a landscape clip on a portrait canvas with cover is centre-cropped",
         "shots[].volume: the clip's own recorded sound, 1 as recorded (default), 0 muted",
-        "audio[]: optional sound beds (BGM, voice-over) on their own tracks: asset, from_sec, to_sec, in_sec, volume (default 0.3), fade_in_sec, fade_out_sec",
+        "audio[]: optional sound beds (BGM, voice-over) on their own tracks: asset or library_id (a music-library track, icepublic-…), from_sec, to_sec, in_sec, volume (default 0.3), fade_in_sec, fade_out_sec, duck_under_captions + duck_volume (lower the bed while captions show); a library track shorter than its span repeats, a longer one is cut",
         "transition_out sits on the shot it leads out of and overlaps the next shot",
         "texts[].align=center ignores x; y is the top edge of the text box",
         "captions render bottom-centred at caption_style.bottom_ratio, one track, non-overlapping",

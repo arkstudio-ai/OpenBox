@@ -77,7 +77,9 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-02 19:17 | `20261102-light-38db4a6f` | light-full-footage | 你拍我剪提速一：上传即读素材、合成进程内盯完成、视频意图包按「剪/素材」打开、减帧 |
 | 2026-11-02 晚 | `20261102-light-b9a10d4a` | light-full-footage | 提速二：你拍我剪成片直接贴进对话（无唤醒轮）、视觉回复容错 + 一次重试 |
 | 2026-11-03 15:14 | `20261103-light-edcac2ed` | light-full-footage | 提速三：视觉调用 20 秒没回再问一次、单次 45 秒放弃。**等测试员空闲后才上**（`release.sh --build-only` → `--ship`）；复验 5 段 → 方案卡 40 秒、系统耗时约 1 分 54 秒（`docs/LIGHT_FOOTAGE_EDIT.md` §3.1） |
-| 2026-11-03 15:27 | `20261103-light-7c1a0ab4` | light-full-footage | 时间线嵌套对象（花字 `style` 等）以 JSON 文本传来也能读（复验里白花 33 秒的那处）；**当前线上**，对应 Android 1.1.0 (104) |
+| 2026-11-03 15:27 | `20261103-light-7c1a0ab4` | light-full-footage | 时间线嵌套对象（花字 `style` 等）以 JSON 文本传来也能读（复验里白花 33 秒的那处）；对应 Android 1.1.0 (104) |
+| 2026-11-03 15:40 | `20261103-light-8c35a62a` | light-full-bgm | 你拍我剪配乐：IMS 公共曲库按 MediaId 引用、循环/截断、说话处压低、首尾淡入淡出；方案卡「配乐」+「不要配乐」 |
+| 2026-11-03 15:52 | `20261103-light-2e372886` | light-full-bgm | 超宽字幕编译时拆行（IMS 不给中文自动换行）、曲子剩不到 4 秒不再循环、技能直接 submit；**当前线上**（App 仍是 1.1.0 (104)，无需新包） |
 
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
 

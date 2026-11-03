@@ -15,6 +15,15 @@ from db.repository.user_repo import PgUserRepo
 from video.media_probe import meta_from_media_info
 
 
+@pytest.fixture(autouse=True)
+def _music_library_from_the_snapshot(monkeypatch):
+    """The music library is IMS's; tests read the checked-in snapshot instead of asking it."""
+    import time
+
+    from video import bgm_library
+    monkeypatch.setattr(bgm_library, "_cache", (time.monotonic(), bgm_library.snapshot()))
+
+
 def test_media_facts_apply_rotation_and_read_sound():
     rotated = meta_from_media_info({"MediaInfo": {"FileInfoList": [{
         "FileBasicInfo": {"Duration": "8.000000", "Width": "768", "Height": "432", "FormatName": "mov,mp4"},
@@ -327,3 +336,150 @@ async def test_a_watched_cut_wakes_its_chat_once_it_settles(monkeypatch):
     monkeypatch.setattr(cr, "wake_for", fake_wake)
     await cr._watch("video_w1")
     assert woken == ["video_w1"]
+
+
+# ── music (IMS public library) ───────────────────────────────────────────────
+
+BASE = "https://bossip.oss-cn-shanghai.aliyuncs.com/assets/u/"
+BED = "icepublic-f1681a7c493b069631b87465bb7c7ed0"  # Appetizing Acoustics, 40 s, 美食
+
+
+def test_the_music_library_snapshot_covers_every_tag():
+    from video.bgm_library import TAG_LABELS, catalogue, snapshot
+    tracks = snapshot()
+    assert len(tracks) == 45 and {t.tag for t in tracks} == set(TAG_LABELS)
+    assert all(t.id.startswith("icepublic-") and t.sec > 0 for t in tracks)
+    lines = catalogue(tracks).splitlines()
+    assert lines[0].startswith("美食: ") and f"Appetizing Acoustics 40s {BED}" in lines[0]
+
+
+async def test_the_music_library_is_read_from_ims_and_falls_back_to_the_snapshot(monkeypatch):
+    from video import bgm_library, ims_client
+    monkeypatch.setattr(bgm_library, "_cache", None)
+
+    async def listed(page_size=100):
+        return [{"MediaId": "icepublic-abc", "MediaBasicInfo": {"Title": "New Song.wav", "MediaTags": "bgm-upbeat",
+                                                                "Status": "Normal"},
+                 "FileInfoList": [{"FileBasicInfo": {"Duration": "55.000000"}}]},
+                {"MediaId": "not-public", "MediaBasicInfo": {}, "FileInfoList": []}]
+
+    monkeypatch.setattr(ims_client, "list_public_bgm", listed)
+    found = await bgm_library.tracks()
+    assert [(t.id, t.name, t.label, t.sec) for t in found] == [("icepublic-abc", "New Song", "欢快", 55.0)]
+
+    async def down(page_size=100):
+        raise ims_client.ImsError("Forbidden", "no")
+
+    monkeypatch.setattr(bgm_library, "_cache", None)
+    monkeypatch.setattr(ims_client, "list_public_bgm", down)
+    assert len(await bgm_library.tracks()) == 45
+
+
+def test_a_library_track_repeats_to_fill_the_cut_and_fades_at_the_seams():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 50}],
+        "audio": [{"library_id": BED, "source_sec": 40, "volume": 0.35, "fade_in_sec": 1, "fade_out_sec": 2}],
+    }), output_url=BASE + "out.mp4")
+    first, second = compiled.timeline["AudioTracks"][0]["AudioTrackClips"]
+    assert first["MediaId"] == BED and "MediaURL" not in first
+    assert (first["TimelineIn"], first["TimelineOut"], first.get("In", 0), first["Out"]) == (0.0, 40.0, 0, 40.0)
+    assert (second["TimelineIn"], second["TimelineOut"], second.get("In", 0), second["Out"]) == (40.0, 50.0, 0, 10.0)
+    assert first["Effects"] == [{"Type": "Volume", "Gain": 0.35}, {"Type": "AFade", "SubType": "In", "Duration": 1.0},
+                                {"Type": "AFade", "SubType": "Out", "Duration": 0.6}]
+    assert second["Effects"][1:] == [{"Type": "AFade", "SubType": "In", "Duration": 0.6},
+                                     {"Type": "AFade", "SubType": "Out", "Duration": 2.0}]
+    longer = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 30}],
+        "audio": [{"library_id": BED, "source_sec": 40}],
+    }), output_url=BASE + "out.mp4")
+    (only,) = longer.timeline["AudioTracks"][0]["AudioTrackClips"]
+    assert (only["TimelineOut"], only["Out"]) == (30.0, 30.0)  # cut, not stretched
+
+
+def test_the_music_drops_while_captions_show():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 20}],
+        "captions": [{"from_sec": 2, "to_sec": 4, "text": "大家好"}, {"from_sec": 4.5, "to_sec": 6, "text": "这里是巷口面馆"},
+                     {"from_sec": 12, "to_sec": 14, "text": "欢迎来尝尝"}],
+        "audio": [{"library_id": BED, "source_sec": 40, "volume": 0.35, "duck_under_captions": True,
+                   "duck_volume": 0.1}],
+    }), output_url=BASE + "out.mp4")
+    clips = compiled.timeline["AudioTracks"][0]["AudioTrackClips"]
+    spans = [(c["TimelineIn"], c["TimelineOut"], c["Effects"][0]["Gain"]) for c in clips]
+    # Two lines half a second apart are one dip; each dip starts 0.2 s early and ends 0.3 s late.
+    assert spans == [(0.0, 1.8, 0.35), (1.8, 6.3, 0.1), (6.3, 11.8, 0.35), (11.8, 14.3, 0.1), (14.3, 20.0, 0.35)]
+    assert [c.get("In", 0) for c in clips] == [0, 1.8, 6.3, 11.8, 14.3]  # the music runs on underneath
+
+
+def test_an_audio_bed_names_one_source():
+    from pydantic import ValidationError
+
+    from video.timeline import AudioClip
+    with pytest.raises(ValidationError):
+        AudioClip.model_validate({})
+    with pytest.raises(ValidationError):
+        AudioClip.model_validate({"asset": BASE + "bed.m4a", "library_id": BED})
+    with pytest.raises(ValidationError):
+        AudioClip.model_validate({"library_id": "https://example.com/song.mp3"})
+
+
+async def test_compose_fills_a_library_tracks_length_and_refuses_an_unknown_one():
+    from tool.video_compose import ComposeRefusal, _resolve_shot_assets
+    from video.timeline import Timeline
+
+    class Ctx:
+        user_id = "u"
+
+    class Oss:
+        bucket, host = "bossip", "bossip.oss-cn-shanghai.aliyuncs.com"
+
+    resolved = await _resolve_shot_assets(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 5}], "audio": [{"library_id": BED}],
+    }), Ctx(), Oss())
+    assert resolved.audio[0].source_sec == 40.0 and resolved.audio[0].library_id == BED
+    with pytest.raises(ComposeRefusal, match="not in the music library"):
+        await _resolve_shot_assets(Timeline.model_validate({
+            "shots": [{"asset": BASE + "a.mp4", "duration_sec": 5}], "audio": [{"library_id": "icepublic-0000"}],
+        }), Ctx(), Oss())
+
+
+def test_the_footage_skill_puts_music_on_the_card_and_lets_it_go():
+    from pathlib import Path
+    skill = (Path(__file__).resolve().parents[2] / ".openbox/skills/footage-edit/SKILL.md").read_text(encoding="utf-8")
+    assert "配乐「<track name>」" in skill and "`不要配乐`" in skill
+    assert '"library_id"' in skill and '"duck_under_captions": true' in skill
+
+
+
+def test_a_track_that_would_restart_for_a_second_ends_with_a_fade_instead():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    # light-test 2026-11-03: a 40 s track under a 41 s cut started over for its last second.
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 41}],
+        "audio": [{"library_id": BED, "source_sec": 40, "volume": 0.35, "fade_in_sec": 1, "fade_out_sec": 2}],
+    }), output_url=BASE + "out.mp4")
+    (only,) = compiled.timeline["AudioTracks"][0]["AudioTrackClips"]
+    assert (only["TimelineOut"], only["Out"]) == (40.0, 40.0)
+    assert only["Effects"][-1] == {"Type": "AFade", "SubType": "Out", "Duration": 2.0}
+
+
+def test_a_caption_wider_than_the_frame_is_split_into_lines_that_fit():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    # IMS AutoWrap does not wrap Chinese: this 17-character line ran off a 720-px frame.
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 30}],
+        "captions": [{"from_sec": 12, "to_sec": 24, "text": "今天给大家推荐我们的招牌红烧牛肉面，汤是每天早上现熬的牛骨汤"},
+                     {"from_sec": 25, "to_sec": 27, "text": "中午11点开门，晚上10点打烊"}],
+    }), output_url=BASE + "out.mp4")
+    (track,) = compiled.timeline["SubtitleTracks"]
+    lines = [(c["TimelineIn"], c["TimelineOut"], c["Content"]) for c in track["SubtitleTrackClips"]]
+    assert [text for _, _, text in lines] == ["今天给大家推荐我们", "的招牌红烧牛肉面", "汤是每天早上现熬的牛骨汤",
+                                               "中午11点开门，晚上10点打烊"]
+    assert lines[0][0] == 12 and lines[2][1] == 24 and lines[0][1] == lines[1][0] and lines[1][1] == lines[2][0]
+    assert any("split into 3 cues" in warning for warning in compiled.warnings)

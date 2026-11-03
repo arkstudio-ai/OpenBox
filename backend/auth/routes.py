@@ -155,7 +155,11 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     # Create user
     user_id = generate_id()
     hashed = hash_password(body.password)
-    await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
+    created = await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
+    from billing.signup_gift import grant_signup_gift_safely
+    await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
+    from light.first_video import offer as offer_first_video
+    await offer_first_video(user_id)
 
     # Issue tokens only after creating the exclusive mobile lease.
     from auth.mobile import login_claims
@@ -358,10 +362,14 @@ async def _sign_in_logto_identity(
             username = f"{username}-{subject[:6]}"
 
         user_id = generate_id()
-        await _user_repo.create(
+        created = await _user_repo.create(
             id=user_id, username=username, password_hash=None, email=email,
             oauth_provider=PROVIDER, oauth_id=subject, avatar_url=avatar,
         )
+        from billing.signup_gift import grant_signup_gift_safely
+        await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
+        from light.first_video import offer as offer_first_video
+        await offer_first_video(user_id)
 
         user = await _user_repo.get(user_id)
         from audit import record

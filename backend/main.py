@@ -501,6 +501,9 @@ def create_app() -> FastAPI:
     from api.video_productions import router as video_productions_router
     application.include_router(video_productions_router)
 
+    from api.first_video import router as first_video_router
+    application.include_router(first_video_router)
+
     from api.workspaces import router as workspaces_router
     from api.admin import router as admin_router
     from api.admin_billing import router as admin_billing_router

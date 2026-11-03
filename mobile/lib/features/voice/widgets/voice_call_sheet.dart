@@ -51,43 +51,49 @@ class VoiceCallSheet extends ConsumerWidget {
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: Container(
-            height: height,
-            decoration: BoxDecoration(
-              color: t.bg.withValues(alpha: dark ? 0.86 : 0.9),
-              border: Border(bottom: BorderSide(color: t.hair)),
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-            child: Column(
-              children: [
-                Expanded(
-                  child: end != null
-                      ? Column(
-                          children: [
-                            Text(
-                              VoiceCopy.status(i18n, call),
-                              key: const Key('voice-status'),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: FontSizes.base,
-                                fontWeight: FontWeight.w500,
-                                color: t.ink,
+          // The sheet lives above the Navigator, outside any Scaffold: it is
+          // its own Material, or its text gets the yellow "no Material"
+          // underline and its ink wells have nothing to splash on.
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              height: height,
+              decoration: BoxDecoration(
+                color: t.bg.withValues(alpha: dark ? 0.86 : 0.9),
+                border: Border(bottom: BorderSide(color: t.hair)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: end != null
+                        ? Column(
+                            children: [
+                              Text(
+                                VoiceCopy.status(i18n, call),
+                                key: const Key('voice-status'),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: FontSizes.base,
+                                  fontWeight: FontWeight.w500,
+                                  color: t.ink,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Expanded(
-                              child: VoiceEndedPanel(
-                                end: end,
-                                onClose: () => controller.setExpanded(false),
+                              const SizedBox(height: 8),
+                              Expanded(
+                                child: VoiceEndedPanel(
+                                  end: end,
+                                  onClose: () => controller.setExpanded(false),
+                                ),
                               ),
-                            ),
-                          ],
-                        )
-                      : _Transcript(call: call, i18n: i18n),
-                ),
-                if (end == null) _Foot(call: call, cost: cost, i18n: i18n),
-                _Handle(onTap: () => controller.setExpanded(false)),
-              ],
+                            ],
+                          )
+                        : _Transcript(call: call, i18n: i18n),
+                  ),
+                  if (end == null) _Foot(call: call, cost: cost, i18n: i18n),
+                  _Handle(onTap: () => controller.setExpanded(false)),
+                ],
+              ),
             ),
           ),
         ),

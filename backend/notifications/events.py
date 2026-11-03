@@ -35,12 +35,31 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
         guard=guard, ttl_seconds=ttl_seconds)
 
 
+#: A video job in one of these states has nothing left to deliver.
+VIDEO_JOB_SETTLED = ("completed", "ready", "failed", "cancelled", "refused", "timeout", "transfer_failed")
+
+
+async def light_delivery_pending(db, session) -> bool:
+    """A guided Light session (sessions.light_entry) with a video job still in flight."""
+    if not getattr(session, "light_entry", None):
+        return False
+    from db.models.video_job import VideoJob
+    return bool(await db.scalar(select(VideoJob.id).where(
+        VideoJob.session_id == session.id, VideoJob.status.not_in(VIDEO_JOB_SETTLED)).limit(1)))
+
+
 async def task_finished(db, session, ticket, *, failed=False):
     if session.parent_id or session.kind in {"cron", "assistant"}:
         return
     # Linked executions emit once from their durable TaskResult settlement.
     from db.models.assistant import AssistantTask
     if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)):
+        return
+    if not failed and await light_delivery_pending(db, session):
+        # A Light turn often ends with 「开始合成了」 while the cut is still
+        # rendering; the cut attaches itself later and sends its own
+        # footage_edit_ready / first_video_ready, so 「任务完成」 here would
+        # reach the owner before the film does.
         return
     await emit(db, user_id=ticket.user_id, workspace_id=session.workspace_id,
         session_id=session.id, kind="task_failed" if failed else "task_completed",

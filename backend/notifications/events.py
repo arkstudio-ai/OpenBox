@@ -35,12 +35,30 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
         guard=guard, ttl_seconds=ttl_seconds)
 
 
+#: A video job in one of these states has nothing left to deliver to the chat.
+VIDEO_JOB_SETTLED = ("completed", "ready", "failed", "cancelled", "refused", "timeout", "transfer_failed")
+
+
+async def video_delivery_pending(db, session) -> bool:
+    """The session still has a video job in flight whose film will be attached later."""
+    from db.models.video_job import VideoJob
+    return bool(await db.scalar(select(VideoJob.id).where(
+        VideoJob.session_id == session.id, VideoJob.status.not_in(VIDEO_JOB_SETTLED)).limit(1)))
+
+
 async def task_finished(db, session, ticket, *, failed=False):
     if session.parent_id or session.kind in {"cron", "assistant"}:
         return
     # Linked executions emit once from their durable TaskResult settlement.
     from db.models.assistant import AssistantTask
     if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)):
+        return
+    if not failed and await video_delivery_pending(db, session):
+        # The video tool's inline wait budget lets the model end its run while
+        # the film is still rendering upstream; video.job_recovery wakes the
+        # session with a followup turn once the job settles, and that turn's
+        # own finish_run sends 「任务完成」 after the film is attached. Sending
+        # it here would reach the owner minutes before the film does.
         return
     await emit(db, user_id=ticket.user_id, workspace_id=session.workspace_id,
         session_id=session.id, kind="task_failed" if failed else "task_completed",

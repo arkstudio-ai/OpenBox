@@ -175,10 +175,12 @@ class OnboardingController extends Notifier<OnboardingState> {
 
   Future<void> _push(Map<String, Object> values) async {
     try {
-      await ref.read(apiDioProvider).put<dynamic>(
-        '/api/auth/me/preferences',
-        data: {'onboarding': values},
-      );
+      await ref
+          .read(apiDioProvider)
+          .put<dynamic>(
+            '/api/auth/me/preferences',
+            data: {'onboarding': values},
+          );
     } catch (_) {
       // Best-effort, same as appearance sync; the cache re-syncs on the next
       // successful write.

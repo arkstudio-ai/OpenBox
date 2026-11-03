@@ -46,7 +46,10 @@ class InlineErrorCard extends ConsumerWidget {
             Text(
               message,
               style: TextStyle(
-                  fontSize: FontSizes.sm, color: t.dangerInk, height: 1.5),
+                fontSize: FontSizes.sm,
+                color: t.dangerInk,
+                height: 1.5,
+              ),
             ),
           ],
           const SizedBox(height: 10),
@@ -57,14 +60,18 @@ class InlineErrorCard extends ConsumerWidget {
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: t.hair),
                   foregroundColor: t.ink,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Radii.full),
                   ),
                 ),
-                child: Text(i18n.t('chat:meta.regenerate'),
-                    style: const TextStyle(fontSize: FontSizes.sm)),
+                child: Text(
+                  i18n.t('chat:meta.regenerate'),
+                  style: const TextStyle(fontSize: FontSizes.sm),
+                ),
               ),
               const SizedBox(width: 8),
               TextButton(

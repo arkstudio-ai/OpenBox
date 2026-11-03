@@ -154,13 +154,15 @@ class MineList extends ConsumerWidget {
                     tone: server.isConnected
                         ? BadgeTone.ok
                         : server.status == 'error'
-                            ? BadgeTone.warn
-                            : BadgeTone.muted,
+                        ? BadgeTone.warn
+                        : BadgeTone.muted,
                   ),
                   if (server.isConnected)
                     SkillBadge(
-                      text: i18n.t('skills:badge.tools',
-                          count: server.tools.length),
+                      text: i18n.t(
+                        'skills:badge.tools',
+                        count: server.tools.length,
+                      ),
                     ),
                 ],
                 actions: [

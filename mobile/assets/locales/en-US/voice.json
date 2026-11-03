@@ -107,7 +107,7 @@
   "transcript": {
     "title": "Conversation",
     "empty": "What is said appears here",
-    "you": "You",
+    "you": "Me",
     "assistant": "Assistant",
     "hearing": "Listening…",
     "room": "“{{title}}” · the work",
@@ -121,10 +121,7 @@
     "inRoom": "Watching the work: what you say goes to this task; say “back” to return",
     "watch": "Watch the work",
     "watchOn": "Watching the work",
-    "watchHint": "On: what you say goes straight to this task and its replies are read out; it turns off when the work is done"
-  },
-  "cards": {
-    "show": "Show cards",
-    "hide": "Hide cards"
+    "watchHint": "On: what you say goes straight to this task and its replies are read out; it turns off when the work is done",
+    "helper": "Helper"
   }
 }

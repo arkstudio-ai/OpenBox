@@ -23,8 +23,20 @@ class LangPill extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _segment(context, ref, label: '中', lang: 'zh-CN', active: language == 'zh-CN'),
-          _segment(context, ref, label: 'EN', lang: 'en-US', active: language == 'en-US'),
+          _segment(
+            context,
+            ref,
+            label: '中',
+            lang: 'zh-CN',
+            active: language == 'zh-CN',
+          ),
+          _segment(
+            context,
+            ref,
+            label: 'EN',
+            lang: 'en-US',
+            active: language == 'en-US',
+          ),
         ],
       ),
     );

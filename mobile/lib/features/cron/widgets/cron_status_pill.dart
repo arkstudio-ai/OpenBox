@@ -28,11 +28,12 @@ class CronPillSummary {
 }
 
 CronPillSummary summarizeCronJobs(List<CronJob> jobs) {
-  final nextRuns = jobs
-      .where((j) => j.enabled && j.nextRunAt != null)
-      .map((j) => j.nextRunAt!)
-      .toList()
-    ..sort();
+  final nextRuns =
+      jobs
+          .where((j) => j.enabled && j.nextRunAt != null)
+          .map((j) => j.nextRunAt!)
+          .toList()
+        ..sort();
   final lastRuns =
       jobs.where((j) => j.lastRunAt != null).map((j) => j.lastRunAt!).toList()
         ..sort();
@@ -72,16 +73,16 @@ class CronStatusPill extends ConsumerWidget {
     final dotColor = s.running
         ? t.a700
         : (s.failedCount > 0 || s.autoDisabled)
-            ? t.danger
-            : s.anyEnabled
-                ? t.sage
-                : t.n400;
+        ? t.danger
+        : s.anyEnabled
+        ? t.sage
+        : t.n400;
 
     final label = s.running
         ? i18n.t('cron:pill.running')
         : s.nextRun != null
-            ? formatRelative(s.nextRun!, i18n.language)
-            : i18n.t('cron:pill.paused');
+        ? formatRelative(s.nextRun!, i18n.language)
+        : i18n.t('cron:pill.paused');
 
     return Semantics(
       label: i18n.t('cron:pill.aria'),
@@ -102,8 +103,10 @@ class CronStatusPill extends ConsumerWidget {
               Container(
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 6),
               ConstrainedBox(
@@ -126,7 +129,9 @@ class CronStatusPill extends ConsumerWidget {
                   child: Text(
                     '${s.failedCount}',
                     style: TextStyle(
-                        fontSize: FontSizes.xs2, color: t.dangerInk),
+                      fontSize: FontSizes.xs2,
+                      color: t.dangerInk,
+                    ),
                   ),
                 ),
               ],

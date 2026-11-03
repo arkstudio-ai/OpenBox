@@ -11,12 +11,12 @@ class Project {
   });
 
   factory Project.fromJson(Map<String, dynamic> json) => Project(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? '',
-        slug: asString(json['slug']),
-        description: asString(json['description']),
-        sessionCount: asInt(json['session_count']),
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? '',
+    slug: asString(json['slug']),
+    description: asString(json['description']),
+    sessionCount: asInt(json['session_count']),
+  );
 
   final String id;
   final String name;

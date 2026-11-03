@@ -50,10 +50,7 @@ class SettingsApi {
   Future<void> setAssistantVoice(String? voice, {String? model}) async {
     await _dio.put<dynamic>(
       '/api/assistant/voice/voice',
-      data: {
-        'voice': ?voice,
-        'model': ?model,
-      },
+      data: {'voice': ?voice, 'model': ?model},
     );
   }
 

@@ -52,7 +52,7 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
-    addTearDown(ws.closeFrames);
+      addTearDown(ws.closeFrames);
       await container.read(activeWorkspaceProvider.future);
       await container.read(workspaceProvider.future);
       expect(api.reads, 1);

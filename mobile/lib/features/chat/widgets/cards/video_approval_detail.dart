@@ -25,7 +25,8 @@ class VideoApprovalDetail extends ConsumerWidget {
     final kind = _firstText(detail, const ['kind', 'type']);
     final script = _readScript(detail);
     final segments = _readSegments(detail);
-    final isVideoDetail = kind == 'video_script_approval' ||
+    final isVideoDetail =
+        kind == 'video_script_approval' ||
         kind == 'video_segments_approval' ||
         detail.containsKey('script_text') ||
         detail['segments'] is List;
@@ -142,8 +143,10 @@ class _SegmentCardState extends ConsumerState<_SegmentCard> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                i18n.t('chat:question.videoApproval.segment',
-                    vars: {'number': segment.ordinal}),
+                i18n.t(
+                  'chat:question.videoApproval.segment',
+                  vars: {'number': segment.ordinal},
+                ),
                 style: TextStyle(
                   fontSize: FontSizes.sm,
                   fontWeight: FontWeight.w500,
@@ -157,8 +160,10 @@ class _SegmentCardState extends ConsumerState<_SegmentCard> {
                   borderRadius: BorderRadius.circular(Radii.full),
                 ),
                 child: Text(
-                  i18n.t('chat:question.videoApproval.role',
-                      vars: {'role': _roleLabel(i18n, segment.role)}),
+                  i18n.t(
+                    'chat:question.videoApproval.role',
+                    vars: {'role': _roleLabel(i18n, segment.role)},
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
                 ),
               ),
@@ -242,13 +247,17 @@ String? _firstText(Map<String, dynamic>? record, List<String> keys) {
 }
 
 String? _readScript(Map<String, dynamic> detail) {
-  final direct =
-      _firstText(detail, const ['script_text', 'scriptText', 'content']);
+  final direct = _firstText(detail, const [
+    'script_text',
+    'scriptText',
+    'content',
+  ]);
   if (direct != null) return direct;
-  return _firstText(
-    _asRecord(detail['script']),
-    const ['text', 'script_text', 'content'],
-  );
+  return _firstText(_asRecord(detail['script']), const [
+    'text',
+    'script_text',
+    'content',
+  ]);
 }
 
 List<_VideoSegmentDetail> _readSegments(Map<String, dynamic> detail) {
@@ -263,7 +272,8 @@ List<_VideoSegmentDetail> _readSegments(Map<String, dynamic> detail) {
     final ordinal = rawOrdinal is num && rawOrdinal.isFinite
         ? rawOrdinal.toInt()
         : (rawOrdinal is String ? int.tryParse(rawOrdinal) : null) ?? index + 1;
-    final scriptText = _firstText(segment, const [
+    final scriptText =
+        _firstText(segment, const [
           'script_text',
           'scriptText',
           'transcript',
@@ -271,16 +281,22 @@ List<_VideoSegmentDetail> _readSegments(Map<String, dynamic> detail) {
           'content',
         ]) ??
         '';
-    final prompt = _firstText(segment,
-            const ['prompt', 'segment_prompt', 'segmentPrompt']) ??
+    final prompt =
+        _firstText(segment, const [
+          'prompt',
+          'segment_prompt',
+          'segmentPrompt',
+        ]) ??
         '';
     if (scriptText.isEmpty && prompt.isEmpty) continue;
-    out.add(_VideoSegmentDetail(
-      ordinal: ordinal,
-      role: _firstText(segment, const ['role', 'speaker']) ?? '',
-      scriptText: scriptText,
-      prompt: prompt,
-    ));
+    out.add(
+      _VideoSegmentDetail(
+        ordinal: ordinal,
+        role: _firstText(segment, const ['role', 'speaker']) ?? '',
+        scriptText: scriptText,
+        prompt: prompt,
+      ),
+    );
   }
   return out;
 }

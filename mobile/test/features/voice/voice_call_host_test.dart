@@ -18,7 +18,6 @@ class _Host {
 
   static final clock = FakeClock();
   final StubVoiceController stub;
-  int opened = 0;
 
   /// [statusBar] stands in for the phone's status bar height.
   Future<void> pump(WidgetTester tester, {double statusBar = 0}) async {
@@ -36,7 +35,6 @@ class _Host {
               context,
             ).copyWith(padding: EdgeInsets.only(top: statusBar)),
             child: VoiceCallHost(
-              onOpen: () => opened++,
               child: Stack(children: [child!, const ToastHost()]),
             ),
           ),
@@ -73,12 +71,13 @@ void main() {
     expect(_contentTop(tester), 44);
     expect(_contentTopInset, 0);
 
-    // The call page on top: the bar steps aside (after a short slide).
+    // Expanded: the bar stays, the sheet drops under it over the screen.
     host.stub.set(connectedCall(at: _Host.clock.now, expanded: true));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
-    expect(find.byKey(const Key('voice-banner')), findsNothing);
-    expect(_contentTop(tester), 0);
+    expect(find.byKey(const Key('voice-banner')), findsOneWidget);
+    expect(find.byKey(const Key('voice-sheet')), findsOneWidget);
+    expect(_contentTop(tester), 44);
   });
 
   testWidgets('under a status bar the bar takes it, the screens lose it', (
@@ -128,7 +127,9 @@ void main() {
     await tester.pump(const Duration(seconds: 12));
   });
 
-  testWidgets('a call that ends on its own page gets no toast', (tester) async {
+  testWidgets('a call that ends with the sheet open gets no toast', (
+    tester,
+  ) async {
     final host = _Host(connectedCall(at: _Host.clock.now, expanded: true));
     await host.pump(tester);
     host.stub.set(
@@ -139,9 +140,21 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byType(ToastHost), findsOneWidget);
-    expect(find.text('网络断开，通话结束。'), findsNothing);
-    expect(find.byKey(const Key('voice-banner')), findsNothing);
+    // The sheet shows the summary itself; no toast repeats it.
+    expect(
+      find.descendant(
+        of: find.byType(ToastHost),
+        matching: find.text('网络断开，通话结束。'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('voice-sheet')),
+        matching: find.text('网络断开，通话结束。'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('coming back from an interruption says so', (tester) async {
@@ -158,10 +171,18 @@ void main() {
     await tester.pump(const Duration(seconds: 12));
   });
 
-  testWidgets('tapping the bar asks to open the call page', (tester) async {
+  testWidgets('tapping the bar drops the sheet over the screen', (
+    tester,
+  ) async {
     final host = _Host(connectedCall(at: _Host.clock.now));
     await host.pump(tester);
+    expect(find.byKey(const Key('voice-sheet')), findsNothing);
     await tester.tap(find.byKey(const Key('voice-banner-open')));
-    expect(host.opened, 1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(host.stub.state.expanded, isTrue);
+    expect(find.byKey(const Key('voice-sheet')), findsOneWidget);
+    // The screen under it has not moved: the sheet covers, the bar pushes.
+    expect(_contentTop(tester), 44);
   });
 }

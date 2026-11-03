@@ -9,6 +9,7 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/utils/error_text.dart';
+import '../../../shared/widgets/task_card_extra.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/assistant_api.dart';
 import '../state/assistant_controller.dart';
@@ -295,6 +296,8 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
                             ),
                           ),
                         ),
+                      // The call's 盯现场 switch, when the app supplies one.
+                      ?ref.watch(taskCardExtraProvider)?.call(task.id),
                       if (summary != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),

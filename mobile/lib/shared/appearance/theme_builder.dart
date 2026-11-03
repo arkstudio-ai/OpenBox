@@ -17,9 +17,18 @@ ThemeData buildBossipTheme(BossipThemeName name, Brightness brightness) {
 
   final textTheme = baseText.copyWith(
     // Chat prose default is text-lg / relaxed leading (web ChatFlow).
-    bodyLarge: baseText.bodyLarge?.copyWith(fontSize: FontSizes.lg, height: 1.78),
-    bodyMedium: baseText.bodyMedium?.copyWith(fontSize: FontSizes.base, height: 1.65),
-    bodySmall: baseText.bodySmall?.copyWith(fontSize: FontSizes.sm, height: 1.55),
+    bodyLarge: baseText.bodyLarge?.copyWith(
+      fontSize: FontSizes.lg,
+      height: 1.78,
+    ),
+    bodyMedium: baseText.bodyMedium?.copyWith(
+      fontSize: FontSizes.base,
+      height: 1.65,
+    ),
+    bodySmall: baseText.bodySmall?.copyWith(
+      fontSize: FontSizes.sm,
+      height: 1.55,
+    ),
     titleLarge: baseText.titleLarge?.copyWith(
       fontSize: FontSizes.xl2,
       height: 1.35,
@@ -36,8 +45,14 @@ ThemeData buildBossipTheme(BossipThemeName name, Brightness brightness) {
       height: 1.5,
       fontWeight: FontWeight.w500,
     ),
-    labelLarge: baseText.labelLarge?.copyWith(fontSize: FontSizes.sm, height: 1.2),
-    labelMedium: baseText.labelMedium?.copyWith(fontSize: FontSizes.xs, height: 1.2),
+    labelLarge: baseText.labelLarge?.copyWith(
+      fontSize: FontSizes.sm,
+      height: 1.2,
+    ),
+    labelMedium: baseText.labelMedium?.copyWith(
+      fontSize: FontSizes.xs,
+      height: 1.2,
+    ),
   );
 
   final scheme = ColorScheme(
@@ -87,7 +102,9 @@ ThemeData buildBossipTheme(BossipThemeName name, Brightness brightness) {
     dialogTheme: DialogThemeData(
       backgroundColor: t.card,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.xl)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.xl),
+      ),
     ),
     textSelectionTheme: TextSelectionThemeData(
       cursorColor: t.ink,

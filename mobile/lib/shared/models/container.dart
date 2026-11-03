@@ -12,13 +12,13 @@ class ContainerInfo {
   });
 
   factory ContainerInfo.fromJson(Map<String, dynamic> json) => ContainerInfo(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? '',
-        status: asString(json['status']) ?? '',
-        image: asString(json['image']),
-        createdAt: asDate(json['created_at']),
-        port: asInt(json['port']),
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? '',
+    status: asString(json['status']) ?? '',
+    image: asString(json['image']),
+    createdAt: asDate(json['created_at']),
+    port: asInt(json['port']),
+  );
 
   final String id;
   final String name;
@@ -40,11 +40,11 @@ class SandboxStatus {
   });
 
   factory SandboxStatus.fromJson(Map<String, dynamic> json) => SandboxStatus(
-        available: asBool(json['available']) ?? false,
-        containerId: asString(json['container_id']),
-        containerName: asString(json['container_name']),
-        status: asString(json['status']),
-      );
+    available: asBool(json['available']) ?? false,
+    containerId: asString(json['container_id']),
+    containerName: asString(json['container_name']),
+    status: asString(json['status']),
+  );
 
   final bool available;
   final String? containerId;
@@ -64,20 +64,19 @@ class FileEntry {
   });
 
   factory FileEntry.fromJson(Map<String, dynamic> json) => FileEntry(
-        name: asString(json['name']) ?? '',
-        path: asString(json['path']) ?? '',
-        isDir: asBool(json['is_dir']) ?? asBool(json['isDir']) ?? false,
-        size: asInt(json['size']),
-      );
+    name: asString(json['name']) ?? '',
+    path: asString(json['path']) ?? '',
+    isDir: asBool(json['is_dir']) ?? asBool(json['isDir']) ?? false,
+    size: asInt(json['size']),
+  );
 
   static List<FileEntry> listFrom(dynamic body) {
     final raw = body is Map<String, dynamic>
         ? (body['files'] ?? body['entries'] ?? const <dynamic>[])
         : body;
-    return asList(raw)
-        .whereType<Map<String, dynamic>>()
-        .map(FileEntry.fromJson)
-        .toList();
+    return asList(
+      raw,
+    ).whereType<Map<String, dynamic>>().map(FileEntry.fromJson).toList();
   }
 
   final String name;
@@ -96,11 +95,11 @@ class FileContent {
   });
 
   factory FileContent.fromJson(Map<String, dynamic> json) => FileContent(
-        path: asString(json['path']) ?? '',
-        content: asString(json['content']) ?? '',
-        totalLines: asInt(json['total_lines']) ?? 0,
-        truncated: asBool(json['truncated']) ?? false,
-      );
+    path: asString(json['path']) ?? '',
+    content: asString(json['content']) ?? '',
+    totalLines: asInt(json['total_lines']) ?? 0,
+    truncated: asBool(json['truncated']) ?? false,
+  );
 
   final String path;
   final String content;

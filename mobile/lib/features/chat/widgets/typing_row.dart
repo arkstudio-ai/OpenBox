@@ -48,10 +48,15 @@ class _ThinkingRowState extends ConsumerState<ThinkingRow>
     final retrying = retry != null && retry.attempt > 0;
     final tone = retrying ? t.sage : t.n600;
     final label = retrying
-        ? i18n.t('chat:status.retrying', vars: {
-            'attempt': retry.attempt,
-            'total': retry.maxAttempts > 0 ? retry.maxAttempts : retry.attempt,
-          })
+        ? i18n.t(
+            'chat:status.retrying',
+            vars: {
+              'attempt': retry.attempt,
+              'total': retry.maxAttempts > 0
+                  ? retry.maxAttempts
+                  : retry.attempt,
+            },
+          )
         : widget.label ?? i18n.t('chat:status.thinking');
 
     return Padding(
@@ -67,7 +72,10 @@ class _ThinkingRowState extends ConsumerState<ThinkingRow>
               child: _PulseDot(anim: _anim, delay: i * 0.16, color: tone),
             ),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: FontSizes.md, color: tone)),
+          Text(
+            label,
+            style: TextStyle(fontSize: FontSizes.md, color: tone),
+          ),
         ],
       ),
     );
@@ -116,7 +124,7 @@ class TypingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Align(
-        alignment: Alignment.centerLeft,
-        child: ThinkingRow(retry: retry),
-      );
+    alignment: Alignment.centerLeft,
+    child: ThinkingRow(retry: retry),
+  );
 }

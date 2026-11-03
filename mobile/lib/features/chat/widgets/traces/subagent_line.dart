@@ -37,10 +37,12 @@ class SubagentLine extends ConsumerWidget {
     final current = progress.current;
     final detail = running && current != null
         ? '${i18n.t('chat:kind.${toolKindKey(current.tool)}')} '
-            '${toolTarget(current)}'
-        : i18n.t('chat:subagent.summary',
+              '${toolTarget(current)}'
+        : i18n.t(
+            'chat:subagent.summary',
             count: progress.toolCount,
-            vars: {'duration': formatDuration(progress.seconds)});
+            vars: {'duration': formatDuration(progress.seconds)},
+          );
 
     final style = TextStyle(
       fontSize: FontSizes.xs,
@@ -54,7 +56,10 @@ class SubagentLine extends ConsumerWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('↳ ', style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+          Text(
+            '↳ ',
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+          ),
           Expanded(
             child: running
                 ? ShimmerText(detail, style: style, maxLines: 1)

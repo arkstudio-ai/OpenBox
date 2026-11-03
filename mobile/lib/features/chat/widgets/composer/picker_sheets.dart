@@ -24,23 +24,26 @@ Future<void> showModelPicker(
   final i18n = ref.read(i18nProvider);
   final config = ref.read(appConfigProvider).valueOrNull;
   final models = config?.models ?? const <ModelInfo>[];
-  final active = ref.read(pickedModelProvider(sessionKey)) ??
+  final active =
+      ref.read(pickedModelProvider(sessionKey)) ??
       (currentModel?.isNotEmpty == true ? currentModel : config?.defaultModel);
 
   ReasoningChoice choiceFor(ModelInfo model) => resolveReasoning(
-        model: model,
-        sessionModel: currentModel,
-        sessionVariant: currentVariant,
-        pick: ref.read(
-            pickedVariantProvider(reasoningKey(sessionKey, model.id))),
-      );
+    model: model,
+    sessionModel: currentModel,
+    sessionVariant: currentVariant,
+    pick: ref.read(pickedVariantProvider(reasoningKey(sessionKey, model.id))),
+  );
 
   void choose(ModelInfo model, [String? level]) {
     if (model.variants.isNotEmpty) {
       ref
-          .read(pickedVariantProvider(reasoningKey(sessionKey, model.id))
-              .notifier)
-          .state = Variant(level);
+          .read(
+            pickedVariantProvider(reasoningKey(sessionKey, model.id)).notifier,
+          )
+          .state = Variant(
+        level,
+      );
     }
     ref.read(pickedModelProvider(sessionKey).notifier).state = model.id;
   }
@@ -51,12 +54,16 @@ Future<void> showModelPicker(
     final hasReasoning = choice.variants.isNotEmpty;
     return ListTile(
       dense: true,
-      title: Text(model.name,
-          style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+      title: Text(
+        model.name,
+        style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+      ),
       subtitle: model.provider == null
           ? null
-          : Text(model.provider!,
-              style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+          : Text(
+              model.provider!,
+              style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+            ),
       trailing: isActive
           ? Row(
               mainAxisSize: MainAxisSize.min,
@@ -74,8 +81,8 @@ Future<void> showModelPicker(
               ],
             )
           : (hasReasoning
-              ? Icon(Icons.chevron_right, size: 18, color: t.n500)
-              : null),
+                ? Icon(Icons.chevron_right, size: 18, color: t.n500)
+                : null),
       onTap: () async {
         Navigator.pop(sheetContext);
         if (!hasReasoning) {
@@ -133,17 +140,19 @@ Future<void> _showModelReasoningPicker(
   final defaultId = choice.defaultId;
 
   Widget row(BuildContext sheetContext, String? id, String label) => ListTile(
-        dense: true,
-        title: Text(label,
-            style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
-        trailing: id == choice.activeId
-            ? Icon(Icons.check, size: 18, color: t.a700)
-            : null,
-        onTap: () {
-          onPick(id);
-          Navigator.pop(sheetContext);
-        },
-      );
+    dense: true,
+    title: Text(
+      label,
+      style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+    ),
+    trailing: id == choice.activeId
+        ? Icon(Icons.check, size: 18, color: t.a700)
+        : null,
+    onTap: () {
+      onPick(id);
+      Navigator.pop(sheetContext);
+    },
+  );
 
   return showModalBottomSheet<void>(
     context: context,
@@ -168,9 +177,10 @@ Future<void> _showModelReasoningPicker(
             null,
             defaultId == null
                 ? i18n.t('chat:reasoning.default')
-                : i18n.t('chat:reasoning.defaultWithLevel', vars: {
-                    'level': reasoningLevelLabel(i18n, defaultId),
-                  }),
+                : i18n.t(
+                    'chat:reasoning.defaultWithLevel',
+                    vars: {'level': reasoningLevelLabel(i18n, defaultId)},
+                  ),
           ),
           for (final id in choice.variants)
             row(sheetContext, id, reasoningLevelLabel(i18n, id)),
@@ -186,9 +196,10 @@ String _reasoningChoiceLabel(I18nState i18n, ReasoningChoice choice) {
   final defaultId = choice.defaultId;
   return defaultId == null
       ? i18n.t('chat:reasoning.default')
-      : i18n.t('chat:reasoning.defaultWithLevel', vars: {
-          'level': reasoningLevelLabel(i18n, defaultId),
-        });
+      : i18n.t(
+          'chat:reasoning.defaultWithLevel',
+          vars: {'level': reasoningLevelLabel(i18n, defaultId)},
+        );
 }
 
 /// Known level ids get a translated label; anything else shows the raw id,
@@ -216,7 +227,8 @@ Future<void> showModePicker(
 }) {
   final t = context.tokens;
   final i18n = ref.read(i18nProvider);
-  final agents = ref.read(chatAgentsProvider).valueOrNull ?? const <AgentInfo>[];
+  final agents =
+      ref.read(chatAgentsProvider).valueOrNull ?? const <AgentInfo>[];
   final active = ref.read(pickedAgentProvider(sessionKey)) ?? currentAgent;
   return showModalBottomSheet<void>(
     context: context,
@@ -297,16 +309,22 @@ Future<void> showVideoModelPicker(
   if (models.isEmpty) return;
 
   final picked = ref.read(pickedVideoProvider(sessionKey));
-  final activeId = picked?.modelId ??
-      (currentModel?.isNotEmpty == true ? currentModel : config?.defaultVideoModel);
-  final activeTier = picked?.resolution ??
+  final activeId =
+      picked?.modelId ??
+      (currentModel?.isNotEmpty == true
+          ? currentModel
+          : config?.defaultVideoModel);
+  final activeTier =
+      picked?.resolution ??
       (currentResolution?.isNotEmpty == true
           ? currentResolution
           : config?.defaultVideoResolution);
 
   void choose(String modelId, String resolution) {
-    ref.read(pickedVideoProvider(sessionKey).notifier).state =
-        VideoPick(modelId, resolution);
+    ref.read(pickedVideoProvider(sessionKey).notifier).state = VideoPick(
+      modelId,
+      resolution,
+    );
   }
 
   await showModalBottomSheet<void>(
@@ -330,13 +348,12 @@ Future<void> showVideoModelPicker(
           for (final model in models)
             ListTile(
               dense: true,
-              title: Text(model.name,
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                model.name,
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               subtitle: Text(
-                [
-                  ?model.tier,
-                  model.resolutions.join(' / '),
-                ].join(' · '),
+                [?model.tier, model.resolutions.join(' / ')].join(' · '),
                 style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
               ),
               // The chevron says "there is a second step here", so the row
@@ -350,9 +367,13 @@ Future<void> showVideoModelPicker(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (activeTier != null)
-                          Text(activeTier,
-                              style: TextStyle(
-                                  fontSize: FontSizes.xs, color: t.n500)),
+                          Text(
+                            activeTier,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n500,
+                            ),
+                          ),
                         const SizedBox(width: 6),
                         Icon(Icons.check, size: 18, color: t.a700),
                         if (model.resolutions.length > 1)
@@ -360,8 +381,8 @@ Future<void> showVideoModelPicker(
                       ],
                     )
                   : (model.resolutions.length > 1
-                      ? Icon(Icons.chevron_right, size: 18, color: t.n500)
-                      : null),
+                        ? Icon(Icons.chevron_right, size: 18, color: t.n500)
+                        : null),
               onTap: () async {
                 Navigator.pop(sheetContext);
                 final tiers = model.resolutions;
@@ -412,8 +433,10 @@ Future<void> _showResolutionPicker(
           for (final tier in model.resolutions)
             ListTile(
               dense: true,
-              title: Text(tier,
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                tier,
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               trailing: tier == current
                   ? Icon(Icons.check, size: 18, color: t.a700)
                   : null,
@@ -427,7 +450,6 @@ Future<void> _showResolutionPicker(
     ),
   );
 }
-
 
 /// Which chat tier the composer is on, if any: matched on the model, so an
 /// admin retuning the strength is still on that tier.
@@ -459,23 +481,27 @@ String videoTierLabel(I18nState i18n, VideoTierRow row) =>
     row.label.isNotEmpty ? row.label : tierLabel(i18n, 'video', row.tier);
 
 /// "720p · 0.60 积分/秒", or just the resolution when it is unpriced.
-String resolutionWithPrice(I18nState i18n, VideoTierRow row, String resolution) {
+String resolutionWithPrice(
+  I18nState i18n,
+  VideoTierRow row,
+  String resolution,
+) {
   final price = row.prices[resolution];
   if (price == null) return resolution;
   return '$resolution · ${i18n.t('chat:tier.video.perSecond', vars: {'price': price})}';
 }
 
 Widget _tierHeading(BossipTokens t, String text) => Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: FontSizes.sm,
-          fontWeight: FontWeight.w600,
-          color: t.n600,
-        ),
-      ),
-    );
+  padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+  child: Text(
+    text,
+    style: TextStyle(
+      fontSize: FontSizes.sm,
+      fontWeight: FontWeight.w600,
+      color: t.n600,
+    ),
+  ),
+);
 
 Widget _tierRow(
   BossipTokens t, {
@@ -483,20 +509,25 @@ Widget _tierRow(
   required String hint,
   required bool selected,
   required VoidCallback onTap,
-}) =>
-    ListTile(
-      dense: true,
-      title: Text(label,
-          style: TextStyle(
-              fontSize: FontSizes.base,
-              fontWeight: FontWeight.w500,
-              color: t.ink)),
-      // What the tier resolves to, in small print: a price signal with
-      // nothing behind it is not one.
-      subtitle: Text(hint, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
-      trailing: selected ? Icon(Icons.check, size: 18, color: t.a700) : null,
-      onTap: onTap,
-    );
+}) => ListTile(
+  dense: true,
+  title: Text(
+    label,
+    style: TextStyle(
+      fontSize: FontSizes.base,
+      fontWeight: FontWeight.w500,
+      color: t.ink,
+    ),
+  ),
+  // What the tier resolves to, in small print: a price signal with
+  // nothing behind it is not one.
+  subtitle: Text(
+    hint,
+    style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+  ),
+  trailing: selected ? Icon(Icons.check, size: 18, color: t.a700) : null,
+  onTap: onTap,
+);
 
 /// The catalogue behind the tiers is an admin's view. Everyone else reads
 /// the three tiers and nothing about routing.
@@ -510,8 +541,10 @@ Widget? _catalogueRow(
   return ListTile(
     dense: true,
     leading: Icon(Icons.tune, size: 18, color: t.n600),
-    title: Text(i18n.t('chat:tier.more'),
-        style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+    title: Text(
+      i18n.t('chat:tier.more'),
+      style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+    ),
     onTap: onTap,
   );
 }
@@ -544,9 +577,12 @@ Future<void> showChatTierPicker(
           ? row.variant
           : null;
       ref
-          .read(pickedVariantProvider(reasoningKey(sessionKey, row.model))
-              .notifier)
-          .state = Variant(level);
+          .read(
+            pickedVariantProvider(reasoningKey(sessionKey, row.model)).notifier,
+          )
+          .state = Variant(
+        level,
+      );
     }
     ref.read(pickedModelProvider(sessionKey).notifier).state = row.model;
   }
@@ -606,17 +642,23 @@ Future<void> showVideoTierPicker(
   final config = ref.read(appConfigProvider).valueOrNull;
   if (config == null || config.modelTiers.video.isEmpty) return;
   final picked = ref.read(pickedVideoProvider(sessionKey));
-  final activeId = picked?.modelId ??
-      (currentModel?.isNotEmpty == true ? currentModel! : config.defaultVideoModel);
-  final activeResolution = picked?.resolution ??
+  final activeId =
+      picked?.modelId ??
+      (currentModel?.isNotEmpty == true
+          ? currentModel!
+          : config.defaultVideoModel);
+  final activeResolution =
+      picked?.resolution ??
       (currentResolution?.isNotEmpty == true
           ? currentResolution!
           : config.defaultVideoResolution);
   final active = activeVideoTier(config, activeId, activeResolution);
 
   void choose(String modelId, String resolution) {
-    ref.read(pickedVideoProvider(sessionKey).notifier).state =
-        VideoPick(modelId, resolution);
+    ref.read(pickedVideoProvider(sessionKey).notifier).state = VideoPick(
+      modelId,
+      resolution,
+    );
   }
 
   await showModalBottomSheet<void>(
@@ -693,17 +735,26 @@ Widget _videoTierRow(
   ].join(' · ');
   return ListTile(
     dense: true,
-    title: Text(videoTierLabel(i18n, row),
-        style: TextStyle(
-            fontSize: FontSizes.base,
-            fontWeight: FontWeight.w500,
-            color: t.ink)),
-    subtitle: Text(detail, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+    title: Text(
+      videoTierLabel(i18n, row),
+      style: TextStyle(
+        fontSize: FontSizes.base,
+        fontWeight: FontWeight.w500,
+        color: t.ink,
+      ),
+    ),
+    subtitle: Text(
+      detail,
+      style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+    ),
     trailing: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (selected && current != null)
-          Text(current, style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+          Text(
+            current,
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+          ),
         if (selected) ...[
           const SizedBox(width: 6),
           Icon(Icons.check, size: 18, color: t.a700),
@@ -737,8 +788,10 @@ Future<void> _showTierResolutionPicker(
           for (final resolution in row.resolutions)
             ListTile(
               dense: true,
-              title: Text(resolutionWithPrice(i18n, row, resolution),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                resolutionWithPrice(i18n, row, resolution),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               trailing: resolution == current
                   ? Icon(Icons.check, size: 18, color: t.a700)
                   : null,

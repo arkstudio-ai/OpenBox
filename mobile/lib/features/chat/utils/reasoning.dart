@@ -78,7 +78,8 @@ ReasoningChoice resolveReasoning({
 }) {
   final variants = model?.variants ?? const <String>[];
   final hasSessionModel = sessionModel != null && sessionModel.isNotEmpty;
-  final persisted = model != null &&
+  final persisted =
+      model != null &&
           model.id == sessionModel &&
           sessionVariant != null &&
           variants.contains(sessionVariant)
@@ -87,10 +88,10 @@ ReasoningChoice resolveReasoning({
   final activeId = model == null || variants.isEmpty
       ? null
       : pick != null
-          ? (pick.level != null && variants.contains(pick.level)
-              ? pick.level
-              : null)
-          : persisted;
+      ? (pick.level != null && variants.contains(pick.level)
+            ? pick.level
+            : null)
+      : persisted;
 
   final Variant? value;
   if (model == null) {

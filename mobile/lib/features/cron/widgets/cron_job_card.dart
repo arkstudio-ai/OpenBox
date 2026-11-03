@@ -71,7 +71,10 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
                         job.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                        style: TextStyle(
+                          fontSize: FontSizes.base,
+                          color: t.ink,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -92,10 +95,10 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
     final (dotColor, stateLabel) = job.running
         ? (t.a700, i18n.t('cron:job.state.running'))
         : job.enabled
-            ? (t.sage, i18n.t('cron:job.state.enabled'))
-            : job.autoDisabled
-                ? (t.danger, i18n.t('cron:job.state.autoDisabled'))
-                : (t.n400, i18n.t('cron:job.state.disabled'));
+        ? (t.sage, i18n.t('cron:job.state.enabled'))
+        : job.autoDisabled
+        ? (t.danger, i18n.t('cron:job.state.autoDisabled'))
+        : (t.n400, i18n.t('cron:job.state.disabled'));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -122,12 +125,16 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
               Container(
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 6),
-              Text(stateLabel,
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+              Text(
+                stateLabel,
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -136,7 +143,10 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-                fontSize: FontSizes.sm, color: t.n700, height: 1.5),
+              fontSize: FontSizes.sm,
+              color: t.n700,
+              height: 1.5,
+            ),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -146,23 +156,35 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
               _meta(t, describeSchedule(job.schedule, i18n.t)),
               if (job.enabled && job.nextRunAt != null)
                 _meta(
-                    t,
-                    i18n.t('cron:job.nextRun', vars: {
-                      'when': formatRelative(job.nextRunAt!, i18n.language)
-                    })),
+                  t,
+                  i18n.t(
+                    'cron:job.nextRun',
+                    vars: {
+                      'when': formatRelative(job.nextRunAt!, i18n.language),
+                    },
+                  ),
+                ),
               if (job.lastRunAt != null)
                 _meta(
-                    t,
-                    i18n.t('cron:job.lastRun', vars: {
-                      'when': formatRelative(job.lastRunAt!, i18n.language)
-                    })),
-              _meta(
                   t,
-                  i18n.t('cron:job.stats', vars: {
+                  i18n.t(
+                    'cron:job.lastRun',
+                    vars: {
+                      'when': formatRelative(job.lastRunAt!, i18n.language),
+                    },
+                  ),
+                ),
+              _meta(
+                t,
+                i18n.t(
+                  'cron:job.stats',
+                  vars: {
                     'total': job.totalRuns,
                     'ok': job.totalSuccesses,
                     'failed': job.totalFailures,
-                  })),
+                  },
+                ),
+              ),
             ],
           ),
           if ((job.lastError ?? '').isNotEmpty && !job.enabled)
@@ -244,7 +266,9 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
           children: [
             ListTile(
               leading: Icon(
-                job.enabled ? Icons.pause_circle_outline : Icons.play_circle_outline,
+                job.enabled
+                    ? Icons.pause_circle_outline
+                    : Icons.play_circle_outline,
                 color: t.n700,
               ),
               title: Text(
@@ -275,12 +299,16 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
   }
 
   Widget _meta(BossipTokens t, String text) => Text(
-        text,
-        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
-      );
+    text,
+    style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+  );
 
-  Widget _pill(BossipTokens t, String label,
-      {required bool enabled, required VoidCallback onTap}) {
+  Widget _pill(
+    BossipTokens t,
+    String label, {
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
     return Opacity(
       opacity: enabled ? 1 : 0.5,
       child: OutlinedButton(
@@ -305,11 +333,15 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(i18n.t('cron:job.deleteConfirm.title'),
-            style: const TextStyle(fontSize: FontSizes.lg)),
+        title: Text(
+          i18n.t('cron:job.deleteConfirm.title'),
+          style: const TextStyle(fontSize: FontSizes.lg),
+        ),
         content: Text(
-          i18n.t('cron:job.deleteConfirm.body',
-              vars: {'name': widget.job.name}),
+          i18n.t(
+            'cron:job.deleteConfirm.body',
+            vars: {'name': widget.job.name},
+          ),
           style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
         ),
         actions: [
@@ -319,8 +351,10 @@ class _CronJobCardState extends ConsumerState<CronJobCard> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(i18n.t('cron:job.action.delete'),
-                style: TextStyle(color: t.danger)),
+            child: Text(
+              i18n.t('cron:job.action.delete'),
+              style: TextStyle(color: t.danger),
+            ),
           ),
         ],
       ),

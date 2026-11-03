@@ -124,10 +124,15 @@ class VoiceLine {
     required this.itemId,
     required this.isFinal,
     required this.at,
+    this.room = false,
   });
 
   /// user / assistant.
   final String role;
+
+  /// Said while the call was watching a task's room (`focus.bound`): the
+  /// assistant side is then the task's helper, not the assistant.
+  final bool room;
   final String text;
   final String itemId;
 

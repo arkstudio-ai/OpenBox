@@ -9,21 +9,20 @@ import '../platform/system_voice_call.dart';
 import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
 import 'voice_call_banner.dart';
+import 'voice_call_sheet.dart';
 import 'voice_copy.dart';
 
-/// Wraps every screen (`MaterialApp.builder`): while a call is on and its
-/// page is closed, the call bar takes the top 44 pt and pushes the app down
-/// — it never covers a control (mobile §1, §2).
+/// Wraps every screen (`MaterialApp.builder`): while a call is on, the call
+/// bar takes the top 44 pt and pushes the app down — it never covers a
+/// control — and, when the call is expanded, the call sheet drops from under
+/// the bar over the page (VOICE_SEAM_PLAN §13).
 ///
 /// The tree keeps one shape whether or not the bar shows, so the app below
 /// is never rebuilt from scratch when a call starts or ends.
 class VoiceCallHost extends ConsumerStatefulWidget {
-  const VoiceCallHost({super.key, required this.child, required this.onOpen});
+  const VoiceCallHost({super.key, required this.child});
 
   final Widget child;
-
-  /// Pushes the call page (the host sits above the Navigator).
-  final VoidCallback onOpen;
 
   /// How long the grey "通话已结束" bar stays before it goes.
   static const endedBarTime = Duration(seconds: 3);
@@ -41,8 +40,10 @@ class _VoiceCallHostState extends ConsumerState<VoiceCallHost> {
     super.initState();
     _systemActions = ref.read(systemVoiceCallProvider).actions.listen((action) {
       if (!mounted || action != SystemVoiceAction.open) return;
-      final call = ref.read(voiceCallControllerProvider);
-      if (call.active && !call.expanded) widget.onOpen();
+      final controller = ref.read(voiceCallControllerProvider.notifier);
+      if (ref.read(voiceCallControllerProvider).active) {
+        controller.setExpanded(true);
+      }
     });
   }
 
@@ -75,8 +76,8 @@ class _VoiceCallHostState extends ConsumerState<VoiceCallHost> {
     }
   }
 
-  /// The call ended while its page was closed: say how, how long, what it
-  /// cost, and what is still being worked on.
+  /// The call ended with the sheet folded: say how, how long, what it cost,
+  /// and what is still being worked on.
   void _toastEnd(VoiceCallEnd? end) {
     if (end == null) return;
     final i18n = ref.read(i18nProvider);
@@ -101,30 +102,58 @@ class _VoiceCallHostState extends ConsumerState<VoiceCallHost> {
   @override
   Widget build(BuildContext context) {
     ref.listen<VoiceCallState>(voiceCallControllerProvider, _onCall);
-    final show = ref.watch(
+    final (show, expanded) = ref.watch(
       voiceCallControllerProvider.select(
-        (call) => call.status != VoiceCallStatus.idle && !call.expanded,
+        (call) => (call.status != VoiceCallStatus.idle, call.expanded),
       ),
     );
-    return Column(
+    final barHeight =
+        VoiceCallBanner.height + MediaQuery.paddingOf(context).top;
+    return Stack(
       children: [
-        AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          alignment: Alignment.topCenter,
-          child: show
-              ? VoiceCallBanner(onOpen: widget.onOpen)
-              : const SizedBox(width: double.infinity),
+        Column(
+          children: [
+            // The bar's room: the screens move down, nothing is covered.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: double.infinity,
+                height: show ? barHeight : 0,
+              ),
+            ),
+            Expanded(
+              // The bar already sits under the status bar; the screens below
+              // must not pad for it a second time.
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: show,
+                child: widget.child,
+              ),
+            ),
+          ],
         ),
-        Expanded(
-          // The bar already sits under the status bar; the screens below
-          // must not pad for it a second time.
-          child: MediaQuery.removePadding(
-            context: context,
-            removeTop: show,
-            child: widget.child,
+        if (show)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const VoiceCallBanner(),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  alignment: Alignment.topCenter,
+                  child: expanded
+                      ? const VoiceCallSheet()
+                      : const SizedBox(width: double.infinity),
+                ),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }

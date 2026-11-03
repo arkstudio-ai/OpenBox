@@ -10,8 +10,6 @@ import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/state/config_providers.dart';
-import '../features/chat/widgets/assistant_requests.dart';
-import '../features/chat/widgets/assistant_task_card.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/assistant_tour.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
@@ -27,8 +25,6 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
-import '../features/voice/state/voice_call_controller.dart';
-import '../features/voice/voice_call_page.dart';
 import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
@@ -45,7 +41,6 @@ import 'auth_center_route.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
 import 'knowledge_routes.dart';
-import 'voice_conversation_card.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -163,56 +158,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Full screen over everything (there is no shell route, so every
       // route here is on the root navigator). Popping it collapses the call
       // into the call bar; the call goes on.
-      GoRoute(
-        path: Paths.voice,
-        pageBuilder: (context, state) => MaterialPage<void>(
-          // Its own key per push: reopened from the call bar while the last
-          // one still slides away, it must be a new page, not that one.
-          key: state.pageKey,
-          fullscreenDialog: true,
-          child: Consumer(
-            builder: (context, ref, _) {
-              final scope = ref.watch(assistantScopeProvider);
-              // The task the call is about gets its own card page: what the
-              // assistant arranged is visible without leaving the call.
-              final focusTask = ref.watch(
-                voiceCallControllerProvider.select((s) => s.focus?.taskId),
-              );
-              final focusSession = ref.watch(
-                voiceCallControllerProvider.select((s) => s.focus?.sessionId),
-              );
-              return VoiceCallPage(
-                cards: scope == null
-                    ? null
-                    : (beforeOpen) => AssistantRequests(
-                        scope: scope,
-                        deck: true,
-                        beforeOpen: beforeOpen,
-                        leading: VoiceConversationCard(
-                          scope: scope,
-                          beforeOpen: beforeOpen,
-                        ),
-                        taskCard: focusTask == null
-                            ? null
-                            : Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  VoiceRoomSwitch(taskId: focusTask),
-                                  AssistantTaskById(
-                                    key: ValueKey('call-task-$focusTask'),
-                                    scope: scope,
-                                    taskId: focusTask,
-                                    beforeOpen: beforeOpen,
-                                  ),
-                                ],
-                              ),
-                        taskSessionId: focusSession,
-                      ),
-              );
-            },
-          ),
-        ),
-      ),
+      // The call has no page of its own any more (VOICE_SEAM_PLAN §13): a
+      // deep link to it lands on the assistant page, where the call sheet is.
+      GoRoute(path: Paths.voice, redirect: (context, state) => Paths.assistant),
       GoRoute(
         path: '/app/s/:sessionId',
         builder: (context, state) {

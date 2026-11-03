@@ -14,9 +14,7 @@ class Fold extends StatelessWidget {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
       alignment: Alignment.topCenter,
-      child: open
-          ? child
-          : const SizedBox(width: double.infinity, height: 0),
+      child: open ? child : const SizedBox(width: double.infinity, height: 0),
     );
   }
 }

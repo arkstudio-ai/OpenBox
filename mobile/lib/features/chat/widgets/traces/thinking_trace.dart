@@ -9,11 +9,7 @@ import 'trace_shell.dart';
 /// Thinking trace (web `ThinkingTrace`): collapsible muted markdown of the
 /// reasoning text.
 class ThinkingTrace extends ConsumerWidget {
-  const ThinkingTrace({
-    super.key,
-    required this.turn,
-    required this.active,
-  });
+  const ThinkingTrace({super.key, required this.turn, required this.active});
 
   final AssistantTurnData turn;
 

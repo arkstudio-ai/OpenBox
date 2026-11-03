@@ -28,12 +28,11 @@ class AppearanceState {
     BossipThemeName? theme,
     ColorMode? mode,
     UiFontSize? fontSize,
-  }) =>
-      AppearanceState(
-        theme: theme ?? this.theme,
-        mode: mode ?? this.mode,
-        fontSize: fontSize ?? this.fontSize,
-      );
+  }) => AppearanceState(
+    theme: theme ?? this.theme,
+    mode: mode ?? this.mode,
+    fontSize: fontSize ?? this.fontSize,
+  );
 }
 
 class AppearanceController extends Notifier<AppearanceState> {
@@ -57,7 +56,8 @@ class AppearanceController extends Notifier<AppearanceState> {
 
   void setMode(ColorMode mode) => _apply(state.copyWith(mode: mode));
 
-  void setFontSize(UiFontSize fontSize) => _apply(state.copyWith(fontSize: fontSize));
+  void setFontSize(UiFontSize fontSize) =>
+      _apply(state.copyWith(fontSize: fontSize));
 
   void setLanguage(String lang) {
     ref.read(i18nProvider.notifier).setLanguage(lang);
@@ -69,7 +69,8 @@ class AppearanceController extends Notifier<AppearanceState> {
     final extra = asMap(prefs['extra']);
     var next = state;
     final theme = asString(prefs['theme']);
-    if (theme != null) next = next.copyWith(theme: BossipThemeNameWire.parse(theme));
+    if (theme != null)
+      next = next.copyWith(theme: BossipThemeNameWire.parse(theme));
     final mode = asString(extra['mode']);
     if (mode != null) next = next.copyWith(mode: ColorModeX.parse(mode));
     final fontSize = asString(extra['fontSize']);
@@ -89,7 +90,9 @@ class AppearanceController extends Notifier<AppearanceState> {
   }
 
   void _persistLocal() {
-    ref.read(prefsProvider).setString(
+    ref
+        .read(prefsProvider)
+        .setString(
           _storageKey,
           jsonEncode({
             'theme': state.theme.wire,
@@ -101,17 +104,19 @@ class AppearanceController extends Notifier<AppearanceState> {
 
   Future<void> _syncServer() async {
     try {
-      await ref.read(apiDioProvider).put<dynamic>(
-        '/api/auth/me/preferences',
-        data: {
-          'theme': state.theme.wire,
-          'extra': {
-            'mode': state.mode.wire,
-            'fontSize': state.fontSize.wire,
-            'locale': ref.read(i18nProvider).language,
-          },
-        },
-      );
+      await ref
+          .read(apiDioProvider)
+          .put<dynamic>(
+            '/api/auth/me/preferences',
+            data: {
+              'theme': state.theme.wire,
+              'extra': {
+                'mode': state.mode.wire,
+                'fontSize': state.fontSize.wire,
+                'locale': ref.read(i18nProvider).language,
+              },
+            },
+          );
     } catch (_) {
       // Best-effort, same as web.
     }
@@ -120,5 +125,5 @@ class AppearanceController extends Notifier<AppearanceState> {
 
 final appearanceProvider =
     NotifierProvider<AppearanceController, AppearanceState>(
-  AppearanceController.new,
-);
+      AppearanceController.new,
+    );

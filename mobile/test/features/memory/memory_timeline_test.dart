@@ -93,11 +93,7 @@ void main() {
           today.subtract(const Duration(hours: 1)),
           owner: 'USER_CONFIRMED',
         ),
-        _memory(
-          'd',
-          '用户对花生过敏',
-          today.subtract(const Duration(days: 40)),
-        ),
+        _memory('d', '用户对花生过敏', today.subtract(const Duration(days: 40))),
       ], timeline: true);
       expect(find.text('今天'), findsOneWidget);
       expect(find.text('昨天'), findsOneWidget);

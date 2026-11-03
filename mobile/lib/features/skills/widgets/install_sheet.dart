@@ -20,13 +20,12 @@ class InstallChoice {
 
 Map<String, Map<String, String>> _collect(
   Map<String, Map<String, TextEditingController>> controllers,
-) =>
-    {
-      for (final server in controllers.entries)
-        server.key: {
-          for (final field in server.value.entries) field.key: field.value.text,
-        },
-    };
+) => {
+  for (final server in controllers.entries)
+    server.key: {
+      for (final field in server.value.entries) field.key: field.value.text,
+    },
+};
 
 /// Confirming a store install, and collecting what the entry needs first
 /// (web `InstallDialog`).
@@ -80,8 +79,10 @@ class _InstallSheetState extends ConsumerState<InstallSheet> {
     ];
   }
 
-  List<String> get _selected =>
-      [for (final m in _missing) if (!_cleared.contains(m.id)) m.id];
+  List<String> get _selected => [
+    for (final m in _missing)
+      if (!_cleared.contains(m.id)) m.id,
+  ];
 
   /// Every server about to be installed that wants credentials — the target
   /// itself when installing an MCP entry, plus each selected dependency.
@@ -202,7 +203,8 @@ class DependencySheet extends ConsumerStatefulWidget {
   final void Function(
     List<SkillDependency> deps,
     Map<String, Map<String, String>> env,
-  ) onConfirm;
+  )
+  onConfirm;
 
   @override
   ConsumerState<DependencySheet> createState() => _DependencySheetState();
@@ -230,14 +232,16 @@ class _DependencySheetState extends ConsumerState<DependencySheet> {
   List<SkillDependency> get _unknown =>
       widget.deps.where((d) => !d.actionable).toList();
 
-  List<SkillDependency> get _selected =>
-      [for (final d in _actionable) if (!_cleared.contains(d.name)) d];
+  List<SkillDependency> get _selected => [
+    for (final d in _actionable)
+      if (!_cleared.contains(d.name)) d,
+  ];
 
   List<CatalogEntry> get _envNeeded => [
-        for (final dep in _selected)
-          if (dep.catalog != null && dep.catalog!.requiredEnv.isNotEmpty)
-            dep.catalog!,
-      ];
+    for (final dep in _selected)
+      if (dep.catalog != null && dep.catalog!.requiredEnv.isNotEmpty)
+        dep.catalog!,
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -248,15 +252,18 @@ class _DependencySheetState extends ConsumerState<DependencySheet> {
 
     return SkillSheet(
       title: i18n.t('skills:deps.title'),
-      subtitle:
-          i18n.t('skills:deps.subtitle', vars: {'skill': widget.skillName}),
+      subtitle: i18n.t(
+        'skills:deps.subtitle',
+        vars: {'skill': widget.skillName},
+      ),
       busy: widget.busy,
       error: widget.error,
       cancelLabel: i18n.t('skills:deps.later'),
-      canConfirm: _selected.isNotEmpty &&
-          !EnvFields.missingRequired(envNeeded, _env),
-      confirmLabel: i18n
-          .t(widget.busy ? 'skills:deps.working' : 'skills:deps.confirm'),
+      canConfirm:
+          _selected.isNotEmpty && !EnvFields.missingRequired(envNeeded, _env),
+      confirmLabel: i18n.t(
+        widget.busy ? 'skills:deps.working' : 'skills:deps.confirm',
+      ),
       onConfirm: () => widget.onConfirm(_selected, _collect(_env)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -265,9 +272,11 @@ class _DependencySheetState extends ConsumerState<DependencySheet> {
             DependencyCheckRow(
               icon: dep.catalog?.icon,
               title: dep.catalog?.title ?? dep.name,
-              subtitle: i18n.t(dep.configured
-                  ? 'skills:deps.willConnect'
-                  : 'skills:deps.willInstall'),
+              subtitle: i18n.t(
+                dep.configured
+                    ? 'skills:deps.willConnect'
+                    : 'skills:deps.willInstall',
+              ),
               checked: !_cleared.contains(dep.name),
               onChanged: (on) => setState(() {
                 on ? _cleared.remove(dep.name) : _cleared.add(dep.name);
@@ -276,16 +285,16 @@ class _DependencySheetState extends ConsumerState<DependencySheet> {
           if (unknown.isNotEmpty)
             Container(
               margin: const EdgeInsets.only(top: 12),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
               decoration: BoxDecoration(
                 color: t.hairSoft.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(Radii.md),
               ),
               child: Text(
-                i18n.t('skills:deps.unknown', vars: {
-                  'names': unknown.map((d) => d.name).join(', '),
-                }),
+                i18n.t(
+                  'skills:deps.unknown',
+                  vars: {'names': unknown.map((d) => d.name).join(', ')},
+                ),
                 style: TextStyle(
                   fontSize: FontSizes.xs,
                   height: 1.6,

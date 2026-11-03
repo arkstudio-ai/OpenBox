@@ -55,7 +55,9 @@ DiffPreview editPreview(String oldText, String newText, {int maxChanges = 8}) {
   final after = newText.isEmpty ? <String>[] : newText.split('\n');
 
   var head = 0;
-  while (head < before.length && head < after.length && before[head] == after[head]) {
+  while (head < before.length &&
+      head < after.length &&
+      before[head] == after[head]) {
     head += 1;
   }
 

@@ -34,11 +34,13 @@ List<SearchResult> parseSearchResults(Map<String, dynamic>? metadata) {
     if (item is! Map<String, dynamic>) continue;
     final url = _str(item['url']).trim();
     if (url.isEmpty) continue;
-    out.add(SearchResult(
-      title: _str(item['title']).trim(),
-      url: url,
-      snippet: _str(item['snippet']).trim(),
-    ));
+    out.add(
+      SearchResult(
+        title: _str(item['title']).trim(),
+        url: url,
+        snippet: _str(item['snippet']).trim(),
+      ),
+    );
   }
   return out;
 }
@@ -76,8 +78,10 @@ String safeHostname(String url) {
 final _lineNumber = RegExp(r'^\s*\d+\t');
 
 /// Strip the `     12\t` line-number prefix `read` prepends to every line.
-String stripLineNumbers(String text) =>
-    text.split('\n').map((line) => line.replaceFirst(_lineNumber, '')).join('\n');
+String stripLineNumbers(String text) => text
+    .split('\n')
+    .map((line) => line.replaceFirst(_lineNumber, ''))
+    .join('\n');
 
 /// old/new pairs for edit (single) and multiedit (`edits` array) inputs.
 List<DiffEdit> parseEdits(Object? input) {
@@ -125,10 +129,17 @@ List<(String, List<String>)> questionPairs(Map<String, dynamic> metadata) {
   final out = <(String, List<String>)>[];
   for (final (index, question) in questions.indexed) {
     if (question is! String) continue;
-    final answer = answers is List && index < answers.length ? answers[index] : null;
+    final answer = answers is List && index < answers.length
+        ? answers[index]
+        : null;
     out.add((
       question,
-      answer is List ? [for (final a in answer) if (a is String) a] : const <String>[],
+      answer is List
+          ? [
+              for (final a in answer)
+                if (a is String) a,
+            ]
+          : const <String>[],
     ));
   }
   return out;

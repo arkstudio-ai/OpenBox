@@ -690,10 +690,7 @@ void main() {
       f.container.invalidate(assistantWatchProvider(scope));
       await tester.pumpAndSettle();
       expect(find.text('Needs you'), findsOneWidget);
-      expect(
-        find.textContaining('The helper is waiting'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('The helper is waiting'), findsOneWidget);
       expect(find.text('It is asking you'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await _unmount(tester, f);

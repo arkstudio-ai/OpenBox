@@ -66,8 +66,11 @@ class _BrowserTabState extends ConsumerState<BrowserTab> {
         _onFrame,
         onDone: () {
           if (_disposed) return;
-          setState(() => _phase =
-              channel.closeCode == 4004 ? _Phase.noSandbox : _Phase.failed);
+          setState(
+            () => _phase = channel.closeCode == 4004
+                ? _Phase.noSandbox
+                : _Phase.failed,
+          );
         },
         onError: (Object _) {
           if (!_disposed) setState(() => _phase = _Phase.failed);
@@ -146,8 +149,10 @@ class _BrowserTabState extends ConsumerState<BrowserTab> {
     final i18n = ref.watch(i18nProvider);
     if (_phase == _Phase.noSandbox) {
       return Center(
-        child: Text(i18n.t('workbench:sandbox.none'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:sandbox.none'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       );
     }
     return Column(
@@ -169,7 +174,8 @@ class _BrowserTabState extends ConsumerState<BrowserTab> {
                     controller: _url,
                     onSubmitted: (value) {
                       final url = value.trim();
-                      if (url.isNotEmpty) _send({'type': 'navigate', 'url': url});
+                      if (url.isNotEmpty)
+                        _send({'type': 'navigate', 'url': url});
                     },
                     style: TextStyle(
                       fontSize: FontSizes.xs,
@@ -179,13 +185,17 @@ class _BrowserTabState extends ConsumerState<BrowserTab> {
                     ),
                     decoration: InputDecoration(
                       hintText: i18n.t('workbench:browser.placeholder'),
-                      hintStyle:
-                          TextStyle(fontSize: FontSizes.xs, color: t.n500),
+                      hintStyle: TextStyle(
+                        fontSize: FontSizes.xs,
+                        color: t.n500,
+                      ),
                       isDense: true,
                       filled: true,
                       fillColor: t.card,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(Radii.full),
                         borderSide: BorderSide(color: t.hair),

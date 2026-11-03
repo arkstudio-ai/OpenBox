@@ -93,7 +93,9 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
     final chip = group.isPersonal
         ? listingChipFor(group.publicationStatus, group.listing)
         : null;
-    final reason = chip != null && explainsItself(chip) ? group.listingNote : null;
+    final reason = chip != null && explainsItself(chip)
+        ? group.listingNote
+        : null;
     final reasonOpen = _reasons.contains(group.id);
 
     return Padding(
@@ -109,8 +111,10 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                 : group.description,
             warning: missing.isEmpty
                 ? null
-                : i18n.t('skills:mine.missingDependency',
-                    vars: {'names': missing.join(', ')}),
+                : i18n.t(
+                    'skills:mine.missingDependency',
+                    vars: {'names': missing.join(', ')},
+                  ),
             onFixWarning: missing.isEmpty
                 ? null
                 : () => actions.fixDependencies(group.members.first),
@@ -119,8 +123,10 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
             badges: [
               if (group.isPack)
                 SkillBadge(
-                  text: i18n.t('skills:badge.packCount',
-                      count: group.members.length),
+                  text: i18n.t(
+                    'skills:badge.packCount',
+                    count: group.members.length,
+                  ),
                 ),
               if (group.isPersonal) ...[
                 SkillBadge(text: i18n.t('skills:badge.personal')),
@@ -148,11 +154,13 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
               if (group.isPersonal) ...[
                 IconAction(
                   icon: Icons.cloud_upload_outlined,
-                  tooltip: i18n.t(isResubmission(chip)
-                      ? 'skills:action.resubmit'
-                      : group.isPublished
-                          ? 'skills:action.updatePublish'
-                          : 'skills:action.publish'),
+                  tooltip: i18n.t(
+                    isResubmission(chip)
+                        ? 'skills:action.resubmit'
+                        : group.isPublished
+                        ? 'skills:action.updatePublish'
+                        : 'skills:action.publish',
+                  ),
                   disabled: actions.busy,
                   onTap: () => actions.publish(group),
                 ),
@@ -173,9 +181,11 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
               if (group.isPack)
                 IconAction(
                   icon: expanded ? Icons.expand_less : Icons.chevron_right,
-                  tooltip: i18n.t(expanded
-                      ? 'skills:action.collapse'
-                      : 'skills:action.expand'),
+                  tooltip: i18n.t(
+                    expanded
+                        ? 'skills:action.collapse'
+                        : 'skills:action.expand',
+                  ),
                   onTap: () => setState(() {
                     expanded ? _open.remove(group.id) : _open.add(group.id);
                   }),
@@ -208,9 +218,11 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),
                     child: Text(
-                      i18n.t(reasonOpen
-                          ? 'skills:mine.hideReason'
-                          : 'skills:mine.showReason'),
+                      i18n.t(
+                        reasonOpen
+                            ? 'skills:mine.hideReason'
+                            : 'skills:mine.showReason',
+                      ),
                       style: TextStyle(
                         fontSize: FontSizes.xs,
                         color: t.n600,
@@ -225,7 +237,10 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
               open: reasonOpen,
               child: Container(
                 margin: const EdgeInsets.only(left: 22, top: 2),
-                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: t.hairSoft.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(Radii.md),
@@ -263,7 +278,9 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                             Text(
                               member.name,
                               style: TextStyle(
-                                  fontSize: FontSizes.xs, color: t.ink),
+                                fontSize: FontSizes.xs,
+                                color: t.ink,
+                              ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -272,7 +289,9 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                    fontSize: FontSizes.xs, color: t.n600),
+                                  fontSize: FontSizes.xs,
+                                  color: t.n600,
+                                ),
                               ),
                             ),
                           ],

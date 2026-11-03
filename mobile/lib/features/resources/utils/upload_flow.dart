@@ -46,10 +46,10 @@ Future<List<Resource>> pickAndUploadResources(
         ),
       );
     } catch (error) {
-      ref.read(toastProvider.notifier).error(
-            '${ref.read(i18nProvider).t('resources:upload.failed', vars: {
-                  'name': file.name,
-                })} — ${errorText(ref.read(i18nProvider), error)}',
+      ref
+          .read(toastProvider.notifier)
+          .error(
+            '${ref.read(i18nProvider).t('resources:upload.failed', vars: {'name': file.name})} — ${errorText(ref.read(i18nProvider), error)}',
           );
     }
   }

@@ -64,7 +64,9 @@ Future<bool> showCoachMarks(
 }) async {
   final onboarding = ref.read(onboardingProvider.notifier);
   if (!onboarding.shouldShow(guideKey)) return false;
-  final live = steps.where((s) => CoachAnchor.rectOf(s.anchor) != null).toList();
+  final live = steps
+      .where((s) => CoachAnchor.rectOf(s.anchor) != null)
+      .toList();
   if (live.isEmpty) return false;
   final queue = ref.read(guideQueueProvider.notifier);
   if (!queue.claim(guideKey)) return false;
@@ -333,7 +335,8 @@ class _Bubble extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (arrowUp) Transform.translate(offset: const Offset(0, 7), child: arrow),
+        if (arrowUp)
+          Transform.translate(offset: const Offset(0, 7), child: arrow),
         card,
         if (!arrowUp)
           Transform.translate(offset: const Offset(0, -7), child: arrow),

@@ -18,7 +18,12 @@ I18nBundle _bundle() => I18nBundle({
       'model': {'pick': 'Switch model'},
       'videoModel': {'pick': 'Switch video model'},
       'tier': {
-        'chat': {'pick': 'Model tier', 'high': 'Deep', 'medium': 'Pro', 'low': 'Fast'},
+        'chat': {
+          'pick': 'Model tier',
+          'high': 'Deep',
+          'medium': 'Pro',
+          'low': 'Fast',
+        },
         'video': {
           'pick': 'Video tier',
           'high': 'High',
@@ -34,22 +39,53 @@ I18nBundle _bundle() => I18nBundle({
 
 const _config = AppConfig(
   models: [
-    ModelInfo(id: 'openai/gemini-3.8-flash', name: 'Gemini 3.8 Flash', variants: ['low', 'medium', 'high'], defaultVariant: 'medium'),
-    ModelInfo(id: 'openai/qwen3.8-max', name: 'Qwen3.8 Max', variants: ['none', 'low', 'medium', 'xhigh'], defaultVariant: 'xhigh'),
-    ModelInfo(id: 'openai/qwen3.8-flash', name: 'Qwen3.8 Flash', variants: ['none', 'low', 'medium', 'xhigh'], defaultVariant: 'xhigh'),
+    ModelInfo(
+      id: 'openai/gemini-3.8-flash',
+      name: 'Gemini 3.8 Flash',
+      variants: ['low', 'medium', 'high'],
+      defaultVariant: 'medium',
+    ),
+    ModelInfo(
+      id: 'openai/qwen3.8-max',
+      name: 'Qwen3.8 Max',
+      variants: ['none', 'low', 'medium', 'xhigh'],
+      defaultVariant: 'xhigh',
+    ),
+    ModelInfo(
+      id: 'openai/qwen3.8-flash',
+      name: 'Qwen3.8 Flash',
+      variants: ['none', 'low', 'medium', 'xhigh'],
+      defaultVariant: 'xhigh',
+    ),
   ],
   defaultModel: 'openai/gemini-3.8-flash',
   videoModels: [
-    VideoModelInfo(id: 'video-sd-1080p-pro', name: 'SD 1080p Pro', resolutions: ['1080p']),
-    VideoModelInfo(id: 'wan3.0-video', name: 'Wan 3.0', resolutions: ['480p', '720p', '1080p']),
-    VideoModelInfo(id: 'MiniMax-H3', name: 'MiniMax H3', resolutions: ['480p', '512p', '768p', '2k']),
+    VideoModelInfo(
+      id: 'video-sd-1080p-pro',
+      name: 'SD 1080p Pro',
+      resolutions: ['1080p'],
+    ),
+    VideoModelInfo(
+      id: 'wan3.0-video',
+      name: 'Wan 3.0',
+      resolutions: ['480p', '720p', '1080p'],
+    ),
+    VideoModelInfo(
+      id: 'MiniMax-H3',
+      name: 'MiniMax H3',
+      resolutions: ['480p', '512p', '768p', '2k'],
+    ),
   ],
   defaultVideoModel: 'wan3.0-video',
   defaultVideoResolution: '720p',
   modelTiers: ModelTiers(
     chat: [
       ChatTierRow(tier: 'high', model: 'openai/qwen3.8-max', variant: 'xhigh'),
-      ChatTierRow(tier: 'medium', model: 'openai/gemini-3.8-flash', variant: 'medium'),
+      ChatTierRow(
+        tier: 'medium',
+        model: 'openai/gemini-3.8-flash',
+        variant: 'medium',
+      ),
       ChatTierRow(tier: 'low', model: 'openai/qwen3.8-flash', variant: 'low'),
     ],
     video: [
@@ -85,9 +121,9 @@ class _Auth extends AuthController {
   final String role;
   @override
   AuthState build() => AuthState(
-        user: AuthUser(id: 'u1', username: 'u', role: role),
-        isLoading: false,
-      );
+    user: AuthUser(id: 'u1', username: 'u', role: role),
+    isLoading: false,
+  );
 }
 
 Future<ProviderContainer> _open(
@@ -148,8 +184,9 @@ Future<ProviderContainer> _open(
 }
 
 void main() {
-  testWidgets('chat tiers show the resolved model and the default is checked',
-      (tester) async {
+  testWidgets('chat tiers show the resolved model and the default is checked', (
+    tester,
+  ) async {
     await _open(tester, video: false);
     expect(find.text('Deep'), findsOneWidget);
     expect(find.text('Qwen3.8 Max'), findsOneWidget);
@@ -161,22 +198,26 @@ void main() {
     expect(find.text('More models…'), findsNothing);
   });
 
-  testWidgets('a chat tier picks its model and its strength in one tap',
-      (tester) async {
+  testWidgets('a chat tier picks its model and its strength in one tap', (
+    tester,
+  ) async {
     final container = await _open(tester, video: false);
     await tester.tap(find.text('Deep'));
     await tester.pumpAndSettle();
 
     expect(container.read(pickedModelProvider('s1')), 'openai/qwen3.8-max');
     expect(
-      container.read(pickedVariantProvider(reasoningKey('s1', 'openai/qwen3.8-max'))),
+      container.read(
+        pickedVariantProvider(reasoningKey('s1', 'openai/qwen3.8-max')),
+      ),
       const Variant('xhigh'),
     );
     expect(find.byType(ListTile), findsNothing);
   });
 
-  testWidgets('a single-resolution video tier picks the pair outright',
-      (tester) async {
+  testWidgets('a single-resolution video tier picks the pair outright', (
+    tester,
+  ) async {
     final container = await _open(tester, video: true);
     // Deployment wording wins over the UI's; the description and model show.
     expect(find.text('高清'), findsOneWidget);
@@ -191,23 +232,26 @@ void main() {
     expect(find.byType(ListTile), findsNothing);
   });
 
-  testWidgets('a multi-resolution video tier asks, with the price beside each',
-      (tester) async {
-    final container = await _open(tester, video: true);
-    await tester.tap(find.text('Medium'));
-    await tester.pumpAndSettle();
-    expect(find.text('720p · 0.60 credits/s'), findsOneWidget);
-    expect(find.text('1080p · 1.20 credits/s'), findsOneWidget);
-    await tester.tap(find.text('1080p · 1.20 credits/s'));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'a multi-resolution video tier asks, with the price beside each',
+    (tester) async {
+      final container = await _open(tester, video: true);
+      await tester.tap(find.text('Medium'));
+      await tester.pumpAndSettle();
+      expect(find.text('720p · 0.60 credits/s'), findsOneWidget);
+      expect(find.text('1080p · 1.20 credits/s'), findsOneWidget);
+      await tester.tap(find.text('1080p · 1.20 credits/s'));
+      await tester.pumpAndSettle();
 
-    final pick = container.read(pickedVideoProvider('s1'));
-    expect(pick?.modelId, 'wan3.0-video');
-    expect(pick?.resolution, '1080p');
-  });
+      final pick = container.read(pickedVideoProvider('s1'));
+      expect(pick?.modelId, 'wan3.0-video');
+      expect(pick?.resolution, '1080p');
+    },
+  );
 
-  testWidgets('an admin can reach the catalogue behind the tiers',
-      (tester) async {
+  testWidgets('an admin can reach the catalogue behind the tiers', (
+    tester,
+  ) async {
     await _open(tester, video: false, role: 'admin');
     await tester.tap(find.text('More models…'));
     await tester.pumpAndSettle();

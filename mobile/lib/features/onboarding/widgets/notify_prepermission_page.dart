@@ -11,7 +11,10 @@ import '../state/onboarding_store.dart';
 /// L3: explains notifications before the OS dialog. Resolves true when the
 /// person chose to enable (the caller then asks the OS), false on "later".
 /// Returns null when it did not show (already seen, or a guide is busy).
-Future<bool?> showNotifyPrePermission(BuildContext context, WidgetRef ref) async {
+Future<bool?> showNotifyPrePermission(
+  BuildContext context,
+  WidgetRef ref,
+) async {
   final onboarding = ref.read(onboardingProvider.notifier);
   if (!onboarding.shouldShow(Guides.notifyPrePermission)) return null;
   final queue = ref.read(guideQueueProvider.notifier);

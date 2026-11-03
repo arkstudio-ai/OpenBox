@@ -64,19 +64,19 @@ class Resource {
   bool get isAgent => source == 'agent';
 
   static Resource fromJson(Map<String, dynamic> json) => Resource(
-        id: asString(json['id']) ?? '',
-        name: asString(json['name']) ?? '',
-        mime: asString(json['mime']) ?? 'application/octet-stream',
-        size: asInt(json['size']) ?? 0,
-        kind: asString(json['kind']) ?? 'other',
-        source: asString(json['source']) ?? 'user',
-        sandboxPath: asString(json['sandboxPath']) ?? '',
-        url: asString(json['url']) ?? '',
-        projectId: asString(json['projectId']),
-        sessionId: asString(json['sessionId']),
-        status: asString(json['status']) ?? 'ready',
-        createdAt: asDate(json['createdAt']),
-      );
+    id: asString(json['id']) ?? '',
+    name: asString(json['name']) ?? '',
+    mime: asString(json['mime']) ?? 'application/octet-stream',
+    size: asInt(json['size']) ?? 0,
+    kind: asString(json['kind']) ?? 'other',
+    source: asString(json['source']) ?? 'user',
+    sandboxPath: asString(json['sandboxPath']) ?? '',
+    url: asString(json['url']) ?? '',
+    projectId: asString(json['projectId']),
+    sessionId: asString(json['sessionId']),
+    status: asString(json['status']) ?? 'ready',
+    createdAt: asDate(json['createdAt']),
+  );
 }
 
 class ResourcePage {
@@ -91,13 +91,13 @@ class ResourcePage {
   final bool hasMore;
 
   static ResourcePage fromJson(Map<String, dynamic> json) => ResourcePage(
-        items: [
-          for (final item in asList(json['items']))
-            if (item is Map<String, dynamic>) Resource.fromJson(item),
-        ],
-        total: asInt(json['total']) ?? 0,
-        hasMore: asBool(json['hasMore']) ?? false,
-      );
+    items: [
+      for (final item in asList(json['items']))
+        if (item is Map<String, dynamic>) Resource.fromJson(item),
+    ],
+    total: asInt(json['total']) ?? 0,
+    hasMore: asBool(json['hasMore']) ?? false,
+  );
 }
 
 /// Everything that narrows the listing. A record-like value so it can key a
@@ -126,24 +126,23 @@ class ResourceQuery {
     String? q,
     String? sort,
     int? limit,
-  }) =>
-      ResourceQuery(
-        project: project ?? this.project,
-        source: source ?? this.source,
-        kind: kind ?? this.kind,
-        q: q ?? this.q,
-        sort: sort ?? this.sort,
-        limit: limit ?? this.limit,
-      );
+  }) => ResourceQuery(
+    project: project ?? this.project,
+    source: source ?? this.source,
+    kind: kind ?? this.kind,
+    q: q ?? this.q,
+    sort: sort ?? this.sort,
+    limit: limit ?? this.limit,
+  );
 
   Map<String, dynamic> toQueryParameters() => {
-        'project': project,
-        'source': source,
-        'kind': kind,
-        'sort': sort,
-        'limit': limit,
-        if (q.trim().isNotEmpty) 'q': q.trim(),
-      };
+    'project': project,
+    'source': source,
+    'kind': kind,
+    'sort': sort,
+    'limit': limit,
+    if (q.trim().isNotEmpty) 'q': q.trim(),
+  };
 
   @override
   bool operator ==(Object other) =>

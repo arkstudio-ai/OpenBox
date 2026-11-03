@@ -393,3 +393,36 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 - 前台提示词：这类要求当场 `assistant_ask`，回执没有 conversation/url 前不得说"新对话已建好/已递交"。
 
 未改（后续）：结果被作废后的补播、每请求多于一句的进度、任务建立由服务端推一句"任务单已开"（`control_notes.py` 目前故意不播）、G 轮默认落点改为默认空间。
+
+## 13. 通话条：助理页就是通话页（2026-11-03 拍板）
+
+**起因**：App 上"通话页（牌组：对话卡 / 任务单 / 提问）"和"助理页（对话 + 任务单列表 + 提问）"是同一套东西的两种长相，用户说"有点晕"。拍板：**只留助理页**，通话变成助理页顶上的一条。
+
+### 13.1 形态
+
+- **入口**：助理页应用栏的电话按钮。按下直接拨号，不再跳页；通话中再按只是展开通话条。
+- **通话条**（任何页面都在，贴在状态栏下）：细条 44pt——"● 通话中 · 02:14 · 我在听"，静音、挂断、展开/收起箭头。点细条展开/收起。
+- **展开**：细条下面落下半屏（屏高一半）的半透明面板，盖在当前页面上，底下的任务单隐约可见。面板只放**对话文字记录**：
+
+  ```
+  ｜助理名                 ｜      ← 助理的话左对齐，上方小字是用户给助理起的名字（没起叫"助理"）
+  ｜xxxxxx                ｜
+  ｜                   我 ｜      ← 用户的话右对齐，上方小字"我"
+  ｜          xxxxxxxxxx  ｜
+  ```
+
+  正在说的那句跟着变（斜体）；盯现场时帮手的回复也在同一条记录里，小字写"帮手"（客户端按收到那句时 `focus.bound` 标记，`VoiceLine.room`）。面板底部是静音 / 挂断 / 扬声器三个圆钮和本次消耗；往上划或点箭头收起。通话结束时面板显示结束小结（时长、消耗、重拨/充值），关掉即清。
+- **任务单**：不再有通话专用牌组。当前这件活的任务单（列表、任务抽屉、回执里都是同一张卡）上多一行"盯现场"开关（只在通话中且这张卡是 `focus` 任务时出现，`taskCardExtraProvider` 从 app 层注入，chat 不引用 voice）。帮手的提问照旧长在任务单上（§12.2）。
+- **其他页面**：通话中切到别的页面，细条跟着，展开也只是盖在那页上，不跳回助理页。
+
+### 13.2 决定
+
+1. 对话记录只有一路（不再分"通话 / 现场"两个页签），盯现场时帮手的话混排、标"帮手"。
+2. 标签用用户给助理起的名字，没起名写"助理"；用户一侧写"我"（原来是"你"）。
+3. 收起后的细条常驻顶部，不做完全隐藏。
+4. 只做 App；Web 通话窗保持弹窗。
+5. `/app/voice` 路由保留为重定向到助理页（深链、系统通话入口），`VoiceCallPage`、`VoiceCardPanel`、`VoiceConversationCard`、`AssistantRequests` 的 deck 模式删除。
+
+### 13.3 实施记录
+
+**2026-11-03，分支 `feat/call-sheet`**：删掉 `VoiceCallPage`（含 `VoiceCardPanel`、`VoiceOrb`）、`VoiceConversationCard` 和 `AssistantRequests` 的 deck 模式；`/app/voice` 只重定向到助理页。`VoiceCallHost` 改成 Stack：通话中顶部始终是 `VoiceCallBanner`（新增展开/收起箭头，点细条切换 `expanded`），`expanded` 时细条下落下 `VoiceCallSheet`（屏高一半、磨砂半透明、盖在页面上不推内容）：对话记录（`VoiceLine.room` 由 reducer 按收到时的 `focus.bound` 打标，部分更新保留首次标记；标签 = 助理名 / "我" / "帮手"）、三个圆钮、本次消耗、底部拉手；通话结束时同一面板显示结束小结，关掉即清。电话按钮 `openVoiceCall` 原地拨号并展开，不再跳页。"盯现场"开关搬到 `voice_call_sheet.dart` 的 `VoiceRoomSwitch`，经 `shared/widgets/task_card_extra.dart` 的 `taskCardExtraProvider` 在 `main.dart` 注入，`AssistantTaskCard` 在 meta 行下渲染（只在通话中且是 `focus` 任务时出现）。文案：`transcript.you` 改"我"、新增 `transcript.helper`、删 `cards.*`（两端镜像）。测试：新 `voice_call_sheet_test`（原地拨号出面板、左右对齐与帮手标签、上划收起/细条展开/拉手、挂断小结关掉即清、开关只在焦点任务且发 `room`）；host/banner/button 测试改为面板语义；删 page/card panel/deck/conversation card 四个测试文件。坑：面板对页面是 opaque 命中，测试里要先收起才能点到底下的卡；`assistantLabel` 默认是"个人助理"不是"助理"。

@@ -36,18 +36,17 @@ class ResourceFilterBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final projects = ref.watch(resourceProjectsProvider).valueOrNull ??
+    final projects =
+        ref.watch(resourceProjectsProvider).valueOrNull ??
         const <(String, String)>[];
     final selecting = selectedCount > 0;
 
     final projectLabel = switch (query.project) {
       allProjects => i18n.t('resources:scope.allProjects'),
       noProject => i18n.t('resources:scope.unfiled'),
-      final id => projects
-              .where((p) => p.$1 == id)
-              .map((p) => p.$2)
-              .firstOrNull ??
-          i18n.t('resources:scope.allProjects'),
+      final id =>
+        projects.where((p) => p.$1 == id).map((p) => p.$2).firstOrNull ??
+            i18n.t('resources:scope.allProjects'),
     };
 
     return Column(
@@ -65,8 +64,11 @@ class ResourceFilterBar extends ConsumerWidget {
                 active: query.project != allProjects,
                 trailingCaret: true,
                 onTap: () async {
-                  final picked = await showProjectScopeSheet(context, ref,
-                      active: query.project);
+                  final picked = await showProjectScopeSheet(
+                    context,
+                    ref,
+                    active: query.project,
+                  );
                   if (picked != null) {
                     onQueryChanged(query.copyWith(project: picked));
                   }
@@ -97,9 +99,7 @@ class ResourceFilterBar extends ConsumerWidget {
                 label: selecting
                     ? i18n.t('resources:actions.clearSelection')
                     : i18n.t('resources:actions.selectAll'),
-                icon: selecting
-                    ? Icons.deselect
-                    : Icons.select_all,
+                icon: selecting ? Icons.deselect : Icons.select_all,
                 active: false,
                 enabled: selecting || canSelect,
                 onTap: selecting ? onClearSelection : onSelectAll,
@@ -113,8 +113,11 @@ class ResourceFilterBar extends ConsumerWidget {
                 active: query.kind != 'all',
                 trailingCaret: true,
                 onTap: () async {
-                  final picked =
-                      await showKindSheet(context, ref, active: query.kind);
+                  final picked = await showKindSheet(
+                    context,
+                    ref,
+                    active: query.kind,
+                  );
                   if (picked != null) {
                     onQueryChanged(query.copyWith(kind: picked));
                   }
@@ -127,8 +130,11 @@ class ResourceFilterBar extends ConsumerWidget {
                 active: query.sort != 'created',
                 trailingCaret: true,
                 onTap: () async {
-                  final picked =
-                      await showSortSheet(context, ref, active: query.sort);
+                  final picked = await showSortSheet(
+                    context,
+                    ref,
+                    active: query.sort,
+                  );
                   if (picked != null) {
                     onQueryChanged(query.copyWith(sort: picked));
                   }
@@ -137,8 +143,10 @@ class ResourceFilterBar extends ConsumerWidget {
               if (selecting) ...[
                 const SizedBox(width: 6),
                 _Chip(
-                  label: i18n.t('resources:actions.deleteCount',
-                      count: selectedCount),
+                  label: i18n.t(
+                    'resources:actions.deleteCount',
+                    count: selectedCount,
+                  ),
                   icon: Icons.delete_outline,
                   active: false,
                   danger: true,

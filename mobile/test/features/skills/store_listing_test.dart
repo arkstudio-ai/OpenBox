@@ -13,33 +13,31 @@ CatalogEntry entry(
   int installs = 0,
   String? title,
   String description = '',
-}) =>
-    CatalogEntry.fromJson({
-      'id': name,
-      'name': name,
-      'title': title ?? name,
-      'icon': '',
-      'description': description,
-      'installed': false,
-      'origin': ?origin,
-      'featured': featured,
-      'installs_count': installs,
-    }, kind);
+}) => CatalogEntry.fromJson({
+  'id': name,
+  'name': name,
+  'title': title ?? name,
+  'icon': '',
+  'description': description,
+  'installed': false,
+  'origin': ?origin,
+  'featured': featured,
+  'installs_count': installs,
+}, kind);
 
 InstalledSkill personal({
   String? publicationStatus,
   String? listing,
   String? note,
-}) =>
-    InstalledSkill.fromJson({
-      'name': 'mine',
-      'install_dir': 'mine',
-      'source': 'container',
-      'category': 'personal',
-      'publication_status': ?publicationStatus,
-      'listing': ?listing,
-      'listing_note': ?note,
-    });
+}) => InstalledSkill.fromJson({
+  'name': 'mine',
+  'install_dir': 'mine',
+  'source': 'container',
+  'category': 'personal',
+  'publication_status': ?publicationStatus,
+  'listing': ?listing,
+  'listing_note': ?note,
+});
 
 void main() {
   group('listingChipFor', () {
@@ -119,10 +117,11 @@ void main() {
 
     test('shelves run ours, then users, then everyone else', () {
       final shelves = buildStoreShelves(catalog, kind: 'all', query: '');
-      expect(
-        shelves.sections.map((s) => s.origin),
-        ['official', 'community', 'third_party'],
-      );
+      expect(shelves.sections.map((s) => s.origin), [
+        'official',
+        'community',
+        'third_party',
+      ]);
       expect(shelves.total, 4);
     });
 
@@ -144,34 +143,46 @@ void main() {
       expect(shelves.total, 4);
     });
 
-    test('empty sections are dropped, and total survives a fruitless search', () {
-      final shelves = buildStoreShelves(catalog, kind: 'all', query: 'zzz');
-      expect(shelves.sections, isEmpty);
-      expect(shelves.total, 4);
-    });
+    test(
+      'empty sections are dropped, and total survives a fruitless search',
+      () {
+        final shelves = buildStoreShelves(catalog, kind: 'all', query: 'zzz');
+        expect(shelves.sections, isEmpty);
+        expect(shelves.total, 4);
+      },
+    );
 
     test('featured first, then installs, then name', () {
       final shelves = buildStoreShelves(
-        Catalog(skills: [
-          entry('b-popular', origin: 'official', installs: 9),
-          entry('a-quiet', origin: 'official'),
-          entry('c-pinned', origin: 'official', featured: true),
-        ]),
+        Catalog(
+          skills: [
+            entry('b-popular', origin: 'official', installs: 9),
+            entry('a-quiet', origin: 'official'),
+            entry('c-pinned', origin: 'official', featured: true),
+          ],
+        ),
         kind: 'all',
         query: '',
       );
-      expect(
-        shelves.sections.single.entries.map((e) => e.name),
-        ['c-pinned', 'b-popular', 'a-quiet'],
-      );
+      expect(shelves.sections.single.entries.map((e) => e.name), [
+        'c-pinned',
+        'b-popular',
+        'a-quiet',
+      ]);
     });
 
     test('search reaches the fields a person actually types', () {
       final shelves = buildStoreShelves(
-        Catalog(skills: [
-          entry('a', title: 'Browser QA', description: 'drive a real browser'),
-          entry('b', title: 'PDF', description: 'documents'),
-        ]),
+        Catalog(
+          skills: [
+            entry(
+              'a',
+              title: 'Browser QA',
+              description: 'drive a real browser',
+            ),
+            entry('b', title: 'PDF', description: 'documents'),
+          ],
+        ),
         kind: 'all',
         query: 'BROWSER',
       );

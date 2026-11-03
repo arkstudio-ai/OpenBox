@@ -7,6 +7,7 @@ export const ADMIN_SECTIONS = [
   "billing",
   "pricing",
   "trajectories",
+  "examples",
   "notifications",
   "messages",
 ] as const
@@ -25,6 +26,7 @@ export const ADMIN_SECTION_PATHS: Record<AdminSection, string> = {
   billing: paths.adminBilling(),
   pricing: paths.adminPricing,
   trajectories: paths.adminTrajectories(),
+  examples: paths.adminExamples(),
 }
 
 /**

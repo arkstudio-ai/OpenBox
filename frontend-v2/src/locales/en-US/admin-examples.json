@@ -1,0 +1,82 @@
+{
+  "filters": {
+    "label": "Filters",
+    "entry": "Entry",
+    "industry": "Industry",
+    "shopType": "Shop type",
+    "status": "Status",
+    "keyword": "Search",
+    "placeholder": "Title",
+    "all": "All"
+  },
+  "status": {
+    "active": "Active",
+    "disabled": "Disabled"
+  },
+  "column": {
+    "title": "Title",
+    "entry": "Entry",
+    "industry": "Industry / shop type",
+    "tags": "Tags",
+    "rating": "Rating",
+    "status": "Status",
+    "useCount": "Uses",
+    "updatedAt": "Updated",
+    "actions": "Actions"
+  },
+  "action": {
+    "new": "New by hand",
+    "edit": "Edit",
+    "enable": "Enable",
+    "disable": "Disable",
+    "preview": "Preview"
+  },
+  "list": {
+    "empty": "No examples yet. Open a turn in Trajectories and press “Add to examples”, or create one by hand.",
+    "error": "The example library could not be loaded.",
+    "loading": "Loading examples…",
+    "total": "{{count}} in all"
+  },
+  "form": {
+    "collectTitle": "Add to examples",
+    "collectDescription": "These fields came from the session; add the shop type, tags, rating and notes, then save.",
+    "editTitle": "Edit example",
+    "newTitle": "New example by hand",
+    "newDescription": "Outputs and inputs take existing asset ids; paste the review card or prompt into “Recipe”.",
+    "close": "Close",
+    "entry": "Entry",
+    "industry": "Industry",
+    "shopType": "Shop type",
+    "subtype": "Subtype / style (optional)",
+    "subtypePlaceholder": "e.g. dish_closeup, menu_red",
+    "title": "Title",
+    "tags": "Tags",
+    "tagsHint": "Comma separated, up to 12, e.g. visit, evening, ¥30 per head",
+    "rating": "Rating",
+    "ratingHint": "5 = approved on the spot, a template; 3 = structure usable, copy ordinary; 1 = counter-example only",
+    "notes": "Notes",
+    "notesHint": "What is good about it and what the AI should learn (shown to the AI as written)",
+    "recipe": "Recipe (review card / prompt as it was)",
+    "inputs": "Inputs",
+    "outputs": "Outputs",
+    "assetIds": "asset_id, one per line",
+    "source": "Source",
+    "sourceLine": "Session {{session}} · shop {{shop}} · headline {{headline}}",
+    "noAssets": "No output came back. Enter asset ids by hand, or pick another output on the trajectory page.",
+    "loading": "Reading the session…",
+    "loadFailed": "The session could not be read.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Added to the example library",
+    "needTitle": "A title is required",
+    "needOutput": "At least one output is required",
+    "errors": {
+      "EXAMPLE_INVALID": "Classification or asset id is wrong: {{message}}",
+      "SESSION_NOT_FOUND": "Session not found",
+      "default": "Saving failed; try again later"
+    }
+  },
+  "preview": {
+    "unavailable": "Unavailable right now"
+  }
+}

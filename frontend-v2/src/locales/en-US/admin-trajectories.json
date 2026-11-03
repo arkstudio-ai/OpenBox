@@ -979,7 +979,8 @@
         "job": "Background job: {{name}}",
         "artifact": "Output: {{name}}",
         "agent": "Subtask: {{name}}"
-      }
+      },
+      "collectExample": "Add to examples"
     },
     "credits": {
       "none": "No charge"

@@ -396,6 +396,10 @@ describe("轮详情", () => {
     expect(screen.getByRole("link", { name: "lite.turn.backToUser" }).getAttribute("href")).toBe(
       "/app/admin/trajectories/users/user_a?status=failed",
     )
+    // 收进样例库 hands this session to the example library, which owns the collect sheet.
+    expect(screen.getByTestId("lite-collect-example").getAttribute("href")).toBe(
+      "/app/admin/examples?collect=session_1",
+    )
     const raw = within(failed).getByRole("link", { name: /lite.turn.rawRecord/ })
     expect(raw.getAttribute("href")).toBe(
       "/app/admin/trajectories/sessions/session_1?at=40&record=tool%3Apub",

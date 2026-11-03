@@ -213,3 +213,67 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 **③ 只读工具 `light.entries`。** `tool/assistant_tools.py`（READ_TOOLS）、`assistant/reporting.py::ASSISTANT_TOOLS`、`assistant/projection.py::READ_TOOL_IDS` 都已登记；返回与 ① 同源的目录（`light/prompt.py::entries_directory`：id、标题、用途、可用状态及口语标签、链接，外加 ui_mode / plan_id / desktop），只读，不建任务不出卡。
 
 测试：`tests/unit/test_light_assistant_awareness.py`（两种模式的 section 与 `_build_system_prompt` 注入、section 出错不影响提示词、四种 work_type 的 workflow 映射与不出卡、`light_video` 默认 low 与已确认档位保留、`light.entries` 与 section 同源且只读、绑定缺失时的标签）。未做：App 端对助理回复里 `/light/topic/<id>` 链接的点击跳转尚未核实；light-test 未实测。
+
+## 12. 参考样例库（2026-11-04 拍板，PR #142）
+
+创作团队天天给客户做内容；他们把认可的产出收进样例库，AI 做同类活时先翻库，照同行业同门店类型的样例的结构和风格做。**样例只存引用**（asset_id + OSS key），不复制文件。
+
+### 12.1 表 `light_examples`（迁移 `pl28e9f0a1b2`，接 `pk17d8e9f0a1`）
+
+| 列 | 含义 |
+|---|---|
+| `id` | `lex_<ULID>` |
+| `entry_id` | `video` / `menu` / `poster` / `footage_edit` |
+| `industry` | `food` / `beauty` / `retail` / `other`，沿用首条视频表单的枚举 |
+| `shop_type` | 该行业下的门店类型（`backend/light/taxonomy.json`），没有就 `other` |
+| `subtype` | 可选，专题的子类或样式 id（`dish_closeup`、`menu_red`） |
+| `tags` | JSON 字符串数组，≤12 个 |
+| `rating` | 1–5，匹配时优先高分 |
+| `status` | `active` / `disabled`，停用的不参与匹配 |
+| `title` / `notes` | 标题；说明（这条好在哪、AI 该学什么，原样给 AI） |
+| `recipe` | 当时的方案卡（review 卡原文）和生成提示词原文 |
+| `inputs` / `outputs` | JSON `[{asset_id, oss_key, name, mime}]`：输入素材 / 产出 |
+| `source` | JSON `{session_id, job_id, user_id, workspace_id, shop_name, headline}` |
+| `created_by` / `created_at` / `updated_at` | 收录人与时间 |
+| `use_count` | 被注入到提示里的次数（每个会话计一次） |
+
+索引：`(entry_id, industry, shop_type, status)`、`created_at`。ORM 在 `db/models/light_example.py`。
+
+分类字典 `backend/light/taxonomy.json`：四个行业，餐饮 / 美业 / 零售各 6 个常见门店类型 + `other`，每个门店类型带 `keywords`，供后台下拉与店名推断。
+
+### 12.2 收录流程
+
+1. 超管后台 → 轨迹监控 → 某用户 → 某一轮（简明模式）→ 右上「收进样例库」。
+2. 跳到「样例库」页并打开收录抽屉；服务端 `POST /api/admin/examples/prefill {session_id, asset_id?}` 从会话带回：入口（`sessions.light_entry`）、行业和店名（`user_preferences.extra.first_video`）、门店类型（按店名/主打关键词推断）、输入素材（用户附件 file part）、产出（`role` 为 `result`/`final` 的图片与视频 part；传了 `asset_id` 就只取它）、做法（问答检查点里带 `light.step_id` 的最长一张卡 + `video_generate` / `image_gen` / `video_compose` / `footage_analyze` 的 `prompt`）。
+3. 团队只补：门店类型（核对推断）、标签、评分、说明，保存 → `POST /api/admin/examples`。
+4. 也可「手工新建」：直接填已有 asset_id，方案卡原文贴到「做法」。
+
+**评分标准**：5 = 客户当场认可、可直接当模板；4 = 认可但有一处要改；3 = 结构可用、文案一般；2 = 只有某一段可学；1 = 只作反例（一般停用）。只有 ≥3 的值得启用。
+
+### 12.3 接口（`backend/api/admin_examples.py`，鉴权同其他 admin_*：`live_admin`）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/admin/examples/taxonomy` | 分类字典 |
+| GET | `/api/admin/examples?entry_id&industry&shop_type&status&q&limit&offset` | 列表（含 `use_count`） |
+| POST | `/api/admin/examples/prefill` | 从会话预填（不落库） |
+| POST | `/api/admin/examples` | 新建（手工或收录） |
+| GET / PUT | `/api/admin/examples/{id}` | 查看 / 编辑 |
+| POST | `/api/admin/examples/{id}/status` | 启用 / 停用 |
+| GET | `/api/admin/examples/assets/{asset_id}/url` | 后台预览用的短时签名链接 |
+
+新建、编辑、改状态都写审计（`admin.light_example_*`）。
+
+### 12.4 匹配与注入（`backend/light/examples.py`）
+
+- `pick(entry_id, industry, shop_type, tags, limit=3)`：只取 `active`；逐级退化 **同行业同门店类型 → 同行业 → 通用（industry=other）→ 该入口任意**；同一级内按 共享标签数 ↓、评分 ↓、新建时间 ↓ 排序。
+- `shop_context(user_id)`：行业取首条视频表单，没有就取助理档案的 `business`；门店类型按店名 / 主打 / 老板自述里的关键词推断。
+- `examples_fragment(user_id, session)`：专题会话（`light_entry` 为四个入口之一）才注入；渲染「参考样例」小节——每条：标题、行业/门店类型、评分、说明、当时的方案卡/提示词（≤1200 字）、产出的签名链接（12 小时）；结尾三条规则：① 只学结构、节奏和风格，不抄文案店名菜名价格；② 一律换成这家店的真实信息；③ 老板说要不一样就完全不参考。每条样例在一个会话里只计一次 `use_count`。
+- 注入位置：`light/prompt.py::light_mode_fragment` 末尾一行（店名片段之后），随 Light 片段进系统提示；同一会话内文本稳定，不打散提示缓存。
+- `examples_hint(entry_ids, industry=None)`：给助理的一句话（「这类活有同行业样例可参考（做菜单 3 条）…」），由助理感知那条线在 `assistant_section` 里调用。
+
+### 12.5 后台页面（`frontend-v2/src/features/admin-examples`）
+
+导航「样例库」（`/app/admin/examples`）：筛选（入口 / 行业 / 门店类型 / 状态 / 标题）、列表（标题与说明、入口、行业/门店类型、标签、评分、状态、引用次数、更新时间）、「预览」展开做法与产出播放、「编辑」抽屉、「启用/停用」、「手工新建」。轨迹页的「收进样例库」通过 `?collect=<session>&asset=<asset_id>` 打开同一抽屉。
+
+测试：后端 `tests/unit/test_light_examples.py`（分类字典、逐级退化、片段渲染与计数、预填、接口权限与往返）；前端 `features/admin-examples/*.test.tsx`（列表筛选、预览与状态、编辑、收录抽屉、手工新建）。

@@ -219,3 +219,7 @@ cd backend && uv run pytest tests/unit -q -k "skill or plan_shots or lint_prompt
 - 任何需要改 `backend/tool/`、前端或后端的情形。
 - 实拍前报数未得到确认。
 - `question` 工具在目标环境不可用。
+
+## 7. Light 模式例外（2026-10-31）
+
+`ui_mode=light` 的会话（App 功能首页进来的对话专题页，`sessions.light_entry` 非空）按 `LIGHT_MODE_PLAN.md` §4.4 执行：讲稿、分镜、时长、素材合成**一张** review 卡；每张 `question` 卡带 `step_id`（系统提示词给出步骤列表）；开场卡里选定的样子即为本次风格，不再追问；卡上不出现模型名、档位内部名和积分/秒，整条价格由界面按 `entries.json` 的 `price_hint` 显示，agent 不估算积分。SKILL.md 的「Light mode」段是这条例外的落点；其余规则不变，`credit_cap` 仍兜底。

@@ -385,17 +385,13 @@ async def _mark_failed(ctx, error: str | None) -> None:
 # --- messages and notifications -------------------------------------------
 
 async def _say(session_id: str, message_id: str, user_id: str, text: str, *, channel: str = "final") -> None:
-    from models.message import TextPart
-    from session.session import save_part
-    await save_part(TextPart(text=text, channel=channel, session_id=session_id, message_id=message_id),
-                    is_new=True, user_id=user_id)
+    from light.chat import say
+    await say(session_id, message_id, user_id, text, channel=channel)
 
 
 async def _finish_message(session_id: str, message_id: str, user_id: str) -> None:
-    from models.message import MessageInfo
-    from session.session import update_message_info
-    await update_message_info(MessageInfo(id=message_id, session_id=session_id, role="assistant", finish="stop"),
-                              user_id=user_id)
+    from light.chat import finish
+    await finish(session_id, message_id, user_id)
 
 
 async def _notify(user_id: str, workspace_id: str, session_id: str, *, kind: str, name: str = "") -> None:

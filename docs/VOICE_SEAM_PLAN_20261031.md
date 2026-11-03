@@ -366,3 +366,5 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 **F 轮已上线（2026-11-02 19:25，gw2 `20261102-rooms2-9a0b00de`，App 1.0.45 (56)，PR #124 与 #120）。** 系统提示词 PR #123 待随 G 轮合并。真机与真实通话验收仍未做。
 
 **G 轮实施记录（2026-11-03，分支 `feat/task-rooms-g`，与提示词 PR #123 一起）**：`tasks.submit` 新增 `let_user_choose`（默认 false）。默认时不出任何卡：目的地有 `project_id` 就用，没有就按 `placement.project_name`（无则标题）直接找同名或新建项目（`placement._arrange`，同名复用，重试不重复建）；任务 AI 用用户默认；视频 `work_type=video` 未定时按 `other_video`，档位用配置默认视频模型对应的预设（`model_choices.default_video_choice`，无则第一档），受理回执多 `arranged: {project:{id,name,created}, video_tier, video_kind, model}`。只有 `let_user_choose=true` 才走原来的档位/位置/模型卡（代码保留）。助理提示改为"默认直接安排并一句话说明放在哪、什么档"，工具描述同步。任务视图 `execution_session.current_settings` 加 `video_tier`/`video_tier_label`（按配置预设反查），Web/App 任务卡的"项目 · 时间"一行中间显示档位。测试：`test_assistant_placement.py`、`test_voice_video_workflow.py` 各加一项默认不出卡的用例，原有出卡用例显式带 `let_user_choose=True`。
+
+**G 轮已上线（2026-11-03 15:26，gw2 `20261103-rooms3-ad6f1661`，PR #125 + 提示词 #123）。** App 的档位显示随下次发版。下一轮 H（首次引导 + 随时呼出）。

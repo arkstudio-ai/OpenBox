@@ -9,7 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-02 19:25 `20261102-rooms2-9a0b00de`（叫法收口：助理 / 帮手 / 任务单 / 现场；任务卡一个主按钮；通话页卡片栏可拖可收）
+## 当前应用版本：2026-11-03 15:26 `20261103-rooms3-ad6f1661`（交代一件活不再先过两张卡；助理提示精简）
+
+- PR [#123](https://github.com/arkstudio-ai/OpenBox/pull/123)（系统提示词：回复长度上限、助理/帮手/任务单流程说明、五个状态词）与 [#125](https://github.com/arkstudio-ai/OpenBox/pull/125)（G 轮）合并至 `main@ad6f1661`。G 轮：`tasks.submit` 新增 `let_user_choose`（默认 false），默认不出"视频档次""安排这件事"两张卡：有 `project_id` 就用，没有就按提议名找同名或新建项目；任务 AI 用用户默认；视频类型未定按"其他类型视频"，档位用配置默认视频模型的预设（gw2 上是 **快速档 MiniMax-H3-Max-Turbo 768p**）；回执多 `arranged` 字段，助理一句话说明放在哪、什么档；任务视图与 Web 任务卡显示档位。只有用户要自己选时才出卡。见 [VOICE_SEAM_PLAN_20261031.md](VOICE_SEAM_PLAN_20261031.md) 第 12.4 / 12.7 节。
+- **后端补丁 6 个文件**：以线上 `20261102-rooms2-9a0b00de` 为底 COPY `assistant/placement.py`、`model_choices.py`、`reads.py`、`runtime.py`、`tool/assistant_tools.py`、`voice/prompt.py`（`releases/20261103-rooms3-ad6f1661/patch/`），容器内全树比对仅这 6 个文件不同。其中 **`model_choices.py` 与 `assistant_tools.py` 的 `video_tier` 从线上 10-28 的三档旧版（fast/standard/premium）追到 main（五档预设 ultra/high/medium/low/fast + 兼容旧 standard/premium 答案）**；切换后容器内 `catalogue()` 列出五档，默认档解析为 fast。前端从 `main@ad6f1661` 构建（任务卡显示档位）。**线上仍有 16 个未入库文件原样保留。**
+- 切换 `releases/20261103-rooms3-ad6f1661/activate.sh`，三次尝试：① 07:08 UTC 切换完成后被脚本自己的校验回滚——校验里沿用了上一版"保留线上旧 `video_tier` 行"的 `grep -c`，这次该行已换成 main 版本，计数为 0 触发 ERR 回滚，07:10 回到 rooms2（三容器健康，公网 502 约 1 分钟）；② 07:11 修正脚本后重跑，空闲门禁遇到一个正在跑的任务（`session_7YBSFW0B…`）等了 10 分钟；③ 用户指示直接切换，07:24 去掉门禁重跑（`setsid nohup` 启动，云助手会随命令结束回收后台进程），实际开始时门禁已为 0，backend 07:25:24 → worker → frontend 07:26:23 healthy。配置快照 + 两库 dump（业务 123 表、轨迹 44 表）各三份在 `backups/20261103-rooms3-ad6f1661/`；无迁移（仍 `ph95b6c7d8e9`）、无配置变更；三容器重启 0。
+- 验证：`/health` ok，公网 app-build 为新 tag，`/api/environment`、Logto 配置 200，权限/watch 匿名 401；容器内 `SubmitArgs.let_user_choose` 存在、提示词含 `arranged`、`default_video_choice` 解析为 fast；切换后 4 分钟日志无 traceback。未做真实对话验收（下一次用户交办应不再弹档位和位置卡）。
+- App 端：任务卡的档位显示随下次发版（1.0.45 不含）。
+- 回滚：恢复 `releases/20261103-rooms3-ad6f1661/before/docker-compose.override.yml`（三项均为 `20261102-rooms2-9a0b00de`），依次 `docker compose up -d --no-deps backend / trajectory-worker / frontend`；无库回滚。AWS 与高德未发布。
+
+## 历史应用版本：2026-11-02 19:25 `20261102-rooms2-9a0b00de`（叫法收口：助理 / 帮手 / 任务单 / 现场；任务卡一个主按钮；通话页卡片栏可拖可收）
 
 - PR [#120](https://github.com/arkstudio-ai/OpenBox/pull/120)（通话页卡片栏可拖动改高、可收起、字号加一档、当前任务的任务卡页）、[#122](https://github.com/arkstudio-ai/OpenBox/pull/122)（方案第 12 节）、[#124](https://github.com/arkstudio-ai/OpenBox/pull/124)（F 轮）合并至 `main@9a0b00de`。F 轮内容：执行页头部改为"「X」现场 · 帮手在做 / 帮手等你 / 停了 / 做完了 / 出错了"，按钮"回助理"，现场输入框"给这件活加要求…"；任务卡状态统一为五个词（在做 / 等你 / 停了 / 做完了 / 出错了），按状态只出一个主按钮（他在问你 / 去现场 / 再来一轮 / 继续），帮手的提问直接显示在任务卡上；通话页与语音口播改为"盯现场 / 帮手"。见 [VOICE_SEAM_PLAN_20261031.md](VOICE_SEAM_PLAN_20261031.md) 第 12 节。
 - 后端只改两个文案文件：以线上 `20261102-rooms-a9278fd2` 为底 COPY `voice/room.py`、`voice/phrases.py`（`releases/20261102-rooms2-9a0b00de/patch/`），容器内全树比对仅这两个文件不同，导入检查通过。前端从 `main@9a0b00de` 干净归档本机 buildx amd64 构建，经 OSS 中转，`sha256sum -c` 后装载，中转对象已删。**线上 18 个未入库文件仍原样保留。**

@@ -2093,6 +2093,18 @@ async def _execute_validate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             if limit
             else f"daily_submits_used={used} (no limit configured)"
         ),
+        *(
+            # QWH/e 2026-11-03: with the product's own photo as first frame, a
+            # prompt that named it ("纯白色罗技 GPW 二代无线鼠标") made the
+            # model draw a different mouse from the words; "参考图中的鼠标"
+            # kept the one in the picture.
+            ["subject_note=The pictures decide what the subject looks like. In the prompt refer to it only by "
+             "reference (参考图片1的鼠标 / the mouse in the first frame) and write the motion, camera, light and "
+             "setting; a brand, model name, colour or material in the words can make the model replace the "
+             "subject in the picture with one drawn from the words."]
+            if any(role in {"first_frame", "last_frame", "reference_image"} for role in roles)
+            else []
+        ),
         "",
         "Nothing was submitted. Submit with a stable idempotency_key only within the user-approved production scope.",
     ]

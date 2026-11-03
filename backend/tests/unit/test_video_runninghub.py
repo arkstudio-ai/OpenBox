@@ -199,6 +199,8 @@ async def test_validate_checks_explicit_intent_and_reports_asset_bindings(config
             {'asset_id': f'asset-{i}', 'role': role} for i, role in enumerate(roles)
         ]
         assert 'operation=image-to-video' in result.output
+        # e 2026-11-03: naming the product beside its own first frame made the model draw another mouse.
+        assert 'subject_note=' in result.output and '参考图片1的鼠标' in result.output
         assert 'estimated_credits' not in result.metadata and 'credits' not in result.output
     else:
         assert 'estimated_credits' not in result.metadata

@@ -680,3 +680,14 @@ async def test_inside_a_room_handovers_go_to_the_task_and_other_results_are_only
     await bridge.leave_room()
     assert of_type(outbox(bridge), "focus")[-1]["bound"] is False and bridge.room is None
     assert "正在盯「" not in bridge._instructions()
+
+
+async def test_the_rooms_own_finished_report_unbinds_the_call_and_another_tasks_does_not(call):
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await bridge.enter_room({"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"})
+    bridge.state = "user_speaking"
+    await bridge.report("酒吧视频", "三条成片做好了。", "inbox-8", "t2")
+    assert bridge.room is not None  # someone else's result: announced only, still inside
+    await bridge.report("艾薇兰调研", "成片出来了，在素材库。", "inbox-9", "t1")
+    assert bridge.room is None and of_type(outbox(bridge), "focus")[-1]["bound"] is False

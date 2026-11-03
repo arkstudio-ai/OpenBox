@@ -150,4 +150,54 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
+
+  testWidgets(
+    "the focused task's own question sits under its card, not on a page of its own",
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final f = (await tester.runAsync(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final bundle = await I18nBundle.load();
+        return Fixture(
+          prefs,
+          server: DeckApi(),
+          i18n: I18nState(language: 'zh-CN', bundle: bundle),
+        );
+      }))!;
+      addTearDown(f.close);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: f.container,
+          child: MaterialApp(
+            theme: ThemeData(
+              extensions: [
+                BossipTokens.resolve(
+                  BossipThemeName.default_,
+                  Brightness.light,
+                ),
+              ],
+            ),
+            home: Scaffold(
+              body: SizedBox(
+                height: 600,
+                child: AssistantRequests(
+                  scope: scope,
+                  deck: true,
+                  taskCard: const Text('TASK CARD'),
+                  taskSessionId: 'execution',
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Both DeckApi requests belong to session "execution": one page only.
+      expect(find.text('TASK CARD'), findsOneWidget);
+      expect(find.text('Which audience?'), findsOneWidget);
+      expect(find.byKey(const Key('requests-deck-position')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    },
+  );
 }

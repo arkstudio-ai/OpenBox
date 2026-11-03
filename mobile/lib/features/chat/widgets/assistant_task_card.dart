@@ -240,6 +240,7 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
     }.contains(continuation['state']);
     final meta = [
       ?watched?.projectName,
+      ?task.videoTierLabel,
       sinceLabel(task.updatedAt, i18n.language),
     ].where((part) => part.isNotEmpty).join(' · ');
     final body = TextStyle(fontSize: FontSizes.sm, height: 1.5, color: t.n800);

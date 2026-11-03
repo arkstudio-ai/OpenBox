@@ -42,8 +42,14 @@ def new_project_option(card: dict) -> str | None:
     return card.get("new_project_option") or (options[1] if len(options) == 3 else None)
 
 
-async def require_placement(ctx, source, values: dict, *, destination_confirmed: bool = False) -> str | None:
-    """None for an explicit destination; otherwise suspend or return the answered card ID."""
+async def require_placement(ctx, source, values: dict, *, destination_confirmed: bool = False,
+                            ask: bool = True) -> str | None:
+    """None for an explicit destination; otherwise suspend or return the answered card ID.
+
+    ``ask=False`` (VOICE_SEAM_PLAN §12.4): no card. A given project is used as is; without one the proposed
+    project is created now and written into ``values["project_id"]`` (``values["_arranged_project"]`` says so)."""
+    if not ask and not destination_confirmed:
+        return await _arrange(ctx, source, values)
     digest = command_digest(values)
     async with get_db_session() as db:
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
@@ -94,6 +100,34 @@ async def require_placement(ctx, source, values: dict, *, destination_confirmed:
         continuation={"kind": "question", KIND: {"digest": digest, "input": values,
             "project_name": name, "options": options, "new_project_option": new_option}},
         expires_at=None)
+    return None
+
+
+async def _arrange(ctx, source, values: dict) -> None:
+    """Decide the destination without asking: the given project, else the proposed one, created now."""
+    async with get_db_session() as db:
+        main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
+        await _tool_source_locked(db, main, source, "task_create")
+        if values.get("project_id"):
+            project = await _project(db, values["project_id"], ctx.user_id, ctx.workspace_id)
+            values["_arranged_project"] = {"id": project.id, "name": project.name, "created": False}
+            return None
+    proposal = values.get("placement") or {}
+    name = _clean(proposal.get("project_name") or values["title"])
+    if not 1 <= len(name) <= 128:
+        raise AssistantError(400, "ASSISTANT_PROJECT_INVALID", "Propose a project name of 1 to 128 characters")
+    # By name, so a retry of this call finds its project instead of making another; the task command that
+    # follows is the one durable record (the tool call is a tasks.submit, not a projects.create).
+    from assistant.project_tools import _create, existing_project
+    async with get_db_session() as db:
+        found = await existing_project(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, name=name)
+    if found is not None:
+        project_id, project_name, created = found.id, found.name, False
+    else:
+        made = await _create(user_id=ctx.user_id, workspace_id=ctx.workspace_id, name=name, description=None)
+        project_id, project_name, created = made.id, made.name, True
+    values["project_id"] = project_id
+    values["_arranged_project"] = {"id": project_id, "name": project_name, "created": created}
     return None
 
 

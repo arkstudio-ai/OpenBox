@@ -46,6 +46,13 @@ class AssistantTask {
   String? get sessionStatus =>
       asString(asMap(data['execution_session'])['status']);
 
+  /// The business tier of the task's video choice ("快速档"), when it has one.
+  String? get videoTierLabel => asString(
+    asMap(
+      asMap(data['execution_session'])['current_settings'],
+    )['video_tier_label'],
+  );
+
   /// Set once the user stopped following the conversation.
   bool get archived => task['archived_at'] != null;
   DateTime? get updatedAt => asDate(task['updated_at']);

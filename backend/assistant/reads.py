@@ -33,9 +33,31 @@ def _page(rows, limit, render):
 
 def execution_settings(session) -> dict:
     """Current persisted choices, not permission to generate or spend."""
-    return {**{key: getattr(session, key) for key in (
+    value = {**{key: getattr(session, key) for key in (
         "model", "variant", "video_model", "video_resolution", "quality")},
         "scope": "future_submissions", "grants_execution": False}
+    tier = video_tier_of(session.video_model, session.video_resolution)
+    if tier:
+        value.update(tier)  # video_tier + video_tier_label: what the task card shows (VOICE_SEAM_PLAN §12.4)
+    return value
+
+
+def video_tier_of(video_model, video_resolution) -> dict:
+    """The business tier a task's video choice belongs to, by its configured preset, or {}."""
+    if not video_model:
+        return {}
+    try:
+        from api.metadata import _model_tiers
+        from core.config import get_config
+        from core.model_tiers import video_label
+        rows = _model_tiers(get_config())["video"]
+    except Exception:
+        return {}
+    match = next((row for row in rows if row["model"] == video_model and row.get("resolution") == video_resolution),
+                 None) or next((row for row in rows if row["model"] == video_model), None)
+    if match is None:
+        return {}
+    return {"video_tier": match["tier"], "video_tier_label": video_label(match["tier"], match.get("label", ""))}
 
 
 def task_view(task) -> dict:

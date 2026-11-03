@@ -48,7 +48,7 @@ export interface AssistantTaskView {
       reason: string | null
     }
   }
-  execution_session: { id: string; status: SessionStatus }
+  execution_session: { id: string; status: SessionStatus; current_settings?: { video_tier?: string; video_tier_label?: string } | null }
   run_binding: { run_id: string | null; generation: number; phase: string } | null
   latest_result: AssistantResult | null
   latest_submission: {

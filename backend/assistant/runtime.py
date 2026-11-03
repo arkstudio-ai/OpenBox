@@ -246,12 +246,15 @@ if necessary. If it is separate work in a project the user already selected in c
 new conversation there without asking them to repeat that choice. Mere topical similarity is a
 recommendation, not a selected destination. If multiple conversations/projects remain plausible,
 ask a short natural question that distinguishes them; do not create or pick the first/newest one.
-For new work whose destination is unresolved, use tasks.submit with a placement proposal: write
-your own contextual question and a concise proposed project_name. Supply project_id only for a
-genuinely suitable existing project. When no suitable project was found, omit project_id so the
-card offers a new project plus its conversation, without forcing an unrelated default project.
-The placement card is that question; its labels are UI choices, not a required spoken script.
-Interpret a reply in the context of the proposal; no fixed confirmation words are required.
+For new work whose destination is unresolved, use tasks.submit with a placement proposal: a concise
+proposed project_name (and your question, kept for the rare card). Supply project_id only for a
+genuinely suitable existing project; otherwise omit it. By default the server arranges the work at
+once without a card: it uses that project or creates the proposed one, applies the user's default
+task AI and, for video, their default tier, and the receipt's arranged field says what it chose.
+Tell the user in one line what was arranged (「放在视频创作里，快速档」); the task card shows it and
+they can change it there. Only when the user asks to choose the destination, tier or task AI
+themselves, or asks to be asked, set let_user_choose=true: then unresolved choices become cards,
+whose labels are UI choices, not a required spoken script.
 Ordinary questions, exploration and discussion need not become execution tasks. If the user is
 considering an idea rather than asking you to act, discuss it without creating anything.
 When the user commissions a deliverable or asks you to carry work forward, arrange it as a task.
@@ -269,8 +272,8 @@ If source validation rejects a mixed list, no command was applied. Use only the 
 human source IDs if their actual words authorize this action; do not reread task history to repair authority.
 Set destination_confirmed in tasks.submit when those human messages already selected this project;
 resolve that intent from the conversation, including a project just created at their request.
-For new work without an explicit destination, tasks.submit asks where it belongs using the
-placement proposal above. Once answered, repeat
+For new work without an explicit destination, tasks.submit arranges it from the placement proposal
+above (a card only with let_user_choose=true). Once a card is answered, repeat
 the exact original arguments so the server applies their choice; cancel creates nothing.
 Keep existing work in its original task with tasks.followup; never create a new task to bypass a waiting card.
 For failed work, read execution_error from tasks.get/results.read or the error entry in history.read.

@@ -231,6 +231,12 @@ function cardStatus(value: AssistantTaskView, watch: AssistantWatchItem | undefi
     desiredState: value.task.desired_state, pendingQuestions, outcome: result?.outcome })
 }
 
+/** Project · tier · when: the line under the title. */
+function metaLine(value: AssistantTaskView, watch: AssistantWatchItem | undefined, locale?: string): string {
+  return [watch?.project.name, value.execution_session.current_settings?.video_tier_label,
+    sinceLabel(value.task.updated_at, locale)].filter(Boolean).join(" · ")
+}
+
 /** The task, its conversation or its project was deleted: nothing left to show or control. */
 const GONE = new Set(["ASSISTANT_EXECUTION_UNAVAILABLE", "ASSISTANT_TASK_UNAVAILABLE", "ASSISTANT_PROJECT_UNAVAILABLE"])
 
@@ -271,7 +277,7 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
             <StatusPill tone={TASK_STATUS_TONE[status]}>{t(`assistant.status.${status}`)}</StatusPill>
           </div>
           <p className="text-n600 mt-0.5 text-sm">
-            {[watch?.project.name, sinceLabel(task.updated_at, i18n?.language)].filter(Boolean).join(" · ")}
+            {metaLine(value, watch, i18n?.language)}
           </p>
           <CardDetails status={status} summary={summary} value={value}
             note={earlier ? "assistant.card.note.earlier" : taskNote(value, result)} />

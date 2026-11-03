@@ -400,6 +400,9 @@ class StepResult:
     # Public events receive the bounded retry_reason/error strings, never the
     # exception object or its request headers.
     retry_error: Exception | None = None
+    #: A stable code carried by the failing exception (``AssistantError``,
+    #: ``RuntimePreparationUncertain``); the loop prefers it to ``LLM_ERROR``.
+    error_code: str | None = None
     error: str | None = None
     duration: float = 0.0
 
@@ -1480,6 +1483,12 @@ async def process_step(
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)
         error_message = str(e).strip() or type(e).__name__
+        # Desktop preparation failures speak to the user in their own words;
+        # the exact ledger wording stays in the log line below.
+        public_message = getattr(e, "user_message", None)
+        public_message = public_message if isinstance(public_message, str) and public_message.strip() else error_message
+        error_code = getattr(e, "code", None)
+        error_code = error_code if isinstance(error_code, str) and error_code else None
         if retry_msg and not provider_event_received:
             # Classify only. Whether to retry at all, and how long to wait, is
             # retry *policy* — it belongs to the caller that owns the attempt
@@ -1493,11 +1502,12 @@ async def process_step(
                 duration=time.time() - step_start_time,
             )
         log.error("LLM error in session %s: %s", session_id, error_message)
-        assistant_info.error = {"message": error_message}
+        assistant_info.error = {"message": public_message, **({"code": error_code} if error_code else {})}
         await persist_message(assistant_info, user_id=user_id)
         return StepResult(
             outcome=StepOutcome.ERROR,
-            error=error_message,
+            error=public_message,
+            error_code=error_code,
             duration=time.time() - step_start_time,
         )
 

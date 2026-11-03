@@ -176,6 +176,95 @@ async def remote_client(desktop):
         await client.aclose()
 
 
+#: A SandboxClient attribute set once this process has pinned, or ruled out,
+#: its desktop's remote journal. The pin only ever moves from absent to set,
+#: so a positive answer cannot go stale for that client instance.
+JOURNAL_PINNED_ATTR = "_remote_journal_pinned"
+
+
+async def ensure_remote_journal(sandbox, *, user_id):
+    """Pin and bind a v2 Action Server journal the first time a Driver uses a desktop.
+
+    A ``resource_admission_v2`` gate refuses every fenced request that carries
+    no pinned journal (``409 RESOURCE_JOURNAL_CHANGED``), and the pin was
+    otherwise made only by an explicit assistant ``bind`` command that no
+    provisioning step runs for a freshly assigned desktop. On light-test
+    (2026-11-02/03) every sandbox effect on three new per-user desktops ended
+    in ``manual_review`` for exactly this reason, before any command ran.
+
+    Like the command path, the journal is committed before the bind write so
+    a crash cannot adopt a different empty journal later, and the bind uses a
+    stable command ID so a lost reply replays the same receipt. Only the
+    initial open automation epoch is pinned here: every other state stays
+    with the explicit command path and ``validate_locked``. A server without
+    a journal endpoint or protocol (legacy gate) is left alone.
+    """
+    if getattr(sandbox, JOURNAL_PINNED_ATTR, False):
+        return
+    desktop_id, workspace_id = getattr(sandbox, "desktop_id", None), getattr(sandbox, "workspace_id", None)
+    if not isinstance(desktop_id, str) or not desktop_id or not isinstance(workspace_id, str) or not workspace_id:
+        return
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await controls.enroll_desktop_locked(db, desktop_id=desktop_id,
+            workspace_id=workspace_id, user_id=user_id)
+        if row.remote_journal_id is not None:
+            setattr(sandbox, JOURNAL_PINNED_ATTR, True)
+            return
+        if (row.epoch != 1 or row.owner_kind != "automation" or row.owner_id != workspace_id
+                or row.status != "active" or row.admission_state != "open"):
+            return
+        fence, resource_id = asdict(controls.fence_for(row)), row.id
+    try:
+        payload = await sandbox.resource_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {404, 501}:
+            # No journal endpoint: a legacy gate admits unfenced operations.
+            setattr(sandbox, JOURNAL_PINNED_ATTR, True)
+            return
+        raise
+    try:
+        status = verified_status(payload, fence)
+    except AssistantError as exc:
+        if exc.code != "RESOURCE_PROTOCOL_UNAVAILABLE":
+            raise
+        setattr(sandbox, JOURNAL_PINNED_ATTR, True)  # Not a v2 journal: nothing to pin.
+        return
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await controls.locked(db, resource_id)
+        if row is None or asdict(controls.fence_for(row)) != fence:
+            raise controls.unavailable()
+        if row.remote_journal_id is None:
+            row.remote_journal_id, row.updated_at = status.journal_id, await controls.clock(db)
+        elif row.remote_journal_id != status.journal_id:
+            raise conflict("RESOURCE_JOURNAL_CHANGED")
+    command = {**fence, "command_id": f"enrol:{resource_id}:{fence['epoch']}", "journal_id": status.journal_id}
+    result = await sandbox.resource_command("bind", command)
+    observed = verified_status(result, fence, status.journal_id)
+    receipt = result.get("command_receipt")
+    if (not isinstance(receipt, dict)
+            or any(receipt.get(key) != value for key, value in {**command, "action": "bind"}.items())
+            or receipt.get("admission") not in {"open", "closed"} or observed.control is None):
+        raise conflict("RESOURCE_RECEIPT_INVALID")
+    async with get_db_session() as db:
+        await begin_session_write(db)
+        row = await controls.locked(db, resource_id)
+        if row is None or row.remote_journal_id != observed.journal_id:
+            raise conflict("RESOURCE_JOURNAL_CHANGED")
+        stamp = await controls.clock(db)
+        previous = row.remote_status or {}
+        # A delayed bind reply cannot overwrite a newer closed snapshot.
+        if observed.control.admission == "closed" or (previous.get("control") or {}).get("admission") != "closed":
+            row.remote_status = {**observed.model_dump(), "observed_at": stamp.isoformat()}
+        if observed.control.admission == "closed":
+            row.admission_state = "closed"
+            if row.status != "hold":
+                row.status = "draining"
+        row.updated_at = stamp
+    setattr(sandbox, JOURNAL_PINNED_ATTR, True)
+
+
 async def pending_locked(db, command_id):
     initial = await db.get(AssistantCommand, command_id)
     if initial is None or initial.target_type != "resource" or initial.action not in {

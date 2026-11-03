@@ -197,3 +197,19 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 - App 测试包只从 `light-mode` 构建，版本号或构建说明标注 Light 线，不与主线发版混。
 - 2026-11-03：light-test 上所有需要云桌面步骤的回合（做菜单、做海报、任何从桌面读技能目录的回合）此前从未成功过，App 显示「Runtime preparation may have partially completed」。根因不是桌面或连通性，而是桌面 Action Server 的 v2 资源门要求 journal 头、后端从未钉住 journal（只有手工 bind 会钉）；修复为 Driver 首次准备桌面时自动钉住 journal（不 bind：bind 会让门拒绝后端仍不带围栏的通道校验等请求，首版 `6c69a3e1` 因此让三台桌面通道掉线 11 分钟），镜像 `20261103-light-131fadd6`，细节见 `deploy/light-test/README.md`「根因记录」。
 - 主工作树被 Codex 共用，提交照旧走临时 worktree。
+
+## 11. 助理对 Light 的感知（2026-11-04）
+
+11-04 核实：Light 模式下的个人助理不知道自己在 Light、也不知道首页有哪些功能；老板在助理页说"帮我做个菜单"会被按主线交办到云电脑上，免费档没有云电脑就卡住。改法分三处，都在 `backend/`：
+
+**① 模式感知与首页目录（提示词）。** `light/prompt.py::assistant_section(user_id, workspace_id)`，由 `agent/loop.py::_build_system_prompt` 的 `assistant` 分支注入，位置在 `ASSISTANT_PROMPT`、用户画像之后、日期之前（出错只记 warning，不影响助理应答）。任何模式都先写一句「界面模式：Light（功能引导）」或「界面模式：专业。」（`light/mode.py::ui_mode` 读偏好）；专业模式**只有这一句**，主线行为不变。Light 时再列首页目录（`entries_view` 的结果，每个入口一行：标题｜用途｜当前账号状态｜直达链接 `/light/topic/<entry_id>`，即 App 的 `Paths.lightTopic`），状态口径：可用 / 需要云电脑 / 需要绑定抖音 / 需要套餐 / 即将上线。随后三条规则：
+1. 做视频、做菜单、做海报、剪素材这几类活**默认引导老板去首页对应入口并给链接**（首页有样片和一步一卡引导）；只有老板明确说「你直接做」才用 `tasks.submit` 派活，并选对应的 Light 工作类型。
+2. 标「需要云电脑」的入口在没有桌面时说明要先开通云电脑（我的 → 云电脑），不派帮手去撞；「需要绑定抖音」的先引导绑定。
+3. 不出现模型名、档位内部名、积分估算等技术词。
+助理主会话 kind=assistant，不走 `light_mode_fragment`（它只服务 normal 会话），所以单独走这个函数，不改它的门槛。
+
+**② 派活到 Light 技能。** `tasks.submit` 的 `work_type` 新增 `light_video` / `menu` / `poster` / `footage_edit`（`light/work_types.py`，名字与 `light/entries.json` 的入口 id 一致，`video` 入口叫 `light_video` 是为了不和主线「形式未定的 video」撞名；并回主线不用改）。映射到 workflow = 入口的 skill：`light-video` / `menu-maker` / `poster-maker` / `footage-edit`，`assistant/commands.py::VIDEO_WORKFLOW_GUIDANCE` 为每个 workflow 加了开场指引：先加载对应技能、云端完成、不加载 video-production、不用 bash/文件/桌面、一卡一事、不出技术词、成片附上才算完成。`assistant/model_choices.py::light_video_tier`：这四种不出「视频形式」「视频档次」卡（即使带 `let_user_choose`）；`light_video` 默认档位取入口的 `default_tier`（low，缺这档时退到默认档），老板已确认的档位原样保留；其余三种不是视频，不涉及档位。帮手会话是 normal 会话，Light 模式下 `light_mode_fragment` 已会注入 Light 规则，不重复。
+
+**③ 只读工具 `light.entries`。** `tool/assistant_tools.py`（READ_TOOLS）、`assistant/reporting.py::ASSISTANT_TOOLS`、`assistant/projection.py::READ_TOOL_IDS` 都已登记；返回与 ① 同源的目录（`light/prompt.py::entries_directory`：id、标题、用途、可用状态及口语标签、链接，外加 ui_mode / plan_id / desktop），只读，不建任务不出卡。
+
+测试：`tests/unit/test_light_assistant_awareness.py`（两种模式的 section 与 `_build_system_prompt` 注入、section 出错不影响提示词、四种 work_type 的 workflow 映射与不出卡、`light_video` 默认 low 与已确认档位保留、`light.entries` 与 section 同源且只读、绑定缺失时的标签）。未做：App 端对助理回复里 `/light/topic/<id>` 链接的点击跳转尚未核实；light-test 未实测。

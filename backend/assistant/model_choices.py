@@ -86,6 +86,29 @@ def resolve_video_tier(values, inventory):
     values.update(video_model=tier["model"], video_model_confirmed=True, video_resolution=resolution)
 
 
+def light_video_tier(values: dict, inventory: dict, arranged: dict) -> None:
+    """A Light job never shows a format or tier card. ``light_video`` takes the home entry's default tier
+    (``low``) unless the user already confirmed one; the other Light jobs are not videos and carry no tier."""
+    from light.work_types import LIGHT_WORK_TYPES, default_tier
+    work_type = values.get("work_type")
+    if work_type not in LIGHT_WORK_TYPES:
+        return
+    for key in ("model_question", "video_model_question", "video_kind_question"):
+        values.pop(key, None)
+    if values.get("video_model_confirmed") and values.get("video_model"):
+        return
+    tier_id = default_tier(work_type)
+    if not tier_id:
+        return
+    tier = next((row for row in inventory.get("video_tiers") or [] if row["id"] == tier_id), None)
+    choice = ({"video_tier": tier["id"], "video_tier_confirmed": True, "video_model": tier["model"],
+               "video_model_confirmed": True, "video_resolution": tier["resolution"]}
+              if tier else default_video_choice(inventory))
+    if choice:
+        values.update(choice)
+        arranged["video_tier"] = choice.get("video_tier") or choice.get("video_model")
+
+
 def default_video_choice(inventory: dict) -> dict:
     """The video tier to use when nobody chose one (VOICE_SEAM_PLAN §12.4): the preset of the configured default
     video model, else the first preset, else the default model alone; {} when no video model is configured."""
@@ -115,6 +138,7 @@ async def prepare(ctx, source, arguments, *, ask: bool = True):
     inventory = catalogue()
     resolve_video_tier(values, inventory)
     arranged = {}
+    light_video_tier(values, inventory, arranged)
     if not ask:
         if values.get("work_type") == "video":
             values["work_type"] = "other_video"

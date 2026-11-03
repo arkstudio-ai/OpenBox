@@ -3584,7 +3584,16 @@ async def _build_system_prompt(
         from assistant.runtime import ASSISTANT_PROMPT
         # Who this user is to their assistant: its name, how to address them, how they like to be helped.
         section = await user_section(user_id, workspace_id) if user_id and not memory_packet else ""
-        return [ASSISTANT_PROMPT, *([section] if section else []), f"Today's date: {date.today().isoformat()}"]
+        # Which interface the user is in (Light or 专业) and, in Light, the home directory the
+        # assistant should send them to before arranging work (light/prompt.py::assistant_section).
+        try:
+            from light.prompt import assistant_section
+            light_section = await assistant_section(user_id, workspace_id)
+        except Exception as exc:  # the directory is a convenience; the assistant must still answer
+            light_section = ""
+            log.warning(f"assistant light section skipped: {type(exc).__name__}")
+        return [ASSISTANT_PROMPT, *([section] if section else []), *([light_section] if light_section else []),
+                f"Today's date: {date.today().isoformat()}"]
 
     parts = []
 

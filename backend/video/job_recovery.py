@@ -316,7 +316,17 @@ RESUME_PROMPT = (
 )
 
 
-async def resume_conversation(job) -> bool:
+COMPOSE_RESUME_PROMPT = (
+    "系统提示：合成任务 {job_id} 已在后台完成。用 video_compose(action=\"status\", job_id=\"{job_id}\") 取回成片，"
+    "它会把成片挂到对话里；然后按之前的流程简短交付。不要重新提交合成，也不要再向用户索要已经提供过的信息。"
+)
+COMPOSE_FAILED_PROMPT = (
+    "系统提示：合成任务 {job_id} 在后台失败了。用 video_compose(action=\"status\", job_id=\"{job_id}\") 看原因；"
+    "能直接交付的原片就先交付，用一句白话告诉用户发生了什么，不要自行重新提交合成。"
+)
+
+
+async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
     """Wake the conversation that a recovered job belongs to.
 
     The tool tells the model to end its run once a generation outlives the
@@ -347,7 +357,7 @@ async def resume_conversation(job) -> bool:
             session_id=session_id,
             user_id=user_id,
             delivery="followup",
-            prompt=RESUME_PROMPT.format(job_id=job.id),
+            prompt=prompt.format(job_id=job.id),
             client_id=f"vjob:{job.id}",
             system=True,
             origin_ref=reference,

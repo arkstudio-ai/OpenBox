@@ -67,6 +67,26 @@ abstract final class Paths {
 
   static String chat(String sessionId) => '/app/s/$sessionId';
 
+  /// Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): four tabs on a stateful
+  /// shell, outside `/app` so the pro route tree stays exactly as it is.
+  /// `home` is the mode's own start; `lightAssistant` / `lightInbox` embed the
+  /// personal assistant and the message centre; `me` holds the account.
+  static const String home = '/home';
+  static const String lightAssistant = '/assistant';
+  static const String lightInbox = '/inbox';
+  static const String me = '/me';
+  static const List<String> lightTabs = [home, lightAssistant, lightInbox, me];
+  static bool isLightTab(String path) => lightTabs.contains(path);
+
+  /// The topic pages (docs `LIGHT_MODE_PLAN.md` §4.4) sit on the root
+  /// navigator above the tabs: the sample gallery of one entry, then the
+  /// guided conversation it started.
+  static String lightTopic(String entryId) =>
+      '/light/topic/${Uri.encodeComponent(entryId)}';
+  static String lightChat(String sessionId) => '/light/s/$sessionId';
+  static bool isLightPath(String path) =>
+      isLightTab(path) || path.startsWith('/light/');
+
   static const String cron = '/app/cron';
 
   static const String skills = '/app/skills';

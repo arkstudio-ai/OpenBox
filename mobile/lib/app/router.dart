@@ -41,6 +41,8 @@ import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/api/first_video_entry.dart';
+import '../shared/api/ui_mode_store.dart';
+import '../shared/models/ui_mode.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
@@ -48,6 +50,7 @@ import 'auth_center_route.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
 import 'knowledge_routes.dart';
+import 'light_routes.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -55,6 +58,12 @@ import 'workspace_shell.dart';
 class _AuthRefresh extends ChangeNotifier {
   _AuthRefresh(Ref ref) {
     ref.listen<AuthState>(authProvider, (_, _) => notifyListeners());
+    // The interface mode decides which home `/app` and the tabs resolve to;
+    // a late answer from the server (or the Settings switch) re-routes.
+    ref.listen<UiMode>(
+      uiModeProvider.select((s) => s.mode),
+      (_, _) => notifyListeners(),
+    );
     ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (
       before,
       after,
@@ -83,6 +92,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         uri: state.uri,
         introSeen: () => ref.read(introSeenProvider),
         firstVideoEntry: () => ref.read(firstVideoEntryProvider),
+        uiMode: () => ref.read(uiModeProvider).mode,
       );
       final returningHome =
           state.matchedLocation == Paths.landing ||
@@ -155,6 +165,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Paths.app,
         builder: (context, state) => const _EmptyChatRoute(),
       ),
+      // Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): the four tabs and the
+      // topic pages. Lives beside `/app`; `authRedirect` picks the home.
+      lightShellRoute(resources: composerResourceSlot),
+      ...lightRoutes(resources: composerResourceSlot),
       GoRoute(
         path: Paths.assistant,
         builder: (context, state) => _AssistantRoute(

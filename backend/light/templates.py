@@ -13,6 +13,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from light.media import MEDIA_PATTERN, sign_media
+
 FALLBACK_INDUSTRY = "other"
 
 
@@ -21,6 +23,8 @@ class Option(BaseModel):
     id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     label: str = Field(min_length=1, max_length=40)
     description: str = Field(default="", max_length=200)
+    #: A real sample of this template (templates only): a 9:16 clip the App plays from the card.
+    sample_url: str | None = Field(default=None, max_length=1024, pattern=MEDIA_PATTERN)
 
 
 class TemplatePrompt(BaseModel):
@@ -85,8 +89,9 @@ class FirstVideoTemplates(BaseModel):
         return {
             "eta_seconds": self.eta_seconds,
             "duration_seconds": self.duration_seconds,
-            "industries": [option.model_dump() for option in self.industries],
-            "templates": [option.model_dump() for option in self.templates],
+            "industries": [option.model_dump(exclude={"sample_url"}) for option in self.industries],
+            "templates": [{**option.model_dump(), "sample_url": sign_media(option.sample_url)}
+                          for option in self.templates],
         }
 
 

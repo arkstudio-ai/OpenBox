@@ -5,6 +5,7 @@ import '../../../shared/appearance/appearance_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/widgets/ui_mode_switch.dart';
 
 /// Appearance settings (web `AppearancePage`): language (2-col), theme
 /// (2-col cards with temp pill + swatches), color mode (3-col), font size
@@ -22,6 +23,10 @@ class AppearanceSection extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // 界面模式 (Light 模式 T1): which home the account opens in.
+        _sectionLabel(t, i18n.t('light:uiMode.title')),
+        const UiModeSwitch(),
+        const SizedBox(height: 24),
         _sectionLabel(t, i18n.t('settings:appearance.language')),
         Row(
           children: [

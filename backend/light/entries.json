@@ -1,12 +1,12 @@
 {
-  "version": "2026-10-31",
+  "version": "2026-11-02",
   "entries": [
     {
       "id": "video",
       "title": "做一条视频",
       "subtitle": "店内环境 / 餐品展示 / 探店",
       "kind": "primary",
-      "skill": "video-production",
+      "skill": "light-video",
       "default_tier": "low",
       "price_hint": "15 秒省钱档约 4 积分",
       "requires": {},
@@ -41,19 +41,25 @@
               "id": "dish_closeup",
               "label": "烟火气特写",
               "description": "刚出锅的热气与酱汁光泽，一道菜讲到底",
-              "needs": "1–3 张菜品照片"
+              "needs": "1–3 张菜品照片",
+              "media_url": "oss:light/samples/20261102/dish_closeup.mp4",
+              "poster_url": "oss:light/samples/20261102/dish_closeup.jpg"
             },
             {
               "id": "dish_dark",
               "label": "高级感暗调",
               "description": "深色背景、侧光，适合主打菜与套餐",
-              "needs": "1–2 张菜品照片"
+              "needs": "1–2 张菜品照片",
+              "media_url": "oss:light/samples/20261102/dish_dark.mp4",
+              "poster_url": "oss:light/samples/20261102/dish_dark.jpg"
             },
             {
               "id": "dish_fast",
               "label": "快节奏多菜",
               "description": "七八道菜轮着上，热闹丰盛",
-              "needs": "3 张以上菜品照片"
+              "needs": "3 张以上菜品照片",
+              "media_url": "oss:light/samples/20261102/dish_fast.mp4",
+              "poster_url": "oss:light/samples/20261102/dish_fast.jpg"
             }
           ]
         },
@@ -65,19 +71,25 @@
               "id": "shop_evening",
               "label": "傍晚亮灯",
               "description": "从门头推进店内，人气与灯光",
-              "needs": "门头和店内各 1 张"
+              "needs": "门头和店内各 1 张",
+              "media_url": "oss:light/samples/20261102/shop_evening.mp4",
+              "poster_url": "oss:light/samples/20261102/shop_evening.jpg"
             },
             {
               "id": "shop_clean",
               "label": "明亮整洁",
               "description": "白天自然光，突出干净与座位",
-              "needs": "店内 1–2 张"
+              "needs": "店内 1–2 张",
+              "media_url": "oss:light/samples/20261102/shop_clean.mp4",
+              "poster_url": "oss:light/samples/20261102/shop_clean.jpg"
             },
             {
               "id": "shop_busy",
               "label": "满座人气",
               "description": "用餐高峰的热闹（人物只用中远景）",
-              "needs": "店内 1 张"
+              "needs": "店内 1 张",
+              "media_url": "oss:light/samples/20261102/shop_busy.mp4",
+              "poster_url": "oss:light/samples/20261102/shop_busy.jpg"
             }
           ]
         },
@@ -89,19 +101,25 @@
               "id": "visit_walk",
               "label": "边走边吃",
               "description": "门头 → 点餐 → 上菜 → 收尾的第一视角",
-              "needs": "门头、菜品各 1 张"
+              "needs": "门头、菜品各 1 张",
+              "media_url": "oss:light/samples/20261102/visit_walk.mp4",
+              "poster_url": "oss:light/samples/20261102/visit_walk.jpg"
             },
             {
               "id": "visit_recommend",
               "label": "三道必点",
               "description": "三道菜各给一句推荐理由",
-              "needs": "3 张菜品照片"
+              "needs": "3 张菜品照片",
+              "media_url": "oss:light/samples/20261102/visit_recommend.mp4",
+              "poster_url": "oss:light/samples/20261102/visit_recommend.jpg"
             },
             {
               "id": "visit_price",
               "label": "人均多少",
               "description": "围绕价格与分量的实惠感",
-              "needs": "菜品与小票照片"
+              "needs": "菜品与小票照片",
+              "media_url": "oss:light/samples/20261102/visit_price.mp4",
+              "poster_url": "oss:light/samples/20261102/visit_price.jpg"
             }
           ]
         }
@@ -122,7 +140,7 @@
       "title": "做菜单",
       "subtitle": "拍旧菜单，出新菜单",
       "kind": "primary",
-      "skill": "imagegen",
+      "skill": "menu-maker",
       "default_tier": null,
       "price_hint": "约 1 积分 / 版",
       "requires": {},
@@ -157,25 +175,33 @@
               "id": "menu_mono",
               "label": "简约黑白",
               "description": "干净利落，适合快餐与咖啡",
-              "needs": "菜名与价格"
+              "needs": "菜名与价格",
+              "media_url": "oss:light/samples/20261102/menu_mono.jpg",
+              "poster_url": "oss:light/samples/20261102/menu_mono_thumb.jpg"
             },
             {
               "id": "menu_red",
               "label": "烟火红",
               "description": "红底金字，适合中餐与夜宵",
-              "needs": "菜名与价格"
+              "needs": "菜名与价格",
+              "media_url": "oss:light/samples/20261102/menu_red.jpg",
+              "poster_url": "oss:light/samples/20261102/menu_red_thumb.jpg"
             },
             {
               "id": "menu_chalk",
               "label": "手写粉笔",
               "description": "黑板风，适合小吃与甜品",
-              "needs": "菜名与价格"
+              "needs": "菜名与价格",
+              "media_url": "oss:light/samples/20261102/menu_chalk.jpg",
+              "poster_url": "oss:light/samples/20261102/menu_chalk_thumb.jpg"
             },
             {
               "id": "menu_dark",
               "label": "深色高级",
               "description": "深色底、细线分栏，适合正餐",
-              "needs": "菜名与价格"
+              "needs": "菜名与价格",
+              "media_url": "oss:light/samples/20261102/menu_dark.jpg",
+              "poster_url": "oss:light/samples/20261102/menu_dark_thumb.jpg"
             }
           ]
         }
@@ -196,7 +222,7 @@
       "title": "做海报",
       "subtitle": "新品 / 节日 / 开业 / 团购",
       "kind": "primary",
-      "skill": "imagegen",
+      "skill": "poster-maker",
       "default_tier": null,
       "price_hint": "每张约 0.5 积分",
       "requires": {},
@@ -227,19 +253,25 @@
               "id": "poster_bold",
               "label": "大字促销",
               "description": "大标题、价格醒目",
-              "needs": "活动一句话"
+              "needs": "活动一句话",
+              "media_url": "oss:light/samples/20261102/poster_bold.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_bold_thumb.jpg"
             },
             {
               "id": "poster_photo",
               "label": "实拍主图",
               "description": "用你的菜品照做主图",
-              "needs": "1 张菜品照片"
+              "needs": "1 张菜品照片",
+              "media_url": "oss:light/samples/20261102/poster_photo.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_photo_thumb.jpg"
             },
             {
               "id": "poster_fresh",
               "label": "手绘清新",
               "description": "插画风，适合甜品饮品",
-              "needs": "活动一句话"
+              "needs": "活动一句话",
+              "media_url": "oss:light/samples/20261102/poster_fresh.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_fresh_thumb.jpg"
             }
           ]
         }

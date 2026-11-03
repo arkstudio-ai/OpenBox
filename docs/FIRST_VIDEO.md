@@ -22,6 +22,7 @@ POST body: { "industry": "food"|"beauty"|"retail"|"other",   // 缺省 other
                       "eta_seconds", "error": {"code","message"}|null }
 ```
 
+- `GET /templates` 的每个模板带 `sample_url`：这一模板的真实样片（签名链接，12 小时；模板文件里写 `oss:<key>`）。App 选模板页的卡片用随包截帧做封面，点播放键拉这条样片。
 - 行业会回写 `assistant_profile.business`（只接受 food / beauty / retail）。
 - 状态存在 `user_preferences.extra.first_video`（独立键；不进 `onboarding`，那张表被手机整体替换）。App 跳过整个流程时写 `PUT /api/auth/me/preferences {"extra":{"first_video":{"status":"skipped"}}}`。
 - **谁进六屏**：注册时后端写 `extra.first_video = {"status":"offered"}`；App 只在 `status == "offered"` 时进六屏。**没有这个键的是上线前的老账号，视为已跳过**，不用回填。`GET /api/first-video` 对 `offered` 返回 `status="none"`。

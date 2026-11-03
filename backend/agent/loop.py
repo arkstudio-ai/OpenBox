@@ -1922,7 +1922,9 @@ async def run_loop(
                 memory_fragment = render_memory_context(memory_bundle)
             if sandbox_error:
                 system.append("Sandbox availability: " + sandbox_error["detail"]
-                    + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools.")
+                    + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools."
+                    + " Cloud tools that need no desktop (video_generate, video_compose, image_gen, question)"
+                    " still work: use them when the task only needs them.")
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
                 strategy=runtime.provider_plan.strategy,

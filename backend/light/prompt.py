@@ -32,6 +32,27 @@ def entry_fragment(entry_id: str | None) -> str:
     return " ".join(lines)
 
 
+async def shop_fragment(user_id: str | None) -> str:
+    """The shop name and headline the owner gave in the first-video form, when there are any."""
+    if not user_id:
+        return ""
+    try:
+        from db.repository.preference_repo import PgPreferenceRepo
+        row = await PgPreferenceRepo().get(user_id)
+    except Exception:
+        return ""
+    extra = (row or {}).get("extra") or {}
+    record = extra.get("first_video") if isinstance(extra, dict) else None
+    if not isinstance(record, dict):
+        return ""
+    name = " ".join(str(record.get("shop_name") or "").split())[:40]
+    headline = " ".join(str(record.get("headline") or "").split())[:40]
+    if not name and not headline:
+        return ""
+    bits = [f"店名「{name}」" if name else "", f"主打「{headline}」" if headline else ""]
+    return "这家店：" + "，".join(bit for bit in bits if bit) + "（老板在首条视频里填的）。"
+
+
 async def light_mode_fragment(user_id: str | None, session) -> str:
     """Empty for ordinary chats; the Light rules (and the entry's steps) for guided ones."""
     if session is None or getattr(session, "kind", "normal") != "normal":
@@ -44,4 +65,7 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     fragment = entry_fragment(entry_id)
     if fragment:
         parts.append(fragment)
+    shop = await shop_fragment(user_id)
+    if shop:
+        parts.append(shop)
     return "\n".join(parts)

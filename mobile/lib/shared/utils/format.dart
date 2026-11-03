@@ -20,6 +20,17 @@ String formatTokens(num tokens) {
 
 String formatCost(num cost) => '\$${cost.toStringAsFixed(cost < 0.1 ? 4 : 2)}';
 
+/// A balance at a glance (Light 模式): one decimal at most, never the
+/// 12-place billing precision. Display only; money math stays on strings.
+String formatCreditsBrief(String? value) {
+  final parsed = value == null ? null : double.tryParse(value.trim());
+  if (parsed == null || !parsed.isFinite) return '—';
+  final rounded = (parsed * 10).floorToDouble() / 10;
+  return rounded == rounded.truncateToDouble()
+      ? rounded.toStringAsFixed(0)
+      : rounded.toStringAsFixed(1);
+}
+
 /// Exact presentation for backend Decimal strings. This normalizes exponent
 /// notation and groups the integer part without ever parsing through `double`.
 String formatCredits(String? value) {

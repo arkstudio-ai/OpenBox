@@ -97,7 +97,8 @@ class _FirstVideoResultPageState extends ConsumerState<FirstVideoResultPage> {
     final sessionId = job.sessionId;
     if (!allowed || sessionId == null || sessionId.isEmpty) {
       toast.info(i18n.t('first_video:result.publishLocked'));
-      context.go(Paths.billing());
+      // Pushed, not replaced: the plans page has no other way back to the video.
+      unawaited(context.push(Paths.billing()));
       return;
     }
     toast.info(i18n.t('first_video:result.publishHint'));

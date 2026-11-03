@@ -50,8 +50,39 @@ def test_entries_config_is_complete():
     video = config.entry("video")
     assert [sub.id for sub in video.subtypes] == ["dish", "shop", "visit"]
     assert "「餐品展示 · 烟火气特写」" in video.opening("dish", "dish_closeup").text
+    assert "「烟火红」" in config.entry("menu").opening("menu_style", "menu_red").text
     assert "{sample}" not in video.opening().text and "「" not in video.opening().text
     assert config.entry("review").requires.binding == "douyin" and config.entry("douyin_publish").requires.desktop
+
+
+def test_private_sample_media_is_signed_when_served():
+    from light.entries import Entry
+    entry = Entry.model_validate({
+        "id": "video", "title": "做一条视频", "kind": "primary", "skill": "video-production",
+        "steps": [{"id": "topic", "label": "选主题"}], "opening_card": {"text": "hi"},
+        "subtypes": [{"id": "dish", "label": "餐品", "samples": [
+            {"id": "a", "label": "A", "media_url": "oss:light/samples/a.mp4", "poster_url": "oss:light/samples/a.jpg"},
+            {"id": "b", "label": "B", "media_url": "https://cdn.example/b.jpg"},
+        ]}],
+    })
+    samples = entry.public(lambda v: v and v.replace("oss:", "https://signed/"))["subtypes"][0]["samples"]
+    assert samples[0]["media_url"] == "https://signed/light/samples/a.mp4"
+    assert samples[0]["poster_url"] == "https://signed/light/samples/a.jpg"
+    assert samples[1]["media_url"] == "https://cdn.example/b.jpg" and samples[1]["poster_url"] is None
+    assert entry.public()["subtypes"][0]["samples"][0]["media_url"] == "oss:light/samples/a.mp4"
+    with pytest.raises(ValueError):
+        Entry.model_validate({**entry.model_dump(), "subtypes": [{"id": "x", "label": "X", "samples": [
+            {"id": "c", "label": "C", "media_url": "http://plain/c.mp4"}]}]})
+
+
+def test_every_entry_skill_ships_with_the_backend():
+    """An entry pointing at a skill that is not on disk would leave the agent with nothing to read."""
+    from pathlib import Path
+    skills = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
+    for entry in light_entries().entries:
+        if entry.kind == "coming_soon":
+            continue
+        assert (skills / entry.skill / "SKILL.md").is_file(), entry.skill
 
 
 def test_availability_follows_plan_desktop_and_bindings():
@@ -132,7 +163,7 @@ async def test_prompt_fragment_only_for_light_sessions():
     guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=user["default_workspace_id"])
     guided = await update_session(guided.id, user_id=user["id"], light_entry="menu")
     fragment = await light_mode_fragment(user["id"], guided)
-    assert "界面模式：Light" in fragment and "entry_id=menu" in fragment and "style(选样式)" in fragment and "imagegen" in fragment
+    assert "界面模式：Light" in fragment and "entry_id=menu" in fragment and "style(选样式)" in fragment and "menu-maker" in fragment
     await light_mode.set_ui_mode(user["id"], "light")
     plain_light = await light_mode_fragment(user["id"], plain)
     assert "界面模式：Light" in plain_light and "entry_id=" not in plain_light
@@ -177,3 +208,15 @@ async def test_recent_groups_results_by_conversation(monkeypatch):
     assert list(groups) == [newer, older]
     assert [o["kind"] for o in groups[newer]["outputs"]] == ["video_final"] and groups[newer]["entry_id"] == "video"
     assert [o["kind"] for o in groups[older]["outputs"]] == ["generated_image"] and groups[older]["title"] == "海报"
+
+
+async def test_prompt_fragment_names_the_shop_from_the_first_video_form():
+    from db.repository.preference_repo import PgPreferenceRepo
+    from session.session import create_session, update_session
+    user = await _user()
+    guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=user["default_workspace_id"])
+    guided = await update_session(guided.id, user_id=user["id"], light_entry="video")
+    assert "店名" not in await light_mode_fragment(user["id"], guided)
+    await PgPreferenceRepo().upsert(user["id"], extra={"first_video": {"status": "ready", "shop_name": "巷口面馆", "headline": "红烧牛肉面"}})
+    fragment = await light_mode_fragment(user["id"], guided)
+    assert "店名「巷口面馆」" in fragment and "主打「红烧牛肉面」" in fragment and "light-video" in fragment

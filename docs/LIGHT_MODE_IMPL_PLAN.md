@@ -12,7 +12,7 @@
 | M1 首条视频 | 完成，light-test 实测：相册图 → 约 1.5 分钟出片、叠店名；免费档「发到抖音」去开通页 | #107 / #108，收尾在 PR #118 |
 | M2 App Light | 完成：四 tab、首页、样片画廊（16 条真实样片）、专题对话；做视频改用新技能 `light-video`（免费档无桌面可出片），做菜单 `menu-maker`、做海报 `poster-maker`；结果卡「保存 / 发到抖音 / 再做一条」 | #110 / #112，收尾在 PR #118 |
 | M2.5 省心托管 | 完成：结果卡开关 → 三问 → `light_autopilot` cron；只出片无桌面直跑；托管中的事（暂停 / 继续 / 取消）；light-test 手动触发一次 79 秒出片 | PR #119 |
-| M3 你拍我剪 | F1–F9 完成；免费档 5 段（含横拍、HEVC）→ 方案卡 → 60 秒成片、账单两行与方案卡一致；**总耗时约 6 分钟，超 5 分钟线约 1 分钟**（见 `LIGHT_FOOTAGE_EDIT.md` §3–4） | PR C（`claude/light-full-footage`） |
+| M3 你拍我剪 | F1–F9 完成；免费档 5 段（含横拍、HEVC）→ 方案卡 → 成片、账单两行与方案卡一致。首轮约 6 分钟超线；11-03 提速后复验 **上传完成 → 方案卡 40 秒、系统耗时约 1 分 54 秒，5 分钟线达标**（见 `LIGHT_FOOTAGE_EDIT.md` §3.1） | PR C（`claude/light-full-footage`） |
 | M4 衔接 | 未开始（等 PR #60） | — |
 
 测试包：Android 1.1.0 (101)/(102)/(103)，正式签名连 light-test（`MOBILE_RELEASE_1_1_0_101_LIGHT_TEST_20261102.md`）；iOS 未上 TestFlight（内部组自动分发会把运营手机的生产 App 换成测试包，待定）。

@@ -59,6 +59,8 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 3. 机上（云助手）：`curl` + `sha256sum -c` + `docker load` → 改 override 三行 image → `docker compose up -d`（backend 启动自跑 alembic）→ 看 `docker ps` healthy、`alembic current`、`/api/environment`。
 4. 收尾删 `_deploy-tmp/<tag>/`。
 
+发布会重启后端，正在对话的人会被打断。测试员（hjk、jm 等）在用时先 `release.sh --build-only` 构建暂存，等没人在对话、10 分钟内没有其他人发消息、没有在途视频作业时再 `release.sh --ship <tag>`。
+
 ## 发布记录
 
 | 时间 | 镜像 tag | 源码 | 内容 |
@@ -71,7 +73,11 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-02 17:34 | `20261102-light-6e10c68b` | light-full-autopilot | M2.5 省心托管（`/api/light/autopilot`、只出片无桌面执行）|
 | 2026-11-02 17:45 | `20261102-light-20e41c94` | light-full-autopilot | 托管小修 + 文档；对应 Android 1.1.0 (102) |
 | 2026-11-02 18:01 | `20261102-light-6c2d97f0` | light-full-footage | M3 你拍我剪（迁移 `pj06c7d8e9f0` file_assets.meta）；验收见 `docs/LIGHT_FOOTAGE_EDIT.md` §3 |
-| 2026-11-02 18:15 | `20261102-light-57b6928a` | light-full-footage | 字幕 ≤12 字 + 文档；**当前线上**，对应 Android 1.1.0 (103) |
+| 2026-11-02 18:15 | `20261102-light-57b6928a` | light-full-footage | 字幕 ≤12 字 + 文档；对应 Android 1.1.0 (103) |
+| 2026-11-02 19:17 | `20261102-light-38db4a6f` | light-full-footage | 你拍我剪提速一：上传即读素材、合成进程内盯完成、视频意图包按「剪/素材」打开、减帧 |
+| 2026-11-02 晚 | `20261102-light-b9a10d4a` | light-full-footage | 提速二：你拍我剪成片直接贴进对话（无唤醒轮）、视觉回复容错 + 一次重试 |
+| 2026-11-03 15:14 | `20261103-light-edcac2ed` | light-full-footage | 提速三：视觉调用 20 秒没回再问一次、单次 45 秒放弃。**等测试员空闲后才上**（`release.sh --build-only` → `--ship`）；复验 5 段 → 方案卡 40 秒、系统耗时约 1 分 54 秒（`docs/LIGHT_FOOTAGE_EDIT.md` §3.1） |
+| 2026-11-03 15:27 | `20261103-light-7c1a0ab4` | light-full-footage | 时间线嵌套对象（花字 `style` 等）以 JSON 文本传来也能读（复验里白花 33 秒的那处）；**当前线上**，对应 Android 1.1.0 (104) |
 
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
 

@@ -1,6 +1,6 @@
 # 你拍我剪（M3）：spike 结论、实现与验收
 
-> 2026-11-02，11-03 提速后复验。方案 `LIGHT_MODE_PLAN.md` §5，实施拆解 `LIGHT_MODE_IMPL_PLAN.md` §5（F1–F9）。全部在 light-test（后端 `20261102-light-6c2d97f0` 起，提速后 `20261103-light-edcac2ed`）实测。对外文案写 bossip。
+> 2026-11-02，11-03 提速后复验、加配乐。方案 `LIGHT_MODE_PLAN.md` §5，实施拆解 `LIGHT_MODE_IMPL_PLAN.md` §5（F1–F9）。全部在 light-test（后端 `20261102-light-6c2d97f0` 起，提速后 `20261103-light-edcac2ed`）实测。对外文案写 bossip。
 
 ## 1. 三个 spike 的结论
 
@@ -21,7 +21,7 @@
 | F1 媒体探测 | 迁移 `pj06c7d8e9f0`（`file_assets.meta JSON`）、`video/media_probe.py`、`api/assets.py` `/complete` | 视频上传完成后台探测写 `meta`（`duration_sec / width / height`（已按旋转换算显示方向）`/ rotation / orientation / codec / fps / has_audio / media_id`）；`ensure_meta` 按需补探 |
 | F2 采帧 | `tool/footage_analyze.py` | OSS `video/snapshot` 签名链接直接喂视觉模型，每段 4–5 帧（约 3 秒一帧，宽 360），不经桌面、不落盘。**上传即读**：你拍我剪会话里的视频在 `/complete` 时就后台读画面和人声（同一段两者并行），结果缓存在 `file_assets.meta.reading`，agent 调工具时直接取或等在途的那次；视觉调用 20 秒没回就再问一次、先回的算数，单次 45 秒放弃；回复里的围栏、前后说明和尾逗号都能读 |
 | F3 转写 | 同上；`video_transcribe` 放开 `video/*` | fun-asr 读视频 URL；`_dashscope_transcribe` 现在返回 `sentences[{from_sec,to_sec,text}]` |
-| F4 音轨 | `video/timeline.py` `Timeline.audio[]`、`Shot.volume`；`video/ims_compiler.py` | 音床（BGM / 配音）各占一条 `AudioTrack`，超出成片时长自动截；BGM 暂不提供（IMS 公共媒资授权未确认），方案卡写「原声」 |
+| F4 音轨 | `video/timeline.py` `Timeline.audio[]`、`Shot.volume`；`video/ims_compiler.py`；`video/bgm_library.py` | 音床（BGM / 配音）各占一条 `AudioTrack`。**配乐（11-03）**：IMS 公共曲库按 MediaId 引用（`audio[].library_id = icepublic-…`，不落我们的 OSS），曲库按需向 IMS 拉一次缓存一天、拉不到用仓库快照（45 首 8 标签）；比成片短就循环（接缝处淡出淡入，剩不到 4 秒不再起头、在那里淡出结束）、长就截；`duck_under_captions` 在字幕段压低（你拍我剪的字幕只跟人声走）；首尾淡入淡出。只在你拍我剪用，首条视频 / Light 做视频 / 托管不加 |
 | F5 合成完成链 | `video/compose_recovery.py`（阶段 A 已上） | 合成在本轮等待预算外完成时，补扫唤醒对话取回成片。你拍我剪的合成提交后进程内每 4 秒盯一次，完成即把成片直接贴进对话并配固定一句话（不再起一轮 agent）；其他会话仍走唤醒 |
 | F6 费率 | `billing/footage.py`、`rates.json` `media.footage` | 素材分析：整批素材按分钟向上取整，1 积分/分钟，每批只收一次（`footage_analyze:{session}:{素材集合}`）；成片：你拍我剪会话里的合成按阶梯结算（≤60 秒 5、≤180 秒 9、之后每分钟 +2），账单标题「素材分析」「成片」 |
 | F7 技能 | `.openbox/skills/footage-edit/`（SKILL.md + `references/structure-templates.md`） | 不调 `video_generate` / `image_gen`；`footage_analyze` 一次读全部素材 → 一张方案卡（镜头、字幕、花字、原声、两行价格）→ `video_compose`。默认 40–60 秒、≥3 段时每段至少用一次；结构模板写在技能里不再翻参考文件；合成不查 schema，validate 一次就 submit，提交后不等、一句话收尾。说「剪」「素材」或带视频附件就直接带上视频工具（不再先搜工具）；时间线的嵌套对象以 JSON 文本传来也能读 |
@@ -60,10 +60,21 @@
 
 几处改动各省下的时间（来自上面几轮的对比）：上传即读（首轮分析约 70 秒 → 卡片前只剩最后一段的尾巴）；视频意图包按「剪」「素材」和视频附件直接打开（省一次工具搜索 6–15 秒）；减帧到 4–5 帧、宽 360（5 段同读时单段视觉约 30 秒 → 15–25 秒）；视觉二次发问（挂起的那一次从 3 分钟压到 20 秒后有备份）；合成直接贴片（省唤醒轮约 25 秒，补扫最长 2 分钟的等待也不再有）。IMS 本身 21–25 秒，首轮的 2 分 48 秒是排队，没法在我们这边控制。
 
+### 3.2 配乐首跑（2026-11-03 07:43–07:45 UTC，`20261103-light-8c35a62a`，免费档新号 `light-full-1103b`）
+
+拍板：BGM 先用阿里云 IMS 公共素材库（授权工单 000GJSRH00 已提，不等回复）。
+
+- 同样 5 段素材 → 方案卡 40 秒，卡上「声音：原声 + 配乐「Appetizing Acoustics」（美食，说话时自动压低）」，选项多一个「不要配乐」；点「就这么剪」→ 成片贴进对话 48 秒（IMS 21 秒）。价格不变（成片 5 积分）。
+- **IMS 接受 MediaId 引用**：作业 Success；前 9 秒是两段无声门头素材，这段约 −23 dB 的声音全来自配乐。
+- **人声没被压**：每秒响度在有人说话的 9–24 秒、33–36 秒是 −14～−19 dB，只有配乐的段落 −23～−26 dB；成片整条再过一遍转写，两句口播一字不差（「大家好，这里是巷口面馆。」「今天给大家推荐……一碗28块钱。」）。压低区间与字幕对齐（字幕 9.12–23.96 秒 → 配乐 8.92–24.26 秒为 0.1）。
+- 这一跑发现并已修（`20261103-light-2e372886`）：一句 17 字字幕超出画面（IMS `AutoWrap` 不给中文换行）→ 编译时按一行能放下的字数在标点处拆、再均分；40 秒的曲子配 41 秒成片时最后 1 秒又从头起 → 剩不到 4 秒不再循环；模型 validate 通过后 submit 时把花字改成了别的键被拒一次（约 9 秒）→ 技能改为直接 submit（submit 自己校验）；最后一句口播被拆在两个镜头里、断在「晚」字 → 技能写明一句话只放在一个镜头里（这一条靠模型守，没有程序兜底）。
+- 修完用同一条时间线、`2e372886` 的编译器在机上直接重合成复核（不经模型，输出 `oss://bossip/light/spike/20261103/bgm-recheck.mp4`）：IMS Success；那句 17 字字幕拆成「今天给大家推荐我们」「的招牌红烧牛肉面」两条，截帧都在画面内；配乐 4 段止于 40 秒并淡出（39 秒 −48 dB，原来最后 1 秒从头起是 −31 dB）。
+
 ## 4. 未做 / 下一步
 
 - 视觉 JSON 坏掉、二次发问也失败时，那一段只给「画面没读出来」，方案会少用这段；没有观察到，但没有兜底切分。
 - IMS 排队偶发（首轮 2 分 48 秒）：可以试 IMS 的加急或 480p 预览先出，当前没有做。
-- BGM：等 IMS 公共媒资授权或自备曲库后，在方案卡上加「配乐」一行，`Timeline.audio` 已就绪（口播段把音床 `volume` 压到 0.15）。
+- 配乐：IMS 公共素材库授权工单 000GJSRH00 的回复待收；曲库只有英文曲名，卡上显示英文名 + 中文标签。压低是阶跃（段与段之间没有交叉淡化），听感可再调。
+- 一句口播被拆进两个镜头时没有程序兜底，靠技能约束。
 - 口播 TTS（方案 §5.4 第 5 条）未做。
 - 测试机无云电脑：「发到抖音」未在你拍我剪成片上实测。

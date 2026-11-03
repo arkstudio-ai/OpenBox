@@ -719,7 +719,7 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                     from assistant.placement import require_placement, task_input
                     placement = args.placement.model_dump() if args.placement is not None else None
                     # Workflow intent is structured state, not words to match in a prompt.
-                    workflow = "video-production" if args.work_type == "spoken_video" else None
+                    workflow = {"spoken_video": "video-production", "other_video": "video"}.get(args.work_type)
                     values = task_input(project_id=args.project_id,
                         title=args.title, prompt=args.instructions, attachments=args.attachment_ids,
                         model=args.model, continuation=command_args["continuation"], source=source, placement=placement,

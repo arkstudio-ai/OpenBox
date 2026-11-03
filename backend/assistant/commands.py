@@ -34,6 +34,28 @@ from session.internal_parts import begin_session_write
 from session.session import _new_session_record, _publish_session_created
 
 
+# What a new video room is told before its first input. The room has the video
+# tools either way; without this, a non-talking-head video (QWH, 2026-11-03)
+# got a bare brief, wrote a shot list, asked a card, and after the user chose
+# "start producing" replied with a plan and stopped: no video_generate call,
+# nothing charged, while the assistant reported the work as under way.
+VIDEO_WORKFLOWS = frozenset({"video-production", "video"})
+VIDEO_WORKFLOW_GUIDANCE = {
+    "video-production": (
+        "Load the video-production skill before planning or generating this talking-head video. "
+        "Follow its script, material, shot, transcript and delivery review stages. "
+        "Reuse the user's selected models and decisions below; do not ask them again."),
+    "video": (
+        "This is a video production task, not a talking-head piece. Load the video-production skill and use its "
+        "video_generate, video_analyze and video_compose stages for a showcase video; skip the presenter script "
+        "stages and do not force a spoken script. Reuse the user's selected models and decisions below; do not "
+        "ask them again. Once the plan or shot list is accepted (by the user, or because they already approved "
+        "it in the brief), generate the shots and compose the cut in the same turn. The task is done only when a "
+        "playable video exists; a reply that only lists the production steps still to do is not a result, so "
+        "either do them or state plainly that you stopped and why."),
+}
+
+
 @dataclass(frozen=True)
 class ToolSource:
     """IDs supplied by the executor, never model-selectable actor or run IDs."""
@@ -428,7 +450,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if placement is not None:
         digest = command_digest({"base": digest, "placement": placement})
     if workflow is not None:
-        if workflow != "video-production" or task_id:
+        if workflow not in VIDEO_WORKFLOWS or task_id:
             raise AssistantError(400, "ASSISTANT_WORKFLOW_INVALID", "Invalid workflow for new work")
         digest = command_digest({"base": digest, "workflow": workflow})
     if expected_run is not None:
@@ -599,9 +621,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 "video_model": video_model, "video_resolution": video_resolution}
         if workflow:
             origin_ref["workflow"] = workflow
-            prompt = ("Load the video-production skill before planning or generating this talking-head video. "
-                      "Follow its script, material, shot, transcript and delivery review stages. "
-                      "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)
+            prompt = VIDEO_WORKFLOW_GUIDANCE[workflow] + "\n\n" + prompt
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,

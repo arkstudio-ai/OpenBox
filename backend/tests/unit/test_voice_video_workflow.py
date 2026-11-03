@@ -571,3 +571,25 @@ async def test_by_default_a_video_gets_the_default_tier_without_a_card(tiers):
             assert execution.video_model and execution.video_resolution
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_a_non_talking_head_video_room_is_told_to_produce_not_only_plan(tiers):
+    """QWH 2026-11-03: an other_video room got a bare brief, wrote a plan after the user confirmed it and stopped."""
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "做一条讲解合作做法的视频")
+    args = {"project_id": main.project_id, "title": "合作做法讲解视频", "instructions": "先整理讲解文案与分镜方案",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": "video",
+            "model": "test/model", "model_confirmed": True}
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        assert result.get("state") == "accepted", result
+        async with get_db_session() as db:
+            task = await db.get(AssistantTask, result["task_id"])
+            inbound = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == task.execution_session_id))
+            assert inbound.origin_ref.get("workflow") == "video"
+            assert "Load the video-production skill" in inbound.prompt
+            assert "not a talking-head piece" in inbound.prompt
+            assert "a reply that only lists the production steps still to do is not a result" in inbound.prompt
+            assert inbound.prompt.endswith("先整理讲解文案与分镜方案")
+    finally:
+        await lease.release(session_status="idle")

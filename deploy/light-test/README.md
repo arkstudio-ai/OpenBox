@@ -79,7 +79,12 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-03 15:14 | `20261103-light-edcac2ed` | light-full-footage | 提速三：视觉调用 20 秒没回再问一次、单次 45 秒放弃。**等测试员空闲后才上**（`release.sh --build-only` → `--ship`）；复验 5 段 → 方案卡 40 秒、系统耗时约 1 分 54 秒（`docs/LIGHT_FOOTAGE_EDIT.md` §3.1） |
 | 2026-11-03 15:27 | `20261103-light-7c1a0ab4` | light-full-footage | 时间线嵌套对象（花字 `style` 等）以 JSON 文本传来也能读（复验里白花 33 秒的那处）；对应 Android 1.1.0 (104) |
 | 2026-11-03 15:40 | `20261103-light-8c35a62a` | light-full-bgm | 你拍我剪配乐：IMS 公共曲库按 MediaId 引用、循环/截断、说话处压低、首尾淡入淡出；方案卡「配乐」+「不要配乐」 |
-| 2026-11-03 15:52 | `20261103-light-2e372886` | light-full-bgm | 超宽字幕编译时拆行（IMS 不给中文自动换行）、曲子剩不到 4 秒不再循环、技能直接 submit；**当前线上**（App 仍是 1.1.0 (104)，无需新包） |
+| 2026-11-03 15:52 | `20261103-light-2e372886` | light-full-bgm | 超宽字幕编译时拆行（IMS 不给中文自动换行）、曲子剩不到 4 秒不再循环、技能直接 submit（App 仍是 1.1.0 (104)，无需新包） |
+| 2026-11-03 16:41 | `20261103-light-6c69a3e1` | fix/light-test-sandbox-journal-pin | 云桌面步骤修复：Driver 首次准备桌面时自动钉住并 bind Action Server 的 v2 journal（见下「根因记录」）；`RuntimePreparationUncertain` 改为中文提示 + 错误码 `RUNTIME_PREPARATION_UNCERTAIN`；**当前线上** |
+
+## 根因记录
+
+- **2026-11-03 云桌面步骤 46/46 进 `manual_review`（做菜单/做海报「这一轮出错了 · Runtime preparation may have partially completed」）**：本机三台 per-user 桌面（hjk / jm / e，2026-11-02 随订阅自动购买）的 Action Server 是 `2026.10.29-managed-cache-v1`，开着 `resource_admission_v2` 门；带资源围栏头（`X-OpenBox-Resource-*`）但没有 `X-OpenBox-Resource-Journal` 的请求一律 `409 RESOURCE_JOURNAL_CHANGED`。后端只在 `resource_control_leases.remote_journal_id` 已钉住时才带这个头，而钉住此前只能靠 assistant API 手工 `bind`（`POST /api/assistant/resources/{id}/control`），这台机从未做过，三条租约全是 NULL。于是每个 `project_directory` / `catalogue_read` / `tool_execute` 效果都在越过发送边界后约 100 ms 被 409、`attempt_count=1` 无法撤回而进 `outcome_unknown` → 恢复器无 reconciler → `manual_review`。连通性、密钥、桌面上的 `/workspace`、`/opt/openbox/skills` 都没问题（同一请求补上 journal 头即 200）。修复：`backend/assistant/resource_commands.py::ensure_remote_journal`，Driver 首次为某桌面做运行时准备前自动读 `/resource-control/status`、先提交 journal 钉再 `bind`（command id `enrol:<resource>:<epoch>`，可重放），旧式无 journal 的门不受影响；镜像 `20261103-light-6c69a3e1`。gw2 不受此改动影响面：已钉住的租约只多一次 DB 读，无 journal 的桌面只多一次 404 探测。
 
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
 

@@ -18,6 +18,8 @@ from tests.unit.test_assistant_runtime_resource import runtime, rows  # noqa: F4
 def catalogue_transport(runtime):
     ctx, sent, transport, _ = runtime
     async def respond(request):
+        if request.url.path.startswith("/resource-control/"):
+            return await transport(request)  # Legacy gate: nothing to pin.
         await transport(request)  # Real HTTP hooks require durable admission.
         assert request.url.path == "/catalog" and request.method == "GET"
         return httpx.Response(200, headers={"etag": '"fixture-one"'}, json={

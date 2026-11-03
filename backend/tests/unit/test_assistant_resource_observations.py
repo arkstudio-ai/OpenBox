@@ -66,6 +66,8 @@ async def screen(resource, monkeypatch):
     client = SandboxClient("screen.invalid", 80, "fixture-key", desktop_id=enrollment["desktop_id"],
         workspace_id=enrollment["workspace_id"], reuse_connections=True)
     client._transport = httpx.MockTransport(transport)
+    from assistant.resource_commands import JOURNAL_PINNED_ATTR
+    setattr(client, JOURNAL_PINNED_ATTR, True)  # A legacy remote: no journal probe, ``sent`` counts fenced sends.
     ctx = ToolContext(session_id=run.session_id, user_id=run.tenant_id, sandbox=client,
         workspace_id=enrollment["workspace_id"], run_id=run.run_id, run_generation=run.generation)
     fixture = SimpleNamespace(ctx=ctx, sent=sent, raw=raw, geometry=geometry)

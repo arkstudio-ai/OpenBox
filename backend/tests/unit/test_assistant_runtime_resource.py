@@ -30,6 +30,7 @@ from tests.unit.test_assistant_foundation import assistant_database  # noqa: F40
 from tests.unit.test_assistant_resource_control import resource, close, drain, ordinary_running  # noqa: F401
 from tests.unit.test_assistant_resource_gateway import gateway  # noqa: F401
 from tests.unit.test_assistant_resource_commands import remote, accept  # noqa: F401
+from resource_gate import Fence as RemoteFence  # container path is set by the import above
 
 
 async def rows(ctx):
@@ -273,6 +274,85 @@ async def test_real_v2_server_initializes_project_with_pinned_runtime_receipt(ru
     assert row.state == "succeeded" and row.provider_receipt["result"] == {"directory": str(workdir)}
     assert row.safe_context["resource_journal_id"] == remote[1].status()["journal_id"]
     assert row.provider_receipt["remote_exclusivity_verified"] is False
+
+
+def _unpinned(ctx, monkeypatch):
+    """The gateway fixture marks its legacy remote as pinned; these tests probe for real."""
+    from assistant.resource_commands import JOURNAL_PINNED_ATTR
+    monkeypatch.setattr(ctx.sandbox, JOURNAL_PINNED_ATTR, False, raising=False)
+
+
+def _project_paths(tmp_path, monkeypatch):
+    workdir, internal = tmp_path / "project fixture", tmp_path / "internal fixture"
+    monkeypatch.setattr("project.workspace.project_directory", lambda _slug: str(workdir))
+    monkeypatch.setattr("project.workspace.INTERNAL_ROOT", str(internal))
+    monkeypatch.setattr("project.workspace.WORKSPACE_ROOT", str(tmp_path))
+    return workdir, internal
+
+
+async def test_first_runtime_use_pins_and_binds_an_unbound_v2_journal(runtime, remote, resource, tmp_path, monkeypatch):
+    """light-test 2026-11-03: a v2 gate refused every fenced send with 409 because nothing had pinned its journal."""
+    ctx, _, _, manager = runtime
+    _unpinned(ctx, monkeypatch)
+    journal = remote[1]
+    assert journal.status()["control"] is None
+    workdir, internal = _project_paths(tmp_path, monkeypatch)
+    probes = []
+    original = ctx.sandbox.resource_status
+    async def counted():
+        probes.append(True)
+        return await original()
+    monkeypatch.setattr(ctx.sandbox, "resource_status", counted)
+    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    assert workdir.is_dir() and internal.is_dir()
+    row, = await rows(ctx)
+    status = journal.status()
+    assert row.state == "succeeded" and row.safe_context["resource_journal_id"] == status["journal_id"]
+    assert status["control"]["admission"] == "open" and status["control"]["resource_id"] == resource[0].resource_id
+    assert status["control"]["owner_kind"] == "automation" and status["control"]["epoch"] == 1
+    receipt = journal.command_receipt(f"enrol:{resource[0].resource_id}:1")
+    assert receipt["action"] == "bind" and receipt["journal_id"] == status["journal_id"]
+    async with get_db_session() as db:
+        lease = await db.get(ResourceControlLease, resource[0].resource_id)
+    assert lease.remote_journal_id == status["journal_id"]
+    assert lease.remote_status["control"]["admission"] == "open" and lease.admission_state == "open"
+    # The pin is one-way: a second preparation in the same process asks nothing.
+    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    assert len(probes) == 1 and len(await rows(ctx)) == 1
+
+
+async def test_legacy_gate_without_a_journal_is_probed_once_and_never_pinned(runtime, resource, monkeypatch):
+    ctx, sent, _, manager = runtime
+    _unpinned(ctx, monkeypatch)
+    probes = []
+    original = ctx.sandbox.resource_status
+    async def counted():
+        probes.append(True)
+        return await original()
+    monkeypatch.setattr(ctx.sandbox, "resource_status", counted)
+    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    row, = await rows(ctx)
+    assert row.state == "succeeded" and row.safe_context["resource_journal_id"] is None
+    assert len(probes) == 1 and len(sent) == 1
+    async with get_db_session() as db:
+        assert (await db.get(ResourceControlLease, resource[0].resource_id)).remote_journal_id is None
+
+
+async def test_journal_bound_to_another_owner_is_never_adopted_or_sent_to(runtime, remote, resource, tmp_path, monkeypatch):
+    ctx, _, _, manager = runtime
+    _unpinned(ctx, monkeypatch)
+    journal = remote[1]
+    other = RemoteFence("f" * 64, 1, "automation", "someone-else")
+    journal.bind(other, "fixture:other", journal.status()["journal_id"])
+    workdir, _ = _project_paths(tmp_path, monkeypatch)
+    with pytest.raises(AssistantError):
+        await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
+    assert not workdir.exists() and not await rows(ctx)
+    async with get_db_session() as db:
+        lease = await db.get(ResourceControlLease, resource[0].resource_id)
+    assert lease.remote_journal_id is None and lease.remote_status is None
+    assert journal.status()["control"]["owner_id"] == "someone-else"
 
 
 async def set_task_intent(ctx, state):

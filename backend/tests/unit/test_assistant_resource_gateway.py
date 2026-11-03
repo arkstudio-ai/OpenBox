@@ -34,6 +34,10 @@ async def gateway(resource, monkeypatch):
     monkeypatch.setattr("sandbox.entitlement.require_sandbox_subscription", subscribed)
 
     async def transport(request):
+        if request.url.path.startswith("/resource-control/"):
+            # This fixture is a legacy gate: no journal to pin, and the probe
+            # is not a fenced send, so ``sent`` keeps counting only those.
+            return httpx.Response(404, json={"detail": "Not Found"})
         sent.append(request)
         if request.url.path != "/desktop/lease/release":
             async with get_db_session() as db:
@@ -47,6 +51,11 @@ async def gateway(resource, monkeypatch):
     client = SandboxClient("fixture.invalid", 80, "fixture-key", desktop_id=enrollment["desktop_id"],
         workspace_id=enrollment["workspace_id"], reuse_connections=True)
     client._transport = httpx.MockTransport(transport)
+    # This remote is a legacy gate with no journal, and the tests built on it
+    # count fenced sends only. The journal pin has its own tests, which clear
+    # this mark to exercise the probe (test_assistant_runtime_resource).
+    from assistant.resource_commands import JOURNAL_PINNED_ATTR
+    setattr(client, JOURNAL_PINNED_ATTR, True)
     ctx = ToolContext(session_id=run.session_id, user_id=run.tenant_id,
         workspace_id=enrollment["workspace_id"], sandbox=client,
         part_id="fixture-computer-part", run_id=run.run_id, run_generation=run.generation)

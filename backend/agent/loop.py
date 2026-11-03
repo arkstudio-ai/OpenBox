@@ -2915,7 +2915,7 @@ async def run_loop(
                     duration=time.monotonic() - retry_started_at,
                     code=main_budget.error["code"] if main_budget is not None and main_budget.error else
                         candidate_error["code"] if candidate_error is not None else
-                        "LLM_UNAVAILABLE" if exhausted else "LLM_ERROR",
+                        result.error_code or ("LLM_UNAVAILABLE" if exhausted else "LLM_ERROR"),
                     message=(
                         result.error
                         or (

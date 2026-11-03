@@ -138,7 +138,7 @@ Future<(_FakeLightApi, GoRouter)> _mount(
         '/light/topic/:entryId',
         '/app/billing',
         '/app/desktop',
-        '/app/cron',
+        '/light/autopilot',
         '/assistant',
         '/app/billing/:tab',
       ])
@@ -239,7 +239,7 @@ void main() {
     expect(router.state.uri.path, '/home');
     await tester.tap(find.text('所有事都能省心托管'));
     await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/app/cron');
+    expect(router.state.uri.path, '/light/autopilot');
     router.go('/home');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('light-ask')));

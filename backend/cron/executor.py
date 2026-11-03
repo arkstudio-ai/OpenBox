@@ -62,6 +62,13 @@ async def _execute_cron_job(job: dict) -> dict:
         except ValueError:
             return {"status": "skipped", "error": "ASSISTANT_SCHEDULE_COMMAND_REQUIRED"}
 
+    from light import autopilot as light_autopilot
+    if light_autopilot.is_light_autopilot(job) and light_autopilot.runs_without_desktop(job):
+        # 省心托管 that only makes something: a fixed pipeline into the Light
+        # conversation, no desktop and no agent turn (light/autopilot.py).
+        log.info(f"Executing Light autopilot {job_id} ({job_name}) for session {session_id}")
+        return await light_autopilot.run(job)
+
     log.info(f"Executing cron job {job_id} ({job_name}) for session {session_id}")
 
     # Publish start event
@@ -109,6 +116,11 @@ async def _execute_cron_job(job: dict) -> dict:
         # 2. Create temporary session
         if temp_session_id is None:
             temp_session_id = await _create_temp_session(job, locale)
+        if light_autopilot.is_light_autopilot(job):
+            # The person's per-run limit, enforced by the paid tools themselves.
+            from billing.credit_cap import set_cap
+            await set_cap(temp_session_id, light_autopilot.LightAutopilotTemplate.model_validate(
+                job["template"]).credits_cap_per_run)
         temp_trace = trace.derive(source_session_id=temp_session_id) if trace is not None else None
         await _attach_temp_session(run_id, temp_session_id, temp_trace, job)
 
@@ -218,6 +230,14 @@ async def _execute_cron_job(job: dict) -> dict:
 
         ended_at = datetime.now(timezone.utc)
         duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        from sandbox.entitlement import SandboxSubscriptionRequired
+        if isinstance(e, SandboxSubscriptionRequired):
+            # The plan lapsed: a scheduling skip, not a failure that backs off
+            # toward auto-disable (the job resumes when the plan does).
+            await _update_run_entry(run_id, job_id, temp_session_id, status="skipped",
+                                    error_message="SANDBOX_SUBSCRIPTION_REQUIRED", ended_at=ended_at,
+                                    duration_ms=duration_ms)
+            return {"status": "skipped", "error": "SANDBOX_SUBSCRIPTION_REQUIRED", "run_id": run_id}
         if isinstance(e, DesktopNotReady):
             reason = f"DESKTOP_NOT_READY: {e.payload.get('state', 'not_ready')}"
             await _update_run_entry(

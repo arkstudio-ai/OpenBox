@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/api/auth_store.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/light.dart';
+import '../../../shared/models/light_autopilot.dart';
 import '../../../shared/models/session.dart';
 import '../../workspace/state/active_workspace_store.dart';
 import '../api/light_api.dart';
@@ -23,23 +24,30 @@ final lightEntriesProvider = FutureProvider<LightEntriesView>((ref) {
   return ref.watch(lightApiProvider).entries();
 });
 
+/// 省心托管 jobs of the active workspace; invalidated after every change.
+final lightAutopilotsProvider =
+    FutureProvider.autoDispose<List<LightAutopilot>>((ref) {
+      _scope(ref);
+      return ref.watch(lightApiProvider).autopilots();
+    });
+
 /// One entry by id, once the list has answered.
 final lightEntryProvider = Provider.family<LightEntry?, String>(
   (ref, id) => ref.watch(lightEntriesProvider).valueOrNull?.byId(id),
 );
 
 /// 「最近做的」, polled while the home is on screen.
-final lightRecentProvider = FutureProvider.autoDispose<List<LightRecentGroup>>(
-  (ref) {
-    _scope(ref);
-    final timer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => ref.invalidateSelf(),
-    );
-    ref.onDispose(timer.cancel);
-    return ref.watch(lightApiProvider).recent();
-  },
-);
+final lightRecentProvider = FutureProvider.autoDispose<List<LightRecentGroup>>((
+  ref,
+) {
+  _scope(ref);
+  final timer = Timer.periodic(
+    const Duration(seconds: 30),
+    (_) => ref.invalidateSelf(),
+  );
+  ref.onDispose(timer.cancel);
+  return ref.watch(lightApiProvider).recent();
+});
 
 /// Presigned URL of a result for its thumbnail; cached well inside the
 /// hour the link lives.
@@ -104,9 +112,7 @@ final lightConversationsProvider =
       } catch (_) {
         // The assistant's read is a decoration on the list, not the list.
       }
-      final byId = {
-        for (final item in followed) ?asString(item['id']): item,
-      };
+      final byId = {for (final item in followed) ?asString(item['id']): item};
       final rows = [
         for (final session in sessions)
           if (session.kind != 'assistant' && !session.isCron)

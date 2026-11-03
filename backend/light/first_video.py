@@ -17,12 +17,12 @@ died with the process, instead of waking the agent.
 from __future__ import annotations
 
 import asyncio
-import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from core.log import create_logger
+from light import pipeline
+from light.pipeline import Outcome
 from light.templates import first_video_templates
 
 log = create_logger(__name__)
@@ -38,9 +38,6 @@ TERMINAL = ("ready", "failed")
 #: An account with no record at all predates the feature and is treated as skipped.
 OFFERED = "offered"
 STATUSES = ("none", "skipped", "submitted", "running", "ready", "failed")
-MAX_GENERATION_SECONDS = 20 * 60
-MAX_OVERLAY_SECONDS = 5 * 60
-WAIT_SECONDS = 25.0
 
 PENDING_TEXT = "正在为你制作第一条视频，大约需要 {eta} 秒。做好后会通知你。"
 READY_TEXT = "这是你的第一条视频。想改风格、换文案，直接告诉我。"
@@ -53,14 +50,6 @@ _finishing: set[str] = set()
 
 class FirstVideoError(ValueError):
     code = "FIRST_VIDEO_INVALID"
-
-
-@dataclass
-class Outcome:
-    job_id: str | None
-    status: str  # completed | failed | cancelled | timeout | refused
-    asset_id: str | None
-    error: str | None
 
 
 def job_key(workspace_id: str) -> str:
@@ -132,13 +121,6 @@ async def _find_job(user_id: str, kind: str, key: str):
         return (await db.execute(select(VideoJob).where(
             VideoJob.user_id == user_id, VideoJob.kind == kind, VideoJob.idempotency_key == key,
         ))).scalar_one_or_none()
-
-
-async def _load_job(job_id: str):
-    from db.base import get_db_session
-    from db.models.video_job import VideoJob
-    async with get_db_session() as db:
-        return await db.get(VideoJob, job_id)
 
 
 # --- submit ---------------------------------------------------------------
@@ -257,39 +239,14 @@ async def _drive(ctx, *, key: str, prompt: str, reference: str | None, fallback_
 
 
 async def _generate(ctx, *, key: str, prompt: str, reference: str | None) -> Outcome:
-    from tool import video_production as vp
-    from tool.video_production import VideoGenerateArgs, VideoInputRef
     templates = first_video_templates()
-    args = VideoGenerateArgs(
-        action="submit", prompt=prompt, idempotency_key=key, duration=templates.duration_seconds,
-        ratio=templates.ratio, allow_duplicate=True,
-        input_assets=[VideoInputRef(asset_id=reference, role="reference_image")] if reference else [],
-    )
-    result = await vp.execute_generate(args, ctx)
-    meta = result.metadata or {}
-    job_id = meta.get("job_id")
-    if not job_id:
-        return Outcome(None, "refused", None, f"{result.title}: {result.output}"[:400])
-    await _write_pref(ctx.user_id, status="running", job_id=job_id)
-    status, asset_id = meta.get("status"), meta.get("asset_id")
-    deadline = time.monotonic() + MAX_GENERATION_SECONDS
-    while status not in ("completed", "failed", "cancelled") and time.monotonic() < deadline:
-        waited = await vp.execute_generate(
-            VideoGenerateArgs(action="wait", job_id=job_id, wait_seconds=WAIT_SECONDS, wait_iteration=1), ctx)
-        meta = waited.metadata or {}
-        status = meta.get("status") or status
-        asset_id = meta.get("asset_id") or asset_id
-        if status not in ("completed", "failed", "cancelled"):
-            await asyncio.sleep(2)
-    if status == "completed":
-        if not asset_id:
-            job = await _load_job(job_id)
-            asset_id = job.output_asset_id if job else None
-        return Outcome(job_id, "completed", asset_id, None)
-    if status in ("failed", "cancelled"):
-        job = await _load_job(job_id)
-        return Outcome(job_id, status, None, (job.error if job else None) or status)
-    return Outcome(job_id, "timeout", None, "generation did not finish within the inline budget")
+
+    async def submitted(job_id: str) -> None:
+        await _write_pref(ctx.user_id, status="running", job_id=job_id)
+
+    return await pipeline.generate(ctx, key=key, prompt=prompt, reference=reference,
+                                   duration=templates.duration_seconds, ratio=templates.ratio,
+                                   on_submitted=submitted)
 
 
 async def _complete(ctx, outcome: Outcome) -> None:
@@ -333,38 +290,8 @@ async def _deliver(ctx, *, generated_asset_id: str | None, job_id: str) -> None:
 
 
 async def _overlay(ctx, asset_id: str, *, shop_name: str, slogan: str, key: str) -> str | None:
-    from tool.video_compose import VideoComposeArgs, execute_compose
-    templates = first_video_templates()
-    end = float(templates.duration_seconds) - 0.2
-    texts = [{"text": shop_name, "from_sec": 0.6, "to_sec": end, "y": 0.76,
-              "style": {"size": 64, "outline": 4}}]
-    if slogan:
-        texts.append({"text": slogan, "from_sec": 1.2, "to_sec": end, "y": 0.835,
-                      "style": {"size": 38, "outline": 3}})
-    timeline = {"version": 1, "shots": [{"asset": asset_id, "duration_sec": float(templates.duration_seconds)}],
-                "texts": texts}
-    try:
-        result = await execute_compose(VideoComposeArgs(action="submit", timeline=timeline, idempotency_key=key,
-                                                        filename="first-video.mp4"), ctx)
-        meta = result.metadata or {}
-        job_id = meta.get("job_id")
-        if not job_id:
-            log.info("first video: overlay refused user=%s: %s", ctx.user_id, result.title)
-            return None
-        status, out_asset = meta.get("status"), meta.get("asset_id")
-        deadline = time.monotonic() + MAX_OVERLAY_SECONDS
-        while status not in ("completed", "failed", "cancelled") and time.monotonic() < deadline:
-            waited = await execute_compose(
-                VideoComposeArgs(action="wait", job_id=job_id, wait_seconds=WAIT_SECONDS, wait_iteration=1), ctx)
-            meta = waited.metadata or {}
-            status = meta.get("status") or status
-            out_asset = meta.get("asset_id") or out_asset
-            if status not in ("completed", "failed", "cancelled"):
-                await asyncio.sleep(2)
-        return out_asset if status == "completed" else None
-    except Exception as exc:  # the plain clip is still a first video
-        log.warning("first video: overlay failed user=%s error=%s", ctx.user_id, type(exc).__name__)
-        return None
+    return await pipeline.overlay(ctx, asset_id, shop_name=shop_name, slogan=slogan, key=key,
+                                  duration=first_video_templates().duration_seconds, filename="first-video.mp4")
 
 
 async def _mark_failed(ctx, error: str | None) -> None:

@@ -111,7 +111,8 @@
     "admin": "超管系统",
     "signOut": "退出登录",
     "signOutTitle": "确定退出登录？",
-    "cancel": "取消"
+    "cancel": "取消",
+    "autopilot": "托管中的事"
   },
   "uiMode": {
     "title": "界面模式",
@@ -129,5 +130,57 @@
     "againPrompt": "再做一条，换个样子",
     "publishPrompt": "把这条发到抖音",
     "publishLocked": "发布需要云电脑，开通套餐后就能一键发到抖音"
+  },
+  "autopilot": {
+    "switch": "以后省心托管这个",
+    "switchOn": "已托管 · {{when}}",
+    "sheetTitle": "以后省心托管这个",
+    "sheetLede": "到点自动做一条新的，发回这个对话；每次换个镜头，不重样。",
+    "when": "什么时候",
+    "how": "怎么做",
+    "cap": "每次最多花",
+    "repeat": {
+      "daily": "每天",
+      "weekdays": "工作日",
+      "weekly": "每周一"
+    },
+    "mode": {
+      "make_only": "只出片",
+      "make_and_publish": "做好直接发",
+      "publishLocked": "直接发（需要云电脑）"
+    },
+    "capValue": "{{value}} 积分",
+    "capLine": "每次最多 {{value}} 积分",
+    "confirm": "开始托管",
+    "started": "托管上了：{{when}} 自动做一条",
+    "paused": "已暂停，可以在「托管中的事」里继续或取消",
+    "resumed": "继续托管了",
+    "title": "托管中的事",
+    "lede": "到点自动做，做好的东西发回原来的对话，并通知你。超过每次上限就不做。",
+    "empty": "还没有托管的事。\n做完一条视频或一张图后，打开结果卡上的「以后省心托管这个」。",
+    "task": {
+      "video": "做一条视频",
+      "image": "做一张图",
+      "listing": "上下架",
+      "reviews": "回评价",
+      "report": "成绩复盘"
+    },
+    "statusPaused": "已暂停",
+    "statusRunning": "正在做",
+    "statusNext": "下次 {{when}}",
+    "last": {
+      "ok": "上次做好了",
+      "error": "上次没做成",
+      "skipped": "上次没做（超上限或积分不够）",
+      "running": "正在做"
+    },
+    "pause": "暂停",
+    "resume": "继续",
+    "open": "打开对话",
+    "cancel": "取消托管",
+    "keep": "先留着",
+    "cancelTitle": "不再托管这件事？",
+    "cancelBody": "取消后到点不会再做，已经做好的不受影响。",
+    "banner": "省心托管"
   }
 }

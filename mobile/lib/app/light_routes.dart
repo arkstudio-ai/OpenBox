@@ -10,6 +10,7 @@ import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/inbox/api/inbox_api.dart';
 import '../features/inbox/inbox_screen.dart';
+import '../features/light/autopilot_page.dart';
 import '../features/light/conversations_tab.dart';
 import '../features/light/home_screen.dart';
 import '../features/light/me_screen.dart';
@@ -77,6 +78,11 @@ StatefulShellRoute lightShellRoute({required ResourceSlotOf resources}) =>
 /// The topic pages above the tabs (root navigator, so they cover the bar):
 /// an entry's gallery, and the guided conversation it starts.
 List<GoRoute> lightRoutes({required ResourceSlotOf resources}) => [
+  // Before the parameterised topic route: `/light/autopilot` is not a topic.
+  GoRoute(
+    path: Paths.lightAutopilot,
+    builder: (context, state) => const LightAutopilotPage(),
+  ),
   GoRoute(
     path: '/light/topic/:entryId',
     builder: (context, state) =>
@@ -102,7 +108,10 @@ class _LightShellHost extends ConsumerWidget {
     final scope = ref.watch(assistantScopeProvider);
     final assistantUnread = scope == null
         ? 0
-        : ref.watch(assistantOverviewProvider(scope)).valueOrNull?.unreadCount ??
+        : ref
+                  .watch(assistantOverviewProvider(scope))
+                  .valueOrNull
+                  ?.unreadCount ??
               0;
     final inboxUnread = ref.watch(inboxUnreadProvider).valueOrNull?.total ?? 0;
     return LightShell(

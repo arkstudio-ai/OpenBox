@@ -84,6 +84,9 @@ abstract final class Paths {
   static String lightTopic(String entryId) =>
       '/light/topic/${Uri.encodeComponent(entryId)}';
   static String lightChat(String sessionId) => '/light/s/$sessionId';
+
+  /// 省心托管: 托管中的事.
+  static const String lightAutopilot = '/light/autopilot';
   static bool isLightPath(String path) =>
       isLightTab(path) || path.startsWith('/light/');
 

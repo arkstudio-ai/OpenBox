@@ -68,5 +68,7 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-02 16:48 | `20261102-light-8883666d` | light-full | `light-video` 技能（免费档做视频不再卡在云桌面）、Light 提示词带店名 |
 | 2026-11-02 17:09 | `20261102-light-eb7e7262` | light-full | F5：合成完成后唤醒对话；compose 计入在途 |
 | 2026-11-02 17:20 | `20261102-light-520b4184` | light-full | 单子类样式名、菜单/海报不以问题卡收尾 |
+| 2026-11-02 17:34 | `20261102-light-6e10c68b` | light-full-autopilot | M2.5 省心托管（`/api/light/autopilot`、只出片无桌面执行）|
+| 2026-11-02 17:45 | `20261102-light-20e41c94` | light-full-autopilot | 托管小修 + 文档；对应 Android 1.1.0 (102) |
 
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt`，不入库）：`light-full-samples`（样片，超管 grant 了 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（密码在会话记录，不入库）。

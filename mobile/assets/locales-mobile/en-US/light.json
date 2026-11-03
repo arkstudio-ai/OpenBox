@@ -40,7 +40,7 @@
     "recentFailed": "Recent work could not be loaded",
     "outputs_one": "{{count}} result",
     "outputs_other": "{{count}} results",
-    "ask": "Something else? Just say it"
+    "ask": "Anything else? Tell the assistant"
   },
   "gallery": {
     "lede": "Pick a look first; the chat then walks you through it step by step.",

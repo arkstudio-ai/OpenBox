@@ -24,7 +24,7 @@ ASSISTANT_TOOLS = REPORT_TOOLS | {"projects.list", "sessions.list", "tasks.submi
                                 "memory.prepare", "memory.read_more", "memory.remember", "memory.update", "memory.forget", "assistant.preferences", "cards.list", "cards.answer",
                                 "projects.brief.read", "projects.brief.update", "requests.answer", "requests.revise",
                                 "projects.create", "projects.delete", "sessions.delete", "tasks.delete",
-                                "status.credits", "status.resources", "status.skills", "status.publishing",
+                                "status.credits", "status.resources", "status.skills", "status.publishing", "light.entries",
                                 "status.briefing", "briefing.configure", "status.models", "status.platforms", "assets.describe"}
 MAX_REPORT_ATTEMPTS = 3
 EVIDENCE_PROJECTION_VERSION = "credentials-v1"

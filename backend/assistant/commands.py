@@ -29,6 +29,7 @@ from db.models.message import Message
 from db.models.part import Part
 from db.models.project import Project
 from db.models.session import Session
+from light.work_types import WORKFLOWS as LIGHT_WORKFLOWS
 from session.agent_event_log import append_agent_event_locked
 from session.internal_parts import begin_session_write
 from session.session import _new_session_record, _publish_session_created
@@ -39,8 +40,23 @@ from session.session import _new_session_record, _publish_session_created
 # got a bare brief, wrote a shot list, asked a card, and after the user chose
 # "start producing" replied with a plan and stopped: no video_generate call,
 # nothing charged, while the assistant reported the work as under way.
-VIDEO_WORKFLOWS = frozenset({"video-production", "video"})
+VIDEO_WORKFLOWS = frozenset({"video-production", "video"} | set(LIGHT_WORKFLOWS.values()))
+
+
+def _light_guidance(skill: str, job: str) -> str:
+    return (f"This is a Light home job: {job}. Load the `{skill}` skill first and follow it; it is completed "
+            "entirely in the cloud (image/video generation and composition tools, the question card), so do not "
+            "load video-production, and do not use bash, file or desktop tools, and do not ask for a desktop. "
+            "The user is a shop owner new to AI tools: one decision per card with options to tap, no model names, "
+            "tier names or credit estimates. Reuse the choices in the brief below; do not ask them again. "
+            "The task is done only when the finished piece exists and has been attached; a plan alone is not a result.")
+
+
 VIDEO_WORKFLOW_GUIDANCE = {
+    "light-video": _light_guidance("light-video", "做一条视频 (a short promotional clip from the owner's photos)"),
+    "menu-maker": _light_guidance("menu-maker", "做菜单 (a new menu image from the owner's old menu or dish list)"),
+    "poster-maker": _light_guidance("poster-maker", "做海报 (a promotional poster image)"),
+    "footage-edit": _light_guidance("footage-edit", "你拍我剪 (cut the owner's own footage into one clip)"),
     "video-production": (
         "Load the video-production skill before planning or generating this talking-head video. "
         "Follow its script, material, shot, transcript and delivery review stages. "

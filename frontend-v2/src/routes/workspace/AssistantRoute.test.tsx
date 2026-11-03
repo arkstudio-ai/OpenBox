@@ -165,7 +165,7 @@ it("welcomes a first-time user and puts a chosen idea into the composer", async 
 it("meets someone new on the welcome page, and steps aside when they go straight to work", async () => {
   history = []
   useAppearanceStore.setState({ assistantMeta: structuredClone(DEFAULT_ASSISTANT_META) })
-  vi.mocked(http.post).mockResolvedValue({ ...DEFAULT_ASSISTANT_META, intro: { status: "bypassed", steps: {}, nudged: false } })
+  vi.mocked(http.post).mockResolvedValue({ ...DEFAULT_ASSISTANT_META, intro: { status: "bypassed", steps: {}, nudged: false, tourSeen: true } })
   mount()
   expect(await screen.findByTestId("assistant-intro")).toBeTruthy()
   fireEvent.click(screen.getByRole("button", { name: "send" }))

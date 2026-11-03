@@ -195,5 +195,5 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 - `light-mode` 只单向吸收 main（需要主线修复时 `git merge origin/main`），不反向合并；main 上不出现任何 Light 代码、迁移与文档。
 - 测试环境与 gw2 生产隔离：**独立测试机 `openbox-light-test`**（2026-11-01 建，4c8g，包月一个月不续，`https://light-test.bossipai.com.cn`，细节见 `deploy/light-test/README.md`）。迁移 `pi95b6c7d8e9`、`openbox.json` 档位 label 改名已在该机生效；首版镜像 `20261101-light-050fa783`（feat/light-mode-backend@050fa783）。域名 2026-11-01 已通（证书到 2027-01-30）。首条视频出片闭环 2026-11-02 已在该机实测：约 2 分钟出片，花字、账本、通知均对（README「账号与首轮验证」）。
 - App 测试包只从 `light-mode` 构建，版本号或构建说明标注 Light 线，不与主线发版混。
-- 2026-11-03：light-test 上所有需要云桌面步骤的回合（做菜单、做海报、任何从桌面读技能目录的回合）此前从未成功过，App 显示「Runtime preparation may have partially completed」。根因不是桌面或连通性，而是桌面 Action Server 的 v2 资源门要求 journal 头、后端从未钉住 journal（只有手工 bind 会钉）；修复为 Driver 首次准备桌面时自动钉住并 bind，镜像 `20261103-light-6c69a3e1`，细节见 `deploy/light-test/README.md`「根因记录」。
+- 2026-11-03：light-test 上所有需要云桌面步骤的回合（做菜单、做海报、任何从桌面读技能目录的回合）此前从未成功过，App 显示「Runtime preparation may have partially completed」。根因不是桌面或连通性，而是桌面 Action Server 的 v2 资源门要求 journal 头、后端从未钉住 journal（只有手工 bind 会钉）；修复为 Driver 首次准备桌面时自动钉住 journal（不 bind：bind 会让门拒绝后端仍不带围栏的通道校验等请求，首版 `6c69a3e1` 因此让三台桌面通道掉线 11 分钟），镜像 `20261103-light-131fadd6`，细节见 `deploy/light-test/README.md`「根因记录」。
 - 主工作树被 Codex 共用，提交照旧走临时 worktree。

@@ -20,3 +20,10 @@ Light 线（集成分支 `light-mode`，不进 main）的 iOS 测试包首次上
 
 - 真机未验（相机、相册上传、「不要配乐 / 换配乐」）；外部测试组未挂（外部分发要过 Beta App Review）。
 - Light 线并回主线后，1.1.x 与 1.0.x 的版本号要合并规划（Light 线独占 1.1.x / 100+）。
+
+## 1.1.0 (105) — 2026-11-04 05:00，同日第二版
+
+- 源码 `light-mode@765a71c1`（含 #138 只留助理 tab、#139 问答遮罩式弹层 + 渐隐、#140 首页提示行、#141 助理感知、#142 样例库），版本 `1.1.0+105`，接口仍指向 light-test（后端同步发 `20261104-light-765a71c1`）。
+- **Android**：`flutter build apk --release`，正式签名 `bossip-release`（SHA-256 `16:16:50:A5…01:61:96`），versionCode 105，108.6 MB，sha256 `c950c11b5353de15…`，在 `~/Desktop/BossIP-Android-1.1.0-105-light-test/`。
+- **iOS**：归档 + 导出 + 上传 1 分钟（Delivery `4c015757-6dc2-4a81-b107-bd572b21d462`），Apple 处理为 VALID 后挂到内部组「Light 测试」；该组现在是 [104, 105]，「运营测试组」仍是 14–60，不含 Light 构建。IPA 34 MB，sha256 `78b2c367d906a3f6…`，在 `~/Desktop/BossIP-iOS-1.1.0-105-light-test/`。
+- 构建插曲：Docker Desktop 守护进程没在跑，后端首次构建失败，`open -a Docker` 后重跑即可。

@@ -32,7 +32,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from video import ims_catalog as cat
-from video.timeline import Canvas, Cue, Motion, Shot, TextClip, TextStyle, Timeline
+from video.timeline import AudioClip, Canvas, Cue, Motion, Shot, TextClip, TextStyle, Timeline
 
 _ADAPT = {"cover": "Cover", "contain": "Contain", "fill": "Fill"}
 _ALIGN = {"center": "TopCenter", "left": "TopLeft", "right": "TopRight"}
@@ -103,11 +103,19 @@ def compile_ims(
         if caption_clips:
             subtitle_tracks.append({"SubtitleTrackClips": caption_clips})
 
+    audio_tracks = [
+        {"AudioTrackClips": [clip]}
+        for index, item in enumerate(timeline.audio)
+        if (clip := _audio_clip(index, item, total, oss_region, problems, warnings)) is not None
+    ]
+
     out_url = _normalise_asset(output_url, oss_region, problems, what="output_url")
     if problems:
         raise TimelineCompileError(problems)
 
     ims_timeline: dict[str, Any] = {"VideoTracks": [{"VideoTrackClips": video_clips}]}
+    if audio_tracks:
+        ims_timeline["AudioTracks"] = audio_tracks
     if subtitle_tracks:
         ims_timeline["SubtitleTracks"] = subtitle_tracks
     output = {"MediaURL": out_url, "Width": canvas.width, "Height": canvas.height, "Bitrate": bitrate_kbps}
@@ -130,6 +138,9 @@ def _video_clip(index: int, shot: Shot, canvas: Canvas, region: str | None,
         "X": 0, "Y": 0, "Width": canvas.width, "Height": canvas.height,
         "AdaptMode": _ADAPT[shot.fit],
     }
+    if shot.volume != 1.0:
+        # The clip's own sound. 0 mutes it (a silent B-roll under a voice-over).
+        clip.setdefault("Effects", []).append({"Type": "Volume", "Gain": round(shot.volume, 3)})
     if shot.in_sec:
         clip["In"] = _sec(shot.in_sec)
     if shot.duration_sec is not None:
@@ -138,7 +149,39 @@ def _video_clip(index: int, shot: Shot, canvas: Canvas, region: str | None,
         kind = shot.transition_out.type
         _check_enum(kind, cat.KNOWN_TRANSITIONS, cat.VERIFIED_TRANSITIONS,
                     f"shots[{index}].transition_out.type", "transition", problems, warnings)
-        clip["Effects"] = [{"Type": "Transition", "SubType": kind, "Duration": _sec(shot.transition_out.seconds)}]
+        clip.setdefault("Effects", []).append(
+            {"Type": "Transition", "SubType": kind, "Duration": _sec(shot.transition_out.seconds)})
+    return clip
+
+
+def _audio_clip(index: int, item: AudioClip, total: float | None, region: str | None,
+                problems: list[str], warnings: list[str]) -> dict[str, Any] | None:
+    where = f"audio[{index}]"
+    end = item.to_sec if item.to_sec is not None else total
+    if total is not None and item.from_sec >= total:
+        problems.append(f"{where}: starts at {item.from_sec}s, after the cut ends ({total}s)")
+        return None
+    if total is not None and end is not None and end > total:
+        warnings.append(f"{where}: to_sec {end}s clamped to the cut's end ({total}s)")
+        end = total
+    clip: dict[str, Any] = {
+        "MediaURL": _normalise_asset(item.asset, region, problems, what=f"{where}.asset"),
+        "TimelineIn": _sec(item.from_sec),
+    }
+    if end is not None:
+        clip["TimelineOut"] = _sec(end)
+        clip["Out"] = _sec(item.in_sec + (end - item.from_sec))
+    if item.in_sec:
+        clip["In"] = _sec(item.in_sec)
+    effects: list[dict[str, Any]] = []
+    if item.volume != 1.0:
+        effects.append({"Type": "Volume", "Gain": round(item.volume, 3)})
+    if item.fade_in_sec:
+        effects.append({"Type": "AFade", "SubType": "In", "Duration": _sec(item.fade_in_sec)})
+    if item.fade_out_sec:
+        effects.append({"Type": "AFade", "SubType": "Out", "Duration": _sec(item.fade_out_sec)})
+    if effects:
+        clip["Effects"] = effects
     return clip
 
 

@@ -1170,12 +1170,24 @@ async def _dashscope_transcribe(
     duration_ms = (transcript_data.get("properties") or {}).get(
         "original_duration_in_milliseconds"
     )
-    return {
+    sentences = [
+        {"from_sec": round(float(item.get("begin_time") or 0) / 1000, 2),
+         "to_sec": round(float(item.get("end_time") or 0) / 1000, 2),
+         "text": str(item.get("text") or "").strip()}
+        for transcript in transcripts if isinstance(transcript, dict)
+        for item in (transcript.get("sentences") or []) if isinstance(item, dict) and item.get("text")
+    ]
+    result = {
         "text": text,
         "duration_ms": duration_ms,
         "model": target.model,
         "provider": "dashscope",
     }
+    if sentences:
+        # Sentence timings (footage_analyze cuts on them); absent when the
+        # engine reports none, so the plain result keeps its shape.
+        result["sentences"] = sentences
+    return result
 
 
 async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str) -> dict[str, Any]:
@@ -3233,11 +3245,17 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 raise _RequestError(
                     f"asset '{args.asset_id}' is not a ready OSS resource owned by this user"
                 )
-            if not source.mime.startswith("audio/"):
+            if not source.mime.startswith(("audio/", "video/")):
                 raise _RequestError(
-                    f"asset '{args.asset_id}' is {source.mime}; transcription needs audio. "
-                    "Extract it first (ffmpeg -vn) and register that file."
+                    f"asset '{args.asset_id}' is {source.mime}; transcription needs audio or a video with sound."
                 )
+            if source.mime.startswith("video/"):
+                # The ASR engine reads the video's sound track directly from
+                # the signed URL (measured 2026-11-02); no ffmpeg step.
+                from video.media_probe import ensure_meta
+                facts = await ensure_meta(source.id, user_id=ctx.user_id)
+                if facts is not None and not facts.get("has_audio"):
+                    raise _RequestError(f"video '{args.asset_id}' has no sound track to transcribe.")
             request_data = {
                 "source_asset_id": source.id,
                 "source_bytes": source.size,

@@ -71,10 +71,7 @@ class _LightConversationsTabState extends ConsumerState<LightConversationsTab> {
           Expanded(
             child: IndexedStack(
               index: _segment == 'assistant' ? 0 : 1,
-              children: [
-                widget.assistant,
-                const LightConversationList(),
-              ],
+              children: [widget.assistant, const LightConversationList()],
             ),
           ),
         ],

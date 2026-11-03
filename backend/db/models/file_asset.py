@@ -8,7 +8,7 @@ and whether a person or the agent produced it, which is what the two-level
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -44,6 +44,9 @@ class FileAsset(Base):
     #: Working bytes the agent needs to see once (desktop screenshots). Kept
     #: for the chat transcript, hidden from the resource centre.
     transient: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    #: Media facts of a video, read once after upload (video/media_probe.py):
+    #: duration_sec, width/height as displayed, rotation, codec, has_audio, …
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: Soft delete: the OSS object is removed, the row stays so old messages
     #: still know what used to hang off them.
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

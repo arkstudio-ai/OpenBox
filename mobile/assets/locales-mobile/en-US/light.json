@@ -64,7 +64,10 @@
       "send": "Send",
       "stop": "Stop",
       "uploading": "Uploading photos…",
-      "photosSent": "Here are my photos"
+      "photosSent": "Here are my photos",
+      "clipsSent": "Here are my clips, please cut them",
+      "clipTooBig": "Clips over 200 MB were skipped",
+      "uploadingOf": "Uploading {{n}} of {{total}}…"
     }
   },
   "card": {

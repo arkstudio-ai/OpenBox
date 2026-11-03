@@ -9,6 +9,7 @@ a pipeline drives itself (the first video's name overlay) are left alone.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
@@ -18,6 +19,12 @@ log = create_logger("video.compose_recovery")
 STALE_AFTER_SECONDS = 120
 LOOKBACK_DAYS = 7
 MAX_JOBS_PER_SWEEP = 10
+#: A watched cut is asked about this often (IMS renders a 60 s cut in 20 s–3 min).
+WATCH_INTERVAL_SECONDS = 4
+WATCH_LIMIT_SECONDS = 15 * 60
+#: While the agent's own turn runs it may still fetch the cut itself; check again this often.
+BUSY_RECHECK_SECONDS = 5
+_watching: dict[str, asyncio.Task] = {}
 #: Idempotency-key prefixes of compositions whose own driver delivers the result.
 SELF_DELIVERED_PREFIXES = ("first_video_text:", "light_autopilot:")
 
@@ -68,3 +75,98 @@ async def wake_for(job) -> bool:
     if job.status == "failed":
         return await resume_conversation(job, COMPOSE_FAILED_PROMPT)
     return False
+
+
+def watch(job_id: str) -> None:
+    """Follow one submitted cut in this process and wake its chat the moment it settles.
+
+    The sweep above remains the fallback (a restart drops the watcher); a cut
+    the agent already attached is left alone.
+    """
+    if job_id in _watching and not _watching[job_id].done():
+        return
+    task = asyncio.create_task(_watch(job_id))
+    _watching[job_id] = task
+    task.add_done_callback(lambda _t: _watching.pop(job_id, None) if _watching.get(job_id) is _t else None)
+
+
+async def _watch(job_id: str) -> None:
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool.video_compose import poll_compose_job
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + WATCH_LIMIT_SECONDS
+    job = None
+    try:
+        while loop.time() < deadline:
+            await asyncio.sleep(WATCH_INTERVAL_SECONDS)
+            async with get_db_session() as db:
+                job = await db.get(VideoJob, job_id)
+            if job is None:
+                return
+            if job.status == "in_progress":
+                job = await poll_compose_job(job)
+            if job is not None and job.status != "in_progress":
+                break
+        if job is None or job.status == "in_progress":
+            return
+        # Let a running turn finish first: it may fetch (and attach) the cut itself.
+        while loop.time() < deadline and await _session_busy(job.session_id):
+            await asyncio.sleep(BUSY_RECHECK_SECONDS)
+        async with get_db_session() as db:
+            job = await db.get(VideoJob, job_id)
+        if job is None or job.attached_message_id:
+            return
+        from billing.footage import is_footage_session
+        if job.status == "completed" and await is_footage_session(job.session_id):
+            # 你拍我剪: the finished cut goes straight into the chat, no agent turn.
+            if await deliver(job):
+                return
+        await wake_for(job)
+    except Exception as exc:  # the sweep still covers it
+        log.warning(f"compose watcher for {job_id} stopped: {type(exc).__name__}: {exc}")
+
+
+async def _session_busy(session_id: str | None) -> bool:
+    if not session_id:
+        return False
+    from db.base import get_db_session
+    from db.models.session import Session
+    async with get_db_session() as db:
+        session = await db.get(Session, session_id)
+    return bool(session is not None and str(getattr(session, "status", "") or "") in ("busy", "retry", "compacting", "queued"))
+
+
+DELIVERED_TEXT = "剪好了，可以保存或者发到抖音；想换个开头、改字幕，直接说。"
+
+
+async def deliver(job) -> bool:
+    """Attach a finished cut to its conversation under a fixed line; False when it cannot."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.message import Message
+    from db.models.session import Session
+    from light import chat
+    from session import session as session_mod
+    from tool import video_production as vp
+    from tool.tool import ToolContext
+
+    async with get_db_session() as db:
+        session = await db.get(Session, job.session_id)
+        parent = await db.scalar(select(Message.id).where(Message.session_id == job.session_id,
+                                                          Message.role == "user")
+                                 .order_by(Message.created_at.desc()).limit(1))
+    if session is None or parent is None:
+        return False
+    assistant = await session_mod.create_assistant_message(job.session_id, parent, model_id=None,
+                                                           agent=session.agent, user_id=job.user_id)
+    ctx = ToolContext(session_id=job.session_id, user_id=job.user_id, workspace_id=session.workspace_id,
+                      project_id=session.project_id or "", message_id=assistant.id)
+    attached = await vp._attach_completed(job, ctx)
+    await chat.say(job.session_id, assistant.id, job.user_id,
+                   DELIVERED_TEXT if attached else "成片已经在上面了。")
+    await chat.finish(job.session_id, assistant.id, job.user_id)
+    log.info(f"Delivered composition {job.id} to {job.session_id} without an agent turn")
+    return True

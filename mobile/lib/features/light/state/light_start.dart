@@ -22,8 +22,7 @@ String? lightUnavailableTarget(
   required bool paidPlan,
 }) => switch (availability) {
   LightAvailability.needsPlan => Paths.billing(),
-  LightAvailability.needsDesktop =>
-    paidPlan ? Paths.desktop : Paths.billing(),
+  LightAvailability.needsDesktop => paidPlan ? Paths.desktop : Paths.billing(),
   LightAvailability.needsBinding => Paths.authCenter(),
   LightAvailability.ok || LightAvailability.comingSoon => null,
 };

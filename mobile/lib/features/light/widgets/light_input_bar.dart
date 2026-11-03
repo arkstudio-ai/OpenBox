@@ -16,6 +16,9 @@ import '../api/light_api.dart';
 /// without a platform picker.
 abstract class LightPhotoPicker {
   Future<List<XFile>> pick({required bool camera, required int limit});
+
+  /// Photos and videos from the album (你拍我剪). Videos are not re-encoded.
+  Future<List<XFile>> pickMedia({required int limit});
 }
 
 class ImagePickerLightPhotoPicker implements LightPhotoPicker {
@@ -45,6 +48,28 @@ class ImagePickerLightPhotoPicker implements LightPhotoPicker {
     );
     return many.take(limit).toList();
   }
+
+  @override
+  Future<List<XFile>> pickMedia({required int limit}) async {
+    final many = await _picker.pickMultipleMedia(
+      imageQuality: 88,
+      limit: limit > 1 ? limit : null,
+      requestFullMetadata: false,
+    );
+    return many.take(limit).toList();
+  }
+}
+
+/// A clip larger than this is refused before upload (plan §5.1: ≤ 200 MB each).
+const lightMaxClipBytes = 200 * 1024 * 1024;
+
+bool lightIsVideo(XFile file) {
+  final mime = file.mimeType ?? '';
+  if (mime.startsWith('video/')) return true;
+  final lower = file.name.toLowerCase();
+  return lower.endsWith('.mov') ||
+      lower.endsWith('.mp4') ||
+      lower.endsWith('.m4v');
 }
 
 final lightPhotoPickerProvider = Provider<LightPhotoPicker>(
@@ -65,11 +90,20 @@ class LightInputBar extends ConsumerStatefulWidget {
     required this.state,
     this.chips = const [],
     this.maxPhotos = 3,
+    this.allowVideo = false,
+    this.sessionId,
   });
 
   final ChatInputState state;
   final List<String> chips;
   final int maxPhotos;
+
+  /// 你拍我剪: the album picks videos too, and clips upload one by one with
+  /// their own progress.
+  final bool allowVideo;
+
+  /// The conversation clips are uploaded into (the server reads them early).
+  final String? sessionId;
 
   @override
   ConsumerState<LightInputBar> createState() => _LightInputBarState();
@@ -80,6 +114,7 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
   final _photos = <XFile>[];
   bool _sending = false;
   double? _progress;
+  int _uploadingIndex = 0;
 
   @override
   void initState() {
@@ -111,9 +146,23 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
   Future<void> _pick({required bool camera}) async {
     if (_busy || _photos.length >= widget.maxPhotos) return;
     try {
-      final picked = await ref
-          .read(lightPhotoPickerProvider)
-          .pick(camera: camera, limit: widget.maxPhotos - _photos.length);
+      final picker = ref.read(lightPhotoPickerProvider);
+      final room = widget.maxPhotos - _photos.length;
+      var picked = widget.allowVideo && !camera
+          ? await picker.pickMedia(limit: room)
+          : await picker.pick(camera: camera, limit: room);
+      if (!mounted || picked.isEmpty) return;
+      final sizes = await Future.wait(picked.map((f) => f.length()));
+      final tooBig = [
+        for (final (index, file) in picked.indexed)
+          if (lightIsVideo(file) && sizes[index] > lightMaxClipBytes) file,
+      ];
+      if (tooBig.isNotEmpty) {
+        picked = picked.where((f) => !tooBig.contains(f)).toList();
+        ref
+            .read(toastProvider.notifier)
+            .info(ref.read(i18nProvider).t('light:topic.input.clipTooBig'));
+      }
       if (!mounted || picked.isEmpty) return;
       setState(() => _photos.addAll(picked));
     } catch (error) {
@@ -136,24 +185,47 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
       // The transport is only needed when photos ride along.
       final api = _photos.isEmpty ? null : ref.read(lightApiProvider);
       for (final (index, photo) in _photos.indexed) {
-        final bytes = await photo.readAsBytes();
+        void progress(double fraction) {
+          if (mounted) {
+            setState(() {
+              _progress = (index + fraction) / _photos.length;
+              _uploadingIndex = index;
+            });
+          }
+        }
+
+        final video = lightIsVideo(photo);
+        final name = photo.name.isEmpty
+            ? (video ? 'clip-${index + 1}.mov' : 'photo-${index + 1}.jpg')
+            : photo.name;
+        final mime = photo.mimeType ?? _mimeForName(photo.name);
         ids.add(
-          await api!.uploadImage(
-            name: photo.name.isEmpty ? 'photo-${index + 1}.jpg' : photo.name,
-            mime: photo.mimeType ?? _mimeForName(photo.name),
-            bytes: bytes,
-            onProgress: (fraction) {
-              if (mounted) {
-                setState(
-                  () => _progress = (index + fraction) / _photos.length,
-                );
-              }
-            },
-          ),
+          video
+              ? await api!.uploadStream(
+                  name: name,
+                  mime: mime,
+                  length: await photo.length(),
+                  stream: photo.openRead,
+                  onProgress: progress,
+                  sessionId: widget.sessionId,
+                )
+              : await api!.uploadImage(
+                  name: name,
+                  mime: mime,
+                  bytes: await photo.readAsBytes(),
+                  onProgress: progress,
+                ),
         );
       }
+      final clips = _photos.any(lightIsVideo);
       await widget.state.onSend(
-        text.isEmpty ? i18n.t('light:topic.input.photosSent') : text,
+        text.isNotEmpty
+            ? text
+            : i18n.t(
+                clips
+                    ? 'light:topic.input.clipsSent'
+                    : 'light:topic.input.photosSent',
+              ),
         ids,
       );
       if (!mounted) return;
@@ -174,6 +246,9 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
 
   static String _mimeForName(String name) {
     final lower = name.toLowerCase();
+    if (lower.endsWith('.mov')) return 'video/quicktime';
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.m4v')) return 'video/x-m4v';
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
       return 'image/heic';
@@ -231,18 +306,22 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
           if (_photos.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 8, 4, 2),
-              child: Row(
-                children: [
-                  for (final (index, photo) in _photos.indexed) ...[
-                    if (index > 0) const SizedBox(width: 8),
-                    _PhotoThumb(
-                      photo: photo,
-                      onRemove: _sending
-                          ? null
-                          : () => setState(() => _photos.removeAt(index)),
-                    ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                child: Row(
+                  children: [
+                    for (final (index, photo) in _photos.indexed) ...[
+                      if (index > 0) const SizedBox(width: 8),
+                      _PhotoThumb(
+                        photo: photo,
+                        onRemove: _sending
+                            ? null
+                            : () => setState(() => _photos.removeAt(index)),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           if (_progress != null)
@@ -258,7 +337,15 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    i18n.t('light:topic.input.uploading'),
+                    _photos.length > 1
+                        ? i18n.t(
+                            'light:topic.input.uploadingOf',
+                            vars: {
+                              'n': _uploadingIndex + 1,
+                              'total': _photos.length,
+                            },
+                          )
+                        : i18n.t('light:topic.input.uploading'),
                     style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
                   ),
                 ],
@@ -379,12 +466,22 @@ class _PhotoThumb extends StatelessWidget {
           child: SizedBox(
             width: 56,
             height: 56,
-            child: FutureBuilder<Uint8List>(
-              future: photo.readAsBytes(),
-              builder: (context, snapshot) => snapshot.hasData
-                  ? Image.memory(snapshot.data!, fit: BoxFit.cover)
-                  : ColoredBox(color: t.n300),
-            ),
+            child: lightIsVideo(photo)
+                // A clip is not decoded here (it may be hundreds of MB).
+                ? ColoredBox(
+                    color: t.n800,
+                    child: Icon(
+                      Icons.videocam_outlined,
+                      color: t.mediaLabel,
+                      size: 24,
+                    ),
+                  )
+                : FutureBuilder<Uint8List>(
+                    future: photo.readAsBytes(),
+                    builder: (context, snapshot) => snapshot.hasData
+                        ? Image.memory(snapshot.data!, fit: BoxFit.cover)
+                        : ColoredBox(color: t.n300),
+                  ),
           ),
         ),
         if (onRemove != null)
@@ -396,10 +493,7 @@ class _PhotoThumb extends StatelessWidget {
               child: Container(
                 width: 20,
                 height: 20,
-                decoration: BoxDecoration(
-                  color: t.ink,
-                  shape: BoxShape.circle,
-                ),
+                decoration: BoxDecoration(color: t.ink, shape: BoxShape.circle),
                 child: Icon(Icons.close, size: 12, color: t.bg),
               ),
             ),

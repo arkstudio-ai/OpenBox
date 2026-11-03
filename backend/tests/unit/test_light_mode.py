@@ -93,7 +93,8 @@ def test_availability_follows_plan_desktop_and_bindings():
     assert light_mode.availability(config.entry("douyin_publish"), free) == "needs_desktop"
     assert light_mode.availability(config.entry("review"), {**paid, "bound": set()}) == "needs_binding"
     assert light_mode.availability(config.entry("review"), paid) == "ok"
-    assert light_mode.availability(config.entry("footage_edit"), paid) == "coming_soon"
+    # 你拍我剪 runs without a desktop (M3), so a free workspace can use it too.
+    assert light_mode.availability(config.entry("footage_edit"), free) == "ok"
 
 
 async def test_entries_endpoint_marks_desktop_entries_for_a_free_workspace(monkeypatch):
@@ -109,7 +110,7 @@ async def test_entries_endpoint_marks_desktop_entries_for_a_free_workspace(monke
     assert body["ui_mode"] == "pro" and body["plan_id"] == "free"
     by_id = {entry["id"]: entry["availability"] for entry in body["entries"]}
     assert by_id == {"video": "ok", "menu": "ok", "poster": "ok", "douyin_publish": "needs_desktop",
-                     "review": "needs_desktop", "shopkeeper": "needs_desktop", "footage_edit": "coming_soon"}
+                     "review": "needs_desktop", "shopkeeper": "needs_desktop", "footage_edit": "ok"}
 
 
 async def test_start_creates_a_guided_session_with_its_opening_card(monkeypatch):

@@ -72,6 +72,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
         "video_compose",
         "video_transcribe",
         "video_analyze",
+        "footage_analyze",
         "creator_context",
         "image_gen",
         "hot_trends",
@@ -384,7 +385,9 @@ def route_explicit_intent_packs(signals: ExposureSignals) -> tuple[str, ...]:
     image_attachment = bool(kinds & {"image", "photo", "screenshot", "png", "jpg", "jpeg", "webp"})
     if image_attachment or re.search(r"生成.{0,8}(图片|图像)|画一|改图|image", text):
         packs.add("image")
-    if re.search(r"视频|短片|口播|成片|video|字幕|逐字稿", text):
+    video_attachment = bool(kinds & {"video", "mp4", "mov", "m4v", "quicktime"})
+    # 你拍我剪 speaks of cutting footage, not of video: 「素材传好了，帮我剪」「就这么剪」.
+    if video_attachment or re.search(r"视频|短片|口播|成片|video|字幕|逐字稿|剪辑|剪成|帮我剪|这么剪|素材", text):
         packs.add("video")
     if re.search(r"下载|导出|交付|share file", text):
         packs.add("delivery")

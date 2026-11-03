@@ -97,7 +97,9 @@ void main() {
     expect(sent.single.$1, '门头拍一张');
     expect(sent.single.$2, isEmpty);
     expect(
-      tester.widget<TextField>(find.byKey(const Key('light-input'))).controller!
+      tester
+          .widget<TextField>(find.byKey(const Key('light-input')))
+          .controller!
           .text,
       isEmpty,
     );

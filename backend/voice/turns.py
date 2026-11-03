@@ -1031,6 +1031,8 @@ class TurnsMixin:
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
+        if self.room and task_id == self.room["task_id"] and not running:
+            await self.leave_room()  # the room's work is done: the switch goes off by itself
         if not self._report_batch:
             await self.fill_idle()
 

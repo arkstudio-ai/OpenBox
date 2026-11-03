@@ -377,3 +377,55 @@ class _Line extends StatelessWidget {
     );
   }
 }
+
+/// The 盯现场 switch above the task card in the call deck (VOICE_SEAM_PLAN
+/// §12.5): on, what the user says goes straight to this task and its
+/// replies are read out; the server turns it off when the work is done.
+class VoiceRoomSwitch extends ConsumerWidget {
+  const VoiceRoomSwitch({super.key, required this.taskId});
+
+  final String taskId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final focus = ref.watch(voiceCallControllerProvider.select((s) => s.focus));
+    final on = focus != null && focus.bound && focus.taskId == taskId;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  i18n.t(
+                    on ? 'voice:transcript.watchOn' : 'voice:transcript.watch',
+                  ),
+                  style: TextStyle(
+                    fontSize: FontSizes.md,
+                    fontWeight: FontWeight.w500,
+                    color: on ? t.a700 : t.ink,
+                  ),
+                ),
+                Text(
+                  i18n.t('voice:transcript.watchHint'),
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
+              ],
+            ),
+          ),
+          Switch.adaptive(
+            key: const Key('voice-room-switch'),
+            value: on,
+            onChanged: (value) => ref
+                .read(voiceCallControllerProvider.notifier)
+                .setRoom(value ? taskId : null),
+          ),
+        ],
+      ),
+    );
+  }
+}

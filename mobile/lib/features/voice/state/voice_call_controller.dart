@@ -155,6 +155,11 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (state.status == VoiceCallStatus.connected) _socket?.sendView(sessionId);
   }
 
+  /// Bind the call to one task's room, or leave it (the card's 盯现场 switch).
+  void setRoom(String? taskId) {
+    if (state.status == VoiceCallStatus.connected) _socket?.sendRoom(taskId);
+  }
+
   void clearViewedSession(String sessionId) {
     if (_viewedSessionId == sessionId) setViewedSession(null);
   }

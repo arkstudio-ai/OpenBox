@@ -780,4 +780,26 @@ void main() {
     expect(call.rig.audio.played.single, hasLength(3));
     call.dispose();
   });
+
+  testWidgets(
+    'the room switch sends the task, or null to leave, only once connected',
+    (tester) async {
+      final call = _Call(VoiceRig());
+      await call.dial(tester);
+      call.controller.setRoom('t1');
+      expect(call.socket.jsonSent.where((m) => m['type'] == 'room'), isEmpty);
+      call.socket.sendReady();
+      await tester.pump();
+      call.controller.setRoom('t1');
+      call.controller.setRoom(null);
+      expect(
+        call.socket.jsonSent
+            .where((m) => m['type'] == 'room')
+            .map((m) => m['task_id'])
+            .toList(),
+        ['t1', null],
+      );
+      call.dispose();
+    },
+  );
 }

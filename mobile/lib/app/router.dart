@@ -178,6 +178,9 @@ final routerProvider = Provider<GoRouter>((ref) {
               final focusTask = ref.watch(
                 voiceCallControllerProvider.select((s) => s.focus?.taskId),
               );
+              final focusSession = ref.watch(
+                voiceCallControllerProvider.select((s) => s.focus?.sessionId),
+              );
               return VoiceCallPage(
                 cards: scope == null
                     ? null
@@ -191,12 +194,19 @@ final routerProvider = Provider<GoRouter>((ref) {
                         ),
                         taskCard: focusTask == null
                             ? null
-                            : AssistantTaskById(
-                                key: ValueKey('call-task-$focusTask'),
-                                scope: scope,
-                                taskId: focusTask,
-                                beforeOpen: beforeOpen,
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  VoiceRoomSwitch(taskId: focusTask),
+                                  AssistantTaskById(
+                                    key: ValueKey('call-task-$focusTask'),
+                                    scope: scope,
+                                    taskId: focusTask,
+                                    beforeOpen: beforeOpen,
+                                  ),
+                                ],
                               ),
+                        taskSessionId: focusSession,
                       ),
               );
             },

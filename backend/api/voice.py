@@ -216,6 +216,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     async def deliver_controls(notes):
         for note in notes:
             await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
+            if bridge.room and note.task_id == bridge.room["task_id"] and note.kind == "canceled":
+                await bridge.leave_room()  # the room's work was stopped: back to the assistant
 
     async def deliver_room(replies):
         for reply in replies:
@@ -283,6 +285,13 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 focused = await task_of_session(bridge.scope.viewed_session_id, user_id)
                 if focused is not None:
                     bridge.set_focus_task(focused)
+            elif kind == "room":
+                # The task card's 盯现场 switch (VOICE_SEAM_PLAN §12.5): bind the call to that task's room, or leave.
+                target = await task_by_id(payload.get("task_id"), user_id) if payload.get("task_id") else None
+                if target is not None:
+                    await bridge.enter_room(target)
+                elif not payload.get("task_id"):
+                    await bridge.leave_room()
             elif kind == "capabilities" and payload.get("playback_ack") is True:
                 bridge.playback_ack = True
             elif kind == "playback.completed" and isinstance(payload.get("response_id"), str):
@@ -479,6 +488,24 @@ def _ending(task: asyncio.Task, call_id: str) -> CallEnded:
         return CallEnded("error", close=4003)
     log.error("voice call=%s failed error=%s", call_id, type(exc).__name__ if exc else "pump returned")
     return CallEnded("error", close=1011, error="internal")
+
+
+async def task_by_id(task_id, user_id: str) -> dict | None:
+    """The user's own task by id, as a room binding; None for anything else."""
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.assistant import AssistantTask
+    try:
+        async with get_db_session() as db:
+            task = await db.scalar(select(AssistantTask).where(AssistantTask.id == task_id,
+                                                                AssistantTask.user_id == user_id,
+                                                                AssistantTask.archived_at.is_(None)))
+    except Exception as exc:
+        log.warning("voice room lookup failed task=%s error=%s", task_id, type(exc).__name__)
+        return None
+    return {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id} if task else None
 
 
 async def task_of_session(session_id: str | None, user_id: str) -> dict | None:

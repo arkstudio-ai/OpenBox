@@ -357,12 +357,13 @@ DIRECT: dict[str, DirectTool] = {
         {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
                                            "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
     "room_enter": DirectTool(
-        "用户明确要进入某个任务里说话时调用（“进艾薇兰那间”“到那个任务里说”“我们聊聊酒吧视频这个”）：之后用户的话直接交给该任务，"
-        "它的回复直接告诉用户。给 task_id 或标题。只是切换，不改任务本身；用户只是问进度不用进。", room_enter,
+        "用户明确要盯着某件活的现场说话时调用（“盯着艾薇兰那件”“我们聊聊酒吧视频这个”）：之后用户的话直接交给这件活，"
+        "它的回复直接告诉用户。给 task_id 或标题。只是切换，不改任务本身；用户只是问进度不用盯。任务单上也有“盯现场”开关，"
+        "用户用开关时你不用调用，也不要主动劝用户盯现场。", room_enter,
         {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
                                            "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
     "room_leave": DirectTool(
-        "用户说“回去”“回到总助理”“出来”或要聊别的事时调用：离开当前任务间，回到总助理这一层。", room_leave,
+        "用户说“回去”“回助理”“不盯了”或要聊别的事时调用：不再盯这件活的现场，回到助理这一层。活做完会自动回来。", room_leave,
         _no_parameters(), timeout=2.0),
 }
 

@@ -111,6 +111,11 @@ export class VoiceCallSession {
     this.capture?.setMuted(muted)
   }
 
+  /** The task card's 盯现场 switch: bind the call to that task's room, or leave (null). */
+  setRoom(taskId: string | null): void {
+    if (this.ready) this.send({ type: "room", task_id: taskId })
+  }
+
   setViewedSession(sessionId: string | null): void {
     if (this.done || this.stopping || this.viewedSessionId === sessionId) return
     this.viewedSessionId = sessionId

@@ -118,7 +118,10 @@
     "taskWaiting": "The helper is waiting for your answer",
     "openRoom": "Go to the work",
     "taskDoing": "The helper is {{step}}; I will tell you when it is done",
-    "inRoom": "Watching the work: what you say goes to this task; say “back” to return"
+    "inRoom": "Watching the work: what you say goes to this task; say “back” to return",
+    "watch": "Watch the work",
+    "watchOn": "Watching the work",
+    "watchHint": "On: what you say goes straight to this task and its replies are read out; it turns off when the work is done"
   },
   "cards": {
     "show": "Show cards",

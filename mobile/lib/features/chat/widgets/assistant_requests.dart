@@ -46,6 +46,7 @@ class AssistantRequests extends ConsumerStatefulWidget {
     this.deck = false,
     this.leading,
     this.taskCard,
+    this.taskSessionId,
   });
   final AssistantScope scope;
   final VoidCallback? beforeOpen;
@@ -56,6 +57,10 @@ class AssistantRequests extends ConsumerStatefulWidget {
 
   /// The task the call is about, as its card (the deck's second page).
   final Widget? taskCard;
+
+  /// That task's conversation: its questions and approvals show under the
+  /// task card instead of on pages of their own (VOICE_SEAM_PLAN §12.5).
+  final String? taskSessionId;
 
   /// One card at a time with previous/next, for the call page: the parent
   /// bounds the height and the person swipes between what needs them while
@@ -231,8 +236,31 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
     int count,
   ) {
     final t = context.tokens;
+    bool inTask(Map<String, dynamic> item) =>
+        widget.taskCard != null &&
+        widget.taskSessionId != null &&
+        asString(item['session_id']) == widget.taskSessionId;
     final pages = <Widget>[
       if (widget.leading != null) widget.leading!,
+      if (widget.taskCard != null)
+        SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              widget.taskCard!,
+              if (error == null)
+                for (final kind in _kinds)
+                  for (final item in _requests[kind]!.items.where(inTask))
+                    _Request(
+                      key: ValueKey('task-$kind:${item['id']}'),
+                      scope: widget.scope,
+                      kind: kind,
+                      item: item,
+                      onOpen: _openConversation,
+                    ),
+            ],
+          ),
+        ),
       if (error != null)
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -248,7 +276,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
           ],
         )
       else ...[
-        for (final item in questions.items)
+        for (final item in questions.items.where((item) => !inTask(item)))
           _Request(
             key: ValueKey(
               'question:${item['id']}:${asMap(item['assistant'])['request_revision']}',
@@ -258,7 +286,7 @@ class _AssistantRequestsState extends ConsumerState<AssistantRequests> {
             item: item,
             onOpen: _openConversation,
           ),
-        for (final item in permissions.items)
+        for (final item in permissions.items.where((item) => !inTask(item)))
           _Request(
             key: ValueKey(
               'permission:${item['id']}:${asMap(item['assistant'])['request_revision']}',

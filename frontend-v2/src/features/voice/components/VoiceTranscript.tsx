@@ -39,6 +39,12 @@ export function VoiceTranscript({ className }: { className?: string }) {
           )
         )}
       </div>
+      {focus && (
+        <label className="mb-1 flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={bound} onChange={(e) => useVoiceStore.getState().setRoom(e.target.checked ? focus.task_id : null)} />
+          <span className={bound ? "text-a700" : "text-n700"}>{t(bound ? "transcript.watchOn" : "transcript.watch")}</span>
+        </label>
+      )}
       {bound && <p className="text-a700 mb-1 text-xs">{t("transcript.inRoom")}</p>}
       <div className="max-h-48 space-y-1 overflow-y-auto pe-1 text-sm" role="log" aria-live="off">
         {lines.length === 0 && <p className="text-n600 text-xs">{t("transcript.empty")}</p>}

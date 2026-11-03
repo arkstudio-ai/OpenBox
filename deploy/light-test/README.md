@@ -91,6 +91,8 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
   修复：`backend/assistant/resource_commands.py::ensure_remote_journal`，Driver 首次为某桌面做运行时准备前自动读 `/resource-control/status`、把 journal 钉进租约并记录远端快照（`control` 为 null）；`resource_control.validate_locked` 接受"已钉住但未 bind"的租约。**不 bind**：门有了 control 行就会用 423 拒绝一切不带围栏的请求，而后端的通道校验、Driver 之外的技能/MCP 列表、终端、诊断都还不带围栏——首版自动 bind 让三台桌面通道掉线 11 分钟（见发布记录），bind 仍只留给显式命令。gw2 影响面：已钉住的租约只多一次 DB 读，无 journal 端点的旧桌面只多一次 404 探测。
   三台桌面的 `control_commands` 里留着首版写入的 `enrol:<resource>:1` bind 回执（不可删的历史）；将来若显式 bind 复用同一命令 id，门会回放旧回执而不重建 control 行——那时换一个命令 id。
 
+iOS：**1.1.0 (104)** 2026-11-04 03:26 已上 TestFlight（只挂内部组「Light 测试」，运营测试组已重建为不自动分发），见 [docs/MOBILE_RELEASE_1_1_0_20261104.md](../../docs/MOBILE_RELEASE_1_1_0_20261104.md)。
+
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
 
 到期提醒：包月到 **2026-12-01 16:00 UTC（北京 12-02 00:00）**，不自动续费；续费或在此前把测试结论搬走。

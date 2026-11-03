@@ -79,12 +79,12 @@ describe("useAssistantProfileLive", () => {
         ...DEFAULT_ASSISTANT_PROFILE,
         address: "老王",
         decided: { address: { at: "t", via: "intro" } },
-        intro: { status: "started", steps: { address: "answered" }, nudged: false },
+        intro: { status: "started", steps: { address: "answered" }, nudged: false, tourSeen: true },
       },
     } as never)
     expect(useAppearanceStore.getState().assistantMeta).toEqual({
       decided: { address: { at: "t", via: "intro" } },
-      intro: { status: "started", steps: { address: "answered" }, nudged: false },
+      intro: { status: "started", steps: { address: "answered" }, nudged: false, tourSeen: true },
     })
   })
 

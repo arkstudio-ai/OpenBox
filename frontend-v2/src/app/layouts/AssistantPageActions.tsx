@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react"
-import { Settings2 } from "lucide-react"
+import { HelpCircle, Settings2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { openAssistantTour } from "@/features/chat"
 import { VoiceCallButton, useVoiceCall } from "@/features/voice"
 import { Sheet } from "@/shared/ui/Sheet"
 import { Spinner } from "@/shared/ui/Spinner"
@@ -11,13 +12,23 @@ const QuickSettings = lazy(() =>
 
 /** The full conversation owns the chat; its header provides call and settings access. */
 export function AssistantPageActions() {
-  const { t } = useTranslation(["companion", "common"])
+  const { t } = useTranslation(["companion", "common", "chat"])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { status } = useVoiceCall()
   const close = () => setSettingsOpen(false)
   return (
     <>
       <VoiceCallButton />
+      <button
+        type="button"
+        onClick={openAssistantTour}
+        aria-label={t("assistant.tour.button", { ns: "chat" })}
+        title={t("assistant.tour.button", { ns: "chat" })}
+        className="border-hair text-n800 hover:bg-hairsoft flex h-8 flex-none items-center gap-1.5 rounded-full border px-3 text-sm"
+      >
+        <HelpCircle size={15} strokeWidth={2.2} aria-hidden />
+        <span className="hidden sm:inline">{t("assistant.tour.button", { ns: "chat" })}</span>
+      </button>
       <button
         type="button"
         onClick={() => setSettingsOpen(true)}

@@ -13,6 +13,7 @@ import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_requests.dart';
 import '../features/chat/widgets/assistant_task_card.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
+import '../features/chat/widgets/assistant_tour.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
@@ -36,6 +37,7 @@ import '../features/workspace/state/active_workspace_store.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
+import '../shared/i18n/i18n.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
@@ -336,6 +338,15 @@ class _AssistantRoute extends ConsumerWidget {
         if (scope != null) VoiceCallButton(enabled: voiceEnabled),
         if (scope != null)
           AssistantTasksButton(key: ValueKey(scope), scope: scope),
+        if (scope != null)
+          Builder(
+            builder: (context) => IconButton(
+              key: const Key('assistant-tour-button'),
+              tooltip: ref.read(i18nProvider).t('chat:assistant.tour.button'),
+              onPressed: () => showAssistantTour(context, ref),
+              icon: const Icon(Icons.help_outline),
+            ),
+          ),
       ],
       child: scope == null
           ? const Center(child: CircularProgressIndicator())

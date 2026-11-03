@@ -7,7 +7,7 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { Spinner } from "@/shared/ui/Spinner"
 import type { QuestionRequest } from "@/shared/types/api"
 import { useResourceMention } from "@/features/resources"
-import { AssistantIntroEntry, AssistantReadBoundary, AssistantRequests, AssistantWelcome, sendAssistantTurn,
+import { AssistantIntroEntry, AssistantReadBoundary, AssistantRequests, AssistantTourHost, AssistantWelcome, sendAssistantTurn,
   useAssistantEvents, useAssistantSnapshot, useEnsureAssistant, QuestionDock, AssistantNotificationTarget,
   type SendRequest } from "@/features/chat"
 import { introStartsByItself } from "@/shared/appearance/assistant-profile"
@@ -61,7 +61,7 @@ function AssistantEntry({ workspaceId, compact, realtimeSurface }: { workspaceId
       <ChatSessionView key={mainId} sessionId={mainId} assistant sendRequest={sendRequest} realtimeSurface={realtimeSurface} compact={compact}
         welcome={(fill) => compact ? <CompanionWelcome onPick={fill} /> : <AssistantWelcome onPick={fill} />}
         extraFooter={<AssistantRequests conversation renderQuestion={renderQuestion} />}
-        aside={compact ? undefined : ({ fill, quiet }) => <AssistantIntroEntry quiet={quiet} onPick={fill} />}
+        aside={compact ? undefined : ({ fill, quiet }) => <><AssistantIntroEntry quiet={quiet} onPick={fill} />{!compact && <AssistantTourHost />}</>}
         onSend={wentStraightToWork} />
     </div>
   </AssistantReadBoundary>

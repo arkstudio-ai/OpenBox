@@ -290,8 +290,12 @@ def _project_paths(tmp_path, monkeypatch):
     return workdir, internal
 
 
-async def test_first_runtime_use_pins_and_binds_an_unbound_v2_journal(runtime, remote, resource, tmp_path, monkeypatch):
-    """light-test 2026-11-03: a v2 gate refused every fenced send with 409 because nothing had pinned its journal."""
+async def test_first_runtime_use_pins_an_unbound_v2_journal_without_binding(runtime, remote, resource, tmp_path, monkeypatch):
+    """light-test 2026-11-03: a v2 gate refused every fenced send with 409 because nothing had pinned its journal.
+
+    The pin must not bind: a bound gate refuses the backend's still-unfenced
+    channels (channel verify, listings outside a Driver) with 423.
+    """
     ctx, _, _, manager = runtime
     _unpinned(ctx, monkeypatch)
     journal = remote[1]
@@ -308,14 +312,14 @@ async def test_first_runtime_use_pins_and_binds_an_unbound_v2_journal(runtime, r
     row, = await rows(ctx)
     status = journal.status()
     assert row.state == "succeeded" and row.safe_context["resource_journal_id"] == status["journal_id"]
-    assert status["control"]["admission"] == "open" and status["control"]["resource_id"] == resource[0].resource_id
-    assert status["control"]["owner_kind"] == "automation" and status["control"]["epoch"] == 1
-    receipt = journal.command_receipt(f"enrol:{resource[0].resource_id}:1")
-    assert receipt["action"] == "bind" and receipt["journal_id"] == status["journal_id"]
+    assert status["control"] is None  # Pinned, not bound.
     async with get_db_session() as db:
         lease = await db.get(ResourceControlLease, resource[0].resource_id)
-    assert lease.remote_journal_id == status["journal_id"]
-    assert lease.remote_status["control"]["admission"] == "open" and lease.admission_state == "open"
+    assert lease.remote_journal_id == status["journal_id"] and lease.admission_state == "open"
+    assert lease.remote_status["journal_id"] == status["journal_id"] and lease.remote_status["control"] is None
+    # An unfenced management request is still admitted by the unbound gate.
+    unfenced = await ctx.sandbox.execute("true", workdir=str(tmp_path))
+    assert unfenced.exit_code == 0
     # The pin is one-way: a second preparation in the same process asks nothing.
     await manager._ensure_session_dir(ctx.sandbox, ctx.session_id)
     assert len(probes) == 1 and len(await rows(ctx)) == 1

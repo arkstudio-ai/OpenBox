@@ -100,9 +100,13 @@ async def validate_locked(db, fence, *, user_id, session_id, require_open=True):
         raise unavailable()
     if require_open and row.remote_journal_id is not None:
         observed = row.remote_status or {}
-        control = observed.get("control") or {}
+        control = observed.get("control")
         if (observed.get("protocol") != "resource_admission_v2"
-                or observed.get("journal_id") != row.remote_journal_id
+                or observed.get("journal_id") != row.remote_journal_id):
+            raise unavailable()
+        # An unbound gate (no control row yet) admits fenced requests that
+        # carry the pinned journal; a bound one must be open for this fence.
+        if control is not None and (not isinstance(control, dict)
                 or control.get("admission") != "open"
                 or any(control.get(key) != value for key, value in {
                     "resource_id": row.id, "epoch": row.epoch,

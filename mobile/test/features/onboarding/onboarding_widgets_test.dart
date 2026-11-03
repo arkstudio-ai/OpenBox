@@ -65,7 +65,9 @@ void main() {
     dio = Dio(BaseOptions(baseUrl: 'https://test.invalid'));
     dio.httpClientAdapter = _Adapter((o) async {
       if (o.method == 'PUT') {
-        server = Map<String, dynamic>.from((o.data as Map)['onboarding'] as Map);
+        server = Map<String, dynamic>.from(
+          (o.data as Map)['onboarding'] as Map,
+        );
       }
       return {'onboarding': server};
     });
@@ -125,8 +127,14 @@ void main() {
               widgetRef = ref;
               return Column(
                 children: const [
-                  CoachAnchor(name: 'a', child: SizedBox(width: 80, height: 40)),
-                  CoachAnchor(name: 'b', child: SizedBox(width: 80, height: 40)),
+                  CoachAnchor(
+                    name: 'a',
+                    child: SizedBox(width: 80, height: 40),
+                  ),
+                  CoachAnchor(
+                    name: 'b',
+                    child: SizedBox(width: 80, height: 40),
+                  ),
                 ],
               );
             },
@@ -139,7 +147,12 @@ void main() {
       const CoachStep(anchor: 'a', title: '第一步', body: 'A'),
       const CoachStep(anchor: 'b', title: '第二步', body: 'B'),
     ];
-    final shown = showCoachMarks(ctx, widgetRef, guideKey: 'drawer', steps: steps);
+    final shown = showCoachMarks(
+      ctx,
+      widgetRef,
+      guideKey: 'drawer',
+      steps: steps,
+    );
     await tester.pumpAndSettle();
     expect(find.text('第一步'), findsOneWidget);
     expect(find.text('1 / 2'), findsOneWidget);
@@ -167,11 +180,7 @@ void main() {
     await tester.pumpWidget(
       app(
         Scaffold(
-          body: FirstSeenHint(
-            guide: Guides.inbox,
-            title: '标题',
-            body: '正文',
-          ),
+          body: FirstSeenHint(guide: Guides.inbox, title: '标题', body: '正文'),
         ),
       ),
     );

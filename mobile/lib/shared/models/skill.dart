@@ -27,40 +27,38 @@ class McpConfig {
   final int timeout;
 
   factory McpConfig.fromJson(Map<String, dynamic> json) => McpConfig(
-        type: asString(json['type']) ?? 'stdio',
-        command: asString(json['command']),
-        args: [for (final a in asList(json['args'])) '$a'],
-        env: {
-          for (final e in asMap(json['env']).entries) e.key: '${e.value}',
-        },
-        url: asString(json['url']),
-        headers: {
-          for (final e in asMap(json['headers']).entries) e.key: '${e.value}',
-        },
-        timeout: asInt(json['timeout']) ?? 60,
-      );
+    type: asString(json['type']) ?? 'stdio',
+    command: asString(json['command']),
+    args: [for (final a in asList(json['args'])) '$a'],
+    env: {for (final e in asMap(json['env']).entries) e.key: '${e.value}'},
+    url: asString(json['url']),
+    headers: {
+      for (final e in asMap(json['headers']).entries) e.key: '${e.value}',
+    },
+    timeout: asInt(json['timeout']) ?? 60,
+  );
 
   Map<String, dynamic> toJson() => {
-        'type': type,
-        if (type == 'stdio') ...{
-          'command': ?command,
-          'args': args,
-          'env': env,
-        } else ...{
-          'url': ?url,
-          'headers': headers,
-        },
-        'timeout': timeout,
-      };
+    'type': type,
+    if (type == 'stdio') ...{
+      'command': ?command,
+      'args': args,
+      'env': env,
+    } else ...{
+      'url': ?url,
+      'headers': headers,
+    },
+    'timeout': timeout,
+  };
 }
 
 class McpTool {
   const McpTool({required this.name, this.description});
 
   factory McpTool.fromJson(Map<String, dynamic> json) => McpTool(
-        name: asString(json['name']) ?? '',
-        description: asString(json['description']),
-      );
+    name: asString(json['name']) ?? '',
+    description: asString(json['description']),
+  );
 
   final String name;
   final String? description;
@@ -80,18 +78,17 @@ class McpServer {
   });
 
   factory McpServer.fromJson(Map<String, dynamic> json) => McpServer(
-        name: asString(json['name']) ?? '',
-        type: asString(json['type']) ?? '',
-        status: asString(json['status']) ?? 'disconnected',
-        tools: asList(json['tools'])
-            .whereType<Map<String, dynamic>>()
-            .map(McpTool.fromJson)
-            .toList(),
-        error: asString(json['error']),
-        command: asString(json['command']),
-        args: [for (final a in asList(json['args'])) '$a'],
-        url: asString(json['url']),
-      );
+    name: asString(json['name']) ?? '',
+    type: asString(json['type']) ?? '',
+    status: asString(json['status']) ?? 'disconnected',
+    tools: asList(
+      json['tools'],
+    ).whereType<Map<String, dynamic>>().map(McpTool.fromJson).toList(),
+    error: asString(json['error']),
+    command: asString(json['command']),
+    args: [for (final a in asList(json['args'])) '$a'],
+    url: asString(json['url']),
+  );
 
   final String name;
   final String type;
@@ -135,22 +132,22 @@ class InstalledSkill {
   });
 
   factory InstalledSkill.fromJson(Map<String, dynamic> json) => InstalledSkill(
-        name: asString(json['name']) ?? '',
-        description: asString(json['description']),
-        icon: asString(json['icon']),
-        requiresMcp: [for (final m in asList(json['requires_mcp'])) '$m'],
-        homepage: asString(json['homepage']),
-        source: asString(json['source']),
-        installDir: asString(json['install_dir']),
-        category: asString(json['category']),
-        publicationStatus: asString(json['publication_status']),
-        libraryId: asString(json['library_id']),
-        catalogId: asString(json['catalog_id']),
-        publishedAt: asString(json['published_at']),
-        listing: asString(json['listing']),
-        listingNote: asString(json['listing_note']),
-        isOfficial: asBool(json['is_official']) ?? false,
-      );
+    name: asString(json['name']) ?? '',
+    description: asString(json['description']),
+    icon: asString(json['icon']),
+    requiresMcp: [for (final m in asList(json['requires_mcp'])) '$m'],
+    homepage: asString(json['homepage']),
+    source: asString(json['source']),
+    installDir: asString(json['install_dir']),
+    category: asString(json['category']),
+    publicationStatus: asString(json['publication_status']),
+    libraryId: asString(json['library_id']),
+    catalogId: asString(json['catalog_id']),
+    publishedAt: asString(json['published_at']),
+    listing: asString(json['listing']),
+    listingNote: asString(json['listing_note']),
+    isOfficial: asBool(json['is_official']) ?? false,
+  );
 
   final String name;
   final String? description;
@@ -292,15 +289,15 @@ class Catalog {
   const Catalog({this.skills = const [], this.mcp = const []});
 
   factory Catalog.fromJson(Map<String, dynamic> json) => Catalog(
-        skills: asList(json['skills'])
-            .whereType<Map<String, dynamic>>()
-            .map((e) => CatalogEntry.fromJson(e, 'skill'))
-            .toList(),
-        mcp: asList(json['mcp'])
-            .whereType<Map<String, dynamic>>()
-            .map((e) => CatalogEntry.fromJson(e, 'mcp'))
-            .toList(),
-      );
+    skills: asList(json['skills'])
+        .whereType<Map<String, dynamic>>()
+        .map((e) => CatalogEntry.fromJson(e, 'skill'))
+        .toList(),
+    mcp: asList(json['mcp'])
+        .whereType<Map<String, dynamic>>()
+        .map((e) => CatalogEntry.fromJson(e, 'mcp'))
+        .toList(),
+  );
 
   final List<CatalogEntry> skills;
   final List<CatalogEntry> mcp;

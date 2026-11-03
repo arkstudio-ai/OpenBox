@@ -93,31 +93,34 @@ List<SkillGroup> groupSkills(List<InstalledSkill> skills) {
     final first = members.first;
     final category = first.category ?? _legacyCategory(first);
     final hasContainer = members.any((m) => m.source == 'container');
-    groups.add(SkillGroup(
-      id: entry.key,
-      // A pack is named by its directory, since no single member's name
-      // describes the whole thing.
-      name: isPack ? entry.key : first.name,
-      members: members,
-      isPack: isPack,
-      removable: hasContainer,
-      origin: hasContainer
-          ? 'container'
-          : members.any((m) => m.source == 'builtin')
-              ? 'builtin'
-              : 'host',
-      category: category,
-      publicationStatus:
-          category == 'personal' ? (first.publicationStatus ?? 'unpublished') : null,
-      libraryId: first.libraryId,
-      catalogId: first.catalogId,
-      publishedAt: first.publishedAt,
-      listing: first.listing,
-      listingNote: first.listingNote,
-      isOfficial: first.isOfficial,
-      icon: isPack ? null : first.icon,
-      description: isPack ? null : first.description,
-    ));
+    groups.add(
+      SkillGroup(
+        id: entry.key,
+        // A pack is named by its directory, since no single member's name
+        // describes the whole thing.
+        name: isPack ? entry.key : first.name,
+        members: members,
+        isPack: isPack,
+        removable: hasContainer,
+        origin: hasContainer
+            ? 'container'
+            : members.any((m) => m.source == 'builtin')
+            ? 'builtin'
+            : 'host',
+        category: category,
+        publicationStatus: category == 'personal'
+            ? (first.publicationStatus ?? 'unpublished')
+            : null,
+        libraryId: first.libraryId,
+        catalogId: first.catalogId,
+        publishedAt: first.publishedAt,
+        listing: first.listing,
+        listingNote: first.listingNote,
+        isOfficial: first.isOfficial,
+        icon: isPack ? null : first.icon,
+        description: isPack ? null : first.description,
+      ),
+    );
   }
 
   // Packs first, then alphabetical: the biggest thing installed is the one
@@ -164,11 +167,13 @@ List<SkillDependency> unmetDependencies(
   for (final name in requiresMcp) {
     final server = byName[name];
     if (server != null && server.isConnected) continue;
-    out.add(SkillDependency(
-      name: name,
-      configured: server != null,
-      catalog: catalogByName[name],
-    ));
+    out.add(
+      SkillDependency(
+        name: name,
+        configured: server != null,
+        catalog: catalogByName[name],
+      ),
+    );
   }
   return out;
 }

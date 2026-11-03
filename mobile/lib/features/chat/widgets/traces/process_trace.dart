@@ -10,11 +10,7 @@ import 'trace_shell.dart';
 
 /// Process trace (web `ProcessTrace`): step count, context tokens, duration.
 class ProcessTrace extends ConsumerWidget {
-  const ProcessTrace({
-    super.key,
-    required this.turn,
-    required this.active,
-  });
+  const ProcessTrace({super.key, required this.turn, required this.active});
 
   final AssistantTurnData turn;
   final bool active;
@@ -40,13 +36,18 @@ class ProcessTrace extends ConsumerWidget {
           if (turn.contextTokens > 0)
             _line(
               t,
-              i18n.t('chat:trace.process.contextTokens',
-                  vars: {'tokens': formatTokens(turn.contextTokens)}),
+              i18n.t(
+                'chat:trace.process.contextTokens',
+                vars: {'tokens': formatTokens(turn.contextTokens)},
+              ),
             ),
           if (turn.durationSec > 0)
             _line(
               t,
-              i18n.t('chat:trace.process.duration', vars: {'duration': duration}),
+              i18n.t(
+                'chat:trace.process.duration',
+                vars: {'duration': duration},
+              ),
             ),
         ],
       ),
@@ -54,10 +55,10 @@ class ProcessTrace extends ConsumerWidget {
   }
 
   Widget _line(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(
-          text,
-          style: TextStyle(fontSize: FontSizes.sm, color: t.n600, height: 1.5),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: FontSizes.sm, color: t.n600, height: 1.5),
+    ),
+  );
 }

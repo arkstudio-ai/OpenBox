@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +8,6 @@ import '../shared/appearance/appearance_store.dart';
 import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
 import '../shared/i18n/i18n.dart';
-import '../shared/router/paths.dart';
 import '../shared/widgets/toast.dart';
 import 'notification_host.dart';
 import 'router.dart';
@@ -67,7 +64,6 @@ class BossipApp extends ConsumerWidget {
                   },
                   // The call bar pushes every screen — and the toasts — down.
                   child: VoiceCallHost(
-                    onOpen: () => unawaited(router.push(Paths.voice)),
                     child: Stack(children: [?child, const ToastHost()]),
                   ),
                 ),

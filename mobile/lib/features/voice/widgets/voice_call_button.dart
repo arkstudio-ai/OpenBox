@@ -2,12 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../shared/api/assistant_profile.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
-import '../../../shared/router/paths.dart';
 import '../audio/mic_permission.dart';
 import '../state/voice_call_controller.dart';
 import '../voice_call_prepermission_page.dart';
@@ -44,9 +42,10 @@ class VoiceCallButton extends ConsumerWidget {
   }
 }
 
-/// Opens the call page. With no call on, the microphone is explained first
-/// when the system has not asked yet; "以后再说" stays where it is. The page
-/// itself dials, so a second tap during a call only shows that call.
+/// Dials in place and opens the call sheet (VOICE_SEAM_PLAN §13). With no
+/// call on, the microphone is explained first when the system has not asked
+/// yet; "以后再说" stays where it is. A second tap during a call only shows
+/// that call.
 Future<void> openVoiceCall(BuildContext context, WidgetRef ref) async {
   final controller = ref.read(voiceCallControllerProvider.notifier);
   if (!ref.read(voiceCallControllerProvider).active) {
@@ -82,5 +81,9 @@ Future<void> openVoiceCall(BuildContext context, WidgetRef ref) async {
       if (!context.mounted) return;
     }
   }
-  if (context.mounted) unawaited(context.push(Paths.voice));
+  if (!context.mounted) return;
+  controller.setExpanded(true);
+  if (!ref.read(voiceCallControllerProvider).active) {
+    unawaited(controller.start());
+  }
 }

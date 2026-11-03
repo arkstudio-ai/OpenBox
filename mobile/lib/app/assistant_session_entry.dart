@@ -51,7 +51,8 @@ class AssistantSessionEntry extends ConsumerWidget {
           data: (session) {
             if (session.kind != 'assistant') return builder(context);
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (context.mounted && ref.read(assistantScopeProvider) == scope) {
+              if (context.mounted &&
+                  ref.read(assistantScopeProvider) == scope) {
                 context.go(Paths.assistant);
               }
             });

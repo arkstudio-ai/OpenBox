@@ -17,8 +17,17 @@ abstract final class FontSizes {
 }
 
 /// Text style helper carrying the paired CSS line-height.
-TextStyle ts(double size, double lineHeight, {FontWeight? weight, Color? color}) =>
-    TextStyle(fontSize: size, height: lineHeight, fontWeight: weight, color: color);
+TextStyle ts(
+  double size,
+  double lineHeight, {
+  FontWeight? weight,
+  Color? color,
+}) => TextStyle(
+  fontSize: size,
+  height: lineHeight,
+  fontWeight: weight,
+  color: color,
+);
 
 /// Border radii — `tokens.css` @theme radius overrides.
 abstract final class Radii {
@@ -38,18 +47,18 @@ extension UiFontSizeX on UiFontSize {
   String get wire => name;
 
   double get scale => switch (this) {
-        UiFontSize.sm => 0.92,
-        UiFontSize.base => 1.0,
-        UiFontSize.md => 1.09,
-        UiFontSize.lg => 1.20,
-      };
+    UiFontSize.sm => 0.92,
+    UiFontSize.base => 1.0,
+    UiFontSize.md => 1.09,
+    UiFontSize.lg => 1.20,
+  };
 
   static UiFontSize parse(String? value) => switch (value) {
-        'sm' => UiFontSize.sm,
-        'md' => UiFontSize.md,
-        'lg' => UiFontSize.lg,
-        _ => UiFontSize.base,
-      };
+    'sm' => UiFontSize.sm,
+    'md' => UiFontSize.md,
+    'lg' => UiFontSize.lg,
+    _ => UiFontSize.base,
+  };
 }
 
 /// Color mode preference (`light` | `system` | `dark`).
@@ -59,8 +68,8 @@ extension ColorModeX on ColorMode {
   String get wire => name;
 
   static ColorMode parse(String? value) => switch (value) {
-        'light' => ColorMode.light,
-        'dark' => ColorMode.dark,
-        _ => ColorMode.system,
-      };
+    'light' => ColorMode.light,
+    'dark' => ColorMode.dark,
+    _ => ColorMode.system,
+  };
 }

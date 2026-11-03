@@ -15,5 +15,6 @@ final chatAgentsProvider = FutureProvider<List<AgentInfo>>(
 
 /// Unsent per-session agent pick (overlays `session.agent`); key `draft`
 /// is the not-yet-created session on the empty screen.
-final pickedAgentProvider =
-    StateProvider.family<String?, String>((ref, sessionId) => null);
+final pickedAgentProvider = StateProvider.family<String?, String>(
+  (ref, sessionId) => null,
+);

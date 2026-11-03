@@ -434,9 +434,7 @@ List<Widget> _usageDetailTexts(I18nState i18n, UsageEntry entry) {
   }
   if (tokens.items != null) {
     items.add(
-      Text(
-        i18n.t('billing:usage.media.items', vars: {'value': tokens.items}),
-      ),
+      Text(i18n.t('billing:usage.media.items', vars: {'value': tokens.items})),
     );
   }
   if (tokens.images != null) {

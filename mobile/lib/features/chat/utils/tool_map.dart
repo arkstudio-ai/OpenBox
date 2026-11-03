@@ -84,14 +84,23 @@ String toolTarget(ToolPart part) {
     final command = pick(const ['command']);
     return command.isEmpty ? part.tool : command;
   }
-  if (const ['read', 'edit', 'write', 'multiedit', 'readfile', 'writefile', 'view']
-      .contains(t)) {
+  if (const [
+    'read',
+    'edit',
+    'write',
+    'multiedit',
+    'readfile',
+    'writefile',
+    'view',
+  ].contains(t)) {
     final path = pick(const ['file_path', 'path']);
     return path.isNotEmpty ? path : (title.isNotEmpty ? title : part.tool);
   }
   if (const ['glob', 'grep', 'search', 'find'].contains(t)) {
     final pattern = pick(const ['pattern', 'query']);
-    return pattern.isNotEmpty ? pattern : (title.isNotEmpty ? title : part.tool);
+    return pattern.isNotEmpty
+        ? pattern
+        : (title.isNotEmpty ? title : part.tool);
   }
   if (t == 'web_search' || t == 'websearch') {
     final query = pick(const ['query']);
@@ -141,9 +150,7 @@ String toolPayloadText(dynamic payload) {
   if (payload == null) return '';
   if (payload is String) return payload;
   if (payload is Map<String, dynamic>) {
-    return payload.entries
-        .map((e) => '${e.key}: ${e.value}')
-        .join('\n');
+    return payload.entries.map((e) => '${e.key}: ${e.value}').join('\n');
   }
   return payload.toString();
 }

@@ -86,8 +86,9 @@ class ResourcesApi {
         if (total > 0) onProgress?.call(sent / total);
       },
     );
-    final done =
-        await _dio.post<Map<String, dynamic>>('/api/assets/$id/complete');
+    final done = await _dio.post<Map<String, dynamic>>(
+      '/api/assets/$id/complete',
+    );
     return Resource.fromJson(done.data ?? const {});
   }
 
@@ -107,8 +108,9 @@ class ResourcesApi {
   }
 }
 
-final resourcesApiProvider =
-    Provider<ResourcesApi>((ref) => ResourcesApi(ref.watch(apiDioProvider)));
+final resourcesApiProvider = Provider<ResourcesApi>(
+  (ref) => ResourcesApi(ref.watch(apiDioProvider)),
+);
 
 /// Bumped after every write so every open listing refetches.
 final resourcesRevisionProvider = StateProvider<int>((ref) => 0);
@@ -116,18 +118,21 @@ final resourcesRevisionProvider = StateProvider<int>((ref) => 0);
 void bumpResources(WidgetRef ref) =>
     ref.read(resourcesRevisionProvider.notifier).state++;
 
-final resourceListProvider =
-    FutureProvider.family<ResourcePage, ResourceQuery>((ref, query) {
-  ref.watch(resourcesRevisionProvider);
-  return ref.watch(resourcesApiProvider).list(query);
-});
+final resourceListProvider = FutureProvider.family<ResourcePage, ResourceQuery>(
+  (ref, query) {
+    ref.watch(resourcesRevisionProvider);
+    return ref.watch(resourcesApiProvider).list(query);
+  },
+);
 
 final resourceProjectsProvider = FutureProvider<List<(String, String)>>(
   (ref) => ref.watch(resourcesApiProvider).listProjects(),
 );
 
-final resourceTextProvider =
-    FutureProvider.family<String, String>((ref, id) async {
+final resourceTextProvider = FutureProvider.family<String, String>((
+  ref,
+  id,
+) async {
   ref.keepAlive();
   return ref.watch(resourcesApiProvider).text(id);
 });

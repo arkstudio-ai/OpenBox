@@ -81,8 +81,7 @@ void main() {
     expect(choice.value, isNull);
   });
 
-  test('clears a persisted effort when moving to a model with no selector',
-      () {
+  test('clears a persisted effort when moving to a model with no selector', () {
     final choice = resolveReasoning(
       model: _plain,
       sessionModel: _gpt.id,
@@ -107,7 +106,10 @@ void main() {
       activeModelId(picked: 'a', sessionModel: 'b', defaultModel: 'c'),
       'a',
     );
-    expect(activeModelId(picked: '', sessionModel: 'b', defaultModel: 'c'), 'b');
+    expect(
+      activeModelId(picked: '', sessionModel: 'b', defaultModel: 'c'),
+      'b',
+    );
     expect(activeModelId(sessionModel: '', defaultModel: 'c'), 'c');
     expect(activeModelId(), '');
   });

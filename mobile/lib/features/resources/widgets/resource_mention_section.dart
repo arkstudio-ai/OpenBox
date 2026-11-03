@@ -62,9 +62,11 @@ class _ResourceMentionSectionState
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final page = ref.watch(resourceListProvider(
-      ResourceQuery(project: _project, source: _source, limit: 200),
-    ));
+    final page = ref.watch(
+      resourceListProvider(
+        ResourceQuery(project: _project, source: _source, limit: 200),
+      ),
+    );
     final needle = widget.query.trim().toLowerCase();
     final items = [
       for (final resource in page.valueOrNull?.items ?? const <Resource>[])
@@ -102,8 +104,10 @@ class _ResourceMentionSectionState
             InkWell(
               onTap: () => widget.onPick(resource),
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
                 child: Row(
                   children: [
                     _Thumb(resource: resource),
@@ -113,15 +117,13 @@ class _ResourceMentionSectionState
                         resource.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style:
-                            TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Text(
                       formatBytes(resource.size),
-                      style:
-                          TextStyle(fontSize: FontSizes.xs2, color: t.n500),
+                      style: TextStyle(fontSize: FontSizes.xs2, color: t.n500),
                     ),
                   ],
                 ),
@@ -132,10 +134,12 @@ class _ResourceMentionSectionState
   }
 
   Widget _hint(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-        child: Text(text,
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n500)),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
+    ),
+  );
 }
 
 class _ScopeBar extends ConsumerWidget {
@@ -155,15 +159,13 @@ class _ScopeBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final projects = ref.watch(resourceProjectsProvider).valueOrNull ??
+    final projects =
+        ref.watch(resourceProjectsProvider).valueOrNull ??
         const <(String, String)>[];
     final label = project == allProjects
         ? i18n.t('chat:composer.mention.allProjects')
-        : projects
-                .where((p) => p.$1 == project)
-                .map((p) => p.$2)
-                .firstOrNull ??
-            i18n.t('chat:composer.mention.allProjects');
+        : projects.where((p) => p.$1 == project).map((p) => p.$2).firstOrNull ??
+              i18n.t('chat:composer.mention.allProjects');
 
     return Container(
       decoration: BoxDecoration(
@@ -179,8 +181,11 @@ class _ScopeBar extends ConsumerWidget {
               active: true,
               caret: true,
               onTap: () async {
-                final picked = await showProjectScopeSheet(context, ref,
-                    active: project);
+                final picked = await showProjectScopeSheet(
+                  context,
+                  ref,
+                  active: project,
+                );
                 // "Unfiled" is a listing scope, not a mention scope: the menu
                 // offers this conversation's project or everything.
                 if (picked != null) {
@@ -209,10 +214,10 @@ class _ScopeBar extends ConsumerWidget {
 /// The menu uses the short labels ("全部 / 我上传的 / 模型产出"), the same
 /// copy the web scope bar carries.
 String _shortSourceKey(String source) => switch (source) {
-      'user' => 'chat:composer.mention.sourceUser',
-      'agent' => 'chat:composer.mention.sourceAgent',
-      _ => 'chat:composer.mention.sourceAll',
-    };
+  'user' => 'chat:composer.mention.sourceUser',
+  'agent' => 'chat:composer.mention.sourceAgent',
+  _ => 'chat:composer.mention.sourceAll',
+};
 
 class _Chip extends StatelessWidget {
   const _Chip({

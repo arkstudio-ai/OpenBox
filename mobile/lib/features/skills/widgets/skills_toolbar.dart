@@ -107,16 +107,18 @@ class _SkillsToolbarState extends ConsumerState<SkillsToolbar> {
                         controller: _search,
                         onChanged: (value) =>
                             widget.onChanged(filters.copyWith(query: value)),
-                        style: TextStyle(
-                            fontSize: FontSizes.sm, color: t.ink),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                         decoration: InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
                           hintText: i18n.t('skills:searchPlaceholder'),
                           hintStyle: TextStyle(
-                              fontSize: FontSizes.sm, color: t.n600),
-                          contentPadding:
-                              const EdgeInsets.symmetric(vertical: 10),
+                            fontSize: FontSizes.sm,
+                            color: t.n600,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                          ),
                         ),
                       ),
                     ),
@@ -157,8 +159,9 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final background =
-        selected ? (solid ? t.ink : t.hairSoft) : Colors.transparent;
+    final background = selected
+        ? (solid ? t.ink : t.hairSoft)
+        : Colors.transparent;
     final foreground = selected ? (solid ? t.bg : t.ink) : t.n600;
     return GestureDetector(
       onTap: onTap,

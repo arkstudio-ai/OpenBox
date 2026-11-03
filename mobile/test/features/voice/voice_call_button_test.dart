@@ -1,10 +1,8 @@
 import 'package:bossip_mobile/features/voice/audio/mic_permission.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
-import 'package:bossip_mobile/features/voice/voice_call_page.dart';
 import 'package:bossip_mobile/features/voice/voice_call_prepermission_page.dart';
 import 'package:bossip_mobile/features/voice/widgets/voice_call_button.dart';
-import 'package:bossip_mobile/shared/router/paths.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,10 +29,6 @@ class _Entry {
           builder: (context, state) => Scaffold(
             appBar: AppBar(actions: [VoiceCallButton(enabled: enabled)]),
           ),
-        ),
-        GoRoute(
-          path: Paths.voice,
-          builder: (context, state) => const VoiceCallPage(),
         ),
       ],
     );
@@ -82,20 +76,20 @@ void main() {
     await tester.tap(find.text('以后再说'));
     await _settle(tester);
     expect(find.byType(VoicePrepermissionPage), findsNothing);
-    expect(find.byType(VoiceCallPage), findsNothing);
+    expect(entry.stub.state.expanded, isFalse);
     expect(entry.stub.starts, 0);
     // Nothing was asked of the system yet.
     expect(entry.rig.permission.requests, 0);
   });
 
-  testWidgets('allow opens the call page, which dials', (tester) async {
+  testWidgets('allow dials and opens the call sheet', (tester) async {
     final entry = _Entry(access: MicAccess.undetermined);
     await entry.pump(tester);
     await tester.tap(_button);
     await _settle(tester);
     await tester.tap(find.text('允许'));
     await _settle(tester);
-    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.state.expanded, isTrue);
     expect(entry.stub.starts, 1);
   });
 
@@ -107,7 +101,7 @@ void main() {
     await tester.tap(_button);
     await _settle(tester);
     expect(find.byType(VoicePrepermissionPage), findsNothing);
-    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.state.expanded, isTrue);
     expect(entry.stub.starts, 1);
   });
 
@@ -124,11 +118,13 @@ void main() {
     await tester.tap(_button);
     await _settle(tester);
     expect(find.byType(VoicePrepermissionPage), findsNothing);
-    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.state.expanded, isTrue);
     expect(entry.stub.starts, 0);
   });
 
-  testWidgets('declining overlay permission still dials the call', (tester) async {
+  testWidgets('declining overlay permission still dials the call', (
+    tester,
+  ) async {
     final entry = _Entry();
     entry.rig.systemCall.needsOverlay = true;
     await entry.pump(tester);
@@ -137,12 +133,14 @@ void main() {
     expect(find.text('开启通话悬浮窗'), findsOneWidget);
     await tester.tap(find.text('暂不开启，继续通话'));
     await _settle(tester);
-    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.state.expanded, isTrue);
     expect(entry.stub.starts, 1);
     expect(entry.rig.systemCall.overlayRequests, 0);
   });
 
-  testWidgets('returning from overlay settings without a grant still dials', (tester) async {
+  testWidgets('returning from overlay settings without a grant still dials', (
+    tester,
+  ) async {
     final entry = _Entry();
     entry.rig.systemCall.needsOverlay = true;
     await entry.pump(tester);
@@ -151,7 +149,7 @@ void main() {
     await tester.tap(find.text('去设置'));
     await _settle(tester);
     expect(entry.rig.systemCall.overlayRequests, 1);
-    expect(find.byType(VoiceCallPage), findsOneWidget);
+    expect(entry.stub.state.expanded, isTrue);
     expect(entry.stub.starts, 1);
   });
 }

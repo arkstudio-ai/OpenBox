@@ -57,8 +57,10 @@ class PlanCard extends ConsumerWidget {
           MarkdownView(plan.content, variant: MarkdownVariant.user),
           if (plan.status == 'ready' && plan.reviewViaQuestion) ...[
             const SizedBox(height: 12),
-            Text(i18n.t('chat:plan.review.viaQuestion'),
-                style: TextStyle(color: t.n600, fontSize: FontSizes.sm)),
+            Text(
+              i18n.t('chat:plan.review.viaQuestion'),
+              style: TextStyle(color: t.n600, fontSize: FontSizes.sm),
+            ),
           ],
           if (plan.status == 'ready' && !plan.reviewViaQuestion) ...[
             const SizedBox(height: 12),
@@ -71,13 +73,17 @@ class PlanCard extends ConsumerWidget {
                     backgroundColor: t.ink,
                     foregroundColor: t.bg,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 6),
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(Radii.full),
                     ),
                   ),
-                  child: Text(i18n.t('chat:plan.review.accept'),
-                      style: const TextStyle(fontSize: FontSizes.sm)),
+                  child: Text(
+                    i18n.t('chat:plan.review.accept'),
+                    style: const TextStyle(fontSize: FontSizes.sm),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton(
@@ -87,13 +93,17 @@ class PlanCard extends ConsumerWidget {
                     side: BorderSide(color: t.hair),
                     foregroundColor: t.ink,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 6),
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(Radii.full),
                     ),
                   ),
-                  child: Text(i18n.t('chat:plan.review.reject'),
-                      style: const TextStyle(fontSize: FontSizes.sm)),
+                  child: Text(
+                    i18n.t('chat:plan.review.reject'),
+                    style: const TextStyle(fontSize: FontSizes.sm),
+                  ),
                 ),
               ],
             ),

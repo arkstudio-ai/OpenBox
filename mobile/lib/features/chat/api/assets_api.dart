@@ -24,8 +24,10 @@ class AssetUrl {
 /// (AVAssetImageGenerator on iOS) straight from the presigned URL — only the
 /// moov atom and one frame are fetched, not the whole file. Cached for the
 /// session; null means extraction failed and the tile keeps its dark fallback.
-final videoThumbnailProvider =
-    FutureProvider.family<Uint8List?, String>((ref, assetId) async {
+final videoThumbnailProvider = FutureProvider.family<Uint8List?, String>((
+  ref,
+  assetId,
+) async {
   ref.keepAlive();
   final asset = await ref.watch(assetUrlProvider(assetId).future);
   if (asset.url.isEmpty) return null;
@@ -41,8 +43,10 @@ final videoThumbnailProvider =
   }
 });
 
-final assetUrlProvider =
-    FutureProvider.family<AssetUrl, String>((ref, assetId) async {
+final assetUrlProvider = FutureProvider.family<AssetUrl, String>((
+  ref,
+  assetId,
+) async {
   final link = ref.keepAlive();
   final expiry = Timer(const Duration(minutes: 40), link.close);
   ref.onDispose(expiry.cancel);

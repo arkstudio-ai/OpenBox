@@ -29,13 +29,18 @@ class CronScreen extends ConsumerWidget {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(i18n.t('cron:page.title'),
-                style: TextStyle(
-                    fontSize: FontSizes.lg,
-                    fontWeight: FontWeight.w500,
-                    color: t.ink)),
-            Text(i18n.t('cron:page.subtitle'),
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+            Text(
+              i18n.t('cron:page.title'),
+              style: TextStyle(
+                fontSize: FontSizes.lg,
+                fontWeight: FontWeight.w500,
+                color: t.ink,
+              ),
+            ),
+            Text(
+              i18n.t('cron:page.subtitle'),
+              style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+            ),
           ],
         ),
         titleSpacing: 0,
@@ -67,8 +72,10 @@ class CronScreen extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(i18n.t('cron:page.create'),
-                          style: const TextStyle(fontSize: FontSizes.sm)),
+                      Text(
+                        i18n.t('cron:page.create'),
+                        style: const TextStyle(fontSize: FontSizes.sm),
+                      ),
                       const SizedBox(width: 5),
                       const Icon(Icons.expand_more, size: 15),
                     ],
@@ -109,18 +116,20 @@ class CronScreen extends ConsumerWidget {
               loading: () => [
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Text(i18n.t('cron:page.loading'),
-                      textAlign: TextAlign.center,
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+                  child: Text(
+                    i18n.t('cron:page.loading'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
                 ),
               ],
               error: (_, _) => [
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Text(i18n.t('cron:page.loadFailed'),
-                      style: TextStyle(
-                          fontSize: FontSizes.sm, color: t.danger)),
+                  child: Text(
+                    i18n.t('cron:page.loadFailed'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.danger),
+                  ),
                 ),
               ],
               data: (data) => data.isEmpty
@@ -135,22 +144,31 @@ class CronScreen extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(i18n.t('cron:page.empty.title'),
-                                style: TextStyle(
-                                    fontSize: FontSizes.base,
-                                    color: t.ink)),
+                            Text(
+                              i18n.t('cron:page.empty.title'),
+                              style: TextStyle(
+                                fontSize: FontSizes.base,
+                                color: t.ink,
+                              ),
+                            ),
                             const SizedBox(height: 4),
-                            Text(i18n.t('cron:page.empty.body'),
-                                style: TextStyle(
-                                    fontSize: FontSizes.sm,
-                                    color: t.n600,
-                                    height: 1.6)),
+                            Text(
+                              i18n.t('cron:page.empty.body'),
+                              style: TextStyle(
+                                fontSize: FontSizes.sm,
+                                color: t.n600,
+                                height: 1.6,
+                              ),
+                            ),
                             const SizedBox(height: 10),
-                            Text(i18n.t('onboarding:m2.cronEmpty.body'),
-                                style: TextStyle(
-                                    fontSize: FontSizes.sm,
-                                    color: t.n800,
-                                    height: 1.6)),
+                            Text(
+                              i18n.t('onboarding:m2.cronEmpty.body'),
+                              style: TextStyle(
+                                fontSize: FontSizes.sm,
+                                color: t.n800,
+                                height: 1.6,
+                              ),
+                            ),
                             const SizedBox(height: 12),
                             OutlinedButton(
                               key: const Key('cron-empty-create-chat'),
@@ -160,8 +178,9 @@ class CronScreen extends ConsumerWidget {
                                 side: BorderSide(color: t.n400),
                                 minimumSize: const Size(0, 36),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(Radii.full),
+                                  borderRadius: BorderRadius.circular(
+                                    Radii.full,
+                                  ),
                                 ),
                               ),
                               child: Text(
@@ -199,20 +218,26 @@ class CronScreen extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.edit_calendar_outlined,
-                  size: 20, color: t.n700),
-              title: Text(i18n.t('cron:page.createManual'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              leading: Icon(
+                Icons.edit_calendar_outlined,
+                size: 20,
+                color: t.n700,
+              ),
+              title: Text(
+                i18n.t('cron:page.createManual'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () {
                 Navigator.pop(sheetContext);
                 showCronJobForm(context);
               },
             ),
             ListTile(
-              leading: Icon(Icons.chat_bubble_outline,
-                  size: 20, color: t.n700),
-              title: Text(i18n.t('cron:page.createChat'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              leading: Icon(Icons.chat_bubble_outline, size: 20, color: t.n700),
+              title: Text(
+                i18n.t('cron:page.createChat'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () {
                 Navigator.pop(sheetContext);
                 showCronChatCreateDialog(context);
@@ -249,9 +274,10 @@ class _StatusLine extends ConsumerWidget {
         ),
         if (status.lastTickAt != null)
           Text(
-            i18n.t('cron:status.lastTick', vars: {
-              'when': formatRelative(status.lastTickAt!, i18n.language)
-            }),
+            i18n.t(
+              'cron:status.lastTick',
+              vars: {'when': formatRelative(status.lastTickAt!, i18n.language)},
+            ),
             style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
           ),
         Text(

@@ -52,7 +52,7 @@ class ApiError implements Exception {
 }
 
 ApiError? apiErrorOf(Object error) => switch (error) {
-      final ApiError value => value,
-      final DioException value => ApiError.fromDio(value),
-      _ => null,
-    };
+  final ApiError value => value,
+  final DioException value => ApiError.fromDio(value),
+  _ => null,
+};

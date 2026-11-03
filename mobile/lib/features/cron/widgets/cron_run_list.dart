@@ -26,20 +26,26 @@ class CronRunList extends ConsumerWidget {
     return runs.when(
       loading: () => Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Text(i18n.t('cron:run.loading'),
-            style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+        child: Text(
+          i18n.t('cron:run.loading'),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+        ),
       ),
       error: (_, _) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Text(i18n.t('cron:run.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.xs, color: t.danger)),
+        child: Text(
+          i18n.t('cron:run.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+        ),
       ),
       data: (list) {
         if (list.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Text(i18n.t('cron:run.empty'),
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+            child: Text(
+              i18n.t('cron:run.empty'),
+              style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+            ),
           );
         }
         return Column(
@@ -91,28 +97,32 @@ class _RunRow extends ConsumerWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: chipBg,
                   borderRadius: BorderRadius.circular(Radii.full),
                 ),
                 child: Text(
-                  i18n.t(runStatusKeys[run.status] ?? runStatusKeys['skipped']!),
+                  i18n.t(
+                    runStatusKeys[run.status] ?? runStatusKeys['skipped']!,
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: chipFg),
                 ),
               ),
               if (silent)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: t.hairSoft,
                     borderRadius: BorderRadius.circular(Radii.full),
                   ),
-                  child: Text(i18n.t('cron:run.silent'),
-                      style:
-                          TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+                  child: Text(
+                    i18n.t('cron:run.silent'),
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                  ),
                 ),
               if (run.startedAt != null)
                 Text(
@@ -125,8 +135,10 @@ class _RunRow extends ConsumerWidget {
               ),
               if (run.totalTokens > 0)
                 Text(
-                  i18n.t('cron:run.tokens',
-                      vars: {'formatted': formatTokens(run.totalTokens)}),
+                  i18n.t(
+                    'cron:run.tokens',
+                    vars: {'formatted': formatTokens(run.totalTokens)},
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
                 ),
               if (run.tempSessionId != null)
@@ -146,8 +158,10 @@ class _RunRow extends ConsumerWidget {
           if (run.status == 'error')
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(i18n.t('cron:run.failed'),
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.danger)),
+              child: Text(
+                i18n.t('cron:run.failed'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+              ),
             )
           else if (!silent &&
               run.summaryText != null &&
@@ -159,7 +173,10 @@ class _RunRow extends ConsumerWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: FontSizes.xs, color: t.n700, height: 1.5),
+                  fontSize: FontSizes.xs,
+                  color: t.n700,
+                  height: 1.5,
+                ),
               ),
             ),
         ],

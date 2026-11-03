@@ -78,23 +78,23 @@ class UserRow extends ConsumerWidget {
                         CoachAnchor(
                           name: 'drawer.credits',
                           child: Text(
-                          credits.hasError
-                              ? i18n.t('workspace:creditsUnavailable')
-                              : i18n.t(
-                                  'workspace:creditBalance',
-                                  vars: {
-                                    'value': formatCredits(
-                                      credits.valueOrNull?.balance,
-                                    ),
-                                  },
-                                ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: FontSizes.xs,
-                            color: t.n600,
+                            credits.hasError
+                                ? i18n.t('workspace:creditsUnavailable')
+                                : i18n.t(
+                                    'workspace:creditBalance',
+                                    vars: {
+                                      'value': formatCredits(
+                                        credits.valueOrNull?.balance,
+                                      ),
+                                    },
+                                  ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              color: t.n600,
+                            ),
                           ),
-                        ),
                         ),
                       ],
                     ),

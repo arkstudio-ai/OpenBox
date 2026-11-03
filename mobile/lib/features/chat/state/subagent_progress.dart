@@ -47,8 +47,10 @@ String? childSessionOf(ToolPart part) {
 
 /// Live progress for one task call. Zeroed for a part that is not a task, or
 /// whose child has not reported anything yet.
-final subagentProgressProvider =
-    Provider.family<SubagentProgress, ToolPart>((ref, part) {
+final subagentProgressProvider = Provider.family<SubagentProgress, ToolPart>((
+  ref,
+  part,
+) {
   final sessionId = childSessionOf(part);
   final agent = asString(part.metadata['subagent_type']);
   if (sessionId == null) return SubagentProgress(agent: agent);
@@ -70,8 +72,9 @@ final subagentProgressProvider =
     return SubagentProgress(sessionId: sessionId, agent: agent);
   }
   final running = tools
-      .where((t) =>
-          t.status == ToolStatus.running || t.status == ToolStatus.pending)
+      .where(
+        (t) => t.status == ToolStatus.running || t.status == ToolStatus.pending,
+      )
       .toList();
   return SubagentProgress(
     sessionId: sessionId,
@@ -89,8 +92,10 @@ final subagentProgressProvider =
 /// A child session is a single turn, so its newest turn is all of it. The
 /// default `/message` page returned the oldest 200 messages instead, which
 /// for a long subagent run left out exactly the end it was on.
-final _subagentBackfillProvider =
-    FutureProvider.family<void, String>((ref, sessionId) async {
+final _subagentBackfillProvider = FutureProvider.family<void, String>((
+  ref,
+  sessionId,
+) async {
   ref.keepAlive();
   final page = await ref.read(chatApiProvider).history(sessionId, turns: 1);
   if (page.messages.isEmpty) return;

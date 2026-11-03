@@ -4,11 +4,11 @@ import 'json.dart';
 enum TodoStatus { pending, inProgress, completed, cancelled }
 
 TodoStatus todoStatusFrom(String? value) => switch (value) {
-      'in_progress' => TodoStatus.inProgress,
-      'completed' => TodoStatus.completed,
-      'cancelled' => TodoStatus.cancelled,
-      _ => TodoStatus.pending,
-    };
+  'in_progress' => TodoStatus.inProgress,
+  'completed' => TodoStatus.completed,
+  'cancelled' => TodoStatus.cancelled,
+  _ => TodoStatus.pending,
+};
 
 class TodoItem {
   const TodoItem({
@@ -23,15 +23,15 @@ class TodoItem {
   });
 
   factory TodoItem.fromJson(Map<String, dynamic> json) => TodoItem(
-        id: asString(json['id']) ?? '',
-        subject: asString(json['subject']) ?? '',
-        status: todoStatusFrom(asString(json['status'])),
-        description: asString(json['description']),
-        activeForm: asString(json['active_form']),
-        priority: asString(json['priority']),
-        source: asString(json['source']),
-        startedAt: asDate(json['started_at']),
-      );
+    id: asString(json['id']) ?? '',
+    subject: asString(json['subject']) ?? '',
+    status: todoStatusFrom(asString(json['status'])),
+    description: asString(json['description']),
+    activeForm: asString(json['active_form']),
+    priority: asString(json['priority']),
+    source: asString(json['source']),
+    startedAt: asDate(json['started_at']),
+  );
 
   final String id;
   final String subject;

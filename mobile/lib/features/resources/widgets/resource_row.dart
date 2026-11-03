@@ -119,11 +119,8 @@ class _Thumb extends StatelessWidget {
             ? Image.network(
                 resource.url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Icon(
-                  kindIcon(resource.kind),
-                  size: 17,
-                  color: t.n600,
-                ),
+                errorBuilder: (_, _, _) =>
+                    Icon(kindIcon(resource.kind), size: 17, color: t.n600),
               )
             : Icon(kindIcon(resource.kind), size: 17, color: t.n600),
       ),

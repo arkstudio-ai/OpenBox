@@ -123,33 +123,51 @@ void main() {
     expect((requests.last.data as Map)['onboarding'], isEmpty);
   });
 
-  test('a cached account survives an offline start; a fresh one waits', () async {
-    await prefs.setString('bossip:onboarding:u1', jsonEncode({'welcome': true}));
-    serverDown = true;
-    final cached = container('u1');
-    addTearDown(cached.dispose);
-    await cached.read(onboardingProvider.notifier).whenLoaded();
-    expect(cached.read(onboardingProvider).loaded, isTrue);
-    expect(cached.read(onboardingProvider.notifier).shouldShow(Guides.welcome), isFalse);
+  test(
+    'a cached account survives an offline start; a fresh one waits',
+    () async {
+      await prefs.setString(
+        'bossip:onboarding:u1',
+        jsonEncode({'welcome': true}),
+      );
+      serverDown = true;
+      final cached = container('u1');
+      addTearDown(cached.dispose);
+      await cached.read(onboardingProvider.notifier).whenLoaded();
+      expect(cached.read(onboardingProvider).loaded, isTrue);
+      expect(
+        cached.read(onboardingProvider.notifier).shouldShow(Guides.welcome),
+        isFalse,
+      );
 
-    final fresh = container('u9');
-    addTearDown(fresh.dispose);
-    await fresh.read(onboardingProvider.notifier).whenLoaded();
-    expect(fresh.read(onboardingProvider).loaded, isFalse);
-    expect(fresh.read(onboardingProvider.notifier).shouldShow(Guides.welcome), isFalse);
-  });
+      final fresh = container('u9');
+      addTearDown(fresh.dispose);
+      await fresh.read(onboardingProvider.notifier).whenLoaded();
+      expect(fresh.read(onboardingProvider).loaded, isFalse);
+      expect(
+        fresh.read(onboardingProvider.notifier).shouldShow(Guides.welcome),
+        isFalse,
+      );
+    },
+  );
 
   test('switching accounts drops the previous progress', () async {
     serverOnboarding = {'welcome': true};
     final c = container('u1');
     addTearDown(c.dispose);
     await c.read(onboardingProvider.notifier).whenLoaded();
-    expect(c.read(onboardingProvider.notifier).shouldShow(Guides.welcome), isFalse);
+    expect(
+      c.read(onboardingProvider.notifier).shouldShow(Guides.welcome),
+      isFalse,
+    );
     serverOnboarding = {};
     (c.read(authProvider.notifier) as _Auth).switchTo('u2');
     await c.read(onboardingProvider.notifier).whenLoaded();
     expect(c.read(onboardingProvider).userId, 'u2');
-    expect(c.read(onboardingProvider.notifier).shouldShow(Guides.welcome), isTrue);
+    expect(
+      c.read(onboardingProvider.notifier).shouldShow(Guides.welcome),
+      isTrue,
+    );
   });
 
   test('guide queue admits one guide at a time and wakes waiters', () async {

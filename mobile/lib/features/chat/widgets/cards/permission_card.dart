@@ -105,7 +105,8 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
     } catch (error) {
       if (!current()) return;
       final apiError = apiErrorOf(error);
-      if (apiError != null && (apiError.status == 404 || apiError.status == 410)) {
+      if (apiError != null &&
+          (apiError.status == 404 || apiError.status == 410)) {
         // The request is gone (expired, closed or superseded): retire the card
         // like web `useReplyPermission` does and say so in plain words.
         pending.removePermission(request.id);
@@ -209,7 +210,9 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
             spacing: 8,
             children: [
               FilledButton(
-                onPressed: _submitting || _expired ? null : () => _reply('once'),
+                onPressed: _submitting || _expired
+                    ? null
+                    : () => _reply('once'),
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
                   foregroundColor: t.bg,
@@ -228,7 +231,9 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
               ),
               const SizedBox(width: 8),
               OutlinedButton(
-                onPressed: _submitting || _expired ? null : () => _reply('always'),
+                onPressed: _submitting || _expired
+                    ? null
+                    : () => _reply('always'),
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: t.hair),
                   foregroundColor: t.ink,
@@ -247,7 +252,9 @@ class _PermissionCardState extends ConsumerState<PermissionCard> {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: _submitting || _expired ? null : () => _reply('reject'),
+                onPressed: _submitting || _expired
+                    ? null
+                    : () => _reply('reject'),
                 child: Text(
                   i18n.t('chat:permission.deny'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.danger),

@@ -19,10 +19,14 @@ class StepDivider extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final label = switch (part) {
       CompactionPart() => i18n.t('chat:compaction'),
-      RetryPart(:final attempt) =>
-        i18n.t('chat:retry', vars: {'attempt': attempt}),
-      AgentPart(:final agent) =>
-        i18n.t('chat:agentSwitch', vars: {'agent': agent}),
+      RetryPart(:final attempt) => i18n.t(
+        'chat:retry',
+        vars: {'attempt': attempt},
+      ),
+      AgentPart(:final agent) => i18n.t(
+        'chat:agentSwitch',
+        vars: {'agent': agent},
+      ),
       _ => '',
     };
     if (label.isEmpty) return const SizedBox.shrink();

@@ -167,7 +167,11 @@ class _IntroScreen extends StatelessWidget {
 }
 
 class _Dots extends StatelessWidget {
-  const _Dots({required this.count, required this.active, required this.tokens});
+  const _Dots({
+    required this.count,
+    required this.active,
+    required this.tokens,
+  });
 
   final int count;
   final int active;

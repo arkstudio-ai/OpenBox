@@ -103,8 +103,9 @@ void main() {
     expect(find.text('高清 · 1080p'), findsOneWidget);
   });
 
-  testWidgets('a multi-tier model opens a second sheet and records the pair',
-      (tester) async {
+  testWidgets('a multi-tier model opens a second sheet and records the pair', (
+    tester,
+  ) async {
     final container = await _open(tester);
 
     await tester.tap(find.text('Wan 3.0'));
@@ -122,8 +123,9 @@ void main() {
     expect(pick?.resolution, '1080p');
   });
 
-  testWidgets('the model you are on still advertises its other tiers',
-      (tester) async {
+  testWidgets('the model you are on still advertises its other tiers', (
+    tester,
+  ) async {
     // Found on device: the active row showed only a check, so the one model
     // whose resolution you are most likely to change read as the one model
     // that could not be changed. It always could — the affordance was missing,
@@ -143,11 +145,15 @@ void main() {
       of: find.text('Wan 3.0'),
       matching: find.byType(ListTile),
     );
-    expect(find.descendant(of: activeRow, matching: find.byIcon(Icons.check)),
-        findsOneWidget);
+    expect(
+      find.descendant(of: activeRow, matching: find.byIcon(Icons.check)),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
-          of: activeRow, matching: find.byIcon(Icons.chevron_right)),
+        of: activeRow,
+        matching: find.byIcon(Icons.chevron_right),
+      ),
       findsOneWidget,
       reason: 'the active row opens the tiers, so it must look like it does',
     );
@@ -159,13 +165,16 @@ void main() {
     );
     expect(
       find.descendant(
-          of: singleRow, matching: find.byIcon(Icons.chevron_right)),
+        of: singleRow,
+        matching: find.byIcon(Icons.chevron_right),
+      ),
       findsNothing,
     );
   });
 
-  testWidgets('a single-tier model is chosen outright, with no second sheet',
-      (tester) async {
+  testWidgets('a single-tier model is chosen outright, with no second sheet', (
+    tester,
+  ) async {
     // Nothing to choose there, so a second step would only be a step.
     final container = await _open(tester);
 

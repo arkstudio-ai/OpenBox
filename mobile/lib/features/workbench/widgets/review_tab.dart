@@ -52,12 +52,15 @@ class _ReviewTabState extends ConsumerState<ReviewTab> {
                     ),
                   ),
                 ),
-                Text('+$additions',
-                    style: TextStyle(fontSize: FontSizes.xs, color: t.s700)),
+                Text(
+                  '+$additions',
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.s700),
+                ),
                 const SizedBox(width: 6),
-                Text('−$deletions',
-                    style:
-                        TextStyle(fontSize: FontSizes.xs, color: t.dangerInk)),
+                Text(
+                  '−$deletions',
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.dangerInk),
+                ),
               ],
             ),
             const SizedBox(height: 10),
@@ -74,21 +77,21 @@ class _ReviewTabState extends ConsumerState<ReviewTab> {
   }
 
   Widget _empty(BossipTokens t, I18nState i18n) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              i18n.t('workbench:review.empty'),
-              style: TextStyle(fontSize: FontSizes.base, color: t.n700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              i18n.t('workbench:review.emptyHint'),
-              style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
-            ),
-          ],
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          i18n.t('workbench:review.empty'),
+          style: TextStyle(fontSize: FontSizes.base, color: t.n700),
         ),
-      );
+        const SizedBox(height: 6),
+        Text(
+          i18n.t('workbench:review.emptyHint'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
+        ),
+      ],
+    ),
+  );
 }
 
 class _ReviewCard extends ConsumerWidget {
@@ -122,8 +125,7 @@ class _ReviewCard extends ConsumerWidget {
             borderRadius: BorderRadius.circular(Radii.lg),
             onTap: onTap,
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
                 children: [
                   _badge(t),
@@ -156,12 +158,18 @@ class _ReviewCard extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text('+${entry.additions}',
-                      style: TextStyle(fontSize: FontSizes.xs, color: t.s700)),
+                  Text(
+                    '+${entry.additions}',
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.s700),
+                  ),
                   const SizedBox(width: 5),
-                  Text('−${entry.deletions}',
-                      style: TextStyle(
-                          fontSize: FontSizes.xs, color: t.dangerInk)),
+                  Text(
+                    '−${entry.deletions}',
+                    style: TextStyle(
+                      fontSize: FontSizes.xs,
+                      color: t.dangerInk,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -212,12 +220,14 @@ class _DiffBody extends StatelessWidget {
       final label = entry.status == 'added'
           ? i18n.t('workbench:review.skippedNew')
           : entry.status == 'deleted'
-              ? i18n.t('workbench:review.skippedDeleted')
-              : i18n.t('workbench:review.empty');
+          ? i18n.t('workbench:review.skippedDeleted')
+          : i18n.t('workbench:review.empty');
       return Padding(
         padding: const EdgeInsets.all(12),
-        child: Text(label,
-            style: TextStyle(fontSize: FontSizes.xs, color: t.n500)),
+        child: Text(
+          label,
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+        ),
       );
     }
     final rows = <Widget>[];
@@ -238,22 +248,25 @@ class _DiffBody extends StatelessWidget {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: ConstrainedBox(
-          constraints:
-              BoxConstraints(minWidth: MediaQuery.sizeOf(context).width - 58),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows),
+          constraints: BoxConstraints(
+            minWidth: MediaQuery.sizeOf(context).width - 58,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: rows,
+          ),
         ),
       ),
     );
   }
 
   Widget _gapRow(BossipTokens t, int count) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Text(
-          i18n.t('workbench:review.unchanged', count: count),
-          style: TextStyle(fontSize: FontSizes.xs2, color: t.n500),
-        ),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+    child: Text(
+      i18n.t('workbench:review.unchanged', count: count),
+      style: TextStyle(fontSize: FontSizes.xs2, color: t.n500),
+    ),
+  );
 
   Widget _lineRow(BossipTokens t, DiffLine line) {
     final (bg, fg, sign) = switch (line.type) {

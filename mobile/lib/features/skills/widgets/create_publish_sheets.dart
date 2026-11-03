@@ -42,14 +42,14 @@ class _CreateSkillSheetState extends ConsumerState<CreateSkillSheet> {
   }
 
   String get _selectedProject =>
-      _projectId ??
-      (widget.projects.isEmpty ? '' : widget.projects.first.$1);
+      _projectId ?? (widget.projects.isEmpty ? '' : widget.projects.first.$1);
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final canSubmit = _selectedProject.isNotEmpty &&
+    final canSubmit =
+        _selectedProject.isNotEmpty &&
         _brief.text.trim().isNotEmpty &&
         !widget.loading;
 
@@ -89,8 +89,7 @@ class _CreateSkillSheetState extends ConsumerState<CreateSkillSheet> {
                       value: _selectedProject.isEmpty ? null : _selectedProject,
                       hint: Text(
                         i18n.t('skills:create.noProjects'),
-                        style:
-                            TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
                       ),
                       items: [
                         for (final (id, name) in widget.projects)
@@ -101,7 +100,9 @@ class _CreateSkillSheetState extends ConsumerState<CreateSkillSheet> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: FontSizes.sm, color: t.ink),
+                                fontSize: FontSizes.sm,
+                                color: t.ink,
+                              ),
                             ),
                           ),
                       ],
@@ -126,8 +127,11 @@ class _CreateSkillSheetState extends ConsumerState<CreateSkillSheet> {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               i18n.t('skills:create.chatHint'),
-              style:
-                  TextStyle(fontSize: FontSizes.xs, height: 1.6, color: t.n600),
+              style: TextStyle(
+                fontSize: FontSizes.xs,
+                height: 1.6,
+                color: t.n600,
+              ),
             ),
           ),
         ],
@@ -172,20 +176,20 @@ class PublishSkillSheet extends ConsumerWidget {
     final titleKey = resubmit
         ? 'skills:publish.resubmitTitle'
         : updating
-            ? 'skills:publish.updateTitle'
-            : 'skills:publish.title';
+        ? 'skills:publish.updateTitle'
+        : 'skills:publish.title';
     final bodyKey = resubmit
         ? 'skills:publish.resubmitBody'
         : updating
-            ? 'skills:publish.updateBody'
-            : 'skills:publish.body';
+        ? 'skills:publish.updateBody'
+        : 'skills:publish.body';
     final confirmKey = reviewRequired
         ? 'skills:publish.confirmSubmit'
         : resubmit
-            ? 'skills:publish.confirmResubmit'
-            : updating
-                ? 'skills:publish.confirmUpdate'
-                : 'skills:publish.confirm';
+        ? 'skills:publish.confirmResubmit'
+        : updating
+        ? 'skills:publish.confirmUpdate'
+        : 'skills:publish.confirm';
 
     return SkillSheet(
       title: i18n.t(titleKey),
@@ -204,8 +208,8 @@ class PublishSkillSheet extends ConsumerWidget {
       confirmLabel: i18n.t(
         busy
             ? (reviewRequired
-                ? 'skills:publish.submitting'
-                : 'skills:publish.working')
+                  ? 'skills:publish.submitting'
+                  : 'skills:publish.working')
             : confirmKey,
       ),
       onConfirm: onConfirm,
@@ -231,9 +235,11 @@ class PublishSkillSheet extends ConsumerWidget {
               borderRadius: BorderRadius.circular(Radii.md),
             ),
             child: Text(
-              i18n.t(reviewRequired
-                  ? 'skills:publish.reviewNotice'
-                  : 'skills:publish.publicNotice'),
+              i18n.t(
+                reviewRequired
+                    ? 'skills:publish.reviewNotice'
+                    : 'skills:publish.publicNotice',
+              ),
               style: TextStyle(
                 fontSize: FontSizes.xs,
                 height: 1.6,
@@ -243,8 +249,7 @@ class PublishSkillSheet extends ConsumerWidget {
           ),
           // Re-submitting after a refusal or a delisting: repeat what was said
           // about it, so the fix can be checked against the reason.
-          if (resubmit &&
-              (group.listingNote?.isNotEmpty ?? false))
+          if (resubmit && (group.listingNote?.isNotEmpty ?? false))
             Container(
               margin: const EdgeInsets.only(top: 8),
               padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
@@ -253,8 +258,10 @@ class PublishSkillSheet extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(Radii.md),
               ),
               child: Text(
-                i18n.t('skills:mine.listingReason',
-                    vars: {'note': group.listingNote!}),
+                i18n.t(
+                  'skills:mine.listingReason',
+                  vars: {'note': group.listingNote!},
+                ),
                 style: TextStyle(
                   fontSize: FontSizes.xs,
                   height: 1.6,

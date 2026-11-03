@@ -15,14 +15,14 @@ import 'sheet_scaffold.dart';
 /// — are the only part of adding a server that has any real shape to it.
 class McpFormState {
   McpFormState()
-      : name = TextEditingController(),
-        // npx is what almost every published server's README starts with.
-        command = TextEditingController(text: 'npx'),
-        args = TextEditingController(),
-        env = TextEditingController(),
-        url = TextEditingController(),
-        headers = TextEditingController(),
-        json = TextEditingController();
+    : name = TextEditingController(),
+      // npx is what almost every published server's README starts with.
+      command = TextEditingController(text: 'npx'),
+      args = TextEditingController(),
+      env = TextEditingController(),
+      url = TextEditingController(),
+      headers = TextEditingController(),
+      json = TextEditingController();
 
   final TextEditingController name;
   final TextEditingController command;
@@ -41,7 +41,9 @@ class McpFormState {
   bool get canSubmit => tab == 'json'
       ? json.text.trim().isNotEmpty
       : name.text.trim().isNotEmpty &&
-          (isStdio ? command.text.trim().isNotEmpty : url.text.trim().isNotEmpty);
+            (isStdio
+                ? command.text.trim().isNotEmpty
+                : url.text.trim().isNotEmpty);
 
   /// The single server the form describes, or null when it is incomplete.
   McpConfig? buildConfig() {
@@ -174,7 +176,10 @@ class McpConfigForm extends ConsumerWidget {
               child: Text(
                 i18n.t('skills:upload.remoteHint'),
                 style: TextStyle(
-                    fontSize: FontSizes.xs, height: 1.6, color: t.n600),
+                  fontSize: FontSizes.xs,
+                  height: 1.6,
+                  color: t.n600,
+                ),
               ),
             ),
           ],
@@ -194,8 +199,11 @@ class McpConfigForm extends ConsumerWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               i18n.t('skills:upload.jsonHint'),
-              style:
-                  TextStyle(fontSize: FontSizes.xs, height: 1.6, color: t.n600),
+              style: TextStyle(
+                fontSize: FontSizes.xs,
+                height: 1.6,
+                color: t.n600,
+              ),
             ),
           ),
           if (state.jsonError != null)

@@ -45,21 +45,36 @@ class _Source {
 }
 
 List<_Source> _sourcesFor(TargetPlatform platform) => switch (platform) {
-      TargetPlatform.android => const [
-          _Source(FileType.image, Icons.photo_library_outlined,
-              'resources:upload.fromPhotos'),
-          _Source(FileType.video, Icons.videocam_outlined,
-              'resources:upload.fromVideos'),
-          _Source(FileType.any, Icons.folder_open_outlined,
-              'resources:upload.fromFiles'),
-        ],
-      _ => const [
-          _Source(FileType.media, Icons.photo_library_outlined,
-              'resources:upload.fromAlbum'),
-          _Source(FileType.any, Icons.folder_open_outlined,
-              'resources:upload.fromFiles'),
-        ],
-    };
+  TargetPlatform.android => const [
+    _Source(
+      FileType.image,
+      Icons.photo_library_outlined,
+      'resources:upload.fromPhotos',
+    ),
+    _Source(
+      FileType.video,
+      Icons.videocam_outlined,
+      'resources:upload.fromVideos',
+    ),
+    _Source(
+      FileType.any,
+      Icons.folder_open_outlined,
+      'resources:upload.fromFiles',
+    ),
+  ],
+  _ => const [
+    _Source(
+      FileType.media,
+      Icons.photo_library_outlined,
+      'resources:upload.fromAlbum',
+    ),
+    _Source(
+      FileType.any,
+      Icons.folder_open_outlined,
+      'resources:upload.fromFiles',
+    ),
+  ],
+};
 
 Future<FileType?> _showSourceSheet(BuildContext context, WidgetRef ref) {
   final t = context.tokens;

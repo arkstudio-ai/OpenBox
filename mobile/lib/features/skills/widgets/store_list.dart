@@ -14,11 +14,7 @@ import 'entry_row.dart';
 /// Sections are cut by who published a thing, not by what it technically is,
 /// so a row has to say its own kind rather than inherit it from the heading.
 class StoreList extends ConsumerWidget {
-  const StoreList({
-    super.key,
-    required this.shelves,
-    required this.onInstall,
-  });
+  const StoreList({super.key, required this.shelves, required this.onInstall});
 
   final StoreShelves shelves;
   final void Function(CatalogEntry entry) onInstall;
@@ -35,9 +31,11 @@ class StoreList extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 48),
         child: Center(
           child: Text(
-            i18n.t(shelves.total == 0
-                ? 'skills:store.empty'
-                : 'skills:store.noMatch'),
+            i18n.t(
+              shelves.total == 0
+                  ? 'skills:store.empty'
+                  : 'skills:store.noMatch',
+            ),
             style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
           ),
         ),
@@ -49,8 +47,7 @@ class StoreList extends ConsumerWidget {
       children: [
         for (final section in shelves.sections) ...[
           _heading(t, i18n.t(_headingKey(section.origin))),
-          for (final entry in section.entries)
-            _row(context, i18n, entry),
+          for (final entry in section.entries) _row(context, i18n, entry),
           const SizedBox(height: 12),
         ],
       ],
@@ -58,22 +55,22 @@ class StoreList extends ConsumerWidget {
   }
 
   static String _headingKey(String origin) => switch (origin) {
-        'official' => 'skills:section.storeOfficial',
-        'third_party' => 'skills:section.storeThirdParty',
-        _ => 'skills:section.storeCommunity',
-      };
+    'official' => 'skills:section.storeOfficial',
+    'third_party' => 'skills:section.storeThirdParty',
+    _ => 'skills:section.storeCommunity',
+  };
 
   Widget _heading(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 7),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: FontSizes.xs,
-            fontWeight: FontWeight.w500,
-            color: t.n600,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 7),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: FontSizes.xs,
+        fontWeight: FontWeight.w500,
+        color: t.n600,
+      ),
+    ),
+  );
 
   List<Widget> _badges(I18nState i18n, CatalogEntry entry) {
     final isMcp = entry.kind == 'mcp';
@@ -89,8 +86,9 @@ class StoreList extends ConsumerWidget {
         SkillBadge(text: entry.publisher!),
       if (isMcp) ...[
         SkillBadge(
-          text: i18n
-              .t('skills:upload.transport.${entry.config?.type ?? 'stdio'}'),
+          text: i18n.t(
+            'skills:upload.transport.${entry.config?.type ?? 'stdio'}',
+          ),
         ),
         if (entry.requiredEnv.isNotEmpty)
           SkillBadge(
@@ -101,8 +99,10 @@ class StoreList extends ConsumerWidget {
         // Stated on the card, not just in the sheet: whether a skill drags a
         // server along changes whether someone wants it at all.
         SkillBadge(
-          text: i18n.t('skills:badge.needsMcp',
-              vars: {'names': entry.requiresMcp.join(', ')}),
+          text: i18n.t(
+            'skills:badge.needsMcp',
+            vars: {'names': entry.requiresMcp.join(', ')},
+          ),
           tone: BadgeTone.warn,
         ),
       // Zero is not evidence of anything — a fresh entry and an ignored one
@@ -149,9 +149,11 @@ class StoreList extends ConsumerWidget {
                 ),
               ),
               child: Text(
-                i18n.t(entry.installed
-                    ? 'skills:action.installed'
-                    : 'skills:action.install'),
+                i18n.t(
+                  entry.installed
+                      ? 'skills:action.installed'
+                      : 'skills:action.install',
+                ),
                 style: const TextStyle(fontSize: FontSizes.xs),
               ),
             ),

@@ -90,7 +90,9 @@ class MentionMenu extends ConsumerWidget {
                   onTap: () => onSelect(item),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 7),
+                      horizontal: 16,
+                      vertical: 7,
+                    ),
                     child: Row(
                       children: [
                         Expanded(
@@ -101,8 +103,7 @@ class MentionMenu extends ConsumerWidget {
                             style: TextStyle(
                               fontSize: FontSizes.sm,
                               color: t.ink,
-                              fontFamily:
-                                  item.kind == 'file' ? 'Menlo' : null,
+                              fontFamily: item.kind == 'file' ? 'Menlo' : null,
                               fontFamilyFallback: item.kind == 'file'
                                   ? const ['monospace']
                                   : null,
@@ -118,7 +119,9 @@ class MentionMenu extends ConsumerWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: FontSizes.xs, color: t.n500),
+                                fontSize: FontSizes.xs,
+                                color: t.n500,
+                              ),
                             ),
                           ),
                         ],
@@ -133,10 +136,10 @@ class MentionMenu extends ConsumerWidget {
   }
 
   Widget _hint(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-        child: Text(
-          text,
-          style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
-        ),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
+    ),
+  );
 }

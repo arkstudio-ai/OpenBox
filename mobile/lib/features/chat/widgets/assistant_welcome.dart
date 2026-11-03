@@ -23,13 +23,23 @@ String welcomeTimeOfDay(DateTime now) {
 /// before anything happens. Until the first meeting is over, the meeting
 /// stands where the cards would.
 class AssistantWelcome extends ConsumerStatefulWidget {
-  const AssistantWelcome({super.key, required this.onPick, this.clock});
+  const AssistantWelcome({
+    super.key,
+    required this.onPick,
+    this.clock,
+    this.inlineMeeting = true,
+  });
 
   /// Puts an idea's prompt into the composer.
   final ValueChanged<String> onPick;
 
   /// The time the greeting is for; now unless a test pins it.
   final DateTime Function()? clock;
+
+  /// Whether the first meeting stands here, where the idea cards would.
+  /// Light 模式 opens it as a sheet over the page instead and keeps the
+  /// cards (`AssistantIntroEntry.autoOpen`).
+  final bool inlineMeeting;
 
   static const ideas = <(String, IconData)>[
     ('delegate', Icons.assignment_outlined),
@@ -55,7 +65,11 @@ class _AssistantWelcomeState extends ConsumerState<AssistantWelcome> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final loaded = ref.watch(assistantProfileProvider).valueOrNull;
-    _meeting ??= loaded == null ? null : introStartsByItself(loaded);
+    _meeting ??= !widget.inlineMeeting
+        ? false
+        : loaded == null
+        ? null
+        : introStartsByItself(loaded);
     final onPick = widget.onPick;
     // What the person asked to be called (Settings, or told to the
     // assistant); a sign-in name such as "memoryqa_2026…" is not a way to
@@ -78,7 +92,8 @@ class _AssistantWelcomeState extends ConsumerState<AssistantWelcome> {
         : i18n.t('chat:assistant.welcome.intro');
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(16, 32, 16, 16),
+      // Room under the last line so the composer never sits on it.
+      padding: const EdgeInsets.fromLTRB(16, 32, 16, 40),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),

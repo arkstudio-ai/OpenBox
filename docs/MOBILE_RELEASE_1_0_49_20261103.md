@@ -15,9 +15,10 @@
 
 ## iOS
 
-- 归档成功（1.0.49 / 60，`/Users/wxy/openbox-ios-build-1.0.49/BossIP-iOS-1.0.49-60.xcarchive`）。
-- **导出未完成**：Xcode 登录账号的钥匙串凭据失效（`DVTDeveloperAccountManager: Invalid credentials in keychain … missing Xcode-Username` → `exportArchive No Accounts`），账号列表为空；改用 API 密钥导出报 `Cloud signing permission error`（密钥 ZH3HN7FF5A 没有「访问云端管理的分发证书」权限）。本机钥匙串只有 Apple Development 证书，没有分发证书。
-- 解法二选一：在 Xcode → Settings → Accounts 重新登录 Apple ID 后重跑导出；或在 App Store Connect → 用户和访问 → 集成 → 团队密钥里给该密钥勾选「访问云端管理的分发证书」，然后带密钥导出。导出通过后 `altool --upload-app`（参数同 1.0.48）。
+- 归档 → 导出（云端 Apple Distribution 签名，`codesign --verify --deep --strict` 通过）→ `altool --upload-app`。
+- IPA 32,162,254 字节，SHA-256 `339a45989f235c1fab9e810756678557ce00539d7c36a97ac884ad43175eac03`；1.0.49 / 60。
+- 2026-11-04 01:12（北京时间）上传成功，Delivery UUID `73355fcb-5c1d-4303-90f6-476b930d3953`；内部测试组自动分发。桌面副本 `~/Desktop/BossIP-iOS-1.0.49-60/`。
+- **中间卡过一次**：首次导出报 `No Accounts`（Xcode 的 Apple ID 登录态丢失，钥匙串凭据 `missing Xcode-Username`），带 API 密钥导出报 `Cloud signing permission error`（密钥 ZH3HN7FF5A 无云端分发证书权限）。在 Xcode → Settings → Accounts 重新登录后导出即过。
 
 ## 桌面清理
 

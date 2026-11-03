@@ -11,7 +11,19 @@ from sandbox import resource_operation as operations
 
 
 class RuntimePreparationUncertain(effects.EffectNotDispatchableError):
-    pass
+    """The Driver's own desktop preparation has no confirmed outcome.
+
+    ``str(self)`` stays the precise ledger wording for logs and tests;
+    ``user_message`` is what the failed turn shows under 「这一轮出错了」.
+    """
+    code = "RUNTIME_PREPARATION_UNCERTAIN"
+    user_message = ("云电脑上的准备步骤没有收到确认结果，这一轮先停下了。"
+                    "请等几秒再点「重新生成」；如果反复出现，请看一下云电脑是否在线。")
+
+    def __init__(self, message, *, user_message=None):
+        super().__init__(message)
+        if user_message:
+            self.user_message = user_message
 
 
 def runtime_read_lease(sandbox):
@@ -35,6 +47,7 @@ async def read_runtime_catalogue(sandbox, lease, operation):
     from core.identifier import ascending
     from db.base import get_db_session
     from db.models.external_effect import ExternalEffect
+    await _ensure_journal(sandbox, lease)
     _, resource, _, _, _ = await runtime_context(sandbox, lease)
     async with get_db_session() as db:
         # Terminal rows (manual_review included) are parked, not in flight:
@@ -45,7 +58,8 @@ async def read_runtime_catalogue(sandbox, lease, operation):
             ExternalEffect.submitting_at.is_not(None),
             ExternalEffect.state.not_in(tuple(effects.TERMINAL_STATES))).limit(1))
     if uncertain:
-        raise RuntimePreparationUncertain("An earlier catalogue read has an unresolved outcome")
+        raise RuntimePreparationUncertain("An earlier catalogue read has an unresolved outcome",
+            user_message="上一轮在云电脑上的读取还没有确认结果，这一轮先停下了。请等几秒再点「重新生成」。")
     result = None
 
     async def read():
@@ -61,6 +75,17 @@ async def read_runtime_catalogue(sandbox, lease, operation):
         payload={"surface": "skill_mcp_catalogue", "method": "GET"}, operation=read,
         before_request=current)
     return result
+
+
+async def _ensure_journal(sandbox, lease):
+    """A v2 gate refuses fenced requests until the desktop's journal is pinned.
+
+    This must run before the run's first ``runtime_context`` freezes the
+    journal into ``resource.runtime_requested``; a pin made later in the same
+    run would correctly read as a control change and refuse every operation.
+    """
+    from assistant.resource_commands import ensure_remote_journal
+    await ensure_remote_journal(sandbox, user_id=lease.user_id)
 
 
 async def runtime_context(sandbox, lease):
@@ -137,6 +162,7 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
     if operations._bound_operation() is not None or operations._tool_scope() is not None:
         return await operation()
     await lease.assert_current()
+    await _ensure_journal(sandbox, lease)
     if before_request is not None:
         await before_request()
     run, resource, journal, project_id, origin = await runtime_context(sandbox, lease)
@@ -161,7 +187,8 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
             raise effects.EffectNotDispatchableError("Runtime preparation receipt is unavailable")
         return receipt["result"]
     if snapshot.state != "prepared":
-        raise RuntimePreparationUncertain("Runtime preparation already crossed its send boundary")
+        raise RuntimePreparationUncertain("Runtime preparation already crossed its send boundary",
+            user_message="这一步准备操作已经发出过、还没有确认结果，不会重复发送。请等几秒再点「重新生成」。")
     claim = await effects.claim_effect_for_dispatch(snapshot.effect_id, run)
     if claim is None:
         raise effects.EffectNotDispatchableError("Runtime preparation is already being processed")

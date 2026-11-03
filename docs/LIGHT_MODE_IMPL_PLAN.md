@@ -198,11 +198,27 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 - 2026-11-03：light-test 上所有需要云桌面步骤的回合（做菜单、做海报、任何从桌面读技能目录的回合）此前从未成功过，App 显示「Runtime preparation may have partially completed」。根因不是桌面或连通性，而是桌面 Action Server 的 v2 资源门要求 journal 头、后端从未钉住 journal（只有手工 bind 会钉）；修复为 Driver 首次准备桌面时自动钉住 journal（不 bind：bind 会让门拒绝后端仍不带围栏的通道校验等请求，首版 `6c69a3e1` 因此让三台桌面通道掉线 11 分钟），镜像 `20261103-light-131fadd6`，细节见 `deploy/light-test/README.md`「根因记录」。
 - 主工作树被 Codex 共用，提交照旧走临时 worktree。
 
-## 11. 参考样例库（2026-11-04 拍板，PR 待合）
+## 11. 助理对 Light 的感知（2026-11-04）
+
+11-04 核实：Light 模式下的个人助理不知道自己在 Light、也不知道首页有哪些功能；老板在助理页说"帮我做个菜单"会被按主线交办到云电脑上，免费档没有云电脑就卡住。改法分三处，都在 `backend/`：
+
+**① 模式感知与首页目录（提示词）。** `light/prompt.py::assistant_section(user_id, workspace_id)`，由 `agent/loop.py::_build_system_prompt` 的 `assistant` 分支注入，位置在 `ASSISTANT_PROMPT`、用户画像之后、日期之前（出错只记 warning，不影响助理应答）。任何模式都先写一句「界面模式：Light（功能引导）」或「界面模式：专业。」（`light/mode.py::ui_mode` 读偏好）；专业模式**只有这一句**，主线行为不变。Light 时再列首页目录（`entries_view` 的结果，每个入口一行：标题｜用途｜当前账号状态｜直达链接 `/light/topic/<entry_id>`，即 App 的 `Paths.lightTopic`），状态口径：可用 / 需要云电脑 / 需要绑定抖音 / 需要套餐 / 即将上线。随后三条规则：
+1. 做视频、做菜单、做海报、剪素材这几类活**默认引导老板去首页对应入口并给链接**（首页有样片和一步一卡引导）；只有老板明确说「你直接做」才用 `tasks.submit` 派活，并选对应的 Light 工作类型。
+2. 标「需要云电脑」的入口在没有桌面时说明要先开通云电脑（我的 → 云电脑），不派帮手去撞；「需要绑定抖音」的先引导绑定。
+3. 不出现模型名、档位内部名、积分估算等技术词。
+助理主会话 kind=assistant，不走 `light_mode_fragment`（它只服务 normal 会话），所以单独走这个函数，不改它的门槛。
+
+**② 派活到 Light 技能。** `tasks.submit` 的 `work_type` 新增 `light_video` / `menu` / `poster` / `footage_edit`（`light/work_types.py`，名字与 `light/entries.json` 的入口 id 一致，`video` 入口叫 `light_video` 是为了不和主线「形式未定的 video」撞名；并回主线不用改）。映射到 workflow = 入口的 skill：`light-video` / `menu-maker` / `poster-maker` / `footage-edit`，`assistant/commands.py::VIDEO_WORKFLOW_GUIDANCE` 为每个 workflow 加了开场指引：先加载对应技能、云端完成、不加载 video-production、不用 bash/文件/桌面、一卡一事、不出技术词、成片附上才算完成。`assistant/model_choices.py::light_video_tier`：这四种不出「视频形式」「视频档次」卡（即使带 `let_user_choose`）；`light_video` 默认档位取入口的 `default_tier`（low，缺这档时退到默认档），老板已确认的档位原样保留；其余三种不是视频，不涉及档位。帮手会话是 normal 会话，Light 模式下 `light_mode_fragment` 已会注入 Light 规则，不重复。
+
+**③ 只读工具 `light.entries`。** `tool/assistant_tools.py`（READ_TOOLS）、`assistant/reporting.py::ASSISTANT_TOOLS`、`assistant/projection.py::READ_TOOL_IDS` 都已登记；返回与 ① 同源的目录（`light/prompt.py::entries_directory`：id、标题、用途、可用状态及口语标签、链接，外加 ui_mode / plan_id / desktop），只读，不建任务不出卡。
+
+测试：`tests/unit/test_light_assistant_awareness.py`（两种模式的 section 与 `_build_system_prompt` 注入、section 出错不影响提示词、四种 work_type 的 workflow 映射与不出卡、`light_video` 默认 low 与已确认档位保留、`light.entries` 与 section 同源且只读、绑定缺失时的标签）。未做：App 端对助理回复里 `/light/topic/<id>` 链接的点击跳转尚未核实；light-test 未实测。
+
+## 12. 参考样例库（2026-11-04 拍板，PR #142）
 
 创作团队天天给客户做内容；他们把认可的产出收进样例库，AI 做同类活时先翻库，照同行业同门店类型的样例的结构和风格做。**样例只存引用**（asset_id + OSS key），不复制文件。
 
-### 11.1 表 `light_examples`（迁移 `pl28e9f0a1b2`，接 `pk17d8e9f0a1`）
+### 12.1 表 `light_examples`（迁移 `pl28e9f0a1b2`，接 `pk17d8e9f0a1`）
 
 | 列 | 含义 |
 |---|---|
@@ -225,7 +241,7 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 
 分类字典 `backend/light/taxonomy.json`：四个行业，餐饮 / 美业 / 零售各 6 个常见门店类型 + `other`，每个门店类型带 `keywords`，供后台下拉与店名推断。
 
-### 11.2 收录流程
+### 12.2 收录流程
 
 1. 超管后台 → 轨迹监控 → 某用户 → 某一轮（简明模式）→ 右上「收进样例库」。
 2. 跳到「样例库」页并打开收录抽屉；服务端 `POST /api/admin/examples/prefill {session_id, asset_id?}` 从会话带回：入口（`sessions.light_entry`）、行业和店名（`user_preferences.extra.first_video`）、门店类型（按店名/主打关键词推断）、输入素材（用户附件 file part）、产出（`role` 为 `result`/`final` 的图片与视频 part；传了 `asset_id` 就只取它）、做法（问答检查点里带 `light.step_id` 的最长一张卡 + `video_generate` / `image_gen` / `video_compose` / `footage_analyze` 的 `prompt`）。
@@ -234,7 +250,7 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 
 **评分标准**：5 = 客户当场认可、可直接当模板；4 = 认可但有一处要改；3 = 结构可用、文案一般；2 = 只有某一段可学；1 = 只作反例（一般停用）。只有 ≥3 的值得启用。
 
-### 11.3 接口（`backend/api/admin_examples.py`，鉴权同其他 admin_*：`live_admin`）
+### 12.3 接口（`backend/api/admin_examples.py`，鉴权同其他 admin_*：`live_admin`）
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -248,7 +264,7 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 
 新建、编辑、改状态都写审计（`admin.light_example_*`）。
 
-### 11.4 匹配与注入（`backend/light/examples.py`）
+### 12.4 匹配与注入（`backend/light/examples.py`）
 
 - `pick(entry_id, industry, shop_type, tags, limit=3)`：只取 `active`；逐级退化 **同行业同门店类型 → 同行业 → 通用（industry=other）→ 该入口任意**；同一级内按 共享标签数 ↓、评分 ↓、新建时间 ↓ 排序。
 - `shop_context(user_id)`：行业取首条视频表单，没有就取助理档案的 `business`；门店类型按店名 / 主打 / 老板自述里的关键词推断。
@@ -256,7 +272,7 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 - 注入位置：`light/prompt.py::light_mode_fragment` 末尾一行（店名片段之后），随 Light 片段进系统提示；同一会话内文本稳定，不打散提示缓存。
 - `examples_hint(entry_ids, industry=None)`：给助理的一句话（「这类活有同行业样例可参考（做菜单 3 条）…」），由助理感知那条线在 `assistant_section` 里调用。
 
-### 11.5 后台页面（`frontend-v2/src/features/admin-examples`）
+### 12.5 后台页面（`frontend-v2/src/features/admin-examples`）
 
 导航「样例库」（`/app/admin/examples`）：筛选（入口 / 行业 / 门店类型 / 状态 / 标题）、列表（标题与说明、入口、行业/门店类型、标签、评分、状态、引用次数、更新时间）、「预览」展开做法与产出播放、「编辑」抽屉、「启用/停用」、「手工新建」。轨迹页的「收进样例库」通过 `?collect=<session>&asset=<asset_id>` 打开同一抽屉。
 

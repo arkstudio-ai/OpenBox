@@ -52,6 +52,7 @@ STEPS = {
     "status.publishing": ("在看发布渠道通不通", "checking the publishing route"),
     "status.skills": ("在看能用哪些技能", "checking the available skills"),
     "status.briefing": ("在看每日简报的设置", "checking the daily briefing"),
+    "light.entries": ("在看首页有哪些功能", "checking the home entries"),
     TEXT_STEP: ("在整理回复", "writing up the answer"),
 }
 PREFIX_STEPS = {

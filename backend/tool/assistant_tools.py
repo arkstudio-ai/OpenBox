@@ -27,7 +27,8 @@ log = create_logger("tool.assistant")
 READ_TOOLS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
                         "requests.list", "requests.get", "assets.list", "schedules.list", "knowledge.directory", "knowledge.read",
                         "memory.search", "memory.read", "status.credits", "status.resources", "status.skills",
-                        "status.publishing", "status.briefing", "status.models", "status.platforms", "assets.describe", "cards.list"})
+                        "status.publishing", "status.briefing", "status.models", "status.platforms", "assets.describe", "cards.list",
+                        "light.entries"})
 
 
 class Arguments(BaseModel):
@@ -310,9 +311,13 @@ class SubmitArgs(Arguments):
         "Otherwise omit model to use the user's saved default task AI, with no extra question."))
     model_question: str | None = Field(default=None, max_length=500,
         description="Only when the user explicitly asks to choose or change task AI. Otherwise omit and use their default.")
-    work_type: Literal["general", "video", "spoken_video", "other_video"] = Field(default="general",
+    work_type: Literal["general", "video", "spoken_video", "other_video",
+                       "light_video", "menu", "poster", "footage_edit"] = Field(default="general",
         description="Semantic intent: video if video type is unresolved; spoken_video for confirmed talking-head work; "
-        "other_video for another confirmed video type. General excludes video production.")
+        "other_video for another confirmed video type. General excludes video production. "
+        "light_video / menu / poster / footage_edit are the Light home jobs (做一条视频 / 做菜单 / 做海报 / 你拍我剪): "
+        "a cloud helper with that entry's skill, no desktop, no format or tier card; use them only when the user "
+        "explicitly asked you to do it here instead of going to the home entry.")
     video_kind_question: str | None = Field(default=None, max_length=500)
     video_tier: Literal["fast", "low", "medium", "high", "ultra", "standard", "premium"] | None = Field(default=None,
         description="Business tier ID from status.models.video_tiers; the server resolves its model and resolution.")
@@ -535,6 +540,9 @@ async def _read_operation(operation: str, arguments: dict, ctx: ToolContext, *, 
         # The current human input can be removed or superseded while vision
         # is running; completing the provider call does not renew that grant.
         return await check_asset_read(ctx, operation, arguments) or value
+    if operation == "light.entries":
+        from light.prompt import entries_directory
+        return await entries_directory(ctx.user_id, ctx.workspace_id)
     if operation.startswith("status."):
         from assistant import status_tools
         return await getattr(status_tools, operation.removeprefix("status."))(**identity)
@@ -719,7 +727,9 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                     from assistant.placement import require_placement, task_input
                     placement = args.placement.model_dump() if args.placement is not None else None
                     # Workflow intent is structured state, not words to match in a prompt.
-                    workflow = {"spoken_video": "video-production", "other_video": "video"}.get(args.work_type)
+                    from light.work_types import WORKFLOWS as LIGHT_WORKFLOWS
+                    workflow = {"spoken_video": "video-production", "other_video": "video",
+                                **LIGHT_WORKFLOWS}.get(args.work_type)
                     values = task_input(project_id=args.project_id,
                         title=args.title, prompt=args.instructions, attachments=args.attachment_ids,
                         model=args.model, continuation=command_args["continuation"], source=source, placement=placement,
@@ -786,6 +796,7 @@ assistant_tools = (
     _tool("status.resources", StatusArgs, "Read the workspace cloud desktop's state and the user's browser preference. Read-only; starting or stopping is done by the user."),
     _tool("status.skills", StatusArgs, "Read the skills available to the user's agents: their own library and platform skills. Read-only."),
     _tool("status.publishing", StatusArgs, "Read the user's most recent publishing jobs and their state. Read-only; publishing happens in a task conversation under its own approvals."),
+    _tool("light.entries", StatusArgs, "Read the Light home directory as this account sees it: each entry's id, title, purpose, availability (ok / needs_desktop / needs_binding / needs_plan / coming_soon, with a spoken label) and its deep link /light/topic/<id>. Read-only; it starts nothing. Use it to point the user at the right home entry, or to check whether an entry needs the cloud desktop before arranging work."),
     _tool("requests.reply", RequestReplyArgs, "Submit the current direct human answer to one freshly and completely displayed request. The server derives answers/once/reject from the whole original human message; you cannot choose an action. Use the exact revision and options_hash from requests.get. Ambiguous, unseen, stale, quoted or unrelated input is rejected; ask the user to use the card. Always requires the human to explicitly name the displayed tool and scope. Applied, accepted and applying are different states."),
     _tool("projects.list", ProjectsArgs, "List your available projects with descriptions and brief excerpts. Interpret relevance from meaning and conversation, not name equality. Follow next_cursor for more; an unread page is not a negative match."),
     _tool("sessions.list", SessionsArgs, "List your top-level conversations, newest first, with project, visibility, watched task_id, result summary and bounded recent message excerpts. Use their meaning to find related work even when titles differ. Filter by project or watched; optional query is only a literal title filter, so do not rely on it to rule out a semantic match. Follow next_cursor; use history.read for fuller context. Includes link eligibility/version; never creates or links work."),

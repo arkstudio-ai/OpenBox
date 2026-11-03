@@ -210,6 +210,9 @@ class LightHomeScreen extends ConsumerWidget {
 }
 
 /// 「有别的事，直接说」 — looks like an input, opens the 对话 tab.
+/// Not a composer: a line of help under the cards that points at the
+/// assistant tab, where anything else is said (2026-11-04 feedback — a
+/// fake input here looked like a second place to type).
 class _AskBar extends StatelessWidget {
   const _AskBar({required this.label, required this.onTap});
 
@@ -220,31 +223,26 @@ class _AskBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Material(
-      color: t.card,
+      color: t.bg,
       child: InkWell(
         key: const Key('light-ask'),
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: t.hair)),
+            border: Border(top: BorderSide(color: t.hairSoft)),
           ),
           padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
           child: Row(
             children: [
-              Icon(Icons.mic_none_outlined, size: 20, color: t.n600),
-              const SizedBox(width: 10),
+              Icon(Icons.auto_awesome_outlined, size: 16, color: t.a700),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   label,
-                  style: TextStyle(fontSize: FontSizes.base, color: t.n500),
+                  style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
                 ),
               ),
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(color: t.ink, shape: BoxShape.circle),
-                child: Icon(Icons.arrow_upward, size: 18, color: t.bg),
-              ),
+              Icon(Icons.chevron_right, size: 18, color: t.n500),
             ],
           ),
         ),

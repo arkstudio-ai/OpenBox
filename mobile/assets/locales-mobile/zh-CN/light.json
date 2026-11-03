@@ -39,7 +39,7 @@
     "recentEmpty": "还没有做过东西，从上面挑一件开始",
     "recentFailed": "最近做的读不出来",
     "outputs_other": "{{count}} 个产出",
-    "ask": "有别的事，直接说"
+    "ask": "有别的事？直接跟助理说"
   },
   "gallery": {
     "lede": "先挑一个样子，选定后进入对话，一步一步做。",

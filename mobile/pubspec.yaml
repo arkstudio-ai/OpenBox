@@ -50,6 +50,7 @@ dependencies:
   go_router: ^17.5.0
   google_fonts: ^8.2.1
   gpt_markdown: ^1.2.1
+  image_picker: ^1.2.2
   intl: ^0.20.2
   logto_dart_sdk: ^4.0.0
   path_provider: ^2.1.6

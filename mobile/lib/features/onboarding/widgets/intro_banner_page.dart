@@ -8,252 +8,131 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../state/onboarding_store.dart';
+import 'intro_sample.dart';
 
-/// L1: three-screen intro shown once per install, before sign-in.
-class IntroBannerPage extends ConsumerStatefulWidget {
+/// L1, one screen (Light 模式 M1): a line on what bossip does, a sample
+/// finished video playing on its own, and one button that leads — through
+/// sign-up — into making the person's own. Shown once per install, before
+/// sign-in; the small link below is for accounts that already exist.
+class IntroBannerPage extends ConsumerWidget {
   const IntroBannerPage({super.key});
 
-  @override
-  ConsumerState<IntroBannerPage> createState() => _IntroBannerPageState();
-}
-
-class _IntroBannerPageState extends ConsumerState<IntroBannerPage> {
-  final _pages = PageController();
-  int _index = 0;
-
-  @override
-  void dispose() {
-    _pages.dispose();
-    super.dispose();
-  }
-
-  Future<void> _finish(String destination) async {
+  Future<void> _finish(
+    BuildContext context,
+    WidgetRef ref,
+    String destination,
+  ) async {
     await ref.read(prefsProvider).setBool(introSeenKey, true);
     ref.read(introSeenProvider.notifier).state = true;
-    if (mounted) context.go(destination);
+    if (context.mounted) context.go(destination);
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    const screens = ['s1', 's2', 's3'];
-    final last = _index == screens.length - 1;
+    final height = MediaQuery.sizeOf(context).height;
     return Scaffold(
       backgroundColor: t.bg,
-      body: Stack(
-        children: [
-          PageView.builder(
-            controller: _pages,
-            itemCount: screens.length,
-            onPageChanged: (i) => setState(() => _index = i),
-            itemBuilder: (context, i) => _IntroScreen(
-              image: 'assets/onboarding/intro-${i + 1}.jpg',
-              title: i18n.t('onboarding:intro.${screens[i]}.title'),
-              lede: i18n.t('onboarding:intro.${screens[i]}.lede'),
-            ),
-          ),
-          if (!last)
-            Positioned(
-              top: MediaQuery.paddingOf(context).top + 4,
-              right: 12,
-              child: TextButton(
-                key: const Key('intro-skip'),
-                onPressed: () => _finish(Paths.landing),
-                child: Text(
-                  i18n.t('onboarding:intro.skip'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.n700),
-                ),
-              ),
-            ),
-          Positioned(
-            left: 24,
-            right: 24,
-            bottom: MediaQuery.paddingOf(context).bottom + 16,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _Dots(count: screens.length, active: _index, tokens: t),
-                const SizedBox(height: 18),
-                if (last) ...[
-                  _Primary(
-                    key: const Key('intro-sign-in'),
-                    label: i18n.t('onboarding:intro.signIn'),
-                    onTap: () => _finish(Paths.login),
-                    tokens: t,
-                  ),
-                  const SizedBox(height: 10),
-                  _Secondary(
-                    key: const Key('intro-register'),
-                    label: i18n.t('onboarding:intro.register'),
-                    onTap: () => _finish(Paths.register),
-                    tokens: t,
-                  ),
-                ] else
-                  _Primary(
-                    key: const Key('intro-next'),
-                    label: i18n.t('onboarding:intro.next'),
-                    onTap: () => _pages.nextPage(
-                      duration: const Duration(milliseconds: 260),
-                      curve: Curves.easeOutCubic,
-                    ),
-                    tokens: t,
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IntroScreen extends StatelessWidget {
-  const _IntroScreen({
-    required this.image,
-    required this.title,
-    required this.lede,
-  });
-
-  final String image;
-  final String title;
-  final String lede;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final height = MediaQuery.sizeOf(context).height;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          height: height * 0.52,
-          child: Image.asset(
-            image,
-            fit: BoxFit.cover,
-            alignment: Alignment.topCenter,
-            errorBuilder: (_, _, _) => ColoredBox(color: t.surface),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                title,
+                i18n.t('onboarding:intro.brand'),
                 style: TextStyle(
-                  fontSize: FontSizes.xl3,
+                  fontSize: FontSizes.md,
                   fontWeight: FontWeight.w700,
-                  height: 1.25,
-                  color: t.ink,
+                  letterSpacing: 1.2,
+                  color: t.a800,
                 ),
               ),
               const SizedBox(height: 10),
               Text(
-                lede,
+                i18n.t('onboarding:intro.title'),
                 style: TextStyle(
-                  fontSize: FontSizes.base,
-                  height: 1.6,
+                  fontSize: FontSizes.xl4,
+                  fontWeight: FontWeight.w800,
+                  height: 1.25,
+                  color: t.ink,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                i18n.t('onboarding:intro.lede'),
+                style: TextStyle(
+                  fontSize: FontSizes.lg,
+                  height: 1.45,
                   color: t.n700,
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: (height * 0.44).clamp(220.0, 400.0),
+                        ),
+                        child: IntroSample(
+                          tag: i18n.t('onboarding:intro.sampleTag'),
+                          shopName: i18n.t('onboarding:intro.sampleShop'),
+                          line: i18n.t('onboarding:intro.sampleLine'),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        i18n.t('onboarding:intro.sampleCaption'),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              FilledButton(
+                key: const Key('intro-register'),
+                onPressed: () => _finish(context, ref, Paths.register),
+                style: FilledButton.styleFrom(
+                  backgroundColor: t.a700,
+                  foregroundColor: t.bg,
+                  minimumSize: const Size.fromHeight(54),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(Radii.full),
+                  ),
+                ),
+                child: Text(
+                  i18n.t('onboarding:intro.cta'),
+                  style: const TextStyle(
+                    fontSize: FontSizes.xl,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                i18n.t('onboarding:intro.ctaHint'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+              ),
+              TextButton(
+                key: const Key('intro-sign-in'),
+                onPressed: () => _finish(context, ref, Paths.login),
+                style: TextButton.styleFrom(
+                  foregroundColor: t.n700,
+                  minimumSize: const Size.fromHeight(44),
+                ),
+                child: Text(
+                  i18n.t('onboarding:intro.signIn'),
+                  style: const TextStyle(fontSize: FontSizes.base),
                 ),
               ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
-}
-
-class _Dots extends StatelessWidget {
-  const _Dots({required this.count, required this.active, required this.tokens});
-
-  final int count;
-  final int active;
-  final BossipTokens tokens;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: [
-      for (var i = 0; i < count; i++)
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          margin: const EdgeInsets.symmetric(horizontal: 3),
-          width: i == active ? 22 : 6,
-          height: 6,
-          decoration: BoxDecoration(
-            color: i == active ? tokens.ink : tokens.n400,
-            borderRadius: BorderRadius.circular(Radii.full),
-          ),
-        ),
-    ],
-  );
-}
-
-class _Primary extends StatelessWidget {
-  const _Primary({
-    super.key,
-    required this.label,
-    required this.onTap,
-    required this.tokens,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final BossipTokens tokens;
-
-  @override
-  Widget build(BuildContext context) => FilledButton(
-    onPressed: onTap,
-    style: FilledButton.styleFrom(
-      backgroundColor: tokens.a700,
-      foregroundColor: tokens.bg,
-      minimumSize: const Size.fromHeight(52),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.full),
-      ),
-    ),
-    child: Text(
-      label,
-      style: const TextStyle(
-        fontSize: FontSizes.lg,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
-}
-
-class _Secondary extends StatelessWidget {
-  const _Secondary({
-    super.key,
-    required this.label,
-    required this.onTap,
-    required this.tokens,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final BossipTokens tokens;
-
-  @override
-  Widget build(BuildContext context) => OutlinedButton(
-    onPressed: onTap,
-    style: OutlinedButton.styleFrom(
-      foregroundColor: tokens.ink,
-      side: BorderSide(color: tokens.n400),
-      minimumSize: const Size.fromHeight(52),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(Radii.full),
-      ),
-    ),
-    child: Text(
-      label,
-      style: const TextStyle(
-        fontSize: FontSizes.lg,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
 }

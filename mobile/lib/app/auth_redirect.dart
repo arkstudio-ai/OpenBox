@@ -1,17 +1,20 @@
 import '../shared/api/auth_store.dart';
+import '../shared/models/first_video.dart';
 import '../shared/router/paths.dart';
 
 /// The router's auth guard (web `RequireAuth` + the landing's `useStart`),
 /// kept free of widgets so every rule can be tested on its own.
 ///
 /// [location] is the matched path, [uri] the full location with its query.
-/// [introSeen] is only asked for a signed-out visit to the landing page.
-/// Null means "stay where you are".
+/// [introSeen] is only asked for a signed-out visit to the landing page;
+/// [firstVideoEntry] only when a sign-in page is left behind, to pick between
+/// the guided first video and the chat home. Null means "stay where you are".
 String? authRedirect({
   required AuthState auth,
   required String location,
   required Uri uri,
   required bool Function() introSeen,
+  FirstVideoEntry Function()? firstVideoEntry,
 }) {
   // Nothing is decided before the boot refresh settles, nor while a saved
   // sign-in could not be checked (offline): `WorkspaceBootstrap` covers every
@@ -39,6 +42,11 @@ String? authRedirect({
     return Paths.app;
   }
   final onAuthPage = location == Paths.login || location == Paths.register;
-  if (onAuthPage && signedIn) return Paths.postAuthDestination(uri);
+  if (onAuthPage && signedIn) {
+    return Paths.postAuthDestination(
+      uri,
+      entry: firstVideoEntry?.call() ?? FirstVideoEntry.settled,
+    );
+  }
   return null;
 }

@@ -98,7 +98,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       }
     }
     if (!mounted) return;
-    final result = await navigator.open(link, stillCurrent: () => mounted);
+    final result = await navigator.open(
+      link,
+      kind: item.kind,
+      stillCurrent: () => mounted,
+    );
     if (result == InboxOpen.unavailable && mounted) {
       ref
           .read(toastProvider.notifier)

@@ -147,7 +147,10 @@ class OnboardingController extends Notifier<OnboardingState> {
   Future<void> setIndustry(String industry) =>
       _set({Guides.industryKey: industry});
 
-  /// Settings → "重新查看新手引导": clears every account-level mark.
+  /// Settings → "重新查看新手引导": clears every account-level mark. Only the
+  /// `onboarding` map: the first video's record lives in `extra.first_video`
+  /// and a replay of the hints must never send someone through that flow
+  /// again.
   Future<void> reset() async {
     state = state.copyWith(values: const {}, loaded: true);
     _writeCache();

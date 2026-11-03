@@ -374,3 +374,22 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 **H 轮已上线（2026-11-03 15:42，gw2 `20261103-rooms4-bf377ba8`，App 1.0.46 (57)）。** 剩 I 轮（电话"盯现场"开关替代进门口令、待答问题并入任务单页）与真机/真实通话验收。
 
 **I 轮实施记录（2026-11-03，分支 `feat/task-rooms-i`）**：电话协议新增客户端→服务端 `room {task_id|null}`（`VOICE_CALL_SPEC` 已登记）：`api/voice.py` 按任务号查本人未归档任务后 `bridge.enter_room`，null 即 `leave_room`，服务端照旧回 `focus{bound}`。自动解绑两处：现场这件活自己的回报到达且不再运行时（`turns.report`），或控制通知 `canceled` 命中现场任务时（`deliver_controls`）。App：通话牌组的任务单页终于真的出现了——#120 只加了 `taskCard` 参数却没把它放进页面，这轮补上；任务单上方是"盯现场"开关（`VoiceRoomSwitch`，键 `voice-room-switch`，状态直接读 `focus.bound`），该任务（`focus.session_id`）的待答问题/授权挂在任务单下方同一页（`taskSessionId`），不再各占一页。Web：`VoiceTranscript` 的焦点行加同名复选框（`useVoiceStore.setRoom`）。口令 `room_enter/room_leave` 保留不动。测试：后端 1 项（自己的回报解绑、别人的不解绑）、App 2 项（开关只在连上后发、任务问题并页）。
+
+## 13. 2026-11-03 测试反馈的核实与修正（分支 `fix/voice-greeting-handoff`）
+
+张阳（gw2 账号 e）11-03 的四条反馈，按 gw2 库里的 voice_turns / messages / assistant_commands 核实（通话 `01M6FNCMJFSTGPBPAFVJMCXQEJ` 10:56–11:51，早于当天的 G/H 轮发布）：
+
+| 反馈 | 证据 | 状态 |
+| --- | --- | --- |
+| 1 递交不及时、等很久没反馈 | 11-02 09:47 交办→10:13 建任务；11-03 03:00→03:12。都卡在 `tasks.submit` 的位置卡与档位卡，恢复提示后同一张卡被重问；用户再开口上一回合结果即作废（10 回合里 4 个 cancelled）；进度每请求只补一句（`PROGRESS_PER_TURN=1`） | 两张卡：G 轮已去。作废与进度：未改 |
+| 2 问默认空间还是新建项目 | placement 卡 | G 轮已去；但 `placement._arrange` 默认按提案名建项目而非默认空间，待拍板 |
+| 3 口称已建对话实际没有 | 11-02 03:35–06:32 一通 2h57m 只有 1 条 voice_turn：06:30 用户说"没看到新的对话建立"后 12 秒任务才建；主会话 03:30–06:30 无任何消息。守卫把"开新对话讨论"判为 direct | 本分支修 |
+| 4 每通开头叫名字+复读对话名 | `greeting_instructions` 在 24h 内有任务时固定接"上次在跟进「X」"；11-02 07:26 两分钟连开 4 通每通都听 | 本分支修 |
+
+本分支改动：
+- 开场只剩一句"接通、在听"，不再复读上次任务名（任务仍在指令的焦点段与对话卡上，用户问才答）；
+- 上一通在 10 分钟内挂断的再拨入（`FrontFacts.quick_return`，`prompt.recent_hangup`）不开场、不叫称呼，用户开口直接接；首次使用仍开场；
+- `voice/handoff.py` 的语义核查新增 `operation=conversation`：明确要求新建对话、递交/提交刚谈的内容、"没看到新对话你先建好"都算交办，即使内容只是方案；
+- 前台提示词：这类要求当场 `assistant_ask`，回执没有 conversation/url 前不得说"新对话已建好/已递交"。
+
+未改（后续）：结果被作废后的补播、每请求多于一句的进度、任务建立由服务端推一句"任务单已开"（`control_notes.py` 目前故意不播）、G 轮默认落点改为默认空间。

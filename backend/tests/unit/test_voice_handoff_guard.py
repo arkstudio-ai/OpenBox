@@ -6,7 +6,7 @@ import pytest
 
 from tests.support.voice_fakes import audio, done, drain, event, item, started, tool_call, transcript
 from tests.unit.test_voice_routing import greeted, make, replay, said, utterance
-from voice.handoff import HandoffGuard, required
+from voice.handoff import HandoffGuard, HandoffRequest, required
 
 
 def guarded(checker):
@@ -717,3 +717,16 @@ async def test_authorization_source_resolves_only_to_permitted_human_words(monke
     else:
         with pytest.raises(ValueError, match='unknown_authorization_source'):
             await required('用灵活档制作', 'assistant: 制作一个短视频', earlier)
+
+
+@pytest.mark.parametrize("words", ["嗯你直接在默认空间里面新建一个对话，然后继续处理。", "那你就去创建，把我们刚刚沟通的赶紧递交。",
+                                   "我并没有看到新的对话建立，你可能要先建立了之后，我才能够跟你继续探讨。"])
+async def test_an_explicit_new_conversation_or_hand_in_instruction_is_a_handoff(monkeypatch, words):
+    """2026-11-02: a three-hour call never handed anything over while the front desk said the conversation
+    existed; the check had read "open a conversation to discuss" as direct."""
+    async def complete(*args):
+        return json.dumps({"decision": "handoff", "operation": "conversation", "authorization_source": "latest_user",
+                           "request": "在默认空间新建一个对话，把通话里谈定的模板优化内容递交过去继续处理"})
+    monkeypatch.setattr("voice.summary.complete", complete)
+    result = await required(words, "assistant: 新对话已经建好了")
+    assert isinstance(result, HandoffRequest) and "新建一个对话" in result.request

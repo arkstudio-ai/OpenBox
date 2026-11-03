@@ -147,6 +147,9 @@ _FRONT = (
     "普通聊天、常识解释、听清确认和当前通话内的问答由你直接回答，不逐句转交个人助理。"
     "个人助理有后台任务或正在等待结果时，你仍正常听用户说话并回应新话题；无需等后台结束。"
     "交办工作或需要深查真实资料时使用 assistant_ask，同一请求不要重复交办。"
+    "用户要求新建对话、开个新对话接着做、把刚才谈的递交或提交出去、立刻创建或开单时，当场用 assistant_ask 转交，"
+    "request 带上已谈定的内容；这不是闲聊，也不因为谈的只是方案就不转交。"
+    "回执里没有对应的 conversation 或 url 之前，不能说新对话已经建好、任务已经递交或已经在做。"
     "围绕当前话题交流，不在闲聊或一项结果后追加无关旧任务、旧卡片或业务菜单。"
     "身份和能力只在首次使用的简短介绍或用户主动询问时说明，其他时候直接接续实际话题；"
     "用户插话后回应其新问题，不重新开始刚被打断的开场或播报。\n"
@@ -266,7 +269,8 @@ class FrontFacts:
     recent: str = ""      # the latest typed replies in the main session
     last_call: str = ""   # the previous call's summary, within a day
     finished: str = ""    # watched work that finished since the previous call
-    focus: dict | None = None  # the open task touched most recently (voice/focus.py): the greeting names it
+    focus: dict | None = None  # the open task touched most recently (voice/focus.py): the instructions name it
+    quick_return: bool = False  # the previous call ended minutes ago: no opening, no address, just listen
     native_memory: bool = False  # semantic_recall mode: captured ASR, no remember handover
 
 
@@ -281,6 +285,8 @@ def front_instructions(facts: FrontFacts, lang: str, now: datetime, *, opening: 
                  if facts.first_call else "已有使用记录。日常接通不自我介绍或罗列能力；用户主动询问身份时再回答。"))
     if not facts.recap:
         lines.append("\n用户关闭了开场回顾。下列旧通话和工作资料仅供理解指代，不主动播报旧任务或待确认内容。")
+    if facts.quick_return and not facts.first_call:
+        lines.append("\n用户刚挂断不久又拨入，本通没有开场白：不问候、不叫称呼、不复述上次的事，用户一开口就直接接着说。")
     # Opening is not a business read. Historical summaries can contain already
     # answered cards; restore them only for reference once the greeting ends.
     known = [] if opening else [f"{label}：{value}。" for label, value in (
@@ -415,19 +421,31 @@ async def front_context(*, user_id: str, workspace_id: str, main_session_id: str
     from voice.calls import first_call
     from core.config import get_config
     if get_config().memory.enabled("semantic_recall", user_id):
-        user, initial = await asyncio.gather(guarded(user_facts(user_id, workspace_id, offer=True), {}),
-                                             guarded(first_call(user_id), False))
-        return FrontFacts(**{**user, "native_memory": True}, first_call=initial)
+        user, initial, again = await asyncio.gather(guarded(user_facts(user_id, workspace_id, offer=True), {}),
+                                                    guarded(first_call(user_id), False),
+                                                    guarded(recent_hangup(user_id, workspace_id), False))
+        return FrontFacts(**{**user, "native_memory": True}, first_call=initial, quick_return=again)
     from assistant.status_tools import platforms
     from voice.focus import recent_focus
-    user, profile, recent, (last_call, finished), initial, accounts, focus = await asyncio.gather(
+    user, profile, recent, (last_call, finished), initial, accounts, focus, again = await asyncio.gather(
         guarded(user_facts(user_id, workspace_id, offer=True), {}), guarded(core_memories(user_id, workspace_id)),
         guarded(recent_summary(user_id, main_session_id)), guarded(since_last_call(user_id, workspace_id), ("", "")),
         guarded(first_call(user_id), False),
         guarded(platforms(user_id=user_id, workspace_id=workspace_id, main_id=main_session_id), None),
-        guarded(recent_focus(user_id, workspace_id, main_session_id), None))
+        guarded(recent_focus(user_id, workspace_id, main_session_id), None),
+        guarded(recent_hangup(user_id, workspace_id), False))
     return FrontFacts(**user, profile=profile, recent=recent, last_call=last_call, finished=finished,
-                      first_call=initial, platforms=accounts, focus=focus or None)
+                      first_call=initial, platforms=accounts, focus=focus or None, quick_return=again)
+
+
+QUICK_RETURN_MINUTES = 10
+
+
+async def recent_hangup(user_id: str, workspace_id: str) -> bool:
+    """The user hung up less than QUICK_RETURN_MINUTES ago: this call continues that one, without an opening."""
+    from voice import calls
+    previous = await calls.previous_call(user_id, workspace_id)
+    return bool(previous) and datetime.now(timezone.utc) - previous["ended_at"] < timedelta(minutes=QUICK_RETURN_MINUTES)
 
 
 async def user_facts(user_id: str, workspace_id: str, *, offer: bool = False, asking: bool = False) -> dict:

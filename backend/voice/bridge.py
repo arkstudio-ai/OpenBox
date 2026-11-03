@@ -67,6 +67,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                  opening_instructions: str | None = None,
                  opener=None, summarizer=None, handoff_checker=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
+                 quick_return: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
                  context_sink=None, context_reader=None,
                  prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None, focus_task=None,
@@ -83,6 +84,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
         self.first_call = first_call
+        self.quick_return = quick_return  # rang again minutes after hanging up: no opening, the call just listens
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session;
         # keepalive_after: seconds without a response before a silent one (upkeep.keepalive_seconds), None: never;
@@ -186,9 +188,14 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     async def start(self) -> None:
         """An interruptible opening after the client is ready to speak and listen."""
         self._prewarm_memory_connection()
-        if self.state == "user_speaking" or self._last_user_item:
+        if self.state == "user_speaking" or self._last_user_item or (self.quick_return and not self.first_call):
+            # The user spoke first, or hung up minutes ago and rang again: no opening, no address
+            # (2026-11-03: four calls in two minutes each began with the name and the last task).
             self._greeting_over()
+            if self.focus_task:
+                self.emit(events.focus(self.focus_task))
             await self._sync_instructions(force=True)
+            self._update_phase()
             return
         self._update_phase()
         if self.focus_task:

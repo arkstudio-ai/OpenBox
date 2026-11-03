@@ -3,6 +3,7 @@
 Turns, notes and delivery: test_voice_turns.py. Summaries and rotation: test_voice_upkeep.py.
 """
 import asyncio
+import json
 
 import pytest
 
@@ -691,3 +692,25 @@ async def test_the_rooms_own_finished_report_unbinds_the_call_and_another_tasks_
     assert bridge.room is not None  # someone else's result: announced only, still inside
     await bridge.report("艾薇兰调研", "成片出来了，在素材库。", "inbox-9", "t1")
     assert bridge.room is None and of_type(outbox(bridge), "focus")[-1]["bound"] is False
+
+
+async def test_a_call_minutes_after_hanging_up_has_no_opening_and_just_listens():
+    """2026-11-03: a tester who rang four times in two minutes heard the greeting every time."""
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock, quick_return=True,
+                    focus_task={"task_id": "t1", "title": "六堡茶宣传视频", "session_id": "s1"})
+    await bridge.start()
+    assert not provider.commands("create") and bridge.greeted.is_set() and not bridge.greeting
+    items = outbox(bridge)
+    assert of_type(items, "phrase") == [] and phase_values(items)[-1] == ("listening", False, False)
+    assert "六堡茶宣传视频" in json.dumps(of_type(items, "focus")[0], ensure_ascii=False)  # the card still opens on the task
+    await bridge.close()
+
+
+async def test_a_first_contact_is_greeted_even_right_after_a_dropped_call():
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock, quick_return=True, first_call=True)
+    await bridge.start()
+    [(_, instructions)] = provider.commands("create")
+    assert instructions == phrases.greeting_instructions("zh", first_call=True)
+    await bridge.close()

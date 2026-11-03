@@ -22,12 +22,14 @@ def test_state_phrases_say_who_does_what_and_never_a_field_name():
         assert "_" not in text and "state" not in text
 
 
-def test_the_greeting_and_the_instructions_name_the_focused_task():
+def test_the_instructions_name_the_focused_task_but_the_greeting_never_reads_it_back():
+    # 2026-11-03 feedback: every call opened with the name and the last task's title; the task now
+    # stays in the focus section (answered when asked) and on the conversation card.
     focus = {"task_id": "t1", "title": "艾薇兰小红瓶调研", "state": "正在做，没有卡住"}
-    greeting = phrases.greeting_instructions("zh", recap=True, focus=focus)
-    assert "「艾薇兰小红瓶调研」，正在做，没有卡住" in greeting and "不展开" in greeting
-    assert "艾薇兰" not in phrases.greeting_instructions("zh", recap=False, focus=focus)  # recap off: no task talk
-    assert "艾薇兰" not in phrases.greeting_instructions("zh", recap=True, first_call=True, focus=focus)
+    for lang in ("zh", "en"):
+        for recap in (True, False):
+            greeting = phrases.greeting_instructions(lang, recap=recap, focus=focus)
+            assert "艾薇兰" not in greeting and greeting == phrases.greeting_instructions(lang, recap=recap)
     text = with_sections("BASE", focus=focus)
     assert text.startswith("BASE") and "当前在跟进：「艾薇兰小红瓶调研」，正在做，没有卡住" in text and "先问清是哪一件" in text
     assert with_sections("BASE", focus=None) == "BASE"
@@ -50,3 +52,14 @@ async def test_task_blocker_answers_in_a_second_with_a_sentence_to_say():
     # The next call opens on it.
     focus = await recent_focus(owner, workspace, main.id)
     assert focus["task_id"] == created["task_id"] and focus["title"] == "艾薇兰小红瓶调研" and "已停止" in focus["state"]
+
+
+def test_a_call_minutes_after_hanging_up_is_told_to_skip_the_opening():
+    from datetime import datetime
+    from voice.prompt import FrontFacts, front_instructions
+    again = front_instructions(FrontFacts(quick_return=True), "zh", datetime(2026, 11, 3, 10, 56))
+    assert "本通没有开场白" in again and "不叫称呼" in again
+    assert "本通没有开场白" not in front_instructions(FrontFacts(), "zh", datetime(2026, 11, 3, 10, 56))
+    # A first contact still introduces itself even when a failed handshake ended seconds ago.
+    assert "本通没有开场白" not in front_instructions(FrontFacts(quick_return=True, first_call=True), "zh",
+                                                   datetime(2026, 11, 3, 10, 56))

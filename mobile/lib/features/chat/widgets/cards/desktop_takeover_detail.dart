@@ -135,7 +135,10 @@ class DesktopTakeoverDetail extends ConsumerWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: t.ink,
                 foregroundColor: t.bg,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(Radii.full),
                 ),
@@ -177,7 +180,10 @@ class _Pill extends StatelessWidget {
         color: background,
         borderRadius: BorderRadius.circular(Radii.full),
       ),
-      child: Text(text, style: TextStyle(fontSize: FontSizes.xs, color: foreground)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: FontSizes.xs, color: foreground),
+      ),
     );
   }
 }

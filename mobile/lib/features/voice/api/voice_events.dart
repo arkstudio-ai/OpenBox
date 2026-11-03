@@ -51,6 +51,26 @@ sealed class VoiceServerEvent {
       'heartbeat' => VoiceHeartbeatEvent(asInt(json['elapsed_seconds']) ?? 0),
       'limit' => VoiceLimitEvent(asString(json['reason']) ?? 'credits'),
       'notice' => VoiceNoticeEvent(asString(json['code']) ?? ''),
+      'transcript' => VoiceTranscriptEvent(
+        VoiceLine(
+          role: asString(json['role']) == 'user' ? 'user' : 'assistant',
+          text: asString(json['text']) ?? '',
+          itemId: asString(json['item_id']) ?? '',
+          isFinal: json['final'] == true,
+          at: (json['at'] is num) ? (json['at'] as num).toDouble() : 0,
+        ),
+      ),
+      'focus' => VoiceFocusEvent(
+        json['task'] is Map<String, dynamic>
+            ? VoiceFocusTask(
+                taskId: asString(asMap(json['task'])['task_id']) ?? '',
+                title: asString(asMap(json['task'])['title']) ?? '',
+                sessionId: asString(asMap(json['task'])['session_id']),
+                progress: asString(asMap(json['task'])['progress']) ?? '',
+                bound: json['bound'] == true,
+              )
+            : null,
+      ),
       'error' => VoiceErrorEvent(
         code: asString(json['code']) ?? 'internal',
         message: asString(json['message']),
@@ -162,6 +182,19 @@ final class VoiceEndedEvent extends VoiceServerEvent {
   final int durationSeconds;
   final int pendingTurns;
   final VoiceCost? cost;
+}
+
+/// One line of this call as it was said (`transcript`, 2026-11-02): the
+/// caller's words or the front desk's reply, partial or final.
+final class VoiceTranscriptEvent extends VoiceServerEvent {
+  const VoiceTranscriptEvent(this.line);
+  final VoiceLine line;
+}
+
+/// The task this call is about now (`focus`), or none.
+final class VoiceFocusEvent extends VoiceServerEvent {
+  const VoiceFocusEvent(this.task);
+  final VoiceFocusTask? task;
 }
 
 final class VoiceUnknownEvent extends VoiceServerEvent {

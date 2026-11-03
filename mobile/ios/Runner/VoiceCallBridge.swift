@@ -37,7 +37,12 @@ final class VoiceCallBridge: NSObject, CXProviderDelegate {
         let muted = call.arguments as? Bool ?? false
         if let id = self.callID, self.muted != muted {
           self.muted = muted
+          #if targetEnvironment(simulator)
+          _ = id
+          self.channel?.invokeMethod("mute", arguments: muted)
+          #else
           self.calls.request(CXTransaction(action: CXSetMutedCallAction(call: id, muted: muted))) { _ in }
+          #endif
         }
         result(nil)
       case "end":
@@ -57,6 +62,23 @@ final class VoiceCallBridge: NSObject, CXProviderDelegate {
       result(FlutterError(code: "CALL_BUSY", message: "A call is already active", details: nil))
       return
     }
+    #if targetEnvironment(simulator)
+    // The simulator's callservicesd refuses every CXStartCallAction
+    // (requesttransaction error 5), so a call there skips CallKit and
+    // drives the audio session itself: enough to see and hear the call.
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+      try session.setActive(true)
+      callID = UUID()
+      muted = false
+      audioActive = true
+      result(nil)
+    } catch {
+      result(FlutterError(code: "CALL_AUDIO_FAILED", message: "The simulator could not start call audio", details: nil))
+    }
+    return
+    #endif
     if provider == nil {
       let configuration = CXProviderConfiguration(localizedName: "BossIP")
       configuration.supportsVideo = false
@@ -169,6 +191,9 @@ final class VoiceCallBridge: NSObject, CXProviderDelegate {
     let id = callID
     clear()
     if let id { provider?.reportCall(with: id, endedAt: Date(), reason: reason) }
+    #if targetEnvironment(simulator)
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
   }
 
   private func clear() {

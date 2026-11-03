@@ -270,3 +270,30 @@ async def test_similar_title_submission_is_refused_unless_the_user_asked_for_a_s
     human = await accept_task_command(**{**kwargs, "idempotency_key": "human-2", "prompt": "再来一条"},
                                       title="艾薇兰小红瓶1分钟国风视频制作")
     assert human["task_id"] not in {first["task_id"], separate["task_id"], other["task_id"]}
+
+
+async def test_a_new_task_for_the_same_work_replaces_its_finished_predecessors_only():
+    owner, _, _, main, kwargs = await setup_task()
+    first = await accept_task_command(**kwargs, title="荷叶奶蛙宣传视频")
+    assert first["url"] == f"/app/s/{first['execution_session_id']}"
+    # Still queued: a second human submission counts in the chain but replaces nothing.
+    second = await accept_task_command(**{**kwargs, "idempotency_key": "create-2", "prompt": "再来一版"},
+                                       title="荷叶奶蛙宣传视频（第二版）")
+    assert "superseded_task_ids" not in second
+    async with get_db_session() as db:
+        (await db.get(AssistantTask, first["task_id"])).observed_state = "error"
+        (await db.get(AssistantTask, first["task_id"])).desired_state = "running"
+        (await db.get(AssistantTask, second["task_id"])).desired_state = "canceled"
+    third = await accept_task_command(**{**kwargs, "idempotency_key": "create-3", "prompt": "第三版"},
+                                      title="荷叶奶蛙宣传视频 第三版")
+    assert sorted(third["superseded_task_ids"]) == sorted([first["task_id"], second["task_id"]])
+    async with get_db_session() as db:
+        for old in (first, second):
+            row = await db.get(AssistantTask, old["task_id"])
+            assert row.archived_at is not None and row.superseded_by_task_id == third["task_id"]
+        assert (await db.get(AssistantTask, third["task_id"])).archived_at is None
+    # The replaced tasks drop out of the duplicate gate too: nothing keeps pointing at them.
+    from assistant.reads import list_tasks
+    listed = await list_tasks(user_id=owner, workspace_id=kwargs["workspace_id"], main_id=main.id)
+    assert {row["id"]: row["superseded_by_task_id"] for row in listed["items"]} == {
+        first["task_id"]: third["task_id"], second["task_id"]: third["task_id"], third["task_id"]: None}

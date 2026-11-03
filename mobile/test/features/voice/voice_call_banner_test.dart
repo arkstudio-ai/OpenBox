@@ -11,7 +11,6 @@ class _Bar {
   _Bar(this.stub);
 
   final StubVoiceController stub;
-  int opened = 0;
 
   Future<void> pump(WidgetTester tester) async {
     await tester.pumpWidget(
@@ -22,9 +21,7 @@ class _Bar {
         ],
         child: MaterialApp(
           theme: testTheme(),
-          home: Scaffold(
-            body: Column(children: [VoiceCallBanner(onOpen: () => opened++)]),
-          ),
+          home: Scaffold(body: const Column(children: [VoiceCallBanner()])),
         ),
       ),
     );
@@ -61,7 +58,7 @@ void main() {
     expect(_text(tester), '通话中 · 00:07 · 通话已暂停');
   });
 
-  testWidgets('tap returns to the call; the red button hangs up', (
+  testWidgets('tap drops the sheet, again folds it; the red button hangs up', (
     tester,
   ) async {
     final clock = FakeClock();
@@ -74,12 +71,16 @@ void main() {
     semantics.dispose();
 
     await tester.tap(find.byKey(const Key('voice-banner-open')));
-    expect(bar.opened, 1);
+    await tester.pump();
+    expect(bar.stub.state.expanded, isTrue);
+    expect(find.byIcon(Icons.keyboard_arrow_up), findsOneWidget);
     expect(bar.stub.hangUps, 0);
+    await tester.tap(find.byKey(const Key('voice-banner-open')));
+    await tester.pump();
+    expect(bar.stub.state.expanded, isFalse);
 
     await tester.tap(find.byKey(const Key('voice-banner-hang-up')));
     expect(bar.stub.hangUps, 1);
-    expect(bar.opened, 1);
   });
 
   testWidgets('while dialling it says so and can still cancel', (tester) async {

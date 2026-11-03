@@ -28,8 +28,10 @@ double taskProgress({
   required DateTime now,
 }) {
   if (startedAt == null) return 0;
-  final elapsed =
-      math.max(0, now.difference(startedAt).inMilliseconds / 1000.0);
+  final elapsed = math.max(
+    0,
+    now.difference(startedAt).inMilliseconds / 1000.0,
+  );
 
   // Asymptotic in elapsed time: quick at first, then slower, never arriving.
   // Work done pushes it along faster than waiting does.

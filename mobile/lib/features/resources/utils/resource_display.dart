@@ -48,10 +48,10 @@ String sourceLabelKey(String source) =>
     _sourceLabelKeys[source] ?? 'resources:source.all';
 
 IconData sourceIcon(String source) => switch (source) {
-      'user' => Icons.person_outline,
-      'agent' => Icons.smart_toy_outlined,
-      _ => Icons.layers_outlined,
-    };
+  'user' => Icons.person_outline,
+  'agent' => Icons.smart_toy_outlined,
+  _ => Icons.layers_outlined,
+};
 
 const _sortLabelKeys = <String, String>{
   'created': 'resources:sort.created',
@@ -73,8 +73,10 @@ bool isTextPreviewable(Resource resource) {
       mime == 'application/xml') {
     return true;
   }
-  return RegExp(r'\.(md|txt|csv|log)$', caseSensitive: false)
-      .hasMatch(resource.name);
+  return RegExp(
+    r'\.(md|txt|csv|log)$',
+    caseSensitive: false,
+  ).hasMatch(resource.name);
 }
 
 bool isPdf(Resource resource) =>

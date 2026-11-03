@@ -33,8 +33,13 @@ class McpParseResult {
 String _readTransport(Map<String, dynamic> raw) {
   final declared = '${raw['type'] ?? raw['transport'] ?? ''}'.toLowerCase();
   if (declared == 'stdio') return 'stdio';
-  if (const ['remote', 'http', 'sse', 'streamable-http', 'streamablehttp']
-      .contains(declared)) {
+  if (const [
+    'remote',
+    'http',
+    'sse',
+    'streamable-http',
+    'streamablehttp',
+  ].contains(declared)) {
     return 'remote';
   }
   return raw['url'] != null ? 'remote' : 'stdio';
@@ -78,8 +83,9 @@ ParsedMcpEntry? _readOne(String name, Object? raw) {
     );
   }
 
-  final command =
-      raw['command'] is String ? (raw['command'] as String).trim() : '';
+  final command = raw['command'] is String
+      ? (raw['command'] as String).trim()
+      : '';
   if (command.isEmpty) return null;
   return ParsedMcpEntry(
     name: name,
@@ -122,7 +128,8 @@ McpParseResult parseMcpConfig(String text, {String fallbackName = ''}) {
     return const McpParseResult(error: 'invalidShape');
   }
 
-  final container = data['mcpServers'] ?? data['servers'] ?? data['mcp_servers'];
+  final container =
+      data['mcpServers'] ?? data['servers'] ?? data['mcp_servers'];
   if (container is Map<String, dynamic>) {
     final entries = <ParsedMcpEntry>[];
     for (final entry in container.entries) {
@@ -184,8 +191,8 @@ Map<String, String> parsePairs(String text) {
     final at = eq == -1
         ? colon
         : colon == -1
-            ? eq
-            : (eq < colon ? eq : colon);
+        ? eq
+        : (eq < colon ? eq : colon);
     if (at <= 0) continue;
     out[trimmed.substring(0, at).trim()] = trimmed.substring(at + 1).trim();
   }

@@ -6,8 +6,8 @@ library;
 
 import '../../../shared/models/cron.dart';
 
-typedef Translate = String Function(String key,
-    {Map<String, Object?>? vars, int? count});
+typedef Translate =
+    String Function(String key, {Map<String, Object?>? vars, int? count});
 
 const scheduleModes = ['daily', 'weekly', 'interval', 'custom'];
 
@@ -77,15 +77,14 @@ class ScheduleForm {
     int? every,
     String? unit,
     String? expr,
-  }) =>
-      ScheduleForm(
-        mode: mode ?? this.mode,
-        time: time ?? this.time,
-        weekday: weekday ?? this.weekday,
-        every: every ?? this.every,
-        unit: unit ?? this.unit,
-        expr: expr ?? this.expr,
-      );
+  }) => ScheduleForm(
+    mode: mode ?? this.mode,
+    time: time ?? this.time,
+    weekday: weekday ?? this.weekday,
+    every: every ?? this.every,
+    unit: unit ?? this.unit,
+    expr: expr ?? this.expr,
+  );
 }
 
 int intervalMs(int every, String unit) =>
@@ -118,7 +117,9 @@ CronSchedule? buildSchedule(ScheduleForm form, String tz) {
   if (time == null) return null;
   if (form.mode == 'weekly') {
     return CronScheduleCron(
-        expr: '${time.m} ${time.h} * * ${form.weekday}', tz: tz);
+      expr: '${time.m} ${time.h} * * ${form.weekday}',
+      tz: tz,
+    );
   }
   return CronScheduleCron(expr: '${time.m} ${time.h} * * *', tz: tz);
 }
@@ -134,12 +135,16 @@ ScheduleForm scheduleToForm(CronSchedule schedule) {
     case CronScheduleEvery(:final everyMs):
       if (everyMs % 3600000 == 0) {
         return ScheduleForm(
-            mode: 'interval', every: everyMs ~/ 3600000, unit: 'hours');
+          mode: 'interval',
+          every: everyMs ~/ 3600000,
+          unit: 'hours',
+        );
       }
       return ScheduleForm(
-          mode: 'interval',
-          every: (everyMs / 60000).round(),
-          unit: 'minutes');
+        mode: 'interval',
+        every: (everyMs / 60000).round(),
+        unit: 'minutes',
+      );
     case CronScheduleCron(:final expr):
       final daily = _dailyRe.firstMatch(expr);
       if (daily != null) {
@@ -177,18 +182,24 @@ String describeSchedule(CronSchedule schedule, Translate t) {
     case CronScheduleCron(:final expr):
       final daily = _dailyRe.firstMatch(expr);
       if (daily != null) {
-        return t('cron:describe.daily', vars: {
-          'time':
-              '${_pad(int.parse(daily.group(2)!))}:${_pad(int.parse(daily.group(1)!))}',
-        });
+        return t(
+          'cron:describe.daily',
+          vars: {
+            'time':
+                '${_pad(int.parse(daily.group(2)!))}:${_pad(int.parse(daily.group(1)!))}',
+          },
+        );
       }
       final weekly = _weeklyRe.firstMatch(expr);
       if (weekly != null) {
-        return t('cron:describe.weekly', vars: {
-          'weekday': t(weekdayKeys[int.parse(weekly.group(3)!)]!),
-          'time':
-              '${_pad(int.parse(weekly.group(2)!))}:${_pad(int.parse(weekly.group(1)!))}',
-        });
+        return t(
+          'cron:describe.weekly',
+          vars: {
+            'weekday': t(weekdayKeys[int.parse(weekly.group(3)!)]!),
+            'time':
+                '${_pad(int.parse(weekly.group(2)!))}:${_pad(int.parse(weekly.group(1)!))}',
+          },
+        );
       }
       return t('cron:describe.cron', vars: {'expr': expr});
   }
@@ -205,6 +216,5 @@ bool isSilentResult(String? summary) {
       .trim()
       .replaceAll(RegExp(r'^[*_`]+'), '')
       .replaceAll(RegExp(r'[*_`.。!!\s]+$'), '');
-  return head == silentSentinel &&
-      stripped.length <= silentSentinel.length + 8;
+  return head == silentSentinel && stripped.length <= silentSentinel.length + 8;
 }

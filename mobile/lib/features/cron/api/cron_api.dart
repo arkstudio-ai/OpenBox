@@ -42,12 +42,15 @@ class CronApi {
     required CronSchedule schedule,
     required String taskPrompt,
   }) async {
-    await _dio.post<dynamic>('/api/cron/jobs', data: {
-      'project_id': projectId,
-      'name': name,
-      'schedule': schedule.toJson(),
-      'task_prompt': taskPrompt,
-    });
+    await _dio.post<dynamic>(
+      '/api/cron/jobs',
+      data: {
+        'project_id': projectId,
+        'name': name,
+        'schedule': schedule.toJson(),
+        'task_prompt': taskPrompt,
+      },
+    );
   }
 
   Future<void> update(String jobId, Map<String, dynamic> patch) async {
@@ -87,8 +90,9 @@ class CronApi {
   }
 }
 
-final cronApiProvider =
-    Provider<CronApi>((ref) => CronApi(ref.watch(apiDioProvider)));
+final cronApiProvider = Provider<CronApi>(
+  (ref) => CronApi(ref.watch(apiDioProvider)),
+);
 
 const _cronEvents = {
   'cron.job.created',
@@ -122,8 +126,10 @@ final cronStatusProvider = FutureProvider<CronStatus>((ref) {
   return ref.watch(cronApiProvider).status();
 });
 
-final cronRunsProvider =
-    FutureProvider.family<List<CronRun>, String>((ref, jobId) {
+final cronRunsProvider = FutureProvider.family<List<CronRun>, String>((
+  ref,
+  jobId,
+) {
   _wireCronInvalidation(ref);
   return ref.watch(cronApiProvider).listRuns(jobId);
 });

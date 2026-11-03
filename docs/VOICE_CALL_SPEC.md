@@ -141,8 +141,10 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `limit` | `reason` = credits, `elapsed_seconds` | 积分耗尽：服务端先说明积分不足，再发 `ended{reason:quota}` |
 | `error` | `code`, `message` | `message` 已是可直接显示的用户语言文案；随后关闭连接 |
 | `ended` | `reason` (同 4.1 枚举), `duration_seconds`, `pending_turns`, `cost` | 通话结束的最终事件；之后服务端关闭 1000 |
+| `transcript` | `role` ∈ user/assistant, `text`, `item_id`, `final` (bool), `at` (epoch 秒) | 2026-11-02 起：本通电话里用户说的和前台答的，供通话页"对话卡"显示（VOICE_SEAM_PLAN §11.2）。`final=false` 是同一 `item_id` 的前台回复到目前为止的全文，最终行替换它。后台备注、静音保活回复不下发。旧客户端忽略 |
+| `focus` | `task` = `{task_id, title, session_id, progress}` 或 `null`，`bound` (bool) | 2026-11-02 起：这通电话当前在说哪个任务：某次交办把工作交给了它、刚播了它的结果、或用户正开着它的执行页（`view`）；接通时若 24 小时内有动过的任务也会发。`progress` 是该任务房间此刻在做的一步（"在生成视频"，空串表示空闲），变化时再发一次。`bound=true` 表示用户已口头进入这间（VOICE_SEAM_PLAN §9.4 步 3）：之后说的话直接交给该任务；对话卡据此自动切到"任务间"通道，`false` 切回通话 |
 
-服务端不下发实时转写：通话界面不显示对话文字，转写只在服务端用于 `VoiceTurn.transcript` 和调试日志（默认关）。
+转写只发给本通电话自己的客户端，仍不写入任何可被其他人读到的地方；服务端另用于 `VoiceTurn.transcript`、通话小结和调试日志（默认关）。
 
 ### 5.4 客户端 → 服务端 JSON 事件
 
@@ -151,6 +153,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `stop` | — | 挂断：服务端 `response.cancel`、等待最后用量最多 2 秒、发 `ended`、关闭 |
 | `ping` | — | 可选；服务端回 `heartbeat` |
 | `capabilities` | `playback_ack: true` | 客户端见到 `ready.playback_ack` 后开启播放回执；不发送则保留旧客户端时长估算行为 |
+| `room` | `task_id`（字符串或 null） | 2026-11-03 起：任务单上的"盯现场"开关。给任务号即把这通电话绑到该任务的现场（之后说的话直接给它，它的回复直接播），null 即解绑；服务端回 `focus{bound}`。任务做完或被停下时服务端自动解绑 |
 | `playback.completed` | `response_id` | 对应 `playback.finished` 已收到且成功入队的音频实际播完后发送一次。清空队列、挂断或播放失败不能发送；过早、重复或已取消 ID 会被忽略 |
 
 播放回执超时只记录未知状态，不自动重播整段；迟到的有效回执仍可完成送达。用户打断正在播放的主动结果汇报时，暂停该批结果的自动重播，由当前对话结合最新任务事实承接；保留未完整送达状态和文字结果，不把插话后的任意回复当作送达凭据。无效语音起声可恢复排队，状态更新撤回不等同于用户打断。SQL 任务状态、当前代次确认项与已就绪文件组成一致快照；语音回答前重新读取，过期的待确认播报或旧任务版本应撤回。后台结果先整批入队，相邻通知保留 400 ms 合并窗口，最多三个普通结果合并汇报。图片就绪只说明文件可用，不能据此宣布整个任务完成。

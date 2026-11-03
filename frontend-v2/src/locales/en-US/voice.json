@@ -33,7 +33,8 @@
     "collapse": "Collapse",
     "expand": "Expand",
     "cost": "This call",
-    "move": "Move"
+    "move": "Move",
+    "resume": "Resume call"
   },
   "banner": {
     "inCall": "In call",
@@ -95,11 +96,32 @@
   "interruption": {
     "phoneCall": "Incoming phone call; the call is paused",
     "resumed": "Call resumed",
-    "background": "Return to the app to continue the call"
+    "background": "Return to the app to continue the call",
+    "audio": "Another app is using audio. The call resumes when it is released, or tap Resume call."
   },
   "overlay": {
     "title": "Enable the floating call button",
     "body": "Allow BossIP to display over other apps. A phone button will appear while the app is in the background; tap it to return to your call. Calls continue without this permission, and you can return using the notification.",
     "later": "Continue without it"
+  },
+  "transcript": {
+    "title": "Conversation",
+    "empty": "What is said appears here",
+    "you": "Me",
+    "assistant": "Assistant",
+    "hearing": "Listening…",
+    "room": "“{{title}}” · the work",
+    "call": "Call",
+    "task": "Room",
+    "taskEmpty": "Nothing at the work yet",
+    "taskBusy": "The helper is working…",
+    "taskWaiting": "The helper is waiting for your answer",
+    "openRoom": "Go to the work",
+    "taskDoing": "The helper is {{step}}; I will tell you when it is done",
+    "inRoom": "Watching the work: what you say goes to this task; say “back” to return",
+    "watch": "Watch the work",
+    "watchOn": "Watching the work",
+    "watchHint": "On: what you say goes straight to this task and its replies are read out; it turns off when the work is done",
+    "helper": "Helper"
   }
 }

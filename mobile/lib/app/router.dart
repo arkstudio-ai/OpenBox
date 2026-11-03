@@ -11,8 +11,8 @@ import '../features/chat/assistant_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/state/config_providers.dart';
-import '../features/chat/widgets/assistant_requests.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
+import '../features/chat/widgets/assistant_tour.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/first_video/making_page.dart';
@@ -31,7 +31,6 @@ import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/skills/skills_screen.dart';
-import '../features/voice/voice_call_page.dart';
 import '../features/voice/widgets/voice_call_button.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workbench/workbench_surface_page.dart';
@@ -42,6 +41,7 @@ import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/api/first_video_entry.dart';
 import '../shared/api/ui_mode_store.dart';
+import '../shared/i18n/i18n.dart';
 import '../shared/models/ui_mode.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
@@ -180,29 +180,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Full screen over everything (there is no shell route, so every
       // route here is on the root navigator). Popping it collapses the call
       // into the call bar; the call goes on.
-      GoRoute(
-        path: Paths.voice,
-        pageBuilder: (context, state) => MaterialPage<void>(
-          // Its own key per push: reopened from the call bar while the last
-          // one still slides away, it must be a new page, not that one.
-          key: state.pageKey,
-          fullscreenDialog: true,
-          child: Consumer(
-            builder: (context, ref, _) {
-              final scope = ref.watch(assistantScopeProvider);
-              return VoiceCallPage(
-                cards: scope == null
-                    ? null
-                    : (beforeOpen) => AssistantRequests(
-                        scope: scope,
-                        deck: true,
-                        beforeOpen: beforeOpen,
-                      ),
-              );
-            },
-          ),
-        ),
-      ),
+      // The call has no page of its own any more (VOICE_SEAM_PLAN §13): a
+      // deep link to it lands on the assistant page, where the call sheet is.
+      GoRoute(path: Paths.voice, redirect: (context, state) => Paths.assistant),
       // Guided first video (Light 模式 M1): full-screen steps on the root
       // navigator, outside the workspace shell. The bare path forwards to
       // the first step so a sign-in can land on it.
@@ -378,6 +358,15 @@ class _AssistantRoute extends ConsumerWidget {
         if (scope != null) VoiceCallButton(enabled: voiceEnabled),
         if (scope != null)
           AssistantTasksButton(key: ValueKey(scope), scope: scope),
+        if (scope != null)
+          Builder(
+            builder: (context) => IconButton(
+              key: const Key('assistant-tour-button'),
+              tooltip: ref.read(i18nProvider).t('chat:assistant.tour.button'),
+              onPressed: () => showAssistantTour(context, ref),
+              icon: const Icon(Icons.help_outline),
+            ),
+          ),
       ],
       child: scope == null
           ? const Center(child: CircularProgressIndicator())

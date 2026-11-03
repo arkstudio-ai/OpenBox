@@ -210,3 +210,14 @@ async def test_a_call_offers_each_plan_once_and_carries_the_users_settings(monke
     styled = front_instructions(FrontFacts(style=("用户希望先说结论",)), "zh", datetime(2026, 10, 8, 17, 30))
     assert ("用户说过或表现出的说话偏好（照做，和上面的通用规则冲突时以这里为准；和用户自己的设置冲突时以设置为准）："
             "用户希望先说结论。") in styled
+
+
+async def test_the_tour_is_marked_seen_once_for_every_app():
+    from assistant import profile
+    from tests.unit.test_assistant_foundation import accounts
+    owner, _, _ = await accounts()
+    before = await profile.load_view(owner)
+    assert before["intro"]["tour_seen"] is False
+    after = await profile.intro_event(owner, "tour")
+    assert after["intro"]["tour_seen"] is True and after["intro"]["status"] == before["intro"]["status"]
+    assert (await profile.load_view(owner))["intro"]["tour_seen"] is True

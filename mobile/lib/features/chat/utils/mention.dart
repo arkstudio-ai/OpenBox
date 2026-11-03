@@ -55,8 +55,9 @@ MentionTrigger? resolveTrigger(String text, int caret) {
     final ch = text[i];
     if (ch != '@' && ch != '/') continue;
     final kind = ch == '@' ? MentionKind.at : MentionKind.slash;
-    final valid =
-        kind == MentionKind.at ? _isAtBoundary(text, i) : _isLineStart(text, i);
+    final valid = kind == MentionKind.at
+        ? _isAtBoundary(text, i)
+        : _isLineStart(text, i);
     if (!valid) continue;
     final query = text.substring(i + 1, end);
     if (query.length > _maxQuery) return null;

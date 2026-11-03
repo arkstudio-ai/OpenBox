@@ -67,9 +67,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                  opening_instructions: str | None = None,
                  opener=None, summarizer=None, handoff_checker=None, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
+                 quick_return: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
                  context_sink=None, context_reader=None,
-                 prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None):
+                 prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None, focus_task=None,
+                 room_progress=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.unified = unified
         self.shared_context = ""
@@ -82,6 +84,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         # nobody asked about are told, and how much the assistant says in a reply meant for the phone.
         self.recap, self.tell_reports, self.detail = recap, tell_reports, detail
         self.first_call = first_call
+        self.quick_return = quick_return  # rang again minutes after hanging up: no opening, the call just listens
         self.late_after, self.clock, self.debug = late_after, clock, debug_transcripts
         # scope: whose call (direct reads); progress: the main session's live steps; opener: a fresh session;
         # keepalive_after: seconds without a response before a silent one (upkeep.keepalive_seconds), None: never;
@@ -118,6 +121,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._cancel_wake: asyncio.TimerHandle | None = None
         self._cancel_recovery_provider = None
         self._keepalives: dict[str, set[str]] = {}  # silent replies of ours → their output items
+        self._partials: dict[str, str] = {}      # reply item → its transcript so far, shown live on the client
+        self.focus_task: dict | None = dict(focus_task) if focus_task else None  # the task this call is about (events.focus)
+        self.room: dict | None = None    # the task room this call is inside (voice/room.py), else the global layer
+        self.room_progress = room_progress  # voice/progress.py RoomProgress: what the focus task's room is doing
+        self._room_progress_seen = (-1, "")  # (RoomProgress.version, phrase) last put into instructions and told
         self._keepalive_at: float | None = None
         self._keepalive_prompt = False          # Audio said the conversation has no user message: prompt first
         self.awaiting_since: float | None = None
@@ -180,13 +188,20 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     async def start(self) -> None:
         """An interruptible opening after the client is ready to speak and listen."""
         self._prewarm_memory_connection()
-        if self.state == "user_speaking" or self._last_user_item:
+        if self.state == "user_speaking" or self._last_user_item or (self.quick_return and not self.first_call):
+            # The user spoke first, or hung up minutes ago and rang again: no opening, no address
+            # (2026-11-03: four calls in two minutes each began with the name and the last task).
             self._greeting_over()
+            if self.focus_task:
+                self.emit(events.focus(self.focus_task))
             await self._sync_instructions(force=True)
+            self._update_phase()
             return
         self._update_phase()
+        if self.focus_task:
+            self.emit(events.focus(self.focus_task))  # the conversation card opens on the task the call resumes
         if not await self.say_phrase("greeting", phrases.greeting_instructions(
-                self.lang, recap=self.recap, first_call=self.first_call, unified=self.unified)):
+                self.lang, recap=self.recap, first_call=self.first_call, unified=self.unified, focus=self.focus_task)):
             self._greeting_over()
             await self._sync_instructions(force=True)
 
@@ -449,9 +464,71 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
 
     async def _on_assistant_transcribing(self, event) -> None:
         await self._track_spoken_cards(event, partial=True)
+        response = event.response_id or self.active_response
+        if response in self._keepalives or response in self._unverified_replies or response in self._stale_responses:
+            return
+        if event.item_id and event.text:
+            if len(self._partials) > 8:
+                self._partials.pop(next(iter(self._partials)))
+            self._partials[event.item_id] = text = self._partials.get(event.item_id, "") + event.text
+            self.emit(events.transcript("assistant", text, item_id=event.item_id, final=False, at=time.time()))
+
+    def _focus_with_progress(self) -> dict | None:
+        if not self.focus_task:
+            return None
+        doing = self.room_progress.step(self.focus_task.get("session_id")) if self.room_progress is not None else ""
+        return {**self.focus_task, "progress": doing} if doing else self.focus_task
+
+    async def refresh_room_progress(self) -> None:
+        """Once a second (api/voice.py timers): a new step in the focus task's room reaches the instructions and the
+        client's conversation card; the same step again reaches nothing."""
+        if self.room_progress is None or not self.focus_task or self.closing:
+            return
+        doing = self.room_progress.step(self.focus_task.get("session_id"))
+        if (self.room_progress.version, doing) == self._room_progress_seen:
+            return
+        self._room_progress_seen = (self.room_progress.version, doing)
+        self.emit(events.focus({**self.focus_task, "progress": doing}, bound=self.room is not None))
+        await self._sync_instructions()
+
+    async def enter_room(self, room: dict) -> None:
+        """Bind the call to one task's room: handovers go there, its replies come back here (voice/room.py)."""
+        self.room = {key: room.get(key) for key in ("task_id", "title", "session_id")}
+        self.set_focus_task(dict(self.room))
+        self.emit(events.focus(self._focus_with_progress(), bound=True))
+        log.info("voice room entered call=%s task=%s", self.call_id, self.room["task_id"])
+        await self._sync_instructions(force=True)
+
+    async def leave_room(self) -> None:
+        if self.room is None:
+            return
+        log.info("voice room left call=%s task=%s", self.call_id, self.room["task_id"])
+        self.room = None
+        self.emit(events.focus(self._focus_with_progress(), bound=False))
+        await self._sync_instructions(force=True)
+
+    def set_focus_task(self, task: dict | None) -> None:
+        """What this call is about now: the task a request was passed to, the one just reported, or the one whose
+        page the user has open. Told to the client once per change; the same task again is not a change."""
+        current = (self.focus_task or {}).get("task_id")
+        if task is not None and not task.get("task_id"):
+            return
+        if (task or {}).get("task_id") == current and (task is None) == (self.focus_task is None):
+            if task is not None and any(task.get(key) and task.get(key) != self.focus_task.get(key)
+                                        for key in ("title", "state", "session_id")):
+                self.focus_task = {**self.focus_task, **{k: v for k, v in task.items() if v}}
+            return
+        self.focus_task = dict(task) if task else None
+        self._room_progress_seen = (-1, "")
+        self.emit(events.focus(self._focus_with_progress(), bound=self.room is not None))
 
     def _said(self, speaker: str, text: str, item_id: str = "") -> bool:
         added = self.spoken.add(speaker, text, item_id)
+        if added and speaker in events.TRANSCRIPT_ROLES:
+            # The caller's own words and the replies they heard, for the call page's conversation card.
+            self._partials.pop(item_id, None)
+            self.emit(events.transcript(speaker, self.spoken.lines[-1].text, item_id=item_id, final=True,
+                                        at=time.time()))
         if added and speaker in {"user", "assistant"} and self.context_sink and not self.closing:
             self._context_dirty = True
             if self._context_task is None or self._context_task.done():
@@ -1039,8 +1116,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             base += "\n当前任务状态核验失败；历史信息不能作为当前进展或待确认事项的证据。明确说暂时无法核实。"
         if self.decision_context:
             base += "\n" + self.decision_context
+        if self.room:
+            from voice.room import room_section
+            base += "\n" + room_section(self.room, self.lang)
         return with_sections(base, call_so_far=self.keeper.summary, progress=section,
-                             last_lines=self.keeper.carried)
+                             last_lines=self.keeper.carried, focus=self._focus_with_progress())
 
     async def _sync_instructions(self, *, force: bool = False, memory_packet=None):
         if (self.provider is self._cancel_recovery_provider
@@ -1366,6 +1446,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             self._memory_warm_task.cancel()
         if self.progress is not None:
             self.progress.stop()
+        if self.room_progress is not None:
+            self.room_progress.stop()
         if self._wake is not None:
             self._wake.cancel()
             self._wake = None

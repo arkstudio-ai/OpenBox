@@ -21,6 +21,8 @@ interface VoiceStore {
   workspaceId: string | null
   viewedSessionId: string | null
   setViewedSession: (sessionId: string | null) => void
+  /** Bind the live call to one task's room (the 盯现场 switch), or leave it. */
+  setRoom: (taskId: string | null) => void
   /** The window's form, card or pill. Local only: the server never hears of it. */
   expanded: boolean
   muted: boolean
@@ -74,6 +76,7 @@ export const useVoiceStore = create<VoiceStore>((set, get) => {
     call: initialCall,
     workspaceId: null,
     viewedSessionId: null,
+    setRoom: (taskId) => session?.setRoom(taskId),
     setViewedSession: (viewedSessionId) => {
       set({ viewedSessionId })
       session?.setViewedSession(get().workspaceId === useWorkspaceStore.getState().currentId ? viewedSessionId : null)

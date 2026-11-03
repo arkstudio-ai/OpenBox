@@ -75,15 +75,18 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
     final targetProject = _projectId.isNotEmpty
         ? _projectId
         : (projects.isNotEmpty ? projects.first.$1 : '');
-    final targetName = projects
+    final targetName =
+        projects
             .where((p) => p.$1 == targetProject)
             .map((p) => p.$2)
             .firstOrNull ??
         targetProject;
 
     return AlertDialog(
-      title: Text(i18n.t('cron:chatCreate.title'),
-          style: const TextStyle(fontSize: FontSizes.lg)),
+      title: Text(
+        i18n.t('cron:chatCreate.title'),
+        style: const TextStyle(fontSize: FontSizes.lg),
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,11 +94,16 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
           Text(
             i18n.t('cron:chatCreate.body'),
             style: TextStyle(
-                fontSize: FontSizes.sm, color: t.n700, height: 1.6),
+              fontSize: FontSizes.sm,
+              color: t.n700,
+              height: 1.6,
+            ),
           ),
           const SizedBox(height: 14),
-          Text(i18n.t('cron:form.project'),
-              style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+          Text(
+            i18n.t('cron:form.project'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
           const SizedBox(height: 6),
           InkWell(
             borderRadius: BorderRadius.circular(Radii.md),
@@ -108,9 +116,13 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
                     for (final (id, label) in projects)
                       ListTile(
                         dense: true,
-                        title: Text(label,
-                            style: TextStyle(
-                                fontSize: FontSizes.base, color: t.ink)),
+                        title: Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: FontSizes.base,
+                            color: t.ink,
+                          ),
+                        ),
                         trailing: id == targetProject
                             ? Icon(Icons.check, size: 18, color: t.a700)
                             : null,
@@ -124,8 +136,7 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
               ),
             ),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 border: Border.all(color: t.hair),
                 borderRadius: BorderRadius.circular(Radii.md),
@@ -133,9 +144,10 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(targetName,
-                        style: TextStyle(
-                            fontSize: FontSizes.sm, color: t.ink)),
+                    child: Text(
+                      targetName,
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                    ),
                   ),
                   Icon(Icons.expand_more, size: 15, color: t.n500),
                 ],
@@ -145,17 +157,20 @@ class _ChatCreateBodyState extends ConsumerState<_ChatCreateBody> {
           if (_failed)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(i18n.t('cron:chatCreate.failed'),
-                  style:
-                      TextStyle(fontSize: FontSizes.xs, color: t.danger)),
+              child: Text(
+                i18n.t('cron:chatCreate.failed'),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.danger),
+              ),
             ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text(i18n.t('cron:form.cancel'),
-              style: TextStyle(fontSize: FontSizes.sm, color: t.n700)),
+          child: Text(
+            i18n.t('cron:form.cancel'),
+            style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+          ),
         ),
         FilledButton(
           onPressed: targetProject.isEmpty || _starting

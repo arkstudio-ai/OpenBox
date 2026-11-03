@@ -81,8 +81,9 @@ Future<_RecordingPicker> _pump(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('iOS asks album or files, and the album goes through media',
-      (tester) async {
+  testWidgets('iOS asks album or files, and the album goes through media', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     final picker = await _pump(tester);
 
@@ -117,8 +118,9 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Android offers photos and videos as image/* and video/*',
-      (tester) async {
+  testWidgets('Android offers photos and videos as image/* and video/*', (
+    tester,
+  ) async {
     // FileType.media would go out as */* and only the OEM file manager
     // answers; image and video types are what gallery apps register for.
     debugDefaultTargetPlatformOverride = TargetPlatform.android;

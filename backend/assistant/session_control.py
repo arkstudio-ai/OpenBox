@@ -42,7 +42,9 @@ async def target_for_session(session, user_id):
                if driver and driver.run_id and driver.phase != "idle" else None)
         return {"task_id": task.id, "expected_revision": task.control_revision,
                 "expected_run": run, "desired_state": task.desired_state,
-                "observed_state": task.observed_state}
+                "observed_state": task.observed_state,
+                # The room's own name and whether it is still watched: the page says where the user is.
+                "task_title": task.title, "archived": task.archived_at is not None}
 
 
 async def stop_task(session, user_id, body: StopBody | None):

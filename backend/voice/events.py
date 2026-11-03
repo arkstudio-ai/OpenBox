@@ -13,6 +13,7 @@ PHRASE_KEYS = frozenset({"greeting", "progress", "result_in_text", "limit_reache
 TURN_STATES = frozenset({"accepted", "working", "late", "delivered", "timeout", "failed"})
 # credits: the call's cost reached the workspace balance (enforce billing).
 LIMIT_REASONS = frozenset({"credits"})
+TRANSCRIPT_ROLES = frozenset({"user", "assistant"})
 END_REASONS = frozenset({"hangup", "error", "limit", "quota", "concurrent", "mic_lost", "network",
                          "unsupported", "mic_denied", "mic_missing", "mic_busy"})
 # Shown to the user as is. Never a provider message, key or identifier.
@@ -54,6 +55,26 @@ def phrase(key: str) -> dict:
 def turn(turn_id: str, state: str, *, inbox_id: str | None, message_id: str | None) -> dict:
     return {"type": "turn", "turn_id": turn_id, "state": _member(state, TURN_STATES, "turn state"),
             "inbox_id": inbox_id, "message_id": message_id}
+
+
+def transcript(role: str, text: str, *, item_id: str, final: bool, at: float) -> dict:
+    """One line of this call as it was said, for the caller's own conversation card (docs/VOICE_CALL_SPEC.md §5.3).
+
+    ``final=False`` carries the reply so far for the same ``item_id``; the final line replaces it. Only the
+    user's words and the front desk's replies: background notes never leave the server."""
+    return {"type": "transcript", "role": _member(role, TRANSCRIPT_ROLES, "transcript role"), "text": text,
+            "item_id": item_id, "final": bool(final), "at": round(float(at), 3)}
+
+
+def focus(task: dict | None, *, bound: bool = False) -> dict:
+    """The task this call is about right now, or none: the conversation card opens that task's room.
+
+    ``bound``: the call is inside that room (voice/room.py): what the user says goes to the task."""
+    value = ({"task_id": str(task["task_id"]), "title": str(task.get("title") or ""),
+              "session_id": task.get("session_id"),
+              # What the room is doing right now, as a phrase ("在生成第二镜"); "" when idle or unknown.
+              "progress": str(task.get("progress") or "")} if task else None)
+    return {"type": "focus", "task": value, "bound": bool(bound and value is not None)}
 
 
 def cost(snapshot: dict) -> dict:

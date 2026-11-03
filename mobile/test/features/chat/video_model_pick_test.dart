@@ -47,8 +47,10 @@ void main() {
   test('config exposes the deployment defaults the pill starts from', () {
     expect(config.defaultVideoModel, 'wan3.0-video');
     expect(config.defaultVideoResolution, '720p');
-    expect(resolveTier(config.defaultVideoModel, config.defaultVideoResolution),
-        '720p');
+    expect(
+      resolveTier(config.defaultVideoModel, config.defaultVideoResolution),
+      '720p',
+    );
   });
 
   test('a draft pick survives the hop onto the real session', () {
@@ -62,8 +64,8 @@ void main() {
 
     container.read(pickedVideoProvider('__draft__').notifier).state =
         const VideoPick('wan3.0-video', '1080p');
-    container.read(pickedVideoProvider('s-new').notifier).state =
-        container.read(pickedVideoProvider('__draft__'));
+    container.read(pickedVideoProvider('s-new').notifier).state = container
+        .read(pickedVideoProvider('__draft__'));
 
     final carried = container.read(pickedVideoProvider('s-new'));
     expect(carried?.modelId, 'wan3.0-video');

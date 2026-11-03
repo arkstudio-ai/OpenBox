@@ -82,6 +82,8 @@ class CallScope:
     context_kept: bool = False
     # Client navigation hint only; SQL authority is resolved anew per utterance.
     viewed_session_id: str | None = None
+    # The call itself (voice/bridge.py), for the room tools; never read for authority.
+    call: object = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -269,6 +271,22 @@ async def cards_answer(scope: CallScope, arguments: dict) -> dict:
     return await cards.answer(scope, arguments)
 
 
+async def task_blocker(scope: CallScope, arguments: dict) -> dict:
+    """Where one task is and what it waits for (voice/focus.py): the answer to "怎么还没动" in a second."""
+    from voice.focus import blocker
+    return await blocker(scope, arguments)
+
+
+async def room_enter(scope: CallScope, arguments: dict) -> dict:
+    from voice.room import enter
+    return await enter(scope, arguments)
+
+
+async def room_leave(scope: CallScope, arguments: dict) -> dict:
+    from voice.room import leave
+    return await leave(scope, arguments)
+
+
 async def credits(scope: CallScope, arguments: dict) -> dict:
     """What ``status.credits`` reads: the workspace balance and the user's own use this month."""
     from assistant.status_tools import credits as read_credits
@@ -332,6 +350,21 @@ DIRECT: dict[str, DirectTool] = {
         "目标或选择不明确时先澄清，多个卡片不能凭最近顺序猜。用户补充所选新项目的名称仍属于本卡片，填 project_name；"
         "改变待执行事项的内容或范围才另用 assistant_ask。返回 decision_recorded 只代表回答已记录，后续执行结果另行返回。",
         cards_answer, CardAnswerArguments.model_json_schema(), timeout=8.0),
+    "task_blocker": DirectTool(
+        "用户问某个任务“怎么还没动”“卡在哪”“现在什么情况”时查它当前卡在哪、要谁做什么。"
+        "给 task_id 或标题，都不给则查最近在跟进的那个；返回的 say 可直接口播。"
+        "只是查看；要恢复、继续、核对或取消必须用 assistant_ask 转交。", task_blocker,
+        {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
+                                           "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
+    "room_enter": DirectTool(
+        "用户明确要盯着某件活的现场说话时调用（“盯着艾薇兰那件”“我们聊聊酒吧视频这个”）：之后用户的话直接交给这件活，"
+        "它的回复直接告诉用户。给 task_id 或标题。只是切换，不改任务本身；用户只是问进度不用盯。任务单上也有“盯现场”开关，"
+        "用户用开关时你不用调用，也不要主动劝用户盯现场。", room_enter,
+        {"type": "object", "properties": {"task_id": {"type": "string", "maxLength": 64},
+                                           "title": {"type": "string", "maxLength": 128}}}, timeout=3.0),
+    "room_leave": DirectTool(
+        "用户说“回去”“回助理”“不盯了”或要聊别的事时调用：不再盯这件活的现场，回到助理这一层。活做完会自动回来。", room_leave,
+        _no_parameters(), timeout=2.0),
 }
 
 

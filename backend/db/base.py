@@ -160,6 +160,7 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
         },
         "assistant_tasks": {
             "continuation_policy": "TEXT",
+            "superseded_by_task_id": "VARCHAR(64)",
         },
         "assistant_task_results": {
             "summary": "TEXT",

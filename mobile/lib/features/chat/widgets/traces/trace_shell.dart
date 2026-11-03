@@ -65,8 +65,11 @@ class _TraceShellState extends State<TraceShell> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                ShimmerText(widget.title,
-                    style: titleStyle, enabled: widget.active),
+                ShimmerText(
+                  widget.title,
+                  style: titleStyle,
+                  enabled: widget.active,
+                ),
                 if (widget.summary != null) ...[
                   const SizedBox(width: 8),
                   Expanded(

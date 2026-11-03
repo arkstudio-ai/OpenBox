@@ -39,14 +39,18 @@ class _FilesTabState extends ConsumerState<FilesTab> {
       loading: () =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       error: (_, _) => Center(
-        child: Text(i18n.t('workbench:files.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:files.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
       data: (root) {
         if (root == null || root.isEmpty) {
           return Center(
-            child: Text(i18n.t('workbench:sandbox.none'),
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+            child: Text(
+              i18n.t('workbench:sandbox.none'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+            ),
           );
         }
         final cwd = _cwd ?? root;
@@ -69,12 +73,13 @@ class _FilesTabState extends ConsumerState<FilesTab> {
   }
 
   Widget _breadcrumb(BossipTokens t, String root, String cwd) {
-    final rootName = root.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '/';
+    final rootName =
+        root.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '/';
     final relative = cwd == root
         ? ''
         : cwd.startsWith(root)
-            ? cwd.substring(root.length)
-            : cwd;
+        ? cwd.substring(root.length)
+        : cwd;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
@@ -110,19 +115,24 @@ class _FilesTabState extends ConsumerState<FilesTab> {
 
   Widget _listing(BossipTokens t, I18nState i18n, String cwd) {
     final entries = ref.watch(
-        fileListProvider((containerId: widget.containerId, path: cwd)));
+      fileListProvider((containerId: widget.containerId, path: cwd)),
+    );
     return entries.when(
       loading: () =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       error: (_, _) => Center(
-        child: Text(i18n.t('workbench:files.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:files.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
       data: (list) {
         if (list.isEmpty) {
           return Center(
-            child: Text(i18n.t('workbench:files.empty'),
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+            child: Text(
+              i18n.t('workbench:files.empty'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+            ),
           );
         }
         final dirs = list.where((e) => e.isDir).toList()
@@ -205,8 +215,9 @@ class _FileViewer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final content =
-        ref.watch(fileContentProvider((containerId: containerId, path: path)));
+    final content = ref.watch(
+      fileContentProvider((containerId: containerId, path: path)),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -249,15 +260,18 @@ class _FileViewer extends ConsumerWidget {
             loading: () =>
                 const Center(child: CircularProgressIndicator(strokeWidth: 2)),
             error: (_, _) => Center(
-              child: Text(i18n.t('workbench:files.notSupported'),
-                  style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+              child: Text(
+                i18n.t('workbench:files.notSupported'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+              ),
             ),
             data: (file) {
               if (file.content.contains('\u0000')) {
                 return Center(
-                  child: Text(i18n.t('workbench:files.binary'),
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+                  child: Text(
+                    i18n.t('workbench:files.binary'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
                 );
               }
               return SingleChildScrollView(
@@ -271,10 +285,14 @@ class _FileViewer extends ConsumerWidget {
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Text(
-                            i18n.t('workbench:files.tooLarge',
-                                vars: {'limit': fileContentLineLimit}),
+                            i18n.t(
+                              'workbench:files.tooLarge',
+                              vars: {'limit': fileContentLineLimit},
+                            ),
                             style: TextStyle(
-                                fontSize: FontSizes.xs, color: t.n500),
+                              fontSize: FontSizes.xs,
+                              color: t.n500,
+                            ),
                           ),
                         ),
                       SelectableText(

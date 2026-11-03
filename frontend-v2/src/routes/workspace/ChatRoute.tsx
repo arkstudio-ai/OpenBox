@@ -10,6 +10,7 @@ import {
   Composer,
   ExecutionEffectNotice,
   StopTaskNotice,
+  TaskRoomBanner,
   RunErrorNotice,
   PermissionCard,
   QuestionDock,
@@ -175,6 +176,11 @@ function chatEventSurface(assistant: boolean, override?: "assistant" | "workspac
   return override ?? (assistant ? "assistant" : "workspace")
 }
 
+/** A task's own conversation (the work), as opposed to the assistant's or an ordinary chat. */
+function isRoom(session: Session | undefined, assistant: boolean): boolean {
+  return !assistant && !!session?.task_control
+}
+
 export function ChatSessionView({ sessionId, assistant = false, sendRequest, welcome, extraFooter, aside, onSend, realtimeSurface, compact }: {
   sessionId: string; assistant?: boolean; sendRequest?: SendRequest
   realtimeSurface?: "assistant" | "workspace"
@@ -313,6 +319,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <TaskRoomBanner session={session.data} />
       <TranscriptArea loading={loading} welcome={extras.welcomeView}>
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy} compact={compact}
           historyScrollRef={historyScrollRef}
@@ -349,6 +356,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
           }}
           onStop={stop}
           stopTask={stopping.stopsTask}
+          room={isRoom(session.data, assistant)}
           sessionModel={session.data?.model}
           sessionVariant={session.data?.variant}
           sessionVideoModel={session.data?.video_model}

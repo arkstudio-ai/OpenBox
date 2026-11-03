@@ -149,7 +149,7 @@ class TurnsMixin:
             ref = VoiceTurnRef(id=key, provider_call_id=key, text=request, transcript=words,
                                requested=self.clock(), context=context)
             try:
-                await self.link.start(ref)
+                await self.link.start(ref, **({"room": self.room} if self.room else {}))
             except Exception as exc:
                 log.warning("voice recovery acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
                 if guard is not None:
@@ -360,7 +360,7 @@ class TurnsMixin:
             self.pending_calls[event.call_id] = ref
             self.refs.append(ref)
             try:
-                await self.link.start(ref)
+                await self.link.start(ref, **({"room": self.room} if self.room else {}))
             except Exception as exc:
                 log.warning("voice handover acceptance failed call=%s error=%s", self.call_id, type(exc).__name__)
                 await self._command("send_tool_output", event.call_id, {
@@ -473,7 +473,7 @@ class TurnsMixin:
                           if line.role == "user" and line.item_id == source), "") if source else self.utterance
             sequence = self._user_utterances.get(source, 0) if source else self.heard_count
         scope = replace(self.scope, transcript=words, utterance_index=sequence,
-                        desk=self.desk, memory_turn=memory_turn, memory_budget=memory_budget,
+                        desk=self.desk, call=self, memory_turn=memory_turn, memory_budget=memory_budget,
                         context_kept=keeps_call_context(getattr(self, "memory_packet", None))) if self.scope else None
         decision = event.name in {"cards_answer", "task_question_answer"}
         if event.name == "task_question_answer":
@@ -778,6 +778,8 @@ class TurnsMixin:
         if ref.status == "ok" and ref.running and not ref.cards:
             ref.reason = "running"  # passed on: told as such, and the task's report answers the request
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
+            self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", ""),
+                                 "state": "刚交办过去，正在做" if self.lang != "en" else "just handed over, in progress"})
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if not self._request_pending():
@@ -1003,6 +1005,9 @@ class TurnsMixin:
         if not speech or self.closing:
             return
         asked = self._passed_on.get(task_id, "")
+        if self.room and task_id and task_id != self.room["task_id"]:
+            # Inside another task's room: announce, do not tell (VOICE_SEAM_PLAN §9.1).
+            speech, asked = phrases.room_interjection(title, self.lang), ""
         if not asked and not self.tell_reports:
             log.info("voice report kept for the conversation call=%s", self.call_id)  # the user turned these off
             return
@@ -1020,11 +1025,57 @@ class TurnsMixin:
         if (_fresh and self._stale_work(ref)) or not self._claim_delivery(ref):
             return
         self._passed_on.pop(task_id, None)
+        if task_id:
+            self.set_focus_task({"task_id": task_id, "title": title,
+                                 "state": "刚出了结果" if self.lang != "en" else "just reported a result"})
         ref.delivery = "queued"
         self.deliveries.append(ref)
         self._update_phase()
+        if self.room and task_id == self.room["task_id"] and not running:
+            await self.leave_room()  # the room's work is done: the switch goes off by itself
         if not self._report_batch:
             await self.fill_idle()
+
+    async def control_note(self, task_id: str, title: str, text: str, control_revision: int) -> None:
+        """A task was stopped, paused, released or resumed while the call is on (voice/control_notes.py): one
+        short note with the next step, told unasked at the next quiet moment. Several changes of the same task
+        before the first is told collapse into the latest one."""
+        if not text or self.closing or not self.tell_reports:
+            return
+        key = f"control:{task_id}"
+        queued = next((ref for ref in self.deliveries if ref.provider_call_id == key and ref.delivery == "queued"), None)
+        if queued is not None:
+            queued.speech, queued.inbox_id, queued.control_revision = text, f"{key}:{control_revision}", control_revision
+            return
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=key, text=title, transcript="",
+                           requested=self.clock(), report=title, asked="", inbox_id=f"{key}:{control_revision}",
+                           task_id=task_id, control_revision=control_revision)
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", text, "control", self.clock()
+        if not self._claim_delivery(ref):
+            return
+        self.set_focus_task({"task_id": task_id, "title": title, "state": text})
+        ref.delivery = "queued"
+        self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
+
+    async def room_reply(self, inbox_id: str, title: str, text: str, result_id: str = "") -> None:
+        """A reply that landed in the bound room's conversation (voice/room.py): told to the user as the room's
+        own answer, whatever their report setting; the assistant's later report of the same result is a duplicate."""
+        from voice.speech_text import clean
+        speech = clean(text, self.lang)
+        if not speech or self.closing or not self.room:
+            return
+        ref = VoiceTurnRef(id=generate_id(), provider_call_id=f"room:{inbox_id}"[:64], text=title, transcript="",
+                           requested=self.clock(), report=title, asked="", inbox_id=inbox_id,
+                           task_id=self.room["task_id"], result_id=result_id, room=dict(self.room))
+        ref.status, ref.speech, ref.reason, ref.settled = "ok", speech, "ok", self.clock()
+        if not self._claim_delivery(ref):
+            return
+        ref.delivery = "queued"
+        self.deliveries.append(ref)
+        self._update_phase()
+        await self.fill_idle()
 
     def seed_waiting_cards(self, main_cards: list[dict], questions: list[dict]) -> None:
         """A connection is not a request to replay pre-existing decisions.

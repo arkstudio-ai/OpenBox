@@ -30,10 +30,7 @@ class ResourcePreview extends ConsumerWidget {
       return _ImageBody(resource: resource);
     }
     if (resource.kind == 'video' || resource.kind == 'audio') {
-      return _MediaBody(
-        url: resource.url,
-        audioOnly: resource.kind == 'audio',
-      );
+      return _MediaBody(url: resource.url, audioOnly: resource.kind == 'audio');
     }
     if (isTextPreviewable(resource)) {
       return _TextBody(resource: resource);
@@ -43,8 +40,9 @@ class ResourcePreview extends ConsumerWidget {
     return _Unsupported(
       resource: resource,
       onDownload: onDownload,
-      openLabelKey:
-          isPdf(resource) ? 'resources:actions.open' : 'resources:actions.download',
+      openLabelKey: isPdf(resource)
+          ? 'resources:actions.open'
+          : 'resources:actions.download',
     );
   }
 }
@@ -90,11 +88,13 @@ class _MediaBodyState extends State<_MediaBody> {
   void initState() {
     super.initState();
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize().then((_) {
-        if (mounted) setState(() => _ready = true);
-      }).catchError((Object _) {
-        if (mounted) setState(() => _failed = true);
-      });
+      ..initialize()
+          .then((_) {
+            if (mounted) setState(() => _ready = true);
+          })
+          .catchError((Object _) {
+            if (mounted) setState(() => _failed = true);
+          });
   }
 
   @override
@@ -107,13 +107,10 @@ class _MediaBodyState extends State<_MediaBody> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     if (_failed) {
-      return Center(
-        child: Icon(Icons.error_outline, size: 28, color: t.n500),
-      );
+      return Center(child: Icon(Icons.error_outline, size: 28, color: t.n500));
     }
     if (!_ready) {
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2));
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
     return Center(
       child: Column(
@@ -134,9 +131,11 @@ class _MediaBodyState extends State<_MediaBody> {
           IconButton(
             iconSize: 34,
             color: t.ink,
-            icon: Icon(_controller.value.isPlaying
-                ? Icons.pause_circle_filled
-                : Icons.play_circle_fill),
+            icon: Icon(
+              _controller.value.isPlaying
+                  ? Icons.pause_circle_filled
+                  : Icons.play_circle_fill,
+            ),
             onPressed: () => setState(() {
               _controller.value.isPlaying
                   ? _controller.pause()
@@ -223,8 +222,10 @@ class _Unsupported extends ConsumerWidget {
           FilledButton.icon(
             onPressed: () {
               if (openLabelKey == 'resources:actions.open') {
-                launchUrl(Uri.parse(resource.url),
-                    mode: LaunchMode.externalApplication);
+                launchUrl(
+                  Uri.parse(resource.url),
+                  mode: LaunchMode.externalApplication,
+                );
               } else {
                 onDownload();
               }
@@ -242,8 +243,10 @@ class _Unsupported extends ConsumerWidget {
                   : Icons.file_download_outlined,
               size: 16,
             ),
-            label: Text(i18n.t(openLabelKey),
-                style: const TextStyle(fontSize: FontSizes.sm)),
+            label: Text(
+              i18n.t(openLabelKey),
+              style: const TextStyle(fontSize: FontSizes.sm),
+            ),
           ),
         ],
       ),

@@ -34,7 +34,8 @@ class PulseDot extends StatefulWidget {
   State<PulseDot> createState() => _PulseDotState();
 }
 
-class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin {
+class _PulseDotState extends State<PulseDot>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1100),
@@ -49,8 +50,10 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return FadeTransition(
-      opacity: Tween(begin: 0.35, end: 1.0)
-          .animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+      opacity: Tween(
+        begin: 0.35,
+        end: 1.0,
+      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
       child: ScaleTransition(
         scale: Tween(begin: 0.82, end: 1.0).animate(
           CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
@@ -58,7 +61,10 @@ class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin
         child: Container(
           width: widget.size,
           height: widget.size,
-          decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: widget.color,
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     );

@@ -22,7 +22,7 @@ import {
 export type IntroEvent =
   | { event: "answer"; step: IntroStep; value: string }
   | { event: "skip"; step: IntroStep }
-  | { event: "dismiss" | "bypass" | "nudged" }
+  | { event: "dismiss" | "bypass" | "nudged" | "tour" }
 
 export const THEMES = ["default", "azure", "cobalt", "graphite", "lagoon", "ink", "ochre", "sepia"] as const
 export type ThemeName = (typeof THEMES)[number]

@@ -43,7 +43,8 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
       final ticket = await ref.read(wsClientProvider).fetchTicket();
       final channel = WebSocketChannel.connect(
         Uri.parse(
-            '${Env.wsBase}/ws/terminal/${widget.containerId}?ticket=$ticket'),
+          '${Env.wsBase}/ws/terminal/${widget.containerId}?ticket=$ticket',
+        ),
       );
       await channel.ready;
       if (!mounted) {
@@ -65,14 +66,15 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
         channel.sink.add(frame.buffer.asUint8List());
       };
       // Announce the initial size.
-      _terminal.onResize
-          ?.call(_terminal.viewWidth, _terminal.viewHeight, 0, 0);
+      _terminal.onResize?.call(_terminal.viewWidth, _terminal.viewHeight, 0, 0);
 
       channel.stream.listen(
         (frame) {
           if (frame is List<int>) {
             if (frame.isNotEmpty && frame.first == 0x00) {
-              _terminal.write(utf8.decode(frame.sublist(1), allowMalformed: true));
+              _terminal.write(
+                utf8.decode(frame.sublist(1), allowMalformed: true),
+              );
             }
           } else if (frame is String) {
             // Text frames are JSON `{type:"error", data}` only.
@@ -115,8 +117,10 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
     final i18n = ref.watch(i18nProvider);
     if (_connecting) {
       return Center(
-        child: Text(i18n.t('workbench:terminal.connecting'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:terminal.connecting'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       );
     }
     return Container(

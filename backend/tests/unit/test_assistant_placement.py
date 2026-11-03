@@ -36,7 +36,8 @@ async def prepare(text="帮我写一份新品发布计划"):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, text)
     args = {"project_id": main.project_id, "title": "新品发布计划", "instructions": "写一份新品发布计划",
-            "source_message_ids": [human], "model": "test/model", "model_confirmed": True}
+            "source_message_ids": [human], "model": "test/model", "model_confirmed": True,
+            "let_user_choose": True}  # these tests are about the card; by default the server arranges itself
     return owner, workspace, main, ctx, lease, args
 
 
@@ -254,3 +255,32 @@ async def test_missing_project_cannot_skip_the_choice_by_claiming_confirmation()
         assert denied["error"] == "ASSISTANT_PLACEMENT_REQUIRED" and await counts(owner) == before
     finally:
         await lease.release(session_status="idle")
+
+
+async def test_by_default_the_work_is_arranged_without_a_card_and_the_receipt_says_where():
+    """VOICE_SEAM_PLAN §12.4: no destination card; the proposed project is created and named in the receipt."""
+    owner, workspace, main, ctx, lease, args = await prepare()
+    try:
+        before = await counts(owner)
+        plain = {**{k: v for k, v in args.items() if k not in {"let_user_choose", "project_id"}},
+                 "placement": {"question": "放哪儿？", "project_name": "新品发布"}}
+        result, _ = await tool_call(ctx, "tasks.submit", plain)
+        assert "suspended" not in result and result.get("state") == "accepted", result
+        assert result["arranged"]["project"]["name"] == "新品发布" and result["arranged"]["project"]["created"] is True
+        projects, sessions, tasks = await counts(owner)
+        assert (projects, sessions, tasks) == (before[0] + 1, before[1] + 1, before[2] + 1)
+        async with get_db_session() as db:
+            assert await db.scalar(select(func.count()).select_from(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id)) == 0
+            task = await db.get(AssistantTask, result["task_id"])
+            project = await db.get(Project, task.project_id)
+            assert project.name == "新品发布"
+        # A given project is used as is, and says so.
+        again, _ = await tool_call(ctx, "tasks.submit", {**plain, "title": "另一件事", "project_id": main.project_id})
+        assert again["arranged"]["project"] == {"id": main.project_id, "name": project_name_of(main), "created": False}
+    finally:
+        await lease.release(session_status="idle")
+
+
+def project_name_of(main):
+    return getattr(main, "_project_name", None) or "默认空间"

@@ -141,3 +141,30 @@ async def test_cancel_waits_for_bounded_read_to_release_connection():
     with pytest.raises(asyncio.CancelledError):
         await task
     watch.close()
+
+
+async def test_a_task_control_change_wakes_the_control_and_context_readers_of_its_main_session():
+    from bus.events import ASSISTANT_TASK_CONTROL
+    watch = updates.CallUpdates(SimpleNamespace(user_id="u", workspace_id="w", main_session_id="s", call_id="c"),
+                                rooms=lambda: {"execution-page"})
+    try:
+        for signal in (watch.reports, watch.context, watch.cards, watch.controls):
+            signal.clear()
+        bus.publish(ASSISTANT_TASK_CONTROL, {"userId": "u", "workspaceId": "w", "sessionId": "other-main",
+                                             "taskId": "t", "desiredState": "canceled"})
+        await asyncio.sleep(0)
+        assert not watch.controls.is_set()
+        bus.publish(ASSISTANT_TASK_CONTROL, {"userId": "u", "workspaceId": "w", "sessionId": "s",
+                                             "taskId": "t", "desiredState": "canceled"})
+        await asyncio.sleep(0)
+        assert watch.controls.is_set() and watch.context.is_set() and not watch.cards.is_set()
+        # Input on a task's own page is shared context: its inbox hint wakes the context reader.
+        watch.context.clear()
+        bus.publish(AGENT_INBOX_UPDATED, {"userId": "u", "sessionId": "unrelated-chat"})
+        await asyncio.sleep(0)
+        assert not watch.context.is_set()
+        bus.publish(AGENT_INBOX_UPDATED, {"userId": "u", "sessionId": "execution-page"})
+        await asyncio.sleep(0)
+        assert watch.context.is_set() and not watch.reports.is_set()
+    finally:
+        watch.close()

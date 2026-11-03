@@ -27,12 +27,16 @@ class CronPanelTab extends ConsumerWidget {
 
     return jobs.when(
       loading: () => Center(
-        child: Text(i18n.t('cron:page.loading'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('cron:page.loading'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
       error: (_, _) => Center(
-        child: Text(i18n.t('cron:page.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.danger)),
+        child: Text(
+          i18n.t('cron:page.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.danger),
+        ),
       ),
       data: (list) {
         final mine = list
@@ -52,15 +56,19 @@ class CronPanelTab extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(i18n.t('cron:panel.empty.title'),
-                        style: TextStyle(
-                            fontSize: FontSizes.sm, color: t.ink)),
+                    Text(
+                      i18n.t('cron:panel.empty.title'),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                    ),
                     const SizedBox(height: 4),
-                    Text(i18n.t('cron:panel.empty.body'),
-                        style: TextStyle(
-                            fontSize: FontSizes.xs,
-                            color: t.n600,
-                            height: 1.6)),
+                    Text(
+                      i18n.t('cron:panel.empty.body'),
+                      style: TextStyle(
+                        fontSize: FontSizes.xs,
+                        color: t.n600,
+                        height: 1.6,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -128,10 +136,10 @@ class _PanelJobRowState extends ConsumerState<_PanelJobRow> {
     final dotColor = job.running
         ? t.a700
         : job.enabled
-            ? t.sage
-            : job.autoDisabled
-                ? t.danger
-                : t.n400;
+        ? t.sage
+        : job.autoDisabled
+        ? t.danger
+        : t.n400;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -149,8 +157,10 @@ class _PanelJobRowState extends ConsumerState<_PanelJobRow> {
               Container(
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -184,20 +194,28 @@ class _PanelJobRowState extends ConsumerState<_PanelJobRow> {
             spacing: 10,
             runSpacing: 4,
             children: [
-              Text(describeSchedule(job.schedule, i18n.t),
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+              Text(
+                describeSchedule(job.schedule, i18n.t),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
               if (job.enabled && job.nextRunAt != null)
                 Text(
-                  i18n.t('cron:job.nextRun', vars: {
-                    'when': formatRelative(job.nextRunAt!, i18n.language)
-                  }),
+                  i18n.t(
+                    'cron:job.nextRun',
+                    vars: {
+                      'when': formatRelative(job.nextRunAt!, i18n.language),
+                    },
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
                 ),
               if (job.lastRunAt != null)
                 Text(
-                  i18n.t('cron:job.lastRun', vars: {
-                    'when': formatRelative(job.lastRunAt!, i18n.language)
-                  }),
+                  i18n.t(
+                    'cron:job.lastRun',
+                    vars: {
+                      'when': formatRelative(job.lastRunAt!, i18n.language),
+                    },
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
                 ),
               GestureDetector(
@@ -225,8 +243,12 @@ class _PanelJobRowState extends ConsumerState<_PanelJobRow> {
     );
   }
 
-  Widget _pill(BossipTokens t, String label,
-      {required bool enabled, required VoidCallback onTap}) {
+  Widget _pill(
+    BossipTokens t,
+    String label, {
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
     return Opacity(
       opacity: enabled ? 1 : 0.5,
       child: OutlinedButton(

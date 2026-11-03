@@ -111,6 +111,12 @@ class VoiceSocket {
     }
   }
 
+  /// The task card's 盯现场 switch: bind the call to that task's room (null leaves).
+  void sendRoom(String? taskId) {
+    if (_closed) return;
+    _channel.sink.add(jsonEncode({'type': 'room', 'task_id': taskId}));
+  }
+
   void sendView(String? sessionId) {
     if (!_closed) {
       _channel.sink.add(jsonEncode({'type': 'view', 'session_id': sessionId}));

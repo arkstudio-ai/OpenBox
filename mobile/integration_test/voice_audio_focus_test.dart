@@ -7,7 +7,7 @@ import 'package:bossip_mobile/features/voice/audio/mic_permission.dart';
 import 'package:bossip_mobile/features/voice/platform/system_voice_call.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
-import 'package:bossip_mobile/features/voice/widgets/voice_call_controls.dart';
+import 'package:bossip_mobile/features/voice/widgets/voice_call_sheet.dart';
 import 'package:bossip_mobile/features/voice/widgets/voice_copy.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:flutter/material.dart';
@@ -71,7 +71,8 @@ void main() {
                       if (VoiceCopy.detail(strings, call)
                           case final String detail)
                         Text(detail),
-                      VoiceCallControls(call: call),
+                      // The sheet's foot holds the resume button (§13).
+                      const VoiceCallSheet(),
                     ],
                   );
                 },

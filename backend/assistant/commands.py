@@ -34,6 +34,28 @@ from session.internal_parts import begin_session_write
 from session.session import _new_session_record, _publish_session_created
 
 
+# What a new video room is told before its first input. The room has the video
+# tools either way; without this, a non-talking-head video (QWH, 2026-11-03)
+# got a bare brief, wrote a shot list, asked a card, and after the user chose
+# "start producing" replied with a plan and stopped: no video_generate call,
+# nothing charged, while the assistant reported the work as under way.
+VIDEO_WORKFLOWS = frozenset({"video-production", "video"})
+VIDEO_WORKFLOW_GUIDANCE = {
+    "video-production": (
+        "Load the video-production skill before planning or generating this talking-head video. "
+        "Follow its script, material, shot, transcript and delivery review stages. "
+        "Reuse the user's selected models and decisions below; do not ask them again."),
+    "video": (
+        "This is a video production task, not a talking-head piece. Load the video-production skill and use its "
+        "video_generate, video_analyze and video_compose stages for a showcase video; skip the presenter script "
+        "stages and do not force a spoken script. Reuse the user's selected models and decisions below; do not "
+        "ask them again. Once the plan or shot list is accepted (by the user, or because they already approved "
+        "it in the brief), generate the shots and compose the cut in the same turn. The task is done only when a "
+        "playable video exists; a reply that only lists the production steps still to do is not a result, so "
+        "either do them or state plainly that you stopped and why."),
+}
+
+
 @dataclass(frozen=True)
 class ToolSource:
     """IDs supplied by the executor, never model-selectable actor or run IDs."""
@@ -51,6 +73,34 @@ _TITLE_NOISE = re.compile(r"[（(【\[][^）)】\]]*[）)】\]]|[^\w\u4e00-\u9ff
 def _title_key(title: str) -> str:
     """Bracketed variants ("（标准档）", "(MiniMax H3 重跑)") and punctuation never make a new piece of work."""
     return _TITLE_NOISE.sub("", title or "").lower()
+
+
+# A task in one of these states is finished with, one way or another: a newer task for the same work replaces it.
+REPLACEABLE_OBSERVED = frozenset({"completed", "error", "idle", "canceled", "input_not_applied"})
+
+
+async def supersede_chain_locked(db, main, task, now) -> list[str]:
+    """Archive the finished older tasks of the same work when a new one is created (VOICE_SEAM_PLAN §11.4).
+
+    Only tasks that are canceled or ended (``REPLACEABLE_OBSERVED``) are replaced; one still running or waiting
+    for the user keeps its place and only counts in the chain. Returns the replaced task ids."""
+    older = (await db.scalars(select(AssistantTask).where(
+        AssistantTask.assistant_session_id == main.id, AssistantTask.user_id == main.user_id,
+        AssistantTask.archived_at.is_(None), AssistantTask.id != task.id,
+    ).order_by(AssistantTask.created_at.desc()).limit(50))).all()
+    replaced = []
+    for old in older:
+        if not similar_task_title(old.title, task.title):
+            continue
+        if old.desired_state != "canceled" and old.observed_state not in REPLACEABLE_OBSERVED:
+            continue
+        old.archived_at, old.updated_at, old.superseded_by_task_id = now, now, task.id
+        old.control_revision += 1
+        await append_agent_event_locked(db, main, kind="assistant.task.changed",
+            payload={"task_id": old.id, "superseded_by": task.id, "task_revision": old.control_revision},
+            idempotency_key=f"assistant-supersede:{old.id}:{task.id}")
+        replaced.append(old.id)
+    return replaced
 
 
 def similar_task_title(first: str, second: str) -> bool:
@@ -400,7 +450,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
     if placement is not None:
         digest = command_digest({"base": digest, "placement": placement})
     if workflow is not None:
-        if workflow != "video-production" or task_id:
+        if workflow not in VIDEO_WORKFLOWS or task_id:
             raise AssistantError(400, "ASSISTANT_WORKFLOW_INVALID", "Invalid workflow for new work")
         digest = command_digest({"base": digest, "workflow": workflow})
     if expected_run is not None:
@@ -480,6 +530,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             command.target_id = task.id
             source_ref["revision_request"] = revision_request
             command.source_ref = dict(source_ref)
+        superseded: list[str] = []
+        reopened = False
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
                                                 main_id=main_id, task_id=task_id, lock=True)
@@ -498,6 +550,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 source_ref["reopened_from"] = {"desired_state": task.desired_state,
                                                "control_revision": task.control_revision}
                 await reopen_canceled_for_input_locked(db, task, execution)
+                reopened = True
                 command.source_ref = dict(source_ref)
             elif task.desired_state != "running":
                 raise AssistantError(409, "ASSISTANT_TASK_NOT_RUNNING",
@@ -539,15 +592,18 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                         f"({duplicate.desired_state}/{duplicate.observed_state}, task_id {duplicate.id}). Continue it "
                         "instead of creating another: tasks.get, then tasks.followup while it runs, tasks.resume when it "
                         "is paused or stopped, and tasks.acknowledge_effects first when its outcomes are unverified. "
-                        "Only when the user explicitly asked for a new, separate task repeat tasks.submit with "
-                        "new_despite_similar=true."), details={
+                        "If the user only wants to see or talk about that work, answer with its current state and "
+                        "the link in details.url so they go back into it. Only when the user explicitly asked for a "
+                        "new, separate task repeat tasks.submit with new_despite_similar=true."), details={
                             "existing_task_id": duplicate.id, "existing_title": duplicate.title,
                             "desired_state": duplicate.desired_state, "observed_state": duplicate.observed_state,
-                            "execution_session_id": duplicate.execution_session_id})
+                            "execution_session_id": duplicate.execution_session_id,
+                            "url": f"/app/s/{duplicate.execution_session_id}"})
             task, execution, new_session = await create_task_locked(db, main, project_id=project_id,
                 title=title, now=now, model=model, variant=variant, variant_explicit=variant_explicit,
                 video_model=video_model, video_resolution=video_resolution)
             command.target_id = task.id
+            superseded = await supersede_chain_locked(db, main, task, now)
         submission_id = generate_id()
         origin = "assistant_delegation" if source else "human"
         # Input provenance is a bounded reference to the human request, never a
@@ -565,9 +621,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 "video_model": video_model, "video_resolution": video_resolution}
         if workflow:
             origin_ref["workflow"] = workflow
-            prompt = ("Load the video-production skill before planning or generating this talking-head video. "
-                      "Follow its script, material, shot, transcript and delivery review stages. "
-                      "Reuse the user's selected models and decisions below; do not ask them again.\n\n" + prompt)
+            prompt = VIDEO_WORKFLOW_GUIDANCE[workflow] + "\n\n" + prompt
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,
@@ -593,7 +647,11 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         receipt = {"command_id": command.id, "task_id": task.id,
                    "execution_session_id": execution.id, "submission_id": submission_id,
                    "inbox_id": accepted.id, "task_revision": task.control_revision,
-                   "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery}
+                   "intent_revision": task.intent_revision, "state": "accepted", "delivery": delivery,
+                   # Where the user goes on with this work: the link to show instead of retelling it.
+                   "url": f"/app/s/{execution.id}"}
+        if superseded:
+            receipt["superseded_task_ids"] = superseded
         if revision_request:
             receipt["superseded_request_id"] = revision_request["request_id"]
         if placement_row is not None:
@@ -623,8 +681,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
-    from assistant.control import publish_task_changed
+    from assistant.control import publish_task_changed, publish_task_control
     publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
+    if reopened:
+        publish_task_control(user_id, workspace_id, task, reason="reopened:user")
     from agent.driver import request_abort
     for target in interruption_targets:
         try:

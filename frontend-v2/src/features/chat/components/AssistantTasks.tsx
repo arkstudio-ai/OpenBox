@@ -106,7 +106,18 @@ export function AssistantTasksSheet({ open, onClose, renderQuestion }: {
                       <h3 className={cn("mb-1 text-sm font-medium", group.key === "waiting" ? "text-dangerink" : "text-n600")}>
                         {t(`assistant.taskList.groups.${group.key}`)} · {rows.length}
                       </h3>
-                      {rows.map((item) => <AssistantTaskCard key={item.task_id} taskId={item.task_id} />)}
+                      {rows.map((item) => (
+                        <div key={item.task_id}>
+                          <AssistantTaskCard taskId={item.task_id} />
+                          {(item.chain && item.chain.count > 1) || item.stale ? (
+                            <p className="text-n600 -mt-1 mb-2 px-1 text-xs leading-relaxed">
+                              {item.chain && item.chain.count > 1 && <span>{t("assistant.taskList.chain", { count: item.chain.count })}</span>}
+                              {item.chain && item.chain.count > 1 && item.stale && " · "}
+                              {item.stale && <span className="text-dangerink">{t("assistant.taskList.stale")}</span>}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
                     </section>
                   )
                 })}

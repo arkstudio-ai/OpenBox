@@ -13,19 +13,17 @@ import '../state/voice_call_state.dart';
 import 'voice_copy.dart';
 import 'voice_ticker.dart';
 
-/// The 44 pt call bar under the status bar while the call page is closed
-/// (mobile §3): "● 通话中 · 02:14 · 我在听", mute and hang-up. Grey with
-/// "通话已结束" for a moment after a call ends away from the page.
+/// The 44 pt call bar under the status bar for the whole call (VOICE_SEAM_PLAN
+/// §13): "● 通话中 · 02:14 · 我在听", a chevron, mute and hang-up. Tapping it
+/// drops the call sheet (the transcript) or folds it back. Grey with
+/// "通话已结束" for a moment after a call ends with the sheet folded.
 ///
 /// It lives in `MaterialApp.builder`, above the Navigator: no Overlay, so
 /// no tooltips; semantics labels carry the names instead.
 class VoiceCallBanner extends ConsumerWidget {
-  const VoiceCallBanner({super.key, required this.onOpen});
+  const VoiceCallBanner({super.key});
 
   static const height = 44.0;
-
-  /// Pushes the call page.
-  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -49,10 +47,16 @@ class VoiceCallBanner extends ConsumerWidget {
                 Expanded(
                   child: Semantics(
                     button: true,
-                    label: i18n.t('voice:banner.tapToReturn'),
+                    label: i18n.t(
+                      call.expanded
+                          ? 'voice:controls.collapse'
+                          : 'voice:banner.tapToReturn',
+                    ),
                     child: InkWell(
                       key: const Key('voice-banner-open'),
-                      onTap: onOpen,
+                      onTap: () => ref
+                          .read(voiceCallControllerProvider.notifier)
+                          .setExpanded(!call.expanded),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Row(
@@ -76,6 +80,14 @@ class VoiceCallBanner extends ConsumerWidget {
                                   ),
                                 ),
                               ),
+                            ),
+                            Icon(
+                              call.expanded
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
+                              key: const Key('voice-banner-chevron'),
+                              size: 22,
+                              color: ink,
                             ),
                           ],
                         ),

@@ -11,11 +11,11 @@ class DiffLine {
   });
 
   factory DiffLine.fromJson(Map<String, dynamic> json) => DiffLine(
-        type: asString(json['type']) ?? 'context',
-        content: asString(json['content']) ?? '',
-        oldLine: asInt(json['old_line']),
-        newLine: asInt(json['new_line']),
-      );
+    type: asString(json['type']) ?? 'context',
+    content: asString(json['content']) ?? '',
+    oldLine: asInt(json['old_line']),
+    newLine: asInt(json['new_line']),
+  );
 
   final String type; // add | del | context
   final String content;
@@ -33,15 +33,14 @@ class DiffHunk {
   });
 
   factory DiffHunk.fromJson(Map<String, dynamic> json) => DiffHunk(
-        oldStart: asInt(json['old_start']) ?? 0,
-        oldCount: asInt(json['old_count']) ?? 0,
-        newStart: asInt(json['new_start']) ?? 0,
-        newCount: asInt(json['new_count']) ?? 0,
-        lines: asList(json['lines'])
-            .whereType<Map<String, dynamic>>()
-            .map(DiffLine.fromJson)
-            .toList(),
-      );
+    oldStart: asInt(json['old_start']) ?? 0,
+    oldCount: asInt(json['old_count']) ?? 0,
+    newStart: asInt(json['new_start']) ?? 0,
+    newCount: asInt(json['new_count']) ?? 0,
+    lines: asList(
+      json['lines'],
+    ).whereType<Map<String, dynamic>>().map(DiffLine.fromJson).toList(),
+  );
 
   final int oldStart;
   final int oldCount;
@@ -60,17 +59,16 @@ class DiffEntry {
   });
 
   factory DiffEntry.fromJson(Map<String, dynamic> json) => DiffEntry(
-        path: asString(json['path']) ?? '',
-        additions: asInt(json['additions']) ?? 0,
-        deletions: asInt(json['deletions']) ?? 0,
-        status: asString(json['status']) ?? 'modified',
-        hunks: json['hunks'] is List
-            ? asList(json['hunks'])
-                .whereType<Map<String, dynamic>>()
-                .map(DiffHunk.fromJson)
-                .toList()
-            : null,
-      );
+    path: asString(json['path']) ?? '',
+    additions: asInt(json['additions']) ?? 0,
+    deletions: asInt(json['deletions']) ?? 0,
+    status: asString(json['status']) ?? 'modified',
+    hunks: json['hunks'] is List
+        ? asList(
+            json['hunks'],
+          ).whereType<Map<String, dynamic>>().map(DiffHunk.fromJson).toList()
+        : null,
+  );
 
   final String path;
   final int additions;

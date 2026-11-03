@@ -123,3 +123,90 @@ class Progress:
 def _short(text: str) -> str:
     text = " ".join(text.split()).rstrip("。.！!？?")
     return text if len(text) <= TEXT_CHARS else text[:TEXT_CHARS - 1] + "…"
+
+
+# What a task's own conversation (the build agent) is doing, said without tool names (VOICE_SEAM_PLAN §9.4 step 2).
+ROOM_STEPS = {
+    "image_gen": ("在生成图片", "generating the image"),
+    "image_runninghub": ("在生成图片", "generating the image"),
+    "video_production": ("在制作视频", "producing the video"),
+    "video_dashscope": ("在生成视频", "generating the video"),
+    "video_runninghub": ("在生成视频", "generating the video"),
+    "video_compose": ("在剪视频", "editing the video"),
+    "video_analyze": ("在看视频内容", "reviewing the video"),
+    "desktop_publish": ("在发布", "publishing"),
+    "douyin_publish": ("在发布到抖音", "publishing to Douyin"),
+    "desktop_login": ("在登录平台", "signing in to the platform"),
+    "desktop_takeover": ("在等你接管云桌面", "waiting for you on the cloud desktop"),
+    "browser_action": ("在操作网页", "working in the browser"),
+    "computer": ("在操作云桌面", "working on the cloud desktop"),
+    "web_search": ("在查资料", "searching the web"),
+    "web_fetch": ("在看网页", "reading a page"),
+    "hot_trends": ("在看热点", "checking what is trending"),
+    "share_file": ("在整理文件给你", "preparing the file for you"),
+    "asset_delivery": ("在整理文件给你", "preparing the file for you"),
+    "question": ("在等你回答", "waiting for your answer"),
+    "plan": ("在列计划", "planning"),
+    "todo": ("在列计划", "planning"),
+    TEXT_STEP: ("在写说明", "writing up"),
+}
+ROOM_PREFIX_STEPS = {"video": ("在做视频", "working on the video"), "image": ("在做图", "working on the image"),
+                     "desktop": ("在操作云桌面", "working on the cloud desktop"),
+                     "browser": ("在操作网页", "working in the browser"),
+                     "skill": ("在用技能", "using a skill"), "memory": ("在翻记忆", "searching memories")}
+ROOM_OTHER_STEP = ("在处理", "working on it")
+ROOM_STEP_SECONDS = 180  # a step older than this is not "what it is doing now"
+
+
+def room_step_phrase(tool: str, lang: str = "zh") -> str:
+    pair = ROOM_STEPS.get(tool) or next((value for prefix, value in ROOM_PREFIX_STEPS.items()
+                                         if tool.startswith(prefix)), ROOM_OTHER_STEP)
+    return pair[1] if lang == "en" else pair[0]
+
+
+class RoomProgress:
+    """The latest step of each task room (execution session) of this call's user, from the live bus.
+
+    ``rooms`` says which sessions are task rooms (voice/shared_context.py knows them after each read);
+    everything else of the user's is ignored. ``version`` changes whenever any watched step does."""
+
+    def __init__(self, *, user_id: str, rooms, lang: str = "zh", clock=time.monotonic):
+        self.user_id, self.rooms, self.lang, self.clock = user_id, rooms, lang, clock
+        self.steps: dict[str, tuple[str, float]] = {}
+        self.version = 0
+        self._unsubscribe = []
+
+    def start(self) -> None:
+        from bus import bus
+        from bus.events import MESSAGE_TEXT_DELTA, SESSION_STATUS, TOOL_RUNNING
+        self._unsubscribe = [bus.subscribe(kind, self.on_event) for kind in (TOOL_RUNNING, MESSAGE_TEXT_DELTA, SESSION_STATUS)]
+
+    def stop(self) -> None:
+        for unsubscribe in self._unsubscribe:
+            unsubscribe()
+        self._unsubscribe = []
+
+    def on_event(self, event: dict) -> None:
+        data = event.get("data") or {}
+        session_id = data.get("sessionId")
+        if data.get("userId") != self.user_id or not session_id or session_id not in self.rooms():
+            return
+        kind = event.get("type")
+        if kind == "session.status":
+            if data.get("status") in {"idle", "waiting_input", "error"} and session_id in self.steps:
+                del self.steps[session_id]
+                self.version += 1
+            return
+        tool = TEXT_STEP if kind == "message.text_delta" else str(data.get("tool") or "")
+        if tool:
+            phrase = room_step_phrase(tool, self.lang)
+            if self.steps.get(session_id, ("", 0))[0] != phrase:
+                self.version += 1
+            self.steps[session_id] = (phrase, self.clock())
+
+    def step(self, session_id: str | None) -> str:
+        """What that room is doing now, or "" when nothing recent."""
+        if not session_id or session_id not in self.steps:
+            return ""
+        phrase, at = self.steps[session_id]
+        return phrase if self.clock() - at <= ROOM_STEP_SECONDS else ""

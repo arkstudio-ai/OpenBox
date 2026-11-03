@@ -24,6 +24,7 @@ class SharedContextWatcher:
         self.scope, self._last = scope, None
         self._read_lock = asyncio.Lock()
         self._sequence = 0
+        self.rooms: frozenset[str] = frozenset()  # execution sessions of the user's open tasks, after each read
 
     async def poll(self):
         snapshot = await self.read()
@@ -54,17 +55,29 @@ class SharedContextWatcher:
                 .order_by(Session.updated_at.desc(), Session.id.desc()).limit(6))).all()
             conversations = [{"session_id": row.id, "title": redact_credentials(row.title or "新对话"),
                               "status": row.status} for row in sessions]
+            # What the user typed in the assistant's own conversation, and on the pages of their open
+            # tasks (VOICE_SEAM_PLAN §3.1): an image uploaded on a task's page is in that task already.
+            from db.models.assistant import AssistantTask
+            tasks = (await db.scalars(select(AssistantTask).where(
+                AssistantTask.assistant_session_id == scope.main_session_id, AssistantTask.user_id == scope.user_id,
+                AssistantTask.archived_at.is_(None)).order_by(AssistantTask.updated_at.desc()).limit(20))).all()
+            rooms = {task.execution_session_id: task for task in tasks}
+            self.rooms = frozenset(rooms)
             rows = (await db.scalars(select(AgentInboxItem).where(
-                AgentInboxItem.session_id == scope.main_session_id, AgentInboxItem.user_id == scope.user_id,
+                AgentInboxItem.session_id.in_([scope.main_session_id, *rooms]), AgentInboxItem.user_id == scope.user_id,
                 AgentInboxItem.origin == "human").order_by(AgentInboxItem.created_at.desc(),
-                    AgentInboxItem.id.desc()).limit(12))).all()
+                    AgentInboxItem.id.desc()).limit(16))).all()
             typed = [row for row in reversed(rows)
-                     if (row.origin_ref or {}).get("voice_call_id") != scope.call_id][-4:]
+                     if (row.origin_ref or {}).get("voice_call_id") != scope.call_id][-6:]
             messages = []
             for row in typed:
                 message = {"message_id": row.message_id, "text": redact_credentials(row.prompt)[:800],
                            "state": row.state, "attachments": row.attachments or []}
-                if row.state == "settled" and row.outcome == "succeeded" and row.result_message_id:
+                task = rooms.get(row.session_id)
+                if task is not None:
+                    message["task_id"], message["task_title"] = task.id, redact_credentials(task.title)
+                    message["where"] = "task_page"
+                elif row.state == "settled" and row.outcome == "succeeded" and row.result_message_id:
                     message["reply"] = (await reply_text(scope.main_session_id, row.result_message_id,
                                                          scope.user_id, db=db))[:1000]
                 messages.append(message)
@@ -77,4 +90,5 @@ class SharedContextWatcher:
             "这些字段名和布尔值不能口播，只用日常语言说明，例如‘目前没有需要您确认的事项’。"
             "resuming、decision_recorded和resume_blocked都表示确认已经提交，恢复受阻应说明后台问题。"
             "previous_result 是旧版本；available_outputs 表示文件已就绪，不代表当前任务全部完成。"
+            "typed_input 里 where=task_page 的条目是用户在那个任务自己的页面提交的，内容已经在该任务里：不要再向用户要，也不要替用户重发。"
             "未列出的任务需查询 tasks_overview；不要主动逐项朗读）：\n" + value, work["items"])

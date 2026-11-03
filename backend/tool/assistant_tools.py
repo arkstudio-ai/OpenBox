@@ -296,6 +296,11 @@ class SubmitArgs(Arguments):
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
     source_message_ids: list[str] = Field(min_length=1, max_length=20,
         description="Original authenticated human message IDs that authorize this task; never report or tool IDs.")
+    let_user_choose: bool = Field(default=False, strict=True, description=(
+        "True only when the cited human messages ask to pick the destination, task AI or video tier themselves, "
+        "or ask to be asked. False (default) arranges the work at once: a suitable project_id, or the proposed "
+        "project is created; the user's saved default task AI; for video, their default tier. No card is shown; "
+        "say what was arranged in two sentences and the task card shows it."))
     new_despite_similar: bool = Field(default=False, strict=True, description=(
         "True only when the cited human messages explicitly ask for a new, separate task although a similar one exists. "
         "A submit refused with ASSISTANT_DUPLICATE_TASK names the existing task: continue it instead."))
@@ -704,26 +709,34 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                     "continuation": args.continuation.model_dump(mode="json") if args.continuation else None}
                 if operation == "tasks.submit":
                     from assistant.model_choices import prepare
-                    prepared = await prepare(ctx, source, arguments)
+                    ask = bool(arguments.get("let_user_choose"))
+                    prepared = await prepare(ctx, source, arguments, ask=ask)
                     if prepared is None:
                         return ToolResult(title=operation, output=json.dumps({"state": "cancelled"}))
                     setup_id = prepared.pop("_setup_id", None)
+                    arranged = prepared.pop("_arranged", {}) or {}
                     args = SubmitArgs.model_validate(prepared)
                     from assistant.placement import require_placement, task_input
                     placement = args.placement.model_dump() if args.placement is not None else None
                     # Workflow intent is structured state, not words to match in a prompt.
-                    workflow = "video-production" if args.work_type == "spoken_video" else None
-                    placement_id = await require_placement(ctx, source, task_input(project_id=args.project_id,
+                    workflow = {"spoken_video": "video-production", "other_video": "video"}.get(args.work_type)
+                    values = task_input(project_id=args.project_id,
                         title=args.title, prompt=args.instructions, attachments=args.attachment_ids,
                         model=args.model, continuation=command_args["continuation"], source=source, placement=placement,
-                        video_model=args.video_model, video_resolution=args.video_resolution, workflow=workflow),
-                        destination_confirmed=args.destination_confirmed)
-                    value = await accept_task_command(**command_args, project_id=args.project_id, title=args.title,
+                        video_model=args.video_model, video_resolution=args.video_resolution, workflow=workflow)
+                    placement_id = await require_placement(ctx, source, values,
+                        destination_confirmed=args.destination_confirmed, ask=ask)
+                    if values.get("_arranged_project"):
+                        arranged["project"] = values.pop("_arranged_project")
+                    value = await accept_task_command(**command_args, project_id=values["project_id"], title=args.title,
                         prompt=args.instructions, model=args.model, placement_id=placement_id, placement=placement,
                         video_model=args.video_model, video_resolution=args.video_resolution, workflow=workflow,
                         setup_id=setup_id, allow_similar=args.new_despite_similar)
                     if value.get("state") == "cancelled":
                         return ToolResult(title=operation, output=json.dumps(value), metadata={})
+                    if arranged:
+                        # What was decided without asking (VOICE_SEAM_PLAN §12.4): the reply names it, the card shows it.
+                        value["arranged"] = arranged
                 else:
                     from assistant.confirmations import release_confirmation, consume_send_confirmation
                     confirmation = await consume_send_confirmation(ctx, task_id=args.task_id,
@@ -796,7 +809,7 @@ assistant_tools = (
     _tool("schedules.run", ScheduleRunArgs, "Accept one immediate execution of an assistant-managed schedule on an explicit human request, even if disabled. Read its current revision first. Returns distinct CronRun and Task/Session/input IDs; accepted is not started or complete. Repeated delivery of this persisted call reuses the same IDs. An unfinished prior execution prevents overlap. Read its Task and actual result for progress."),
     _tool("assets.attach", AttachArgs, "On an original human request, submit these exact asset IDs with the requested instructions to an existing watched Task. Send authorized text and files directly to the user’s own conversation, including workspace-visible ones. Do not ask for a separate send confirmation. Read tasks.get for current revision. Default followup queues a new turn on its original Session; explicit steer requires its observed run. A receipt means accepted, not that bytes have been delivered or understood. Never change the files' original ownership or pass signed URLs. Pending delivery is recovered with the same input identity."),
     _tool("history.read", HistoryArgs, "Read a bounded page of history from this assistant session or any top-level conversation the user owns (find it with sessions.list). Follow next_cursor until null; unread text is unverified. Memory and knowledge reads inside it are not replayed: search again for current text. In a report, only the bound task's conversation is available."),
-    _tool("tasks.submit", SubmitArgs, "Arrange new work after checking the current work directory and relevant history. Continue related existing work with tasks.followup instead. Cite original human messages. Use the user's saved default task AI unless they explicitly request another; omit model_question by default. Preserve explicit model choices with model_confirmed. For video, set work_type=video until the format is decided, then spoken_video or other_video; ask for the video model if unresolved. Explain choices naturally and answer questions before recording a decision. Set destination_confirmed only when they already chose the supplied project in context. Otherwise supply placement with a natural question and proposed project_name; supply project_id only for a suitable existing project, or omit it when none fits. Unresolved choices create cards, not projects or conversations. Once answered repeat exactly the original arguments; the server applies saved choices once. Cancel creates nothing. Accepted is not completed."),
+    _tool("tasks.submit", SubmitArgs, "Arrange new work after checking the current work directory and relevant history. Continue related existing work with tasks.followup instead. Cite original human messages. Use the user's saved default task AI unless they explicitly request another; omit model_question by default. Preserve explicit model choices with model_confirmed. For video, set work_type=video until the format is decided, then spoken_video or other_video; ask for the video model if unresolved. Explain choices naturally and answer questions before recording a decision. Set destination_confirmed only when they already chose the supplied project in context. Otherwise supply placement with a natural question and proposed project_name; supply project_id only for a suitable existing project, or omit it when none fits. By default the server arranges unresolved choices itself (the proposed project is created, the saved default task AI and default video tier apply) and the receipt's arranged field says what it chose; only with let_user_choose=true do unresolved choices become cards. Once a card is answered repeat exactly the original arguments; the server applies saved choices once. Cancel creates nothing. Accepted is not completed."),
     _tool("tasks.followup", FollowupArgs, "Append authorized input to the watched conversation of a task; it is shown there as sent by the assistant. Default followup queues a later turn. For an explicit change to a live run use steer with its exact run_id, generation and current task revision. If the run stops before consuming steer, the receipt becomes not_applied; never automatically turn it into followup. Cite original human message IDs. Send authorized input directly to the user’s own conversation, including workspace-visible ones. Do not ask again whether to send it. Pending task decisions and external-action approvals still apply. A receipt with blocked_by means the conversation waits for the user on that card (e.g. a desktop takeover): the input stays queued and runs after the user handles it; tell them where, with its link."),
     _tool("tasks.pause", ControlArgs, "Pause scheduling of the original task only on explicit human request. Read tasks.get first; provide its current revision and non-idle run identity. Pausing is not yet paused. Preserve inputs, completed work and external effects."),
     _tool("tasks.resume", ControlArgs, "Resume the original paused or stopped task only on explicit human request. Read tasks.get first; never create a replacement task. A stopped task reopens its same Session without replaying canceled input or approvals: when requires_followup is true, call tasks.followup with the user's current instructions and the receipt's task_revision. Paused work retains its original continuation. Pending questions still need answers, unknown external outcomes must be verified first. Acceptance does not mean execution has begun."),

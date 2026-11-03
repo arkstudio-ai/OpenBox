@@ -115,6 +115,61 @@ class VoiceTurn {
   bool get open => state == 'accepted' || state == 'working' || state == 'late';
 }
 
+/// One line of the call for the conversation card (`transcript`).
+@immutable
+class VoiceLine {
+  const VoiceLine({
+    required this.role,
+    required this.text,
+    required this.itemId,
+    required this.isFinal,
+    required this.at,
+    this.room = false,
+  });
+
+  /// user / assistant.
+  final String role;
+
+  /// Said while the call was watching a task's room (`focus.bound`): the
+  /// assistant side is then the task's helper, not the assistant.
+  final bool room;
+  final String text;
+  final String itemId;
+
+  /// False while the reply is still being spoken: the text so far.
+  final bool isFinal;
+
+  /// Epoch seconds on the server.
+  final double at;
+}
+
+/// The task this call is about now (`focus`).
+@immutable
+class VoiceFocusTask {
+  const VoiceFocusTask({
+    required this.taskId,
+    required this.title,
+    this.sessionId,
+    this.progress = '',
+    this.bound = false,
+  });
+
+  final String taskId;
+  final String title;
+
+  /// The task's execution conversation, when the server knew it.
+  final String? sessionId;
+
+  /// What the room is doing right now ("在生成视频"); empty when idle or unknown.
+  final String progress;
+
+  /// The call is inside this task's room: what the user says goes to the task.
+  final bool bound;
+}
+
+/// Lines kept for the conversation card; older ones fall off the top.
+const voiceTranscriptLines = 200;
+
 /// The last word on a finished call.
 @immutable
 class VoiceCallEnd {
@@ -189,6 +244,8 @@ class VoiceCallState {
     this.muted = false,
     this.speakerOn = true,
     this.expanded = false,
+    this.transcript = const [],
+    this.focus,
   });
 
   final VoiceCallStatus status;
@@ -226,6 +283,12 @@ class VoiceCallState {
   /// The full-screen call page is open.
   final bool expanded;
 
+  /// What was said in this call, oldest first (at most [voiceTranscriptLines]).
+  final List<VoiceLine> transcript;
+
+  /// The task this call is about right now, when the server named one.
+  final VoiceFocusTask? focus;
+
   /// A call exists: from the first tap until it has ended.
   bool get active =>
       status != VoiceCallStatus.idle && status != VoiceCallStatus.ended;
@@ -260,6 +323,8 @@ class VoiceCallState {
     bool? muted,
     bool? speakerOn,
     bool? expanded,
+    List<VoiceLine>? transcript,
+    Object? focus = _keep,
   }) => VoiceCallState(
     status: status ?? this.status,
     phase: phase ?? this.phase,
@@ -287,6 +352,8 @@ class VoiceCallState {
     muted: muted ?? this.muted,
     speakerOn: speakerOn ?? this.speakerOn,
     expanded: expanded ?? this.expanded,
+    transcript: transcript ?? this.transcript,
+    focus: identical(focus, _keep) ? this.focus : focus as VoiceFocusTask?,
   );
 }
 

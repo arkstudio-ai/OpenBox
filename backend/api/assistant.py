@@ -213,7 +213,7 @@ class IntroBody(Body):
     """One thing that happened while the user first met their assistant (assistant/profile.py
     ``intro_event``): an answer or a skip for one question, "以后再说", going straight to work, or the
     one reminder after that being shown."""
-    event: Literal["answer", "skip", "dismiss", "bypass", "nudged"]
+    event: Literal["answer", "skip", "dismiss", "bypass", "nudged", "tour"]
     step: Literal["address", "name", "length", "business"] | None = None
     value: str | None = Field(default=None, max_length=80)
 

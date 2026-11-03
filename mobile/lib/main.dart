@@ -9,7 +9,9 @@ import 'app/app.dart';
 import 'app/assistant_scope.dart';
 import 'shared/api/auth_store.dart';
 import 'shared/api/providers.dart';
+import 'features/voice/widgets/voice_call_sheet.dart';
 import 'shared/i18n/i18n.dart';
+import 'shared/widgets/task_card_extra.dart';
 
 /// Boot sequence mirrors web `bootstrap/main.tsx`: load persistence + i18n,
 /// then silent refresh BEFORE first paint, then mount the app.
@@ -34,6 +36,10 @@ Future<void> main() async {
       prefsProvider.overrideWithValue(prefs),
       cookieJarProvider.overrideWithValue(cookieJar),
       i18nProvider.overrideWith(() => I18nController(i18nBundle, prefs)),
+      // Task cards carry the call's 盯现场 switch (VOICE_SEAM_PLAN §13).
+      taskCardExtraProvider.overrideWithValue(
+        (taskId) => VoiceRoomSwitch(taskId: taskId),
+      ),
     ],
   );
 

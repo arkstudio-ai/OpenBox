@@ -33,14 +33,37 @@ def _page(rows, limit, render):
 
 def execution_settings(session) -> dict:
     """Current persisted choices, not permission to generate or spend."""
-    return {**{key: getattr(session, key) for key in (
+    value = {**{key: getattr(session, key) for key in (
         "model", "variant", "video_model", "video_resolution", "quality")},
         "scope": "future_submissions", "grants_execution": False}
+    tier = video_tier_of(session.video_model, session.video_resolution)
+    if tier:
+        value.update(tier)  # video_tier + video_tier_label: what the task card shows (VOICE_SEAM_PLAN §12.4)
+    return value
+
+
+def video_tier_of(video_model, video_resolution) -> dict:
+    """The business tier a task's video choice belongs to, by its configured preset, or {}."""
+    if not video_model:
+        return {}
+    try:
+        from api.metadata import _model_tiers
+        from core.config import get_config
+        from core.model_tiers import video_label
+        rows = _model_tiers(get_config())["video"]
+    except Exception:
+        return {}
+    match = next((row for row in rows if row["model"] == video_model and row.get("resolution") == video_resolution),
+                 None) or next((row for row in rows if row["model"] == video_model), None)
+    if match is None:
+        return {}
+    return {"video_tier": match["tier"], "video_tier_label": video_label(match["tier"], match.get("label", ""))}
 
 
 def task_view(task) -> dict:
     value = {key: getattr(task, key) for key in ("id", "title", "project_id", "execution_session_id",
-        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at")}
+        "desired_state", "observed_state", "control_revision", "intent_revision", "updated_at", "archived_at",
+        "superseded_by_task_id")}
     # Where the user opens the work: a link the assistant can show instead of an ID.
     value["url"] = f"/app/s/{task.execution_session_id}"
     if task.continuation_policy:
@@ -252,4 +275,5 @@ async def watch_list(*, user_id, workspace_id) -> dict:
         if main is None:
             return {"items": [], "has_more": False}
         value = await task_context(db, main)
-        return {"items": value["items"], "has_more": value["has_more"]}
+        from assistant.task_context import fold_chains
+        return {"items": fold_chains(value["items"]), "has_more": value["has_more"]}

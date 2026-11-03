@@ -7,8 +7,9 @@ the call's heartbeat/credit timer.
 import asyncio
 
 from bus import bus
-from bus.events import (AGENT_INBOX_UPDATED, ASSET_UPDATED, MESSAGE_CREATED, SESSION_STATUS,
-                        SESSION_UPDATED, SESSION_TITLE, QUESTION_ASKED, QUESTION_REPLIED, QUESTION_REJECTED)
+from bus.events import (AGENT_INBOX_UPDATED, ASSET_UPDATED, ASSISTANT_TASK_CONTROL, MESSAGE_CREATED,
+                        SESSION_STATUS, SESSION_UPDATED, SESSION_TITLE, QUESTION_ASKED, QUESTION_REPLIED,
+                        QUESTION_REJECTED)
 from core.log import create_logger
 
 log = create_logger("voice.updates")
@@ -17,14 +18,21 @@ READ_TIMEOUT_SECONDS = 2.0
 
 
 class CallUpdates:
-    def __init__(self, scope):
+    def __init__(self, scope, rooms=None):
         self.scope = scope
+        # The execution sessions of this user's open tasks (voice/shared_context.py knows them after each
+        # read): input typed on one of those pages is shared context; other sessions' inbox traffic is not.
+        self._rooms = rooms or (lambda: ())
         self.reports, self.context, self.cards = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        self.controls = asyncio.Event()  # a task was paused/resumed/cancelled/released (voice/control_notes.py)
+        self.rooms = asyncio.Event()  # a task room's conversation moved (voice/room.py RoomWatcher)
         self.reports.set()
         self.context.set()
         self.cards.set()
+        self.controls.set()
+        self.rooms.set()
         self._unsubscribers = [bus.subscribe(kind, self._changed) for kind in (
-            AGENT_INBOX_UPDATED, ASSET_UPDATED, MESSAGE_CREATED, SESSION_STATUS,
+            AGENT_INBOX_UPDATED, ASSET_UPDATED, ASSISTANT_TASK_CONTROL, MESSAGE_CREATED, SESSION_STATUS,
             SESSION_UPDATED, SESSION_TITLE, QUESTION_ASKED, QUESTION_REPLIED, QUESTION_REJECTED)]
 
     def _changed(self, event):
@@ -41,7 +49,16 @@ class CallUpdates:
         if kind in (QUESTION_ASKED, QUESTION_REPLIED, QUESTION_REJECTED,
                     SESSION_STATUS, SESSION_UPDATED, SESSION_TITLE, MESSAGE_CREATED):
             self.context.set()
-        if kind == ASSET_UPDATED:
+        if kind in (AGENT_INBOX_UPDATED, SESSION_STATUS) and session_id in self._rooms():
+            # Input on a task's own page is shared context too (VOICE_SEAM_PLAN §3.1); a reply landing in the
+            # room the call is inside is told (voice/room.py).
+            self.context.set()
+            self.rooms.set()
+        if kind == ASSISTANT_TASK_CONTROL:
+            if session_id == self.scope.main_session_id:
+                self.controls.set()
+                self.context.set()
+        elif kind == ASSET_UPDATED:
             if data.get("workspaceId") == self.scope.workspace_id:
                 self.context.set()
         elif session_id == self.scope.main_session_id:

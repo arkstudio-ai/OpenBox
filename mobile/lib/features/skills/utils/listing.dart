@@ -29,7 +29,10 @@ extension ListingChipName on ListingChip {
 }
 
 /// The states whose reason (`listingNote`) the author must be able to read.
-const Set<ListingChip> _explained = {ListingChip.rejected, ListingChip.delisted};
+const Set<ListingChip> _explained = {
+  ListingChip.rejected,
+  ListingChip.delisted,
+};
 
 bool explainsItself(ListingChip chip) => _explained.contains(chip);
 

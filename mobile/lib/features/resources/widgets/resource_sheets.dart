@@ -72,18 +72,26 @@ Future<String?> showProjectScopeSheet(
   final t = context.tokens;
   final i18n = ref.read(i18nProvider);
   final projects =
-      ref.read(resourceProjectsProvider).valueOrNull ?? const <(String, String)>[];
+      ref.read(resourceProjectsProvider).valueOrNull ??
+      const <(String, String)>[];
   return _pick(
     context,
     t,
     title: i18n.t('resources:scope.title'),
     active: active,
     choices: [
-      _Choice(allProjects, i18n.t('resources:scope.allProjects'),
-          Icons.layers_outlined),
+      _Choice(
+        allProjects,
+        i18n.t('resources:scope.allProjects'),
+        Icons.layers_outlined,
+      ),
       for (final (id, name) in projects)
         _Choice(id, name, Icons.folder_outlined),
-      _Choice(noProject, i18n.t('resources:scope.unfiled'), Icons.inbox_outlined),
+      _Choice(
+        noProject,
+        i18n.t('resources:scope.unfiled'),
+        Icons.inbox_outlined,
+      ),
     ],
   );
 }
@@ -163,25 +171,37 @@ Future<ResourceAction?> showResourceActions(
           ),
           ListTile(
             dense: true,
-            leading: Icon(Icons.drive_file_rename_outline,
-                size: 18, color: t.n600),
-            title: Text(i18n.t('resources:actions.rename'),
-                style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+            leading: Icon(
+              Icons.drive_file_rename_outline,
+              size: 18,
+              color: t.n600,
+            ),
+            title: Text(
+              i18n.t('resources:actions.rename'),
+              style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+            ),
             onTap: () => Navigator.pop(sheetContext, ResourceAction.rename),
           ),
           ListTile(
             dense: true,
-            leading:
-                Icon(Icons.file_download_outlined, size: 18, color: t.n600),
-            title: Text(i18n.t('resources:actions.download'),
-                style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+            leading: Icon(
+              Icons.file_download_outlined,
+              size: 18,
+              color: t.n600,
+            ),
+            title: Text(
+              i18n.t('resources:actions.download'),
+              style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+            ),
             onTap: () => Navigator.pop(sheetContext, ResourceAction.download),
           ),
           ListTile(
             dense: true,
             leading: Icon(Icons.delete_outline, size: 18, color: t.dangerInk),
-            title: Text(i18n.t('resources:actions.delete'),
-                style: TextStyle(fontSize: FontSizes.base, color: t.dangerInk)),
+            title: Text(
+              i18n.t('resources:actions.delete'),
+              style: TextStyle(fontSize: FontSizes.base, color: t.dangerInk),
+            ),
             onTap: () => Navigator.pop(sheetContext, ResourceAction.delete),
           ),
         ],
@@ -204,8 +224,10 @@ Future<String?> showRenameDialog(
     context: context,
     builder: (dialogContext) => AlertDialog(
       backgroundColor: t.card,
-      title: Text(i18n.t('resources:actions.rename'),
-          style: TextStyle(fontSize: FontSizes.lg, color: t.ink)),
+      title: Text(
+        i18n.t('resources:actions.rename'),
+        style: TextStyle(fontSize: FontSizes.lg, color: t.ink),
+      ),
       content: TextField(
         controller: controller,
         autofocus: true,
@@ -216,14 +238,17 @@ Future<String?> showRenameDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: Text(i18n.t('common:action.cancel'),
-              style: TextStyle(color: t.n700)),
+          child: Text(
+            i18n.t('common:action.cancel'),
+            style: TextStyle(color: t.n700),
+          ),
         ),
         TextButton(
-          onPressed: () =>
-              Navigator.pop(dialogContext, controller.text.trim()),
-          child: Text(i18n.t('common:action.save'),
-              style: TextStyle(color: t.a700)),
+          onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+          child: Text(
+            i18n.t('common:action.save'),
+            style: TextStyle(color: t.a700),
+          ),
         ),
       ],
     ),
@@ -246,20 +271,28 @@ Future<bool> confirmDelete(
     context: context,
     builder: (dialogContext) => AlertDialog(
       backgroundColor: t.card,
-      title: Text(i18n.t('resources:delete.title'),
-          style: TextStyle(fontSize: FontSizes.lg, color: t.ink)),
-      content: Text(body,
-          style: TextStyle(fontSize: FontSizes.base, color: t.n700)),
+      title: Text(
+        i18n.t('resources:delete.title'),
+        style: TextStyle(fontSize: FontSizes.lg, color: t.ink),
+      ),
+      content: Text(
+        body,
+        style: TextStyle(fontSize: FontSizes.base, color: t.n700),
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
-          child: Text(i18n.t('common:action.cancel'),
-              style: TextStyle(color: t.n700)),
+          child: Text(
+            i18n.t('common:action.cancel'),
+            style: TextStyle(color: t.n700),
+          ),
         ),
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(i18n.t('resources:actions.delete'),
-              style: TextStyle(color: t.dangerInk)),
+          child: Text(
+            i18n.t('resources:actions.delete'),
+            style: TextStyle(color: t.dangerInk),
+          ),
         ),
       ],
     ),

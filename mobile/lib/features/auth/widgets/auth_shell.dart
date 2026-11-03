@@ -40,12 +40,16 @@ class AuthShell extends StatelessWidget {
                       border: Border.all(color: t.hair),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF3E3929).withValues(alpha: 0.03),
+                          color: const Color(
+                            0xFF3E3929,
+                          ).withValues(alpha: 0.03),
                           offset: const Offset(0, 1),
                           blurRadius: 2,
                         ),
                         BoxShadow(
-                          color: const Color(0xFF3E3929).withValues(alpha: 0.26),
+                          color: const Color(
+                            0xFF3E3929,
+                          ).withValues(alpha: 0.26),
                           offset: const Offset(0, 30),
                           blurRadius: 70,
                           spreadRadius: -42,

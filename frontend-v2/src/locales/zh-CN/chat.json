@@ -400,7 +400,8 @@
       "hintEnter": "Enter 发送 · Shift+Enter 换行",
       "hintModEnter": "⌘/Ctrl+Enter 发送 · Enter 换行"
     },
-    "resourceCenter": "资源中心"
+    "resourceCenter": "资源中心",
+    "placeholderRoom": "给这件活加要求…"
   },
   "diff": {
     "unmodified_one": "{{count}} 行未修改",
@@ -579,7 +580,8 @@
       "askMe": "也可以直接告诉我答案，我帮你回复。",
       "reminder": "有 {{count}} 件待处理事项，前往「我的任务」查看",
       "reviewTasks": "前往「我的任务」查看提醒",
-      "dismissReminder": "收起提醒（待处理事项保留在我的任务中）"
+      "dismissReminder": "收起提醒（待处理事项保留在我的任务中）",
+      "deckIdle": "对话与任务单"
     },
     "moreTasks": "加载更多任务",
     "earlierResult": "下方结果属于先前请求，未包含最新输入。",
@@ -833,20 +835,20 @@
       "dialogTitle": "让我更懂你"
     },
     "status": {
-      "waiting": "等你回复",
-      "running": "进行中",
-      "queued": "排队中",
-      "paused": "已暂停",
-      "done": "已完成",
-      "failed": "出了问题",
-      "stopped": "已停止",
-      "idle": "待命"
+      "waiting": "等你",
+      "running": "在做",
+      "queued": "在做",
+      "paused": "停了",
+      "done": "做完了",
+      "failed": "出错了",
+      "stopped": "停了",
+      "idle": "停了"
     },
     "card": {
-      "label": "任务：{{title}}",
+      "label": "任务单：{{title}}",
       "loading": "正在读取任务…",
       "loadingResult": "正在读取完整结果…",
-      "noResultText": "这次没有留下文字结果，可以打开对话看看。",
+      "noResultText": "这次没有留下文字结果，去现场看看。",
       "moreResult": "继续看",
       "more": "更多",
       "showResult": "查看完整结果",
@@ -857,12 +859,12 @@
       "cancel": "取消任务",
       "unfollow": "不再跟进",
       "unfollowed": "好的，不再跟进这件事，对话本身保留。",
-      "open": "打开对话",
-      "answer": "去回复",
-      "waitingHint": "它在等你回复，打开对话就能接着聊。",
+      "open": "去现场",
+      "answer": "他在问你",
+      "waitingHint": "帮手在等你回复，去现场就能接着说。",
       "takeoverHint": {
-        "desktop": "它在等你打开云桌面完成验证，弄好后在对话里点「我已完成，继续」。",
-        "extension": "它在等你在自己的浏览器里完成验证，弄好后回到对话点「我已完成，继续」。"
+        "desktop": "帮手在等你打开云桌面完成验证，弄好后在现场点「我已完成，继续」。",
+        "extension": "帮手在等你在自己的浏览器里完成验证，弄好后回到现场点「我已完成，继续」。"
       },
       "followingUp": "我会一直跟进到做完（已自动跟进 {{used}}/{{limit}} 次）",
       "continuation": {
@@ -893,15 +895,17 @@
       },
       "checkEffects": "还有操作结果待确认，确认前不能继续，也不能当作已撤销。",
       "changed": "任务状态刚刚变了，已刷新，请再看一眼后重试。",
-      "waitingOnCard": "这个任务在等你处理对话里的一张卡片（比如云桌面验证），这里没法直接操作。打开任务对话，在那里处理或取消这张卡片。",
-      "openTaskConversation": "打开任务对话",
-      "gone": "这件事的对话已经删除了。"
+      "waitingOnCard": "这件活在等你处理现场的一张卡片（比如云桌面验证），这里没法直接操作。去现场处理或取消这张卡片。",
+      "openTaskConversation": "去现场",
+      "gone": "这件活的现场已经删除了。",
+      "again": "再来一轮",
+      "helperAsks": "帮手问：{{question}}"
     },
     "taskList": {
       "title": "我的任务",
       "button": "我的任务",
       "buttonWaiting": "我的任务，有 {{count}} 件等你回复",
-      "description": "交给助理的事都在这里，点“打开对话”可以看具体过程。",
+      "description": "交给助理的活都在这里，一件一张任务单，点「去现场」看过程。",
       "close": "关闭",
       "followExisting": "让助理跟进一个已有对话",
       "emptyTitle": "还没有交给我的事",
@@ -912,7 +916,50 @@
         "finished": "最近完成"
       },
       "more": "还有更早的任务，问我“列出我所有的任务”就能看到。",
-      "pendingCount": "待处理 {{count}}"
+      "pendingCount": "待处理 {{count}}",
+      "chain": "第 {{count}} 轮",
+      "stale": "出错超过一天，建议不再跟进"
+    },
+    "tour": {
+      "title": "我们怎么配合",
+      "button": "怎么用",
+      "skip": "跳过",
+      "next": "下一步",
+      "done": "知道了",
+      "position": "{{index}} / {{count}}",
+      "steps": {
+        "talk": {
+          "title": "你只跟我说",
+          "body": "想做什么、想改什么、想停，都直接告诉我，文字或打电话都行。"
+        },
+        "card": {
+          "title": "我开任务单，派帮手去做",
+          "body": "每件活一张任务单，上面有谁在做、到哪一步。我会自己定档位和放哪个项目，不用你先选。"
+        },
+        "site": {
+          "title": "点任务单，去现场看",
+          "body": "现场能看到帮手每一步做了什么，有要求直接在那里加；点「回助理」就回来。"
+        },
+        "report": {
+          "title": "做好了我回报",
+          "body": "帮手完工或卡住，我第一时间告诉你，成片和结果都在任务单上。"
+        }
+      }
+    }
+  },
+  "room": {
+    "here": "「{{title}}」现场",
+    "back": "回助理",
+    "entered": "进了「{{title}}」现场，这里说的话都是给这件活的",
+    "state": {
+      "running": "帮手在做",
+      "queued": "帮手排队中",
+      "waiting": "帮手等你",
+      "paused": "停了",
+      "effect_unknown": "等你核对",
+      "canceled": "停了",
+      "completed": "做完了",
+      "error": "出错了"
     }
   }
 }

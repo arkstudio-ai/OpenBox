@@ -43,7 +43,10 @@ class _RecordingBus extends AppEventBus {
   }
 }
 
-Future<_RecordingBus> _pump(WidgetTester tester, Map<String, dynamic> detail) async {
+Future<_RecordingBus> _pump(
+  WidgetTester tester,
+  Map<String, dynamic> detail,
+) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'en-US'});
   final prefs = await SharedPreferences.getInstance();
   final bus = _RecordingBus();
@@ -89,30 +92,41 @@ void main() {
   });
 
   test('the workbench path carries the control flag only when asked', () {
-    expect(Paths.workbench('s1', tab: 'desktop', control: true),
-        '/app/w/s1?tab=desktop&control=1');
+    expect(
+      Paths.workbench('s1', tab: 'desktop', control: true),
+      '/app/w/s1?tab=desktop&control=1',
+    );
     expect(Paths.workbench('s1', tab: 'desktop'), '/app/w/s1?tab=desktop');
   });
 
-  testWidgets('a page on the cloud desktop gets a button that asks for control',
-      timeout: const Timeout(Duration(seconds: 60)), (tester) async {
-    final bus = await _pump(tester, _local);
+  testWidgets(
+    'a page on the cloud desktop gets a button that asks for control',
+    timeout: const Timeout(Duration(seconds: 60)),
+    (tester) async {
+      final bus = await _pump(tester, _local);
 
-    expect(find.text('slider captcha'), findsOneWidget);
-    expect(find.text('login.taobao.com'), findsOneWidget);
-    await tester.tap(find.text('Open the cloud desktop'));
-    await tester.pump();
+      expect(find.text('slider captcha'), findsOneWidget);
+      expect(find.text('login.taobao.com'), findsOneWidget);
+      await tester.tap(find.text('Open the cloud desktop'));
+      await tester.pump();
 
-    expect(bus.seen, hasLength(1));
-    expect(bus.seen.single.type, 'workbench.open');
-    expect(bus.seen.single.payload,
-        {'kind': 'desktop', 'sessionId': 's1', 'control': true});
-  });
+      expect(bus.seen, hasLength(1));
+      expect(bus.seen.single.type, 'workbench.open');
+      expect(bus.seen.single.payload, {
+        'kind': 'desktop',
+        'sessionId': 's1',
+        'control': true,
+      });
+    },
+  );
 
-  testWidgets('a page in the user\'s own browser only says where to look',
-      timeout: const Timeout(Duration(seconds: 60)), (tester) async {
-    await _pump(tester, {..._local, 'browser': 'extension'});
-    expect(find.text('Open the cloud desktop'), findsNothing);
-    expect(find.text('Finish it in your own browser.'), findsOneWidget);
-  });
+  testWidgets(
+    'a page in the user\'s own browser only says where to look',
+    timeout: const Timeout(Duration(seconds: 60)),
+    (tester) async {
+      await _pump(tester, {..._local, 'browser': 'extension'});
+      expect(find.text('Open the cloud desktop'), findsNothing);
+      expect(find.text('Finish it in your own browser.'), findsOneWidget);
+    },
+  );
 }

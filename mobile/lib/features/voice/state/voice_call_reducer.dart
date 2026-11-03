@@ -52,6 +52,18 @@ VoiceCallState reduceVoiceEvent(
       return state.live && event.code == 'handoff_check_unavailable'
           ? state.copyWith(handoffUnavailable: true)
           : state;
+    case VoiceTranscriptEvent():
+      if (!state.live) return state;
+      final next = withVoiceLine(
+        state.transcript,
+        event.line,
+        room: state.focus?.bound ?? false,
+      );
+      return identical(next, state.transcript)
+          ? state
+          : state.copyWith(transcript: next);
+    case VoiceFocusEvent():
+      return state.live ? state.copyWith(focus: event.task) : state;
     case VoiceCostEvent():
       if (state.status == VoiceCallStatus.idle) return state;
       if (state.status == VoiceCallStatus.ended) {
@@ -170,4 +182,39 @@ VoiceCallState endVoiceCall(
       detailKey: 'voice:errors.connectFailed',
     ),
   };
+}
+
+/// A partial reply replaces its earlier partial; a final line replaces both;
+/// a straggling partial after the final line changes nothing. Empty text is
+/// dropped. Returns the same list when nothing changed.
+List<VoiceLine> withVoiceLine(
+  List<VoiceLine> lines,
+  VoiceLine line, {
+  bool room = false,
+}) {
+  final text = line.text.trim();
+  if (text.isEmpty || line.itemId.isEmpty) return lines;
+  final index = lines.indexWhere(
+    (known) => known.itemId == line.itemId && known.role == line.role,
+  );
+  // A line keeps the room it started in; the switch flipping mid-sentence
+  // does not relabel what was already said.
+  final clean = VoiceLine(
+    role: line.role,
+    text: text,
+    itemId: line.itemId,
+    isFinal: line.isFinal,
+    at: line.at,
+    room: index >= 0 ? lines[index].room : room,
+  );
+  if (index >= 0) {
+    if (lines[index].isFinal && !line.isFinal) return lines;
+    final next = List<VoiceLine>.of(lines);
+    next[index] = clean;
+    return next;
+  }
+  final next = [...lines, clean];
+  return next.length > voiceTranscriptLines
+      ? next.sublist(next.length - voiceTranscriptLines)
+      : next;
 }

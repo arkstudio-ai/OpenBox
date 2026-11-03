@@ -16,6 +16,7 @@ PHRASES = {
 }
 SPEECHES = {
     "timeout": {"zh": "暂时还没有处理结果，后续可以在对话里查看。", "en": "No result yet; check the conversation for updates."},
+    "room_pending": {"zh": "交给帮手了，做好了我叫你。", "en": "It is with the task now; I will tell you when it is done."},
     "failed": {"zh": "没有取得可确认的结果，请在对话里查看处理情况。", "en": "No verified result is available; check the conversation for its status."},
     "unavailable": {"zh": "没能提交给个人助理。", "en": "The request could not be submitted to the assistant."},
 }
@@ -47,7 +48,17 @@ def phrase_instructions(key, lang):
     return lead + phrase_text(key, lang)
 
 
-def greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
+def greeting_instructions(lang, recap=True, *, first_call=False, unified=False, focus=None):
+    """One connected-and-listening sentence. ``focus`` is accepted for callers but never read back here:
+    the task the call is about stays in the instructions' focus section (prompt.focus_section) and on the
+    conversation card (events.focus), so the user hears it only when they ask. Measured 2026-11-03: a tester
+    who opened four calls in two minutes heard their name and the last task's title every time and called
+    the opening noise.
+    """
+    return _greeting_instructions(lang, recap, first_call=first_call, unified=unified)
+
+
+def _greeting_instructions(lang, recap=True, *, first_call=False, unified=False):
     if unified:
         # A previous call's recap can predate a result delivered in text. Only
         # the main assistant may reconcile business state across channels.
@@ -292,3 +303,10 @@ async def user_language(user_id):
     except Exception:
         return "zh"
     return "en" if locale.lower().startswith("en") else "zh"
+
+
+def room_interjection(title, lang):
+    """Another task's result while the call is inside a room: one line, not the result."""
+    name = f"「{title}」" if title else ("另一件活" if _lang(lang) == "zh" else "another task")
+    return (f"{name}那边帮手做好了，要看吗？" if _lang(lang) == "zh" else
+            f"The helper on {name} is done. Want to see?")

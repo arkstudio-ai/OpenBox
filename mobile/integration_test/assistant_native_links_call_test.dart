@@ -13,7 +13,6 @@ import 'package:bossip_mobile/features/chat/widgets/chat_flow.dart';
 import 'package:bossip_mobile/features/voice/platform/system_voice_call.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
-import 'package:bossip_mobile/features/voice/voice_call_page.dart';
 import 'package:bossip_mobile/main.dart' as app;
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
@@ -281,7 +280,8 @@ void main() {
         expect(binding.lifecycleState, AppLifecycleState.resumed);
       });
       await waitFor(
-        () => find.byType(VoiceCallPage).evaluate().isNotEmpty,
+        // The system's return opens the call sheet under the bar (§13).
+        () => find.byKey(const Key('voice-sheet')).evaluate().isNotEmpty,
         'returned-same-call',
       );
       expect(call().callId, callID);

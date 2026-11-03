@@ -38,8 +38,10 @@ class PatchChip extends ConsumerWidget {
           ),
           child: Row(
             children: [
-              Text('⊞',
-                  style: TextStyle(fontSize: FontSizes.base, color: t.n600)),
+              Text(
+                '⊞',
+                style: TextStyle(fontSize: FontSizes.base, color: t.n600),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -55,11 +57,15 @@ class PatchChip extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text('+$additions',
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.s700)),
+              Text(
+                '+$additions',
+                style: TextStyle(fontSize: FontSizes.xs, color: t.s700),
+              ),
               const SizedBox(width: 4),
-              Text('−$deletions',
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.dangerInk)),
+              Text(
+                '−$deletions',
+                style: TextStyle(fontSize: FontSizes.xs, color: t.dangerInk),
+              ),
               const SizedBox(width: 10),
               Text(
                 i18n.t('chat:reviewGo'),

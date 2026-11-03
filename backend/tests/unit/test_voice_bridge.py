@@ -3,6 +3,7 @@
 Turns, notes and delivery: test_voice_turns.py. Summaries and rotation: test_voice_upkeep.py.
 """
 import asyncio
+import json
 
 import pytest
 
@@ -329,7 +330,8 @@ async def test_a_dropped_session_is_replaced_and_the_call_goes_on_unnoticed(call
     assert bridge.provider is fresh[0] and bridge.recoveries == 1 and not (bridge.recovering or bridge.swapping)
     assert fresh[0].commands("audio") == [("audio", 3200, b"\x10\x00\x10\x00")]  # what the user said meanwhile
     assert "用户：先等一下" in fresh[0].instructions  # the call's last lines carry over, as in a rotation
-    assert not fresh[0].commands("create") and not outbox(bridge)  # nobody was cut off: nothing said, no event
+    # nobody was cut off: nothing said, no event (the user's own line is echoed to their conversation card)
+    assert not fresh[0].commands("create") and not [e for e in outbox(bridge) if e.get("type") != "transcript"]
     await bridge.feed_audio(SPEECH)
     assert len(fresh[0].commands("audio")) == 2
 
@@ -555,4 +557,160 @@ async def test_idle_and_detected_human_speech_have_distinct_hearing_flags(call):
     await replay(bridge, event('user_stopped'), started('r'), audio('r'), done('r'))
     phases = of_type(outbox(bridge), 'phase')
     assert phases[-1]['hearing'] is False
+    await bridge.close()
+
+
+async def test_the_callers_own_lines_reach_the_client_as_transcripts_and_notes_never_do(call):
+    bridge, provider, link, clock = call
+    await replay(bridge, event("user_transcript", text="你好", item_id="i1"),
+                 event("assistant_transcribing", text="你好", item_id="i2", response_id="r1"),
+                 event("assistant_transcribing", text="呀", item_id="i2", response_id="r1"),
+                 event("assistant_transcript", text="你好呀", item_id="i2", response_id="r1"),
+                 event("assistant_transcript", text="你好呀", item_id="i2", response_id="r1"))
+    bridge._said("note", "（后台事件）任务好了", "n1")
+    lines = of_type(outbox(bridge), "transcript")
+    assert [(line["role"], line["text"], line["final"]) for line in lines] == [
+        ("user", "你好", True), ("assistant", "你好", False), ("assistant", "你好呀", False), ("assistant", "你好呀", True)]
+    assert all(line["item_id"] and isinstance(line["at"], float) for line in lines)
+
+
+async def test_a_silent_keepalive_is_never_shown_as_a_transcript(call):
+    bridge, provider, link, clock = call
+    bridge._keepalives["r9"] = {"k1"}
+    await replay(bridge, event("assistant_transcribing", text="嗯", item_id="k1", response_id="r9"),
+                 event("assistant_transcript", text="嗯", item_id="k1", response_id="r9"))
+    assert not of_type(outbox(bridge), "transcript")
+
+
+async def test_focus_is_told_once_per_change_and_cleared_explicitly(call):
+    bridge, provider, link, clock = call
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研"})
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研"})
+    bridge.set_focus_task({"task_id": "t2", "title": "酒吧视频", "session_id": "s2"})
+    bridge.set_focus_task(None)
+    bridge.set_focus_task(None)
+    focus = of_type(outbox(bridge), "focus")
+    assert [item["task"] and item["task"]["task_id"] for item in focus] == ["t1", "t2", None]
+    assert focus[1]["task"] == {"task_id": "t2", "title": "酒吧视频", "session_id": "s2", "progress": ""}
+    assert focus[0]["task"]["session_id"] is None
+
+
+async def test_a_control_note_is_told_unasked_and_later_changes_of_the_same_task_collapse_into_it(call):
+    bridge, provider, link, clock = call
+    bridge.state = "user_speaking"  # nothing is told while the user talks: the notes wait, and collapse
+    await bridge.control_note("t1", "艾薇兰调研", "「艾薇兰调研」刚刚被停下了。要继续的话跟我说一声。", 3)
+    await bridge.control_note("t1", "艾薇兰调研", "「艾薇兰调研」停下时有一步的结果没来得及确认。", 4)
+    queued = [ref for ref in bridge.deliveries if ref.provider_call_id == "control:t1"]
+    assert len(queued) == 1 and queued[0].control_revision == 4 and "没来得及确认" in queued[0].speech
+    assert queued[0].report == "艾薇兰调研" and not queued[0].asked
+    assert [f["task"]["task_id"] for f in of_type(outbox(bridge), "focus")] == ["t1"]
+    # The same revision again is a duplicate; a call whose user turned reports off hears none of these.
+    await bridge.control_note("t1", "艾薇兰调研", "重复", 4)
+    assert len([ref for ref in bridge.deliveries if ref.provider_call_id == "control:t1"]) == 1
+    bridge.tell_reports = False
+    await bridge.control_note("t2", "酒吧视频", "「酒吧视频」接着做了。", 2)
+    assert not [ref for ref in bridge.deliveries if ref.provider_call_id == "control:t2"]
+
+
+async def test_a_call_that_resumes_a_task_names_it_in_the_greeting_the_instructions_and_to_the_client():
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    focus = {"task_id": "t1", "title": "艾薇兰调研", "session_id": "s1", "state": "正在做，没有卡住"}
+    bridge = Bridge(provider, link, clock=clock, instructions="BASE", focus_task=focus)
+    await bridge.start()
+    await drain()
+    assert of_type(outbox(bridge), "focus")[0]["task"]["task_id"] == "t1"
+    assert "「艾薇兰调研」，正在做" in provider.commands("create")[0][1]
+    assert "当前在跟进：「艾薇兰调研」" in bridge._instructions()
+    bridge.set_focus_task({"task_id": "t1", "title": "艾薇兰调研", "state": "已停止，要继续跟我说一声"})
+    assert "已停止" in bridge._instructions() and not of_type(outbox(bridge), "focus")  # a state change is not a new focus
+
+
+async def test_what_the_focus_tasks_room_is_doing_reaches_the_instructions_and_the_card_once_per_step():
+    from bus import bus
+    from bus.events import SESSION_STATUS, TOOL_RUNNING
+    from voice.progress import RoomProgress
+    clock = FakeClock()
+    rooms = RoomProgress(user_id="u", rooms=lambda: {"room-1"}, clock=clock)
+    rooms.start()
+    try:
+        bridge = Bridge(ScriptedProvider(), FakeLink(), clock=clock, instructions="BASE", room_progress=rooms,
+                        focus_task={"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1", "state": "正在做"})
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "room-1", "tool": "video_dashscope"})
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "other", "tool": "image_gen"})  # not a room
+        bus.publish(TOOL_RUNNING, {"userId": "x", "sessionId": "room-1", "tool": "image_gen"})  # not this user
+        await drain()
+        await bridge.refresh_room_progress()
+        await bridge.refresh_room_progress()
+        focus = of_type(outbox(bridge), "focus")
+        assert [item["task"]["progress"] for item in focus] == ["在生成视频"]
+        assert "「艾薇兰调研」，正在生成视频" in bridge._instructions() and "好了会叫他" in bridge._instructions()
+        bus.publish(SESSION_STATUS, {"userId": "u", "sessionId": "room-1", "status": "idle"})
+        await drain()
+        await bridge.refresh_room_progress()
+        assert [item["task"]["progress"] for item in of_type(outbox(bridge), "focus")] == [""]
+        assert "正在做" in bridge._instructions() and "生成视频" not in bridge._instructions()
+        clock.advance(400)
+        bus.publish(TOOL_RUNNING, {"userId": "u", "sessionId": "room-1", "tool": "unknown_tool"})
+        await drain()
+        assert rooms.step("room-1") == "在处理"
+        clock.advance(400)
+        assert rooms.step("room-1") == ""  # too old to be "now"
+    finally:
+        rooms.stop()
+
+
+async def test_inside_a_room_handovers_go_to_the_task_and_other_results_are_only_announced(call):
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await bridge.enter_room({"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"})
+    focus = of_type(outbox(bridge), "focus")
+    assert focus[-1]["bound"] is True and focus[-1]["task"]["task_id"] == "t1"
+    assert "正在盯「艾薇兰调研」的现场" in bridge._instructions()
+    await replay(bridge, started("r1"), event("user_transcript", text="第二镜换成夜景", item_id="u1"),
+                 tool_call("call-1", "第二镜换成夜景"))
+    assert link.started[-1].room == {"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"}
+    # Another task's result while inside: one line, not the report.
+    bridge.state = "user_speaking"
+    await bridge.report("酒吧视频", "酒吧视频的三条成片都做好了，已经发到素材库。", "inbox-9", "t2")
+    other = [ref for ref in bridge.deliveries if ref.task_id == "t2"]
+    assert len(other) == 1 and other[0].speech == "「酒吧视频」那边帮手做好了，要看吗？"
+    # The room's own reply is told whatever the report setting; leaving unbinds.
+    bridge.tell_reports = False
+    await bridge.room_reply("inbox-7", "艾薇兰调研", "第二镜已经换成夜景，成片两分钟后出。", "result-7")
+    assert [ref.speech for ref in bridge.deliveries if ref.provider_call_id == "room:inbox-7"] == ["第二镜已经换成夜景，成片两分钟后出。"]
+    await bridge.leave_room()
+    assert of_type(outbox(bridge), "focus")[-1]["bound"] is False and bridge.room is None
+    assert "正在盯「" not in bridge._instructions()
+
+
+async def test_the_rooms_own_finished_report_unbinds_the_call_and_another_tasks_does_not(call):
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    await bridge.enter_room({"task_id": "t1", "title": "艾薇兰调研", "session_id": "room-1"})
+    bridge.state = "user_speaking"
+    await bridge.report("酒吧视频", "三条成片做好了。", "inbox-8", "t2")
+    assert bridge.room is not None  # someone else's result: announced only, still inside
+    await bridge.report("艾薇兰调研", "成片出来了，在素材库。", "inbox-9", "t1")
+    assert bridge.room is None and of_type(outbox(bridge), "focus")[-1]["bound"] is False
+
+
+async def test_a_call_minutes_after_hanging_up_has_no_opening_and_just_listens():
+    """2026-11-03: a tester who rang four times in two minutes heard the greeting every time."""
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock, quick_return=True,
+                    focus_task={"task_id": "t1", "title": "六堡茶宣传视频", "session_id": "s1"})
+    await bridge.start()
+    assert not provider.commands("create") and bridge.greeted.is_set() and not bridge.greeting
+    items = outbox(bridge)
+    assert of_type(items, "phrase") == [] and phase_values(items)[-1] == ("listening", False, False)
+    assert "六堡茶宣传视频" in json.dumps(of_type(items, "focus")[0], ensure_ascii=False)  # the card still opens on the task
+    await bridge.close()
+
+
+async def test_a_first_contact_is_greeted_even_right_after_a_dropped_call():
+    clock, provider, link = FakeClock(), ScriptedProvider(), FakeLink()
+    bridge = Bridge(provider, link, lang="zh", late_after=12, clock=clock, quick_return=True, first_call=True)
+    await bridge.start()
+    [(_, instructions)] = provider.commands("create")
+    assert instructions == phrases.greeting_instructions("zh", first_call=True)
     await bridge.close()

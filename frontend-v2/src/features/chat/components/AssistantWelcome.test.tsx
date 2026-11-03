@@ -61,7 +61,7 @@ it("does not open the meeting once it was put off or everything is decided", () 
   useAppearanceStore.setState({
     assistantMeta: {
       ...structuredClone(DEFAULT_ASSISTANT_META),
-      intro: { status: "dismissed", steps: {}, nudged: false },
+      intro: { status: "dismissed", steps: {}, nudged: false, tourSeen: true },
     },
   })
   const { unmount } = render(<AssistantWelcome onPick={vi.fn()} />)

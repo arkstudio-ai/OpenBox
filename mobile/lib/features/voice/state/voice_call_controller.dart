@@ -155,6 +155,11 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (state.status == VoiceCallStatus.connected) _socket?.sendView(sessionId);
   }
 
+  /// Bind the call to one task's room, or leave it (the card's 盯现场 switch).
+  void setRoom(String? taskId) {
+    if (state.status == VoiceCallStatus.connected) _socket?.sendRoom(taskId);
+  }
+
   void clearViewedSession(String sessionId) {
     if (_viewedSessionId == sessionId) setViewedSession(null);
   }
@@ -360,21 +365,14 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     await _route(speaker: !state.speakerOn);
   }
 
-  /// The page opened ([expanded]) or closed. Closing it on a finished call
-  /// clears the call: the person has read the summary.
+  /// The call sheet opened ([expanded]) or closed. Closing it on a finished
+  /// call clears the call: the person has read the summary.
   void setExpanded(bool expanded) {
     if (!expanded && state.status == VoiceCallStatus.ended) {
       state = const VoiceCallState();
     } else if (state.expanded != expanded) {
       state = state.copyWith(expanded: expanded);
     }
-  }
-
-  /// The page has gone. If it handed the call to the bar on its way out
-  /// ([setExpanded] from a button), there is nothing left to do — and a
-  /// call that ended meanwhile keeps its summary in the bar.
-  void pageGone() {
-    if (state.expanded) setExpanded(false);
   }
 
   /// The call bar's summary has been shown; back to no call.

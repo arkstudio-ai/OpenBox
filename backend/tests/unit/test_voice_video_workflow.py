@@ -3,12 +3,13 @@ from types import SimpleNamespace
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from assistant.model_choices import KIND
 from assistant.request_answers import list_waiting
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
+from db.models.assistant import AssistantTask
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from question import question as q
@@ -41,7 +42,7 @@ async def test_tier_question_is_not_creation_and_answer_binds_exact_model_once(t
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "默认空间里用Task AI做咖啡口播，先解释档次")
     args = {"project_id": main.project_id, "title": "档次样片", "instructions": "咖啡口播",
-            "source_message_ids": [human], "destination_confirmed": True, "work_type": work_type,
+            "source_message_ids": [human], "destination_confirmed": True, "let_user_choose": True, "work_type": work_type,
             "model": "test/model", "model_confirmed": True,
             question_field: "这条咖啡口播视频想用哪个档次？"}
     try:
@@ -76,7 +77,7 @@ async def test_retired_chat_model_keeps_answered_fast_tier_and_setup_identity(ti
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "做开业短片，快速档，其他按原来的来")
     args = {"project_id": main.project_id, "title": "开业短片", "instructions": "做开业短片",
-        "source_message_ids": [human], "destination_confirmed": True, "work_type": "other_video",
+        "source_message_ids": [human], "destination_confirmed": True, "let_user_choose": True, "work_type": "other_video",
         "model": "test/model", "model_confirmed": True}
     try:
         asked, _ = await tool_call(ctx, "tasks.submit", args)
@@ -101,7 +102,7 @@ async def test_changed_tier_mapping_cannot_silently_replace_an_answered_choice(t
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "做口播，档次我选")
     args = {"project_id": main.project_id, "title": "旧卡", "instructions": "咖啡口播",
-            "source_message_ids": [human], "destination_confirmed": True, "work_type": "spoken_video",
+            "source_message_ids": [human], "destination_confirmed": True, "let_user_choose": True, "work_type": "spoken_video",
             "model": "test/model", "model_confirmed": True}
     try:
         result, _ = await tool_call(ctx, "tasks.submit", args)
@@ -119,7 +120,7 @@ async def test_confirmed_tier_preserves_explicit_resolution_without_another_card
     ctx, lease, human = await main_turn(owner, workspace, main, "默认空间用快速档480p做口播，Task AI来执行")
     try:
         result, _ = await tool_call(ctx, "tasks.submit", {"project_id": main.project_id, "title": "快速档",
-            "instructions": "咖啡口播", "source_message_ids": [human], "destination_confirmed": True,
+            "instructions": "咖啡口播", "source_message_ids": [human], "destination_confirmed": True, "let_user_choose": True,
             "work_type": "spoken_video", "model": "test/model", "model_confirmed": True,
             "video_tier": "fast", "video_tier_confirmed": True, "video_resolution": "480p"})
         assert result["state"] == "accepted"
@@ -148,7 +149,7 @@ async def test_models_are_selected_before_creation_and_spoken_skill_is_preserved
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, "在默认空间新开对话，帮我制作一段视频")
     args = {"project_id": main.project_id, "title": "口播样片", "instructions": "做 5 秒咖啡口播",
-            "source_message_ids": [human], "destination_confirmed": True, "work_type": "video"}
+            "source_message_ids": [human], "destination_confirmed": True, "let_user_choose": True, "work_type": "video"}
     try:
         before = await counts(owner)
         for field, choice_index in (("model", 0), ("work_type", 0), ("video_model", video_index)):
@@ -490,7 +491,7 @@ async def test_confirmed_video_type_does_not_reopen_the_answered_model(legacy):
     owner, _, workspace, main = await assistant()
     ctx, lease, human = await main_turn(owner, workspace, main, '默认空间做两段15秒海鲜视频，无背景音乐')
     args = {'project_id': main.project_id, 'title': '海鲜视频', 'instructions': '两段15秒，单独砂锅分焗，中文，无背景音乐',
-            'source_message_ids': [human], 'destination_confirmed': True, 'work_type': 'video',
+            'source_message_ids': [human], 'destination_confirmed': True, 'let_user_choose': True, 'work_type': 'video',
             'model_question': '我想选择任务档位', 'video_model': 'wan3.0', 'video_model_confirmed': True}
     try:
         selected = []
@@ -549,3 +550,46 @@ async def test_new_task_uses_account_default_without_model_question(monkeypatch,
             preferred if preferred == 'test/preferred' else 'test/default')
     finally:
         await lease.release(session_status='idle')
+
+
+async def test_by_default_a_video_gets_the_default_tier_without_a_card(tiers):
+    """VOICE_SEAM_PLAN §12.4: no tier card; the default preset applies and the receipt says so."""
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "随便做一个风景类的，10秒")
+    args = {"project_id": main.project_id, "title": "10秒风景视频", "instructions": "做一条10秒风景视频",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": "video",
+            "model": "test/model", "model_confirmed": True, "video_model_question": "要哪个档？"}
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        assert "suspended" not in result and result.get("state") == "accepted", result
+        assert result["arranged"]["video_kind"] == "other_video" and result["arranged"]["video_tier"]
+        async with get_db_session() as db:
+            assert await db.scalar(select(func.count()).select_from(QuestionCheckpoint).where(
+                QuestionCheckpoint.session_id == main.id)) == 0
+            task = await db.get(AssistantTask, result["task_id"])
+            execution = await db.get(Session, task.execution_session_id)
+            assert execution.video_model and execution.video_resolution
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_a_non_talking_head_video_room_is_told_to_produce_not_only_plan(tiers):
+    """QWH 2026-11-03: an other_video room got a bare brief, wrote a plan after the user confirmed it and stopped."""
+    owner, _, workspace, main = await assistant()
+    ctx, lease, human = await main_turn(owner, workspace, main, "做一条讲解合作做法的视频")
+    args = {"project_id": main.project_id, "title": "合作做法讲解视频", "instructions": "先整理讲解文案与分镜方案",
+            "source_message_ids": [human], "destination_confirmed": True, "work_type": "video",
+            "model": "test/model", "model_confirmed": True}
+    try:
+        result, _ = await tool_call(ctx, "tasks.submit", args)
+        assert result.get("state") == "accepted", result
+        async with get_db_session() as db:
+            task = await db.get(AssistantTask, result["task_id"])
+            inbound = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == task.execution_session_id))
+            assert inbound.origin_ref.get("workflow") == "video"
+            assert "Load the video-production skill" in inbound.prompt
+            assert "not a talking-head piece" in inbound.prompt
+            assert "a reply that only lists the production steps still to do is not a result" in inbound.prompt
+            assert inbound.prompt.endswith("先整理讲解文案与分镜方案")
+    finally:
+        await lease.release(session_status="idle")

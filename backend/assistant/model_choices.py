@@ -86,17 +86,48 @@ def resolve_video_tier(values, inventory):
     values.update(video_model=tier["model"], video_model_confirmed=True, video_resolution=resolution)
 
 
-async def prepare(ctx, source, arguments):
+def default_video_choice(inventory: dict) -> dict:
+    """The video tier to use when nobody chose one (VOICE_SEAM_PLAN §12.4): the preset of the configured default
+    video model, else the first preset, else the default model alone; {} when no video model is configured."""
+    tiers = inventory.get("video_tiers") or []
+    default = inventory.get("default_video")
+    tier = next((row for row in tiers if row["model"] == default), None) or (tiers[0] if tiers else None)
+    if tier is not None:
+        return {"video_tier": tier["id"], "video_tier_confirmed": True, "video_model": tier["model"],
+                "video_model_confirmed": True, "video_resolution": tier["resolution"]}
+    videos = {row["id"] for row in inventory.get("video") or []}
+    if default in videos:
+        return {"video_model": default, "video_model_confirmed": True}
+    return {}
+
+
+async def prepare(ctx, source, arguments, *, ask: bool = True):
     """Resolve successive choices against the same original request; create nothing.
 
     Repeat the original arguments after every answer. Changed work gets fresh
-    questions rather than reusing an unrelated task's approval.
+    questions rather than reusing an unrelated task's approval. ``ask=False``
+    decides the open choices itself (default task AI, the default video tier,
+    a plain video when the kind was left open) and records them in ``_arranged``.
     """
     original = dict(arguments)
     values = dict(arguments)
     setup_id = None
     inventory = catalogue()
     resolve_video_tier(values, inventory)
+    arranged = {}
+    if not ask:
+        if values.get("work_type") == "video":
+            values["work_type"] = "other_video"
+            arranged["video_kind"] = "other_video"
+        if values.get("work_type") in {"spoken_video", "other_video"} and not (
+                values.get("video_model_confirmed") and values.get("video_model")):
+            choice = default_video_choice(inventory)
+            if choice:
+                values.update(choice)
+                arranged["video_tier"] = choice.get("video_tier") or choice.get("video_model")
+        values.pop("model_question", None)
+        values.pop("video_model_question", None)
+        values.pop("video_kind_question", None)
     async with get_db_session() as db:
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
         await _tool_source_locked(db, main, source, "task_create")
@@ -128,6 +159,8 @@ async def prepare(ctx, source, arguments):
             break
     if not values.get("model_confirmed") and not values.get("model_question") and default_model:
         values.update(model=default_model, model_confirmed=True)
+        if not ask and not original.get("model_confirmed"):
+            arranged["model"] = default_model
     for field in ("model", "work_type", "video_model"):
         if field == "model" and values.get("model_confirmed") and values.get("model"):
             continue
@@ -208,6 +241,7 @@ async def prepare(ctx, source, arguments):
     # Internal identity, never a model-provided argument. Retries in a new tool
     # part still create only one conversation for the completed setup card.
     values["_setup_id"] = setup_id
+    values["_arranged"] = arranged
     return values
 
 

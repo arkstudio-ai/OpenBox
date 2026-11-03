@@ -147,6 +147,43 @@ function TaskMenu({ value, result, showResult, onToggleResult, onWaitingCard }: 
   )
 }
 
+/** The one button a task card offers (VOICE_SEAM_PLAN §12.2): go to the work, answer the helper, resume, or
+ *  start another round. Checking unverified outcomes has its own control above, so no button here then. */
+function PrimaryAction({ value, status, onWaitingCard }: { value: AssistantTaskView; status: TaskStatus; onWaitingCard: () => void }) {
+  const { t } = useTranslation("chat")
+  const { submit, busy } = useTaskControl(value, onWaitingCard)
+  const { task } = value
+  if (task.observed_state === "effect_unknown") return null
+  const link = paths.chat(task.execution_session_id)
+  // Resume only once the stop or pause has landed (the menu's rule): a task still pausing has nothing to resume yet.
+  const resumable = ["paused", "resume_blocked", "canceled"].includes(task.observed_state) && task.desired_state !== "running" && !task.archived_at
+  if (resumable) {
+    return (
+      <div className="mt-3 flex items-center gap-2 ps-5">
+        <button type="button" disabled={busy} onClick={() => void submit("resume")}
+          className="bg-ink text-card inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm disabled:opacity-50">
+          {t("assistant.card.resume")}
+        </button>
+        <Link to={link} className="text-n700 hover:bg-hairsoft inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm">
+          {t("assistant.card.open")}
+          <ArrowUpRight size={14} strokeWidth={2.2} aria-hidden />
+        </Link>
+      </div>
+    )
+  }
+  const label = status === "waiting" ? "assistant.card.answer" : status === "done" ? "assistant.card.again" : "assistant.card.open"
+  return (
+    <div className="mt-3 flex items-center gap-2 ps-5">
+      <Link to={link}
+        className={cn("inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm",
+          status === "waiting" ? "bg-ink text-card" : "border-hair text-n800 hover:bg-hairsoft border")}>
+        {t(label)}
+        <ArrowUpRight size={14} strokeWidth={2.2} aria-hidden />
+      </Link>
+    </div>
+  )
+}
+
 /** A note under the summary only when something needs explaining. */
 function taskNote(value: AssistantTaskView, result: AssistantResult | null): string | null {
   const { task, latest_submission: submission } = value
@@ -177,7 +214,10 @@ function CardDetails({ status, summary, value, note }: {
     ? `assistant.card.takeoverHint.${takeover.browser === "extension" ? "extension" : "desktop"}` : "assistant.card.waitingHint"
   return <>
     {summary && <p className="text-n800 mt-2 line-clamp-3 text-sm leading-relaxed whitespace-pre-line">{summary}</p>}
-    {status === "waiting" && <p className="text-n800 mt-2 text-sm">{t(waitingHint)}</p>}
+    {status === "waiting" && !takeover && value.blocked_by?.question && (
+      <p className="text-ink mt-2 text-sm">{t("assistant.card.helperAsks", { question: value.blocked_by.question })}</p>
+    )}
+    {status === "waiting" && (takeover || !value.blocked_by?.question) && <p className="text-n800 mt-2 text-sm">{t(waitingHint)}</p>}
     {following && <p className="text-n600 mt-2 text-xs">{t("assistant.card.followingUp", {
       used: continuation.followups_used, limit: continuation.max_followups })}</p>}
     {decision && <p className="text-n800 mt-2 text-sm">{t(`assistant.card.continuation.${continuation.state}`)}</p>}
@@ -189,6 +229,12 @@ function cardStatus(value: AssistantTaskView, watch: AssistantWatchItem | undefi
   const pendingQuestions = Math.max(watch?.pending_questions ?? 0, value.blocked_by ? 1 : 0)
   return taskStatus({ sessionStatus: value.execution_session.status, observedState: value.task.observed_state,
     desiredState: value.task.desired_state, pendingQuestions, outcome: result?.outcome })
+}
+
+/** Project · tier · when: the line under the title. */
+function metaLine(value: AssistantTaskView, watch: AssistantWatchItem | undefined, locale?: string): string {
+  return [watch?.project.name, value.execution_session.current_settings?.video_tier_label,
+    sinceLabel(value.task.updated_at, locale)].filter(Boolean).join(" · ")
 }
 
 /** The task, its conversation or its project was deleted: nothing left to show or control. */
@@ -231,7 +277,7 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
             <StatusPill tone={TASK_STATUS_TONE[status]}>{t(`assistant.status.${status}`)}</StatusPill>
           </div>
           <p className="text-n600 mt-0.5 text-sm">
-            {[watch?.project.name, sinceLabel(task.updated_at, i18n?.language)].filter(Boolean).join(" · ")}
+            {metaLine(value, watch, i18n?.language)}
           </p>
           <CardDetails status={status} summary={summary} value={value}
             note={earlier ? "assistant.card.note.earlier" : taskNote(value, result)} />
@@ -250,13 +296,7 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
           onWaitingCard={() => setWaitingCard(true)} />
       </div>
       <AssistantEffectAcknowledge value={value} />
-      <div className="mt-3 flex items-center gap-2 ps-5">
-        <Link to={paths.chat(task.execution_session_id)}
-          className="border-hair text-n800 hover:bg-hairsoft inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm">
-          {t(status === "waiting" ? "assistant.card.answer" : "assistant.card.open")}
-          <ArrowUpRight size={14} strokeWidth={2.2} aria-hidden />
-        </Link>
-      </div>
+      <PrimaryAction value={value} status={status} onWaitingCard={() => setWaitingCard(true)} />
       {showResult && result && <div className="ps-5"><FullResult key={result.result_id} resultId={result.result_id} /></div>}
     </section>
   )

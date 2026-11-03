@@ -26,8 +26,10 @@ from voice import config as voice_settings
 from voice.assistant_link import AssistantLink, main_session
 from voice.bridge import REPLY_GAP_SECONDS, Bridge
 from voice.meter import PRICE_DATE, CallMeter, call_prices
-from voice.progress import Progress
+from voice.progress import Progress, RoomProgress
+from voice.control_notes import ControlWatcher
 from voice.reports import ReportWatcher
+from voice.room import RoomWatcher
 from voice.updates import CallUpdates
 from voice.provider import RealtimeProvider
 
@@ -190,15 +192,16 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
                     recap=facts.recap, tell_reports=facts.reports,
-                    detail=facts.detail, first_call=facts.first_call,
+                    detail=facts.detail, first_call=facts.first_call, quick_return=facts.quick_return,
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
                     reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines),
                     context_reader=shared_context.read,
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,
-                    focus=ReplyFocus())
-    updates = CallUpdates(scope)
+                    focus=ReplyFocus(), focus_task=facts.focus,
+                    room_progress=RoomProgress(user_id=user_id, rooms=lambda: shared_context.rooms, lang=lang))
+    updates = CallUpdates(scope, rooms=lambda: shared_context.rooms)
     from voice.memory_capture import OccurrenceClock
     occurrence_clock = OccurrenceClock()
     memory_changed = asyncio.Event()
@@ -209,6 +212,16 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     async def deliver_context(fresh):
         if fresh:
             await bridge.refresh_shared_context(fresh)
+
+    async def deliver_controls(notes):
+        for note in notes:
+            await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
+            if bridge.room and note.task_id == bridge.room["task_id"] and note.kind == "canceled":
+                await bridge.leave_room()  # the room's work was stopped: back to the assistant
+
+    async def deliver_room(replies):
+        for reply in replies:
+            await bridge.room_reply(reply.inbox_id, reply.title, reply.text, reply.result_id)
 
     async def profile_changed(event):
         """A rename or a new way of talking, made in Settings or in chat while this call goes on."""
@@ -269,6 +282,16 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                 from voice.view_context import session_hint
                 bridge.scope = dataclasses.replace(bridge.scope,
                     viewed_session_id=session_hint(payload.get("session_id")))
+                focused = await task_of_session(bridge.scope.viewed_session_id, user_id)
+                if focused is not None:
+                    bridge.set_focus_task(focused)
+            elif kind == "room":
+                # The task card's 盯现场 switch (VOICE_SEAM_PLAN §12.5): bind the call to that task's room, or leave.
+                target = await task_by_id(payload.get("task_id"), user_id) if payload.get("task_id") else None
+                if target is not None:
+                    await bridge.enter_room(target)
+                elif not payload.get("task_id"):
+                    await bridge.leave_room()
             elif kind == "capabilities" and payload.get("playback_ack") is True:
                 bridge.playback_ack = True
             elif kind == "playback.completed" and isinstance(payload.get("response_id"), str):
@@ -314,6 +337,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             if now - renew >= LOCK_RENEW_SECONDS:
                 renew = now
                 await calls.renew_lock(user_id)
+            await bridge.refresh_room_progress()
             await bridge.fill_idle()
 
     async def memory_updates():
@@ -370,9 +394,15 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
 
     tasks, ending, answered = [], CallEnded("network", close=None), False
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
+    controls = ControlWatcher(user_id=user_id, main_session_id=main_id, workspace_id=workspace_id, call_id=call_id,
+                              lang=lang)
+    room_watcher = RoomWatcher(user_id=user_id, workspace_id=workspace_id, call_id=call_id,
+                               room=lambda: bridge.room, lang=lang)
     try:
         bridge.progress.start()
+        bridge.room_progress.start()
         await reports.start()
+        await controls.start()
         # Answer as soon as the provider is configured. Both audio directions
         # run before requesting the opening, so the very first words can interrupt it.
         started = last_audio = time.monotonic()
@@ -384,6 +414,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             raise_on(bridge.failed, CallEnded("error", close=1011, error="provider_error")),
             bridge_to_client(), timers(), pending_cards(), memory_updates(),
             updates.watch(updates.reports, reports.poll, deliver_reports, name="reports"),
+            updates.watch(updates.controls, controls.poll, deliver_controls, name="controls"),
+            updates.watch(updates.rooms, room_watcher.poll, deliver_room, name="room"),
             updates.watch(updates.context, shared_context.poll, deliver_context, name="context"),
             raise_on(bridge.overflow, CallEnded("network", close=1011, error="internal")))]
         await bridge.start()
@@ -456,6 +488,41 @@ def _ending(task: asyncio.Task, call_id: str) -> CallEnded:
         return CallEnded("error", close=4003)
     log.error("voice call=%s failed error=%s", call_id, type(exc).__name__ if exc else "pump returned")
     return CallEnded("error", close=1011, error="internal")
+
+
+async def task_by_id(task_id, user_id: str) -> dict | None:
+    """The user's own task by id, as a room binding; None for anything else."""
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.assistant import AssistantTask
+    try:
+        async with get_db_session() as db:
+            task = await db.scalar(select(AssistantTask).where(AssistantTask.id == task_id,
+                                                                AssistantTask.user_id == user_id,
+                                                                AssistantTask.archived_at.is_(None)))
+    except Exception as exc:
+        log.warning("voice room lookup failed task=%s error=%s", task_id, type(exc).__name__)
+        return None
+    return {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id} if task else None
+
+
+async def task_of_session(session_id: str | None, user_id: str) -> dict | None:
+    """The task whose room the user is looking at, if that page is a task's execution page."""
+    if not session_id:
+        return None
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.assistant import AssistantTask
+    try:
+        async with get_db_session() as db:
+            task = await db.scalar(select(AssistantTask).where(AssistantTask.execution_session_id == session_id,
+                                                                AssistantTask.user_id == user_id))
+    except Exception as exc:  # a hint, never a reason to drop the call
+        log.warning("voice focus lookup failed session=%s error=%s", session_id, type(exc).__name__)
+        return None
+    return {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id} if task else None
 
 
 async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_id, lang, client, duration,

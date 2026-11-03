@@ -220,7 +220,6 @@ class _Foot extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final t = context.tokens;
     final controller = ref.read(voiceCallControllerProvider.notifier);
     final paused = call.status == VoiceCallStatus.paused;
     final connected = call.status == VoiceCallStatus.connected;
@@ -257,7 +256,7 @@ class _Foot extends ConsumerWidget {
                     child: VoiceCostLine(cost: cost!),
                   ),
           ),
-          if (action != null) action,
+          ?action,
         ],
       ),
     );

@@ -422,4 +422,74 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
     },
   );
+
+  testWidgets(
+    'Light 模式: a first meeting that starts by itself opens as a sheet over the page; 以后再说 puts it off',
+    (tester) async {
+      final api = TestProfileApi()..profile = _profile(status: 'new');
+      await _pump(
+        tester,
+        api,
+        Column(
+          children: [
+            const Spacer(),
+            AssistantIntroEntry(quiet: false, autoOpen: true, onPick: (_) {}),
+          ],
+        ),
+      );
+      // The sheet, not a card: the auto-mode put-off stands.
+      expect(find.text('我该怎么称呼你？'), findsOneWidget);
+      expect(find.byKey(const ValueKey('intro-later')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('intro-later')));
+      await tester.pumpAndSettle();
+      expect(find.text('我该怎么称呼你？'), findsNothing);
+      expect(api.introEvents.last, {'event': 'dismiss'});
+    },
+  );
+
+  testWidgets(
+    'Light 模式: swiping the first-meeting sheet away counts as 以后再说, once',
+    (tester) async {
+      final api = TestProfileApi()..profile = _profile(status: 'new');
+      await _pump(
+        tester,
+        api,
+        Column(
+          children: [
+            const Spacer(),
+            AssistantIntroEntry(quiet: false, autoOpen: true, onPick: (_) {}),
+          ],
+        ),
+      );
+      expect(find.text('我该怎么称呼你？'), findsOneWidget);
+      // The scrim above the sheet.
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pumpAndSettle();
+      expect(find.text('我该怎么称呼你？'), findsNothing);
+      expect(api.introEvents, [
+        {'event': 'dismiss'},
+      ]);
+      // Not offered again while this page lives.
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('我该怎么称呼你？'), findsNothing);
+    },
+  );
+
+  testWidgets('without autoOpen the entry never opens the meeting by itself', (
+    tester,
+  ) async {
+    final api = TestProfileApi()..profile = _profile(status: 'new');
+    await _pump(
+      tester,
+      api,
+      Column(
+        children: [
+          const Spacer(),
+          AssistantIntroEntry(quiet: false, onPick: (_) {}),
+        ],
+      ),
+    );
+    expect(find.text('我该怎么称呼你？'), findsNothing);
+    expect(api.introEvents, isEmpty);
+  });
 }

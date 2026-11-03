@@ -41,6 +41,12 @@ MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
 FRAME_WIDTH = 360
 SNAPSHOT_LINK_SECONDS = 3600
+#: A picture reading normally answers in 10–25 s, but now and then one call hangs for
+#: minutes (2026-11-02: 3 min 7 s on one clip of five, with no error). So it is asked a
+#: second time after HEDGE_SECONDS and the first good answer wins; an attempt is given
+#: up after ATTEMPT_SECONDS.
+HEDGE_SECONDS = 20
+ATTEMPT_SECONDS = 45
 
 PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一段素材的截帧，每张标了它在素材里的秒数。
 素材时长 {duration} 秒，{orientation}；{speech}（人声内容另行转写，这里只看画面。）
@@ -96,17 +102,38 @@ async def _vision(frames: list[tuple[float, str]], *, duration: float, orientati
     for at_sec, url in frames:
         content.append({"type": "text", "text": f"第 {at_sec:g} 秒："})
         content.append({"type": "image_url", "image_url": {"url": url}})
-    last_error: Exception | None = None
-    for attempt in range(2):
+
+    async def attempt() -> dict:
         # A thinking model spends part of the budget before it writes; 4000 keeps the JSON whole.
-        response = await litellm.acompletion(model=cfg.model, messages=[{"role": "user", "content": content}],
-                                             temperature=0.2, max_tokens=4000, timeout=cfg.timeout_seconds,
-                                             **_get_provider_kwargs(cfg.model))
-        try:
-            return parse_picture(response.choices[0].message.content or "")
-        except ValueError as exc:  # one more try; a second bad answer is reported, not guessed
-            last_error = exc
-            log.info("footage picture reading unparseable (attempt %d): %s", attempt + 1, exc)
+        response = await asyncio.wait_for(litellm.acompletion(
+            model=cfg.model, messages=[{"role": "user", "content": content}], temperature=0.2,
+            max_tokens=4000, timeout=ATTEMPT_SECONDS, **_get_provider_kwargs(cfg.model)), ATTEMPT_SECONDS)
+        return parse_picture(response.choices[0].message.content or "")
+
+    return await first_answer(attempt, hedge_after=HEDGE_SECONDS)
+
+
+async def first_answer(attempt, *, hedge_after: float, tries: int = 2) -> dict:
+    """Run ``attempt``; when it fails, or has not answered after ``hedge_after`` seconds,
+    run it again alongside, up to ``tries`` in all. The first good answer wins and the
+    rest are cancelled; when every try fails the last error is reported, not guessed."""
+    pending: set[asyncio.Task] = {asyncio.create_task(attempt())}
+    launched, last_error = 1, None
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, timeout=hedge_after if launched < tries else None,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task.exception() is None:
+                    return task.result()
+                last_error = task.exception()
+                log.info("footage picture reading attempt failed: %s: %s", type(last_error).__name__, last_error)
+            if launched < tries and (not done or not pending):
+                pending.add(asyncio.create_task(attempt()))
+                launched += 1
+    finally:
+        for task in pending:
+            task.cancel()
     raise FootageRefusal(f"the picture reading returned no usable result: {last_error}")
 
 

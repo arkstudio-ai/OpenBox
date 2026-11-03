@@ -232,6 +232,38 @@ def test_picture_replies_are_read_despite_fences_prose_and_trailing_commas():
         parse_picture('{"subject": "门头", "segments": [')
 
 
+async def test_a_hung_picture_reading_is_asked_again_and_the_first_answer_wins():
+    import asyncio
+
+    from tool.footage_analyze import FootageRefusal, first_answer
+
+    calls = []
+
+    async def hangs_then_answers():
+        calls.append(len(calls))
+        if len(calls) == 1:
+            await asyncio.sleep(30)
+        return {"subject": f"try {len(calls)}"}
+
+    assert await asyncio.wait_for(first_answer(hangs_then_answers, hedge_after=0.05), 2) == {"subject": "try 2"}
+
+    answers = iter([ValueError("no JSON object in the reply"), {"subject": "门头"}])
+
+    async def bad_then_good():
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    assert await first_answer(bad_then_good, hedge_after=10) == {"subject": "门头"}
+
+    async def always_bad():
+        raise ValueError("no JSON object in the reply")
+
+    with pytest.raises(FootageRefusal):
+        await first_answer(always_bad, hedge_after=10)
+
+
 async def test_a_finished_footage_cut_is_delivered_without_an_agent_turn():
     from video import compose_recovery as cr
     user, session, ids = await _owner_with_clips([15], audio=[False])

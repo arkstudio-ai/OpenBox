@@ -9,7 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-03 15:26 `20261103-rooms3-ad6f1661`（交代一件活不再先过两张卡；助理提示精简）
+## 当前应用版本：2026-11-03 15:42 `20261103-rooms4-bf377ba8`（首次四步引导 + "怎么用"随时呼出）
+
+- PR [#126](https://github.com/arkstudio-ai/OpenBox/pull/126)（H 轮）合并至 `main@bf377ba8`，前端另含 `6e006216`（仅测试桩补 `tourSeen` 字段，镜像仍以 bf377ba8 命名）。内容：第一次打开助理页弹四步引导（你只跟我说 → 我开任务单派帮手 → 点任务单去现场 → 做好了我回报），不叠在初次见面问答上；顶栏/应用栏"怎么用"随时重放；服务端 `assistant_intro.tour_seen` + `POST /api/assistant/intro` 事件 `tour`，跨端只弹一次，老服务端缺字段按已看过。见 [VOICE_SEAM_PLAN_20261031.md](VOICE_SEAM_PLAN_20261031.md) 第 12.6 / 12.7 节。
+- 后端补丁 2 个文件：以线上 `20261103-rooms3-ad6f1661` 为底 COPY `assistant/profile.py`、`api/assistant.py`（切换前核对线上这两个文件与旧 main 一致），容器内全树比对仅此两处不同。前端 buildx amd64 构建经 OSS 中转装载，资源含 `assistant.tour`。
+- 切换 `releases/20261103-rooms4-bf377ba8/activate.sh`：配置快照 + 两库 dump（业务 123 表、轨迹 44 表）→ 空闲门禁一次即 0 → backend 07:41:15 → worker → frontend 07:42:14 UTC healthy；无迁移、无配置变更；三容器重启 0。
+- 验证：`/health` ok，公网 app-build 为新 tag，环境/Logto 200，权限与 profile 匿名 401；容器内 `intro_from_extra` 含 `tour_seen`；切换后日志无 traceback。真机未验。
+- 配套 App：iOS **1.0.46 (57)** 2026-11-03 15:44 上传 TestFlight（Delivery `05d8e060-94bd-4b11-aafa-fabe70d92201`），Android **1.0.46 (57)** 正式签名包同时出（桌面 `BossIP-Android-1.0.46-57/`，已发给用户），源码 `main@bf377ba8` + 版本号提交，带上 G 轮任务卡档位显示与 H 轮引导；见 [MOBILE_RELEASE_1_0_46_20261103.md](MOBILE_RELEASE_1_0_46_20261103.md)。
+- 回滚：恢复 `releases/20261103-rooms4-bf377ba8/before/docker-compose.override.yml`（三项均为 `20261103-rooms3-ad6f1661`），依次 `docker compose up -d --no-deps backend / trajectory-worker / frontend`；无库回滚。AWS 与高德未发布。
+
+## 历史应用版本：2026-11-03 15:26 `20261103-rooms3-ad6f1661`（交代一件活不再先过两张卡；助理提示精简）
 
 - PR [#123](https://github.com/arkstudio-ai/OpenBox/pull/123)（系统提示词：回复长度上限、助理/帮手/任务单流程说明、五个状态词）与 [#125](https://github.com/arkstudio-ai/OpenBox/pull/125)（G 轮）合并至 `main@ad6f1661`。G 轮：`tasks.submit` 新增 `let_user_choose`（默认 false），默认不出"视频档次""安排这件事"两张卡：有 `project_id` 就用，没有就按提议名找同名或新建项目；任务 AI 用用户默认；视频类型未定按"其他类型视频"，档位用配置默认视频模型的预设（gw2 上是 **快速档 MiniMax-H3-Max-Turbo 768p**）；回执多 `arranged` 字段，助理一句话说明放在哪、什么档；任务视图与 Web 任务卡显示档位。只有用户要自己选时才出卡。见 [VOICE_SEAM_PLAN_20261031.md](VOICE_SEAM_PLAN_20261031.md) 第 12.4 / 12.7 节。
 - **后端补丁 6 个文件**：以线上 `20261102-rooms2-9a0b00de` 为底 COPY `assistant/placement.py`、`model_choices.py`、`reads.py`、`runtime.py`、`tool/assistant_tools.py`、`voice/prompt.py`（`releases/20261103-rooms3-ad6f1661/patch/`），容器内全树比对仅这 6 个文件不同。其中 **`model_choices.py` 与 `assistant_tools.py` 的 `video_tier` 从线上 10-28 的三档旧版（fast/standard/premium）追到 main（五档预设 ultra/high/medium/low/fast + 兼容旧 standard/premium 答案）**；切换后容器内 `catalogue()` 列出五档，默认档解析为 fast。前端从 `main@ad6f1661` 构建（任务卡显示档位）。**线上仍有 16 个未入库文件原样保留。**

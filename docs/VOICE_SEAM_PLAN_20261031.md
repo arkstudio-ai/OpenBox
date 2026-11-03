@@ -370,3 +370,5 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 **G 轮已上线（2026-11-03 15:26，gw2 `20261103-rooms3-ad6f1661`，PR #125 + 提示词 #123）。** App 的档位显示随下次发版。下一轮 H（首次引导 + 随时呼出）。
 
 **H 轮实施记录（2026-11-03，分支 `feat/task-rooms-h`）**：复用既有"初次见面"状态（`profile.extra.assistant_intro`）加一位 `tour_seen`，`POST /api/assistant/intro` 新增事件 `tour`，profile 视图 `intro.tour_seen` 两端解析（缺字段按已看过，老服务端不弹）。Web `AssistantTour`（Dialog，四步：你只跟我说 → 我开任务单派帮手 → 点任务单去现场 → 做好了我回报，每步图标 + 一句话，跳过/下一步/知道了），`AssistantTourHost` 挂在助理页：资料已知、`tour_seen=false` 且不在初次见面问答时自动弹一次，关闭即记 `tour`；顶栏新增"怎么用"按钮随时重放（`openAssistantTour`）。App `assistant_tour.dart` 同一套（底部弹层、`AssistantTourAutoOpen`、应用栏"?"按钮）。文案 `assistant.tour.*` 两端镜像。测试：后端 1 项、Web 2 项、App 1 项。坑：用 Python 重写 locale JSON 时把 `"\n"` 写成了字面量，文件尾多了反斜杠 n，App 加载文案失败连锁 134 个测试报错——改 JSON 后必须 `json.load` 回读校验。
+
+**H 轮已上线（2026-11-03 15:42，gw2 `20261103-rooms4-bf377ba8`，App 1.0.46 (57)）。** 剩 I 轮（电话"盯现场"开关替代进门口令、待答问题并入任务单页）与真机/真实通话验收。

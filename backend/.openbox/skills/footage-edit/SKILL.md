@@ -62,8 +62,9 @@ Rules for picking:
 - Only `usable: true` segments. Each shot 2–4 s; the first second must show
   the subject (门头 or the dish), never a blank wall or a shaky start.
 - Mix wide and close; never two shots from the same second range.
-- A spoken line is kept whole: start and end the shot on its sentence
-  timings, and keep the clip's sound (`volume: 1`). Shots without speech keep
+- A spoken line is kept whole: one shot from the sentence's `from_sec` to its
+  `to_sec` in that clip, never two shots that each hold half of it, and keep
+  the clip's sound (`volume: 1`). Shots without speech keep
   their natural sound too.
 - Landscape clips are fine: `fit: "cover"` centre-crops them to 9:16; pick
   segments whose subject is in the middle.
@@ -109,8 +110,9 @@ the price changed; for 换个配乐 pick another track of the same tag.
 
 ## 4. Compose (`compose`)
 
-The format is below; do not call `action="schema"`. Call `validate` once, then
-`submit`:
+The format is below; do not call `action="schema"` or `validate`. Call
+`submit` straight away — it checks the timeline before anything is rendered
+and refuses an invalid one with the reason; fix that and submit again:
 
 ```json
 {"version": 1,

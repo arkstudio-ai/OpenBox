@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -96,9 +97,13 @@ def compile_ims(
     if timeline.captions:
         caption_clips = []
         for index, cue in enumerate(timeline.captions):
-            clip = _caption_clip(f"captions[{index}]", cue, timeline, total, problems, warnings)
-            if clip is not None:
-                caption_clips.append(clip)
+            pieces = _fit_line(cue, timeline)
+            if len(pieces) > 1:
+                warnings.append(f"captions[{index}]: split into {len(pieces)} cues to fit one line")
+            for piece in pieces:
+                clip = _caption_clip(f"captions[{index}]", piece, timeline, total, problems, warnings)
+                if clip is not None:
+                    caption_clips.append(clip)
         _check_overlaps(timeline.captions, problems)
         if caption_clips:
             subtitle_tracks.append({"SubtitleTrackClips": caption_clips})
@@ -158,8 +163,10 @@ def _video_clip(index: int, shot: Shot, canvas: Canvas, region: str | None,
 _DUCK_JOIN_SEC = 0.8
 _DUCK_LEAD_SEC = 0.2
 _DUCK_TAIL_SEC = 0.3
-#: A repeated track fades out and back in around each seam instead of jumping.
+#: A repeated track fades out and back in around each seam instead of jumping;
+#: it does not start again for less than this, but ends (fading) where it ran out.
 _LOOP_FADE_SEC = 0.6
+_LOOP_MIN_TAIL_SEC = 4.0
 _EPS = 0.05
 
 
@@ -192,6 +199,8 @@ def _audio_clips(index: int, item: AudioClip, timeline: Timeline, total: float |
         while at < end - _EPS:
             seams.append(at)
             at += period
+        if seams and end - seams[-1] < _LOOP_MIN_TAIL_SEC:
+            end = seams.pop()  # a few seconds of the song again sound like a mistake: end it there
     ducks = _duck_spans(timeline.captions, item.from_sec, end) if item.duck_under_captions else []
     points: list[float] = []
     for point in sorted({item.from_sec, end, *seams, *(p for span in ducks for p in span)}):
@@ -277,6 +286,47 @@ def _text_clip(where: str, text: TextClip, canvas: Canvas, total: float | None,
     clip.update(_style(where, text.style, problems, warnings))
     clip.update(_motion(where, text.motion, problems, warnings))
     return clip
+
+
+#: Width of a character as a share of the font size: CJK fills it, Latin and digits take about half.
+_NARROW = 0.55
+_PHRASE_END = re.compile(r"(?<=[，,。！!？?；;、：:])")
+
+
+def _fit_line(cue: Cue, timeline: Timeline) -> list[Cue]:
+    """A caption that fits one line, or several that do, each timed by its share of the text.
+
+    IMS's AutoWrap does not wrap Chinese: a long cue runs off the frame
+    (light-test, 2026-11-03, a 17-character line on a 720-px canvas). So a cue
+    wider than the line splits at its punctuation, and a phrase still too wide
+    splits evenly.
+    """
+    cs = timeline.caption_style
+    room = timeline.canvas.width * cs.max_width / cs.style.size
+    if _width(cue.text) <= room:
+        return [cue]
+    lines: list[str] = []
+    for phrase in (p for p in _PHRASE_END.split(cue.text) if p.strip()):
+        if lines and _width(lines[-1] + phrase) <= room:
+            lines[-1] += phrase
+        elif _width(phrase) <= room:
+            lines.append(phrase)
+        else:
+            parts = math.ceil(_width(phrase) / room)
+            size = math.ceil(len(phrase) / parts)
+            lines.extend(phrase[i:i + size] for i in range(0, len(phrase), size))
+    lines = [line.rstrip("，,、") or line for line in lines]
+    total = sum(_width(line) for line in lines)
+    pieces, at = [], cue.from_sec
+    for index, line in enumerate(lines):
+        end = cue.to_sec if index == len(lines) - 1 else round(at + (cue.to_sec - cue.from_sec) * _width(line) / total, 2)
+        pieces.append(Cue(from_sec=at, to_sec=end, text=line))
+        at = end
+    return pieces
+
+
+def _width(text: str) -> float:
+    return sum(_NARROW if ord(ch) < 0x2E80 else 1.0 for ch in text)
 
 
 def _caption_clip(where: str, cue: Cue, timeline: Timeline, total: float | None,

@@ -453,3 +453,33 @@ def test_the_footage_skill_puts_music_on_the_card_and_lets_it_go():
     assert "配乐「<track name>」" in skill and "`不要配乐`" in skill
     assert '"library_id"' in skill and '"duck_under_captions": true' in skill
 
+
+
+def test_a_track_that_would_restart_for_a_second_ends_with_a_fade_instead():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    # light-test 2026-11-03: a 40 s track under a 41 s cut started over for its last second.
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 41}],
+        "audio": [{"library_id": BED, "source_sec": 40, "volume": 0.35, "fade_in_sec": 1, "fade_out_sec": 2}],
+    }), output_url=BASE + "out.mp4")
+    (only,) = compiled.timeline["AudioTracks"][0]["AudioTrackClips"]
+    assert (only["TimelineOut"], only["Out"]) == (40.0, 40.0)
+    assert only["Effects"][-1] == {"Type": "AFade", "SubType": "Out", "Duration": 2.0}
+
+
+def test_a_caption_wider_than_the_frame_is_split_into_lines_that_fit():
+    from video.ims_compiler import compile_ims
+    from video.timeline import Timeline
+    # IMS AutoWrap does not wrap Chinese: this 17-character line ran off a 720-px frame.
+    compiled = compile_ims(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 30}],
+        "captions": [{"from_sec": 12, "to_sec": 24, "text": "今天给大家推荐我们的招牌红烧牛肉面，汤是每天早上现熬的牛骨汤"},
+                     {"from_sec": 25, "to_sec": 27, "text": "中午11点开门，晚上10点打烊"}],
+    }), output_url=BASE + "out.mp4")
+    (track,) = compiled.timeline["SubtitleTracks"]
+    lines = [(c["TimelineIn"], c["TimelineOut"], c["Content"]) for c in track["SubtitleTrackClips"]]
+    assert [text for _, _, text in lines] == ["今天给大家推荐我们", "的招牌红烧牛肉面", "汤是每天早上现熬的牛骨汤",
+                                               "中午11点开门，晚上10点打烊"]
+    assert lines[0][0] == 12 and lines[2][1] == 24 and lines[0][1] == lines[1][0] and lines[1][1] == lines[2][0]
+    assert any("split into 3 cues" in warning for warning in compiled.warnings)

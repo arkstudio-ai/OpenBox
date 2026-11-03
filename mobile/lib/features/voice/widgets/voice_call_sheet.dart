@@ -10,7 +10,6 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../state/voice_call_controller.dart';
 import '../state/voice_call_state.dart';
-import 'voice_call_controls.dart';
 import 'voice_copy.dart';
 import 'voice_cost_sheet.dart';
 import 'voice_ended_panel.dart';
@@ -19,8 +18,10 @@ import 'voice_ended_panel.dart';
 /// translucent over whatever page is open, holding the call's words as text
 /// — the assistant's lines on the left under the name the person gave it
 /// (the helper's while watching a task's room), the person's own on the
-/// right under "我" — with the call controls at the bottom. A finished call
-/// shows its summary here instead. Swiping up folds it into the bar.
+/// right under "我". Mute and hang-up stay on the bar above, so the foot
+/// carries only what the bar has not: the cost so far and the speaker /
+/// earpiece switch (resume, while paused). A finished call shows its
+/// summary here instead. Swiping up folds it into the bar.
 class VoiceCallSheet extends ConsumerWidget {
   const VoiceCallSheet({super.key});
 
@@ -84,16 +85,7 @@ class VoiceCallSheet extends ConsumerWidget {
                         )
                       : _Transcript(call: call, i18n: i18n),
                 ),
-                if (end == null) ...[
-                  const SizedBox(height: 6),
-                  VoiceCallControls(call: call),
-                ],
-                SizedBox(
-                  height: 28,
-                  child: cost == null || end != null
-                      ? null
-                      : Center(child: VoiceCostLine(cost: cost)),
-                ),
+                if (end == null) _Foot(call: call, cost: cost, i18n: i18n),
                 _Handle(onTap: () => controller.setExpanded(false)),
               ],
             ),
@@ -211,6 +203,119 @@ class _Line extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The sheet's last line: the cost so far on the left, on the right the
+/// one control the bar lacks — speaker or earpiece, or 恢复通话 while the
+/// call is paused by an interruption.
+class _Foot extends ConsumerWidget {
+  const _Foot({required this.call, required this.cost, required this.i18n});
+
+  final VoiceCallState call;
+  final VoiceCost? cost;
+  final I18nState i18n;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final controller = ref.read(voiceCallControllerProvider.notifier);
+    final paused = call.status == VoiceCallStatus.paused;
+    final connected = call.status == VoiceCallStatus.connected;
+    final Widget? action = paused
+        ? _FootButton(
+            key: const Key('voice-resume'),
+            icon: Icons.play_arrow,
+            label: i18n.t('voice:controls.resume'),
+            accent: true,
+            onTap: () => unawaited(controller.resumeAudio()),
+          )
+        : connected
+        ? _FootButton(
+            key: const Key('voice-speaker'),
+            icon: call.speakerOn ? Icons.volume_up : Icons.hearing,
+            label: i18n.t(
+              call.speakerOn
+                  ? 'voice:controls.speaker'
+                  : 'voice:controls.earpiece',
+            ),
+            toggled: call.speakerOn,
+            onTap: () => unawaited(controller.toggleSpeaker()),
+          )
+        : null;
+    return SizedBox(
+      height: 36,
+      child: Row(
+        children: [
+          Expanded(
+            child: cost == null
+                ? const SizedBox.shrink()
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: VoiceCostLine(cost: cost!),
+                  ),
+          ),
+          ?action,
+        ],
+      ),
+    );
+  }
+}
+
+/// A small icon-and-word button for the foot.
+class _FootButton extends StatelessWidget {
+  const _FootButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.toggled,
+    this.accent = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool? toggled;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final on = toggled ?? false;
+    final color = accent ? t.a700 : t.ink;
+    return Semantics(
+      button: true,
+      toggled: toggled,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: on ? t.ink : t.n200,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 18, color: on ? t.bg : color),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    fontWeight: FontWeight.w500,
+                    color: on ? t.bg : color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

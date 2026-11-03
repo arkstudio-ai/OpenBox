@@ -6,6 +6,9 @@ ffmpeg; HEVC/mov and rotated clips work, measured 2026-11-02), the spoken words
 with timings from the ASR engine reading the video URL directly, and one vision
 call that turns the timed frames into usable segments. Clips run in parallel.
 
+The result also lists the music library (``video/bgm_library``) by tag, so
+the plan can name a track without another call.
+
 Billing is one line for the whole batch — 素材分析, 1 credit per started minute
 of footage (billing/footage.py) — charged when the analysis completes, before
 the plan card, and idempotent on the batch: the same clips analysed twice in a
@@ -308,6 +311,10 @@ async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         *(f"refused: {item}" for item in refused),
         "clips_json=" + json.dumps(clips, ensure_ascii=False),
     ]
+    from video.bgm_library import catalogue, tracks
+    music = catalogue(await tracks())
+    if music:
+        lines.append("music (name, length, library_id for audio[]; pick by type as the skill says):\n" + music)
     return ToolResult(title=f"素材分析 · {len(clips)} 段 · {total:.0f} 秒", output="\n".join(lines),
                       metadata={"clips": clips, "total_footage_sec": round(total, 2),
                                 "analysis_credits": charged,

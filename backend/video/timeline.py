@@ -135,14 +135,18 @@ class Cue(BaseModel):
 class AudioClip(BaseModel):
     """A sound bed under the picture (BGM, voice-over): a file placed on the timeline.
 
-    Rendered on its own track(s), mixed with each shot's own sound. 你拍我剪 keeps
-    the recorded sound and adds BGM only once a licensed library is in place.
+    Rendered on its own track, mixed with each shot's own sound. A music-library
+    track (``library_id``, IMS public media) repeats when it is shorter than its
+    span and is cut when longer; ``duck_under_captions`` lowers it wherever a
+    caption is on screen, which in a 你拍我剪 cut is wherever someone speaks.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     #: Same forms as ``Shot.asset``: an owned asset id or the account's OSS object.
-    asset: str = Field(min_length=1, max_length=2048)
+    asset: str | None = Field(default=None, min_length=1, max_length=2048)
+    #: A track of the music library by its IMS MediaId (``icepublic-…``), instead of ``asset``.
+    library_id: str | None = Field(default=None, pattern=r"^icepublic-[0-9A-Za-z]+$")
     #: Where it starts and ends on the timeline.
     from_sec: float = Field(default=0.0, ge=0)
     to_sec: float | None = Field(default=None, gt=0)
@@ -151,11 +155,21 @@ class AudioClip(BaseModel):
     volume: float = Field(default=0.3, ge=0, le=2)
     fade_in_sec: float = Field(default=0.0, ge=0, le=10)
     fade_out_sec: float = Field(default=0.0, ge=0, le=10)
+    #: Lower the bed to ``duck_volume`` while a caption is showing.
+    duck_under_captions: bool = False
+    duck_volume: float = Field(default=0.1, ge=0, le=2)
+    #: Length of the source. Known for library tracks (the tool fills it in);
+    #: when the span is longer, the source starts again from ``in_sec``.
+    source_sec: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _ordered(self) -> "AudioClip":
+        if (self.asset is None) == (self.library_id is None):
+            raise ValueError("audio clip: give exactly one of asset or library_id")
         if self.to_sec is not None and self.to_sec <= self.from_sec:
             raise ValueError("audio clip: to_sec must exceed from_sec")
+        if self.source_sec is not None and self.in_sec >= self.source_sec:
+            raise ValueError("audio clip: in_sec must be inside the source")
         return self
 
 

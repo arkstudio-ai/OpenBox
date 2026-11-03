@@ -1,6 +1,6 @@
 ---
 name: footage-edit
-description: 你拍我剪 — cut a small shop owner's own phone clips (3–10 clips, up to 5 minutes) into one vertical video with captions and the shop name, priced by the finished cut. Reads the clips with footage_analyze (no desktop needed), proposes one plan card, then composes with video_compose. Use for 你拍我剪 / 帮我剪 / 把这几段剪成一条 / 实拍剪辑, and for the Light home's 你拍我剪 entry.
+description: 你拍我剪 — cut a small shop owner's own phone clips (3–10 clips, up to 5 minutes) into one vertical video with captions, the shop name and a music bed, priced by the finished cut. Reads the clips with footage_analyze (no desktop needed), proposes one plan card, then composes with video_compose. Use for 你拍我剪 / 帮我剪 / 把这几段剪成一条 / 实拍剪辑, and for the Light home's 你拍我剪 entry.
 allowed-tools:
   - footage_analyze
   - video_compose
@@ -44,7 +44,8 @@ the order sent (the clips were already being read while they uploaded).
 It returns per clip: duration, orientation, sound, transcript with sentence
 timings, and usable segments (`from_sec`/`to_sec`, what the shot shows,
 quality). It also charges the 素材分析 fee for the whole batch and tells you
-the amount (`analysis_credits=`). Do not call it again for the same clips.
+the amount (`analysis_credits=`), and lists the music library by tag
+(`music`: name, length, library_id). Do not call it again for the same clips.
 
 ## 3. The plan (`plan`)
 
@@ -79,7 +80,12 @@ over silent shots. Banner
 texts: the shop name for the whole cut at the bottom (`y: 0.76`, size 60),
 and at most two short 花字 (the dish name, the price) on their shots.
 
-BGM: none yet (the licensed library is not ready) — say 「原声」 on the card.
+Music: one track from the `music` list, by type — 探店 / 日常记录 → 美食
+(a quiet tea, coffee or book shop → 轻松), 新品上市 → 欢快, 活动促销 → 动感;
+a 国风 shop (茶馆、老字号、汉服、国潮装修) → 国风 whatever the type; a beauty,
+nail or hair shop → 时尚. Within the tag take the first track at least as long
+as the cut, else the longest (a shorter one repeats). The clips keep their own
+sound; the music sits under it and drops while anyone speaks.
 
 Then **one** `question` card on `plan`, `purpose` review, in plain words:
 
@@ -90,14 +96,16 @@ Then **one** `question` card on `plan`, `purpose` review, in plain words:
 2. ...
 字幕：<共 n 句，例：「今天带大家来巷口面馆」…>
 花字：店名「巷口面馆」；「红烧牛肉面 ¥28」
-声音：原声
+声音：原声 + 配乐「<track name>」（<tag>，说话时自动压低）
 价格：成片 <5|9|…> 积分（素材分析 <analysis_credits> 积分已收）
 ```
 
 The cut price comes from its length: ≤ 60 s 5 积分, ≤ 180 s 9 积分, then +2 for
 each further started minute. State both numbers exactly; they are what the
-bill will show. Options: `就这么剪` / `短一点` / `换个开头` / `custom`. Apply
-changes and show the card again only when the length or the price changed.
+bill will show. Options: `就这么剪` / `短一点` / `换个开头` / `不要配乐` /
+`custom`. 不要配乐 means: compose with no `audio` (the price does not change, so
+no new card). Apply changes and show the card again only when the length or
+the price changed; for 换个配乐 pick another track of the same tag.
 
 ## 4. Compose (`compose`)
 
@@ -109,8 +117,13 @@ The format is below; do not call `action="schema"`. Call `validate` once, then
  "canvas": {"width": 720, "height": 1280, "fps": 25},
  "shots": [{"asset": "<asset_id>", "in_sec": 2.0, "duration_sec": 3.0, "fit": "cover", "volume": 1}],
  "captions": [{"from_sec": 0.2, "to_sec": 2.8, "text": "今天带大家来巷口面馆"}],
- "texts": [{"text": "<店名>", "from_sec": 0.3, "to_sec": <end - 0.2>, "y": 0.76, "style": {"size": 60, "outline": 4}}]}
+ "texts": [{"text": "<店名>", "from_sec": 0.3, "to_sec": <end - 0.2>, "y": 0.76, "style": {"size": 60, "outline": 4}}],
+ "audio": [{"library_id": "<icepublic-… from music>", "volume": 0.35, "duck_under_captions": true,
+            "duck_volume": 0.1, "fade_in_sec": 1, "fade_out_sec": 2}]}
 ```
+
+`style` is an object, not a string. `audio` has no `from_sec`/`to_sec`: the
+music runs the whole cut, repeating or cut to fit.
 
 Caption times are on the cut's timeline (add up the shots before it), not the
 source clip's.

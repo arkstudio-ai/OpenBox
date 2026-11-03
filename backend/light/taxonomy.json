@@ -1,0 +1,55 @@
+{
+  "version": "2026-11-04",
+  "entries": [
+    { "id": "video", "label": "做一条视频" },
+    { "id": "menu", "label": "做菜单" },
+    { "id": "poster", "label": "做海报" },
+    { "id": "footage_edit", "label": "你拍我剪" }
+  ],
+  "industries": [
+    {
+      "id": "food",
+      "label": "餐饮",
+      "shop_types": [
+        { "id": "hotpot", "label": "火锅", "keywords": ["火锅", "串串", "冒菜"] },
+        { "id": "noodle", "label": "面馆 / 粉店", "keywords": ["面", "粉", "米线", "馄饨"] },
+        { "id": "bbq", "label": "烧烤 / 夜宵", "keywords": ["烧烤", "烤串", "夜宵", "龙虾", "烤鱼"] },
+        { "id": "fastfood", "label": "快餐 / 小吃", "keywords": ["快餐", "小吃", "盖饭", "炒饭", "煎饼", "包子"] },
+        { "id": "drink", "label": "奶茶 / 咖啡 / 甜品", "keywords": ["奶茶", "咖啡", "甜品", "蛋糕", "烘焙", "饮品"] },
+        { "id": "restaurant", "label": "正餐 / 家常菜", "keywords": ["餐厅", "饭店", "家常菜", "川菜", "湘菜", "粤菜", "私房菜"] },
+        { "id": "other", "label": "其他餐饮", "keywords": [] }
+      ]
+    },
+    {
+      "id": "beauty",
+      "label": "美业",
+      "shop_types": [
+        { "id": "hair", "label": "理发 / 造型", "keywords": ["理发", "造型", "美发", "烫染", "发廊"] },
+        { "id": "nail", "label": "美甲 / 美睫", "keywords": ["美甲", "美睫", "睫毛", "指甲"] },
+        { "id": "skincare", "label": "美容 / 皮肤管理", "keywords": ["美容", "皮肤", "护肤", "面部", "祛痘"] },
+        { "id": "spa", "label": "按摩 / 足疗 / 养生", "keywords": ["按摩", "足疗", "养生", "推拿", "SPA", "spa"] },
+        { "id": "tattoo", "label": "纹绣 / 纹身", "keywords": ["纹绣", "纹身", "半永久", "眉"] },
+        { "id": "other", "label": "其他美业", "keywords": [] }
+      ]
+    },
+    {
+      "id": "retail",
+      "label": "零售",
+      "shop_types": [
+        { "id": "grocery", "label": "便利店 / 超市", "keywords": ["便利店", "超市", "商店", "小卖部"] },
+        { "id": "fresh", "label": "水果 / 生鲜", "keywords": ["水果", "生鲜", "蔬菜", "肉", "海鲜"] },
+        { "id": "apparel", "label": "服装 / 鞋包", "keywords": ["服装", "女装", "男装", "鞋", "包", "童装"] },
+        { "id": "flower", "label": "花店 / 礼品", "keywords": ["花", "礼品", "鲜花"] },
+        { "id": "pet", "label": "宠物", "keywords": ["宠物", "猫", "狗", "宠"] },
+        { "id": "other", "label": "其他零售", "keywords": [] }
+      ]
+    },
+    {
+      "id": "other",
+      "label": "其他",
+      "shop_types": [
+        { "id": "other", "label": "其他", "keywords": [] }
+      ]
+    }
+  ]
+}

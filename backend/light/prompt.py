@@ -8,6 +8,7 @@ the provider prompt cache warm across turns.
 from __future__ import annotations
 
 from light.entries import light_entries
+from light.examples import examples_fragment
 from light.mode import ui_mode
 
 LIGHT_MODE_TEXT = (
@@ -68,4 +69,5 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     shop = await shop_fragment(user_id)
     if shop:
         parts.append(shop)
+    parts.extend(filter(None, [await examples_fragment(user_id, session)]))  # 参考样例 (light/examples.py)
     return "\n".join(parts)

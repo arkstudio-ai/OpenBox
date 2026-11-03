@@ -560,6 +560,8 @@ def create_app() -> FastAPI:
     application.include_router(inbox_router)
     application.include_router(topics_router)  # No auth — published topics are shareable
     application.include_router(admin_messages_router)
+    from api.admin_examples import router as admin_examples_router
+    application.include_router(admin_examples_router)  # Light 参考样例库
     application.include_router(douyin_webhook_router)  # No auth — signed by the platform
 
     # ── Agent routes ──

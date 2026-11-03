@@ -140,13 +140,23 @@ export function TrajectoryTurnPage({
               })}
             </p>
           </div>
-          <Link
-            to={proHref(null)}
-            className="bg-ink text-bg inline-flex flex-none items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium"
-          >
-            {t("lite.turn.technicalDetails")}
-            <ExternalLink size={12} aria-hidden />
-          </Link>
+          <div className="flex flex-none flex-wrap items-center gap-2">
+            {/* The library page owns the collect sheet (features never import each other). */}
+            <Link
+              to={paths.adminExamples(`collect=${encodeURIComponent(sessionId)}`)}
+              className="border-hair hover:bg-hairsoft inline-flex items-center rounded-full border px-3.5 py-1.5 text-xs font-medium"
+              data-testid="lite-collect-example"
+            >
+              {t("lite.turn.collectExample")}
+            </Link>
+            <Link
+              to={proHref(null)}
+              className="bg-ink text-bg inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium"
+            >
+              {t("lite.turn.technicalDetails")}
+              <ExternalLink size={12} aria-hidden />
+            </Link>
+          </div>
         </div>
         <dl className="border-hair text-n800 flex flex-wrap gap-x-7 gap-y-2 border-t pt-3 text-xs">
           <div className="flex flex-col">

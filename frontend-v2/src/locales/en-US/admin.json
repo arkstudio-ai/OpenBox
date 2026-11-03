@@ -58,6 +58,7 @@
     "skills": "Skills",
     "billing": "Subscriptions",
     "trajectories": "Trajectories",
+    "examples": "Examples",
     "notifications": "Notifications",
     "messages": "Messages",
     "pricing": "Pricing"
@@ -78,6 +79,10 @@
     "trajectories": {
       "title": "Session trajectories",
       "subtitle": "Monitor and replay recorded agent sessions across all users and workspaces — read only."
+    },
+    "examples": {
+      "title": "Reference examples",
+      "subtitle": "Approved work filed by entry, industry and shop type; the AI follows matching examples when it makes new ones."
     },
     "notifications": {
       "title": "Notification tests",

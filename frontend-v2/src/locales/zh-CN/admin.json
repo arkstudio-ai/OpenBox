@@ -58,6 +58,7 @@
     "skills": "技能管理",
     "billing": "订阅管理",
     "trajectories": "轨迹监控",
+    "examples": "样例库",
     "notifications": "通知测试",
     "messages": "消息通知",
     "pricing": "模型定价"
@@ -78,6 +79,10 @@
     "trajectories": {
       "title": "会话轨迹监控",
       "subtitle": "跨全部用户与工作区查看、回放已记录的 Agent 会话，只读。"
+    },
+    "examples": {
+      "title": "参考样例库",
+      "subtitle": "创作团队认可的产出，按入口、行业、门店类型收录；AI 制作时照着同类样例做。"
     },
     "notifications": {
       "title": "通知测试",

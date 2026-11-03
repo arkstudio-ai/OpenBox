@@ -426,3 +426,5 @@ App：`mobile/assets/locales`（与 Web 逐字节镜像）、`mobile/lib/feature
 ### 13.3 实施记录
 
 **2026-11-03，分支 `feat/call-sheet`**：删掉 `VoiceCallPage`（含 `VoiceCardPanel`、`VoiceOrb`）、`VoiceConversationCard` 和 `AssistantRequests` 的 deck 模式；`/app/voice` 只重定向到助理页。`VoiceCallHost` 改成 Stack：通话中顶部始终是 `VoiceCallBanner`（新增展开/收起箭头，点细条切换 `expanded`），`expanded` 时细条下落下 `VoiceCallSheet`（屏高一半、磨砂半透明、盖在页面上不推内容）：对话记录（`VoiceLine.room` 由 reducer 按收到时的 `focus.bound` 打标，部分更新保留首次标记；标签 = 助理名 / "我" / "帮手"）、三个圆钮、本次消耗、底部拉手；通话结束时同一面板显示结束小结，关掉即清。电话按钮 `openVoiceCall` 原地拨号并展开，不再跳页。"盯现场"开关搬到 `voice_call_sheet.dart` 的 `VoiceRoomSwitch`，经 `shared/widgets/task_card_extra.dart` 的 `taskCardExtraProvider` 在 `main.dart` 注入，`AssistantTaskCard` 在 meta 行下渲染（只在通话中且是 `focus` 任务时出现）。文案：`transcript.you` 改"我"、新增 `transcript.helper`、删 `cards.*`（两端镜像）。测试：新 `voice_call_sheet_test`（原地拨号出面板、左右对齐与帮手标签、上划收起/细条展开/拉手、挂断小结关掉即清、开关只在焦点任务且发 `room`）；host/banner/button 测试改为面板语义；删 page/card panel/deck/conversation card 四个测试文件。坑：面板对页面是 opaque 命中，测试里要先收起才能点到底下的卡；`assistantLabel` 默认是"个人助理"不是"助理"。
+
+- 11-03 补：底部的大圆钮（静音·挂断·扬声器）与通话条上的静音/挂断重复，已去掉。表单底只剩一行：左边本次消耗，右边通话条没有的那一个——扬声器/听筒切换；被打断暂停时换成「恢复通话」。

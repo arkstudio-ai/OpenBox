@@ -166,7 +166,12 @@ void main() {
       final rig = VoiceRig();
       await _app(tester, rig);
       await _dialAndConnect(tester, rig);
-      await tester.tap(find.byKey(const Key('voice-hang-up')));
+      // Mute and hang-up live on the bar only; the sheet's foot has the
+      // speaker switch and the cost line.
+      expect(find.byKey(const Key('voice-hang-up')), findsNothing);
+      expect(find.byKey(const Key('voice-mute')), findsNothing);
+      expect(find.byKey(const Key('voice-speaker')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('voice-banner-hang-up')));
       await _settle(tester);
       rig.connector.last.event({
         'type': 'ended',

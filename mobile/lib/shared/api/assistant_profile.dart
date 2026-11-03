@@ -21,6 +21,7 @@ class IntroProgress {
     this.status = 'new',
     this.steps = const {},
     this.nudged = false,
+    this.tourSeen = true,
   });
 
   static const statuses = ['new', 'started', 'done', 'dismissed', 'bypassed'];
@@ -35,6 +36,9 @@ class IntroProgress {
   /// The one reminder after going straight to work was shown.
   final bool nudged;
 
+  /// The four-step "how we work together" tour was shown (once across the apps).
+  final bool tourSeen;
+
   factory IntroProgress.fromJson(Object? raw) {
     final value = asMap(raw);
     final status = asString(value['status']);
@@ -47,6 +51,8 @@ class IntroProgress {
             entry.key: entry.value as String,
       },
       nudged: value['nudged'] == true,
+      // Absent on older servers and fixtures: never pop the tour on their account.
+      tourSeen: !value.containsKey('tour_seen') || value['tour_seen'] == true,
     );
   }
 }

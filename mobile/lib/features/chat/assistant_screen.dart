@@ -26,6 +26,7 @@ import 'widgets/assistant_notification_target.dart';
 import 'widgets/assistant_persona_turn.dart';
 import 'widgets/assistant_requests.dart';
 import 'widgets/assistant_tasks.dart';
+import 'widgets/assistant_tour.dart';
 import 'widgets/assistant_welcome.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
@@ -283,6 +284,7 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               ),
             ),
           ),
+        const AssistantTourAutoOpen(),
         AssistantIntroEntry(
           // Settled after an answer: the person's own words alone are not
           // yet a quiet moment.

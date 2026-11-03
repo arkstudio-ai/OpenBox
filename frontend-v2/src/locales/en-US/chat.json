@@ -919,6 +919,32 @@
       "pendingCount": "Needs you {{count}}",
       "chain": "Round {{count}}",
       "stale": "Failed over a day ago; consider unfollowing"
+    },
+    "tour": {
+      "title": "How we work together",
+      "button": "How it works",
+      "skip": "Skip",
+      "next": "Next",
+      "done": "Got it",
+      "position": "{{index}} / {{count}}",
+      "steps": {
+        "talk": {
+          "title": "You only talk to me",
+          "body": "Tell me what to do, change or stop, by text or by call."
+        },
+        "card": {
+          "title": "I open a task card and send a helper",
+          "body": "Each job gets a card with who is on it and how far it is. I pick the tier and the project myself."
+        },
+        "site": {
+          "title": "Tap the card to see the work",
+          "body": "At the work you see each step the helper takes and can add requests there; “Back to the assistant” brings you back."
+        },
+        "report": {
+          "title": "I report when it is done",
+          "body": "When the helper finishes or gets stuck, I tell you at once; results stay on the card."
+        }
+      }
     }
   },
   "room": {

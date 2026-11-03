@@ -155,6 +155,8 @@ def intro_from_extra(extra: dict | None) -> dict:
                   if step in INTRO_STEPS and result in ("answered", "skipped")},
         "nudged": stored.get("nudged") is True,
         "call_asked": stored.get("call_asked") is True,
+        # The four-step "how we work together" tour (VOICE_SEAM_PLAN §12.6): shown once across the apps.
+        "tour_seen": stored.get("tour_seen") is True,
     }
 
 
@@ -292,6 +294,11 @@ async def intro_event(user_id: str, event: str, step: str | None = None, value=N
     ``nudged`` records that the one reminder after a bypass was shown. Answering every question that
     is still undecided, in any order and from any entry, completes it.
     """
+    if event == "tour":
+        def seen(profile, decided, intro):
+            return profile, decided, {**intro, "tour_seen": True}
+        _, _, current = await _write(user_id, seen)
+        return current
     if event not in INTRO_EVENTS or (event in ("answer", "skip")) != (step in INTRO_STEPS):
         raise ValueError("ASSISTANT_PROFILE_INVALID")
     patch = {step: value} if event == "answer" else {}

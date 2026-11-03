@@ -42,6 +42,8 @@ export interface AssistantIntro {
   steps: Partial<Record<IntroStep, "answered" | "skipped">>
   /** The one reminder after going straight to work was shown. */
   nudged: boolean
+  /** The four-step "how we work together" tour was shown (once across the apps). */
+  tourSeen: boolean
 }
 
 export interface AssistantMeta {
@@ -52,7 +54,7 @@ export interface AssistantMeta {
 
 export const DEFAULT_ASSISTANT_META: AssistantMeta = {
   decided: {},
-  intro: { status: "new", steps: {}, nudged: false },
+  intro: { status: "new", steps: {}, nudged: false, tourSeen: true },
 }
 
 export const DEFAULT_ASSISTANT_PROFILE: AssistantProfile = {
@@ -132,6 +134,8 @@ export function readAssistantMeta(decidedRaw: unknown, introRaw: unknown): Assis
       status: INTRO_STATUSES.includes(intro.status as IntroStatus) ? (intro.status as IntroStatus) : "new",
       steps,
       nudged: intro.nudged === true,
+      // Absent on older servers and fixtures: never pop the tour on their account.
+      tourSeen: intro.tour_seen === undefined ? true : intro.tour_seen === true,
     },
   }
 }

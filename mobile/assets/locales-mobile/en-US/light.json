@@ -1,7 +1,7 @@
 {
   "tabs": {
     "home": "Home",
-    "chat": "Chat",
+    "assistant": "Assistant",
     "inbox": "Inbox",
     "me": "Me"
   },
@@ -98,14 +98,6 @@
     "task": "delegating a task",
     "working": "working"
   },
-  "conversations": {
-    "assistant": "Assistant",
-    "all": "All chats",
-    "empty": "No chats yet. Pick something on the home tab, or just talk to the assistant.",
-    "untitled": "Untitled chat",
-    "watched": "Assistant following",
-    "topic": "Topic"
-  },
   "me": {
     "title": "Me",
     "billing": "Plans & credits",
@@ -187,5 +179,8 @@
     "cancelTitle": "Stop doing this?",
     "cancelBody": "Nothing more is made on schedule; what was made stays.",
     "banner": "Running for you"
+  },
+  "conversations": {
+    "untitled": "Untitled chat"
   }
 }

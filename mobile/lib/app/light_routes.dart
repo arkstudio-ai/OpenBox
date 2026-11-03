@@ -10,8 +10,8 @@ import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/inbox/api/inbox_api.dart';
 import '../features/inbox/inbox_screen.dart';
+import '../features/light/assistant_tab.dart';
 import '../features/light/autopilot_page.dart';
-import '../features/light/conversations_tab.dart';
 import '../features/light/home_screen.dart';
 import '../features/light/me_screen.dart';
 import '../features/light/topic_chat_screen.dart';
@@ -122,7 +122,7 @@ class _LightShellHost extends ConsumerWidget {
   }
 }
 
-/// 「对话」: the personal assistant with its voice and task buttons, as the
+/// 「助理」: the personal assistant with its voice and task buttons, as the
 /// pro `_AssistantRoute` wires it, minus the workspace shell.
 class _LightAssistantTab extends ConsumerWidget {
   const _LightAssistantTab({
@@ -142,7 +142,7 @@ class _LightAssistantTab extends ConsumerWidget {
     final scope = ref.watch(assistantScopeProvider);
     final voiceEnabled =
         ref.watch(appConfigProvider).valueOrNull?.voiceEnabled ?? false;
-    return LightConversationsTab(
+    return LightAssistantTab(
       title: assistantLabel(ref),
       actions: [
         if (scope != null) VoiceCallButton(enabled: voiceEnabled),

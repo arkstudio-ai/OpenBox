@@ -119,7 +119,7 @@
 | T3 内嵌版页面 | `InboxScreen`（`inbox_screen.dart:123`）、`SettingsScreen`、`AssistantScreen`（`assistant_screen.dart:39`）加 `embedded: true`：去掉自己的 AppBar 返回键，body 复用 | — |
 | T4 首页 | `features/light/widgets/home_screen.dart` + `entry_card.dart` + `recent_groups.dart`：顶部店名（`assistant_profile.business`，M4 后读 `stores`）与积分（`/api/billing` 余额，点进 `/app/billing`）；入口卡渲染 `GET /api/light/entries`，`availability≠ok` 画灰卡并跳订购/云电脑；黑色横幅「省心托管」→ 托管列表（M2.5 前先指向 `/app/cron`）；「最近做的」用 L8；底部固定输入条 → `/assistant` | 新文件，避开 800 行 |
 | T5 对话专题页 | `features/light/topic_chat_screen.dart`：样片画廊页（`entry.sample_media` 子类切换 → 「就做这种」→ `POST /api/light/start`）；对话页复用 `ChatScreen` 内核（`chat_screen.dart:116` rows、`:230` ChatFlow、`QuestionDock`），加顶部步骤条（`entry.steps` + `QuestionItem.detail.light.step_id` 点亮）；Light 卡皮肤：`question_dock.dart:391` 按 `detail.light` 分支走大芯片卡；工具轨迹折叠一行（`tool_chain_trace.dart:38` summary + 简明模式字典）；上下文输入条 `light_input_bar.dart`（当前步骤芯片 + 文本 + 相机/相册），`composer.dart` 788 行不再加代码 | — |
-| T6 「对话」tab | 内嵌 `AssistantScreen`；列表合并：个人助理会话（`/api/assistant/sessions`）与专题页创建的 normal 会话（`workspace_api.dart:74`）同列，按时间排 | §9 第 6 条 |
+| T6 「助理」tab（原「对话」） | 内嵌 `AssistantScreen`。**2026-11-04 用户拍板**：Light 全部交给助理，去掉「助理 / 全部对话」分段与合并列表（专题会话从首页「最近做的」进），tab 改名「助理」、图标换成助理页的星标（`assistant_tab.dart`） | §9 第 6 条 |
 | T7 「我的」tab | 订购、授权中心、云电脑、资源、设置入口 + `UserRow`；复用现有页面（push 到根导航器） | `user_row.dart:16` |
 | T8 测试与门禁 | tab 壳路由测试、首页灰卡渲染、专题页步骤条点亮、`ui_mode` 切换后 pro 界面与今天一致（`workspace_shell_test.dart` 不改）；`check_file_size.sh`、`check_locales.sh` | — |
 

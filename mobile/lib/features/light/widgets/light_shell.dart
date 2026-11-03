@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
 
-/// The four tabs of Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): 首页 / 对话 /
+/// The four tabs of Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): 首页 / 助理 /
 /// 消息 / 我的 on a `StatefulShellRoute`, each branch keeping its own state.
 /// The app layer supplies the badge counts; this widget only draws the bar.
 ///
@@ -67,15 +67,17 @@ class LightShell extends ConsumerWidget {
                     label: i18n.t('light:tabs.home'),
                   ),
                   NavigationDestination(
+                    // The same spark the assistant page greets with, so the
+                    // tab and the page read as one thing.
                     icon: badged(
-                      const Icon(Icons.chat_bubble_outline),
+                      const Icon(Icons.auto_awesome_outlined),
                       assistantUnread,
                     ),
                     selectedIcon: badged(
-                      const Icon(Icons.chat_bubble),
+                      const Icon(Icons.auto_awesome),
                       assistantUnread,
                     ),
-                    label: i18n.t('light:tabs.chat'),
+                    label: i18n.t('light:tabs.assistant'),
                   ),
                   NavigationDestination(
                     icon: badged(

@@ -1,7 +1,7 @@
 {
   "tabs": {
     "home": "首页",
-    "chat": "对话",
+    "assistant": "助理",
     "inbox": "消息",
     "me": "我的"
   },
@@ -96,14 +96,6 @@
     "task": "分派子任务",
     "working": "处理中"
   },
-  "conversations": {
-    "assistant": "助理",
-    "all": "全部对话",
-    "empty": "还没有对话。从首页挑一件事开始，或者直接和助理说。",
-    "untitled": "未命名对话",
-    "watched": "助理在跟",
-    "topic": "专题"
-  },
   "me": {
     "title": "我的",
     "billing": "订购与积分",
@@ -185,5 +177,8 @@
     "cancelTitle": "不再托管这件事？",
     "cancelBody": "取消后到点不会再做，已经做好的不受影响。",
     "banner": "省心托管"
+  },
+  "conversations": {
+    "untitled": "未命名对话"
   }
 }

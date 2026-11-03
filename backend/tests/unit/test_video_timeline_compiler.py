@@ -263,3 +263,22 @@ def test_spoken_preset_matches_the_verified_spike_layout():
 def test_timeline_rejects_unknown_fields_so_agents_cannot_smuggle_ims_keys():
     with pytest.raises(ValidationError):
         Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4", "AdaptMode": "Cover"}]})
+
+
+def test_a_nested_object_sent_as_json_text_is_read_as_the_object():
+    # Seen on light-test 2026-11-03: the model sent every banner style as a JSON string.
+    timeline = Timeline.model_validate({
+        "shots": [{"asset": f"{B}/a.mp4", "duration_sec": 3, "transition_out": '{"type": "fade", "seconds": 0.4}'},
+                  {"asset": f"{B}/b.mp4", "duration_sec": 3}],
+        "caption_style": '{"bottom_ratio": 0.12}',
+        "texts": [{"text": "巷口面馆", "from_sec": 0.3, "to_sec": 5, "y": 0.76, "style": '{"size": 60, "outline": 4}'}],
+    })
+    assert (timeline.texts[0].style.size, timeline.texts[0].style.outline) == (60, 4)
+    assert timeline.shots[0].transition_out.seconds == 0.4
+    assert timeline.caption_style.bottom_ratio == 0.12
+    with pytest.raises(ValidationError):
+        Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4"}],
+                                 "texts": [{"text": "a", "from_sec": 0, "to_sec": 1, "y": 0.5, "style": "big"}]})
+    with pytest.raises(ValidationError):
+        Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4"}],
+                                 "texts": [{"text": "a", "from_sec": 0, "to_sec": 1, "y": 0.5, "style": '{"AdaptMode": 1}'}]})

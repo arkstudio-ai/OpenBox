@@ -12,9 +12,29 @@ them spelled out).
 """
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Annotated, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+_M = TypeVar("_M")
+
+
+def _object_from_text(value):
+    """A nested object sent as JSON text (``"style": "{...}"``), read as the object.
+
+    Tool-calling models do this now and then; on light-test (2026-11-03) it cost a
+    你拍我剪 cut three rejected validations and a schema lookup before it went out."""
+    if isinstance(value, str) and value.lstrip().startswith("{"):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+#: A nested object field that also accepts its JSON text.
+Nested = Annotated[_M, BeforeValidator(_object_from_text)]
 
 class Canvas(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,7 +64,7 @@ class Shot(BaseModel):
     #: How the source fills the canvas. ``cover`` crops, ``contain`` letterboxes
     #: (black bars, on purpose), ``fill`` stretches.
     fit: Literal["cover", "contain", "fill"] = "cover"
-    transition_out: Transition | None = None
+    transition_out: Nested[Transition | None] = None
     #: The clip's own sound: 1 keeps it as recorded, 0 mutes it (an image has none).
     volume: float = Field(default=1.0, ge=0, le=2)
 
@@ -88,8 +108,8 @@ class TextClip(BaseModel):
     y: float = Field(ge=0.0, le=1.0)
     #: Wrap width as a canvas fraction.
     max_width: float = Field(default=0.88, gt=0, le=1.0)
-    style: TextStyle = Field(default_factory=TextStyle)
-    motion: Motion = Field(default_factory=Motion)
+    style: Nested[TextStyle] = Field(default_factory=TextStyle)
+    motion: Nested[Motion] = Field(default_factory=Motion)
 
     @model_validator(mode="after")
     def _ordered(self) -> "TextClip":
@@ -145,18 +165,18 @@ class CaptionStyle(BaseModel):
     #: Distance from the canvas bottom to the caption's baseline area.
     bottom_ratio: float = Field(default=0.095, ge=0, le=0.5)
     max_width: float = Field(default=0.88, gt=0, le=1.0)
-    style: TextStyle = Field(default_factory=TextStyle)
-    motion: Motion = Field(default_factory=lambda: Motion(in_effect="zoomin_in", in_sec=0.15))
+    style: Nested[TextStyle] = Field(default_factory=TextStyle)
+    motion: Nested[Motion] = Field(default_factory=lambda: Motion(in_effect="zoomin_in", in_sec=0.15))
 
 
 class Timeline(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1] = 1
-    canvas: Canvas = Field(default_factory=Canvas)
+    canvas: Nested[Canvas] = Field(default_factory=Canvas)
     shots: list[Shot] = Field(min_length=1)
     captions: list[Cue] = Field(default_factory=list)
-    caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
+    caption_style: Nested[CaptionStyle] = Field(default_factory=CaptionStyle)
     texts: list[TextClip] = Field(default_factory=list)
     audio: list[AudioClip] = Field(default_factory=list, max_length=4)
 

@@ -3,6 +3,8 @@
 #
 #   deploy/light-test/scripts/release.sh [ref]          # default HEAD
 #   deploy/light-test/scripts/release.sh --ship <tag>   # re-run the machine side for an already built tag
+#   deploy/light-test/scripts/release.sh --build-only [ref]  # build and stage only; ship later with --ship
+#                                                        # (the ship restarts the backend: wait until no one is mid-turn)
 #
 # Steps (README「发布」): git archive → docker buildx linux/amd64 → docker save | gzip -1 →
 # oss://bossip/_deploy-tmp/<tag>/ → signed links → on the machine: curl + sha256sum -c +
@@ -17,6 +19,8 @@ ROOT=$(git -C "$HERE" rev-parse --show-toplevel)
 BUCKET=oss://bossip/_deploy-tmp
 ENDPOINT=oss-cn-shanghai.aliyuncs.com
 
+BUILD_ONLY=
+if [ "${1:-}" = "--build-only" ]; then BUILD_ONLY=1; shift; fi
 if [ "${1:-}" = "--ship" ]; then
   TAG=${2:?usage: release.sh --ship <tag>}
 else
@@ -46,6 +50,7 @@ if [ "${1:-}" != "--ship" ]; then
     aliyun oss cp "$WORK/out/$f" "$BUCKET/$TAG/$f" --endpoint "$ENDPOINT" \
       --parallel 4 --part-size 8388608 --force 2>&1 | tail -1
   done
+  [ -z "$BUILD_ONLY" ] || { echo "[release] staged $TAG; ship with: release.sh --ship $TAG"; exit 0; }
 fi
 
 sign() {

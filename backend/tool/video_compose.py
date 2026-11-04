@@ -162,13 +162,20 @@ async def _execute_schema() -> ToolResult:
         "shots[].asset: an asset_id you own (from video_generate or share_file), or your own oss:// / OSS https object",
         "shots[].fit: cover (default, crops to fill) | contain (black bars) | fill (stretch); a landscape clip on a portrait canvas with cover is centre-cropped",
         "shots[].volume: the clip's own recorded sound, 1 as recorded (default), 0 muted",
+        "shots[].speed: 0.25–4; in_sec/duration_sec stay source times, the shot plays duration_sec/speed on the timeline (0.5 = slow motion, 2 = twice as fast); caption and text times are on the timeline after speed",
+        "shots[].move: a slow camera move — {\"preset\": zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down} or {\"start\": [x,y,w,h], \"end\": [x,y,w,h]} windows of the source frame; use on static or reveal shots, never on every shot",
+        "shots[].filter / filter: a colour preset on one shot or the whole cut; shots[].backdrop=blur with fit=contain puts the same clip, blurred and filling the canvas, behind a landscape clip instead of black bars",
+        "overlays[]: picture-in-picture or a logo over the main picture — asset, from_sec, to_sec, in_sec, x, y, width, height (canvas fractions), opacity, volume (muted by default); each on its own track",
+        "audio[].voiceover: narration spoken by the renderer's AI voice from text — {\"text\", \"voice\", \"speech_rate\", \"pitch_rate\"}; place it with from_sec/to_sec (the voice needs about 0.3 s per character), volume 1; a bed with duck_under_voice=true drops while it speaks",
         "audio[]: optional sound beds (BGM, voice-over) on their own tracks: asset or library_id (a music-library track, icepublic-…), from_sec, to_sec, in_sec, volume (default 0.3), fade_in_sec, fade_out_sec, duck_under_captions + duck_volume (lower the bed while captions show); a library track shorter than its span repeats, a longer one is cut",
         "transition_out sits on the shot it leads out of and overlaps the next shot",
         "texts[].align=center ignores x; y is the top edge of the text box",
         "captions render bottom-centred at caption_style.bottom_ratio, one track, non-overlapping",
         "output is 25fps regardless of source fps",
         f"verified transitions: {sorted(cat.VERIFIED_TRANSITIONS)}; motion-in: {sorted(cat.VERIFIED_MOTION_IN)}; "
-        f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}",
+        f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}; "
+        f"filters: {sorted(cat.VERIFIED_FILTERS)}; moves: {sorted(cat.VERIFIED_MOVES)}; 花字 styles: {sorted(cat.VERIFIED_COLOR_STYLES)}; "
+        f"voices: {sorted(cat.VERIFIED_VOICES)} (all listed voices: {', '.join(f'{k}={v}' for k, v in cat.KNOWN_VOICES.items())})",
         "other documented values compile with a warning; unknown values are refused before submission",
         "use action=validate before action=submit; review the timeline content and warnings, without a pricing comparison or fee card",
     ]

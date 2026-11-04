@@ -85,9 +85,28 @@ Rules for picking:
   has a usable segment at least once — the owner shot them to see them. Do
   not stretch shots to reach a length; a cut of 25 good seconds beats 45
   padded ones.
-- Transitions: `fade` only (the one verified), and only at the two structure
-  joints — into the 成果 / 高潮 section and into the closing card — as
-  `transition_out` on the shot before, 0.4–0.6 s. Never between every shot.
+- Transitions: only at the two structure joints — into the 成果 / 高潮
+  section and into the closing card — as `transition_out: {"type": "fade",
+  "seconds": 0.5}` on the shot before (`wiperight` and `perlin` are verified
+  too; use one of them at most once). Never between every shot.
+- Tempo and camera: the 成果 / 亮相 / 吃的瞬间 shot may run at `speed: 0.5`
+  (slow motion; its timeline length doubles) and a long process step at
+  `speed: 1.5–2`; a static shot gets `"move": {"preset": "zoom_in"}`. One or
+  two such shots per cut, never all of them. Caption and text times are on
+  the timeline after speed.
+- Landscape clips: `fit: "contain"` + `backdrop: "blur"` keeps the whole
+  frame with a blurred copy behind it; `cover` centre-crops. Use contain+blur
+  when the subject is not in the middle or the shot is wide (a stage, a
+  crowd), cover when it is a close-up.
+- Colour: one `filter` for the whole cut when the clips do not match —
+  `warm` for food and evening shots, `m7` (灰橙) for a calmer, product look.
+  Never a different filter per shot.
+- Narration: only when the owner picked 加旁白 on the plan card. Then write
+  a script of 2–4 short lines (≤ 20 characters each, one idea per line, the
+  shop name once), place each as `audio[].voiceover` over its shots with
+  about 0.3 s per character of room, `voice: "zhiyuan"` (the verified one),
+  `volume: 1`, and set `duck_under_voice: true` on the music. Captions still
+  carry the same words.
 
 Captions — every shot says something to the viewer, with or without speech:
 
@@ -131,14 +150,15 @@ Then **one** `question` card on `plan`, `purpose` review, in plain words:
 收尾：<成果或最暖的一镜>，卡上写店名「巷口面馆」+「<地址/电话/价格/一句承诺>」
 字幕：<共 n 句（口播 n 句 + 动作字幕 n 句），例：「先把石子一颗颗挑出来」…>
 花字：店名「巷口面馆」（开场与收尾）；「红烧牛肉面 ¥28」
-声音：原声 + 配乐「<track name>」（<tag>，说话时自动压低）
+声音：原声 + 配乐「<track name>」（<tag>，说话时自动压低）<；旁白：知媛，n 句，只在老板点了 加旁白 之后>
 价格：成片 <5|9|…> 积分（素材分析 <analysis_credits> 积分已收）
 ```
 
 The cut price comes from its length: ≤ 60 s 5 积分, ≤ 180 s 9 积分, then +2 for
 each further started minute. State both numbers exactly; they are what the
 bill will show. Options: `就这么剪` / `短一点` / `换个开头` / `不要配乐` /
-`custom`. 不要配乐 means: compose with no `audio` (the price does not change, so
+`加旁白` / `custom`. 加旁白 adds an AI narration (Narration above; the price
+does not change) and shows the card again with the script lines. 不要配乐 means: compose with no `audio` (the price does not change, so
 no new card). Apply changes and show the card again only when the length or
 the price changed; for 换个配乐 pick another track of the same tag.
 
@@ -151,7 +171,9 @@ and refuses an invalid one with the reason; fix that and submit again:
 ```json
 {"version": 1,
  "canvas": {"width": 720, "height": 1280, "fps": 25},
- "shots": [{"asset": "<asset_id>", "in_sec": 2.0, "duration_sec": 3.0, "fit": "cover", "volume": 1},
+ "shots": [{"asset": "<asset_id>", "in_sec": 2.0, "duration_sec": 3.0, "fit": "cover", "volume": 1, "move": {"preset": "zoom_in"}},
+           {"asset": "<asset_id>", "in_sec": 0.0, "duration_sec": 4.0, "fit": "contain", "backdrop": "blur", "volume": 1},
+           {"asset": "<asset_id>", "in_sec": 5.0, "duration_sec": 3.0, "fit": "cover", "volume": 1, "speed": 0.5},
            {"asset": "<asset_id>", "in_sec": 5.0, "duration_sec": 4.5, "fit": "cover", "volume": 1,
             "transition_out": {"type": "fade", "seconds": 0.5}}],
  "captions": [{"from_sec": 0.2, "to_sec": 2.8, "text": "轮毂多久没洗了？"},
@@ -159,8 +181,10 @@ and refuses an invalid one with the reason; fix that and submit again:
  "texts": [{"text": "<店名>", "from_sec": 0.3, "to_sec": 3.0, "y": 0.76, "style": {"size": 60, "outline": 4}, "motion": {"in_effect": "slide_down_in"}},
            {"text": "<店名>", "from_sec": <end - 3>, "to_sec": <end - 0.2>, "y": 0.76, "style": {"size": 60, "outline": 4}},
            {"text": "<地址或一句承诺>", "from_sec": <end - 3>, "to_sec": <end - 0.2>, "y": 0.84, "style": {"size": 40, "outline": 3}}],
+ "filter": "warm",
  "audio": [{"library_id": "<icepublic-… from music>", "volume": 0.35, "duck_under_captions": true,
-            "duck_volume": 0.1, "fade_in_sec": 1, "fade_out_sec": 2}]}
+            "duck_under_voice": true, "duck_volume": 0.1, "fade_in_sec": 1, "fade_out_sec": 2},
+           {"voiceover": {"text": "轮毂多久没洗了？三分钟还你新轮毂。", "voice": "zhiyuan"}, "from_sec": 0.5, "to_sec": 6.0, "volume": 1}]}
 ```
 
 `style` is an object, not a string. `audio` has no `from_sec`/`to_sec`: the

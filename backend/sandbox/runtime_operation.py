@@ -138,6 +138,31 @@ async def runtime_context(sandbox, lease):
     return run, resource, context["journal_id"], project_id, event_id
 
 
+def definitive_rejection(stage, exc):
+    """A complete desktop answer that settles a preparation stage without work.
+
+    ``release`` at the end of a run whose task never began on this desktop
+    (a turn without tool execution, or a desktop that already holds a newer
+    generation) is answered with ``409 CACHE_TASK_FENCE_CHANGED``. That is a
+    read response, not a lost request: nothing of this run exists to release,
+    so the stage succeeded with ``released=False`` instead of parking the
+    effect in manual review every text-only turn.
+    """
+    import httpx
+    if stage != "cache_release" or not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    response = exc.response
+    if response is None or response.status_code != 409:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    if detail != "CACHE_TASK_FENCE_CHANGED":
+        return None
+    return {"released": False, "reason": detail}
+
+
 async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None, payload, operation,
                                 before_request=None):
     """Run fixed preparation once, retaining success or uncertainty durably.
@@ -212,6 +237,11 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
         return result
     except BaseException as exc:
         bound.closed = True
+        definitive = definitive_rejection(stage, exc)
+        if definitive is not None and not bound.active_clients:
+            receipt = {"result": definitive, "remote_exclusivity_verified": False}
+            await effects.settle_effect(claim, state="succeeded", receipt=receipt)
+            return definitive
         # Keep transport/adapter causes observable without logging commands,
         # credentials, signed URLs or provider response bodies.
         from core.log import create_logger

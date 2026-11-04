@@ -299,6 +299,50 @@ async def test_a_finished_footage_cut_is_delivered_without_an_agent_turn():
     assert fresh.attached_message_id and fresh.attached_message_id in {m.id for m in messages}
 
 
+async def test_a_delivered_cut_leaves_the_conversation_loadable_after_an_agent_turn():
+    """2026-11-04 QWH: the owner's 「就这么剪」 ran an agent turn; the cut was delivered under it as a bare
+    assistant message, and every later turn failed to load (assistant tail has no User turn anchor)."""
+    from agent.driver import reserve_run
+    from session.agent_event_log import load_canonical_model_surface
+    from session.session import create_user_message
+    from video import compose_recovery as cr
+    user, session, ids = await _owner_with_clips([15], audio=[False])
+    lease = await reserve_run(session.id, user["id"])
+    try:
+        await create_user_message(session_id=session.id, text="就这么剪", agent="build", model=None, user_id=user["id"],
+                                  run_fence=(session.id, lease.run_id, lease.generation))
+    finally:
+        await lease.release(session_status="idle")
+    now = datetime.now(timezone.utc)
+    out = "asset_" + uuid4().hex[:20]
+    async with get_db_session() as db:
+        db.add(FileAsset(id=out, user_id=user["id"], workspace_id=user["default_workspace_id"], session_id=session.id,
+                         name="cut.mp4", oss_key=f"assets/{user['id']}/cut.mp4", mime="video/mp4", size=1,
+                         status="ready", created_at=now))
+        from db.models.video_job import VideoJob
+        job = VideoJob(id="video_" + uuid4().hex[:20], user_id=user["id"], session_id=session.id, kind="compose",
+                       idempotency_key="cut:2", request_hash="h", status="completed", model="ims", output_asset_id=out,
+                       request_data={}, result_data={}, attempt=1, created_at=now, updated_at=now, completed_at=now)
+        db.add(job)
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, job.id)
+    assert await cr.deliver(job) is True
+    # The owner's next line starts a run; the loop loads the surface under that run's fence,
+    # repairing the tail, exactly where the orphaned delivery used to fail.
+    again = await create_user_message(session_id=session.id, text="再做一条，换个样子", agent="build", model=None,
+                                      user_id=user["id"])
+    lease = await reserve_run(session.id, user["id"], trigger_message_id=again.id)
+    try:
+        surface = await load_canonical_model_surface(
+            session.id, user_id=user["id"], run_fence=(session.id, lease.run_id, lease.generation))
+    finally:
+        await lease.release(session_status="idle")
+    ids = [m.id for m in surface.messages]
+    async with get_db_session() as db:
+        fresh = await db.get(VideoJob, job.id)
+    assert fresh.attached_message_id in ids and again.id in ids
+
+
 async def test_a_watched_cut_wakes_its_chat_once_it_settles(monkeypatch):
     from types import SimpleNamespace
 

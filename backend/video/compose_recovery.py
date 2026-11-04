@@ -139,14 +139,22 @@ async def _session_busy(session_id: str | None) -> bool:
 
 
 DELIVERED_TEXT = "剪好了，可以保存或者发到抖音；想换个开头、改字幕，直接说。"
+#: The synthetic user line the delivery answers. Clients hide synthetic user
+#: text; the transcript and the model see where the cut came from.
+DELIVERED_PROMPT = "（你拍我剪的成片已合成，贴进对话）"
 
 
 async def deliver(job) -> bool:
-    """Attach a finished cut to its conversation under a fixed line; False when it cannot."""
-    from sqlalchemy import select
+    """Attach a finished cut to its conversation under a fixed line; False when it cannot.
 
+    The delivery is its own exchange: a synthetic user line (hidden by the
+    clients, as the Light opening cards' are) answered by the fixed assistant
+    message. Hanging the assistant message under
+    the owner's last real message instead left an assistant tail outside that
+    message's agent turn, and every later turn of the conversation then failed
+    to load (``assistant tail has no User turn anchor``, 2026-11-04 QWH).
+    """
     from db.base import get_db_session
-    from db.models.message import Message
     from db.models.session import Session
     from light import chat
     from session import session as session_mod
@@ -155,12 +163,14 @@ async def deliver(job) -> bool:
 
     async with get_db_session() as db:
         session = await db.get(Session, job.session_id)
-        parent = await db.scalar(select(Message.id).where(Message.session_id == job.session_id,
-                                                          Message.role == "user")
-                                 .order_by(Message.created_at.desc()).limit(1))
-    if session is None or parent is None:
+    if session is None:
         return False
-    assistant = await session_mod.create_assistant_message(job.session_id, parent, model_id=None,
+    user_message = await session_mod.create_user_message(
+        session_id=job.session_id, text=DELIVERED_PROMPT, agent=session.agent, model=None,
+        synthetic=True, user_id=job.user_id, origin="human",
+        origin_ref={"actor_user_id": job.user_id, "entrypoint": "footage_delivery", "job_id": job.id},
+    )
+    assistant = await session_mod.create_assistant_message(job.session_id, user_message.id, model_id=None,
                                                            agent=session.agent, user_id=job.user_id)
     ctx = ToolContext(session_id=job.session_id, user_id=job.user_id, workspace_id=session.workspace_id,
                       project_id=session.project_id or "", message_id=assistant.id)

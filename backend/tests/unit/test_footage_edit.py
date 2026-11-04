@@ -108,7 +108,8 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
 
     async def fake_vision(frames, *, duration, orientation, speech):
         assert len(frames) == 5 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
-        return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}]}
+        return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
+                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯"}
 
     class FakeOss:
         host = "bossip.oss-cn-shanghai.aliyuncs.com"
@@ -169,7 +170,7 @@ def test_footage_skill_and_entry_ship():
     assert (root / "SKILL.md").is_file() and (root / "references" / "structure-templates.md").is_file()
 
 
-@pytest.mark.parametrize("duration,expected", [(8, 4), (15, 5), (60, 5)])
+@pytest.mark.parametrize("duration,expected", [(3, 6), (8, 6), (15, 10), (60, 16)])
 def test_frame_times_spread_over_the_clip(duration, expected):
     from tool.footage_analyze import _frame_times
     times = _frame_times(duration)
@@ -192,7 +193,8 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
     async def fake_vision(frames, *, duration, orientation, speech):
         calls["vision"] += 1
         assert "转写" not in speech  # picture and speech are read side by side, not in sequence
-        return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}]}
+        return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
+                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯"}
 
     class FakeOss:
         host = "bossip.oss-cn-shanghai.aliyuncs.com"
@@ -214,6 +216,8 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
         session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"]))
     clips = result.metadata["clips"]
     assert [c["subject"] for c in clips] == ["门头", "门头"] and clips[0]["transcript"] == "欢迎光临"
+    # The reading keeps the moments and the opening picture the plan builds on; junk entries are dropped.
+    assert clips[0]["beats"] == [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}] and clips[0]["hook"] == "门头亮灯"
     assert calls == {"asr": 1, "vision": 2}  # once per clip, on upload; the tool reused it
     async with get_db_session() as db:
         stored = await db.get(FileAsset, ids[0])

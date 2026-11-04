@@ -42,44 +42,76 @@ on `upload`: 「从相册选 3–10 段（总共不超过 5 分钟），想突�
 Call `footage_analyze` **once**, straight away, with every clip's asset id in
 the order sent (the clips were already being read while they uploaded).
 It returns per clip: duration, orientation, sound, transcript with sentence
-timings, and usable segments (`from_sec`/`to_sec`, what the shot shows,
-quality). It also charges the 素材分析 fee for the whole batch and tells you
+timings, usable segments (`from_sec`/`to_sec`, what is happening in the shot,
+`kind`, quality), `beats` (the one to three moments that grab — a beat has
+`at_sec`, `what`, `why`), `hook` (the picture that can open the cut) and
+`best`. Read them before planning: the cut is built from what the clips
+actually show, not from the type's template. It also charges the 素材分析 fee for the whole batch and tells you
 the amount (`analysis_credits=`), and lists the music library by tag
 (`music`: name, length, library_id). Do not call it again for the same clips.
 
 ## 3. The plan (`plan`)
 
-Build the cut from the structure for the type (the four below are the whole
-reference; do not open the references file during a cut):
+Start from what the readings say the clips are about (`subject`, `kind`,
+`beats`), then pick the structure that fits — the owner's type is the
+intent, the footage decides the shape. The five below are the whole
+reference; do not open the references file during a cut:
 
-- 探店: 门头 → 环境 → 招牌菜 → 价格/活动 → 收尾
-- 新品上市: 成品亮相 → 制作或细节 → 吃的瞬间 → 价格 → 收尾
-- 活动促销: 活动一句话 → 菜品轮播 → 价格 → 时间地点 → 收尾
-- 日常记录: 开店 → 忙碌 → 出餐 → 客人 → 收尾
+- 餐饮 探店: 门头 → 环境 → 招牌菜 → 价格/活动 → 收尾
+- 餐饮 新品 / 活动: 成品或活动一句话 → 制作或细节 → 吃的瞬间 / 菜品轮播 → 价格 → 时间地点 → 收尾
+- 服务类（美业、洗车、维修、养生，clips that are mostly `服务过程`）: 招牌或问题亮相 →
+  过程 3–4 步，每步一镜 → 成果展示 / 前后对比 → 价格或承诺 → 收尾
+- 零售（货架、商品、门店）: 门头或货架 → 爆品特写 2–3 个 → 价格或活动 → 收尾
+- 活动现场 / 日常记录（舞台、人群、忙碌）: 开场一瞬 → 高潮 → 人群反应 → 时间地点或一句话 → 收尾
 
 Rules for picking:
 
-- Only `usable: true` segments. Each shot 2–4 s; the first second must show
-  the subject (门头 or the dish), never a blank wall or a shaky start.
-- Mix wide and close; never two shots from the same second range.
+- Only `usable: true` segments. The **first shot is the hook**: a clip's
+  `hook` or its strongest `beat`, never a blank wall or a shaky start, and
+  its first second already shows the subject.
+- Shot length follows the action, not a fixed count: an action beat 1.5–3 s,
+  a process step 2–4 s, the 成果展示 / 前后对比 / 亮相 shot 4–6 s so the eye
+  lands. Cut a shot so a `beat` sits inside it, near its start. Never two
+  shots from the same second range; mix wide and close; keep the order of a
+  process (挑石子 before 冲洗, 生 before 熟).
 - A spoken line is kept whole: one shot from the sentence's `from_sec` to its
   `to_sec` in that clip, never two shots that each hold half of it, and keep
-  the clip's sound (`volume: 1`). Shots without speech keep
-  their natural sound too.
+  the clip's sound (`volume: 1`). Shots without speech keep their natural
+  sound too.
 - Landscape clips are fine: `fit: "cover"` centre-crops them to 9:16; pick
   segments whose subject is in the middle.
-- Target length: what the owner asked for, else **40–60 s**, never longer
+- Target length: what the owner asked for, else **30–50 s**, never longer
   than the usable footage allows. With 3 or more clips, use every clip that
-  has a usable segment at least once — the owner shot them to see them. Do not
-  stretch shots to reach a length.
+  has a usable segment at least once — the owner shot them to see them. Do
+  not stretch shots to reach a length; a cut of 25 good seconds beats 45
+  padded ones.
+- Transitions: `fade` only (the one verified), and only at the two structure
+  joints — into the 成果 / 高潮 section and into the closing card — as
+  `transition_out` on the shot before, 0.4–0.6 s. Never between every shot.
 
-Captions: ≤ 12 Chinese characters per cue — split every longer sentence at
-its commas into several cues and share the sentence's time between them in
-proportion to their length (a 30-character sentence is three cues); a longer
-line runs off the 720-px frame. Time cues to the sentence timings; no captions
-over silent shots. Banner
-texts: the shop name for the whole cut at the bottom (`y: 0.76`, size 60),
-and at most two short 花字 (the dish name, the price) on their shots.
+Captions — every shot says something to the viewer, with or without speech:
+
+- Spoken shots: ≤ 12 Chinese characters per cue — split every longer sentence
+  at its commas into several cues and share the sentence's time between them
+  in proportion to their length (a 30-character sentence is three cues); a
+  longer line runs off the 720-px frame. Time cues to the sentence timings.
+- Silent shots: one **动作字幕** per shot, written from the segment's `shot`
+  for the viewer, not as a label — 「先把石子一颗颗挑出来」, not 「清理石子」;
+  ≤ 12 characters, from 0.2 s after the shot starts to 0.2 s before it ends.
+  The hook shot carries the hook line instead: a question or a promise in ≤
+  10 characters (「轮毂多久没洗了？」「三分钟还你新轮毂」).
+- The closing card: the last 2.5–3 s of the cut, on the 成果 or the warmest
+  shot, with no caption — its texts carry the shop name and one line the
+  owner gave or the footage shows (地址 / 电话 / 价格 / 一句承诺). Make it from
+  what the owner said; invent nothing.
+
+Banner texts (`texts`):
+
+- The shop name only on the hook shot (0.3 s → end of that shot) and on the
+  closing card, `y: 0.76`, size 60 — not across the whole cut, which reads as
+  a watermark. The hook-shot name slides in: `"motion": {"in_effect": "slide_down_in"}`.
+- At most two short 花字 on their own shots (the dish or service name, the
+  price), `y: 0.2`, size 48, 2–4 s each.
 
 Music: one track from the `music` list, by type — 探店 / 日常记录 → 美食
 (a quiet tea, coffee or book shop → 轻松), 新品上市 → 欢快, 活动促销 → 动感;
@@ -92,11 +124,13 @@ Then **one** `question` card on `plan`, `purpose` review, in plain words:
 
 ```
 成片：约 <N> 秒竖屏，<type>
+开场：<hook 画面一句话>，字幕「<hook line>」
 镜头：
-1. <0–3 秒> 门头（第 1 段 2–5 秒）
+1. <0–3 秒> 门头（第 1 段 2–5 秒）「<这一镜的字幕>」
 2. ...
-字幕：<共 n 句，例：「今天带大家来巷口面馆」…>
-花字：店名「巷口面馆」；「红烧牛肉面 ¥28」
+收尾：<成果或最暖的一镜>，卡上写店名「巷口面馆」+「<地址/电话/价格/一句承诺>」
+字幕：<共 n 句（口播 n 句 + 动作字幕 n 句），例：「先把石子一颗颗挑出来」…>
+花字：店名「巷口面馆」（开场与收尾）；「红烧牛肉面 ¥28」
 声音：原声 + 配乐「<track name>」（<tag>，说话时自动压低）
 价格：成片 <5|9|…> 积分（素材分析 <analysis_credits> 积分已收）
 ```
@@ -117,9 +151,14 @@ and refuses an invalid one with the reason; fix that and submit again:
 ```json
 {"version": 1,
  "canvas": {"width": 720, "height": 1280, "fps": 25},
- "shots": [{"asset": "<asset_id>", "in_sec": 2.0, "duration_sec": 3.0, "fit": "cover", "volume": 1}],
- "captions": [{"from_sec": 0.2, "to_sec": 2.8, "text": "今天带大家来巷口面馆"}],
- "texts": [{"text": "<店名>", "from_sec": 0.3, "to_sec": <end - 0.2>, "y": 0.76, "style": {"size": 60, "outline": 4}}],
+ "shots": [{"asset": "<asset_id>", "in_sec": 2.0, "duration_sec": 3.0, "fit": "cover", "volume": 1},
+           {"asset": "<asset_id>", "in_sec": 5.0, "duration_sec": 4.5, "fit": "cover", "volume": 1,
+            "transition_out": {"type": "fade", "seconds": 0.5}}],
+ "captions": [{"from_sec": 0.2, "to_sec": 2.8, "text": "轮毂多久没洗了？"},
+              {"from_sec": 3.2, "to_sec": 7.3, "text": "先把石子一颗颗挑出来"}],
+ "texts": [{"text": "<店名>", "from_sec": 0.3, "to_sec": 3.0, "y": 0.76, "style": {"size": 60, "outline": 4}, "motion": {"in_effect": "slide_down_in"}},
+           {"text": "<店名>", "from_sec": <end - 3>, "to_sec": <end - 0.2>, "y": 0.76, "style": {"size": 60, "outline": 4}},
+           {"text": "<地址或一句承诺>", "from_sec": <end - 3>, "to_sec": <end - 0.2>, "y": 0.84, "style": {"size": 40, "outline": 3}}],
  "audio": [{"library_id": "<icepublic-… from music>", "volume": 0.35, "duck_under_captions": true,
             "duck_volume": 0.1, "fade_in_sec": 1, "fade_out_sec": 2}]}
 ```

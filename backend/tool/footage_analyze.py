@@ -38,7 +38,7 @@ log = create_logger("tool.footage_analyze")
 
 MAX_CLIPS = 10
 #: Bump when what a clip reading contains changes, so old cached readings are redone.
-READING_VERSION = 1
+READING_VERSION = 2
 _readings: dict[str, asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
@@ -54,12 +54,15 @@ ATTEMPT_SECONDS = 45
 PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一段素材的截帧，每张标了它在素材里的秒数。
 素材时长 {duration} 秒，{orientation}；{speech}（人声内容另行转写，这里只看画面。）
 
-请按画面把这段素材切成可用的片段，严格只输出 JSON，不要任何解释：
+请按画面把这段素材切成可用的片段，并挑出最精彩的瞬间。严格只输出 JSON，不要任何解释：
 {{"subject": "这段主要拍的是什么（≤15字）",
-  "segments": [{{"from_sec": 0.0, "to_sec": 3.0, "shot": "画面内容（≤20字）", "kind": "门头|环境|菜品特写|制作过程|人物|口播|价格|其他", "quality": "好|晃|暗|糊|遮挡", "usable": true}}],
+  "segments": [{{"from_sec": 0.0, "to_sec": 2.5, "shot": "画面里正在发生什么（≤20字，写动作和对象，不写形容词）", "kind": "门头|环境|产品特写|服务过程|制作过程|成果展示|前后对比|人物|人群反应|口播|价格|其他", "quality": "好|晃|暗|糊|遮挡", "usable": true}}],
+  "beats": [{{"at_sec": 4.0, "what": "这一瞬间发生了什么（≤15字）", "why": "为什么抓人：解压|反差|冲击|有食欲|有笑点|关键动作|成果亮相"}}],
+  "hook": "最适合当成片第一眼的画面（≤15字），没有就留空",
   "best": {{"from_sec": 0.0, "to_sec": 3.0, "why": "最适合放进成片的一段（≤20字）"}}}}
 
-要求：片段首尾相接覆盖整段素材；from_sec/to_sec 用截帧的秒数估计；晃、暗、糊、遮挡的片段 usable=false；不要编造截帧里看不到的东西。"""
+要求：片段首尾相接覆盖整段素材，按动作或镜头的变化来切，每段 1.5–5 秒，一段只写一件事；from_sec/to_sec 用截帧的秒数估计；
+晃、暗、糊、遮挡的片段 usable=false；beats 给 1–3 个，没有就给空数组；不要编造截帧里看不到的东西。"""
 
 
 class FootageAnalyzeArgs(BaseModel):
@@ -74,12 +77,15 @@ class FootageRefusal(Exception):
 
 
 def _frame_times(duration: float) -> list[float]:
-    """About one frame every 3 s, 4–5 frames, never on the very first or last frame.
+    """About one frame every 1.5 s, 6–16 frames, never on the very first or last frame.
 
-    Five small frames read a 15 s clip as well as ten did, and with five clips
-    read at once each call stays around 15 s instead of 30.
+    Five frames (one every 3 s) read what a clip was about but not when the
+    action happened: segments came out as 5-second blocks and the cut felt
+    mechanical (2026-11-04 feedback). Twice the density lets the reading place
+    a beat to within about a second; the images are small (360 px), so the
+    call stays well inside the per-minute price.
     """
-    count = max(4, min(5, math.ceil(duration / 3)))
+    count = max(6, min(16, math.ceil(duration / 1.5)))
     step = duration / count
     return [round(step * (i + 0.5), 2) for i in range(count)]
 
@@ -188,6 +194,8 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
         "v": READING_VERSION, "transcript": str(heard.get("text") or "").strip() or None,
         "sentences": heard.get("sentences") or [], "subject": seen.get("subject"),
         "segments": seen.get("segments") or [], "best": seen.get("best"),
+        "beats": [b for b in (seen.get("beats") or []) if isinstance(b, dict)][:3],
+        "hook": str(seen.get("hook") or "").strip() or None,
         **({"note": seen["error"]} if seen.get("error") else {}),
     }
     if not seen.get("error"):
@@ -261,7 +269,8 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
         "has_audio": bool(meta.get("has_audio")),
         "transcript": reading.get("transcript"), "sentences": reading.get("sentences") or [],
         "subject": reading.get("subject"), "segments": reading.get("segments") or [],
-        "best": reading.get("best"), **({"note": reading["note"]} if reading.get("note") else {}),
+        "best": reading.get("best"), "beats": reading.get("beats") or [], "hook": reading.get("hook"),
+        **({"note": reading["note"]} if reading.get("note") else {}),
     }
 
 

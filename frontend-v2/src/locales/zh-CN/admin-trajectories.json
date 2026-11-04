@@ -983,6 +983,56 @@
     },
     "credits": {
       "none": "未计费"
+    },
+    "prompts": {
+      "title": "本轮发给生成模型的提示词",
+      "lead_one": "共 {{count}} 条，原文照发",
+      "lead_other": "共 {{count}} 条，原文照发",
+      "video": "视频生成",
+      "image": "图片生成",
+      "shot": "第 {{n}} 段",
+      "bySub": "子任务发起",
+      "copy": "复制提示词",
+      "unavailable": "这条提示词的内容已经读不到了",
+      "inputs": "参考素材",
+      "composerChoice": "按用户在输入框选的档位",
+      "seconds_one": "{{count}} 秒",
+      "seconds_other": "{{count}} 秒",
+      "setting": {
+        "model": "模型",
+        "resolution": "分辨率",
+        "ratio": "比例",
+        "duration": "时长",
+        "generate_audio": "带声音",
+        "seed": "种子",
+        "size": "尺寸",
+        "quality": "质量",
+        "n": "张数",
+        "output_format": "格式"
+      },
+      "role": {
+        "first_frame": "首帧",
+        "last_frame": "尾帧",
+        "reference_image": "参考图",
+        "reference_video": "参考视频",
+        "reference_audio": "参考音频",
+        "mask": "蒙版",
+        "reference": "参考素材"
+      }
+    },
+    "replay": {
+      "open": "回放整段会话",
+      "title": "会话回放",
+      "loading": "正在加载会话回放…",
+      "meta_one": "{{user}} · 共 {{count}} 轮",
+      "meta_other": "{{user}} · 共 {{count}} 轮",
+      "loaded_one": "已加载 {{count}} 轮",
+      "loaded_other": "已加载 {{count}} 轮",
+      "turnDetail": "这一轮详情 ›",
+      "empty": "这个会话没有记录到对话",
+      "more_one": "继续加载（还有 {{count}} 轮）",
+      "more_other": "继续加载（还有 {{count}} 轮）",
+      "end": "— 会话到此结束 —"
     }
   }
 }

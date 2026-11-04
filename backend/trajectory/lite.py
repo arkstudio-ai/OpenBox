@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import and_, case, func, or_, select, tuple_
 
 from trajectory import turns
-from trajectory.payload import require_content
+from trajectory.payload import Resolver, is_ref, require_content
 from trajectory.repository import cursor_decode, cursor_encode
 from trajectory.store.models import (TrajectoryMetaSession, TrajectoryMetaUser, TrajectoryRecord, TrajectoryTurnSummary)
 from core.log import create_logger
@@ -382,10 +382,203 @@ async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) 
         steps.append({**enriched, **classify(enriched, document, row.main_agent_id)})
     summary = turns.payload(row, session_title=session.title if session else None, at=at)
     await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)})], [summary])
+    prompts = [prompt for prompt in (media_prompt(summary_row, data) for summary_row, data in rows) if prompt]
+    prompts = await _expand(db, trajectory, prompts)
     return {"summary": summary, "steps": steps, "through_seq": str(trajectory.projected_seq),
-            "labels_version": document.get("version", 0)}
+            "labels_version": document.get("version", 0), "media_prompts": prompts}
 
 
 def _window_dict(row, at) -> dict:
     from_at, to_at = turns.usage_window(row, at=at)
     return {"from_at": from_at, "to_at": to_at}
+
+
+# -- Generation prompts (lite plan §15) --
+
+#: Tools whose ``prompt`` argument goes verbatim to a generation model, and the settings shown beside it.
+#: video_generate sends ``args.prompt`` unchanged (tool/video_production.py ``_resolve_open_submission``);
+#: model and resolution left out of the call follow the person's composer choice.
+PROMPT_TOOLS = {
+    "video_generate": {"medium": "video", "settings": ("model", "resolution", "ratio", "duration", "generate_audio", "seed")},
+    "image_gen": {"medium": "image", "settings": ("size", "quality", "n", "output_format")},
+}
+
+
+def _arguments(inner: dict) -> dict | None:
+    for key in ("effective_arguments", "requested_arguments", "arguments"):
+        value = inner.get(key)
+        if isinstance(value, dict) and value:
+            return value
+    return None
+
+
+def _inputs(medium: str, args: dict) -> list[dict]:
+    if medium == "video":
+        return [{"asset_id": str(item.get("asset_id")), "role": item.get("role")}
+                for item in args.get("input_assets") or [] if isinstance(item, dict) and item.get("asset_id")]
+    inputs = [{"asset_id": str(item), "role": None} for item in args.get("input_images") or [] if isinstance(item, str)]
+    if isinstance(args.get("mask_image"), str):
+        inputs.append({"asset_id": args["mask_image"], "role": "mask"})
+    return inputs
+
+
+def media_prompt(summary: dict, data) -> dict | None:
+    """The generation request a tool record sent: the full prompt and its settings; None for any other record.
+
+    Only a video ``submit`` reaches the model (``validate``/``status``/``wait`` do not). The prompt may still be a
+    ``$ref`` envelope when it was stored out of line; ``_expand`` resolves it.
+    """
+    if summary.get("kind") != "tool" or not isinstance(data, dict):
+        return None
+    inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+    tool = str(inner.get("tool") or inner.get("name") or summary.get("tool_id") or "")
+    spec = PROMPT_TOOLS.get(tool)
+    args = _arguments(inner) if spec else None
+    if not args or (spec["medium"] == "video" and args.get("action") != "submit"):
+        return None
+    prompt = args.get("prompt")
+    if not prompt or not isinstance(prompt, (str, dict)):
+        return None
+    settings = {}
+    for key in spec["settings"]:
+        value = args.get(key)
+        if isinstance(value, bool) or value not in (None, "", 0):  # 0 and "" are a schema's unset fields
+            settings[key] = value
+    return {"record_id": summary.get("record_id"), "tool_id": tool, "medium": spec["medium"],
+            "agent_id": summary.get("agent_id"), "status": summary.get("status"),
+            "status_reason": summary.get("status_reason"), "started_at": summary.get("started_at"),
+            "shot": args.get("shot") if isinstance(args.get("shot"), int) else None,
+            "prompt": prompt, "settings": settings, "inputs": _inputs(spec["medium"], args),
+            "result_preview": summary.get("result_preview")}
+
+
+def _has_ref(value) -> bool:
+    if isinstance(value, dict):
+        return is_ref(value) or any(_has_ref(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_has_ref(child) for child in value)
+    return False
+
+
+async def _expand(db, trajectory, values: list) -> list:
+    """``$ref`` values inside already-trimmed read results replaced by their content (one batched read)."""
+    if not values or not _has_ref(values):
+        return values
+    return await Resolver(db, trajectory.id, through_seq=trajectory.projected_seq).expand_refs(values)
+
+
+# -- Session replay (lite plan §15) --
+
+REPLAY_KINDS = ("user", "assistant", "question", "tool", "artifact")
+#: Characters of one replayed text; longer content stays readable in the turn page and the professional view.
+REPLAY_TEXT_CHARS = 20_000
+
+
+def _clip(text) -> str | None:
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    return text if len(text) <= REPLAY_TEXT_CHARS else text[:REPLAY_TEXT_CHARS - 1] + "…"
+
+
+def _reply_text(data: dict) -> dict | str | None:
+    blocks = data.get("blocks")
+    if isinstance(blocks, dict):  # stored out of line
+        return blocks
+    if not isinstance(blocks, list):
+        return None
+    texts = [block.get("text") for block in blocks if isinstance(block, dict) and block.get("type") == "text"]
+    if any(isinstance(text, dict) for text in texts):
+        return {"$blocks": texts}
+    return "".join(text for text in texts if isinstance(text, str)) or None
+
+
+def _finish_reply(value) -> str | None:
+    if isinstance(value, list):  # resolved out-of-line blocks
+        value = "".join(block.get("text") or "" for block in value
+                        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
+    elif isinstance(value, dict) and isinstance(value.get("$blocks"), list):
+        value = "".join(text for text in value["$blocks"] if isinstance(text, str))
+    return _clip(value)
+
+
+def replay_events(rows: list[tuple[dict, object]], main_agent_id: str | None) -> list[dict]:
+    """What the person saw in one turn, in order: their message, the main agent's replies, questions, files sent,
+    plus every generation prompt (sub-agents' too, marked with ``agent_id``). Values may still hold ``$ref``."""
+    events = []
+    for summary, data in sorted(rows, key=lambda row: (turns._seq(row[0].get("start_seq")), row[0]["record_id"])):
+        data = data if isinstance(data, dict) else {}
+        inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+        kind = summary.get("kind")
+        base = {"record_id": summary["record_id"], "at": summary.get("started_at"), "status": summary.get("status")}
+        main = not main_agent_id or summary.get("agent_id") == main_agent_id
+        if kind == "user" and summary.get("status") == "accepted":
+            events.append({**base, "type": "user", "text": inner.get("text") or summary.get("preview"),
+                           "attachments": turns._has_reference(inner), "source_kind": inner.get("source_kind")})
+        elif kind == "assistant" and main:
+            text = _reply_text(data)
+            if text is None and summary.get("status") != "failed":
+                continue
+            events.append({**base, "type": "reply", "text": text, "status_reason": summary.get("status_reason")})
+        elif kind == "question" and main:
+            events.append({**base, "type": "question", "questions": inner.get("questions") or summary.get("preview"),
+                           "answers": inner.get("answers")})
+        elif kind == "artifact":
+            events.append({**base, "type": "artifact", "title": summary.get("title"), "preview": summary.get("preview")})
+        elif kind == "tool":
+            prompt = media_prompt(summary, data)
+            if prompt:
+                events.append({**base, "type": "media_prompt", **prompt})
+    return events
+
+
+def _finish_events(events: list[dict]) -> list[dict]:
+    for event in events:
+        if event["type"] in ("user",):
+            event["text"] = _clip(event["text"]) if isinstance(event["text"], str) else None
+        elif event["type"] == "reply":
+            event["text"] = _finish_reply(event["text"])
+        elif event["type"] == "media_prompt" and not isinstance(event["prompt"], str):
+            event["prompt"] = None  # content no longer available
+    return events
+
+
+async def session_replay(db, trajectory, *, cursor=None, limit=10, at: datetime | None = None) -> dict:
+    """A session's turns oldest first, each as what the person saw (lite plan §15 ``GET /sessions/{id}/replay``)."""
+    require_content(trajectory)
+    at = at or datetime.now(timezone.utc)
+    filters = digest([trajectory.id, "replay"])
+    Turn = TrajectoryTurnSummary
+    query = select(Turn).where(Turn.trajectory_id == trajectory.id)
+    if cursor:
+        moment, key = _decode_position(cursor, filters, "Replay")
+        query = query.where(tuple_(Turn.started_at, Turn.turn_id) > (moment, key))
+    page = (await db.scalars(query.order_by(Turn.started_at, Turn.turn_id).limit(limit + 1))).all()
+    has_more = len(page) > limit
+    page = page[:limit]
+    total = await db.scalar(select(func.count()).select_from(Turn).where(Turn.trajectory_id == trajectory.id))
+    session = await db.get(TrajectoryMetaSession, trajectory.session_id)
+    user = await db.get(TrajectoryMetaUser, trajectory.user_id) if trajectory.user_id else None
+    grouped: dict[str, list] = {}
+    if page:
+        records = (await db.execute(select(TrajectoryRecord.summary, TrajectoryRecord.data).where(
+            TrajectoryRecord.trajectory_id == trajectory.id, TrajectoryRecord.turn_id.in_([row.turn_id for row in page]),
+            TrajectoryRecord.kind.in_(REPLAY_KINDS)))).all()
+        for summary, data in records:
+            grouped.setdefault(summary["turn_id"], []).append((summary, data))
+    events = [replay_events(grouped.get(row.turn_id, []), row.main_agent_id) for row in page]
+    events = await _expand(db, trajectory, events)
+    items = [{"summary": turns.payload(row, session_title=session.title if session else None, at=at),
+              "events": _finish_events(turn_events)} for row, turn_events in zip(page, events)]
+    await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)}) for row in page],
+                         [item["summary"] for item in items])
+    next_cursor = None
+    if has_more and page:
+        next_cursor = cursor_encode([filters, turns.instant(page[-1].started_at).isoformat(), page[-1].turn_id])
+    return {"session": {"session_id": trajectory.session_id, "title": session.title if session else None,
+                        "user_id": trajectory.user_id, "workspace_id": trajectory.workspace_id,
+                        "username": user.username if user else None, "email": user.email if user else None},
+            "total_turns": int(total or 0), "items": items, "next_cursor": next_cursor, "has_more": has_more,
+            "through_seq": str(trajectory.projected_seq)}

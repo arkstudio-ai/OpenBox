@@ -3,5 +3,10 @@
 // turn detail), and the access binding those routes install.
 export { TrajectoryListPage } from "./components/TrajectoryListPage"
 export { TrajectorySessionPage } from "./components/TrajectorySessionPage"
-export { TrajectoryUsersPage, TrajectoryUserTurnsPage, TrajectoryTurnPage } from "./lite"
+export {
+  TrajectoryUsersPage,
+  TrajectoryUserTurnsPage,
+  TrajectoryTurnPage,
+  TrajectoryReplayPage,
+} from "./lite"
 export { useTrajectoryAccessWatcher } from "./hooks/useTrajectoryAccessWatcher"

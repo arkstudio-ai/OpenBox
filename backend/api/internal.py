@@ -67,6 +67,7 @@ TRAJECTORY_AUDIT_ACTIONS = frozenset({
     "admin.trajectory.payload_link", "admin.trajectory.export", "admin.trajectory.download", "trajectory.subscribe",
     # Lite view reads (docs/SESSION_TRAJECTORY_LITE_PLAN.md §6.3).
     "admin.trajectory.lite_users", "admin.trajectory.lite_turns", "admin.trajectory.lite_turn",
+    "admin.trajectory.lite_replay",
 })
 
 

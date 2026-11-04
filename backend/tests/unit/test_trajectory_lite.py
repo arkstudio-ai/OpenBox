@@ -478,3 +478,106 @@ def test_the_alert_link_kind_is_allow_listed():
     assert validate_link(link) == link
     with pytest.raises(ValueError):
         validate_link({"kind": "admin_trajectory_turn", "userId": "u"})
+
+
+# -- Generation prompts and session replay (§15) --
+
+def _tool_data(tool, **arguments):
+    return {"data": {"tool": tool, "effective_arguments": arguments, "output": "ok"}}
+
+
+def test_media_prompt_keeps_only_requests_that_reach_a_generation_model():
+    record = _record("tool:v1", "tool", 5, title="exit code: 0", agent_id="agent_video")
+    long_prompt = "镜头一：" + "店门口推进，暖光。" * 400
+    video = lite.media_prompt(record, _tool_data(
+        "video_generate", action="submit", prompt=long_prompt, model="", resolution="1080p", duration=8, seed=0,
+        generate_audio=False, shot=2, ratio=None, input_assets=[{"asset_id": "ast_1", "role": "first_frame"}]))
+    assert video["prompt"] == long_prompt and video["medium"] == "video" and video["shot"] == 2
+    # Unset schema fields (empty model, seed 0, no ratio) are left out; an explicit False is kept.
+    assert video["settings"] == {"resolution": "1080p", "duration": 8, "generate_audio": False}
+    assert video["inputs"] == [{"asset_id": "ast_1", "role": "first_frame"}] and video["agent_id"] == "agent_video"
+    for action in ("validate", "status", "wait"):
+        assert lite.media_prompt(record, _tool_data("video_generate", action=action, prompt="x")) is None
+    image = lite.media_prompt(record, _tool_data("image_gen", prompt="一张海报", n=2, input_images=["ast_2"],
+                                                 mask_image="ast_3"))
+    assert image["medium"] == "image" and image["settings"] == {"n": 2}
+    assert image["inputs"] == [{"asset_id": "ast_2", "role": None}, {"asset_id": "ast_3", "role": "mask"}]
+    assert lite.media_prompt(record, _tool_data("bash", prompt="ls")) is None
+    assert lite.media_prompt(_record("user:m1", "user", 1), _tool_data("image_gen", prompt="x")) is None
+
+
+def test_replay_events_follow_what_the_person_saw():
+    rows = [
+        (_record("user:m1", "user", 1, status="accepted", preview="发视频"), {"data": {"text": "帮我发一条国庆视频"}}),
+        (_record("user:m0", "user", 1, status="rejected", preview="重复"), {"data": {"text": "重复"}}),
+        (_record("assistant:r1", "assistant", 2), {"blocks": [{"type": "reasoning", "text": "想想"},
+                                                              {"type": "text", "text": "好的，"},
+                                                              {"type": "text", "text": "先出方案"}]}),
+        (_record("assistant:r2", "assistant", 3, agent_id="agent_video"), {"blocks": [{"type": "text", "text": "子任务"}]}),
+        (_record("assistant:r3", "assistant", 4), {"blocks": [{"type": "reasoning", "text": "只有思考"}]}),
+        (_record("tool:v1", "tool", 5, agent_id="agent_video"), _tool_data("video_generate", action="submit", prompt="镜头")),
+        (_record("question:q1", "question", 6), {"data": {"questions": [{"question": "用哪个？"}], "answers": ["A"]}}),
+        (_record("artifact:a1", "artifact", 7, title="成片.mp4"), {}),
+        (_record("assistant:r4", "assistant", 8, status="failed", reason="overloaded"), {"blocks": []}),
+    ]
+    events = lite._finish_events(lite.replay_events(list(reversed(rows)), "agent_main"))
+    assert [event["type"] for event in events] == ["user", "reply", "media_prompt", "question", "artifact", "reply"]
+    assert events[0]["text"] == "帮我发一条国庆视频" and events[1]["text"] == "好的，先出方案"
+    assert events[2]["prompt"] == "镜头" and events[2]["agent_id"] == "agent_video"
+    assert events[3]["answers"] == ["A"] and events[4]["title"] == "成片.mp4"
+    assert (events[5]["text"], events[5]["status"], events[5]["status_reason"]) == (None, "failed", "overloaded")
+    assert lite._finish_reply("长" * (lite.REPLAY_TEXT_CHARS + 5)).endswith("…")
+
+
+async def _add_video_record(trajectory_id, turn_id="turn_a", seq=20):
+    summary = _record("tool:video_x", "tool", seq, turn_id=turn_id, agent_id="agent_a")
+    async with trace_session() as db:
+        db.add(TrajectoryRecord(trajectory_id=trajectory_id, record_id=summary["record_id"], kind="tool",
+                                status="completed", agent_id="agent_a", turn_id=turn_id, start_seq=seq, end_seq=seq,
+                                applied_seq=seq, projector_version=1, summary=summary, search_doc="video_generate",
+                                data={**summary, **_tool_data("video_generate", action="submit", prompt="完整提示词",
+                                                              resolution="720p")}))
+
+
+async def test_turn_detail_and_replay_carry_the_full_prompt(trace_db, blobs):
+    trajectory_id, session_id, _ = await _project_fixture(blobs)
+    await _add_video_record(trajectory_id)
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        detail = await lite.get_turn(db, trajectory, "turn_a", at=NOW)
+        replay = await lite.session_replay(db, trajectory, at=NOW)
+    assert [(item["record_id"], item["prompt"], item["settings"]) for item in detail["media_prompts"]] == [
+        ("tool:video_x", "完整提示词", {"resolution": "720p"})]
+    assert replay["session"]["title"] == "日志排查" and replay["session"]["session_id"] == session_id
+    assert replay["total_turns"] == 1 and not replay["has_more"] and replay["next_cursor"] is None
+    (item,) = replay["items"]
+    assert item["summary"]["turn_id"] == "turn_a"
+    kinds = [event["type"] for event in item["events"]]
+    assert kinds[0] == "user" and item["events"][0]["text"] == "检查日志"
+    assert "media_prompt" in kinds and "question" in kinds
+    replies = [event["text"] for event in item["events"] if event["type"] == "reply"]
+    assert "我来读取" in replies and "完成" not in replies  # the sub-agent's reply never reached the person
+
+
+async def test_replay_pages_oldest_first(trace_db, blobs):
+    trajectory_id, session_id, user_id = await _project_fixture(blobs)
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        first = trajectory.started_at
+    for index, turn_id in enumerate(("turn_b", "turn_c"), start=1):
+        await _seed_turn(trajectory_id, session_id, user_id, turn_id, started=0, preview=turn_id)
+        async with trace_session() as db:
+            await db.execute(update(TrajectoryTurnSummary).where(TrajectoryTurnSummary.turn_id == turn_id)
+                             .values(started_at=NOW + timedelta(minutes=index)))
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        page = await lite.session_replay(db, trajectory, limit=2, at=NOW)
+        rest = await lite.session_replay(db, trajectory, cursor=page["next_cursor"], limit=2, at=NOW)
+        with pytest.raises(TrajectoryError):
+            other = await db.get(SessionTrajectory, trajectory_id)
+            await lite.session_replay(db, other, cursor="not-a-cursor", limit=2)
+    assert first is not None
+    assert [item["summary"]["turn_id"] for item in page["items"]] == ["turn_a", "turn_b"] and page["has_more"]
+    assert [item["summary"]["turn_id"] for item in rest["items"]] == ["turn_c"] and not rest["has_more"]
+    assert page["total_turns"] == rest["total_turns"] == 3
+    assert rest["items"][0]["events"] == []  # a summary without stored records replays as no events

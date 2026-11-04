@@ -204,6 +204,18 @@ async def lite_turn(session_id: str, turn_id: str, request: Request, admin: dict
     return _json(result)
 
 
+@router.get("/sessions/{session_id}/replay")
+@errors
+@session_read
+async def lite_replay(session_id: str, request: Request, admin: dict = Depends(require_trajectory_admin),
+    cursor: str | None = None, limit: int = Query(10, ge=1, le=30)):
+    async with trace_read_session() as db:
+        _, trajectory = await repository.get_trajectory(db, session_id)
+        result = await lite.session_replay(db, trajectory, cursor=cursor, limit=limit)
+    await audit(admin, request, "lite_replay", session_id, {"cursor": bool(cursor)})
+    return _json(result)
+
+
 @router.get("/lite/labels")
 @errors
 async def lite_labels(admin: dict = Depends(require_trajectory_admin)):

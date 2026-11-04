@@ -250,6 +250,16 @@ function TurnsTable({
                     >
                       {t("lite.turns.onlySession")}
                     </button>
+                    <Link
+                      to={paths.adminTrajectoryReplay(
+                        userId,
+                        group.sessionId,
+                        backQuery ? new URLSearchParams({ back: backQuery }).toString() : undefined,
+                      )}
+                      className="text-a700 font-medium hover:underline"
+                    >
+                      {t("lite.replay.open")}
+                    </Link>
                     <Link to={proHref(group.sessionId)} className="text-a700 hover:underline">
                       {t("lite.turns.openPro")}
                     </Link>

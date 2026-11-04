@@ -42,6 +42,24 @@ def unavailable():
     return AssistantError(423, "RESOURCE_CONTROL_HELD", "This resource is held or its control generation changed")
 
 
+async def unsettled_pool_state(desktop_id):
+    """The pool state that still keeps a live desktop out of tool admission.
+
+    ``validate_locked`` admits only ``assigned`` rows. A pooled desktop whose
+    claim has not finished (``assigning``) may already answer on its channel,
+    so the runtime hands sessions a client for it; model requests would then
+    fail closed at ``enroll_desktop_locked``. Callers use this to degrade to
+    plain conversation instead. ``None`` means no pool state blocks admission.
+    """
+    if not desktop_id:
+        return None
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+    record = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
+    if record is None or record.get("pool_state") in (None, "assigned"):
+        return None
+    return record.get("pool_state")
+
+
 def closed_transition_target(row, user_id):
     """An internal handoff can retire this actor's epoch, never grant input."""
     if row.epoch >= 2**31 - 1:

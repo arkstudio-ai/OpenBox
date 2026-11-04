@@ -38,6 +38,8 @@ CONTRACT = {
     ("GET", f"{PREFIX}/users/{{user_id}}/turns"),
     ("GET", f"{PREFIX}/sessions/{{session_id}}/turns/{{turn_id}}"),
     ("GET", f"{PREFIX}/lite/labels"),
+    # Session replay (lite plan §15).
+    ("GET", f"{PREFIX}/sessions/{{session_id}}/replay"),
 }
 
 

@@ -113,11 +113,64 @@ export interface LiteStep extends RecordSummary {
   tool_id?: string | null
 }
 
+/** One request a generation model received: the prompt exactly as sent and the settings beside it (lite plan §15). */
+export interface MediaPrompt {
+  record_id: string
+  tool_id: string
+  medium: "video" | "image" | string
+  agent_id: string | null
+  status: string | null
+  status_reason: string | null
+  started_at: string | null
+  shot: number | null
+  /** Null when the stored content is no longer available. */
+  prompt: string | null
+  settings: Record<string, string | number | boolean>
+  inputs: Array<{ asset_id: string; role: string | null }>
+  result_preview: string | null
+}
+
 export interface TurnDetail {
   summary: TurnSummary
   steps: LiteStep[]
   through_seq: Seq
   labels_version: number
+  /** Absent on servers before §15. */
+  media_prompts?: MediaPrompt[]
+}
+
+interface ReplayBase {
+  record_id: string
+  at: string | null
+  status: string | null
+}
+
+export type ReplayEvent =
+  | (ReplayBase & { type: "user"; text: string | null; attachments: boolean; source_kind: string | null })
+  | (ReplayBase & { type: "reply"; text: string | null; status_reason: string | null })
+  | (ReplayBase & { type: "question"; questions: unknown; answers: unknown })
+  | (ReplayBase & { type: "artifact"; title: string | null; preview: string | null })
+  | (ReplayBase & MediaPrompt & { type: "media_prompt" })
+
+export interface ReplayTurn {
+  summary: TurnSummary
+  events: ReplayEvent[]
+}
+
+export interface SessionReplay {
+  session: {
+    session_id: string
+    title: string | null
+    user_id: string | null
+    workspace_id: string | null
+    username: string | null
+    email: string | null
+  }
+  total_turns: number
+  items: ReplayTurn[]
+  next_cursor: string | null
+  has_more: boolean
+  through_seq: Seq
 }
 
 export interface Page<T> {

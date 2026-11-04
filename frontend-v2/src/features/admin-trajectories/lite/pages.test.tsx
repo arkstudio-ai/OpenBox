@@ -5,10 +5,19 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router"
 import { useAuthStore } from "@/shared/api/auth-store"
 import type { AuthUser } from "@/shared/types/api"
 import { useTrajectoryAccess } from "../stores/access"
+import { TrajectoryReplayPage } from "./components/ReplayPage"
 import { TrajectoryTurnPage } from "./components/TurnPage"
 import { TrajectoryUserTurnsPage } from "./components/UserTurnsPage"
 import { TrajectoryUsersPage } from "./components/UsersPage"
-import type { LiteLabels, LiteStep, LiteUserRow, TurnDetail, TurnSummary } from "./types"
+import type {
+  LiteLabels,
+  LiteStep,
+  LiteUserRow,
+  MediaPrompt,
+  SessionReplay,
+  TurnDetail,
+  TurnSummary,
+} from "./types"
 
 vi.mock("react-i18next", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-i18next")>()
@@ -144,10 +153,28 @@ function step(id: string, seq: number, type: string, patch: Partial<LiteStep> = 
   }
 }
 
+const FULL_PROMPT = "镜头一：火锅店门口，暖光推近，蒸汽升起。\n镜头二：服务员端上锅底，特写红油翻滚。"
+
+const PROMPT: MediaPrompt = {
+  record_id: "tool:gen",
+  tool_id: "video_generate",
+  medium: "video",
+  agent_id: "child",
+  status: "completed",
+  status_reason: null,
+  started_at: new Date().toISOString(),
+  shot: 2,
+  prompt: FULL_PROMPT,
+  settings: { resolution: "1080p", duration: 8, generate_audio: false },
+  inputs: [{ asset_id: "ast_1", role: "first_frame" }],
+  result_preview: "job_1 submitted",
+}
+
 const DETAIL: TurnDetail = {
   summary: turn({}),
   through_seq: "40",
   labels_version: 1,
+  media_prompts: [PROMPT],
   steps: [
     step("user:m1", 1, "user_input", { preview: "把刚才那条火锅视频发到抖音" }),
     step("request:1", 2, "hidden"),
@@ -211,6 +238,91 @@ function answer(path: string): Promise<unknown> {
       has_more: !url.searchParams.get("cursor"),
     })
   }
+  if (path.includes("/sessions/session_1/replay")) {
+    const url = new URL(path, "http://x")
+    const later = url.searchParams.get("cursor") === "c2"
+    const page: SessionReplay = {
+      session: {
+        session_id: "session_1",
+        title: "国庆活动预热视频",
+        user_id: "user_a",
+        workspace_id: "ws",
+        username: "张店长",
+        email: null,
+      },
+      total_turns: 2,
+      through_seq: "40",
+      next_cursor: later ? null : "c2",
+      has_more: !later,
+      items: later
+        ? [
+            {
+              summary: turn({ turn_id: "turn_2", status: "completed", status_reason: null }),
+              events: [
+                {
+                  type: "user",
+                  record_id: "user:m3",
+                  at: null,
+                  status: "accepted",
+                  text: "再来一条",
+                  attachments: false,
+                  source_kind: null,
+                },
+                {
+                  type: "reply",
+                  record_id: "assistant:r9",
+                  at: null,
+                  status: "completed",
+                  text: "好的",
+                  status_reason: null,
+                },
+              ],
+            },
+          ]
+        : [
+            {
+              summary: turn({}),
+              events: [
+                {
+                  type: "user",
+                  record_id: "user:m1",
+                  at: null,
+                  status: "accepted",
+                  text: "把刚才那条火锅视频发到抖音",
+                  attachments: true,
+                  source_kind: "web",
+                },
+                {
+                  type: "reply",
+                  record_id: "assistant:r1",
+                  at: null,
+                  status: "completed",
+                  text: "**好的**，先出方案",
+                  status_reason: null,
+                },
+                { ...PROMPT, type: "media_prompt", at: null },
+                {
+                  type: "question",
+                  record_id: "question:q1",
+                  at: null,
+                  status: "completed",
+                  questions: [{ question: "用哪个方案？" }],
+                  answers: ["方案 A"],
+                },
+                {
+                  type: "reply",
+                  record_id: "assistant:r2",
+                  at: null,
+                  status: "failed",
+                  text: null,
+                  status_reason: "overloaded",
+                },
+              ],
+            },
+          ],
+    }
+    return Promise.resolve(page)
+  }
   if (path.includes("/turns/turn_1")) return Promise.resolve(DETAIL)
   if (path.includes("/turns/missing"))
     return Promise.reject(Object.assign(new Error("Turn not found"), { status: 404 }))
@@ -253,6 +365,10 @@ function renderAt(path: string) {
           <Route
             path="/app/admin/trajectories/users/:userId/turns/:sessionId/:turnId"
             element={<TrajectoryTurnPage userId="user_a" sessionId="session_1" turnId="turn_1" />}
+          />
+          <Route
+            path="/app/admin/trajectories/users/:userId/sessions/:sessionId"
+            element={<TrajectoryReplayPage userId="user_a" sessionId="session_1" />}
           />
           <Route path="*" element={null} />
         </Routes>
@@ -406,5 +522,66 @@ describe("轮详情", () => {
     expect(within(agent).queryByText("云电脑登录")).toBeNull()
     fireEvent.click(within(agent).getByRole("button", { name: /lite.turn.showAgentSteps/ }))
     expect(within(agent).getByText("云电脑登录")).toBeTruthy()
+  })
+})
+
+describe("生成提示词", () => {
+  it("shows every prompt of the turn in full above the flow, sub-tasks included", async () => {
+    renderAt("/app/admin/trajectories/users/user_a/turns/session_1/turn_1")
+    const section = await screen.findByTestId("lite-media-prompts")
+    const card = within(section).getByTestId("lite-media-prompt")
+    expect(within(card).getByTestId("lite-media-prompt-text").textContent).toBe(FULL_PROMPT)
+    expect(card.textContent).toContain('lite.prompts.shot {"n":2}')
+    expect(card.textContent).toContain("lite.prompts.bySub")
+    expect(card.textContent).toContain("1080p")
+    expect(card.textContent).toContain('lite.prompts.seconds {"count":8}')
+    // No model in the call: the composer's choice applied.
+    expect(card.textContent).toContain("lite.prompts.composerChoice")
+    expect(card.textContent).toContain("lite.prompts.role.first_frame")
+    expect(within(card).getByRole("button", { name: "lite.prompts.copy" })).toBeTruthy()
+    expect(within(card).getByRole("link", { name: "lite.turn.rawRecord" }).getAttribute("href")).toBe(
+      "/app/admin/trajectories/sessions/session_1?at=40&record=tool%3Agen",
+    )
+    expect(screen.getByRole("link", { name: /lite.replay.open/ }).getAttribute("href")).toBe(
+      "/app/admin/trajectories/users/user_a/sessions/session_1?turn=turn_1",
+    )
+  })
+})
+
+describe("会话回放", () => {
+  it("reads the session as a conversation and loads later turns below", async () => {
+    renderAt("/app/admin/trajectories/users/user_a/sessions/session_1?back=status%3Dfailed")
+    await screen.findByTestId("trajectory-lite-replay")
+    expect(screen.getByText("国庆活动预热视频")).toBeTruthy()
+    expect(screen.getAllByTestId("replay-turn")).toHaveLength(1)
+    expect(screen.getByTestId("replay-user").textContent).toContain("把刚才那条火锅视频发到抖音")
+    expect((await screen.findAllByText("好的")).length).toBeGreaterThan(0)
+    expect(screen.getByTestId("lite-media-prompt-text").textContent).toBe(FULL_PROMPT)
+    expect(screen.getByText("用哪个方案？")).toBeTruthy()
+    expect(screen.getByText("方案 A")).toBeTruthy()
+    expect(screen.getByTestId("replay-reply-failed").textContent).toContain("lite.verdict.failedReply")
+    expect(screen.getByTestId("replay-turn-line").getAttribute("href")).toBe(
+      "/app/admin/trajectories/users/user_a/turns/session_1/turn_1?back=status%3Dfailed",
+    )
+    expect(screen.getByRole("link", { name: "lite.turn.backToUser" }).getAttribute("href")).toBe(
+      "/app/admin/trajectories/users/user_a?status=failed",
+    )
+    fireEvent.click(screen.getByRole("button", { name: /lite.replay.more/ }))
+    await waitFor(() => expect(screen.getAllByTestId("replay-turn")).toHaveLength(2))
+    expect(screen.getByText("再来一条")).toBeTruthy()
+    expect(screen.getByText("lite.replay.end")).toBeTruthy()
+    expect(get.mock.calls.map(([path]) => path).filter((path) => path.includes("/replay"))).toEqual([
+      "/api/admin/trajectories/sessions/session_1/replay?limit=10",
+      "/api/admin/trajectories/sessions/session_1/replay?cursor=c2&limit=10",
+    ])
+  })
+
+  it("reads ahead to the turn named in the URL and scrolls to it once", async () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    renderAt("/app/admin/trajectories/users/user_a/sessions/session_1?turn=turn_2")
+    await waitFor(() => expect(screen.getAllByTestId("replay-turn")).toHaveLength(2))
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
+    expect((scroll.mock.contexts[0] as HTMLElement).id).toBe("turn-turn_2")
   })
 })

@@ -300,6 +300,33 @@
     "tool": {
       "label": "工具调用（未记录名称）",
       "group": "internal"
+    },
+    "assets.describe": {
+      "label": "查看素材图片",
+      "group": "assets"
+    },
+    "cards.list": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "cards.answer": {
+      "label": "处理任务请求",
+      "group": "assistant"
+    },
+    "browser_action": {
+      "label": "操作云电脑浏览器",
+      "args": [
+        "action"
+      ],
+      "group": "desktop"
+    },
+    "memory_prepare": {
+      "label": "查阅记忆",
+      "group": "memory"
+    },
+    "memory_read_more": {
+      "label": "查阅记忆",
+      "group": "memory"
     }
   },
   "prefixes": {

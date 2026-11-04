@@ -3,6 +3,7 @@
 export { TrajectoryUsersPage } from "./components/UsersPage"
 export { TrajectoryUserTurnsPage } from "./components/UserTurnsPage"
 export { TrajectoryTurnPage } from "./components/TurnPage"
+export { TrajectoryReplayPage } from "./components/ReplayPage"
 export { ModeToggle } from "./components/ModeToggle"
 export { isLegacyListSearch } from "./params"
 export { rememberedMode, rememberMode, type TrajectoryMode } from "./mode"

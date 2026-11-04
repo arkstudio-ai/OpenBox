@@ -376,3 +376,13 @@ M1/M2 发到 gw2 后用真实记录（177 条轨迹、1,249 轮、23 个用户�
 - **积分**：trace 库没有账本，worker 也不连业务库，所以走业务侧内部回调 `POST /api/internal/trajectory/usage`（与 viewer / audience / audit 同一套 `X-Internal-Token`）。请求是最多 200 个窗口，每个窗口是"会话 + 起止时间"或"用户 + 起止时间"；回答是每个窗口内 `usage_events.status = charged` 的 `credits` 之和（无一条收费行回 null，前端显示"未计费"）。按时间匹配而不是 `message_id`，因为视频/图片等媒体扣费不带 message_id。轮的窗口 = 该会话从 `started_at - 5 s` 到 `finished_at + 60 s`（进行中/等待中到当前时刻 + 60 s）；用户的窗口 = 列表的时间范围。worker 的 `HttpBackend / LocalBackend` 各加 `turn_usage`，`lite.attach_credits` 在三个读接口里附加 `credits`，回调失败只留 null、不影响页面。
 - **失败告警**：trace 迁移 `t0007_turn_alerts` 给轮汇总加 `alerted_at`（升级时把已有的 failed 行全部盖章，不补发历史），worker 投影每 30 秒跑一次 `turns.deliver_alerts`：最旧优先取 50 条 `failed` 且未盖章的轮，经 `POST /api/internal/trajectory/alerts` 给**每个活跃超管**各写一条消息中心记录（`kind=trajectory_turn_failed`，`category=system`，`source_key=trajectory:{turn_id}:failed` 幂等，正文只写"用户 · 会话标题"，不带工具输出或错误原文），链接新增白名单类型 `admin_trajectory_turn {userId, sessionId, turnId}`，Web 消息中心点开直达轮详情（App 未识别的类型按既有规则退回消息中心）。业务侧 4xx 拒收也盖章以免卡队列；网络/5xx 留待下一轮。
 - **未做**：成本 `cost_credits` 不展示；积分按时间窗匹配，同一会话里并发的两轮会各自算到重叠部分；告警只有"失败"一种状态，"完成但有失败步骤"不告警。
+
+## 15. 会话回放与生成提示词（2026-11-04）
+
+运营反馈两点：① 想按会话从头看，像看用户的对话回放；② 不管哪个模式都不好直接看到 AI 发给视频模型的提示词。
+
+- **核实**：`video_generate` 提交（`action=submit`）时 `prompt` 参数原文就是发给视频模型的文本，`_resolve_open_submission` 不改写，只补分辨率/比例/时长/参考图；调用里没写的模型、分辨率按用户在输入框选的档位。所以轨迹工具记录的 `effective_arguments.prompt` 就是全文。以前看不到是因为：简明摘要只截 40 字、点开是 JSON 树、视频多由默认折叠的「视频帮手」子任务提交。
+- **提示词**：`lite.media_prompt` 从工具记录取 `video_generate`（仅 submit）和 `image_gen` 的完整 prompt、设置（模型/分辨率/比例/时长/声音/种子，图片的尺寸/质量/张数/格式；0 和空串视为未设）、参考素材及角色、结果摘要；超过内联阈值存成 `$ref` 的值一次批量解析。`GET .../sessions/{sid}/turns/{turn_id}` 新增 `media_prompts`（子任务的也算），轮详情页在步骤流上方列「本轮发给生成模型的提示词」，全文 + 复制 + 原始记录链接。
+- **回放**：新接口 `GET /api/admin/trajectories/sessions/{sid}/replay?cursor&limit`（默认 10，最多 30 轮，`session_read` 鉴权，审计 `admin.trajectory.lite_replay`）按开始时间从旧到新返回轮，每轮带汇总（含积分）和按顺序的事件：用户消息（已接受的）、主 Agent 的回复正文（只取 text 块，不含思考；子任务回复用户看不到所以不放）、提问与回答、发给用户的产物、所有生成提示词。正文超过 2 万字截断。前端新页 `/app/admin/trajectories/users/{uid}/sessions/{sid}`：用户气泡在右、AI 回复在左，每轮中间一行折叠「状态 · 工具 ×次数 · 耗时 · 积分 · 这一轮详情 ›」，底部「继续加载」；入口是对话轮列表每个会话分组的「回放整段会话」和轮详情的同名按钮（带 `?turn=` 时自动往后读最多 20 页并滚到那一轮）。
+- **顺带**：`lite_labels.json` 补了 6 个后来新增、没有中文名的工具（`assets.describe`、`browser_action`、`cards.*`、`memory_prepare`、`memory_read_more`），修复 `test_every_registered_tool_has_a_label`。
+- **未做**：Light 线（`light-mode` 分支）的「你拍我剪」等视频路径未核对是否同样走 `video_generate.prompt`；参考素材只显示角色，不出缩略图；回放不含没有 `turn_id` 的记录。

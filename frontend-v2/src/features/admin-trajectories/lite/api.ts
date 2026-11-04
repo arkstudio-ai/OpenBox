@@ -1,7 +1,7 @@
 // Transport and query hooks of the lite view. Keys start with the same root as
 // every other trajectory key, so an access purge (api/access.ts) drops these
 // pages too, and every hook stops reading once access has been refused.
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { retryUnlessDenied } from "../api/access"
 import { queryString, TRAJECTORY_API } from "../api/endpoints"
@@ -19,6 +19,7 @@ import {
   type LiteLabels,
   type LiteUserRow,
   type Page,
+  type SessionReplay,
   type TurnDetail,
   type TurnSummary,
 } from "./types"
@@ -27,6 +28,8 @@ export const USERS_PAGE_SIZE = 50
 export const TURNS_PAGE_SIZE = 50
 /** The "new activity" probe of a turn list while the tab is visible. */
 export const TURNS_PROBE_MS = 30_000
+/** Turns per replay page; the server allows up to 30. */
+export const REPLAY_PAGE_SIZE = 10
 export const LABELS_STALE_MS = 24 * 60 * 60 * 1000
 
 const ROOT = trajectoryKeys.root[0]
@@ -40,6 +43,7 @@ export const liteKeys = {
   turn: (viewer: string, sessionId: string, turnId: string) =>
     [ROOT, viewer, "target", sessionId, "lite-turn", turnId] as const,
   labels: (viewer: string) => [ROOT, viewer, "lite", "labels"] as const,
+  replay: (viewer: string, sessionId: string) => [ROOT, viewer, "target", sessionId, "lite-replay"] as const,
 }
 
 const withSignal = (signal?: AbortSignal): RequestInit => (signal ? { signal } : {})
@@ -83,6 +87,14 @@ export const liteApi = {
   turn: (sessionId: string, turnId: string, signal?: AbortSignal) =>
     http.get<TurnDetail>(
       `${TRAJECTORY_API}/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}`,
+      withSignal(signal),
+    ),
+  replay: (sessionId: string, cursor: string | null, signal?: AbortSignal) =>
+    http.get<SessionReplay>(
+      `${TRAJECTORY_API}/sessions/${encodeURIComponent(sessionId)}/replay${queryString({
+        cursor: cursor ?? undefined,
+        limit: REPLAY_PAGE_SIZE,
+      })}`,
       withSignal(signal),
     ),
   labels: (signal?: AbortSignal) => http.get<LiteLabels>(`${TRAJECTORY_API}/lite/labels`, withSignal(signal)),
@@ -192,4 +204,18 @@ export function useLiteLabels(): LiteLabels {
     retry: retryUnlessDenied,
   })
   return query.data ?? EMPTY_LABELS
+}
+
+/** A session as the person saw it, oldest turn first; each further page continues downwards. */
+export function useSessionReplay(sessionId: string) {
+  const scope = useAccessScope()
+  return useInfiniteQuery({
+    queryKey: liteKeys.replay(scope.viewer, sessionId),
+    queryFn: ({ pageParam, signal }) => liteApi.replay(sessionId, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
+    enabled: scope.allowed && !!sessionId,
+    staleTime: Infinity,
+    retry: retryUnlessDenied,
+  })
 }

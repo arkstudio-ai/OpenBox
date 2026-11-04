@@ -31,7 +31,8 @@ async def test_lite_routes_require_a_platform_admin_and_never_cache(worker):
     member = httpx.AsyncClient(transport=httpx.ASGITransport(app=worker.app), base_url="http://testserver",
                                headers={"Authorization": f"Bearer {token('a', 'admin')}"})
     async with anonymous, member:
-        for path in ("/users", "/users/a/turns", "/sessions/session_a_1/turns/turn_1", "/lite/labels"):
+        for path in ("/users", "/users/a/turns", "/sessions/session_a_1/turns/turn_1", "/sessions/session_a_1/replay",
+                     "/lite/labels"):
             response = await anonymous.get(PREFIX + path)
             assert response.status_code == 401 and response.headers["cache-control"] == "no-store", path
             response = await member.get(PREFIX + path)
@@ -87,3 +88,17 @@ async def test_records_accept_the_additive_turn_filter(worker):
     # The read layer stand-in records the call: without the parameter nothing new is passed.
     kwargs = [kwargs for _, kwargs in worker.layer.called("list_records")]
     assert "turn_id" not in kwargs[0] and kwargs[1]["turn_id"] == "turn_1"
+
+
+async def test_session_replay_is_served_paged_and_audited(worker):
+    await _seed_turn()
+    replay = await worker.client.get(PREFIX + "/sessions/session_a_1/replay", params={"limit": "5"})
+    assert replay.status_code == 200, replay.text
+    assert replay.headers["cache-control"] == "no-store"
+    body = replay.json()
+    assert body["session"]["session_id"] == "session_a_1" and body["total_turns"] == 1 and not body["has_more"]
+    assert [item["summary"]["turn_id"] for item in body["items"]] == ["turn_1"]
+    assert (await worker.client.get(PREFIX + "/sessions/session_a_1/replay", params={"limit": "31"})).status_code == 422
+    assert (await worker.client.get(PREFIX + "/sessions/never/replay")).status_code == 404
+    views = _audited(await worker.delivered_audit(), "admin.trajectory.lite_replay")
+    assert [row.resource_id for row in views] == ["session_a_1"] and views[0].details == {"cursor": False}

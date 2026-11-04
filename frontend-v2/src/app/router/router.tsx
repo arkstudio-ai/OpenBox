@@ -39,6 +39,7 @@ const AdminTrajectorySessionsRoute = lazy(() => import("@/routes/admin/AdminTraj
 const AdminTrajectorySessionRoute = lazy(() => import("@/routes/admin/AdminTrajectorySessionRoute"))
 const AdminTrajectoryUserRoute = lazy(() => import("@/routes/admin/AdminTrajectoryUserRoute"))
 const AdminTrajectoryTurnRoute = lazy(() => import("@/routes/admin/AdminTrajectoryTurnRoute"))
+const AdminTrajectoryReplayRoute = lazy(() => import("@/routes/admin/AdminTrajectoryReplayRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -123,6 +124,7 @@ export const router = createBrowserRouter([
               { path: routePatterns.adminTrajectorySession, element: <AdminTrajectorySessionRoute /> },
               { path: routePatterns.adminTrajectoryUser, element: <AdminTrajectoryUserRoute /> },
               { path: routePatterns.adminTrajectoryTurn, element: <AdminTrajectoryTurnRoute /> },
+              { path: routePatterns.adminTrajectoryReplay, element: <AdminTrajectoryReplayRoute /> },
             ],
           },
         ],

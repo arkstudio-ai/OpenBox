@@ -223,7 +223,10 @@ bill will show. Options: `就这么剪` / `短一点` / `换个开头` / `换风
 
 The format is below; do not call `action="schema"` or `validate`. Call
 `submit` straight away — it checks the timeline before anything is rendered
-and refuses an invalid one with the reason; fix that and submit again:
+and refuses an invalid one with the reason; fix that and submit again. If a
+refusal cannot be fixed, never quietly compose less than the card promised
+(dropping the 旁白, the music or a shot): say in one line what cannot be done
+and why, and ask whether to go on without it.
 
 ```json
 {"version": 1,

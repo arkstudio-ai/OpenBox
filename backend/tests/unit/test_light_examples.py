@@ -111,7 +111,7 @@ async def test_fragment_renders_examples_for_this_shop_and_counts_once_per_sessi
     user = await _user()
     ws = user["default_workspace_id"]
     await PgPreferenceRepo().upsert(user["id"], extra={"first_video": {
-        "status": "ready", "industry": "food", "shop_name": "巷口面馆", "headline": "红烧牛肉面"}})
+        "status": "ready", "industry": "food", "workspace_id": ws, "shop_name": "巷口面馆", "headline": "红烧牛肉面"}})
     guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=ws)
     guided = await update_session(guided.id, user_id=user["id"], light_entry="video")
     before = await light_mode_fragment(user["id"], guided)

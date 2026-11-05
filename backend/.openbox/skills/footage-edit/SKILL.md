@@ -44,8 +44,13 @@ the order sent (the clips were already being read while they uploaded).
 It returns per clip: duration, orientation, sound, transcript with sentence
 timings, usable segments (`from_sec`/`to_sec`, what is happening in the shot,
 `kind`, quality), `beats` (the one to three moments that grab — a beat has
-`at_sec`, `what`, `why`), `hook` (the picture that can open the cut) and
-`best`. Read them before planning: the cut is built from what the clips
+`at_sec`, `what`, `why`), `hook` (the picture that can open the cut),
+`best`, `texts` (the words readable on screen — a sign, a price tag, a menu,
+a poster — each with `text`, `where`, `at_sec`; only characters the reading
+could make out in full) and `people` (`count`, `roles`: 店员 / 顾客 / 老板对镜头说话 /
+路人). Each segment also says how the camera moves (`camera`: 静止 / 手持微晃 /
+横移 / 推近 / 拉远 / 环绕 / 跟拍) and whether a face is in close-up (`faces`).
+Read them before planning: the cut is built from what the clips
 actually show, not from the type's template. It also charges the 素材分析 fee for the whole batch and tells you
 the amount (`analysis_credits=`), and lists the music library by tag
 (`music`: name, length, library_id). Do not call it again for the same clips.
@@ -94,6 +99,23 @@ Rules for picking:
   lands. Cut a shot so a `beat` sits inside it, near its start. Never two
   shots from the same second range; mix wide and close; keep the order of a
   process (挑石子 before 冲洗, 生 before 熟).
+- What is written on screen is a fact you may use: the shop name on the 门头
+  sign and a price on a 价签 or 菜单 go on the card and the closing text when
+  the owner did not give them — and the card then says where they came from
+  (「店名「X」是从门头读的，不对就说」); the owner's own words always win over a
+  reading. Never use a `texts` entry that is partial or that the reading
+  marked unsure, and never a competitor's or a brand's name as the shop's. A
+  shot where the sign or the price is readable is worth 0.5 s more so the
+  viewer can read it too.
+- People: a segment with `faces: true` is used only when the person is the
+  owner or staff at work, or the owner talking to the camera; a customer's
+  face in close-up stays out (`people.roles` with 顾客 → prefer the 中远景 of
+  that clip). 老板对镜头说话 is a 口播 shot: keep the whole sentence and its sound.
+- Camera: `move` (zoom_in) only on a `camera: 静止` or 手持微晃 shot — a shot
+  that is already 推近 / 横移 / 环绕 / 跟拍 gets no `move` and no `speed: 0.5`
+  (slow motion makes a moving camera drift). The 成果 / 亮相 shot for slow
+  motion is a steady one. 跟拍 and 横移 shots carry 快剪动感; a 推近 shot is a
+  natural 亮相.
 - A spoken line is kept whole: one shot from the sentence's `from_sec` to its
   `to_sec` in that clip, never two shots that each hold half of it, and keep
   the clip's sound (`volume: 1`). Shots without speech keep their natural
@@ -165,7 +187,8 @@ unchanged. Otherwise write the script, then place it:
   2. one or two body lines — what the viewer is looking at, plus the one
      concrete fact the owner gave (price, how long it takes, the 招牌, the
      时间地点). The owner's own sentence from the upload step comes first,
-     the readings' `shot` / `beats` second; invent no number, name or claim;
+     then a price or name the footage shows in full (`texts`), then the
+     readings' `shot` / `beats`; invent no number, name or claim;
   3. the closing line — the shop name once and what to do (来店 / 预约 / 地址).
 - Timing: about 0.3 s per character plus 0.5 s of air before and after the
   line. A line sits on the shots it describes: the hook line on the hook shot,
@@ -194,7 +217,7 @@ Then **one** `question` card on `plan`, `purpose` review, in plain words:
 镜头：
 1. <0–3 秒> 门头（第 1 段 2–5 秒）「<这一镜的字幕>」
 2. ...
-收尾：<成果或最暖的一镜>，卡上写店名「巷口面馆」+「<地址/电话/价格/一句承诺>」
+收尾：<成果或最暖的一镜>，卡上写店名「巷口面馆」+「<地址/电话/价格/一句承诺>」<（店名是从门头读的，不对就说）>
 字幕：<共 n 句（口播 n 句 + 动作字幕 n 句），例：「先把石子一颗颗挑出来」…>
 花字：店名「巷口面馆」（开场与收尾）；「红烧牛肉面 ¥28」
 声音：原声 + 配乐「<track name>」（<tag>，说话时自动压低）

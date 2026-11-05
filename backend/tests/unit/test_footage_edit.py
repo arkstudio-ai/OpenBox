@@ -109,7 +109,9 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
     async def fake_vision(frames, *, duration, orientation, speech):
         assert len(frames) == 5 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
-                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯"}
+                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯",
+                "texts": [{"text": "巷口面馆", "where": "门头招牌", "at_sec": 1.2}, {"text": "", "where": "价签"}, "junk"],
+                "people": {"count": "1", "roles": ["店员"]}}
 
     class FakeOss:
         host = "bossip.oss-cn-shanghai.aliyuncs.com"
@@ -194,7 +196,9 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
         calls["vision"] += 1
         assert "转写" not in speech  # picture and speech are read side by side, not in sequence
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
-                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯"}
+                "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯",
+                "texts": [{"text": "巷口面馆", "where": "门头招牌", "at_sec": 1.2}, {"text": "", "where": "价签"}, "junk"],
+                "people": {"count": "1", "roles": ["店员"]}}
 
     class FakeOss:
         host = "bossip.oss-cn-shanghai.aliyuncs.com"
@@ -218,6 +222,9 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
     assert [c["subject"] for c in clips] == ["门头", "门头"] and clips[0]["transcript"] == "欢迎光临"
     # The reading keeps the moments and the opening picture the plan builds on; junk entries are dropped.
     assert clips[0]["beats"] == [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}] and clips[0]["hook"] == "门头亮灯"
+    # v3: what is written on screen and who is in the picture reach the plan; empty or junk entries do not.
+    assert clips[0]["texts"] == [{"text": "巷口面馆", "where": "门头招牌", "at_sec": 1.2}]
+    assert clips[0]["people"] == {"count": "1", "roles": ["店员"]}
     assert calls == {"asr": 1, "vision": 2}  # once per clip, on upload; the tool reused it
     async with get_db_session() as db:
         stored = await db.get(FileAsset, ids[0])
@@ -567,3 +574,12 @@ async def test_compose_passes_a_voiceover_through_asset_resolution():
     }), Ctx(), Oss())
     assert resolved.audio[1].voiceover.text == "轮毂多久没洗了？" and resolved.audio[1].asset is None
     assert resolved.audio[0].source_sec == 40.0
+
+
+def test_the_footage_skill_uses_what_the_reading_sees_on_screen_and_who_is_in_it():
+    from pathlib import Path
+    skill = (Path(__file__).resolve().parents[2] / ".openbox/skills/footage-edit/SKILL.md").read_text(encoding="utf-8")
+    assert "`texts`" in skill and "`people`" in skill and "`camera`" in skill and "`faces`" in skill
+    assert "是从门头读的" in skill and "owner's own words always win" in skill
+    assert "customer's face in close-up stays out" in skill
+    assert "no `move` and no `speed: 0.5`" in skill

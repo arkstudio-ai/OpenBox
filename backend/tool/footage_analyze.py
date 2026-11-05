@@ -38,11 +38,13 @@ log = create_logger("tool.footage_analyze")
 
 MAX_CLIPS = 10
 #: Bump when what a clip reading contains changes, so old cached readings are redone.
-READING_VERSION = 2
+READING_VERSION = 3   # 3: on-screen text, people and camera motion (2026-11-05)
 _readings: dict[str, asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
-FRAME_WIDTH = 360
+#: 480 px, not 360: a sign or a price tag has to be readable in the frame for the
+#: reading to copy its characters (2026-11-05); the frames are still small images.
+FRAME_WIDTH = 480
 SNAPSHOT_LINK_SECONDS = 3600
 #: A picture reading normally answers in 10–25 s, but now and then one call hangs for
 #: minutes (2026-11-02: 3 min 7 s on one clip of five, with no error). So it is asked a
@@ -56,13 +58,17 @@ PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一�
 
 请按画面把这段素材切成可用的片段，并挑出最精彩的瞬间。严格只输出 JSON，不要任何解释：
 {{"subject": "这段主要拍的是什么（≤15字）",
-  "segments": [{{"from_sec": 0.0, "to_sec": 2.5, "shot": "画面里正在发生什么（≤20字，写动作和对象，不写形容词）", "kind": "门头|环境|产品特写|服务过程|制作过程|成果展示|前后对比|人物|人群反应|口播|价格|其他", "quality": "好|晃|暗|糊|遮挡", "usable": true}}],
+  "segments": [{{"from_sec": 0.0, "to_sec": 2.5, "shot": "画面里正在发生什么（≤20字，写动作和对象，不写形容词）", "kind": "门头|环境|产品特写|服务过程|制作过程|成果展示|前后对比|人物|人群反应|口播|价格|其他", "quality": "好|晃|暗|糊|遮挡", "usable": true, "camera": "静止|手持微晃|横移|推近|拉远|环绕|跟拍", "faces": false}}],
+  "texts": [{{"text": "画面上能一字不差认出来的字，原样抄", "where": "门头招牌|价签|菜单|海报|屏幕|包装|其他", "at_sec": 4.0}}],
+  "people": {{"count": "0|1|2-3|多", "roles": ["店员|顾客|老板对镜头说话|路人"]}},
   "beats": [{{"at_sec": 4.0, "what": "这一瞬间发生了什么（≤15字）", "why": "为什么抓人：解压|反差|冲击|有食欲|有笑点|关键动作|成果亮相"}}],
   "hook": "最适合当成片第一眼的画面（≤15字），没有就留空",
   "best": {{"from_sec": 0.0, "to_sec": 3.0, "why": "最适合放进成片的一段（≤20字）"}}}}
 
 要求：片段首尾相接覆盖整段素材，按动作或镜头的变化来切，每段 1.5–5 秒，一段只写一件事；from_sec/to_sec 用截帧的秒数估计；
-晃、暗、糊、遮挡的片段 usable=false；beats 给 1–3 个，没有就给空数组；不要编造截帧里看不到的东西。"""
+晃、暗、糊、遮挡的片段 usable=false；beats 给 1–3 个，没有就给空数组；不要编造截帧里看不到的东西。
+camera 写这一段镜头本身怎么动（画面里的人动不算）；faces 只在有清楚可辨的人脸特写时为 true；
+texts 只抄能完全认清的字（店名、价格、菜名、活动），认不清、被遮住的一个字都不要写，没有就给空数组。"""
 
 
 class FootageAnalyzeArgs(BaseModel):
@@ -196,6 +202,8 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
         "segments": seen.get("segments") or [], "best": seen.get("best"),
         "beats": [b for b in (seen.get("beats") or []) if isinstance(b, dict)][:3],
         "hook": str(seen.get("hook") or "").strip() or None,
+        "texts": [t for t in (seen.get("texts") or []) if isinstance(t, dict) and str(t.get("text") or "").strip()][:8],
+        "people": seen.get("people") if isinstance(seen.get("people"), dict) else {},
         **({"note": seen["error"]} if seen.get("error") else {}),
     }
     if not seen.get("error"):
@@ -270,6 +278,7 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
         "transcript": reading.get("transcript"), "sentences": reading.get("sentences") or [],
         "subject": reading.get("subject"), "segments": reading.get("segments") or [],
         "best": reading.get("best"), "beats": reading.get("beats") or [], "hook": reading.get("hook"),
+        "texts": reading.get("texts") or [], "people": reading.get("people") or {},
         **({"note": reading["note"]} if reading.get("note") else {}),
     }
 
@@ -334,7 +343,9 @@ FOOTAGE_ANALYZE_DESCRIPTION = """\
 Read the owner's uploaded phone clips (你拍我剪) without a cloud desktop: for \
 each clip its length, orientation (横拍 clips are centre-cropped to the 9:16 \
 canvas), codec, whether it has sound, the spoken words with sentence timings, \
-and the usable segments with what each shows and its quality. Pass every clip \
+the usable segments with what each shows, its quality, how the camera moves and \
+whether a face is in close-up, the words readable on screen (signs, price tags, \
+menus) and who is in the picture. Pass every clip \
 in one call (asset_ids, up to 10, at most 5 minutes in total). It charges the \
 素材分析 fee once for the batch — 1 credit per started minute of footage — and \
 the result says how much (analysis_credits=), which the plan card must show. \

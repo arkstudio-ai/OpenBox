@@ -272,6 +272,21 @@ _DUCK_TAIL_SEC = 0.3
 _LOOP_FADE_SEC = 0.6
 _LOOP_MIN_TAIL_SEC = 4.0
 _EPS = 0.05
+#: 2026-11-04 voice-only sampler: 知媛 spoke 16 characters in about 5 s at speech_rate 0.
+_SPEECH_SEC_PER_CHAR = 0.3
+_SPEECH_SLACK_SEC = 0.3
+
+
+def _spoken_chars(text: str) -> str:
+    """The characters the voice actually says: letters, digits and CJK, no punctuation or spaces."""
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def speech_seconds(text: str, speech_rate: int = 0) -> float:
+    """How long IMS AI_TTS needs for ``text``: about 0.3 s a character at the natural rate;
+    speech_rate 500 is twice as fast, -500 half the speed."""
+    factor = 1 / (1 + speech_rate / 500) if speech_rate >= 0 else 1 - speech_rate / 500
+    return round(len(_spoken_chars(text)) * _SPEECH_SEC_PER_CHAR * factor, 2)
 
 
 def _audio_clips(index: int, item: AudioClip, timeline: Timeline, total: float | None, region: str | None,
@@ -291,6 +306,11 @@ def _audio_clips(index: int, item: AudioClip, timeline: Timeline, total: float |
             problems.append(f"{where}.voiceover.voice: unknown voice {voice.voice!r}; IMS would refuse or fall back silently")
         elif voice.voice not in cat.VERIFIED_VOICES:
             warnings.append(f"{where}.voiceover.voice: {voice.voice!r} is listed by IMS but not yet verified in a real job")
+        if end is not None:
+            need = speech_seconds(voice.text, voice.speech_rate)
+            if need > (end - item.from_sec) + _SPEECH_SLACK_SEC:
+                warnings.append(f"{where}.voiceover: {len(_spoken_chars(voice.text))} characters need about {need}s of speech "
+                                f"but the span is {round(end - item.from_sec, 2)}s; the end of the line may be cut off")
         clip = {
             "Type": "AI_TTS", "Content": voice.text, "Voice": voice.voice,
             "SpeechRate": voice.speech_rate, "PitchRate": voice.pitch_rate,

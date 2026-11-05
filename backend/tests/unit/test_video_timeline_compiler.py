@@ -386,3 +386,17 @@ def test_a_voiceover_is_an_ai_tts_clip_and_the_bed_ducks_under_it():
                              audio=[AudioClip(voiceover=Voiceover(text="hi", voice="nobody"), from_sec=0, to_sec=3)]), output_url=OUT)
     with pytest.raises(ValidationError):
         AudioClip(voiceover=Voiceover(text="hi"), from_sec=0)  # needs to_sec
+
+
+def test_a_voiceover_line_longer_than_its_span_warns_before_the_render():
+    from video.ims_compiler import speech_seconds
+
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。") == 4.5   # 15 spoken characters, punctuation not counted
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。", speech_rate=500) == 2.25
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。", speech_rate=-500) == 9.0
+    short = Timeline(shots=[Shot(asset=f"{B}/a.mp4", duration_sec=12)],
+                     audio=[AudioClip(voiceover=Voiceover(text="轮毂多久没洗了？三分钟还你新轮毂。"), from_sec=1, to_sec=3, volume=1)])
+    job = compile_ims(short, output_url=OUT)
+    assert any("may be cut off" in w and "15 characters" in w for w in job.warnings)
+    roomy = short.model_copy(update={"audio": [AudioClip(voiceover=Voiceover(text="轮毂多久没洗了？三分钟还你新轮毂。"), from_sec=1, to_sec=6, volume=1)]})
+    assert not any("cut off" in w for w in compile_ims(roomy, output_url=OUT).warnings)

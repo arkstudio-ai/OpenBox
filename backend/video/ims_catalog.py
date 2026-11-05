@@ -99,7 +99,9 @@ KNOWN_VOICES: dict[str, str] = {
     "zhibing_emo": "知冰 · 多情感男声", "zhifeng_emo": "知锋 · 多情感男声",
 }
 #: 2026-11-04 voice-only sampler: zhiyuan spoke 16 characters in about 5 s (−24 dB), silence after.
-VERIFIED_VOICES: frozenset[str] = frozenset({"zhiyuan"})
+#: 2026-11-05: zhixiang (磁性男声) and zhitian_emo (甜美女声) rendered the same line with sound 0–5 s, silence after;
+#: they are the 产品大片 and 快剪动感 voices of the 你拍我剪 styles.
+VERIFIED_VOICES: frozenset[str] = frozenset({"zhiyuan", "zhixiang", "zhitian_emo"})
 
 #: IMS re-times every output to this regardless of the sources (measured).
 OUTPUT_FPS = 25

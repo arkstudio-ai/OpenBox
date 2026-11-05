@@ -126,6 +126,7 @@ QWH 的洗车与商场舞蹈素材拼的 23.4 秒样片，一次把新暴露的�
 | 画中画 | `overlays[]`（独立视频轨，X/Y/W/H 比例、Opacity） | 右上角 36%×20% 小窗正常，带 Opacity 0.95（已验证） |
 | AI 配音 | `audio[].voiceover`（AudioTrackClip `Type: AI_TTS`） | 纯配音样片 0–5 秒 −24 dB、之后 −120 dB；16 字约 5 秒（zhiyuan 已验证） |
 | 配乐压低 | `duck_under_voice` | 与字幕压低同一机制，按旁白区间切段 |
+| AI 配音音色 | `voiceover.voice` | 2026-11-05 同一句（15 字）再渲两个：`zhixiang` 知祥磁性男声、`zhitian_emo` 知甜甜美女声，都是 0–5 秒 −25 dB 左右、之后静音（`oss://bossip/light/spike/20261105/voice-*.mp4`）；三个音色已验证，分别给 温暖纪实 / 产品大片 / 快剪动感 三档风格；编译器按 0.3 秒/字估时长，区间不够会警告 |
 | 转场 | `transition_out.type` | IMS 提交时就校验名字：ffmpeg 风格的 `slideleft` 被拒（InvalidTimelineFormat，不扣费）；`wiperight`、`perlin` 已验证，目录只留 IMS 自己页面上的名字 |
 | 花字 | `style.color_style` | `neon_cyan` 渲染成普通白字描边，`EffectColorStyle` 单独不生效，未验证 |
 | 字体 | `style.font=KaiTi` | 抽帧看不出与默认字体的差别，未验证 |

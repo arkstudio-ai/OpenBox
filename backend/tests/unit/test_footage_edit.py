@@ -531,3 +531,16 @@ def test_a_caption_wider_than_the_frame_is_split_into_lines_that_fit():
                                                "中午11点开门，晚上10点打烊"]
     assert lines[0][0] == 12 and lines[2][1] == 24 and lines[0][1] == lines[1][0] and lines[1][1] == lines[2][0]
     assert any("split into 3 cues" in warning for warning in compiled.warnings)
+
+
+def test_the_footage_skill_offers_four_styles_and_writes_the_narration_only_on_request():
+    from pathlib import Path
+    skill = (Path(__file__).resolve().parents[2] / ".openbox/skills/footage-edit/SKILL.md").read_text(encoding="utf-8")
+    for style in ("快剪动感", "温暖纪实", "产品大片", "口播 vlog"):
+        assert skill.count(style) >= 3, style          # the table, the defaults or 换风格 card, and the card line
+    assert "风格：<风格名>" in skill and "`换风格`" in skill
+    assert "`加旁白`" in skill and "`改旁白`" in skill and "`不要旁白`" in skill
+    assert "0.3 s per character" in skill and "Never over\n  a spoken sentence" in skill
+    assert "never in 口播 vlog" in skill and "Never add it on your own" in skill
+    for voice in ("zhiyuan", "zhixiang", "zhitian_emo"):
+        assert f"`{voice}`" in skill, voice

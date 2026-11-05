@@ -9,8 +9,10 @@ import '../../../shared/config/env.dart';
 import '../../../shared/download/asset_download.dart';
 import '../../../shared/router/paths.dart';
 
-/// Assistant replies use the same conversation links as the web app. Only
-/// first-party links may become native routes; a lookalike host stays external.
+/// Assistant replies use the same conversation links as the web app, and in
+/// Light they also point at a home entry's topic page (`/light/topic/<id>`,
+/// which exists only in the App). Only first-party links may become native
+/// routes; a lookalike host stays external.
 String? conversationRoute(String url) {
   final uri = Uri.tryParse(url.trim());
   if (uri == null || uri.userInfo.isNotEmpty) return null;
@@ -22,13 +24,17 @@ String? conversationRoute(String url) {
     }
   }
   final segments = uri.pathSegments;
-  if (segments.length != 3 || segments[0] != 'app' || segments[1] != 's') {
-    return null;
-  }
+  if (segments.length != 3) return null;
   final id = segments[2];
   if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(id)) return null;
+  final path = switch ((segments[0], segments[1])) {
+    ('app', 's') => Paths.chat(id),
+    ('light', 'topic') => Paths.lightTopic(id),
+    _ => null,
+  };
+  if (path == null) return null;
   return Uri(
-    path: Paths.chat(id),
+    path: path,
     query: uri.hasQuery ? uri.query : null,
     fragment: uri.hasFragment ? uri.fragment : null,
   ).toString();

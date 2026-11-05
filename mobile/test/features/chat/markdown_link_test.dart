@@ -26,6 +26,55 @@ void main() {
     }
   });
 
+  test('Light topic URLs become native routes, other Light paths do not', () {
+    for (final prefix in ['', 'https://ai.bossipai.com.cn']) {
+      expect(
+        conversationRoute('$prefix/light/topic/footage_edit'),
+        '/light/topic/footage_edit',
+      );
+    }
+    for (final url in [
+      'https://ai.bossipai.com.cn.evil.test/light/topic/video',
+      '//evil.test/light/topic/video',
+      '/light/topic/',
+      '/light/topic/a%2fb',
+      '/light/topic/video/extra',
+      '/light/autopilot',
+      '/light/other/video',
+    ]) {
+      expect(conversationRoute(url), isNull, reason: url);
+    }
+  });
+
+  testWidgets('tap an assistant topic link opens the topic page in the App', (
+    tester,
+  ) async {
+    final router = GoRouter(
+      initialLocation: '/app/assistant',
+      routes: [
+        GoRoute(
+          path: '/app/assistant',
+          builder: (_, _) => const Scaffold(
+            body: MarkdownView('去首页[你拍我剪](/light/topic/footage_edit)开始'),
+          ),
+        ),
+        GoRoute(
+          path: '/light/topic/:entryId',
+          builder: (_, state) =>
+              Scaffold(body: Text('专题 ${state.pathParameters['entryId']}')),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      MaterialApp.router(theme: testTheme(), routerConfig: router),
+    );
+    await tester.pumpAndSettle();
+    await tester.tapOnText(find.textRange.ofSubstring('你拍我剪'));
+    await tester.pumpAndSettle();
+    expect(find.text('专题 footage_edit'), findsOneWidget);
+  });
+
   for (final prefix in ['', 'https://ai.bossipai.com.cn']) {
     testWidgets('tap the blue preview link opens its conversation ($prefix)', (
       tester,

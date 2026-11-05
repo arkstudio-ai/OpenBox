@@ -122,6 +122,9 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
         shots.append(shot.model_copy(update={"asset": url}))
     audio = []
     for index, item in enumerate(timeline.audio):
+        if item.voiceover is not None:
+            audio.append(item)   # spoken by the renderer from text: nothing to own or resolve
+            continue
         if item.library_id:
             from video.bgm_library import track
 

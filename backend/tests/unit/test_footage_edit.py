@@ -544,3 +544,26 @@ def test_the_footage_skill_offers_four_styles_and_writes_the_narration_only_on_r
     assert "never in 口播 vlog" in skill and "Never add it on your own" in skill
     for voice in ("zhiyuan", "zhixiang", "zhitian_emo"):
         assert f"`{voice}`" in skill, voice
+
+
+@pytest.mark.asyncio
+async def test_compose_passes_a_voiceover_through_asset_resolution():
+    """2026-11-05 light-test: every timeline with a 旁白 failed submit with "operation failed" — the
+    resolver read ``item.asset`` (None) of the voiceover as an OSS reference; the agent then dropped the
+    narration the owner had just approved."""
+    from tool.video_compose import _resolve_shot_assets
+    from video.timeline import Timeline
+
+    class Ctx:
+        user_id = "u"
+
+    class Oss:
+        bucket, host = "bossip", "bossip.oss-cn-shanghai.aliyuncs.com"
+
+    resolved = await _resolve_shot_assets(Timeline.model_validate({
+        "shots": [{"asset": BASE + "a.mp4", "duration_sec": 8}],
+        "audio": [{"library_id": BED, "duck_under_voice": True},
+                  {"voiceover": {"text": "轮毂多久没洗了？", "voice": "zhiyuan"}, "from_sec": 0.5, "to_sec": 3.5, "volume": 1}],
+    }), Ctx(), Oss())
+    assert resolved.audio[1].voiceover.text == "轮毂多久没洗了？" and resolved.audio[1].asset is None
+    assert resolved.audio[0].source_sec == 40.0

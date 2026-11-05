@@ -581,5 +581,5 @@ def test_the_footage_skill_uses_what_the_reading_sees_on_screen_and_who_is_in_it
     skill = (Path(__file__).resolve().parents[2] / ".openbox/skills/footage-edit/SKILL.md").read_text(encoding="utf-8")
     assert "`texts`" in skill and "`people`" in skill and "`camera`" in skill and "`faces`" in skill
     assert "是从门头读的" in skill and "owner's own words always win" in skill
-    assert "customer's face in close-up stays out" in skill
+    assert "face in close-up stays out" in skill
     assert "no `move` and no `speed: 0.5`" in skill

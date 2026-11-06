@@ -9,8 +9,8 @@ import { Spinner } from "@/shared/ui/Spinner"
 import { useQuery } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { exampleKeys, prefillExample, useAssetLink, useSaveExample, useTaxonomy } from "./api"
-import { EMPTY, toWrite, type FormState } from "./lib"
-import { ENTRY_IDS, type AssetRef, type Example, type ExampleDraft, type Taxonomy } from "./types"
+import { EMPTY, MAX_ASSETS, MAX_RECIPE, toWrite, type FormState } from "./lib"
+import { ENTRY_IDS, type AssetRef, type Example, type ExampleDraft, type ExampleWrite, type Taxonomy } from "./types"
 
 export type SheetMode =
   | { kind: "collect"; sessionId: string; assetId?: string | null }
@@ -85,6 +85,23 @@ export function AssetTile({ asset }: { asset: AssetRef }) {
   )
 }
 
+function RemovableTile({ asset, onRemove }: { asset: AssetRef; onRemove: () => void }) {
+  const { t } = useTranslation("admin-examples")
+  return (
+    <div className="flex flex-col gap-1">
+      <AssetTile asset={asset} />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={t("form.removeAsset", { name: asset.name || asset.asset_id })}
+        className="text-n600 hover:text-ink self-start text-xs underline-offset-2 hover:underline"
+      >
+        {t("form.remove")}
+      </button>
+    </div>
+  )
+}
+
 function Field({ id, label, hint, children }: { id: string; label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
@@ -105,6 +122,17 @@ function modeKey(mode: SheetMode): string {
   if (mode.kind === "edit") return `edit:${mode.example.id}:${mode.example.updated_at ?? ""}`
   if (mode.kind === "collect") return `collect:${mode.sessionId}:${mode.assetId ?? ""}`
   return "new"
+}
+
+/** What stops this form from saving: the same refusals the server would give, said where they can be fixed. */
+function useFormProblems(write: ExampleWrite) {
+  const { t } = useTranslation("admin-examples")
+  const tooMany = (count: number, kind: string) => (count > MAX_ASSETS ? t("form.tooManyAssets", { kind, count, max: MAX_ASSETS }) : null)
+  const outputsOver = tooMany(write.outputs.length, t("form.outputs"))
+  const inputsOver = tooMany(write.inputs.length, t("form.inputs"))
+  const recipeOver = write.recipe.length > MAX_RECIPE ? t("form.recipeTooLong", { count: write.recipe.length, max: MAX_RECIPE }) : null
+  const missing = !write.title ? t("form.needTitle") : !write.outputs.length ? t("form.needOutput") : null
+  return { outputsOver, inputsOver, problem: missing ?? outputsOver ?? inputsOver ?? recipeOver }
 }
 
 function SheetForm({
@@ -129,7 +157,9 @@ function SheetForm({
 
   const shopTypes = shopTypesOf(taxonomy, state.industry)
   const write = toWrite(state)
-  const problem = !write.title ? t("form.needTitle") : !write.outputs.length ? t("form.needOutput") : null
+  const { outputsOver, inputsOver, problem } = useFormProblems(write)
+  const removeOutput = (assetId: string) => patch({ outputs: state.outputs.filter((asset) => asset.asset_id !== assetId) })
+  const removeInput = (assetId: string) => patch({ inputs: state.inputs.filter((asset) => asset.asset_id !== assetId) })
 
   const submit = async () => {
     if (problem || save.isPending) return
@@ -226,14 +256,15 @@ function SheetForm({
           <textarea id={`${id}-notes`} className={AREA} rows={3} maxLength={2000} value={state.notes} onChange={(e) => patch({ notes: e.target.value })} />
         </Field>
         <Field id={`${id}-recipe`} label={t("form.recipe")}>
-          <textarea id={`${id}-recipe`} className={`${AREA} font-mono text-xs`} rows={8} maxLength={20000} value={state.recipe} onChange={(e) => patch({ recipe: e.target.value })} />
+          <textarea id={`${id}-recipe`} className={`${AREA} font-mono text-xs`} rows={8} maxLength={MAX_RECIPE} value={state.recipe} onChange={(e) => patch({ recipe: e.target.value })} />
         </Field>
         <section className="flex flex-col gap-2" aria-label={t("form.outputs")}>
           <h3 className="text-n700 text-xs font-medium">{t("form.outputs")}</h3>
+          {outputsOver && <p className="text-dangerink text-xs">{outputsOver}</p>}
           {state.outputs.length ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {state.outputs.map((asset) => (
-                <AssetTile key={asset.asset_id} asset={asset} />
+                <RemovableTile key={asset.asset_id} asset={asset} onRemove={() => removeOutput(asset.asset_id)} />
               ))}
             </div>
           ) : (
@@ -252,10 +283,11 @@ function SheetForm({
         </section>
         <section className="flex flex-col gap-2" aria-label={t("form.inputs")}>
           <h3 className="text-n700 text-xs font-medium">{t("form.inputs")}</h3>
+          {inputsOver && <p className="text-dangerink text-xs">{inputsOver}</p>}
           {state.inputs.length > 0 && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {state.inputs.map((asset) => (
-                <AssetTile key={asset.asset_id} asset={asset} />
+                <RemovableTile key={asset.asset_id} asset={asset} onRemove={() => removeInput(asset.asset_id)} />
               ))}
             </div>
           )}

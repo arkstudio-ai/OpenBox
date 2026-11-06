@@ -904,6 +904,7 @@
       "search": "Search conversations",
       "searchPlaceholder": "What the user said or the AI replied",
       "clearSession": "Clear session filter",
+      "oldestFirst": "Oldest first",
       "onlySession": "Only this session",
       "openPro": "Open session in professional view",
       "groupCount_one": "{{count}} turn",

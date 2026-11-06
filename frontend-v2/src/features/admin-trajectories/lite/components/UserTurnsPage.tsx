@@ -146,6 +146,19 @@ function Filters({
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          aria-pressed={params.order === "asc"}
+          onClick={() => onApply({ order: params.order === "asc" ? "desc" : "asc" })}
+          className={cn(
+            "rounded-full border px-3 py-1 text-xs font-medium",
+            params.order === "asc"
+              ? "border-a700 bg-a700 text-bg"
+              : "border-hair text-n800 hover:bg-hairsoft",
+          )}
+        >
+          {t("lite.turns.oldestFirst")}
+        </button>
         {params.session && (
           <button type="button" className={BUTTON} onClick={() => onApply({ session: "" })}>
             {t("lite.turns.clearSession")}
@@ -419,7 +432,10 @@ function hasNewer(newest: TurnSummary | undefined, top: TurnSummary | undefined,
   return !top || newest.turn_id !== top.turn_id || newest.last_activity_at !== top.last_activity_at
 }
 
-/** 某用户的对话轮: every turn of one user across sessions, newest first, abnormal ones one switch away. */
+/**
+ * 某用户的对话轮: every turn of one user across sessions, abnormal ones one switch away.
+ * Newest first by default; 从旧到新 reverses it on the server, so paging stays in order.
+ */
 export function TrajectoryUserTurnsPage({ userId }: { userId: string }) {
   const { t } = useTranslation("admin-trajectories")
   const [search, setSearch] = useSearchParams()
@@ -431,7 +447,11 @@ export function TrajectoryUserTurnsPage({ userId }: { userId: string }) {
   if (denied) return <AccessNotice denial={denied} />
 
   const rows = list.data?.items ?? []
-  const updated = !params.cursor && hasNewer(probe.data?.items[0], rows[0], list.isSuccess)
+  // The newest listed turn is the top row of the first page, or the last row of the last page.
+  const oldestFirst = params.order === "asc"
+  const atNewestEnd = oldestFirst ? !list.data?.has_more : !params.cursor
+  const newestListed = oldestFirst ? rows[rows.length - 1] : rows[0]
+  const updated = atNewestEnd && hasNewer(probe.data?.items[0], newestListed, list.isSuccess)
   const go = (next: TurnsParams) => setSearch(serializeTurnsParams(next))
   const refresh = () => {
     void list.refetch()

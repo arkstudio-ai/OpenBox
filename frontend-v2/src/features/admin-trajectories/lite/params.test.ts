@@ -47,6 +47,14 @@ describe("lite URL params", () => {
     expect(parseTurnsParams(new URLSearchParams("window=1y")).window).toBe("30d")
   })
 
+  it("keeps the oldest-first order in the URL and treats anything else as the default", () => {
+    const params = parseTurnsParams(new URLSearchParams("order=asc"))
+    expect(params.order).toBe("asc")
+    expect(serializeTurnsParams(params)).toBe("order=asc")
+    expect(parseTurnsParams(new URLSearchParams("order=sideways")).order).toBe("desc")
+    expect(serializeTurnsParams(EMPTY_TURNS_PARAMS)).toBe("")
+  })
+
   it("pages with an opaque cursor trail and restarts on a damaged one", () => {
     const first = withFilters(EMPTY_USERS_PARAMS, { q: "a" })
     const second = nextPage(first, "cursorB")

@@ -9,7 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-04 18:00 `20261104-gatefix-538e43b6`（预热桌面三连修 + 简明模式回放）
+## 当前应用版本：2026-11-07 00:05 `20261107-turnorder-986a21ab`（简明模式对话轮列表「从旧到新」开关）
+
+- PR [#156](https://github.com/arkstudio-ai/OpenBox/pull/156) 合并至 `main@986a21ab`。对话轮列表默认最新在上，读对话时序是反的；`GET /api/admin/trajectories/users/{id}/turns` 新增 `order=asc`，翻页由服务端反转，前端筛选区加「从旧到新」开关（URL `order=asc`）。无迁移、无配置变更。
+- 后端补丁 **2 个文件**：以线上 `20261104-gatefix-538e43b6` 为底 COPY `trajectory/lite.py`、`trajectory/worker/routes.py`（`releases/20261107-turnorder-986a21ab/patch/`）。切换前核对：这两个文件线上与 `538e43b6` 逐字节一致；`build.sh` 核对镜像内文件一致、`/app` 其余文件与底镜像清单一致、模块可导入。**线上其余未入库文件原样保留。**
+- 前端 `openbox-frontend-v2:20261107-turnorder-986a21ab`：本机 buildx amd64 从 `main@986a21ab` 干净归档构建，经 `oss://bossip/_deploy-tmp/` 中转（`aliyun oss` 要带 `--region cn-shanghai`）、gw2 `sha256sum -c` 后装载，`nginx -t` 通过，中转对象已删。
+- 切换 `releases/20261107-turnorder-986a21ab/activate.sh`：配置快照 + 两库 dump（业务 123 表、轨迹 44 表）→ 空闲门禁一次即 0 → backend 16:04:38 → worker → frontend，全部 healthy，16:05:48 UTC 完成；alembic 仍 `ph95b6c7d8e9`；解析后 compose 只有三处镜像引用变化；`OPENBOX_MANAGED_CACHE=true` 仍在。
+- 验证：`/health` ok，首页 app-build 为新 tag，`/api/environment`、Logto 配置 GET 200，`/users/x/turns?order=asc` 匿名 401；切换后 backend/worker 日志无 traceback。线上 worker 容器内只读调用 `list_user_turns`（497 轮的用户）：`desc` 从 11-03 往回、`asc` 从 09-16 往后，两个方向第二页都接得上。未在线上页面点开关验收（本地已验）。
+- 回滚：恢复 `releases/20261107-turnorder-986a21ab/before/docker-compose.override.yml`（三项回 `20261104-gatefix-538e43b6`），依次 `docker compose up -d --no-deps backend / trajectory-worker / frontend`；无库回滚。AWS、高德、light-test 未发布。
+
+## 历史应用版本：2026-11-04 18:00 `20261104-gatefix-538e43b6`（预热桌面三连修 + 简明模式回放）
 
 - PR [#144](https://github.com/arkstudio-ai/OpenBox/pull/144)、[#145](https://github.com/arkstudio-ai/OpenBox/pull/145)、[#148](https://github.com/arkstudio-ai/OpenBox/pull/148)、[#146](https://github.com/arkstudio-ai/OpenBox/pull/146) 合并至 `main@538e43b6`。起因是 11-04 下午两个新用户每轮报错，查出三个独立问题：① 预热桌面领取后卡在 `pool_state=assigning`（巡检 probe 把 `pending` 改成 `up`，让激活自己的校验快照失效，死循环），资源门又只认 `assigned`，连纯文本对话都 423 `RESOURCE_CONTROL_HELD`；② 11-01 起新分配的 5 台预热桌面在激活时装上了带 `resource_admission_v2` 的 action server，要求 journal 头，gw2 后端从未钉过 journal，这 5 台上所有带围栏请求 100% 409 `RESOURCE_JOURNAL_CHANGED`，表现为 "Runtime preparation may have partially completed"（light-test 11-03 的 PR #130 修过，但只在 light-mode）；③ 21 台 v1 老桌面上纯文本回合结束时的 `cache_release` 被桌面答 409 `CACHE_TASK_FENCE_CHANGED`（本 run 没有 task 行），后端当成"结果不明"进 manual_review，11-02 起约一半。
 - 修法：#144 巡检只 probe 已稳定通道、loop 在桌面未 `assigned` 时降级为纯对话；#145 把 #130 两个提交 cherry-pick 到 main（首次带围栏请求前自动钉 journal，不 bind）；#148 `definitive_rejection` 把释放阶段的 `CACHE_TASK_FENCE_CHANGED` 按 `released=False` 结算；#146 简明模式会话回放与生成提示词全文（后端 + 前端）。无迁移、无配置变更。

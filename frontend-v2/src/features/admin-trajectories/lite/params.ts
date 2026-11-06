@@ -12,6 +12,9 @@ export const TURN_WINDOWS = ["7d", "30d", "90d", "all"] as const
 export type TurnWindow = (typeof TURN_WINDOWS)[number]
 export const DEFAULT_TURN_WINDOW: TurnWindow = "30d"
 
+/** "desc" is the monitoring view (newest on top); "asc" reads like the conversation went. */
+export type TurnOrder = "desc" | "asc"
+
 interface Paged {
   cursor: string | null
   /** Cursors of the pages before this one; `null` is the first page. */
@@ -30,6 +33,7 @@ export interface TurnsParams extends Paged {
   session: string
   q: string
   window: TurnWindow
+  order: TurnOrder
 }
 
 export const EMPTY_USERS_PARAMS: UsersParams = {
@@ -46,6 +50,7 @@ export const EMPTY_TURNS_PARAMS: TurnsParams = {
   session: "",
   q: "",
   window: DEFAULT_TURN_WINDOW,
+  order: "desc",
   cursor: null,
   trail: [],
 }
@@ -123,6 +128,7 @@ export function parseTurnsParams(search: URLSearchParams): TurnsParams {
     window: (TURN_WINDOWS as readonly string[]).includes(window ?? "")
       ? (window as TurnWindow)
       : DEFAULT_TURN_WINDOW,
+    order: search.get("order") === "asc" ? "asc" : "desc",
     ...parsePaging(search),
   }
 }
@@ -133,6 +139,7 @@ export function serializeTurnsParams(params: TurnsParams): string {
   if (params.session) search.set("session", params.session)
   if (params.q) search.set("q", params.q)
   if (params.window !== DEFAULT_TURN_WINDOW) search.set("window", params.window)
+  if (params.order === "asc") search.set("order", "asc")
   serializePaging(search, params)
   return search.toString()
 }

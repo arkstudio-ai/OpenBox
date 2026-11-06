@@ -57,6 +57,8 @@ async def test_users_turns_and_turn_detail_are_served_and_audited(worker):
     assert items[0]["session_title"] == "Session session_a_1" and items[0]["status_reason"] == "login_expired"
     assert items[0]["tool_counts"] == {"desktop_publish": {"total": 1, "failed": 1}}
     assert (await worker.client.get(PREFIX + "/users/a/turns", params={"status": "done"})).status_code == 400
+    assert (await worker.client.get(PREFIX + "/users/a/turns", params={"order": "asc"})).status_code == 200
+    assert (await worker.client.get(PREFIX + "/users/a/turns", params={"order": "sideways"})).status_code == 400
     assert (await worker.client.get(PREFIX + "/users", params={"limit": "0"})).status_code == 422
 
     detail = await worker.client.get(PREFIX + "/sessions/session_a_1/turns/turn_1")

@@ -278,16 +278,21 @@ def _status_clause(statuses: list[str], at: datetime):
 
 
 async def list_user_turns(db, user_id: str, *, statuses=None, activity_from=None, activity_to=None, session_id=None,
-                          q=None, cursor=None, limit=50, viewer_id=None, at: datetime | None = None):
-    """One user's turns across sessions, newest first (lite plan §6.3 ``GET /users/{user_id}/turns``)."""
+                          q=None, cursor=None, limit=50, viewer_id=None, order="desc", at: datetime | None = None):
+    """One user's turns across sessions, newest first unless ``order="asc"`` (lite plan §6.3
+    ``GET /users/{user_id}/turns``)."""
     activity_from, activity_to = _window(activity_from, activity_to)
     at = at or datetime.now(timezone.utc)
     statuses = [status for status in (statuses or []) if status]
     unknown = set(statuses) - set(turns.STATUSES)
     if unknown:
         raise TrajectoryError(f"Unsupported turn status filter: {', '.join(sorted(unknown))}")
+    if order not in ("asc", "desc"):
+        raise TrajectoryError(f"Unsupported turn order: {order}")
+    oldest_first = order == "asc"
+    # Only "asc" joins the digest, so cursors issued before ``order`` existed stay valid.
     filters = digest([user_id, sorted(statuses), iso(activity_from), iso(activity_to), session_id, q]
-                     + ([viewer_id] if viewer_id else []))
+                     + ([viewer_id] if viewer_id else []) + (["asc"] if oldest_first else []))
     Turn, Session = TrajectoryTurnSummary, TrajectoryMetaSession
     query = _in_window(select(Turn, Session.title).outerjoin(Session, Session.id == Turn.session_id)
                        .where(Turn.user_id == user_id), Turn.started_at, activity_from, activity_to)
@@ -301,13 +306,15 @@ async def list_user_turns(db, user_id: str, *, statuses=None, activity_from=None
         if clause is not None:
             query = query.where(clause)
     position = _decode_position(cursor, filters, "Turn") if cursor else None
-    ordered = query.order_by(Turn.started_at.desc(), Turn.turn_id.desc())
+    ordered = query.order_by(*((Turn.started_at, Turn.turn_id) if oldest_first
+                               else (Turn.started_at.desc(), Turn.turn_id.desc())))
     visible = _audience_filter(viewer_id)
     rows = []
     for _ in range(SCAN_ROUNDS):
         batch_query = ordered
         if position is not None:
-            batch_query = batch_query.where(tuple_(Turn.started_at, Turn.turn_id) < position)
+            key = tuple_(Turn.started_at, Turn.turn_id)
+            batch_query = batch_query.where(key > position if oldest_first else key < position)
         batch = (await db.execute(batch_query.limit(BATCH))).all()
         if not batch:
             break

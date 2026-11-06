@@ -72,6 +72,9 @@ const USER_B: LiteUserRow = {
   usage_complete: false,
 }
 
+/** One instant for every read, so the list and the "new activity" probe agree on a turn. */
+const TURN_AT = new Date().toISOString()
+
 function turn(patch: Partial<TurnSummary>): TurnSummary {
   return {
     turn_id: "turn_1",
@@ -79,9 +82,9 @@ function turn(patch: Partial<TurnSummary>): TurnSummary {
     session_title: "国庆活动预热视频",
     user_id: "user_a",
     workspace_id: "ws",
-    started_at: new Date().toISOString(),
-    finished_at: new Date().toISOString(),
-    last_activity_at: new Date().toISOString(),
+    started_at: TURN_AT,
+    finished_at: TURN_AT,
+    last_activity_at: TURN_AT,
     duration_ms: 252_000,
     status: "failed",
     status_reason: "login_expired",
@@ -217,6 +220,7 @@ function answer(path: string): Promise<unknown> {
               session_title: "门店日常运营",
             }),
           ]
+    if (url.searchParams.get("order") === "asc") items.reverse()
     return Promise.resolve({
       items: url.searchParams.get("limit") === "1" ? items.slice(0, 1) : items,
       next_cursor: null,
@@ -471,6 +475,30 @@ describe("某用户的对话轮", () => {
       ),
     )
     expect(await screen.findByText("lite.turns.emptyFiltered")).toBeTruthy()
+  })
+
+  it("switches to oldest first through the URL without calling the newest turn new activity", async () => {
+    renderAt("/app/admin/trajectories/users/user_a?cursor=abc&trail=.")
+    const toggle = await screen.findByRole("button", { name: "lite.turns.oldestFirst" })
+    expect(toggle.getAttribute("aria-pressed")).toBe("false")
+    fireEvent.click(toggle)
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe(
+        "/app/admin/trajectories/users/user_a?order=asc",
+      ),
+    )
+    await waitFor(() => {
+      const titles = screen.getAllByRole("columnheader").map((node) => node.textContent)
+      const older = titles.findIndex((text) => text?.includes("门店日常运营"))
+      const newer = titles.findIndex((text) => text?.includes("国庆活动预热视频"))
+      expect(older).toBeGreaterThanOrEqual(0)
+      expect(older).toBeLessThan(newer)
+    })
+    expect(screen.queryByText("lite.turns.updates")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "lite.turns.oldestFirst" }))
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe("/app/admin/trajectories/users/user_a"),
+    )
   })
 })
 

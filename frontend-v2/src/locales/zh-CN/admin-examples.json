@@ -70,9 +70,14 @@
     "saved": "已收进样例库",
     "needTitle": "标题不能为空",
     "needOutput": "至少要有一条产出",
+    "remove": "移除",
+    "removeAsset": "移除 {{name}}",
+    "tooManyAssets": "{{kind}}最多 {{max}} 条，现在有 {{count}} 条，移除多余的再保存",
+    "recipeTooLong": "做法最多 {{max}} 字，现在有 {{count}} 字，删掉一些再保存",
     "errors": {
       "EXAMPLE_INVALID": "分类或 asset_id 不对：{{message}}",
       "SESSION_NOT_FOUND": "找不到这个会话",
+      "HTTP_422": "内容超出限制或格式不对，检查后再保存",
       "default": "保存失败，请稍后再试"
     }
   },

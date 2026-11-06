@@ -70,9 +70,14 @@
     "saved": "Added to the example library",
     "needTitle": "A title is required",
     "needOutput": "At least one output is required",
+    "remove": "Remove",
+    "removeAsset": "Remove {{name}}",
+    "tooManyAssets": "{{kind}}: at most {{max}}, there are {{count}}. Remove the extras to save",
+    "recipeTooLong": "The recipe can be {{max}} characters at most, it has {{count}}. Trim it to save",
     "errors": {
       "EXAMPLE_INVALID": "Classification or asset id is wrong: {{message}}",
       "SESSION_NOT_FOUND": "Session not found",
+      "HTTP_422": "Something is over a limit or in the wrong format. Check it and save again",
       "default": "Saving failed; try again later"
     }
   },

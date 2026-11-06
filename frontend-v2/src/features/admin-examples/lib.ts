@@ -20,6 +20,10 @@ export interface FormState {
   status: ExampleWrite["status"]
 }
 
+/** The same limits the server's ExampleIn enforces; a session can bring back more than these. */
+export const MAX_ASSETS = 12
+export const MAX_RECIPE = 20000
+
 export const EMPTY: FormState = {
   entry_id: "video",
   industry: "food",

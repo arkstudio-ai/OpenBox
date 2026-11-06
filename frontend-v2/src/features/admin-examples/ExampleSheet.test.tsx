@@ -168,6 +168,40 @@ describe("collect sheet", () => {
     expect(within(dialog).getByText("至少要有一条产出")).toBeTruthy()
   })
 
+  it("holds a session with too many outputs until the extras are removed", async () => {
+    const outputs = Array.from({ length: 13 }, (_, n) => ({ asset_id: `asset_${n}`, oss_key: `k${n}`, name: `out${n}.png`, mime: "image/png" }))
+    vi.mocked(http.post).mockImplementation(async (path: string) => {
+      if (path.endsWith("/prefill")) return { ...DRAFT, outputs }
+      return { ...DRAFT, id: "lex_new", status: "active" }
+    })
+    mount("/app/admin/examples?collect=session_1")
+    const dialog = await screen.findByRole("dialog")
+    await within(dialog).findByLabelText("标题")
+    const save = within(dialog).getByRole("button", { name: "保存" }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    expect(within(dialog).getAllByText("产出最多 12 条，现在有 13 条，移除多余的再保存").length).toBeGreaterThan(0)
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "移除 out3.png" }))
+    expect(save.disabled).toBe(false)
+    fireEvent.click(save)
+    await waitFor(() => expect(vi.mocked(http.post).mock.calls.some(([path]) => path === "/api/admin/examples")).toBe(true))
+    const [, body] = vi.mocked(http.post).mock.calls.find(([path]) => path === "/api/admin/examples") as [string, { outputs: { asset_id: string }[] }]
+    expect(body.outputs).toHaveLength(12)
+    expect(body.outputs.map((output) => output.asset_id)).not.toContain("asset_3")
+  })
+
+  it("says what is wrong when the server refuses the fields themselves", async () => {
+    vi.mocked(http.post).mockImplementation(async (path: string) => {
+      if (path.endsWith("/prefill")) return DRAFT
+      throw new ApiError(422, "HTTP_422", "[]")
+    })
+    mount("/app/admin/examples?collect=session_1")
+    const dialog = await screen.findByRole("dialog")
+    await within(dialog).findByLabelText("标题")
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }))
+    expect(await within(dialog).findByText("内容超出限制或格式不对，检查后再保存")).toBeTruthy()
+  })
+
   it("lets a hand-made example take asset ids and switches the shop types with the industry", async () => {
     vi.mocked(http.post).mockRejectedValue(new ApiError(422, "EXAMPLE_INVALID", "outputs name no known asset"))
     mount("/app/admin/examples")

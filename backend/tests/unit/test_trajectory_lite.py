@@ -275,6 +275,24 @@ async def test_list_user_turns_filters_statuses_search_and_pages(trace_db, monke
         assert (await lite.list_user_turns(db, "nobody", at=NOW)) == {"items": [], "next_cursor": None, "has_more": False}
 
 
+@pytest.mark.asyncio
+async def test_list_user_turns_oldest_first_pages_forward(trace_db):
+    await _seed_users()
+    async with trace_session() as db:
+        first = await lite.list_user_turns(db, "user_a", limit=2, order="asc", at=NOW)
+        assert [item["turn_id"] for item in first["items"]] == ["a3", "a2"] and first["has_more"]
+        rest = await lite.list_user_turns(db, "user_a", limit=2, order="asc", cursor=first["next_cursor"], at=NOW)
+        assert [item["turn_id"] for item in rest["items"]] == ["a1"] and not rest["has_more"]
+        # A cursor reads one direction only, and the default list keeps accepting its own.
+        with pytest.raises(TrajectoryError):
+            await lite.list_user_turns(db, "user_a", limit=2, cursor=first["next_cursor"], at=NOW)
+        newest = await lite.list_user_turns(db, "user_a", limit=2, order="desc", at=NOW)
+        assert [item["turn_id"] for item in (await lite.list_user_turns(
+            db, "user_a", limit=2, cursor=newest["next_cursor"], at=NOW))["items"]] == ["a3"]
+        with pytest.raises(TrajectoryError):
+            await lite.list_user_turns(db, "user_a", order="sideways", at=NOW)
+
+
 async def test_audience_filters_users_and_turns(trace_db, monkeypatch):
     await _seed_users()
     import trajectory.audience as audience

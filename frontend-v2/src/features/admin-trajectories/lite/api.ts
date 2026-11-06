@@ -64,6 +64,7 @@ export interface TurnsApiParams {
   activity_to?: string
   session_id?: string
   q?: string
+  order?: "asc"
   cursor?: string
   limit?: number
 }
@@ -117,6 +118,7 @@ export function toTurnsApiParams(params: TurnsParams, limit = TURNS_PAGE_SIZE): 
     activity_from: windowStart(params.window),
     session_id: params.session || undefined,
     q: params.q || undefined,
+    order: params.order === "asc" ? "asc" : undefined,
     cursor: params.cursor ?? undefined,
     limit,
   }
@@ -170,7 +172,8 @@ export function useUserTurns(userId: string, params: TurnsParams) {
 /** The newest turn under these filters, re-read while the tab is visible, to say "有新活动". */
 export function useUserTurnsProbe(userId: string, params: TurnsParams, enabled: boolean) {
   const scope = useAccessScope()
-  const first: TurnsParams = { ...params, cursor: null, trail: [] }
+  // Always newest first, whatever the list shows: the probe's one row must be the newest turn.
+  const first: TurnsParams = { ...params, order: "desc", cursor: null, trail: [] }
   return useQuery({
     queryKey: liteKeys.turnsProbe(scope.viewer, userId, serializeTurnsParams(first)),
     queryFn: ({ signal }) => liteApi.userTurns(userId, toTurnsApiParams(first, 1), signal),

@@ -49,7 +49,7 @@
 | 页面 | 路由 | 内容 |
 |---|---|---|
 | 用户列表（简明模式首页） | `/app/admin/trajectories` | 有记录活动的用户，按最近活动倒序 |
-| 某用户的对话轮 | `/app/admin/trajectories/users/:userId` | 该用户跨会话的全部轮次，按时间倒序 |
+| 某用户的对话轮 | `/app/admin/trajectories/users/:userId` | 该用户跨会话的全部轮次，默认按时间倒序，可切「从旧到新」 |
 | 轮详情 | `/app/admin/trajectories/users/:userId/turns/:sessionId/:turnId` | 一轮的步骤流 |
 | 专业模式：会话列表 | `/app/admin/trajectories/sessions` | 现有 `TrajectoryListPage` 原样搬到此路径 |
 | 专业模式：会话详情 | `/app/admin/trajectories/sessions/:sessionId` | **路径不变**，现有 `TrajectorySessionPage` |
@@ -83,7 +83,7 @@
 
 ### 4.2 某用户的对话轮
 
-按时间倒序平铺该用户所有会话的轮次。连续属于同一会话的轮次共享一个分组头（会话标题、会话内轮次数、「在专业模式打开会话」）。不要求先选会话。
+默认按时间倒序平铺该用户所有会话的轮次；筛选区的「从旧到新」开关（URL `order=asc`）改为按对话发生的顺序读，翻页方向由后端同步反转，「有新活动」仍以最新一轮为准，只在最后一页提示。连续属于同一会话的轮次共享一个分组头（会话标题、会话内轮次数、「在专业模式打开会话」）。不要求先选会话。
 
 | 列 | 内容 | 来源 |
 |---|---|---|
@@ -252,7 +252,7 @@ trace 库新增迁移 `t0006_turn_summaries`：
 
 **`GET /users/{user_id}/turns`**
 
-参数：`status[]`、`from`、`to`、`session_id`、`q`、`cursor`、`limit≤100`。
+参数：`status[]`、`from`、`to`、`session_id`、`q`、`cursor`、`limit≤100`、`order`（`desc` 默认 / `asc` 从旧到新，游标不能跨方向使用）。
 返回：`items[TurnSummary]`（即汇总表一行 + `session_title`）、`next_cursor`、`has_more`。
 实现：走 `(user_id, started_at DESC)` 索引；`q` 对两个 preview 列 ilike；游标 `(started_at, turn_id)`。audience：取页内 distinct `session_id` 调 `visible_sessions`，不可见的轮整行剔除后再补页，复用 `list_sessions` 的"先过滤再发游标"做法。
 

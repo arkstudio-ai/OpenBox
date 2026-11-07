@@ -94,7 +94,7 @@ Light 模式这条线（集成分支 `light-mode`，见 `docs/LIGHT_MODE_IMPL_PL
 | 2026-11-06 19:58 | `20261106-light-510b56c2` | fix/example-sheet-output-limit (PR #155) | 样例库「收进样例库」：会话带回 13 条产出超接口 12 条上限，一直 422 且前端只说"稍后再试"。输入和产出可逐条移除，超限保存前提示；只动前端。发布前 quiet 判定 QUIET（busy 0、10 分钟消息 0、在途作业 0；`waiting_input` 不算在对话） |
 | 2026-11-07 15:49 | `20261107-light-e9f0dfd5` | light-mode | PR #157 吸收 main 16 个提交：轨迹简明模式「从旧到新」（#156）、会话回放（#146）、#137/#144/#145/#148；无迁移（head `pl28e9f0a1b2`）。构建暂存后 quiet 判定 BUSY（4 个 busy 会话、10 分钟 63 条消息），**用户明确要求直接切**；切换时最后一次会话更新在 07:48 UTC，切后 busy 0、无 traceback，公网首页版本已更新 |
 | 2026-11-07 17:04 | `20261107-light-0cf503f5` | light-mode | PR #158 语音线修复（11-07 反馈 ①②）：Light 规则 1 电话/新建对话直接派活、引导要说没交办，规则 3 点名模型不转交；引导结果标 `light_redirect`、note 写「没有派活」；每轮 instructions 带本通话交办事实；修订轮自己作废的卡不算过期；在途修订卡 `revision_in_flight`、同任务第二张卡 `already_presented` 不复述；light-video 确认卡只发一次。无迁移（head `pl28e9f0a1b2`）。构建暂存后机器仍忙（23 busy、10 分钟 48 条消息），**用户要求直接切**；切后 healthy、0 traceback；未真机复测 ①②；之前线上 |
-| 2026-11-07 17:25 | `20261107-light-a8d0defb` | light-mode | PR #159 轨迹轮详情「收进样例库」：抽屉在轮详情页原地打开（route 层挂载 ExampleSheet，URL 不变）；Sheet 只在按下和松开都落在遮罩上才算外部点击，样例表单关闭外部点击收起（Esc / ✕ 仍可关）。无迁移（head `pl28e9f0a1b2`）。构建暂存后最后真人消息 09:14 UTC、busy 0、在途作业 0，**用户要求直接切**；切后三容器 healthy、0 traceback，公网 app-build 已更新。**当前线上** |
+| 2026-11-07 17:25 | `20261107-light-a8d0defb` | light-mode | PR #159 轨迹轮详情「收进样例库」：抽屉在轮详情页原地打开（route 层挂载 ExampleSheet，URL 不变）；Sheet 只在按下和松开都落在遮罩上才算外部点击，样例表单关闭外部点击收起（Esc / ✕ 仍可关）。无迁移（head `pl28e9f0a1b2`）。构建暂存后最后真人消息 09:14 UTC、busy 0、在途作业 0，**用户要求直接切**；切后三容器 healthy、0 traceback，公网 app-build 已更新。|
 
 ## 根因记录
 
@@ -107,3 +107,4 @@ iOS：**1.1.0 (104)** 2026-11-04 03:26 已上 TestFlight（只挂内部组「Lig
 账号（密码在机上 `/opt/openbox/secrets/accounts.txt` 或会话记录，不入库）：`light-full-samples`（样片，admin_grant 80 积分用于出片）；App 模拟器联调号 `light-full-1102a`（首条视频 / Light / 托管）、`light-full-1102b`（你拍我剪免费档验收）。
 
 到期提醒：包月到 **2026-12-01 16:00 UTC（北京 12-02 00:00）**，不自动续费；续费或在此前把测试结论搬走。
+| 2026-11-07 18:00 | `20261107-light-110bbd01` | light-mode | PR #160 做菜单导出 PDF：新工具 `image_to_pdf`（Pillow 解码 → JPEG q92 → 手写单页 PDF，A4/按图比例；不计费不占沙箱）挂到与图同 group；menu-maker 出图核对后自动调用；App 成片卡「存 PDF」。新依赖 pillow（镜像里 13.0.0）。无迁移（head `pl28e9f0a1b2`）。构建暂存后机器忙（1 busy、10 分钟 5 条真人消息、1 在途作业），**用户要求直接切**；在途作业 09:59:54 已 completed 后才重启，切后三容器 healthy、0 traceback、公网 app-build 已更新。未走真实「做菜单」链路验 PDF 卡片。**当前线上** |

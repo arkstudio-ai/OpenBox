@@ -904,6 +904,7 @@
       "search": "Search conversations",
       "searchPlaceholder": "What the user said or the AI replied",
       "clearSession": "Clear session filter",
+      "oldestFirst": "Oldest first",
       "onlySession": "Only this session",
       "openPro": "Open session in professional view",
       "groupCount_one": "{{count}} turn",
@@ -984,6 +985,56 @@
     },
     "credits": {
       "none": "No charge"
+    },
+    "prompts": {
+      "title": "Prompts sent to generation models this turn",
+      "lead_one": "{{count}} prompt, exactly as sent",
+      "lead_other": "{{count}} prompts, exactly as sent",
+      "video": "Video generation",
+      "image": "Image generation",
+      "shot": "Shot {{n}}",
+      "bySub": "From a sub-task",
+      "copy": "Copy prompt",
+      "unavailable": "This prompt's content is no longer available",
+      "inputs": "References",
+      "composerChoice": "The user's composer choice",
+      "seconds_one": "{{count}} s",
+      "seconds_other": "{{count}} s",
+      "setting": {
+        "model": "Model",
+        "resolution": "Resolution",
+        "ratio": "Ratio",
+        "duration": "Duration",
+        "generate_audio": "Audio",
+        "seed": "Seed",
+        "size": "Size",
+        "quality": "Quality",
+        "n": "Images",
+        "output_format": "Format"
+      },
+      "role": {
+        "first_frame": "First frame",
+        "last_frame": "Last frame",
+        "reference_image": "Reference image",
+        "reference_video": "Reference video",
+        "reference_audio": "Reference audio",
+        "mask": "Mask",
+        "reference": "Reference"
+      }
+    },
+    "replay": {
+      "open": "Replay session",
+      "title": "Session replay",
+      "loading": "Loading the session replay…",
+      "meta_one": "{{user}} · {{count}} turn",
+      "meta_other": "{{user}} · {{count}} turns",
+      "loaded_one": "{{count}} loaded",
+      "loaded_other": "{{count}} loaded",
+      "turnDetail": "Turn details ›",
+      "empty": "No conversation was recorded in this session",
+      "more_one": "Load more ({{count}} left)",
+      "more_other": "Load more ({{count}} left)",
+      "end": "— End of session —"
     }
   }
 }

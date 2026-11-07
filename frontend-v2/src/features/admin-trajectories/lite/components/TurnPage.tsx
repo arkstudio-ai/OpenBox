@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, PlayCircle } from "lucide-react"
 import { Link, useSearchParams } from "react-router"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { cn } from "@/shared/lib/cn"
@@ -14,6 +14,7 @@ import { useLiteLabels, useTurnDetail } from "../api"
 import { conclusion, turnStatusTone } from "../labels"
 import { buildFlow } from "../steps"
 import { Credits, Duration, TurnStatus } from "./bits"
+import { MediaPromptsSection } from "./MediaPrompts"
 import { ModeToggle } from "./ModeToggle"
 import { Flow, UsageLine, type StepEnv } from "./StepCards"
 
@@ -116,7 +117,16 @@ export function TrajectoryTurnPage({
           {t("lite.turn.backToUser")}
         </Link>
         <span aria-hidden>/</span>
-        <span className="text-ink">{summary.session_title || t("list.untitled")}</span>
+        <Link
+          to={paths.adminTrajectoryReplay(
+            userId,
+            sessionId,
+            back ? `back=${encodeURIComponent(back)}` : undefined,
+          )}
+          className="text-ink hover:underline"
+        >
+          {summary.session_title || t("list.untitled")}
+        </Link>
         <span className="flex-1" />
         <ModeToggle mode="lite" />
       </nav>
@@ -148,6 +158,19 @@ export function TrajectoryTurnPage({
               data-testid="lite-collect-example"
             >
               {t("lite.turn.collectExample")}
+            </Link>
+            <Link
+              to={paths.adminTrajectoryReplay(
+                userId,
+                sessionId,
+                [back ? `back=${encodeURIComponent(back)}` : "", `turn=${encodeURIComponent(turnId)}`]
+                  .filter(Boolean)
+                  .join("&"),
+              )}
+              className="border-hair hover:bg-hairsoft inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium"
+            >
+              <PlayCircle size={12} aria-hidden />
+              {t("lite.replay.open")}
             </Link>
             <Link
               to={proHref(null)}
@@ -192,6 +215,12 @@ export function TrajectoryTurnPage({
           </div>
         </dl>
       </header>
+
+      <MediaPromptsSection
+        prompts={detail.data.media_prompts ?? []}
+        mainAgentId={summary.main_agent_id}
+        rawHref={(recordId) => proHref(recordId)}
+      />
 
       <section className="flex flex-col gap-2.5" aria-label={t("lite.turn.flow")}>
         {flow.items.length ? (

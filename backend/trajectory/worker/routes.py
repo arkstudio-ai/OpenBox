@@ -184,12 +184,12 @@ async def lite_users(request: Request, admin: dict = Depends(require_trajectory_
 async def lite_user_turns(user_id: str, request: Request, admin: dict = Depends(require_trajectory_admin),
     status: list[str] | None = Query(None), activity_from: datetime | None = None, activity_to: datetime | None = None,
     session_id: str | None = None, q: str | None = None, cursor: str | None = None,
-    limit: int = Query(50, ge=1, le=100)):
+    limit: int = Query(50, ge=1, le=100), order: str = "desc"):
     await audit(admin, request, "lite_turns", details={"user_id": user_id, "session_id": session_id, "status": status})
     async with trace_read_session() as db:
         result = await lite.list_user_turns(db, user_id, statuses=status, activity_from=activity_from,
                                             activity_to=activity_to, session_id=session_id, q=q, cursor=cursor,
-                                            limit=limit, viewer_id=admin["user_id"])
+                                            limit=limit, viewer_id=admin["user_id"], order=order)
     return _json(result)
 
 
@@ -201,6 +201,18 @@ async def lite_turn(session_id: str, turn_id: str, request: Request, admin: dict
         _, trajectory = await repository.get_trajectory(db, session_id)
         result = await lite.get_turn(db, trajectory, turn_id)
     await audit(admin, request, "lite_turn", session_id, {"turn_id": turn_id})
+    return _json(result)
+
+
+@router.get("/sessions/{session_id}/replay")
+@errors
+@session_read
+async def lite_replay(session_id: str, request: Request, admin: dict = Depends(require_trajectory_admin),
+    cursor: str | None = None, limit: int = Query(10, ge=1, le=30)):
+    async with trace_read_session() as db:
+        _, trajectory = await repository.get_trajectory(db, session_id)
+        result = await lite.session_replay(db, trajectory, cursor=cursor, limit=limit)
+    await audit(admin, request, "lite_replay", session_id, {"cursor": bool(cursor)})
     return _json(result)
 
 

@@ -121,6 +121,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
     from tool.view_image import view_image_tool
     from tool.share_file import share_file_tool
     from tool.image_gen import image_gen_tool
+    from tool.image_to_pdf import image_to_pdf_tool
     from tool.computer import computer_tool
     from tool.browser_mode import browser_mode_tool
     from tool.browser_action import browser_action_tool
@@ -145,7 +146,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
         glob_tool, grep_tool, task_tool, batch_tool, question_tool,
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
         skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
-        multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
+        multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool, image_to_pdf_tool,
         video_generate_tool, video_transcribe_tool, video_compose_tool, video_analyze_tool, footage_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
         computer_tool, browser_mode_tool, browser_action_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,

@@ -122,6 +122,7 @@
   "testBuild": "TEST BUILD",
   "result": {
     "save": "Save",
+    "savePdf": "Save PDF",
     "publish": "Post to Douyin",
     "again": "Make another",
     "againPrompt": "Make another one in a different style",

@@ -4,6 +4,7 @@ description: Turn a restaurant's old menu photo or a typed list of dishes and pr
 allowed-tools:
   - question
   - image_gen
+  - image_to_pdf
   - share_file
 ---
 
@@ -15,8 +16,9 @@ money, so every name and price is confirmed by the owner before any image is
 made, and checked again on the image afterwards.
 
 `image_gen` (see the `imagegen` skill for its storage contract and size rules)
-draws the menu. No sandbox is needed; do not create files, run commands or
-look for templates on disk.
+draws the menu; `image_to_pdf` wraps the finished image into a printable PDF.
+No sandbox is needed; do not create files, run commands or look for templates
+on disk.
 
 ## Steps
 
@@ -29,7 +31,7 @@ The Light page shows these steps; put the matching `step_id` on every
 | `items` | get the dishes: a photo of the old menu, typed lines, or "改上次那版" |
 | `review` | one card with the whole dish table for the owner to confirm or correct |
 | `layout` | size and extras: A4 打印 / 手机竖图 / 桌贴, shop name on top, a space for the ordering QR code |
-| `deliver` | the image, checked, with "再做一版" options |
+| `deliver` | the image, checked, plus the PDF for printing, with "再做一版" options |
 
 Outside Light mode the same order applies; just skip the step ids.
 
@@ -114,10 +116,30 @@ the second image is still wrong, deliver the better one and list the wrong
 lines in plain words so the owner can tell you to try again; never claim it
 is correct when it is not.
 
+## 5. The PDF for printing (`deliver`, same turn)
+
+A copy shop asks for a PDF, not a picture. Once the image passed the check
+(or is the better of two attempts), call `image_to_pdf` once with the image's
+`asset_id` from the `image_gen` result:
+
+| layout | call |
+|---|---|
+| A4 打印 | `paper: "a4"`, `name: "<店名>菜单.pdf"` (or `菜单.pdf` without a shop name) |
+| 手机竖图 / 桌贴 | `paper: "image"`, same naming |
+
+It costs nothing and needs no sandbox; the PDF lands on the same card as the
+image. If it fails, say so in the closing line (「PDF 没导出来，要的话再说一声」)
+and move on; never retry `image_gen` because of it.
+
 Finish with one short line and no question card — the image card already
-has 保存 / 再做一条, and an open question would sit in the owner's to-do list.
-Mention the other next steps in that line, e.g. 「排好了，菜名和价格都对过一遍。要换个样式、
-改几道菜，或者做一张同款海报，直接说。」 Do not call `share_file` on `image_gen` results.
+has 保存 / 存 PDF / 再做一条, and an open question would sit in the owner's
+to-do list. Mention the other next steps in that line, e.g. 「排好了，菜名和价格
+都对过一遍，打印用的 PDF 也在卡片上。要换个样式、改几道菜，或者做一张同款海报，直接说。」
+Do not call `share_file` on `image_gen` or `image_to_pdf` results.
+
+When the owner later asks for the PDF of an earlier menu (「给我 PDF」「要打印的」),
+call `image_to_pdf` on that image's `asset_id` from this conversation — no new
+image, no new review.
 
 ## Light mode
 

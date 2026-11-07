@@ -36,6 +36,7 @@ class LightResultActions extends ConsumerStatefulWidget {
 
 class _LightResultActionsState extends ConsumerState<LightResultActions> {
   bool _saving = false;
+  bool _savingPdf = false;
   bool _sending = false;
 
   ({String assetId, String mime})? get _media {
@@ -49,6 +50,34 @@ class _LightResultActionsState extends ConsumerState<LightResultActions> {
       }
     }
     return null;
+  }
+
+  /// The printable PDF `image_to_pdf` attached next to a menu or poster
+  /// image: same group as the picture, `application/pdf`.
+  ({String assetId, String name})? get _pdf {
+    for (final part in widget.group.parts) {
+      final id = part.assetId;
+      if (id != null && id.isNotEmpty && part.mimeType == 'application/pdf') {
+        return (assetId: id, name: part.path.split('/').last);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _savePdf(String assetId, String name) async {
+    if (_savingPdf) return;
+    setState(() => _savingPdf = true);
+    try {
+      await saveAssetToDevice(
+        ref.read,
+        assetId: assetId,
+        name: name,
+        mimeType: 'application/pdf',
+        target: AssetSaveTarget.files,
+      );
+    } finally {
+      if (mounted) setState(() => _savingPdf = false);
+    }
   }
 
   Future<void> _save(String assetId, String mime) async {
@@ -100,6 +129,7 @@ class _LightResultActionsState extends ConsumerState<LightResultActions> {
     final media = _media;
     if (media == null) return const SizedBox.shrink();
     final video = media.mime.startsWith('video/');
+    final pdf = _pdf;
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Column(
@@ -117,6 +147,14 @@ class _LightResultActionsState extends ConsumerState<LightResultActions> {
                 busy: _saving,
                 onTap: () => _save(media.assetId, media.mime),
               ),
+              if (pdf != null)
+                _ActionChip(
+                  key: const Key('light-result-save-pdf'),
+                  icon: Icons.picture_as_pdf_outlined,
+                  label: i18n.t('light:result.savePdf'),
+                  busy: _savingPdf,
+                  onTap: () => _savePdf(pdf.assetId, pdf.name),
+                ),
               if (video)
                 _ActionChip(
                   key: const Key('light-result-publish'),

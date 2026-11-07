@@ -171,10 +171,13 @@ def question_instructions(lang):
     # was announced as 春禾果店's; the note named its own task in "conversation".
     return card_instructions(lang) + (
         "先用卡片 conversation 字段里的任务名说清是哪个任务在问，它可能不是刚才谈到的任务，不要套用其他任务的名字。"
-        "结合任务询问尚缺的决定，不填默认答案或推断进度。" if _lang(lang) == "zh" else
+        "结合任务询问尚缺的决定，不填默认答案或推断进度。"
+        "卡片带 already_presented 时，这个任务的方案本通话已经讲过：只说这次新增或变化的决定，一两句话问清，不再复述方案。" if _lang(lang) == "zh" else
         "First say which task is asking, by the task name in the card's conversation field; it may not be the task "
         "just discussed, so never borrow another task's name. "
-        "Ask about missing decisions in task context; do not fill defaults or infer progress.")
+        "Ask about missing decisions in task context; do not fill defaults or infer progress. "
+        "When the card carries already_presented, this call has read this task's plan before: say only what is new "
+        "or changed, in a sentence or two, without restating the plan.")
 
 
 def question_followup_instructions(lang):

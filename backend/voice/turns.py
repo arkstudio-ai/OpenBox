@@ -190,6 +190,7 @@ class TurnsMixin:
         self._user_utterances: dict[str, int] = {}  # original audio item → transcript sequence
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
+        self._handed_tasks: dict[str, str] = {}  # task id → title: work this call handed over successfully
         self._notified_questions: set[tuple[str, str]] = set()
         self._initial_cards: dict[str, str] = {}
         self._initial_questions: dict[str, str] = {}
@@ -734,10 +735,42 @@ class TurnsMixin:
         sequence = self._user_utterances.get(source_item, self.heard_count) if source_item else self.heard_count
         self._handoff_seq = max(self._handoff_seq, sequence)
 
+    def _handoff_facts(self) -> str:
+        """What this call has actually handed over so far: the only ground for "已交办" / "正在做".
+
+        2026-11-07: with nothing submitted, the front desk answered "你已经在做了吗" with "是的" and
+        "我刚才查了一下…确实已经提交" for six minutes, without a single assistant_ask.
+        """
+        if not any(ref.settled is not None and ref.recorded for ref in self.refs):
+            return ""  # nothing has come back from the assistant yet: the greeting and first ask stay as they are
+        if self.lang == "en":
+            titles = "、".join(f"「{title or task_id}」" for task_id, title in self._handed_tasks.items())
+            facts = (f"Work this call has handed over so far: {titles}." if titles
+                     else "This call has handed over no work yet.")
+            return ("\n" + facts + " Nothing else may be called handed over, submitted or in progress. When asked "
+                    "whether something is being done, answer from this line, or hand it over with assistant_ask first.")
+        titles = "、".join(f"「{title or task_id}」" for task_id, title in self._handed_tasks.items())
+        facts = f"本通话到目前为止交办成功、正在做的任务：{titles}。" if titles else "本通话到目前为止没有任何任务交办成功。"
+        return ("\n" + facts + "没有列在这里的事情一律不能说已交办、已提交或正在做；"
+                "用户问「是不是在做了」「提交了吗」时按这一行如实回答，要交办就先 assistant_ask，不凭印象答。")
+
+    def _revisions_in_flight(self) -> set[str]:
+        """Task cards whose change is on its way to the assistant: the user need not confirm them again."""
+        return {(ref.context or {}).get("revision_request", {}).get("request_id")
+                for ref in self.refs if ref.status == "pending" and (ref.context or {}).get("revision_request")}
+
     def _open_decisions(self) -> str:
         shown = self.desk.call_context(self.lang)
         if not shown:
             return ""
+        in_flight = self._revisions_in_flight()
+        for item in shown:
+            if item.get("request_id") in in_flight:
+                item["revision_in_flight"] = True
+                item["how_now"] = ("这张卡的修改要求已经转交，正在等回执：不要再复述它的方案，也不要再问用户确认它。"
+                                   if self.lang != "en" else
+                                   "Its change is already handed over and awaiting a receipt: do not restate its plan "
+                                   "or ask the user to confirm it again.")
         return ("\n本通话中已经向用户展示、仍在等用户回答的卡片（服务端按最新状态维护，已在屏幕或别处处理的不在此列）。"
                 "用户回答其中某张卡片时，直接用这里的 request_id（任务卡）或 card（助理卡）、version 和原样选项提交，"
                 "不必先查询；用户改要求时按卡片说明用 assistant_ask(mode=revise)。要向用户解释、比较或复述其中某张卡片时，"
@@ -775,9 +808,11 @@ class TurnsMixin:
         ref.cards = [card for card in result.get("cards") or [] if card["card_id"] not in self.desk.answered]
         ref.reason = result.get("reason") or ("ok" if ref.status == "ok" else ref.status)
         ref.running = result.get("running") or None
+        ref.light_redirect = bool(result.get("light_redirect"))
         if ref.status == "ok" and ref.running and not ref.cards:
             ref.reason = "running"  # passed on: told as such, and the task's report answers the request
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
+            self._handed_tasks.update({task["task_id"]: task.get("title", "") for task in ref.running})
             self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", ""),
                                  "state": "刚交办过去，正在做" if self.lang != "en" else "just handed over, in progress"})
         if not self.pending_calls and self.progress is not None:
@@ -961,6 +996,18 @@ class TurnsMixin:
                 "verified 且为空表示本轮没有新投递；普通问答不需要投递，答卡恢复按决定回执和任务最新状态判断。"
                 "unavailable 表示未核实，不能推断已启动或未送达，更不能据此重复提交。"
                 "本轮处理结束不代表整个视频或最终交付已经完成。")
+        if ref.light_redirect and ref.recorded:
+            body["task_submission_facts"] = ("助理没有派活，只回复了首页入口的引导（电话里用户点不了链接）。"
+                                             if self.lang != "en" else
+                                             "Nothing was arranged: the assistant only pointed at a home entry, "
+                                             "which the user cannot open on the phone.")
+            body["light_redirect_note"] = (
+                "必须如实告诉用户这件事还没开始做、没有交给帮手，并问一句要不要直接在后台做；"
+                "用户说要，就把原话用 assistant_ask 再转交一次并说明「直接在后台做」。不得说已转交、已提交或正在处理。"
+                if self.lang != "en" else
+                "Tell the user plainly that this has not started and was not handed to a helper, and ask whether to "
+                "do it in the background; if they say yes, hand their words over again with assistant_ask and say "
+                "to do it directly. Never say it was handed over, submitted or in progress.")
         if questions := (ref.context or {}).get("task_questions"):
             body["answer_context"] = questions
         return json.dumps(body, ensure_ascii=False)

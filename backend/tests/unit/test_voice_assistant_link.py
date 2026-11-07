@@ -362,3 +362,10 @@ def test_working_brief_fits_handoff_with_original_utterance_and_card_identity():
     assert bounded['summary'] == context['summary']
     assert bounded['request'] == context['request']
     assert bounded['task_questions'][0]['request_id'] == 'q-1'
+
+
+def test_a_reply_pointing_at_a_light_home_entry_counts_as_a_redirect():
+    from voice.assistant_link import light_redirect
+    assert light_redirect("做短视频建议直接去首页的[做一条视频](/light/topic/video)，入口链接已经发在对话里了。")
+    assert not light_redirect("已经为你新建了对话，交由帮手去做了。[任务单](/app/s/session_1)")
+    assert not light_redirect("")

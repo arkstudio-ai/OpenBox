@@ -53,6 +53,8 @@ async def test_read_receipt_is_owned_run_scoped_and_checked_against_sql(change):
                 question = await db.get(QuestionCheckpoint, request_id)
                 question.questions = [{**question.questions[0], "question": "已修改的问题"}]
         assert await for_turn(main.id, owner, workspace, inbox_id) == ({request_id: version}, change != "unchanged")
+        # The card a revise turn was bound to is expected to go: its change is not a stale decision.
+        assert await for_turn(main.id, owner, workspace, inbox_id, revised=request_id) == ({}, False)
         assert await for_turn(main.id, "another-user", workspace, inbox_id) == ({}, False)
         assert await for_turn(main.id, owner, "another-workspace", inbox_id) == ({}, False)
     finally:

@@ -1085,6 +1085,15 @@ async def run_loop(
                 if subscription_sandbox_enabled():
                     await require_sandbox_subscription(session.workspace_id)
                 sandbox = await sandbox_manager.get_client(session_id, user_id=user_id, prepare=False)
+                if sandbox is not None and getattr(sandbox, "desktop_id", ""):
+                    # A pooled desktop still finishing its claim answers on
+                    # its channel but admits no tools yet; talk without it.
+                    from assistant.resource_control import unsettled_pool_state
+                    unsettled = await unsettled_pool_state(sandbox.desktop_id)
+                    if unsettled is not None:
+                        sandbox = None
+                        sandbox_error = {"code": "DESKTOP_NOT_READY", "state": unsettled,
+                            "detail": "无影云正在完成分配。普通对话可继续，桌面就绪后请重试执行。"}
         except SandboxSubscriptionRequired as exc:
             sandbox = None
             sandbox_error = exc.payload

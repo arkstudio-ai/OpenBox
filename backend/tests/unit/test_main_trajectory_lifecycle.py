@@ -28,7 +28,7 @@ GUARDED = ("trajectory.store", "trajectory.worker")
 
 
 # Includes the retained-list audience check (POST /audience).
-ADMIN_ROUTE_COUNT = 20  # contract + blobs + payload link + four lite routes
+ADMIN_ROUTE_COUNT = 21  # contract + blobs + payload link + five lite routes (replay: lite plan §15)
 
 
 def admin_routes(app) -> list[str]:

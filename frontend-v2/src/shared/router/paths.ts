@@ -72,6 +72,9 @@ export const paths = {
   /** One turn's step flow (lite view); `back` is the user page query to return to. */
   adminTrajectoryTurn: (userId: string, sessionId: string, turnId: string, search?: string) =>
     `/app/admin/trajectories/users/${encodeURIComponent(userId)}/turns/${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}${search ? `?${search}` : ""}`,
+  /** One session replayed as the person saw it (lite view); `turn` scrolls to a turn, `back` returns to the user page. */
+  adminTrajectoryReplay: (userId: string, sessionId: string, search?: string) =>
+    `/app/admin/trajectories/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}${search ? `?${search}` : ""}`,
 } as const
 
 /** Query params a chat URL may carry to open a workbench panel on arrival. */
@@ -122,4 +125,5 @@ export const routePatterns = {
   adminTrajectorySession: "trajectories/sessions/:sessionId",
   adminTrajectoryUser: "trajectories/users/:userId",
   adminTrajectoryTurn: "trajectories/users/:userId/turns/:sessionId/:turnId",
+  adminTrajectoryReplay: "trajectories/users/:userId/sessions/:sessionId",
 } as const

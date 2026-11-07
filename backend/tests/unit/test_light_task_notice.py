@@ -67,8 +67,8 @@ async def test_a_failed_light_turn_still_reports_the_failure(monkeypatch):
     assert await _finish(monkeypatch, session, owner, failed=True) == ["task_failed"]
 
 
-async def test_an_ordinary_conversation_is_not_affected(monkeypatch):
+async def test_an_ordinary_conversation_waits_for_its_film_too(monkeypatch):
     owner, _, workspace = await accounts()
     session = _session(workspace, light_entry=None)
     await _job(owner, session.id, "in_progress")
-    assert await _finish(monkeypatch, session, owner) == ["task_completed"]
+    assert await _finish(monkeypatch, session, owner) == []

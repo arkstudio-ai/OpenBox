@@ -53,6 +53,20 @@ def _parse_expired_time(value: str | None) -> datetime | None:
         return None
 
 
+def patrol_may_probe(record: dict) -> bool:
+    """Patrol health probes belong to settled channels only.
+
+    A ``pending`` channel is owned by an in-flight install/verify attempt
+    (activation of a pooled desktop rotates its key and reinstalls the tunnel
+    while the row already says ``running``). That attempt verifies against a
+    ``pending`` snapshot, so a patrol probe flipping the row to ``up`` first
+    would make the activation stop with "binding is no longer current" and
+    leave the desktop stuck in ``assigning``.
+    """
+    return (record.get("status") == "running"
+            and record.get("tunnel_state") not in ("revoked", "pending"))
+
+
 class WuyingDesktopService:
     def __init__(self) -> None:
         self._inflight: dict[str, asyncio.Task] = {}
@@ -310,7 +324,7 @@ class WuyingDesktopService:
                         continue
                 if get_config().wuying_routing == "per_desktop":
                     for record in refreshed_records:
-                        if record["status"] == "running" and record.get("tunnel_state") != "revoked":
+                        if patrol_may_probe(record):
                             await wuying_channel.probe(record)
             except asyncio.CancelledError:
                 raise

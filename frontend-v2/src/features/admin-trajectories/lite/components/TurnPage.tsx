@@ -39,10 +39,13 @@ export function TrajectoryTurnPage({
   userId,
   sessionId,
   turnId,
+  onCollectExample,
 }: {
   userId: string
   sessionId: string
   turnId: string
+  /** Opens 收进样例库 for this session where the reader is, instead of on the library page. */
+  onCollectExample?: () => void
 }) {
   const { t, i18n } = useTranslation("admin-trajectories")
   const errorMessage = useApiErrorMessage()
@@ -151,14 +154,26 @@ export function TrajectoryTurnPage({
             </p>
           </div>
           <div className="flex flex-none flex-wrap items-center gap-2">
-            {/* The library page owns the collect sheet (features never import each other). */}
-            <Link
-              to={paths.adminExamples(`collect=${encodeURIComponent(sessionId)}`)}
-              className="border-hair hover:bg-hairsoft inline-flex items-center rounded-full border px-3.5 py-1.5 text-xs font-medium"
-              data-testid="lite-collect-example"
-            >
-              {t("lite.turn.collectExample")}
-            </Link>
+            {/* The route mounts the collect sheet over this page (features never import each
+                other); without that hook the library page takes the session in its URL. */}
+            {onCollectExample ? (
+              <button
+                type="button"
+                onClick={onCollectExample}
+                className="border-hair hover:bg-hairsoft inline-flex items-center rounded-full border px-3.5 py-1.5 text-xs font-medium"
+                data-testid="lite-collect-example"
+              >
+                {t("lite.turn.collectExample")}
+              </button>
+            ) : (
+              <Link
+                to={paths.adminExamples(`collect=${encodeURIComponent(sessionId)}`)}
+                className="border-hair hover:bg-hairsoft inline-flex items-center rounded-full border px-3.5 py-1.5 text-xs font-medium"
+                data-testid="lite-collect-example"
+              >
+                {t("lite.turn.collectExample")}
+              </Link>
+            )}
             <Link
               to={paths.adminTrajectoryReplay(
                 userId,

@@ -357,7 +357,7 @@ export function ExampleSheet({ mode, onClose, onSaved }: { mode: SheetMode | nul
   }
 
   return (
-    <Sheet open={mode !== null} onClose={onClose} title={title} description={description} closeLabel={t("form.close")}>
+    <Sheet open={mode !== null} onClose={onClose} title={title} description={description} closeLabel={t("form.close")} dismissOnBackdrop={false}>
       {body}
     </Sheet>
   )

@@ -65,6 +65,9 @@ async def test_light_mode_lists_the_home_directory_with_availability_and_links(f
     assert "light_video / menu / poster / footage_edit" in section
     assert "我的 → 云电脑" in section and "不要派帮手去撞" in section
     assert "不出现模型名" in section and "light.entries" in section
+    # 2026-11-07: on the phone the owner cannot tap a link, and a redirect must not sound like a handover
+    assert "电话里提的这几类活一律直接 tasks.submit 派活" in section
+    assert "不能说「已交办」「正在处理」" in section and "用页面上选好的那款做" in section
     # never the internals the Light rules forbid
     for banned in ("MiniMax", "wan3", "low", "credits"):
         assert banned not in section

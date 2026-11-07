@@ -1093,7 +1093,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             if self.memory_turn and keeps_call_context(packet):
                 # A turn that keeps the call's context also keeps the decisions
                 # the call already presented answerable; its reads stay gated.
-                decisions = self.decision_context + self._open_decisions()
+                decisions = self.decision_context + self._open_decisions() + self._handoff_facts()
                 # And what the provider no longer holds: a restricted turn retires
                 # the earlier lines, a summary or a fresh session drops them. The
                 # call's own record comes back once a turn may use it (measured
@@ -1116,6 +1116,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             base += "\n当前任务状态核验失败；历史信息不能作为当前进展或待确认事项的证据。明确说暂时无法核实。"
         if self.decision_context:
             base += "\n" + self.decision_context
+        base += self._handoff_facts()
         if self.room:
             from voice.room import room_section
             base += "\n" + room_section(self.room, self.lang)

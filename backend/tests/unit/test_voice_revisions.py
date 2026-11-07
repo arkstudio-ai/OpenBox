@@ -21,6 +21,10 @@ async def test_revision_spoken_before_reading_old_card_preserves_exact_target(ca
     assert ref.context["revision_request"] == {"request_id": "q-video", "version": "a" * 64,
                                                "session_id": "video-session"}
     assert ref.transcript == "讲稿可以，但改用刚上传的水果店照片重新做。"
+    # While the change travels, the card is still listed but marked: no re-reading, no second confirmation
+    # (2026-11-07: the front desk read the whole plan again and asked again during those 20 seconds).
+    open_decisions = bridge._open_decisions()
+    assert '"revision_in_flight": true' in open_decisions and "不要再问用户确认它" in open_decisions
     calls = []
     async def run(name, scope, arguments):
         calls.append(json.loads(arguments)["request_id"])

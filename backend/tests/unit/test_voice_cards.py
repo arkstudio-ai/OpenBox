@@ -849,3 +849,17 @@ async def test_a_translated_explanation_of_a_told_card_stops_only_when_that_card
     await bridge.waiting_cards([], [ORANGE] if answered == "explained" else [SUNSET])
     cleared = any(isinstance(value, dict) and value.get("type") == "playback.clear" for value in outbox(bridge))
     assert cleared is (answered == "explained")
+
+
+def test_a_second_card_from_the_same_task_is_marked_already_presented():
+    """2026-11-07: the helper re-posted its review card after a revision; the plan was read out a third time."""
+    desk = cards.CardDesk(Heard())
+    first = desk.show_question(FORM, "zh")
+    assert "already_presented" not in first
+    assert "already_presented" not in desk.show_question({**FORM, "version": "v2"}, "zh")  # same card, new version
+    second = desk.show_question({**FORM, "id": "q-video-2", "version": "v3"}, "zh")
+    assert second["already_presented"] is True and "只说这次新增或变化的决定" in second["how_to_say"]
+    other = desk.show_question({**FORM, "id": "q-other", "session_id": "other-session"}, "zh")
+    assert "already_presented" not in other
+    assert [item["request_id"] for item in desk.call_context("zh")] == ["q-video", "q-video-2", "q-other"]
+    assert desk.call_context("zh")[1]["already_presented"] is True

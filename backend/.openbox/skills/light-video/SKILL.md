@@ -51,6 +51,17 @@ Options: `就这样，开始做` / `换个画面` / `custom`. No prices, no mode
 no "(Recommended)" labels — the page shows the price itself. If they change
 something, apply it and go straight to generation unless the change is unclear.
 
+Post this card once. A change that arrives after it (a revision from the owner
+or relayed by their assistant, "可以的，但是…", a new line or a new look) is the
+answer: apply it and generate, do not post the review card again. The owner is
+often on the phone, where every card is read aloud and a second one sounds
+like you did not hear them.
+
+The owner may name a model, tier or "那款". You cannot change the model: the
+page's selection is used. Do not ask a card about it and do not plan around
+the named model's limits; say in the delivery line that the clip was made with
+the model chosen on the page.
+
 ## 3. Generate (`generate`)
 
 Write the generation prompt in Chinese, one paragraph, from the look below plus

@@ -10,11 +10,14 @@ import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import '../billing/state/billing_providers.dart';
+import '../store/models/store.dart';
+import '../store/state/store_provider.dart';
 import 'state/light_providers.dart';
 import 'state/light_start.dart';
 import 'widgets/entry_card.dart';
 import 'widgets/home_header.dart';
 import 'widgets/recent_groups.dart';
+import 'widgets/starter_card_tile.dart';
 
 /// The Light home (docs `LIGHT_MODE_PLAN.md` §4.2, impl §4.2 T4): a heading,
 /// the entries as cards the server ordered and gated, the 托管 band, 「最近做
@@ -26,7 +29,7 @@ class LightHomeScreen extends ConsumerWidget {
   Future<void> _refresh(WidgetRef ref) async {
     ref.invalidate(lightEntriesProvider);
     ref.invalidate(lightRecentProvider);
-    ref.invalidate(lightShopNameProvider);
+    ref.invalidate(storeProvider);
     ref.invalidate(billingBalanceProvider);
     try {
       await ref.read(lightEntriesProvider.future);
@@ -121,6 +124,13 @@ class LightHomeScreen extends ConsumerWidget {
     LightEntriesView view,
   ) {
     final t = context.tokens;
+    // A card only promises what this workspace can do right now.
+    final starters = [
+      for (final card
+          in ref.watch(storeStarterCardsProvider).valueOrNull ??
+              const <StarterCard>[])
+        if (view.byId(card.entryId)?.available ?? false) card,
+    ];
     final primaries = view.entries.where((e) => e.isPrimary).toList();
     final secondaries = view.entries.where((e) => e.isSecondary).toList();
     final coming = view.entries
@@ -165,7 +175,24 @@ class LightHomeScreen extends ConsumerWidget {
     );
 
     return [
-      if (primaries.isNotEmpty) label('light:home.section.todo'),
+      if (starters.isNotEmpty) ...[
+        label('light:home.section.todo'),
+        for (final starter in starters) ...[
+          LightStarterCardTile(
+            key: Key('light-starter-${starter.entryId}'),
+            card: starter,
+            onTap: () => _open(context, ref, view, view.byId(starter.entryId)!),
+          ),
+          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 12),
+      ],
+      if (primaries.isNotEmpty)
+        label(
+          starters.isEmpty
+              ? 'light:home.section.todo'
+              : 'light:home.section.make',
+        ),
       if (primaries.isNotEmpty) card(primaries.first, LightCardSize.hero),
       for (var i = 1; i < primaries.length; i += 2) ...[
         const SizedBox(height: 10),

@@ -65,6 +65,7 @@ from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob,
 from db.models.voice import VoiceCall, VoiceTurn
 from db.models.memory_protocol import MemoryChangeClock, MemoryWriteReceipt, MemoryExperience
 from db.models.light_example import LightExample
+from db.models.store import Store
 
 __all__ = [
     "AgentDriverState", "SessionSurfaceEvent", "TaskHandoff", "AgentEvent",
@@ -72,7 +73,7 @@ __all__ = [
     "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
     "ExternalEffect", "ExternalEffectEvidence", "ResourceControlLease",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
-    "MemoryPipelineEnrollment", "VoiceCall", "VoiceTurn", "LightExample",
+    "MemoryPipelineEnrollment", "VoiceCall", "VoiceTurn", "LightExample", "Store",
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",

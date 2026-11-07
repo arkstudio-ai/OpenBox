@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-02.2",
+  "version": "2026-11-05.1",
   "entries": [
     {
       "id": "video",
@@ -369,7 +369,7 @@
     },
     {
       "id": "shopkeeper",
-      "title": "掌柜",
+      "title": "店长",
       "subtitle": "上下架 / 回评价 / 看数据",
       "kind": "secondary",
       "skill": "business-operations",

@@ -61,9 +61,9 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     # constrained wire budget instead of silently widening execution rights.
     "browser": ("browser_action", "view_image", "browser_mode", "computer", "desktop_takeover"),
     "vision": ("view_image",),
-    "delivery": ("share_file",),
+    "delivery": ("share_file", "image_to_pdf"),
     "automation": ("cron",),
-    "image": ("image_gen", "view_image"),
+    "image": ("image_gen", "view_image", "image_to_pdf"),
     "video": (
         # Generate, recover and deliver first: an in-progress production needs
         # these to fetch completed clips without resubmitting (and paying) again.

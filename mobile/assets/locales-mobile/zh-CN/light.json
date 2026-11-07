@@ -120,6 +120,7 @@
   "testBuild": "测试版",
   "result": {
     "save": "保存",
+    "savePdf": "存 PDF",
     "publish": "发到抖音",
     "again": "再做一条",
     "againPrompt": "再做一条，换个样子",

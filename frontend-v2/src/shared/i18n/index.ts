@@ -55,7 +55,7 @@ void i18n
   .use(initReactI18next)
   .init({
     lng: detectInitialLanguage(),
-    fallbackLng: "en-US",
+    fallbackLng: { "vi-VN": ["en-US"], default: [] },
     supportedLngs: [...SUPPORTED_LANGS],
     ns: ["common"],
     defaultNS: "common",

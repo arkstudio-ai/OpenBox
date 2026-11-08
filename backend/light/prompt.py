@@ -46,25 +46,23 @@ def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
     return " ".join(lines)
 
 
-async def shop_fragment(user_id: str | None) -> str:
-    """The shop name and headline the owner gave in the first-video form, when there are any."""
-    if not user_id:
+async def shop_fragment(user_id: str | None, workspace_id: str | None = None) -> str:
+    """The shop name and what it leads with, from `stores`, when the owner has told us."""
+    if not user_id or not workspace_id:
         return ""
     try:
-        from db.repository.preference_repo import PgPreferenceRepo
-        row = await PgPreferenceRepo().get(user_id)
+        from store.service import get_store
+        store = await get_store(workspace_id, user_id)
     except Exception:
         return ""
-    extra = (row or {}).get("extra") or {}
-    record = extra.get("first_video") if isinstance(extra, dict) else None
-    if not isinstance(record, dict):
+    if store is None:
         return ""
-    name = " ".join(str(record.get("shop_name") or "").split())[:40]
-    headline = " ".join(str(record.get("headline") or "").split())[:40]
+    name = " ".join(str(store.get("name") or "").split())[:40]
+    headline = " ".join(str(store.get("headline") or "").split())[:40]
     if not name and not headline:
         return ""
     bits = [f"店名「{name}」" if name else "", f"主打「{headline}」" if headline else ""]
-    return "这家店：" + "，".join(bit for bit in bits if bit) + "（老板在首条视频里填的）。"
+    return "这家店：" + "，".join(bit for bit in bits if bit) + "（老板告诉我们的；没说换主题时，视频默认拍这个主打）。"
 
 
 async def light_mode_fragment(user_id: str | None, session) -> str:
@@ -80,7 +78,7 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     fragment = entry_fragment(entry_id, lang)
     if fragment:
         parts.append(fragment)
-    shop = await shop_fragment(user_id)
+    shop = await shop_fragment(user_id, getattr(session, "workspace_id", None))
     if shop:
         parts.append(shop)
     parts.extend(filter(None, [await examples_fragment(user_id, session)]))  # 参考样例 (light/examples.py)

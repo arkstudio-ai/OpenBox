@@ -104,7 +104,8 @@ async def test_section_failure_never_breaks_the_assistant_prompt(monkeypatch):
         raise RuntimeError("db away")
     monkeypatch.setattr("light.prompt.assistant_section", boom)
     parts = await _build_system_prompt(get_agent("assistant"), "test/model", user_id=owner, workspace_id=workspace)
-    assert parts[-1].startswith("Today's date:") and not any("界面模式" in part for part in parts)
+    # The mode section itself is gone; the base prompt may still mention the section by name (its language rule).
+    assert parts[-1].startswith("Today's date:") and not any(part.startswith("界面模式") for part in parts)
 
 
 # --- 2. the four Light work types ---------------------------------------------------------------------------

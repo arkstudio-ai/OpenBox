@@ -128,18 +128,6 @@ class LightApi {
     ).whereType<Map<String, dynamic>>().toList();
   }
 
-  /// The shop name the first-video flow recorded, for the home heading
-  /// (`extra.first_video.shop_name`; M4 reads `stores` instead).
-  Future<String?> shopName() async {
-    final resp = await _dio.get<Map<String, dynamic>>(
-      '/api/auth/me/preferences',
-    );
-    final name = asString(
-      asMap(asMap(resp.data?['extra'])['first_video'])['shop_name'],
-    )?.trim();
-    return name == null || name.isEmpty ? null : name;
-  }
-
   /// A photo for the topic chat, uploaded the way the resource centre does
   /// it: open an upload, PUT the bytes to object storage, have the backend
   /// verify the object landed. Returns the asset id to attach.

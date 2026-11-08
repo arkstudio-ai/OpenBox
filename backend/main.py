@@ -509,6 +509,8 @@ def create_app() -> FastAPI:
 
     from api.light import router as light_router
     application.include_router(light_router)
+    from api.stores import router as stores_router
+    application.include_router(stores_router)
 
     from api.workspaces import router as workspaces_router
     from api.admin import router as admin_router

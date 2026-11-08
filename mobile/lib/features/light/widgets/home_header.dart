@@ -9,7 +9,7 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/utils/format.dart';
 import '../../billing/state/billing_providers.dart';
-import '../state/light_providers.dart';
+import '../../store/state/store_provider.dart';
 
 /// Top of the Light home (docs `LIGHT_MODE_PLAN.md` §4.2): the shop (or the
 /// person) by name, one line for today, and the credit balance — which
@@ -22,7 +22,7 @@ class LightHomeHeader extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final user = ref.watch(authProvider).user;
-    final shop = ref.watch(lightShopNameProvider).valueOrNull;
+    final shop = ref.watch(storeProvider).valueOrNull?.name;
     final credits = ref.watch(billingBalanceProvider);
     final name = shop ?? user?.username ?? '';
     final taglines = i18n.tList('light:home.taglines');

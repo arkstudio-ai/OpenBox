@@ -13,7 +13,7 @@
 | M2 App Light | 完成：四 tab、首页、样片画廊（16 条真实样片）、专题对话；做视频改用新技能 `light-video`（免费档无桌面可出片），做菜单 `menu-maker`、做海报 `poster-maker`；结果卡「保存 / 发到抖音 / 再做一条」 | #110 / #112，收尾在 PR #118 |
 | M2.5 省心托管 | 完成：结果卡开关 → 三问 → `light_autopilot` cron；只出片无桌面直跑；托管中的事（暂停 / 继续 / 取消）；light-test 手动触发一次 79 秒出片 | PR #119 |
 | M3 你拍我剪 | F1–F9 完成；免费档 5 段（含横拍、HEVC）→ 方案卡 → 成片、账单两行与方案卡一致。首轮约 6 分钟超线；11-03 提速后复验 **上传完成 → 方案卡 40 秒、系统耗时约 1 分 54 秒，5 分钟线达标**（见 `LIGHT_FOOTAGE_EDIT.md` §3.1） | PR C（`claude/light-full-footage`） |
-| M4 衔接 | 未开始（等 PR #60） | — |
+| M4 衔接 | 店名、默认主题、「今天可以做」已做（2026-11-05，见 §6）；店长数据区未做 | `feat/light-m4-store` |
 
 测试包：Android 1.1.0 (101)/(102)/(103)，正式签名连 light-test（`MOBILE_RELEASE_1_1_0_101_LIGHT_TEST_20261102.md`）；iOS 未上 TestFlight（内部组自动分发会把运营手机的生产 App 换成测试包，待定）。
 
@@ -100,7 +100,7 @@
 
 | 包 | 内容 | 落点 |
 |---|---|---|
-| L1 入口配置 | `backend/light/entries.json` + `entries.py`：版本号、每入口 `{id, title, subtitle, sample_media[], steps[{id,label}], opening_card{text, chips[]}, price_hint, default_tier, requires:{plan?, desktop?, binding?}, skill}`；第一版 7 个入口：`video_shop`/`video_dish`/`video_visit`（做视频三子类）、`menu`、`poster`、`douyin_publish`、`review`（成绩复盘）、`shopkeeper`（掌柜）、`footage_edit`（灰卡） | 同 B1 的加载模式 |
+| L1 入口配置 | `backend/light/entries.json` + `entries.py`：版本号、每入口 `{id, title, subtitle, sample_media[], steps[{id,label}], opening_card{text, chips[]}, price_hint, default_tier, requires:{plan?, desktop?, binding?}, skill}`；第一版 7 个入口：`video_shop`/`video_dish`/`video_visit`（做视频三子类）、`menu`、`poster`、`douyin_publish`、`review`（成绩复盘）、`shopkeeper`（店长）、`footage_edit`（灰卡） | 同 B1 的加载模式 |
 | L2 两个接口 | `backend/api/light.py`：`GET /api/light/entries` 把 `requires` 算成 `availability: ok/needs_plan/needs_desktop/needs_binding`（套餐看订阅服务；桌面看 `desktop_publish` 返回 `SANDBOX_SUBSCRIPTION_REQUIRED` 的同一判定；登录态看授权中心平台状态）；`POST /api/light/start {entry_id, project_id?, context?}`：`create_session` → `resolve_quality(default_tier)` 写会话 → 写 `sessions.light_entry` → 开场卡作为第一条助理消息直接落库（复用 B2 的"直接落助理消息"函数）→ 返回 `session_id`；之后 App 走现有 `prompt_async` | `api/inbox.py` 模板；开场卡落库复用 `cron/injector.py:276` 写法 |
 | L3 `ui_mode` 偏好 | `PUT /api/auth/me/preferences {extra:{ui_mode:"light"|"pro"}}`，schema 不用改；注册两处（`auth/routes.py:158,361`）新用户 upsert `extra.ui_mode="light"`；老用户为空视为 `pro` | `preference_repo.py:48` 浅合并 |
 | L4 会话入口身份 | 迁移：`sessions` 加 `light_entry String(32) NULL`（head `ph73f4a5b6c7` 之后，命名 `pi84…`，模板 `pg40c1d2e3f4_session_credit_cap.py`）；`Session` 内部模型映射该列 | 不用 `metadata` 列（契约是调用方所有） |
@@ -152,7 +152,14 @@
 
 ## 6. M4 衔接
 
-PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶部店名与「做一条视频」默认主题改读 `stores`；`starter-cards` 接口喂首页「今天可以做」；「掌柜」的数据区接 `store_ledger`（OPS_CASE M2）。不单独排期，随 PR #60 的节奏。
+PR #60 在 2026-09 的 main 上，与 `light-mode` 有 22 处冲突，不等它合并。2026-11-05 只把 M4 要用的部分搬进 Light 线：
+
+- **表**：`stores`（迁移 `pm39f0a1b2c3`，字段同 #60，多一列 `headline` 存主打）。#60 的绑店回填、人设初始化、Web 页面没有搬。将来 #60 落到这条线时，要去掉它自己的 `e2c4a6b8d0f1` 建表。
+- **数据来源**：Light 老板在首条视频表单里填店名和主打，表单仍存 `extra.first_video`；第一次读 `stores` 没有行时由 `store/service.py::get_store` 用表单补一行（只认同一 workspace）。没填店名的账号没有门店，首页回落到用户名。
+- **首页店名**：`GET /api/stores`（`storeProvider`），不再读 `/api/auth/me/preferences`。
+- **默认主题**：`light/prompt.py::shop_fragment` 改读 `stores`，把店名和主打带进专题对话，老板没说换主题时视频默认拍主打。
+- **今天可以做**：`GET /api/stores/{id}/starter-cards` 返回三张卡，每张带 `entry`（入口 id），文案用店名和主打。App 只显示当前可用的入口，点卡走该入口的专题页；一张都不剩时首页和以前一样。卡片标题不会带进专题对话。
+- **未做**：店长的数据区接 `store_ledger`（OPS_CASE M2）。
 
 ## 7. 第一周动作清单
 

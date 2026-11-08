@@ -65,16 +65,6 @@ final lightAssetUrlProvider = FutureProvider.family<String?, String>((
   }
 });
 
-/// The heading's shop name; null until the first video flow recorded one.
-final lightShopNameProvider = FutureProvider<String?>((ref) async {
-  ref.watch(authProvider.select((a) => a.userId));
-  try {
-    return await ref.watch(lightApiProvider).shopName();
-  } catch (_) {
-    return null;
-  }
-});
-
 /// What `POST /api/light/start` returned, by session id, so the topic page
 /// that opens right after has the entry, steps and opening chips without
 /// waiting for the entries list.

@@ -3,6 +3,8 @@ import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/light/api/light_api.dart';
 import 'package:bossip_mobile/features/light/home_screen.dart';
 import 'package:bossip_mobile/features/light/widgets/entry_card.dart';
+import 'package:bossip_mobile/features/store/api/store_api.dart';
+import 'package:bossip_mobile/features/store/models/store.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
 import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
@@ -38,13 +40,32 @@ class _Workspace extends ActiveWorkspaceController {
       const ActiveWorkspaceState(currentId: 'w1');
 }
 
+class _FakeStoreApi extends StoreApi {
+  _FakeStoreApi() : super(Dio());
+
+  Store? store = const Store(id: 'sto1', name: '巷口小馆');
+  List<StarterCard> cards = const [];
+  String? locale;
+
+  @override
+  Future<Store?> current() async => store;
+
+  @override
+  Future<List<StarterCard>> starterCards(
+    String id, {
+    required String locale,
+  }) async {
+    this.locale = locale;
+    return cards;
+  }
+}
+
 class _FakeLightApi extends LightApi {
   _FakeLightApi() : super(Dio());
 
   LightEntriesView view = LightEntriesView.fromJson(_entriesJson());
   List<LightRecentGroup> groups = const [];
   bool recentDown = false;
-  String? shop = '巷口小馆';
 
   @override
   Future<LightEntriesView> entries() async => view;
@@ -54,9 +75,6 @@ class _FakeLightApi extends LightApi {
     if (recentDown) throw DioException(requestOptions: RequestOptions());
     return groups;
   }
-
-  @override
-  Future<String?> shopName() async => shop;
 
   @override
   Future<String?> assetUrl(String assetId) async => null;
@@ -137,6 +155,7 @@ Future<(_FakeLightApi, GoRouter)> _mount(
   WidgetTester tester, {
   _FakeLightApi? api,
   List<Override> overrides = const [],
+  _FakeStoreApi? store,
 }) async {
   // Tall enough for the whole lazy list, band and recent section included.
   tester.view.physicalSize = const Size(1170, 4800);
@@ -179,6 +198,7 @@ Future<(_FakeLightApi, GoRouter)> _mount(
         appConfigProvider.overrideWith(
           (ref) async => const AppConfig(models: [], voiceEnabled: true),
         ),
+        storeApiProvider.overrideWithValue(store ?? _FakeStoreApi()),
         billingBalanceProvider.overrideWith(
           (ref) async => const CreditBalance(
             workspaceId: 'w1',
@@ -265,6 +285,37 @@ void main() {
     await tester.tap(find.byKey(const Key('light-entry-voice_assistant')));
     await tester.pumpAndSettle();
     expect(router.state.uri.path, '/assistant');
+  });
+
+  testWidgets('without a store the heading falls back to the person', (
+    tester,
+  ) async {
+    await _mount(tester, store: _FakeStoreApi()..store = null);
+    expect(find.textContaining('alice'), findsOneWidget);
+    expect(find.text('今天可以做'), findsOneWidget);
+    expect(find.text('自己挑一件'), findsNothing);
+  });
+
+  testWidgets('今天可以做 lists what this workspace can do and opens it', (
+    tester,
+  ) async {
+    final store = _FakeStoreApi()
+      ..cards = const [
+        StarterCard(entryId: 'video', title: '给巷口小馆拍条视频', hint: '挑个样子'),
+        StarterCard(entryId: 'douyin_publish', title: '发到抖音'),
+        StarterCard(entryId: 'gone', title: '下线的入口'),
+      ];
+    final (_, router) = await _mount(tester, store: store);
+    expect(store.locale, 'zh-CN');
+    expect(find.text('给巷口小馆拍条视频'), findsOneWidget);
+    expect(find.text('挑个样子'), findsOneWidget);
+    expect(find.text('自己挑一件'), findsOneWidget);
+    // Grey on the free tier, and an entry the server no longer lists.
+    expect(find.byKey(const Key('light-starter-douyin_publish')), findsNothing);
+    expect(find.text('下线的入口'), findsNothing);
+    await tester.tap(find.byKey(const Key('light-starter-video')));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/light/topic/video');
   });
 
   testWidgets('an available entry opens its topic page', (tester) async {

@@ -13,6 +13,12 @@ import '../../../shared/widgets/ui_mode_switch.dart';
 class AppearanceSection extends ConsumerWidget {
   const AppearanceSection({super.key});
 
+  static const _langLabelKeys = {
+    'zh-CN': 'settings:appearance.langZh',
+    'en-US': 'settings:appearance.langEn',
+    'vi-VN': 'settings:appearance.langVi',
+  };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
@@ -30,33 +36,22 @@ class AppearanceSection extends ConsumerWidget {
         _sectionLabel(t, i18n.t('settings:appearance.language')),
         Row(
           children: [
-            Expanded(
-              child: _card(
-                t,
-                selected: i18n.language == 'zh-CN',
-                onTap: () => controller.setLanguage('zh-CN'),
-                child: _langLabel(
+            for (final (index, lang) in supportedLangs.indexed) ...[
+              if (index > 0) const SizedBox(width: 10),
+              Expanded(
+                child: _card(
                   t,
-                  i18n,
-                  'settings:appearance.langZh',
-                  i18n.language == 'zh-CN',
+                  selected: i18n.language == lang,
+                  onTap: () => controller.setLanguage(lang),
+                  child: _langLabel(
+                    t,
+                    i18n,
+                    _langLabelKeys[lang] ?? 'settings:appearance.langEn',
+                    i18n.language == lang,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _card(
-                t,
-                selected: i18n.language == 'en-US',
-                onTap: () => controller.setLanguage('en-US'),
-                child: _langLabel(
-                  t,
-                  i18n,
-                  'settings:appearance.langEn',
-                  i18n.language == 'en-US',
-                ),
-              ),
-            ),
+            ],
           ],
         ),
         const SizedBox(height: 24),

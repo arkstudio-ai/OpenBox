@@ -110,7 +110,8 @@ class _VoiceSectionState extends ConsumerState<VoiceSection> {
     }
   }
 
-  static bool _english(I18nState i18n) => i18n.language.startsWith('en');
+  // Every language but Chinese reads the English names and descriptions.
+  static bool _english(I18nState i18n) => !i18n.language.startsWith('zh');
 
   static String _name(Map<String, dynamic> voice, I18nState i18n) =>
       (_english(i18n) ? asString(voice['id']) : asString(voice['name'])) ?? '';

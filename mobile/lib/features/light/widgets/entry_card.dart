@@ -7,6 +7,7 @@ import '../../../shared/models/light.dart';
 /// The glyph of a home entry, by its id (the server names no icon).
 IconData lightEntryIcon(String id) => switch (id) {
   'video' => Icons.videocam_outlined,
+  'voice_assistant' => Icons.phone_outlined,
   'menu' => Icons.restaurant_menu,
   'poster' => Icons.image_outlined,
   'douyin_publish' => Icons.send_outlined,
@@ -30,11 +31,16 @@ class LightEntryCard extends StatelessWidget {
     required this.onTap,
     this.reason,
     this.action,
+    this.unavailable = false,
   });
 
   final LightEntry entry;
   final LightCardSize size;
   final VoidCallback? onTap;
+
+  /// Grey for a reason the server does not know (the voice card when this
+  /// deployment has no voice calls); [reason] says which.
+  final bool unavailable;
 
   /// Why the entry is grey (`needs_desktop` …), already translated.
   final String? reason;
@@ -42,7 +48,7 @@ class LightEntryCard extends StatelessWidget {
   /// The grey card's call to action ("去开通"), already translated.
   final String? action;
 
-  bool get _grey => !entry.available;
+  bool get _grey => unavailable || !entry.available;
 
   @override
   Widget build(BuildContext context) {

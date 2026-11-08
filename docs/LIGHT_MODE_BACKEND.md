@@ -17,6 +17,7 @@
 GET /api/light/entries →
 { "version", "ui_mode": "light"|"pro", "plan_id", "desktop": bool,
   "entries": [ { "id", "title", "subtitle", "kind": "primary"|"secondary"|"coming_soon",
+                 "action": "voice_call"?,   // 应用内动作：从卡上直接拨通助理，没有 skill/steps/opening_card（I0，LIGHT_MODE_I18N_PLAN §3）
                  "skill", "default_tier", "price_hint", "requires": {plan, desktop, binding},
                  "steps": [{id,label}], "subtypes": [{id,label,samples:[{id,label,description,needs,media_url,poster_url}]}],
                  "opening_card": {text, text_with_sample, chips[]}, "sample_media": [],
@@ -25,7 +26,8 @@ GET /api/light/entries →
 POST /api/light/start {"entry_id", "project_id"?, "subtype"?, "sample"?} →
 { "session_id", "entry": {…同上…}, "opening_card": {"text","chips"}, "steps": [...],
   "video_model", "video_resolution" }
-  400 LIGHT_ENTRY_UNKNOWN / LIGHT_SAMPLE_UNKNOWN；409 LIGHT_ENTRY_UNAVAILABLE（detail.availability 说明缺什么）
+  400 LIGHT_ENTRY_UNKNOWN / LIGHT_SAMPLE_UNKNOWN；409 LIGHT_ENTRY_UNAVAILABLE（detail.availability 说明缺什么）；
+  409 LIGHT_ENTRY_ACTION（action 入口没有专题对话，detail.action 说明是哪种）
 
 GET /api/light/recent →
 { "groups": [ { "session_id", "title", "entry_id", "updated_at",

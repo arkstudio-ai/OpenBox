@@ -1,11 +1,16 @@
 import 'package:bossip_mobile/features/billing/state/billing_providers.dart';
+import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/light/api/light_api.dart';
 import 'package:bossip_mobile/features/light/home_screen.dart';
+import 'package:bossip_mobile/features/light/widgets/entry_card.dart';
+import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
+import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
+import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
 import 'package:bossip_mobile/shared/models/billing.dart';
 import 'package:bossip_mobile/shared/models/light.dart';
@@ -16,6 +21,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../voice/voice_fakes.dart';
 
 class _Auth extends AuthController {
   @override
@@ -77,10 +84,11 @@ Map<String, dynamic> _entriesJson({String plan = 'free'}) => {
       'availability': 'ok',
     },
     {
-      'id': 'menu',
-      'title': '做菜单',
-      'subtitle': '拍旧菜单，出新菜单',
+      'id': 'voice_assistant',
+      'title': '语音助手',
+      'subtitle': '打个电话，说一句就办',
       'kind': 'primary',
+      'action': 'voice_call',
       'requires': <String, dynamic>{},
       'availability': 'ok',
     },
@@ -114,12 +122,21 @@ Map<String, dynamic> _entriesJson({String plan = 'free'}) => {
       'requires': <String, dynamic>{},
       'availability': 'coming_soon',
     },
+    {
+      'id': 'menu',
+      'title': '做菜单',
+      'subtitle': '拍旧菜单，出新菜单',
+      'kind': 'primary',
+      'requires': <String, dynamic>{},
+      'availability': 'ok',
+    },
   ],
 };
 
 Future<(_FakeLightApi, GoRouter)> _mount(
   WidgetTester tester, {
   _FakeLightApi? api,
+  List<Override> overrides = const [],
 }) async {
   // Tall enough for the whole lazy list, band and recent section included.
   tester.view.physicalSize = const Size(1170, 4800);
@@ -159,6 +176,9 @@ Future<(_FakeLightApi, GoRouter)> _mount(
         authProvider.overrideWith(_Auth.new),
         activeWorkspaceProvider.overrideWith(_Workspace.new),
         lightApiProvider.overrideWithValue(light),
+        appConfigProvider.overrideWith(
+          (ref) async => const AppConfig(models: [], voiceEnabled: true),
+        ),
         billingBalanceProvider.overrideWith(
           (ref) async => const CreditBalance(
             workspaceId: 'w1',
@@ -166,6 +186,7 @@ Future<(_FakeLightApi, GoRouter)> _mount(
             mode: 'enforce',
           ),
         ),
+        ...overrides,
       ],
       child: MaterialApp.router(
         theme: ThemeData(
@@ -191,8 +212,21 @@ void main() {
     expect(find.byKey(const Key('light-entry-video')), findsOneWidget);
     expect(find.text('做一条视频'), findsOneWidget);
     expect(find.text('15 秒省钱档约 4 积分'), findsOneWidget);
-    expect(find.byKey(const Key('light-entry-menu')), findsOneWidget);
+    expect(
+      find.byKey(const Key('light-entry-voice_assistant')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('light-entry-poster')), findsOneWidget);
+    expect(find.byKey(const Key('light-entry-menu')), findsOneWidget);
+    // The voice card sits where 做菜单 was: second card, first of the half
+    // row (你拍我剪 is coming soon in this fixture, so it is drawn last).
+    final order = [
+      for (final card in tester.widgetList<LightEntryCard>(
+        find.byType(LightEntryCard),
+      ))
+        card.entry.id,
+    ];
+    expect(order.take(4), ['video', 'voice_assistant', 'poster', 'menu']);
     // Free tier: the desktop entries are grey and say what is missing.
     expect(find.byKey(const Key('light-entry-douyin_publish')), findsOneWidget);
     expect(find.text('需要云电脑'), findsNWidgets(2));
@@ -201,6 +235,36 @@ void main() {
     expect(find.text('所有事都能省心托管'), findsOneWidget);
     expect(find.byKey(const Key('light-recent-empty')), findsOneWidget);
     expect(find.byKey(const Key('light-ask')), findsOneWidget);
+  });
+
+  testWidgets('the voice card dials in place once the assistant is bound', (
+    tester,
+  ) async {
+    final rig = VoiceRig();
+    final stub = StubVoiceController(const VoiceCallState(), rig.clock);
+    final (_, router) = await _mount(
+      tester,
+      overrides: [
+        ...rig.overrides,
+        voiceCallControllerProvider.overrideWith(() => stub),
+      ],
+    );
+    expect(find.text('语音暂未开通'), findsNothing);
+    await tester.tap(find.byKey(const Key('light-entry-voice_assistant')));
+    await tester.pumpAndSettle();
+    expect(stub.starts, 1);
+    expect(router.state.uri.path, '/home');
+  });
+
+  testWidgets('without voice the card is grey and leads to the assistant tab', (
+    tester,
+  ) async {
+    // No assistant scope bound (the default here): nothing to dial yet.
+    final (_, router) = await _mount(tester);
+    expect(find.text('语音暂未开通'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('light-entry-voice_assistant')));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/assistant');
   });
 
   testWidgets('an available entry opens its topic page', (tester) async {

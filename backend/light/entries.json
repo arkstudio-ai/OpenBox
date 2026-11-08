@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-02.2",
+  "version": "2026-11-08.1",
   "entries": [
     {
       "id": "video",
@@ -136,6 +136,132 @@
       "sample_media": []
     },
     {
+      "id": "voice_assistant",
+      "title": "语音助手",
+      "subtitle": "打个电话，说一句就办",
+      "kind": "primary",
+      "action": "voice_call",
+      "price_hint": "",
+      "requires": {},
+      "steps": [],
+      "subtypes": [],
+      "sample_media": []
+    },
+    {
+      "id": "poster",
+      "title": "做海报",
+      "subtitle": "新品 / 节日 / 开业 / 团购",
+      "kind": "primary",
+      "skill": "poster-maker",
+      "default_tier": null,
+      "price_hint": "每张约 0.5 积分",
+      "requires": {},
+      "steps": [
+        {
+          "id": "purpose",
+          "label": "用途"
+        },
+        {
+          "id": "copy",
+          "label": "一句话"
+        },
+        {
+          "id": "title",
+          "label": "选标题"
+        },
+        {
+          "id": "deliver",
+          "label": "出图"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "poster_style",
+          "label": "样式",
+          "samples": [
+            {
+              "id": "poster_bold",
+              "label": "大字促销",
+              "description": "大标题、价格醒目",
+              "needs": "活动一句话",
+              "media_url": "oss:light/samples/20261102/poster_bold.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_bold_thumb.jpg"
+            },
+            {
+              "id": "poster_photo",
+              "label": "实拍主图",
+              "description": "用你的菜品照做主图",
+              "needs": "1 张菜品照片",
+              "media_url": "oss:light/samples/20261102/poster_photo.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_photo_thumb.jpg"
+            },
+            {
+              "id": "poster_fresh",
+              "label": "手绘清新",
+              "description": "插画风，适合甜品饮品",
+              "needs": "活动一句话",
+              "media_url": "oss:light/samples/20261102/poster_fresh.jpg",
+              "poster_url": "oss:light/samples/20261102/poster_fresh_thumb.jpg"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "这次海报是为了什么？说一句活动内容就行，有菜的照片也发我。",
+        "chips": [
+          "新品上市",
+          "节日活动",
+          "开业",
+          "团购"
+        ],
+        "text_with_sample": "做一张「{sample}」海报。这次是为了什么？说一句活动内容就行，有菜的照片也发我。"
+      },
+      "sample_media": []
+    },
+    {
+      "id": "footage_edit",
+      "title": "你拍我剪",
+      "subtitle": "自己拍的素材，剪成一条",
+      "kind": "primary",
+      "skill": "footage-edit",
+      "default_tier": null,
+      "price_hint": "60 秒内成片 5 积分 + 素材每分钟 1 积分",
+      "requires": {},
+      "steps": [
+        {
+          "id": "type",
+          "label": "成片类型"
+        },
+        {
+          "id": "upload",
+          "label": "传素材"
+        },
+        {
+          "id": "plan",
+          "label": "剪辑方案"
+        },
+        {
+          "id": "compose",
+          "label": "合成"
+        },
+        {
+          "id": "deliver",
+          "label": "成片"
+        }
+      ],
+      "subtypes": [],
+      "opening_card": {
+        "text": "剪成哪种？从相册选 3–10 段你拍的视频（总共不超过 5 分钟），横拍竖拍都行，我来挑镜头、配字幕、加店名。",
+        "chips": [
+          "探店",
+          "新品上市",
+          "活动促销",
+          "日常记录"
+        ]
+      },
+      "sample_media": []
+    },
+    {
       "id": "menu",
       "title": "做菜单",
       "subtitle": "拍旧菜单，出新菜单",
@@ -214,77 +340,6 @@
           "改上次那版"
         ],
         "text_with_sample": "做一版「{sample}」菜单。把旧菜单拍一张给我，或者直接把菜名和价格打出来，我来排版。"
-      },
-      "sample_media": []
-    },
-    {
-      "id": "poster",
-      "title": "做海报",
-      "subtitle": "新品 / 节日 / 开业 / 团购",
-      "kind": "primary",
-      "skill": "poster-maker",
-      "default_tier": null,
-      "price_hint": "每张约 0.5 积分",
-      "requires": {},
-      "steps": [
-        {
-          "id": "purpose",
-          "label": "用途"
-        },
-        {
-          "id": "copy",
-          "label": "一句话"
-        },
-        {
-          "id": "title",
-          "label": "选标题"
-        },
-        {
-          "id": "deliver",
-          "label": "出图"
-        }
-      ],
-      "subtypes": [
-        {
-          "id": "poster_style",
-          "label": "样式",
-          "samples": [
-            {
-              "id": "poster_bold",
-              "label": "大字促销",
-              "description": "大标题、价格醒目",
-              "needs": "活动一句话",
-              "media_url": "oss:light/samples/20261102/poster_bold.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_bold_thumb.jpg"
-            },
-            {
-              "id": "poster_photo",
-              "label": "实拍主图",
-              "description": "用你的菜品照做主图",
-              "needs": "1 张菜品照片",
-              "media_url": "oss:light/samples/20261102/poster_photo.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_photo_thumb.jpg"
-            },
-            {
-              "id": "poster_fresh",
-              "label": "手绘清新",
-              "description": "插画风，适合甜品饮品",
-              "needs": "活动一句话",
-              "media_url": "oss:light/samples/20261102/poster_fresh.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_fresh_thumb.jpg"
-            }
-          ]
-        }
-      ],
-      "opening_card": {
-        "text": "这次海报是为了什么？说一句活动内容就行，有菜的照片也发我。",
-        "chips": [
-          "新品上市",
-          "节日活动",
-          "开业",
-          "团购"
-        ],
-        "text_with_sample": "做一张「{sample}」海报。这次是为了什么？说一句活动内容就行，有菜的照片也发我。"
       },
       "sample_media": []
     },
@@ -404,49 +459,6 @@
           "回评价",
           "改团购",
           "看数据"
-        ]
-      },
-      "sample_media": []
-    },
-    {
-      "id": "footage_edit",
-      "title": "你拍我剪",
-      "subtitle": "自己拍的素材，剪成一条",
-      "kind": "primary",
-      "skill": "footage-edit",
-      "default_tier": null,
-      "price_hint": "60 秒内成片 5 积分 + 素材每分钟 1 积分",
-      "requires": {},
-      "steps": [
-        {
-          "id": "type",
-          "label": "成片类型"
-        },
-        {
-          "id": "upload",
-          "label": "传素材"
-        },
-        {
-          "id": "plan",
-          "label": "剪辑方案"
-        },
-        {
-          "id": "compose",
-          "label": "合成"
-        },
-        {
-          "id": "deliver",
-          "label": "成片"
-        }
-      ],
-      "subtypes": [],
-      "opening_card": {
-        "text": "剪成哪种？从相册选 3–10 段你拍的视频（总共不超过 5 分钟），横拍竖拍都行，我来挑镜头、配字幕、加店名。",
-        "chips": [
-          "探店",
-          "新品上市",
-          "活动促销",
-          "日常记录"
         ]
       },
       "sample_media": []

@@ -1,0 +1,82 @@
+{
+  "archiveQueue": {
+    "pick": "Chọn nhiều file nén",
+    "limits": "Mỗi đợt tối đa 20 file, mỗi file không quá 32 MB, tổng không quá 128 MB. Chọn thêm để đưa file vào hàng đợi.",
+    "remove": "Bỏ {{name}}",
+    "queued": "Chờ tải lên",
+    "working": "Đang tải lên — đừng đóng hộp thoại này…",
+    "success": "Đã tải lên",
+    "failed": "Thất bại",
+    "submit": "Tải lên / thử lại {{count}} file",
+    "unknown": "Chưa xác nhận được kết quả tải lên. Hãy làm mới danh sách trước rồi mới thử lại các file lỗi; file đã thành công sẽ không tải lại."
+  },
+  "action": {
+    "cancel": "Hủy",
+    "delete": "Xóa",
+    "copy": "Sao chép",
+    "copied": "Đã sao chép",
+    "close": "Đóng",
+    "send": "Gửi",
+    "save": "Lưu",
+    "retry": "Thử lại",
+    "confirm": "Xác nhận",
+    "download": "Tải về",
+    "search": "Tìm kiếm",
+    "more": "Thêm",
+    "back": "Quay lại",
+    "reload": "Tải lại",
+    "maximize": "Phóng to",
+    "share": "Chia sẻ",
+    "manage": "Quản lý",
+    "view": "Xem",
+    "stop": "Dừng",
+    "approve": "Duyệt",
+    "reject": "Từ chối",
+    "signOut": "Đăng xuất",
+    "create": "Tạo"
+  },
+  "state": {
+    "loading": "Đang tải…",
+    "empty": "Chưa có gì ở đây",
+    "running": "Đang chạy",
+    "done": "Đã xong",
+    "error": "Có lỗi",
+    "unavailable": "Tạm không dùng được",
+    "connecting": "Đang kết nối…",
+    "offline": "Mất kết nối — đang kết nối lại…"
+  },
+  "pageLoad": {
+    "title": "Không tải được tài nguyên trang",
+    "body": "Có thể trang vừa được cập nhật hoặc mạng bị gián đoạn. Hãy kiểm tra kết nối rồi tải lại trang để lấy tài nguyên mới nhất. Tải lại sẽ không gửi lại việc đã giao.",
+    "genericBody": "Hãy thử tải lại trang. Nếu vẫn lỗi, bạn có thể quay về không gian làm việc.",
+    "sessionGone": "Cuộc trò chuyện này đã bị xóa hoặc thuộc không gian làm việc khác, nên bạn đã được đưa về trang chủ."
+  },
+  "unit": {
+    "tokens": "tokens",
+    "files_one": "{{count}} file",
+    "files_other": "{{count}} file",
+    "lines_one": "{{count}} dòng",
+    "lines_other": "{{count}} dòng",
+    "matches_one": "{{count}} kết quả khớp",
+    "matches_other": "{{count}} kết quả khớp"
+  },
+  "brand": {
+    "tagline": "không gian làm việc agent"
+  },
+  "time": {
+    "todayTime": "Hôm nay {{time}}",
+    "thisYearDateTime": "{{date}} {{time}}",
+    "fullDateTime": "{{date}} {{time}}"
+  },
+  "close": "Đóng",
+  "env": {
+    "dev": "Dev",
+    "devHint": "Đây là môi trường phát triển, dữ liệu có thể bị xóa bất cứ lúc nào",
+    "staging": "Thử nghiệm nội bộ",
+    "stagingHint": "Đây là môi trường thử nghiệm nội bộ, chưa mở cho bên ngoài"
+  },
+  "assistantName": {
+    "title": "Trợ lý riêng",
+    "mention": "trợ lý của bạn"
+  }
+}

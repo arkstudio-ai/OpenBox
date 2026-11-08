@@ -1,0 +1,175 @@
+{
+  "page": {
+    "title": "Trung tâm ủy quyền",
+    "subtitle": "Kết nối tài khoản nền tảng để đăng bài và lấy dữ liệu."
+  },
+  "capability": {
+    "login": "Đăng nhập",
+    "publish": "Đăng bài"
+  },
+  "platform": {
+    "notConfigured": "Môi trường này chưa cấu hình nền tảng này",
+    "grantHint": "Quét mã một lần, trong tối đa {{days}} ngày không cần quét lại; khi hết hạn hoặc bị hủy ủy quyền trong ứng dụng thì cần ủy quyền lại.",
+    "genericHint": "Quét mã một lần là dùng được các tính năng của nền tảng này.",
+    "emptyManager": "Chưa có tài khoản nào — bấm “Kết nối tài khoản” để bắt đầu.",
+    "emptyMember": "Chưa có tài khoản nào — hãy nhờ quản trị viên không gian làm việc kết nối."
+  },
+  "actions": {
+    "bind": "Kết nối tài khoản",
+    "reauthorize": "Ủy quyền lại",
+    "probe": "Kiểm tra",
+    "unbind": "Ngắt kết nối",
+    "publish": "Đăng lên Douyin"
+  },
+  "status": {
+    "bound": "Đã ủy quyền",
+    "expiring": "Sắp hết hạn",
+    "expired": "Đã hết hạn",
+    "revoked": "Đã ngắt kết nối"
+  },
+  "account": {
+    "unnamed": "Tài khoản chưa đặt tên",
+    "openId": "openid {{id}}…",
+    "validUntil": "Ủy quyền hiện tại có hiệu lực đến {{date}}",
+    "renewalsLeft_one": "Còn {{count}} lần tự động gia hạn",
+    "renewalsLeft_other": "Còn {{count}} lần tự động gia hạn",
+    "needsReauth": "Cần quét mã lại",
+    "lastProbe": "Kiểm tra lần cuối {{date}}",
+    "estimatedExpiry": "Hết hạn {{date}}, còn khoảng {{days}} ngày",
+    "details": "Chi tiết",
+    "hideDetails": "Thu gọn"
+  },
+  "unbind": {
+    "title": "Ngắt kết nối tài khoản này?",
+    "body": "“{{name}}” sẽ bị gỡ khỏi không gian làm việc này. Muốn hủy ủy quyền hoàn toàn, vào Douyin › Cài đặt › Tài khoản và bảo mật › Quản lý ủy quyền."
+  },
+  "publish": {
+    "title": "Đăng lên Douyin",
+    "intro": "Chọn một video trong Tài nguyên để tạo mã QR đăng bài. Dùng ứng dụng Douyin quét mã rồi xác nhận đăng trong đó.",
+    "video": "Video",
+    "pickVideo": "Chọn một video…",
+    "noVideos": "Trong Tài nguyên không có video nào đăng được (mp4/mov, ≤128 MB)",
+    "caption": "Tiêu đề",
+    "captionPlaceholder": "Tối đa 55 ký tự",
+    "hashtags": "Hashtag",
+    "hashtagsPlaceholder": "Cách nhau bằng dấu cách hoặc dấu phẩy",
+    "privacy": "Ai xem được",
+    "privacyPublic": "Mọi người",
+    "privacyFriends": "Bạn bè",
+    "privacyPrivate": "Chỉ mình tôi",
+    "generate": "Tạo mã QR",
+    "scanHint": "Mở ứng dụng Douyin và quét mã",
+    "scanSteps": "Douyin sẽ tải video về và mở trang đăng bài; bạn bấm Đăng ở đó.",
+    "waiting": "Đang chờ kết quả đăng…",
+    "expiresIn": "Mã QR hết hạn sau {{time}}",
+    "noTracking": "Lần này không lấy được mã theo dõi; sau khi đăng, màn hình này sẽ không tự cập nhật.",
+    "done": "Đã đăng lên Douyin",
+    "itemId": "Mã bài {{id}}",
+    "expired": "Mã QR đã hết hạn",
+    "expiredHint": "Đóng lại rồi tạo mã mới.",
+    "qrAlt": "Mã QR đăng bài Douyin",
+    "videosError": "Không tải được danh sách video (kho lưu trữ không khả dụng)"
+  },
+  "toast": {
+    "bound": "Đã kết nối tài khoản",
+    "unbound": "Đã ngắt kết nối tài khoản",
+    "probeOk": "Ủy quyền còn hiệu lực",
+    "probeExpired": "Ủy quyền đã hết hạn — hãy ủy quyền lại",
+    "desktopLoginOpened": "Đã mở trang đăng nhập trên máy tính đám mây — hãy quét mã ở đó",
+    "desktopLoggedIn": "Đã đăng nhập trên máy tính đám mây",
+    "desktopLoginTimeout": "Trong ba phút chưa thấy đăng nhập; lát nữa bấm Kiểm tra lại",
+    "desktopLoggedOut": "Đã đăng xuất khỏi trang đó"
+  },
+  "state": {
+    "error": "Tải thất bại",
+    "noPlatforms": "Môi trường này chưa kết nối nền tảng nào."
+  },
+  "mobile": {
+    "openAuthorize": "Ủy quyền Douyin trên điện thoại này",
+    "authorizeQrAlt": "Mã QR ủy quyền Douyin",
+    "authorizeReturnHint": "Sau khi xác nhận ủy quyền trong Douyin, hãy quay lại BossIP. Ứng dụng sẽ kiểm tra lại trạng thái tài khoản; chỉ mở trang ủy quyền thì chưa kết nối được tài khoản.",
+    "openDouyin": "Mở Douyin để đăng",
+    "returnHint": "Sau khi thao tác xong trong Douyin, hãy quay lại BossIP. Ứng dụng sẽ kiểm tra lại với máy chủ; mở Douyin không có nghĩa là bài đã được đăng.",
+    "authorizeIntro": "Mở trang ủy quyền trên điện thoại này và xác nhận. Bước gọi về sẽ hoàn tất trong trình duyệt; sau đó quay lại ứng dụng để xem tài khoản. Hủy thì sẽ không thêm tài khoản nào.",
+    "checkAccounts": "Quay lại xem trạng thái tài khoản",
+    "publishIntro": "Kiểm tra lại video, tiêu đề, hashtag và ai xem được, rồi tạo liên kết đăng bài. Mở Douyin trên điện thoại này hoặc dùng mã QR dự phòng. Bạn vẫn phải tự xác nhận đăng trong Douyin.",
+    "saveQr": "Lưu mã QR dự phòng",
+    "qrFallback": "Nếu không mở được Douyin, hãy lưu mã QR hoặc quét bằng thiết bị khác. Có nhận dạng được từ Ảnh hay không tùy phiên bản Douyin.",
+    "saved": "Đã lưu mã QR",
+    "saveFailed": "Không lưu được mã QR. Hãy thử lại.",
+    "launchFailed": "Không mở được Douyin hoặc trang ủy quyền. Hãy kiểm tra đã cài Douyin chưa, hoặc dùng mã QR dự phòng.",
+    "linkExpired": "Liên kết này đã hết hạn. Quay lại để tạo liên kết mới; ứng dụng sẽ không tự đăng lại.",
+    "recentJobs": "Bài đăng gần đây",
+    "noJobs": "Không gian làm việc này chưa có bản ghi đăng bài nào.",
+    "untitledJob": "Bài đăng chưa có tiêu đề",
+    "jobDetails": "Xem kết quả đăng bài",
+    "resumeJobHint": "Đã khôi phục bản ghi đăng bài từ máy chủ. Dùng mã QR trong cuộc trò chuyện hoặc tiếp tục trong Douyin. Liên kết cũ không bao giờ được tự tạo lại.",
+    "statusUnconfirmed": "Chưa xác nhận được trạng thái mới nhất. Hãy thử lại. Mở Douyin không có nghĩa là đã đăng thành công.",
+    "createUncertain": "Nếu mất mạng sau khi gửi, có thể bản ghi đã được tạo. Hãy xem Bài đăng gần đây trước khi thử lại thủ công.",
+    "failedHint": "Đăng bài thất bại. Hãy kiểm tra video và ủy quyền trước khi thử lại thủ công.",
+    "unknown": "Chưa xác nhận",
+    "jobStatus": {
+      "pending": "Đang chờ xác nhận đăng",
+      "published": "Đã đăng",
+      "expired": "Đã hết hạn",
+      "failed": "Thất bại",
+      "unknown": "Chưa xác nhận"
+    }
+  },
+  "errors": {
+    "PLATFORM_ERROR": "Có lỗi, hãy thử lại sau",
+    "PLATFORM_DENIED": "Bạn đã hủy ủy quyền trên nền tảng",
+    "PLATFORM_STATE_INVALID": "Liên kết ủy quyền đã hết hạn — hãy bắt đầu lại",
+    "PLATFORM_NOT_CONFIGURED": "Môi trường này chưa cấu hình nền tảng này",
+    "PLATFORM_AUTH_REQUIRED": "Ủy quyền đã hết hạn — hãy ủy quyền lại",
+    "PLATFORM_API_ERROR": "Nền tảng trả về lỗi, hãy thử lại sau",
+    "PLATFORM_ACCOUNT_NOT_FOUND": "Không tìm thấy tài khoản",
+    "PLATFORM_UNKNOWN": "Nền tảng không xác định",
+    "PUBLISH_FILE_NOT_FOUND": "Không tìm thấy video",
+    "PUBLISH_FILE_TYPE": "Chỉ hỗ trợ video mp4/mov",
+    "PUBLISH_FILE_TOO_LARGE": "Video vượt giới hạn 128 MB của Douyin",
+    "PUBLISH_STAGE_FAILED": "Không chuẩn bị được video, hãy thử lại",
+    "PUBLISH_JOB_NOT_FOUND": "Không tìm thấy bản ghi đăng bài",
+    "WORKSPACE_ROLE_REQUIRED": "Chỉ quản trị viên không gian làm việc mới được kết nối hoặc ngắt kết nối tài khoản",
+    "WORKSPACE_FORBIDDEN": "Bạn không có quyền trong không gian làm việc này",
+    "DESKTOP_UNAVAILABLE": "Máy tính đám mây đang ngoại tuyến hoặc chưa được mở",
+    "DESKTOP_BUSY": "Máy tính đám mây đang được dùng, hãy thử lại sau",
+    "BROWSER_NOT_RUNNING": "Trình duyệt trên máy tính đám mây chưa chạy; hãy mở máy tính đám mây trước",
+    "PLATFORM_KIND_MISMATCH": "Tài khoản này không phải đăng nhập trên máy tính đám mây"
+  },
+  "desktop": {
+    "title": "Đăng nhập trên máy tính đám mây",
+    "subtitle": "Chỉ kiểm tra trình duyệt trên máy tính đám mây còn đăng nhập hay không; không thao tác trang thay bạn.",
+    "desktopId": "máy tính đám mây …{{id}}",
+    "probeAll": "Kiểm tra tất cả",
+    "reconPending": "chưa dò xong, tạm chưa kiểm tra được",
+    "status": {
+      "bound": "Đã đăng nhập",
+      "expired": "Đã hết hạn",
+      "unknown": "Chưa xác nhận",
+      "desktop_offline": "Máy tính đám mây ngoại tuyến",
+      "revoked": "Đã đăng xuất",
+      "none": "Chưa đăng nhập",
+      "awaiting": "Đang chờ quét mã…"
+    },
+    "predicted": "Dự kiến cần đăng nhập lại trước {{date}} (khoảng {{days}} ngày)",
+    "awaitingHint": "Trang đăng nhập đã mở trên máy tính đám mây — hãy quét mã ở đó; đăng nhập xong chỗ này sẽ chuyển xanh.",
+    "display": {
+      "account": "Cửa hàng: {{name}}"
+    },
+    "actions": {
+      "login": "Đăng nhập",
+      "relogin": "Đăng nhập lại",
+      "logout": "Đăng xuất",
+      "viewDesktop": "Xem máy tính đám mây"
+    }
+  },
+  "desktopLogout": {
+    "title": "Đăng xuất khỏi trang này?",
+    "body": "Sẽ xóa cookie đăng nhập của “{{name}}” trong trình duyệt trên máy tính đám mây; trợ lý sẽ không thể thao tác bằng tài khoản đó nữa cho đến khi bạn quét mã lại."
+  },
+  "notifications": {
+    "title": "{{count}} thông báo chưa đọc",
+    "markRead": "Đánh dấu đã đọc"
+  }
+}

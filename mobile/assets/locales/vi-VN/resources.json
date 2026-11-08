@@ -1,0 +1,93 @@
+{
+  "scope": {
+    "title": "Dự án",
+    "allProjects": "Tất cả tài nguyên",
+    "unfiled": "Chưa xếp loại"
+  },
+  "source": {
+    "all": "Mọi nguồn",
+    "user": "Tôi tải lên",
+    "agent": "Do mô hình tạo ra"
+  },
+  "kind": {
+    "all": "Tất cả loại",
+    "image": "Hình ảnh",
+    "video": "Video",
+    "audio": "Âm thanh",
+    "document": "Tài liệu",
+    "archive": "File nén",
+    "code": "Mã nguồn",
+    "other": "Khác"
+  },
+  "sort": {
+    "created": "Mới nhất",
+    "name": "Tên",
+    "size": "Kích thước"
+  },
+  "actions": {
+    "search": "Tìm kiếm",
+    "upload": "Tải file lên",
+    "filter": "Lọc",
+    "sort": "Sắp xếp",
+    "selectAll": "Chọn tất cả",
+    "clearSelection": "Bỏ chọn",
+    "deleteCount_one": "Xóa {{count}} mục",
+    "deleteCount_other": "Xóa {{count}} mục",
+    "delete": "Xóa",
+    "rename": "Đổi tên",
+    "select": "Chọn file này",
+    "open": "Mở trong tab mới",
+    "download": "Tải về",
+    "resize": "Kéo để đổi độ rộng danh sách"
+  },
+  "list": {
+    "title": "Tài nguyên",
+    "searchPlaceholder": "Tìm theo tên hoặc mô tả",
+    "empty": "Chưa có gì ở đây",
+    "emptyHint": "Tải file lên, hoặc để mô hình gửi lại sản phẩm nó làm ra.",
+    "allLoaded_one": "Đã tải hết {{count}} tài nguyên",
+    "allLoaded_other": "Đã tải hết {{count}} tài nguyên",
+    "loadMore": "Tải thêm ({{shown}} / {{total}})",
+    "loadingMore": "Đang tải…"
+  },
+  "upload": {
+    "source": "Chọn nguồn",
+    "fromAlbum": "Thư viện ảnh",
+    "fromPhotos": "Ảnh",
+    "fromVideos": "Video",
+    "fromFiles": "Duyệt file",
+    "failed": "Tải lên \"{{name}}\" thất bại",
+    "failedShort": "Thất bại"
+  },
+  "detail": {
+    "empty": "Chọn một tài nguyên bên trái để xem"
+  },
+  "preview": {
+    "unsupported": "Loại file này chưa xem trước được",
+    "textFailed": "Không đọc được nội dung chữ"
+  },
+  "delete": {
+    "title": "Xóa tài nguyên?",
+    "one": "\"{{name}}\" sẽ bị xóa khỏi kho lưu trữ. Không thể hoàn tác.",
+    "many_one": "{{count}} tài nguyên đã chọn sẽ bị xóa khỏi kho lưu trữ. Không thể hoàn tác.",
+    "many_other": "{{count}} tài nguyên đã chọn sẽ bị xóa khỏi kho lưu trữ. Không thể hoàn tác."
+  },
+  "toast": {
+    "deleted_one": "Đã xóa {{count}} tài nguyên",
+    "deleted_other": "Đã xóa {{count}} tài nguyên"
+  },
+  "description": {
+    "label": "Mô tả tài nguyên",
+    "placeholder": "Ví dụ: một chú mèo vàng khoác vỏ chuối trên nền trong suốt, hoặc người và cảnh xuất hiện trong video.",
+    "hint": "Cả trợ lý chữ lẫn trợ lý giọng nói đều có thể tìm tài nguyên này theo mô tả.",
+    "save": "Lưu mô tả",
+    "saving": "Đang lưu…",
+    "error": "Không lưu được mô tả. Hãy thử lại.",
+    "recognizing": "AI đang mô tả hình này. Bạn cũng có thể tự nhập mô tả.",
+    "recognized": "AI đã thêm mô tả này. Bạn có thể sửa lại.",
+    "recognitionFailed": "Nhận diện hình chưa thành công. Hãy thử lại hoặc tự nhập mô tả.",
+    "unsupported": "Mô tả tự động hỗ trợ ảnh JPG, PNG và WebP dưới 10 MB. Hãy tự nhập mô tả cho tư liệu này.",
+    "autoHint": "Ảnh mới sẽ được mô tả tự động. Mô tả bạn tự viết được ưu tiên.",
+    "recognize": "Mô tả bằng AI"
+  }
+}

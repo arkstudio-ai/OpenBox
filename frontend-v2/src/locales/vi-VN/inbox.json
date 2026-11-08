@@ -1,0 +1,25 @@
+{
+  "title": "Tin nhắn",
+  "subtitle": "Kết quả công việc, cảnh báo hệ thống và thông báo chính thức",
+  "tabs": {
+    "all": "Tất cả",
+    "session": "Trò chuyện",
+    "system": "Hệ thống",
+    "notice": "Chính thức"
+  },
+  "readAll": "Đánh dấu đã đọc hết",
+  "empty": "Chưa có tin nhắn nào",
+  "loadMore": "Tải thêm",
+  "loadFailed": "Không tải được tin nhắn",
+  "unavailable": "Nội dung của tin nhắn này không còn truy cập được.",
+  "resolved": "Đã xử lý",
+  "workspace": "Không gian làm việc: {{name}}",
+  "topic": {
+    "title": "Chuyên đề",
+    "loadFailed": "Không tải được chuyên đề này hoặc chuyên đề đã gỡ xuống",
+    "openLink": "Mở liên kết",
+    "signIn": "Đăng nhập để tiếp tục",
+    "enterApp": "Mở bossip",
+    "notFound": "Chuyên đề này không tồn tại hoặc đã gỡ xuống."
+  }
+}

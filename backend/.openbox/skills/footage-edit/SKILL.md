@@ -146,15 +146,17 @@ Rules for picking:
 - Narration: only after the owner picked 加旁白 on the plan card — see 旁白
   below. Never add it on your own.
 
-Captions — every shot says something to the viewer, with or without speech:
+Captions — every shot says something to the viewer, with or without speech.
+Captions, 花字 and the closing card are written in the interface language the
+session's language line names (Chinese when none is named):
 
-- Spoken shots: ≤ 12 Chinese characters per cue — split every longer sentence
+- Spoken shots: ≤ 12 Chinese characters (≤ 6 words in English or Vietnamese) per cue — split every longer sentence
   at its commas into several cues and share the sentence's time between them
   in proportion to their length (a 30-character sentence is three cues); a
   longer line runs off the 720-px frame. Time cues to the sentence timings.
 - Silent shots: one **动作字幕** per shot, written from the segment's `shot`
   for the viewer, not as a label — 「先把石子一颗颗挑出来」, not 「清理石子」;
-  ≤ 12 characters, from 0.2 s after the shot starts to 0.2 s before it ends.
+  ≤ 12 characters (6 words), from 0.2 s after the shot starts to 0.2 s before it ends.
   The hook shot carries the hook line instead: a question or a promise in ≤
   10 characters (「轮毂多久没洗了？」「三分钟还你新轮毂」).
 - The closing card: the last 2.5–3 s of the cut, on the 成果 or the warmest
@@ -179,10 +181,13 @@ keep their own sound; the music sits under it and drops while anyone speaks.
 
 Only after the owner picks 加旁白, and never in 口播 vlog — there the owner's
 own voice is the narration: say so in one line and show the card again
-unchanged. Otherwise write the script, then place it:
+unchanged. The narration voices speak Mandarin only: when the interface
+language is not Chinese, leave 加旁白 out of the plan card's options, and if
+the owner asks for narration say in one line that in this language the clip
+carries captions instead. Otherwise write the script, then place it:
 
-- 2–4 lines, ≤ 20 characters each, one idea per line, spoken Chinese (「三分钟
-  还你新轮毂」, not 「本店提供高效轮毂清洗服务」):
+- 2–4 lines, ≤ 20 characters each, one idea per line, spoken style in the
+  interface language (「三分钟还你新轮毂」, not 「本店提供高效轮毂清洗服务」):
   1. the hook line — the same words as the hook caption (a question or a promise);
   2. one or two body lines — what the viewer is looking at, plus the one
      concrete fact the owner gave (price, how long it takes, the 招牌, the

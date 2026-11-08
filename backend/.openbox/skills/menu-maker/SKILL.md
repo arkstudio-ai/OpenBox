@@ -97,7 +97,7 @@ Use case: productivity-visual
 Asset type: restaurant menu, <A4 print | phone portrait | landscape table card>
 Style: <the chosen style, e.g. 烟火红：deep red background, warm gold headings, festive but tidy>
 Layout: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders; signature dishes marked with a small 「招牌」 badge; a blank square labeled 「扫码点餐」 bottom right
-Text (verbatim, render every character exactly; Simplified Chinese):
+Text (verbatim, render every character exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
 <the confirmed table, one line per dish, with ¥ before each price>
 Constraints: no other text, no invented dishes, no photos of people; prices aligned in one column; generous margins for printing
 ```

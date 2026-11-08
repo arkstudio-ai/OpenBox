@@ -6,13 +6,14 @@ section while the call lasts, and the front desk's ``task_blocker`` quick read w
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from voice.phrases import english
 
 FOCUS_HOURS = 24  # a task nobody touched for longer is not "what we were talking about"
 
 
 def state_phrase(desired: str, observed: str, lang: str = "zh", *, blocked_by: dict | None = None) -> str:
     """Where the task is and who has to do what, in one clause; never a field name."""
-    en = lang == "en"
+    en = english(lang)
     if observed == "effect_unknown":
         return ("stopped with one step unconfirmed; say “checked, continue” once you have looked" if en
                 else "停下时有一步结果没确认，你核对过说一声“核对过了，继续”就能接着做")
@@ -84,7 +85,7 @@ async def blocker(scope, arguments: dict) -> dict:
         session = await db.get(Session, task.execution_session_id)
         card = await blocked_by_locked(db, session) if session is not None else None
     view = focus_view(task, scope.lang, blocked_by=card)
-    say = f"「{task.title}」{view['state']}" if scope.lang != "en" else f"“{task.title}” is {view['state']}"
+    say = f"「{task.title}」{view['state']}" if not english(scope.lang) else f"“{task.title}” is {view['state']}"
     return {"status": "ok", **view, "desired_state": task.desired_state, "observed_state": task.observed_state,
             "waiting_on_card": bool(card), "say": say,
             "note": "say 是可直接口播的一句话；状态字段不能念。用户要让它继续、恢复或核对时，走 assistant_ask 转交，不在这里办。"}

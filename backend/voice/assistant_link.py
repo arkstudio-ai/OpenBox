@@ -33,6 +33,7 @@ from core.log import create_logger
 from voice import calls, phrases
 from voice.prompt import VOICE_ENTRYPOINT
 from voice.speech_text import clean
+from voice.phrases import english
 
 log = create_logger("voice.assistant_link")
 
@@ -353,12 +354,12 @@ class AssistantLink:
             await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
             return {"status": "unavailable", "execution_confirmed": False,
                     "speech": ("这轮回复没有完成，目前也无法核实任务指令是否已提交，请先查看原任务状态。"
-                               if self.lang != "en" else
+                               if not english(self.lang) else
                                "The reply did not finish and submission could not be verified. Check the task first.")}
         if submissions:
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
-            speech = (("个人助理这轮回复未完成，但任务指令已有提交记录。" if self.lang != "en" else
+            speech = (("个人助理这轮回复未完成，但任务指令已有提交记录。" if not english(self.lang) else
                        "The assistant reply did not finish, but task instructions were submitted. ")
                       + describe(submissions, self.lang))
             return {"status": "ok", "reason": "submission_receipt", "speech": speech,

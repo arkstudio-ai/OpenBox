@@ -56,7 +56,7 @@ option rather than making both up front.
 Use case: ads-marketing
 Asset type: restaurant promotion poster, portrait for WeChat Moments
 Style: <大字促销: bold headline, price in a burst, high contrast | 实拍主图: the dish photo as hero, clean type band | 手绘清新: soft illustration, pastel>
-Text (verbatim, Simplified Chinese, render exactly):
+Text (verbatim, render exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
   Headline: "<chosen headline>"
   Offer: "<the offer line>"
   Small print: "<dates / conditions>"   (omit when there are none)

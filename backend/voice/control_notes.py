@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.control_notes")
 
@@ -41,8 +42,8 @@ def kind_of(desired: str, observed: str, *, previous_desired: str | None, previo
 
 
 def note_text(kind: str, title: str, lang: str, *, by_user_on_page: bool = False) -> str:
-    name = f"「{title}」" if title else ("那个任务" if lang != "en" else "that task")
-    if lang == "en":
+    name = f"「{title}」" if title else ("那个任务" if not english(lang) else "that task")
+    if english(lang):
         return {
             "canceled": f"{name} was just stopped." + (" You pressed stop on its page." if by_user_on_page else "")
                         + " Say the word if you want it to continue.",

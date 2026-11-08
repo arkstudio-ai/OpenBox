@@ -76,6 +76,21 @@ async def ui_language_for(user_id: str | None) -> str:
     return from_preferences(row) or DEFAULT
 
 
+async def stored_ui_language(user_id: str | None) -> str | None:
+    """The stored ``extra.ui_language`` only — ``None`` when the user never chose one (an old App, the web).
+
+    For places where the Chinese default must not be forced on a user who never said: the 专业 assistant's
+    language line, which otherwise leaves the model to follow the user's own words."""
+    if not user_id:
+        return None
+    try:
+        from db.repository.preference_repo import PgPreferenceRepo
+        row = await PgPreferenceRepo().get(user_id)
+    except Exception:
+        return None
+    return from_preferences(row)
+
+
 async def set_ui_language(user_id: str, lang: str) -> str:
     if not is_language(lang):
         raise ValueError(f"ui_language must be one of {', '.join(LANGS)}")

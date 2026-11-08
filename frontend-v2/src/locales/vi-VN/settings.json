@@ -1,0 +1,267 @@
+{
+  "title": "Cài đặt",
+  "subtitle": "Tài khoản & tùy chọn",
+  "nav": {
+    "account": "Tài khoản",
+    "team": "Nhóm",
+    "models": "Mô hình",
+    "assistant": "Trợ lý riêng",
+    "tools": "Công cụ & quyền",
+    "browser": "Trình duyệt",
+    "publish": "Đăng video",
+    "appearance": "Giao diện",
+    "voice": "Gọi thoại"
+  },
+  "hint": {
+    "account": "Cách đăng nhập, danh tính và phiên.",
+    "team": "Thành viên, vai trò và lời mời trong không gian làm việc.",
+    "models": "Chọn mô hình và agent mặc định.",
+    "assistant": "Tên, cách xưng hô với bạn và cách nói chuyện — trên web, trong app và khi gọi.",
+    "tools": "Những thao tác nào được chạy mà không cần xác nhận.",
+    "browser": "Chọn trình duyệt mà agent dùng để mở trang web.",
+    "publish": "Chọn cách đăng video thành phẩm lên Douyin.",
+    "appearance": "Ngôn ngữ, chủ đề, chế độ màu, cỡ chữ và bảng làm việc.",
+    "voice": "Mô hình, giọng nói và thói quen khi gọi. Đổi mô hình và giọng sẽ có hiệu lực từ cuộc gọi tiếp theo."
+  },
+  "account": {
+    "username": "Tên đăng nhập",
+    "email": "Email",
+    "emailNone": "Chưa liên kết",
+    "role": "Vai trò",
+    "userId": "Mã người dùng"
+  },
+  "team": {
+    "members": "Thành viên",
+    "pending": "Lời mời dành cho bạn",
+    "pendingEmpty": "Không có lời mời nào đang chờ.",
+    "targetPlaceholder": "Tên đăng nhập hoặc email",
+    "invite": "Mời",
+    "remove": "Gỡ bỏ",
+    "inviteCreated": "Đã sao chép link mời: {{url}}",
+    "inviteLink": "Link mời",
+    "joined": "Tham gia ngày {{date}}",
+    "acceptTitle": "Lời mời vào không gian làm việc",
+    "acceptHint": "Chấp nhận lời mời này để tham gia không gian làm việc.",
+    "accept": "Chấp nhận lời mời",
+    "accepted": "Đã chấp nhận lời mời. Không gian làm việc này đã được chọn.",
+    "enterWorkspace": "Vào không gian làm việc",
+    "roles": {
+      "owner": "Chủ sở hữu",
+      "admin": "Quản trị viên",
+      "member": "Thành viên"
+    },
+    "statuses": {
+      "active": "Đang hoạt động",
+      "invited": "Đã mời",
+      "suspended": "Đã tạm khóa",
+      "removed": "Đã gỡ"
+    }
+  },
+  "models": {
+    "defaultModel": "Mô hình mặc định",
+    "defaultModelHint": "Dùng cho cuộc trò chuyện mới.",
+    "defaultAgent": "Agent mặc định",
+    "defaultAgentHint": "Cấu hình agent dùng cho cuộc trò chuyện mới.",
+    "imageProvider": "Nguồn tạo ảnh",
+    "imageProviderHint": "Dùng để tạo ảnh và khung hình đầu cuối cho video. Mô hình ảnh cụ thể do hệ thống quản lý.",
+    "saveFailed": "Không lưu được cài đặt này. Vui lòng thử lại."
+  },
+  "tools": {
+    "skills": "Kỹ năng",
+    "skillsHint": "Đã cài {{count}}",
+    "mcp": "Máy chủ MCP",
+    "mcpHint": "Đã kết nối {{count}}",
+    "mcpNone": "Chưa kết nối máy chủ MCP nào",
+    "permissionNote": "Quyền dùng công cụ được xác nhận từng thao tác trong cuộc trò chuyện; việc chặn thực tế do máy chủ thực hiện."
+  },
+  "browser": {
+    "mode": {
+      "auto": "Tự động (dự phòng)",
+      "local": "Trình duyệt đám mây (mặc định)",
+      "remote": "Trình duyệt của tôi"
+    },
+    "desc": {
+      "auto": "Ưu tiên trình duyệt trên máy của bạn qua tiện ích mở rộng; khi chưa kết nối thì tự chuyển sang trình duyệt đám mây. Không dùng được trên điện thoại.",
+      "local": "Luôn dùng Chrome trên máy tính đám mây — không cần tiện ích mở rộng; trạng thái đăng nhập các trang web được lưu trên máy tính đám mây.",
+      "remote": "Dùng Chrome trên máy tính của bạn qua tiện ích mở rộng, kèm trạng thái đăng nhập của bạn; cần giữ tiện ích luôn kết nối."
+    },
+    "status": {
+      "title": "Trạng thái hiện tại",
+      "remote": "Trình duyệt của tôi",
+      "local": "Trình duyệt đám mây",
+      "connected": "Đã kết nối",
+      "disconnected": "Chưa kết nối",
+      "available": "Sẵn sàng",
+      "unavailable": "Không khả dụng",
+      "reason": {
+        "unreachable": "Không liên lạc được máy tính",
+        "not_started": "Chrome chưa chạy",
+        "no_sandbox": "Chưa có máy tính",
+        "error": "Kiểm tra thất bại"
+      }
+    },
+    "fallbackHint": "Tiện ích mở rộng chưa kết nối — sẽ tạm dùng trình duyệt đám mây cho đến khi kết nối."
+  },
+  "publish": {
+    "route": {
+      "desktop": "Trung tâm nhà sáng tạo",
+      "api": "API Douyin Open Platform"
+    },
+    "desc": {
+      "desktop": "Đăng trực tiếp từ trung tâm nhà sáng tạo Douyin đã đăng nhập trên máy tính đám mây: agent tự điền biểu mẫu, tải lên và bấm đăng — không cần ủy quyền. Hãy giữ trạng thái đăng nhập trung tâm nhà sáng tạo trong trung tâm ủy quyền.",
+      "api": "Đăng qua Douyin Open Platform: agent chuẩn bị video rồi hiện một mã QR; bạn quét bằng app Douyin và bấm đăng ngay trong đó. Cần liên kết tài khoản Douyin trong trung tâm ủy quyền trước."
+    },
+    "defaultTag": "Mặc định hệ thống",
+    "chosen": "Bạn đã chọn: {{route}}",
+    "followingDefault": "Chưa chọn — đang theo mặc định hệ thống: {{route}}",
+    "resetToDefault": "Về mặc định",
+    "note": "Việc hẹn giờ và mẫu cũng theo cài đặt này. Nếu tài khoản bị kiểm soát rủi ro tắt tự động đăng, sẽ tạm dùng cách quét mã QR và cuộc trò chuyện sẽ nói rõ lý do."
+  },
+  "appearance": {
+    "language": "语言 / Language",
+    "langZh": "简体中文",
+    "langEn": "English",
+    "current": "Hiện tại",
+    "theme": "Chủ đề",
+    "themeDefault": "Mặc định",
+    "colorMode": "Chế độ màu",
+    "light": "Sáng",
+    "system": "Theo hệ thống",
+    "dark": "Tối",
+    "fontSize": "Cỡ chữ",
+    "fs": {
+      "sm": "Nhỏ",
+      "base": "Chuẩn",
+      "md": "Vừa",
+      "lg": "Lớn"
+    },
+    "temp": {
+      "warm": "warm",
+      "cool": "cool",
+      "neutral": "neutral"
+    },
+    "workbench": "Bảng làm việc",
+    "developerMode": "Chế độ nhà phát triển",
+    "developerModeHint": "Bật lên thì bảng làm việc có thêm tab xem lại, terminal, trình duyệt và tệp; tắt thì chỉ hiện máy tính đám mây."
+  },
+  "notifications": {
+    "title": "Thông báo hệ thống",
+    "description": "Chỉ nhận kết quả việc và yêu cầu khi khóa màn hình, app chạy nền hoặc mất mạng. Mọi trang ở tiền cảnh, mất tiêu điểm tạm thời và mất kết nối ngắn đều không hiện thông báo. Đăng nhập trên điện thoại khác thì thông báo sẽ chuyển sang máy đó.",
+    "status": {
+      "off": "Đã tắt",
+      "unknown": "Đang đọc cài đặt thông báo",
+      "notDetermined": "Chưa bật thông báo",
+      "denied": "Thông báo đang bị chặn trong cài đặt hệ thống",
+      "ready": "Đã kết nối và sẵn sàng",
+      "connecting": "Đang kết nối dịch vụ thông báo"
+    },
+    "openSettings": "Cài đặt hệ thống",
+    "testLocal": "Thử tại máy",
+    "testRemote": "Thử từ máy chủ",
+    "localTitle": "Thử thông báo tại máy của BossIP",
+    "localBody": "Thông báo này để kiểm tra việc hiển thị trên điện thoại này.",
+    "unavailable": "Việc gắn với thông báo này không còn truy cập được.",
+    "setupFailed": "Thông báo chưa kết nối. Vui lòng thử lại.",
+    "result": {
+      "local": "Đã lên lịch thử tại máy. Hãy khóa màn hình hoặc chuyển app xuống nền trong 10 giây và giữ app vẫn chạy. Ở lại tiền cảnh sẽ không hiện thông báo.",
+      "accepted": "Dịch vụ đẩy đã nhận bản thử. Hãy kiểm tra thông báo hệ thống.",
+      "failed": "Gửi thông báo thử thất bại. Vui lòng thử lại.",
+      "cancelled": "App đã quay lại tiền cảnh, hoặc đăng nhập hay liên kết thông báo đã thay đổi. Thông báo này đã bị hủy.",
+      "unbound": "Điện thoại này chưa đăng ký nhận thông báo.",
+      "pending": "Đã lên lịch thử từ máy chủ. Hãy khóa màn hình hoặc chuyển app xuống nền trong 10 giây. Ở lại hoặc quay về tiền cảnh sẽ không hiện thông báo."
+    }
+  },
+  "voice": {
+    "group": {
+      "zhFemale": "Tiếng Trung · giọng nữ",
+      "zhMale": "Tiếng Trung · giọng nam",
+      "en": "Tiếng Anh"
+    },
+    "defaultTag": "Mặc định",
+    "current": "Hiện tại",
+    "listen": "Nghe thử",
+    "stop": "Dừng",
+    "preview": "Nghe thử {{name}}",
+    "previewFailed": "Chưa phát được bản nghe thử. Hãy thử lại sau giây lát.",
+    "saved": "Đã đổi sang {{name}}. Cuộc gọi tiếp theo sẽ dùng giọng này.",
+    "saveFailed": "Không lưu được. Vui lòng thử lại.",
+    "loadFailed": "Không tải được danh sách giọng. Hãy làm mới rồi thử lại.",
+    "call": {
+      "title": "Thói quen khi gọi",
+      "recap": "Khi bắt máy, nhắc lại chuyện cuộc gọi trước",
+      "recapHint": "Tắt: chỉ chào hỏi, không nhắc đến các cuộc gọi trước.",
+      "reports": "Trong cuộc gọi, chủ động kể việc đã làm xong",
+      "reportsHint": "Tắt: chỉ nói những việc bạn giao trong cuộc gọi này; kết quả khác để lại trong cuộc trò chuyện.",
+      "detail": "Cách trả lời khi gọi",
+      "detailOption": {
+        "brief": "Ngắn gọn",
+        "detailed": "Chi tiết hơn"
+      },
+      "saved": "Đã lưu. Cuộc gọi đang diễn ra cũng áp dụng ngay.",
+      "saveFailed": "Không lưu được. Vui lòng thử lại."
+    },
+    "note": "Giọng nào cũng nói được cả tiếng Trung và tiếng Anh; giọng tiếng Anh hợp nhất với hội thoại tiếng Anh. Cuộc gọi đang diễn ra sẽ giữ nguyên giọng.",
+    "model": {
+      "title": "Mô hình giọng nói",
+      "expert": "Chuyên gia",
+      "standard": "Tiêu chuẩn",
+      "defaultTag": "Mô hình mặc định",
+      "hint": "Mỗi mô hình có bộ giọng riêng và nhớ lựa chọn của bạn. Đổi mô hình và giọng sẽ có hiệu lực từ cuộc gọi tiếp theo.",
+      "saved": "Đã đổi mô hình giọng nói. Cuộc gọi tiếp theo sẽ dùng mô hình này."
+    },
+    "userChoice": "Đang dùng giọng bạn đã chọn. Đổi hình đại diện vẫn giữ lựa chọn này.",
+    "followsAppearance": "Giọng đang theo hình đại diện. Chọn một giọng bên dưới để giữ lựa chọn đó thay vì vậy.",
+    "followsModel": "Đang dùng giọng mặc định của mô hình này. Chọn một giọng bên dưới để giữ lựa chọn đó."
+  },
+  "assistant": {
+    "nameLabel": "Tên",
+    "placeholder": "ví dụ: Mary (để trống sẽ dùng mặc định “Trợ lý riêng”)",
+    "addressLabel": "Nó gọi bạn là gì",
+    "addressPlaceholder": "ví dụ: Andrew (để trống sẽ gọi là “Chủ quán”)",
+    "toneLabel": "Giọng điệu",
+    "tone": {
+      "warm": "Ấm áp",
+      "professional": "Chuyên nghiệp",
+      "lively": "Sôi nổi"
+    },
+    "lengthLabel": "Độ dài câu trả lời",
+    "length": {
+      "brief": "Ngắn gọn",
+      "balanced": "Vừa phải",
+      "detailed": "Chi tiết"
+    },
+    "emoji": "Thỉnh thoảng dùng emoji",
+    "emojiHint": "Thỉnh thoảng thêm một emoji vào câu trả lời; tắt thì không dùng.",
+    "personaLabel": "Còn gì nữa không",
+    "personaPlaceholder": "ví dụ: nói chuyện như bạn cũ; việc gì tốn tiền thì nhắc rủi ro trước",
+    "personaHint": "Chỉ đổi cách nó nói chuyện, không đổi những gì nó được làm hay quy tắc của nó.",
+    "businessLabel": "Bạn kinh doanh gì",
+    "business": {
+      "beauty": "Làm đẹp",
+      "food": "Ăn uống",
+      "retail": "Bán lẻ",
+      "other": "Khác"
+    },
+    "businessPlaceholder": "ví dụ: cửa hàng thú cưng, trung tâm dạy học",
+    "save": "Lưu",
+    "saved": "Đã lưu. Web, app và cuộc gọi áp dụng ngay.",
+    "invalid": "Tên và cách xưng hô viết trên một dòng, tối đa 20 ký tự; phần mô tả tối đa 300.",
+    "saveFailed": "Không lưu được. Vui lòng thử lại.",
+    "note": "Bạn cũng có thể nói thẳng trong cuộc trò chuyện hoặc khi gọi: “từ nay gọi bạn là Mary” hay “gọi tôi là Andrew”; nó sẽ tự đổi.",
+    "restartIntro": "Làm quen lại từ đầu",
+    "restartIntroHint": "Đi lại các câu hỏi lúc mới gặp; cài đặt hiện tại sẽ được đưa ra làm mặc định.",
+    "learned": {
+      "title": "Những gì nó đã học được về bạn",
+      "hint": "Từ những gì bạn nói và lý do bạn chọn khi bấm không thích. Nó sẽ làm theo; cái nào sai thì gỡ đi.",
+      "empty": "Chưa có gì. Hãy nói những câu như “dài quá” hay “nói kết luận thôi” trong cuộc trò chuyện, hoặc chọn lý do khi bấm không thích, nó sẽ ghi nhớ.",
+      "remove": "Gỡ bỏ",
+      "removed": "Đã gỡ. Nó sẽ không làm theo điều đó nữa.",
+      "removeFailed": "Không gỡ được. Vui lòng thử lại.",
+      "reactions": "Lý do đã chọn khi bấm không thích trong 30 ngày qua",
+      "reaction": "{{reason}} ×{{count}}"
+    },
+    "languageLabel": "Ngôn ngữ trò chuyện",
+    "languageHint": "Áp dụng cho cuộc trò chuyện và cuộc gọi mới. Để trống sẽ theo ngôn ngữ của tin nhắn hiện tại của bạn.",
+    "languagePlaceholder": "Ví dụ: Tiếng Việt, tiếng Anh"
+  }
+}

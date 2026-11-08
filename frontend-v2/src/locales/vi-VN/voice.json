@@ -1,0 +1,127 @@
+{
+  "button": {
+    "start": "Gọi",
+    "startLabel": "Gọi cho {{name}}",
+    "inCall": "Đang gọi"
+  },
+  "state": {
+    "requestingMic": "Hãy cho phép dùng micro",
+    "connecting": "Đang kết nối…",
+    "greeting": "Đã kết nối",
+    "listening": "Bạn nói lúc nào cũng được",
+    "muted": "Micro đã tắt tiếng",
+    "mutedShort": "Đã tắt tiếng",
+    "thinking": "Để tôi nghĩ chút…",
+    "speaking": "Đang nói",
+    "working": "Đã nhận, đang chuẩn bị trả lời…",
+    "late": "Vẫn đang chờ câu trả lời…",
+    "ending": "Đang cúp máy…",
+    "reconnecting": "Đang kết nối lại…",
+    "paused": "Cuộc gọi đã tạm dừng",
+    "hearing": "Đang nghe bạn nói",
+    "handoffUnavailable": "Chưa kiểm tra được việc giao qua giọng nói. Hãy xem trong cuộc trò chuyện bằng chữ để biết việc đã được nhận chưa."
+  },
+  "controls": {
+    "mute": "Tắt tiếng",
+    "unmute": "Bật tiếng",
+    "muteHint": "Tắt micro của bạn; cuộc gọi và giọng trợ lý vẫn tiếp tục",
+    "unmuteHint": "Bật lại micro để nói tiếp",
+    "speaker": "Loa ngoài",
+    "earpiece": "Loa trong",
+    "hangUp": "Cúp máy",
+    "cancel": "Hủy",
+    "collapse": "Thu gọn",
+    "expand": "Mở rộng",
+    "cost": "Cuộc gọi này",
+    "move": "Kéo",
+    "resume": "Tiếp tục cuộc gọi"
+  },
+  "banner": {
+    "inCall": "Đang gọi",
+    "tapToReturn": "Chạm để quay lại cuộc gọi"
+  },
+  "hint": {
+    "start": "Cứ nói thôi. Bạn có thể ngắt lời bất cứ lúc nào."
+  },
+  "ended": {
+    "title": "Cuộc gọi đã kết thúc",
+    "hangup": "Cuộc gọi đã kết thúc",
+    "error": "Cuộc gọi bị gián đoạn",
+    "limit": "Cuộc gọi đã kết thúc. Bạn có thể gọi lại.",
+    "quota": "Bạn đã hết điểm. Nạp điểm rồi gọi lại nhé.",
+    "concurrent": "Bạn đang gọi trên một thiết bị khác.",
+    "micLost": "Micro bị ngắt nên cuộc gọi đã kết thúc.",
+    "network": "Mất mạng nên cuộc gọi đã kết thúc.",
+    "pendingHint": "Còn {{count}} việc đang làm; kết quả sẽ hiện trong cuộc trò chuyện.",
+    "duration": "Thời lượng {{duration}}",
+    "cost": "Khoảng {{yuan}} điểm",
+    "topUp": "Nạp điểm"
+  },
+  "errors": {
+    "unsupported": "Trình duyệt này không gọi thoại được. Hãy dùng Chrome hoặc Edge bản mới nhất.",
+    "micDenied": "Quyền dùng micro đang tắt. Hãy cho phép trong cài đặt rồi thử lại.",
+    "micMissing": "Không tìm thấy micro.",
+    "micBusy": "Micro đang bị ứng dụng khác dùng.",
+    "connectFailed": "Không kết nối được. Hãy thử lại sau.",
+    "disabled": "Gọi thoại chưa được mở.",
+    "backlog": "Mạng không ổn định; cuộc gọi đã kết thúc.",
+    "assistantUnavailable": "Hãy mở trợ lý riêng trước, rồi mới gọi.",
+    "backgroundStart": "Hệ thống không bật được cuộc gọi chạy nền. Hãy quay lại ứng dụng và thử lại."
+  },
+  "actions": {
+    "redial": "Gọi lại",
+    "close": "Đóng",
+    "viewInChat": "Xem trong cuộc trò chuyện",
+    "retry": "Thử lại"
+  },
+  "cost": {
+    "pending": "Lượt này chưa tính xong",
+    "partial": "Một phần mức dùng chưa được báo; số tiền có thể thấp hơn thực tế",
+    "settled": "Đã tính {{count}} lượt",
+    "items": {
+      "inputText": "Chữ vào",
+      "inputAudio": "Giọng nói vào",
+      "outputText": "Chữ ra",
+      "outputAudio": "Giọng nói ra"
+    },
+    "credits": "{{amount}} điểm"
+  },
+  "permission": {
+    "title": "Cần dùng micro",
+    "body": "Gọi cho {{name}} cần dùng micro. Chỉ nghe trong lúc gọi và không ghi âm gì cả.",
+    "allow": "Cho phép",
+    "later": "Để sau",
+    "openSettings": "Mở cài đặt"
+  },
+  "interruption": {
+    "phoneCall": "Có cuộc gọi đến; cuộc gọi đã tạm dừng",
+    "resumed": "Cuộc gọi đã tiếp tục",
+    "background": "Quay lại ứng dụng để tiếp tục cuộc gọi",
+    "audio": "Ứng dụng khác đang dùng âm thanh. Cuộc gọi sẽ tự tiếp tục khi được nhả ra, hoặc bạn chạm Tiếp tục cuộc gọi."
+  },
+  "overlay": {
+    "title": "Bật nút gọi nổi",
+    "body": "Cho phép BossIP hiển thị đè lên ứng dụng khác. Khi ứng dụng chạy nền sẽ hiện một nút điện thoại; chạm vào để quay lại cuộc gọi. Không cấp quyền này cuộc gọi vẫn tiếp tục, bạn có thể quay lại qua thông báo.",
+    "later": "Tiếp tục mà không bật"
+  },
+  "transcript": {
+    "title": "Cuộc trò chuyện",
+    "empty": "Nội dung cuộc gọi sẽ hiện ở đây",
+    "you": "Tôi",
+    "assistant": "Trợ lý",
+    "hearing": "Đang nghe…",
+    "room": "Hiện trường “{{title}}”",
+    "call": "Cuộc gọi",
+    "task": "Phòng việc",
+    "taskEmpty": "Hiện trường chưa có gì mới",
+    "taskBusy": "Trợ thủ đang làm…",
+    "taskWaiting": "Trợ thủ đang chờ bạn trả lời",
+    "openRoom": "Đến hiện trường",
+    "taskDoing": "Trợ thủ đang {{step}}; xong tôi sẽ báo bạn",
+    "inRoom": "Đang theo dõi hiện trường: bạn nói gì sẽ chuyển thẳng cho việc này; nói “quay lại” để trở về",
+    "watch": "Theo dõi hiện trường",
+    "watchOn": "Đang theo dõi hiện trường",
+    "watchHint": "Khi bật: bạn nói gì sẽ chuyển thẳng cho việc này và câu trả lời của nó được đọc lên; làm xong sẽ tự tắt",
+    "helper": "Trợ thủ"
+  }
+}

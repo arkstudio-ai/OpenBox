@@ -1,0 +1,108 @@
+{
+  "free": "Video này miễn phí · sau đó khoảng 4 điểm/video",
+  "skip": "Bỏ qua",
+  "back": "Quay lại",
+  "next": "Tiếp theo",
+  "leave": {
+    "title": "Để sau nhé?",
+    "body": "Video này miễn phí, bạn quay lại làm lúc nào cũng được.",
+    "stay": "Làm tiếp",
+    "confirm": "Để sau"
+  },
+  "shop": {
+    "title": "Kể về quán của bạn",
+    "lede": "Video sẽ xoay quanh quán. Mục nào cũng có thể để sau.",
+    "industry": "Ngành",
+    "industries": {
+      "food": "Ăn uống",
+      "beauty": "Làm đẹp",
+      "retail": "Bán lẻ",
+      "other": "Khác"
+    },
+    "name": "Tên quán",
+    "namePlaceholder": "VD: Bếp Đầu Ngõ",
+    "headline": "Thứ muốn quảng bá nhất",
+    "headlinePlaceholder": "Món đặc trưng / dịch vụ chính / hàng bán chạy",
+    "headlineHint": "Một thứ là đủ; video đầu tiên chỉ nói về nó"
+  },
+  "template": {
+    "title": "Chọn một mẫu",
+    "lede": "Đều 15 giây, dọc, có tên quán của bạn ở trên",
+    "confirm": "Chọn cái này",
+    "selected": "Đã chọn",
+    "note": "Chọn mẫu nào cũng ra video; làm xong có thể đổi kiểu làm lại.",
+    "fallback": {
+      "signature": {
+        "label": "Món đặc trưng",
+        "description": "Cận cảnh món bạn nổi tiếng nhất, đúng lúc vừa bưng ra"
+      },
+      "ambience": {
+        "label": "Không khí quán",
+        "description": "Ánh đèn, bàn đầy khách, sự nhộn nhịp khiến người ta muốn bước vào"
+      },
+      "promo": {
+        "label": "Khuyến mãi",
+        "description": "Ưu đãi hôm nay gói trong một câu, để khách đến ngay"
+      }
+    }
+  },
+  "photo": {
+    "title": "Chụp một tấm \"{{headline}}\"",
+    "titlePlain": "Chụp một tấm quán của bạn",
+    "lede": "Video sẽ xoay quanh tấm ảnh này. Chụp thẳng vào chủ thể, đủ sáng.",
+    "frame": "Khung ngắm",
+    "frameHint": "Đưa chủ thể vào trong khung",
+    "album": "Chọn từ thư viện",
+    "camera": "Chụp ảnh",
+    "textOnly": "Không chụp, dùng chữ",
+    "retake": "Chọn tấm khác",
+    "use": "Dùng tấm này, bắt đầu",
+    "uploading": "Đang tải ảnh lên…",
+    "submitting": "Đang giao cho bossip…",
+    "pickFailed": "Chưa nhận được ảnh, thử lại nhé"
+  },
+  "making": {
+    "title": "Đang làm video đầu tiên của bạn",
+    "length": "15 giây",
+    "stage": "Đang tạo hình",
+    "remaining": "Còn khoảng {{time}}",
+    "remainingSoon": "Sắp xong rồi",
+    "remainingUnknown": "Đang xếp hàng",
+    "minutes": "{{m}} phút {{s}} giây",
+    "seconds": "{{s}} giây",
+    "background": "Xong tôi sẽ báo bạn; cứ đi xem chỗ khác trước",
+    "meanwhile": "Trong lúc chờ, xem thử sau này còn làm được gì",
+    "cards": [
+      {
+        "title": "Một chạm đăng lên Douyin",
+        "body": "Máy tính đám mây đăng nhập Creator Center giúp bạn; tiêu đề và hashtag viết sẵn"
+      },
+      {
+        "title": "Mỗi ngày một video mới, đúng giờ",
+        "body": "Bắt trend, biến tấu, video làm xong chờ bạn mỗi sáng"
+      },
+      {
+        "title": "Bạn quay, tôi cắt",
+        "body": "Gửi tư liệu quay thô, nhận về video sẵn sàng để đăng"
+      }
+    ],
+    "leave": "Chờ ở nền, về trang chủ xem trước"
+  },
+  "result": {
+    "title": "Video đầu tiên của bạn",
+    "publish": "Đăng lên Douyin",
+    "publishLocked": "Đăng bài cần máy tính đám mây",
+    "publishHint": "Chỉ cần nói \"đăng lên Douyin\" trong trò chuyện",
+    "save": "Lưu vào thư viện",
+    "again": "Đổi kiểu làm lại",
+    "home": "Xem còn làm được gì nữa",
+    "playFailed": "Video chưa tải được, thử lại nhé",
+    "retry": "Thử lại"
+  },
+  "failed": {
+    "title": "Video này chưa làm được",
+    "lede": "Có thể do mạng hoặc tư liệu. Vào trò chuyện nói một tiếng, bossip sẽ thử lại.",
+    "home": "Trang chủ",
+    "chat": "Mở trò chuyện"
+  }
+}

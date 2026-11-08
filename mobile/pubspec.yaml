@@ -97,8 +97,10 @@ flutter:
   assets:
     - assets/locales/zh-CN/
     - assets/locales/en-US/
+    - assets/locales/vi-VN/
     - assets/locales-mobile/zh-CN/
     - assets/locales-mobile/en-US/
+    - assets/locales-mobile/vi-VN/
     - assets/onboarding/
     - assets/first_video/
     # Voice-call tones (assets/sounds/README.md has the ffmpeg commands).

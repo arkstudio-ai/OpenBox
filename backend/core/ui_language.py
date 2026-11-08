@@ -58,10 +58,18 @@ def is_language(value: Any) -> bool:
 
 
 def from_preferences(row: dict | None) -> str | None:
-    """The stored ``extra.ui_language`` of a preference row, when it is one of the three."""
+    """The language a preference row chose: ``extra.ui_language``, else the web's ``extra.locale`` normalised.
+
+    The web and Apps before 1.1.0 (106) stored only ``locale``; an account that switched language there
+    has chosen one just the same, so pushes, prompts and the Light copy follow it."""
     extra = (row or {}).get("extra") or {}
-    value = extra.get(PREFERENCE_KEY) if isinstance(extra, dict) else None
-    return value if is_language(value) else None
+    if not isinstance(extra, dict):
+        return None
+    value = extra.get(PREFERENCE_KEY)
+    if is_language(value):
+        return value
+    locale = extra.get("locale")
+    return normalize(locale) if isinstance(locale, str) and locale.strip() else None
 
 
 async def ui_language_for(user_id: str | None) -> str:

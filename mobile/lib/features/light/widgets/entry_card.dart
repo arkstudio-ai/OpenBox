@@ -166,9 +166,11 @@ class LightEntryCard extends StatelessWidget {
     children: [
       Icon(lightEntryIcon(entry.id), size: 20, color: ink),
       const SizedBox(height: 10),
+      // Two lines: English and Vietnamese titles run past a third of the
+      // width; the row is IntrinsicHeight, so the three cards stay level.
       Text(
         entry.title,
-        maxLines: 1,
+        maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontSize: FontSizes.base,
@@ -180,7 +182,7 @@ class LightEntryCard extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           reason!,
-          maxLines: 1,
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: FontSizes.xs2, color: sub),
         ),

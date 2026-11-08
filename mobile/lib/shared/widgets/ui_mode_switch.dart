@@ -52,25 +52,29 @@ class _UiModeSwitchState extends ConsumerState<UiModeSwitch> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final mode = ref.watch(uiModeProvider).mode;
-    return Row(
-      children: [
-        for (final (index, option) in UiMode.values.indexed) ...[
-          if (index > 0) const SizedBox(width: 10),
-          Expanded(
-            child: _ModeCard(
-              key: Key('ui-mode-${option.wire}'),
-              selected: mode == option,
-              title: i18n.t('light:uiMode.${option.wire}'),
-              body: i18n.t('light:uiMode.${option.wire}Body'),
-              icon: option == UiMode.light
-                  ? Icons.grid_view_rounded
-                  : Icons.dashboard_customize_outlined,
-              onTap: _busy ? null : () => _pick(option),
-              tokens: t,
+    // Both cards as tall as the longer body (Vietnamese runs long).
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (index, option) in UiMode.values.indexed) ...[
+            if (index > 0) const SizedBox(width: 10),
+            Expanded(
+              child: _ModeCard(
+                key: Key('ui-mode-${option.wire}'),
+                selected: mode == option,
+                title: i18n.t('light:uiMode.${option.wire}'),
+                body: i18n.t('light:uiMode.${option.wire}Body'),
+                icon: option == UiMode.light
+                    ? Icons.grid_view_rounded
+                    : Icons.dashboard_customize_outlined,
+                onTap: _busy ? null : () => _pick(option),
+                tokens: t,
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

@@ -118,8 +118,8 @@
     "note": "Scheduled tasks and templates follow this setting too. If an account's auto publish is switched off by risk control, the QR route is used for the time being and the chat says why."
   },
   "appearance": {
-    "language": "语言 / Language",
-    "langZh": "简体中文",
+    "language": "Language",
+    "langZh": "Chinese",
     "langEn": "English",
     "langVi": "Vietnamese",
     "current": "Current",
@@ -218,7 +218,7 @@
     "nameLabel": "Name",
     "placeholder": "e.g. Mary (leave empty for the default “Personal assistant”)",
     "addressLabel": "What it calls you",
-    "addressPlaceholder": "e.g. Andrew (defaults to 老板 when empty)",
+    "addressPlaceholder": "e.g. Andrew (defaults to “boss” when empty)",
     "toneLabel": "Tone",
     "tone": {
       "warm": "Warm",

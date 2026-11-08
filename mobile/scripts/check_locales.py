@@ -9,8 +9,15 @@ Checks:
   3. zh purity  no Latin words in zh-CN strings (Light-reachable namespaces).
   4. en purity  no CJK in en-US strings (same scope).
 
-Default mode: mirror + keys fail with exit 1; purity is reported only.
---strict-purity: purity violations fail too.  --report: print violations only, exit 0.
+Default mode: mirror, keys and purity all fail with exit 1 (purity became
+enforced once the zh/en copy was cleaned, LIGHT_MODE_I18N_PLAN 6 F).
+--report: print purity violations only, exit 0.  --lenient: report purity, fail
+only on mirror/keys (for a branch mid-cleanup).
+
+Purity exceptions, all deliberate: the brand; third-party components named in
+the legal documents (Logto, JPush, JCore); key caps printed on keyboards (Shift,
+Ctrl); file formats; ICP filing numbers; and values that are not copy at all
+(slugs, section ids, URLs, e-mail addresses).
 """
 import argparse
 import json
@@ -34,9 +41,17 @@ KNOWN_MIRROR_DRIFT = {"admin-examples", "admin", "knowledge", "settings"}
 PLURAL_RE = re.compile(r"_(zero|one|two|few|many|other)$")
 PURITY_NS = ("light first_video onboarding common errors auth auth-center chat "
              "voice billing inbox settings legal memory resources workspace").split()
-LATIN_ALLOW = {"bossip", "BossIP", "BOSSIP"}
+LATIN_ALLOW = {"bossip", "BossIP", "BOSSIP",            # the brand (the one word allowed everywhere)
+               "Logto", "JPush", "JCore",                # third-party components the legal documents must name
+               "Shift", "Ctrl",                          # key caps, printed in Latin on every keyboard
+               "PDF", "JPG", "PNG", "WebP", "MP4", "MOV"}  # file formats
+#: Keys that hold identifiers, not copy: legal document slugs and section ids, links, addresses.
+NOT_COPY_KEY_RE = re.compile(r"(^|\.)(slug|id)$|(Url|url|Origin|Email)$")
+NOT_COPY_VALUE_RE = re.compile(r"^(https?://\S+|[\w.+-]+@[\w-]+\.[\w.-]+)$")
+#: ICP filing numbers are a regulated string, identical in every language.
+ICP_RE = re.compile(r"[\u4e00-\u9fff]?ICP备\d+号(-\d+[A-Z]?)?")
 VAR_RE = re.compile(r"\{\{.*?\}\}")
-LATIN_RE = re.compile(r"[A-Za-z]{2,}")
+LATIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")  # a word may end in digits (MP4), so the allow list can name it
 CJK_RE = re.compile("[一-鿿]")
 
 
@@ -132,7 +147,9 @@ def check_purity():
                 continue
             rel = nsf[ns].relative_to(ROOT)
             for k, v in load(nsf[ns]).items():
-                s = VAR_RE.sub("", v)
+                if NOT_COPY_KEY_RE.search(k) or NOT_COPY_VALUE_RE.match(v.strip()):
+                    continue
+                s = ICP_RE.sub("", VAR_RE.sub("", v))
                 if kind == "zh-latin":
                     bad = [w for w in rx.findall(s) if w not in LATIN_ALLOW]
                     hit = bool(bad)
@@ -160,7 +177,8 @@ def print_purity(viol):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--report", action="store_true", help="print purity violations only, exit 0")
-    ap.add_argument("--strict-purity", action="store_true", help="purity violations fail the run")
+    ap.add_argument("--lenient", action="store_true", help="report purity violations without failing on them")
+    ap.add_argument("--strict-purity", action="store_true", help=argparse.SUPPRESS)  # the default now; kept for old scripts
     a = ap.parse_args()
 
     viol = check_purity()
@@ -179,11 +197,11 @@ def main():
         print("FAIL:", e, file=sys.stderr)
     if errs:
         return 1
-    if total and a.strict_purity:
+    if total and not a.lenient:
         print(f"FAIL: {total} purity violations", file=sys.stderr)
         return 1
     note = f" ({total} purity violations reported, not enforced)" if total else ""
-    print("OK: locales mirror, key alignment" + (", purity" if a.strict_purity else "") + " pass" + note)
+    print("OK: locales mirror, key alignment" + (", purity" if not a.lenient else "") + " pass" + note)
     return 0
 
 

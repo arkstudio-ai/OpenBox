@@ -153,7 +153,7 @@ describe("credit usage", () => {
     await screen.findByText("45")
     expect(screen.getByText("0.02")).toBeDefined()
     expect(screen.getByText("8.25 积分")).toBeDefined()
-    expect(screen.getByText("筛选结果 tokens")).toBeDefined()
+    expect(screen.getByText("筛选结果词元")).toBeDefined()
     expect(screen.getByText("1 / 1 页")).toBeDefined()
     for (const endpoint of ["summary", "usage"]) {
       const request = vi.mocked(http.get).mock.calls.find(([path]) => {
@@ -169,7 +169,7 @@ describe("credit usage", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "重置" }))
     await screen.findByRole("link", { name: "会话 1" })
-    expect(screen.getByText("累计 tokens")).toBeDefined()
+    expect(screen.getByText("累计词元")).toBeDefined()
     expect(screen.getByText("123")).toBeDefined()
     expect((screen.getByLabelText("开始日期") as HTMLInputElement).value).toBe("")
     expect((screen.getByLabelText("结束日期") as HTMLInputElement).value).toBe("")

@@ -122,15 +122,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('内容由 AI 生成，请注意核实。'), findsOneWidget);
-      await tester.tap(find.byTooltip('AI 服务说明'));
+      expect(find.text('内容由人工智能生成，请注意核实。'), findsOneWidget);
+      await tester.tap(find.byTooltip('人工智能服务说明'));
       await tester.pumpAndSettle();
       expect(find.text('公开文档 · 无需登录'), findsOneWidget);
       expect(find.text('关于生成内容'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('返回'));
       await tester.pumpAndSettle();
-      expect(find.text('内容由 AI 生成，请注意核实。'), findsOneWidget);
+      expect(find.text('内容由人工智能生成，请注意核实。'), findsOneWidget);
     },
   );
 }

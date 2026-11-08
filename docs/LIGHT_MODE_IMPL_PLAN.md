@@ -212,7 +212,7 @@ PR #60（`stores` 表、绑店回填、人设初始化）合并后：首页顶�
 
 **③ 只读工具 `light.entries`。** `tool/assistant_tools.py`（READ_TOOLS）、`assistant/reporting.py::ASSISTANT_TOOLS`、`assistant/projection.py::READ_TOOL_IDS` 都已登记；返回与 ① 同源的目录（`light/prompt.py::entries_directory`：id、标题、用途、可用状态及口语标签、链接，外加 ui_mode / plan_id / desktop），只读，不建任务不出卡。
 
-测试：`tests/unit/test_light_assistant_awareness.py`（两种模式的 section 与 `_build_system_prompt` 注入、section 出错不影响提示词、四种 work_type 的 workflow 映射与不出卡、`light_video` 默认 low 与已确认档位保留、`light.entries` 与 section 同源且只读、绑定缺失时的标签）。未做：App 端对助理回复里 `/light/topic/<id>` 链接的点击跳转尚未核实；light-test 未实测。
+测试：`tests/unit/test_light_assistant_awareness.py`（两种模式的 section 与 `_build_system_prompt` 注入、section 出错不影响提示词、四种 work_type 的 workflow 映射与不出卡、`light_video` 默认 low 与已确认档位保留、`light.entries` 与 section 同源且只读、绑定缺失时的标签）。App 端：助理回复里的 `/light/topic/<id>` 链接走 `chat_link.dart::conversationRoute` 进 App 内专题页（此前只认 `/app/s/<id>`，专题链接被甩到外部浏览器的 Web 地址，而 Web 没有这个页面）；不可用的入口由专题页自己显示原因。未在 light-test 实测。
 
 ## 12. 参考样例库（2026-11-04 拍板，PR #142）
 

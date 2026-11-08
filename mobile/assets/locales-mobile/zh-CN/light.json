@@ -66,7 +66,7 @@
       "uploading": "正在上传照片…",
       "photosSent": "我拍好了，看这几张",
       "clipsSent": "素材传好了，帮我剪",
-      "clipTooBig": "单段视频不能超过 200 MB，已跳过太大的",
+      "clipTooBig": "单段视频不能超过 200 兆，已跳过太大的",
       "uploadingOf": "正在上传第 {{n}}/{{total}} 段…"
     }
   },
@@ -112,7 +112,7 @@
   },
   "uiMode": {
     "title": "界面模式",
-    "light": "Light",
+    "light": "简易",
     "lightBody": "首页按钮直达：做视频、做菜单、做海报",
     "pro": "专业",
     "proBody": "完整工作台：对话、项目、云电脑、技能",
@@ -121,7 +121,7 @@
   "testBuild": "测试版",
   "result": {
     "save": "保存",
-    "savePdf": "存 PDF",
+    "savePdf": "存为 PDF",
     "publish": "发到抖音",
     "again": "再做一条",
     "againPrompt": "再做一条，换个样子",

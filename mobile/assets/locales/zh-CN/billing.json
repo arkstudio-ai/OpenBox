@@ -78,7 +78,7 @@
     }
   },
   "usage": {
-    "totalTokens": "累计 tokens",
+    "totalTokens": "累计词元",
     "empty": "还没有模型消耗记录",
     "balance": "当前空间可用积分",
     "points": "{{value}} 积分",
@@ -152,7 +152,7 @@
     "applyFilter": "筛选",
     "resetFilter": "重置",
     "invalidDates": "开始日期不能晚于结束日期",
-    "filteredTokens": "筛选结果 tokens",
+    "filteredTokens": "筛选结果词元",
     "filteredCredits": "筛选结果消耗积分",
     "noMatches": "没有符合条件的消耗记录",
     "cancelPayment": "取消支付",

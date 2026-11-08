@@ -94,7 +94,7 @@ flutter build ios --simulator --debug \
 - **「对话」tab**：个人助理 + 「全部对话」合并列表（`/api/agent/session` 叠 `/api/assistant/sessions`
   的跟进状态），专题会话带入口小标，按时间排。**「我的」tab**：订购、授权中心、云电脑、资源、
   设置（push 到根导航器）、界面模式开关、退出。
-- 文案在移动端专用命名空间 `assets/locales-mobile/*/light.json`（`check_locales.sh` 不比对）。
+- 文案在移动端专用命名空间 `assets/locales-mobile/*/light.json`（`check_locales.sh` 不做 web 镜像比对，但键对齐和中英纯度检查覆盖它；纯度规则与例外见脚本头注释）。
 - 分层说明：`features/light` 依赖 `features/chat`（`ChatScreen`、`pendingProvider`）、
   `features/billing`（余额）、`features/workspace`（当前工作空间），与 `user_row.dart` /
   `session_drawer.dart` 既有的跨特性引用同类；`UiMode` 存储放 `shared/`，因为路由、壳、设置和

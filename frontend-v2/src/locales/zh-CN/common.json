@@ -1,7 +1,7 @@
 {
   "archiveQueue": {
     "pick": "选择多个压缩包",
-    "limits": "每批最多 20 个文件，单个不超过 32 MB，总计不超过 128 MB。可继续选择文件加入队列。",
+    "limits": "每批最多 20 个文件，单个不超过 32 兆，总计不超过 128 兆。可继续选择文件加入队列。",
     "remove": "移除 {{name}}",
     "queued": "待上传",
     "working": "正在上传，请勿关闭…",
@@ -52,7 +52,7 @@
     "sessionGone": "这个对话已删除或不在当前工作空间，已回到首页。"
   },
   "unit": {
-    "tokens": "tokens",
+    "tokens": "词元",
     "files_one": "{{count}} 个文件",
     "files_other": "{{count}} 个文件",
     "lines_one": "{{count}} 行",
@@ -61,7 +61,7 @@
     "matches_other": "{{count}} 个匹配"
   },
   "brand": {
-    "tagline": "agent 工作台"
+    "tagline": "智能工作台"
   },
   "time": {
     "todayTime": "今天 {{time}}",

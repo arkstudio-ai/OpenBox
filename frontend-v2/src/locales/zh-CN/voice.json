@@ -58,7 +58,7 @@
     "topUp": "去充值"
   },
   "errors": {
-    "unsupported": "当前浏览器不支持语音通话，请用最新版 Chrome 或 Edge。",
+    "unsupported": "当前浏览器不支持语音通话，请用最新版的谷歌或微软浏览器。",
     "micDenied": "麦克风权限未开启，请在设置里允许后重试。",
     "micMissing": "没有找到麦克风。",
     "micBusy": "麦克风被其他应用占用。",

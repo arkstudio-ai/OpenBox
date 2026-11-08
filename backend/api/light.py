@@ -4,6 +4,8 @@
 * ``POST /api/light/start``   → a real session with the entry's opening card already in it
 * ``GET  /api/light/recent``  → latest image/video results grouped by conversation
 * ``GET/PUT /api/light/mode`` → ``ui_mode`` (light | pro)
+* ``GET/PUT /api/light/language`` → ``ui_language`` (zh-CN | en-US | vi-VN), the stored copy of the App's
+  language setting; every request also sends it as ``Accept-Language`` (docs/LIGHT_MODE_I18N_PLAN.md §2.1)
 * ``/api/light/autopilot``     → 省心托管: create from a result, list, pause/resume/change, cancel
 """
 from decimal import Decimal
@@ -52,6 +54,11 @@ class ModeBody(BaseModel):
     ui_mode: str = Field(min_length=1, max_length=8)
 
 
+class LanguageBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ui_language: str = Field(min_length=1, max_length=8)
+
+
 def _scope(current_user: dict) -> tuple[str, str]:
     workspace_id = current_user.get("workspace_id")
     if not workspace_id:
@@ -66,7 +73,7 @@ def _raise(exc: light_mode.LightError):
 @router.get("/entries")
 async def entries(current_user: dict = Depends(get_current_user)):
     user_id, workspace_id = _scope(current_user)
-    return await light_mode.entries_view(user_id, workspace_id)
+    return await light_mode.entries_view(user_id, workspace_id, lang=current_user.get("ui_language"))
 
 
 @router.post("/start")
@@ -74,7 +81,8 @@ async def start(body: StartBody, current_user: dict = Depends(get_current_user))
     user_id, workspace_id = _scope(current_user)
     try:
         return await light_mode.start(user_id=user_id, workspace_id=workspace_id, entry_id=body.entry_id,
-                                      project_id=body.project_id, subtype=body.subtype, sample=body.sample)
+                                      project_id=body.project_id, subtype=body.subtype, sample=body.sample,
+                                      lang=current_user.get("ui_language"))
     except light_mode.LightError as exc:
         _raise(exc)
 
@@ -96,6 +104,21 @@ async def put_mode(body: ModeBody, current_user: dict = Depends(get_current_user
         return {"ui_mode": await light_mode.set_ui_mode(current_user["user_id"], body.ui_mode)}
     except light_mode.LightError as exc:
         _raise(exc)
+
+
+@router.get("/language")
+async def get_language(current_user: dict = Depends(get_current_user)):
+    from core.ui_language import ui_language_for
+    return {"ui_language": await ui_language_for(current_user["user_id"])}
+
+
+@router.put("/language")
+async def put_language(body: LanguageBody, current_user: dict = Depends(get_current_user)):
+    from core.ui_language import set_ui_language
+    try:
+        return {"ui_language": await set_ui_language(current_user["user_id"], body.ui_language)}
+    except ValueError as exc:
+        raise HTTPException(400, detail={"code": "LIGHT_LANGUAGE_INVALID", "message": str(exc)})
 
 
 @router.get("/autopilot")

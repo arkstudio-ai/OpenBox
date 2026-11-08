@@ -12,10 +12,18 @@
 | `POST /api/light/start` | 从一个入口开一个对话专题页：真实会话 + 开场卡 |
 | `GET /api/light/recent?limit=8` | 「最近做的」：图与视频产出按会话分组 |
 | `GET /api/light/mode` / `PUT /api/light/mode {"ui_mode":"light"\|"pro"}` | 界面模式 |
+| `GET /api/light/language` / `PUT /api/light/language {"ui_language":"zh-CN"\|"en-US"\|"vi-VN"}` | 界面语言的服务端副本（`extra.ui_language`，与 `ui_mode` 同一处）；`PUT /api/auth/me/preferences {"ui_language": …}` 也写同一个键 |
+
+### 语言（I1 / I3，`LIGHT_MODE_I18N_PLAN.md` §2.1、§2.4）
+
+- 语言值只有 `zh-CN` / `en-US` / `vi-VN`。回退表：zh-CN → 无，en-US → 无，vi-VN → en-US。
+- **同步管道**：每个请求带 `Accept-Language: <lang>`。ASGI 中间件（`core/ui_language.py::UILanguageMiddleware`）按主标签归一化到 `request.state.ui_language`：`zh*` → zh-CN、`vi*` → vi-VN、其余与 `*` → en-US；带 q 值的列表取第一个；没有头或空头 = 没有。`get_current_user` 返回的 dict 多一个 `ui_language`：请求头 > 偏好 `extra.ui_language` > `zh-CN`（旧 App 不带头、没写过偏好，行为与现在一致）。
+- **异步管道**：App 切换语言或启动时写 `PUT /api/light/language`（或 `/api/auth/me/preferences` 的 `ui_language`）。没有请求在手的地方（推送、省心托管产出、语音接通、助理提示词）用 `core.ui_language.ui_language_for(user_id)` 读，缺省 `zh-CN`。推送 `notifications/events.py::emit` 先取 `extra.ui_language`，没有再用设备注册的 `locale`。语音 `voice/phrases.py::user_language` 同样先取 `ui_language`（zh/en/vi），再取 web 的 `extra.locale`。
+- `GET /api/light/entries` 与 `POST /api/light/start` 按请求语言渲染文案（响应多一个 `ui_language`）；`start` 的会话标题、合成用户气泡、开场卡也按该语言。助理目录（`light.entries` 工具、`assistant_section`）与专题页提示词按 `ui_language_for` 取，并各加一行「对用户的所有输出用 {语言}」。
 
 ```
 GET /api/light/entries →
-{ "version", "ui_mode": "light"|"pro", "plan_id", "desktop": bool,
+{ "version", "ui_language": "zh-CN"|"en-US"|"vi-VN", "ui_mode": "light"|"pro", "plan_id", "desktop": bool,
   "entries": [ { "id", "title", "subtitle", "kind": "primary"|"secondary"|"coming_soon",
                  "action": "voice_call"?,   // 应用内动作：从卡上直接拨通助理，没有 skill/steps/opening_card（I0，LIGHT_MODE_I18N_PLAN §3）
                  "skill", "default_tier", "price_hint", "requires": {plan, desktop, binding},
@@ -37,12 +45,13 @@ GET /api/light/recent →
 - `start` 之后 App 走现有 `POST /api/agent/session/{id}/prompt_async`。开场卡的 `chips` 由 App 画在输入条上，点一下就是第一句话；转录里开场卡是一条真实助理消息，前面有一条合成的用户气泡「【做一条视频】选了「餐品展示 · 烟火气特写」」。
 - 会话有 `light_entry`（新列），agent 的系统提示词据此拿到入口、技能与步骤表；每张 `question` 卡的 `detail.light.step_id` 告诉 App 点亮哪一步（`question.asked` 事件与问题快照里都有）。
 - `recent` 只收 `relation.role` 为 `final` / `result` 且 `mime` 为图或视频的 FilePart；中间产物（分镜段、上传素材）不算。
-- 样片：`media_url` 是样片本身（视频 `.mp4` 或图片），`poster_url` 是小图（视频的截帧、图片的缩略图）。两者在 `entries.json` 里写 `oss:<key>`（私有桶），接口返回时换成 12 小时有效的签名链接（`light/media.py`）；没有 OSS 时为 `null`，App 画色块。
+- 样片：`media_url` 是样片本身（视频 `.mp4` 或图片），`poster_url` 是小图（视频的截帧、图片的缩略图）。两者在 `entries.zh-CN.json` 里写 `oss:<key>`（私有桶），接口返回时换成 12 小时有效的签名链接（`light/media.py`）；没有 OSS 时为 `null`，App 画色块。
 - 新注册用户 `extra.ui_mode="light"`；老用户为空读作 `pro`。App 冷启动要自己取一次。
 
 ## 配置
 
-- `backend/light/entries.json`（`LIGHT_ENTRIES_FILE` 可覆盖）：7 个入口（餐饮版）。`requires.desktop=true` 的入口在免费档显示为 `needs_desktop`；`requires.binding="douyin"` 需要授权中心已绑定。`kind=coming_soon` 不可 start。
+- `backend/light/entries.zh-CN.json`（`LIGHT_ENTRIES_FILE` 可覆盖）：结构 + 中文文案，餐饮版入口。`entries.en-US.json` / `entries.vi-VN.json` 与它放在一起，**只写文案字段**（title / subtitle / price_hint / steps[].label / subtypes[].label / samples[].label|description|needs / opening_card.text|text_with_sample|chips），按 id 对齐；`skill`、`requires`、`media_url` 等非文案字段只允许在 zh-CN 里，翻译文件里出现会在加载时报错。`light_entries(lang)` 把文案盖到结构上：vi 缺的字符串取 en，en 缺的保持中文。`Entry.title`、`Step.label`、`Sample.label`、`Subtype.label` 上限 40 字（越南语更长）。`tests/unit/test_light_i18n.py` 守：三份 id/结构对齐、翻译文件只含文案、zh 无拉丁词（`bossip` 例外）、en 无中文。
+- 通知模板 `notifications/templates.py` 每条 `{"zh-CN": (title, body), "en-US": …, "vi-VN": …}`，`render_template(kind, name, locale)` 的 `locale` 可以是设备 locale 或界面语言，归一化后走回退表；`PLATFORMS` 同样三列。语音兜底句 `voice/phrases.py` 的 `PHRASES` / `SPEECHES` / `NOTE_PREFIX` / `CARRIED_PREFIX` 三语，`LANGS = ("zh","en","vi")`；给模型看的指令块只有 zh/en，vi 通话读 en 块。`requires.desktop=true` 的入口在免费档显示为 `needs_desktop`；`requires.binding="douyin"` 需要授权中心已绑定。`kind=coming_soon` 不可 start。
 - 档位名「省钱 / 标准 / 高清」是 `openbox.json` `model_tiers.video[].label`，改配置即可（Web 专业模式同步改名，已拍板接受）。
 - 迁移 `pi95b6c7d8e9`：`sessions.light_entry String(64) NULL`。
 
@@ -64,7 +73,7 @@ GET /api/light/recent →
 
 ## 样片（2026-11-02）
 
-16 条样片（做视频 9 条 15 秒 H3、菜单 4 张、海报 3 张）在 light-test 上用 `backend/scripts/light_samples.py` 走真实链路生成（账号 `light-full-samples`），拷到 `oss://bossip/light/samples/20261102/`：`<id>.mp4` / `<id>.jpg`（样片）、`<id>.jpg`（视频截帧）、`<id>_thumb.jpg`（图片缩略图）。花费：视频 9 × ¥1.35 + 图片约 ¥4，合计约 ¥16。重做样片：在测试机后端容器里跑该脚本（`--only` 选 id、`--prefix` 换目录），再改 `entries.json` 里的 key。
+16 条样片（做视频 9 条 15 秒 H3、菜单 4 张、海报 3 张）在 light-test 上用 `backend/scripts/light_samples.py` 走真实链路生成（账号 `light-full-samples`），拷到 `oss://bossip/light/samples/20261102/`：`<id>.mp4` / `<id>.jpg`（样片）、`<id>.jpg`（视频截帧）、`<id>_thumb.jpg`（图片缩略图）。花费：视频 9 × ¥1.35 + 图片约 ¥4，合计约 ¥16。重做样片：在测试机后端容器里跑该脚本（`--only` 选 id、`--prefix` 换目录），再改 `entries.zh-CN.json` 里的 key。
 
 ## 省心托管（M2.5，2026-11-02）
 

@@ -421,6 +421,9 @@ def create_app() -> FastAPI:
     async def assistant_task_held(_request, exc):
         return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
 
+    # Accept-Language → request.state.ui_language (docs/LIGHT_MODE_I18N_PLAN.md §2.1).
+    from core.ui_language import UILanguageMiddleware
+    application.add_middleware(UILanguageMiddleware)
     application.add_middleware(
         CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,

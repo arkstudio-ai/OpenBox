@@ -7,6 +7,7 @@ the provider prompt cache warm across turns.
 """
 from __future__ import annotations
 
+from core.ui_language import DEFAULT as DEFAULT_LANG, ui_language_for
 from light.entries import light_entries
 from light.examples import examples_fragment
 from light.mode import ui_mode
@@ -20,8 +21,20 @@ LIGHT_MODE_TEXT = (
 )
 
 
-def entry_fragment(entry_id: str | None) -> str:
-    entry = light_entries().entry(entry_id or "") if entry_id else None
+#: How the interface language is named to the model, and what it must use for everything the person sees.
+LANGUAGE_NAMES = {"zh-CN": "中文", "en-US": "英文（English）", "vi-VN": "越南语（Tiếng Việt）"}
+
+
+def output_language_line(lang: str | None) -> str:
+    """One line per fragment (docs/LIGHT_MODE_I18N_PLAN.md §2.4): replies, card titles and options, on-screen text."""
+    name = LANGUAGE_NAMES.get(lang or DEFAULT_LANG, LANGUAGE_NAMES[DEFAULT_LANG])
+    line = f"对用户的所有输出（回复、question/review 卡的标题与选项、成片里的文字）用{name}"
+    return line + ("；越南语可保留英文专有名词。" if lang == "vi-VN" else "。")
+
+
+def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
+    """The entry named in the interface language, so step labels and the title match what the person sees."""
+    entry = light_entries(lang).entry(entry_id or "") if entry_id else None
     if entry is None:
         return ""
     steps = " → ".join(f"{step.id}({step.label})" for step in entry.steps)
@@ -62,8 +75,9 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     mode = await ui_mode(user_id) if user_id else "pro"
     if mode != "light" and not entry_id:
         return ""
-    parts = [LIGHT_MODE_TEXT]
-    fragment = entry_fragment(entry_id)
+    lang = await ui_language_for(user_id)
+    parts = [LIGHT_MODE_TEXT, output_language_line(lang)]
+    fragment = entry_fragment(entry_id, lang)
     if fragment:
         parts.append(fragment)
     shop = await shop_fragment(user_id)
@@ -77,22 +91,36 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
 
 #: App route of a home entry's topic page (``Paths.lightTopic``).
 TOPIC_PATH = "/light/topic/{entry_id}"
-AVAILABILITY_LABELS = {"ok": "可用", "needs_desktop": "需要云电脑", "needs_plan": "需要套餐", "coming_soon": "即将上线"}
+AVAILABILITY_LABELS = {
+    "ok": {"zh-CN": "可用", "en-US": "Available", "vi-VN": "Dùng được"},
+    "needs_desktop": {"zh-CN": "需要云电脑", "en-US": "Needs a cloud desktop", "vi-VN": "Cần máy tính đám mây"},
+    "needs_plan": {"zh-CN": "需要套餐", "en-US": "Needs a plan", "vi-VN": "Cần gói dịch vụ"},
+    "coming_soon": {"zh-CN": "即将上线", "en-US": "Coming soon", "vi-VN": "Sắp ra mắt"},
+    "needs_binding": {"zh-CN": "需要绑定{platform}", "en-US": "Needs {platform} linked", "vi-VN": "Cần liên kết {platform}"},
+}
+BINDING_NAMES = {"douyin": {"zh-CN": "抖音", "en-US": "Douyin", "vi-VN": "Douyin"}}
 
 
-def availability_label(availability: str, binding: str | None = None) -> str:
+def availability_label(availability: str, binding: str | None = None, lang: str | None = None) -> str:
+    lang = lang if lang in LANGUAGE_NAMES else DEFAULT_LANG
+    labels = AVAILABILITY_LABELS.get(availability)
+    if labels is None:
+        return availability
     if availability == "needs_binding":
-        return "需要绑定抖音" if (binding or "douyin") == "douyin" else f"需要绑定{binding}"
-    return AVAILABILITY_LABELS.get(availability, availability)
+        platform = binding or "douyin"
+        return labels[lang].format(platform=BINDING_NAMES.get(platform, {}).get(lang, platform))
+    return labels[lang]
 
 
-async def entries_directory(user_id: str, workspace_id: str) -> dict:
+async def entries_directory(user_id: str, workspace_id: str, lang: str | None = None) -> dict:
     """The Light home as the assistant sees it: one row per entry, with this workspace's availability.
 
     The same ``entries_view`` the App renders, reduced to what a prompt or a read-only tool needs;
-    the ``light.entries`` tool and ``assistant_section`` both read this, so they never disagree."""
+    the ``light.entries`` tool and ``assistant_section`` both read this, so they never disagree.
+    ``lang`` defaults to the stored interface language (the tool and the prompt have no request)."""
     from light.mode import entries_view
-    view = await entries_view(user_id, workspace_id)
+    lang = lang or await ui_language_for(user_id)
+    view = await entries_view(user_id, workspace_id, lang=lang)
     rows = []
     for entry in view["entries"]:
         if entry.get("action"):  # the voice card dials in place; there is no page to send anyone to
@@ -101,10 +129,11 @@ async def entries_directory(user_id: str, workspace_id: str) -> dict:
         rows.append({
             "id": entry["id"], "title": entry["title"], "subtitle": entry.get("subtitle") or "",
             "availability": entry["availability"],
-            "availability_label": availability_label(entry["availability"], binding),
+            "availability_label": availability_label(entry["availability"], binding, lang),
             "url": TOPIC_PATH.format(entry_id=entry["id"]),
         })
-    return {"ui_mode": view["ui_mode"], "plan_id": view["plan_id"], "desktop": view["desktop"], "entries": rows}
+    return {"ui_mode": view["ui_mode"], "ui_language": lang, "plan_id": view["plan_id"], "desktop": view["desktop"],
+            "entries": rows}
 
 
 ASSISTANT_LIGHT_RULES = (
@@ -132,10 +161,12 @@ async def assistant_section(user_id: str | None, workspace_id: str | None) -> st
     mode = await ui_mode(user_id) if user_id else "pro"
     if mode != "light":
         return "界面模式：专业。"
+    lang = await ui_language_for(user_id)
     lines = ["界面模式：Light（功能引导）。这个人是第一次用 AI 工作台的小店老板，App 首页是下面这些入口。",
+             output_language_line(lang),
              "首页目录（标题｜用途｜当前账号状态｜直达链接）："]
     if workspace_id:
-        directory = await entries_directory(user_id, workspace_id)
+        directory = await entries_directory(user_id, workspace_id, lang)
         for row in directory["entries"]:
             lines.append(f"- {row['title']}｜{row['subtitle']}｜{row['availability_label']}｜{row['url']}")
     else:

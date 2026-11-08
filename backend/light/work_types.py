@@ -2,7 +2,7 @@
 
 A ``tasks.submit`` ``work_type`` named after a Light home entry starts a helper
 room that loads that entry's cloud skill and never touches the desktop. The
-names are the entry ids in ``light/entries.json`` (``video`` is ``light_video``
+names are the entry ids in ``light/entries.zh-CN.json`` (``video`` is ``light_video``
 so it cannot be confused with the main line's ``video`` = "format undecided"),
 so nothing has to be renamed when the line is merged back.
 """

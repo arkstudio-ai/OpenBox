@@ -78,6 +78,9 @@ class PreferencesUpdate(BaseModel):
     #: under ``extra["onboarding"]`` and merged key-by-key server-side; an
     #: explicit ``{}`` clears it (settings → replay the tour).
     onboarding: dict | None = None
+    #: Interface language (``zh-CN`` / ``en-US`` / ``vi-VN``), stored as ``extra["ui_language"]``
+    #: (docs/LIGHT_MODE_I18N_PLAN.md §2.1); pushes, autopilot and voice read it when no request is in hand.
+    ui_language: Literal["zh-CN", "en-US", "vi-VN"] | None = None
 
 
 # ── Rate limiting helper ──
@@ -519,6 +522,14 @@ async def update_preferences(body: PreferencesUpdate, current_user: dict = Depen
         if not any(item["id"] == chosen and item["available"] for item in options(get_config())):
             raise HTTPException(status_code=400, detail="Image provider is not configured or unavailable")
         fields["extra"] = {**(fields.get("extra") or {}), KEY: chosen}
+    from core.ui_language import PREFERENCE_KEY as LANG_KEY, is_language
+    lang = fields.pop("ui_language", None)
+    if lang is None and LANG_KEY in (fields.get("extra") or {}):
+        lang = fields["extra"][LANG_KEY]
+    if lang is not None:
+        if not is_language(lang):
+            raise HTTPException(status_code=400, detail="ui_language must be zh-CN, en-US or vi-VN")
+        fields["extra"] = {**(fields.get("extra") or {}), LANG_KEY: lang}
     result = await _pref_repo.upsert(current_user["user_id"], **fields)
     return result
 

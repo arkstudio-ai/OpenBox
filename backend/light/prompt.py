@@ -7,7 +7,7 @@ the provider prompt cache warm across turns.
 """
 from __future__ import annotations
 
-from core.ui_language import DEFAULT as DEFAULT_LANG, ui_language_for
+from core.ui_language import DEFAULT as DEFAULT_LANG, stored_ui_language, ui_language_for
 from light.entries import light_entries
 from light.examples import examples_fragment
 from light.mode import ui_mode
@@ -156,11 +156,15 @@ ASSISTANT_LIGHT_RULES = (
 async def assistant_section(user_id: str | None, workspace_id: str | None) -> str:
     """What the personal assistant is told about the interface mode, in every mode.
 
-    Pro: one line naming the mode, so the main line's behaviour is unchanged. Light: that line, the home
+    Pro: one line naming the mode (plus the output-language line when the user chose an interface language in
+    the App), so the main line's behaviour is unchanged. Light: that line, the language line, the home
     directory (title, purpose, this account's availability, deep link) and the three rules above."""
     mode = await ui_mode(user_id) if user_id else "pro"
     if mode != "light":
-        return "界面模式：专业。"
+        # Only a language the user chose: the web and old Apps store none, and there the assistant keeps
+        # following the user's own words (assistant/runtime.py "How you talk").
+        chosen = await stored_ui_language(user_id)
+        return "界面模式：专业。" + (" " + output_language_line(chosen) if chosen else "")
     lang = await ui_language_for(user_id)
     lines = ["界面模式：Light（功能引导）。这个人是第一次用 AI 工作台的小店老板，App 首页是下面这些入口。",
              output_language_line(lang),

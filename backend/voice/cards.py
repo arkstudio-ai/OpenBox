@@ -12,6 +12,7 @@ import hashlib
 import time
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.cards")
 
@@ -104,7 +105,7 @@ class CardDesk:
                 # revision and the front desk read the whole plan again, a third time): only what is new.
                 value["already_presented"] = True
                 value["how_to_say"] = ("本通话已经向用户讲过这个任务的方案：只说这次新增或变化的决定，一两句话问清，"
-                                       "不再复述标题以外的方案内容。" if lang != "en" else
+                                       "不再复述标题以外的方案内容。" if not english(lang) else
                                        "This call already read this task's plan to the user: say only what is new or "
                                        "changed, in a sentence or two, without restating the plan.")
             previous = self.questions.get(identity)

@@ -52,6 +52,19 @@ def _light_guidance(skill: str, job: str) -> str:
             "The task is done only when the finished piece exists and has been attached; a plan alone is not a result.")
 
 
+async def workflow_guidance(workflow: str, user_id: str | None) -> str:
+    """What the room is told before the brief; a Light job also hears which language the owner's App is in.
+
+    The room is not the guided session, so ``light.prompt.light_mode_fragment`` never reaches it; the same
+    ``output_language_line`` is appended here (docs/LIGHT_MODE_I18N_PLAN.md §2.5)."""
+    guidance = VIDEO_WORKFLOW_GUIDANCE[workflow]
+    if workflow in LIGHT_WORKFLOWS.values():
+        from core.ui_language import ui_language_for
+        from light.prompt import output_language_line
+        guidance = guidance + " " + output_language_line(await ui_language_for(user_id))
+    return guidance
+
+
 VIDEO_WORKFLOW_GUIDANCE = {
     "light-video": _light_guidance("light-video", "做一条视频 (a short promotional clip from the owner's photos)"),
     "menu-maker": _light_guidance("menu-maker", "做菜单 (a new menu image from the owner's old menu or dish list)"),
@@ -637,7 +650,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 "video_model": video_model, "video_resolution": video_resolution}
         if workflow:
             origin_ref["workflow"] = workflow
-            prompt = VIDEO_WORKFLOW_GUIDANCE[workflow] + "\n\n" + prompt
+            prompt = await workflow_guidance(workflow, user_id) + "\n\n" + prompt
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,

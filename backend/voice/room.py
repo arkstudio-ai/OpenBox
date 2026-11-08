@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.room")
 
@@ -24,7 +25,7 @@ class RoomReply:
 
 def room_section(room: dict, lang: str = "zh") -> str:
     title = room.get("title") or ""
-    if lang == "en":
+    if english(lang):
         return (f"You are watching the work of “{title}”: what the user says is input for that task and assistant_ask "
                 "hands it straight there; the helper's replies are told to the user as they come. A reply takes minutes: "
                 "acknowledge, say it will be told when done, do not re-ask. When the user wants out (“回去”, "
@@ -63,7 +64,7 @@ async def enter(scope, arguments: dict) -> dict:
                 "note": "没找到这件活；可以用 known_titles 里的标题再试，或问用户是哪一件。"}
     room = {"task_id": task.id, "title": task.title, "session_id": task.execution_session_id}
     await call.enter_room(room)
-    say = (f"好，盯着「{task.title}」的现场，你说的话我直接给这件活；说“回去”就回来。" if scope.lang != "en" else
+    say = (f"好，盯着「{task.title}」的现场，你说的话我直接给这件活；说“回去”就回来。" if not english(scope.lang) else
            f"Okay, watching the work of “{task.title}”: what you say goes straight to it. Say “back” to return.")
     return {"status": "ok", **room, "say": say}
 
@@ -75,7 +76,7 @@ async def leave(scope, arguments: dict) -> dict:
         return {"status": "unavailable"}
     was = call.room
     await call.leave_room()
-    say = ("好，回来了。" if scope.lang != "en" else "Okay, back with me.")
+    say = ("好，回来了。" if not english(scope.lang) else "Okay, back with me.")
     return {"status": "ok", "left": (was or {}).get("title"), "say": say}
 
 

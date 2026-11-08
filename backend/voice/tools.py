@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelValidationError
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.tools")
 
@@ -148,7 +149,7 @@ STATES = {"queued": "等待处理", "running": "处理中", "waiting_input": "�
 
 
 def state_label(state: str | None, lang: str) -> str:
-    return STATES.get(state or "", state or "") if lang != "en" else ("waiting to start" if state == "queued" else (state or ""))
+    return STATES.get(state or "", state or "") if not english(lang) else ("waiting to start" if state == "queued" else (state or ""))
 
 
 async def tasks_overview(scope: CallScope, arguments: dict) -> dict:

@@ -49,6 +49,11 @@ def _lang(lang):
     return lang if lang in LANGS else "zh"
 
 
+def english(lang) -> bool:
+    """Whether a call's fixed sentences are the English ones: ``en``, and ``vi`` (which may hear English, never Chinese)."""
+    return _lang(lang) in ("en", "vi")
+
+
 def _pick(table, lang):
     """``table[lang]``, else its fallback (vi → en), else zh."""
     lang = _lang(lang)
@@ -92,7 +97,7 @@ def _greeting_instructions(lang, recap=True, *, first_call=False, unified=False)
             "must wait for the main assistant's fresh result.")
     if first_call:
         from assistant.secretary import FIRST_CONTACT
-        return FIRST_CONTACT + (" Use the user's current form of address once in this opening only; do not repeat it in subsequent replies. Use English for the introduction and conversation." if _lang(lang) == "en" else
+        return FIRST_CONTACT + (" Use the user's current form of address once in this opening only; do not repeat it in subsequent replies. Use English for the introduction and conversation." if english(lang) else
                                 "接通时使用一次用户的当前称呼，后续自然交流，不重复称呼。")
     return ("这是已有使用记录的用户接通。按实际聊天上下文和用户偏好简短接话，"
             "不重新介绍身份、职责或能力，不展开业务菜单；详细回答偏好不要求详细开场。" +

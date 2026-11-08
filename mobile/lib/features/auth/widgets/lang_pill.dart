@@ -6,8 +6,11 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 
-/// 中 / EN language toggle (web `features/auth/components/LangPill.tsx`).
+/// 中 / EN / VI language toggle (web `features/auth/components/LangPill.tsx`,
+/// plus Vietnamese on the phone).
 class LangPill extends ConsumerWidget {
+  static const labels = {'zh-CN': '中', 'en-US': 'EN', 'vi-VN': 'VI'};
+
   const LangPill({super.key});
 
   @override
@@ -23,20 +26,14 @@ class LangPill extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _segment(
-            context,
-            ref,
-            label: '中',
-            lang: 'zh-CN',
-            active: language == 'zh-CN',
-          ),
-          _segment(
-            context,
-            ref,
-            label: 'EN',
-            lang: 'en-US',
-            active: language == 'en-US',
-          ),
+          for (final lang in supportedLangs)
+            _segment(
+              context,
+              ref,
+              label: labels[lang] ?? lang,
+              lang: lang,
+              active: language == lang,
+            ),
         ],
       ),
     );

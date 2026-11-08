@@ -37,7 +37,11 @@ class BossipApp extends ConsumerWidget {
         ColorMode.system => ThemeMode.system,
       },
       locale: i18n.locale,
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+        Locale('vi', 'VN'),
+      ],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

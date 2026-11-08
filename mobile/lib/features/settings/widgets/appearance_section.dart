@@ -34,25 +34,28 @@ class AppearanceSection extends ConsumerWidget {
         const UiModeSwitch(),
         const SizedBox(height: 24),
         _sectionLabel(t, i18n.t('settings:appearance.language')),
-        Row(
-          children: [
-            for (final (index, lang) in supportedLangs.indexed) ...[
-              if (index > 0) const SizedBox(width: 10),
-              Expanded(
-                child: _card(
-                  t,
-                  selected: i18n.language == lang,
-                  onTap: () => controller.setLanguage(lang),
-                  child: _langLabel(
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (index, lang) in supportedLangs.indexed) ...[
+                if (index > 0) const SizedBox(width: 10),
+                Expanded(
+                  child: _card(
                     t,
-                    i18n,
-                    _langLabelKeys[lang] ?? 'settings:appearance.langEn',
-                    i18n.language == lang,
+                    selected: i18n.language == lang,
+                    onTap: () => controller.setLanguage(lang),
+                    child: _langLabel(
+                      t,
+                      i18n,
+                      _langLabelKeys[lang] ?? 'settings:appearance.langEn',
+                      i18n.language == lang,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
         const SizedBox(height: 24),
         _sectionLabel(t, i18n.t('settings:appearance.theme')),
@@ -150,18 +153,24 @@ class AppearanceSection extends ConsumerWidget {
     );
   }
 
+  // Stacked, not side by side: three cards share the width and
+  // "Tiếng Việt · Hiện tại" does not fit on one line.
   Widget _langLabel(BossipTokens t, I18nState i18n, String key, bool selected) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           i18n.t(key),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: FontSizes.base, color: t.ink),
         ),
         if (selected) ...[
-          const SizedBox(width: 6),
+          const SizedBox(height: 2),
           Text(
             i18n.t('settings:appearance.current'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
           ),
         ],

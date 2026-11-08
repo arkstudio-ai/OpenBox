@@ -118,9 +118,10 @@
     "note": "Việc hẹn giờ và mẫu cũng theo cài đặt này. Nếu tài khoản bị kiểm soát rủi ro tắt tự động đăng, sẽ tạm dùng cách quét mã QR và cuộc trò chuyện sẽ nói rõ lý do."
   },
   "appearance": {
-    "language": "语言 / Language",
+    "language": "Ngôn ngữ",
     "langZh": "Tiếng Trung",
     "langEn": "Tiếng Anh",
+    "langVi": "Tiếng Việt",
     "current": "Hiện tại",
     "theme": "Chủ đề",
     "themeDefault": "Mặc định",

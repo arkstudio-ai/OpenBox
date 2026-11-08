@@ -162,7 +162,6 @@ class LightEntryCard extends StatelessWidget {
 
   Widget _small(BossipTokens t, Color ink, Color sub) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
       Icon(lightEntryIcon(entry.id), size: 20, color: ink),
       const SizedBox(height: 10),

@@ -20,7 +20,7 @@
   "readPrivacy": "Quyền riêng tư",
   "readAi": "Thông báo về AI",
   "saved": "Đã ghi nhận phiên bản chính sách",
-  "operator": "南宁贝之宝科技有限公司",
+  "operator": "Nanning Beizhibao Technology Co., Ltd.",
   "brand": "BossIP",
   "version": "2026-09-28",
   "updatedAt": "2026-09-28",
@@ -49,7 +49,7 @@
           "id": "provider",
           "title": "1. Bên cung cấp và phạm vi",
           "paragraphs": [
-            "BossIP được cung cấp bởi 南宁贝之宝科技有限公司. Các điều khoản này điều chỉnh tài khoản, tạo nội dung bằng AI, xử lý tệp và hỗ trợ công việc trên đám mây trên trang web cũng như ứng dụng iOS/Android của chúng tôi. Các tính năng khả dụng phụ thuộc vào phiên bản và gói của bạn."
+            "BossIP được cung cấp bởi Nanning Beizhibao Technology Co., Ltd.. Các điều khoản này điều chỉnh tài khoản, tạo nội dung bằng AI, xử lý tệp và hỗ trợ công việc trên đám mây trên trang web cũng như ứng dụng iOS/Android của chúng tôi. Các tính năng khả dụng phụ thuộc vào phiên bản và gói của bạn."
           ]
         },
         {
@@ -105,7 +105,7 @@
           "id": "scope",
           "title": "1. Chúng tôi là ai",
           "paragraphs": [
-            "南宁贝之宝科技有限公司 xử lý thông tin cá nhân để cung cấp BossIP. Hãy đọc chính sách này cùng với các thông báo về thu thập thông tin, bên thứ ba/SDK và quyền truy cập. Không cần tài khoản để đọc các tài liệu này."
+            "Nanning Beizhibao Technology Co., Ltd. xử lý thông tin cá nhân để cung cấp BossIP. Hãy đọc chính sách này cùng với các thông báo về thu thập thông tin, bên thứ ba/SDK và quyền truy cập. Không cần tài khoản để đọc các tài liệu này."
           ]
         },
         {
@@ -238,7 +238,7 @@
           "id": "channels",
           "title": "Kênh liên hệ",
           "paragraphs": [
-            "Hãy sử dụng các liên kết email trên trang này để liên hệ với 南宁贝之宝科技有限公司. Không cần đăng nhập để gửi thắc mắc, khiếu nại hoặc yêu cầu về quyền riêng tư. Hãy ghi \"BossIP\" và loại vấn đề trong tiêu đề email."
+            "Hãy sử dụng các liên kết email trên trang này để liên hệ với Nanning Beizhibao Technology Co., Ltd.. Không cần đăng nhập để gửi thắc mắc, khiếu nại hoặc yêu cầu về quyền riêng tư. Hãy ghi \"BossIP\" và loại vấn đề trong tiêu đề email."
           ]
         },
         {
@@ -301,7 +301,7 @@
           "id": "push",
           "title": "Thông báo đẩy",
           "paragraphs": [
-            "Android sử dụng JPush/JCore của 深圳市和讯华谷信息技术有限公司; các thiết bị được hỗ trợ có thể sử dụng kênh của nhà sản xuất. iOS sử dụng dịch vụ Apple Push Notification. Thông báo tác vụ/hệ thống liên quan đến mã định danh đăng ký, thông tin thiết bị/mạng cần thiết và nội dung tin nhắn, tùy theo nền tảng, phiên bản SDK và các kênh đã bật. Trên Android, việc khởi tạo nghiệp vụ diễn ra sau khi đăng nhập và cấp quyền thông báo."
+            "Android sử dụng JPush/JCore của Shenzhen Hexun Huagu Information Technology Co., Ltd.; các thiết bị được hỗ trợ có thể sử dụng kênh của nhà sản xuất. iOS sử dụng dịch vụ Apple Push Notification. Thông báo tác vụ/hệ thống liên quan đến mã định danh đăng ký, thông tin thiết bị/mạng cần thiết và nội dung tin nhắn, tùy theo nền tảng, phiên bản SDK và các kênh đã bật. Trên Android, việc khởi tạo nghiệp vụ diễn ra sau khi đăng nhập và cấp quyền thông báo."
           ]
         },
         {

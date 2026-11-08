@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +12,9 @@ import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import '../billing/state/billing_providers.dart';
+import '../chat/api/assistant_api.dart';
+import '../chat/state/config_providers.dart';
+import '../voice/widgets/voice_call_button.dart';
 import 'state/light_providers.dart';
 import 'state/light_start.dart';
 import 'widgets/entry_card.dart';
@@ -35,12 +40,27 @@ class LightHomeScreen extends ConsumerWidget {
     }
   }
 
+  /// The voice card can dial only once the assistant scope is bound and the
+  /// deployment has voice calls; until then it is grey and leads to the
+  /// assistant tab, where the same call button lives.
+  bool _voiceReady(WidgetRef ref) =>
+      ref.watch(assistantScopeProvider) != null &&
+      (ref.watch(appConfigProvider).valueOrNull?.voiceEnabled ?? false);
+
   void _open(
     BuildContext context,
     WidgetRef ref,
     LightEntriesView view,
     LightEntry entry,
   ) {
+    if (entry.isVoiceCall) {
+      if (_voiceReady(ref)) {
+        unawaited(openVoiceCall(context, ref));
+      } else {
+        context.go(Paths.lightAssistant);
+      }
+      return;
+    }
     if (entry.isComingSoon) {
       ref
           .read(toastProvider.notifier)
@@ -121,13 +141,17 @@ class LightHomeScreen extends ConsumerWidget {
     LightEntriesView view,
   ) {
     final t = context.tokens;
+    final voiceReady = _voiceReady(ref);
     final primaries = view.entries.where((e) => e.isPrimary).toList();
     final secondaries = view.entries.where((e) => e.isSecondary).toList();
     final coming = view.entries
         .where((e) => !e.isPrimary && !e.isSecondary)
         .toList();
 
-    String? reason(LightEntry entry) => entry.available
+    bool voiceOff(LightEntry entry) => entry.isVoiceCall && !voiceReady;
+    String? reason(LightEntry entry) => voiceOff(entry)
+        ? i18n.t('light:home.voiceUnavailable')
+        : entry.available
         ? null
         : i18n.t('light:home.${lightAvailabilityKey(entry.availability)}');
     String? action(LightEntry entry) {
@@ -150,6 +174,7 @@ class LightHomeScreen extends ConsumerWidget {
       size: size,
       reason: reason(entry),
       action: action(entry),
+      unavailable: voiceOff(entry),
       onTap: () => _open(context, ref, view, entry),
     );
     Widget label(String key) => Padding(

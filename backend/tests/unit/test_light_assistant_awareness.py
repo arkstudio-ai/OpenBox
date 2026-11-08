@@ -60,6 +60,8 @@ async def test_light_mode_lists_the_home_directory_with_availability_and_links(f
     assert "- 做菜单｜拍旧菜单，出新菜单｜可用｜/light/topic/menu" in section
     assert "- 发到抖音｜选成片、写标题、定时间｜需要云电脑｜/light/topic/douyin_publish" in section
     assert "- 你拍我剪｜自己拍的素材，剪成一条｜可用｜/light/topic/footage_edit" in section
+    # the voice card dials in place: no page, so no directory row the assistant could link to
+    assert "语音助手" not in section and "voice_assistant" not in section
     # the three rules and the tool to re-check the directory
     assert "默认引导老板去首页对应入口" in section and "「你直接做」" in section
     assert "light_video / menu / poster / footage_edit" in section
@@ -183,7 +185,7 @@ async def test_light_entries_tool_reads_the_same_directory_as_the_prompt(free_wo
         await lease.release(session_status="idle")
     assert value["ui_mode"] == "light" and value["plan_id"] == "free" and value["desktop"] is False
     rows = {row["id"]: row for row in value["entries"]}
-    assert set(rows) == {entry.id for entry in light_entries().entries}
+    assert set(rows) == {entry.id for entry in light_entries().entries if entry.is_topic}  # no row for the voice card
     assert rows["menu"] == {"id": "menu", "title": "做菜单", "subtitle": "拍旧菜单，出新菜单", "availability": "ok",
                             "availability_label": "可用", "url": "/light/topic/menu"}
     assert rows["review"]["availability"] == "needs_desktop" and rows["review"]["availability_label"] == "需要云电脑"

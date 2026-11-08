@@ -114,6 +114,9 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
     entry = config.entry(entry_id)
     if entry is None:
         raise LightError("LIGHT_ENTRY_UNKNOWN", f"unknown entry {entry_id!r}")
+    if entry.action:
+        raise LightError("LIGHT_ENTRY_ACTION", f"entry {entry.id} is an in-app action ({entry.action}), not a topic chat",
+                         status=409, action=entry.action)
     state = availability(entry, await _workspace_facts(workspace_id))
     if state != "ok":
         raise LightError("LIGHT_ENTRY_UNAVAILABLE", f"entry {entry.id} is {state}", status=409, availability=state)

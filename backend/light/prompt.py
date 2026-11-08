@@ -95,6 +95,8 @@ async def entries_directory(user_id: str, workspace_id: str) -> dict:
     view = await entries_view(user_id, workspace_id)
     rows = []
     for entry in view["entries"]:
+        if entry.get("action"):  # the voice card dials in place; there is no page to send anyone to
+            continue
         binding = (entry.get("requires") or {}).get("binding")
         rows.append({
             "id": entry["id"], "title": entry["title"], "subtitle": entry.get("subtitle") or "",

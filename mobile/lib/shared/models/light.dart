@@ -131,6 +131,7 @@ class LightEntry {
     required this.title,
     this.subtitle = '',
     this.kind = 'primary',
+    this.action,
     this.skill = '',
     this.defaultTier,
     this.priceHint = '',
@@ -155,6 +156,7 @@ class LightEntry {
       title: asString(json['title']) ?? id,
       subtitle: asString(json['subtitle']) ?? '',
       kind: asString(json['kind']) ?? 'primary',
+      action: asString(json['action']),
       skill: asString(json['skill']) ?? '',
       defaultTier: asString(json['default_tier']),
       priceHint: asString(json['price_hint']) ?? '',
@@ -185,6 +187,10 @@ class LightEntry {
 
   /// `primary` (a big card), `secondary` (a small one) or `coming_soon`.
   final String kind;
+
+  /// An in-app action instead of a topic chat: `voice_call` dials the
+  /// assistant from the card (docs `LIGHT_MODE_I18N_PLAN.md` §3).
+  final String? action;
   final String skill;
   final String? defaultTier;
   final String priceHint;
@@ -202,6 +208,7 @@ class LightEntry {
   bool get isComingSoon =>
       kind == 'coming_soon' || availability == LightAvailability.comingSoon;
   bool get available => availability == LightAvailability.ok;
+  bool get isVoiceCall => action == 'voice_call';
 
   /// Whether there is a gallery to pick a look from before the chat starts.
   bool get hasGallery => subtypes.any((s) => s.samples.isNotEmpty);

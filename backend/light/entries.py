@@ -11,6 +11,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ID = r"^[a-z][a-z0-9_]*$"
@@ -65,13 +67,16 @@ class Entry(BaseModel):
     title: str = Field(min_length=1, max_length=20)
     subtitle: str = Field(default="", max_length=60)
     kind: str = Field(pattern=r"^(primary|secondary|coming_soon)$")
-    skill: str = Field(min_length=1, max_length=64)
+    #: An in-app action instead of a topic chat: ``voice_call`` dials the personal assistant
+    #: (docs/LIGHT_MODE_I18N_PLAN.md §3). Such an entry has no skill, steps or opening card.
+    action: Literal["voice_call"] | None = None
+    skill: str = Field(default="", max_length=64)
     default_tier: str | None = Field(default=None, pattern=r"^(ultra|high|medium|low|fast)$")
     price_hint: str = Field(default="", max_length=60)
     requires: Requires = Field(default_factory=Requires)
     steps: list[Step] = Field(default_factory=list)
     subtypes: list[Subtype] = Field(default_factory=list)
-    opening_card: OpeningCard
+    opening_card: OpeningCard | None = None
     sample_media: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -79,9 +84,21 @@ class Entry(BaseModel):
         ids = [step.id for step in self.steps]
         if len(set(ids)) != len(ids):
             raise ValueError(f"entry {self.id}: duplicate step id")
-        if self.kind != "coming_soon" and not self.steps:
-            raise ValueError(f"entry {self.id}: an available entry needs steps")
+        if self.action:
+            if self.steps or self.skill or self.opening_card or self.subtypes:
+                raise ValueError(f"entry {self.id}: an action entry has no steps, skill, subtypes or opening card")
+            return self
+        if self.kind != "coming_soon":
+            if not self.steps:
+                raise ValueError(f"entry {self.id}: an available entry needs steps")
+            if not self.skill or self.opening_card is None:
+                raise ValueError(f"entry {self.id}: a topic entry needs a skill and an opening card")
         return self
+
+    @property
+    def is_topic(self) -> bool:
+        """Opens a guided chat (as opposed to an in-app action)."""
+        return self.action is None
 
     def step_ids(self) -> list[str]:
         return [step.id for step in self.steps]
@@ -100,6 +117,8 @@ class Entry(BaseModel):
 
     def opening(self, subtype_id: str | None = None, sample_id: str | None = None) -> OpeningCard:
         """The first assistant message, with the chosen style named when there is one."""
+        if self.opening_card is None:
+            raise ValueError(f"entry {self.id} has no opening card")
         chosen = self.picked_label(subtype_id, sample_id)
         text = self.opening_card.text
         if chosen and self.opening_card.text_with_sample:

@@ -41,9 +41,10 @@ def _client(app):
 def test_entries_config_is_complete():
     config = light_entries()
     ids = [entry.id for entry in config.entries]
-    assert ids == ["video", "menu", "poster", "douyin_publish", "review", "shopkeeper", "footage_edit"]
+    # The voice card sits where 做菜单 was, and 做菜单 fills the slot beside 你拍我剪 (I0, LIGHT_MODE_I18N_PLAN §3).
+    assert ids == ["video", "voice_assistant", "poster", "footage_edit", "menu", "douyin_publish", "review", "shopkeeper"]
     for entry in config.entries:
-        if entry.kind == "coming_soon":
+        if entry.kind == "coming_soon" or not entry.is_topic:
             continue
         assert entry.steps and entry.opening_card.text and entry.skill
         assert len(entry.step_ids()) == len(set(entry.step_ids()))
@@ -53,6 +54,21 @@ def test_entries_config_is_complete():
     assert "「烟火红」" in config.entry("menu").opening("menu_style", "menu_red").text
     assert "{sample}" not in video.opening().text and "「" not in video.opening().text
     assert config.entry("review").requires.binding == "douyin" and config.entry("douyin_publish").requires.desktop
+    voice = config.entry("voice_assistant")
+    assert voice.action == "voice_call" and voice.kind == "primary" and not voice.is_topic
+    assert not voice.steps and not voice.skill and voice.opening_card is None and not voice.price_hint
+    assert voice.public()["action"] == "voice_call"
+
+
+def test_an_action_entry_carries_no_topic_parts():
+    from light.entries import Entry
+    base = {"id": "voice_assistant", "title": "语音助手", "kind": "primary", "action": "voice_call"}
+    assert Entry.model_validate(base).action == "voice_call"
+    for extra in ({"steps": [{"id": "a", "label": "A"}]}, {"skill": "x"}, {"opening_card": {"text": "hi"}}):
+        with pytest.raises(ValueError):
+            Entry.model_validate({**base, **extra})
+    with pytest.raises(ValueError):  # a topic entry still needs its skill and opening card
+        Entry.model_validate({"id": "menu", "title": "做菜单", "kind": "primary", "steps": [{"id": "a", "label": "A"}]})
 
 
 def test_private_sample_media_is_signed_when_served():
@@ -80,7 +96,7 @@ def test_every_entry_skill_ships_with_the_backend():
     from pathlib import Path
     skills = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
     for entry in light_entries().entries:
-        if entry.kind == "coming_soon":
+        if entry.kind == "coming_soon" or not entry.is_topic:
             continue
         assert (skills / entry.skill / "SKILL.md").is_file(), entry.skill
 
@@ -95,6 +111,15 @@ def test_availability_follows_plan_desktop_and_bindings():
     assert light_mode.availability(config.entry("review"), paid) == "ok"
     # 你拍我剪 runs without a desktop (M3), so a free workspace can use it too.
     assert light_mode.availability(config.entry("footage_edit"), free) == "ok"
+    assert light_mode.availability(config.entry("voice_assistant"), free) == "ok"
+
+
+async def test_start_refuses_an_action_entry(monkeypatch):
+    """The voice card dials in place; there is no topic chat to create for it."""
+    with pytest.raises(light_mode.LightError) as info:
+        await light_mode.start(user_id="u", workspace_id="w", entry_id="voice_assistant")
+    assert info.value.code == "LIGHT_ENTRY_ACTION" and info.value.status == 409
+    assert info.value.extra == {"action": "voice_call"}
 
 
 async def test_entries_endpoint_marks_desktop_entries_for_a_free_workspace(monkeypatch):
@@ -109,7 +134,7 @@ async def test_entries_endpoint_marks_desktop_entries_for_a_free_workspace(monke
         body = (await client.get("/api/light/entries")).json()
     assert body["ui_mode"] == "pro" and body["plan_id"] == "free"
     by_id = {entry["id"]: entry["availability"] for entry in body["entries"]}
-    assert by_id == {"video": "ok", "menu": "ok", "poster": "ok", "douyin_publish": "needs_desktop",
+    assert by_id == {"video": "ok", "voice_assistant": "ok", "menu": "ok", "poster": "ok", "douyin_publish": "needs_desktop",
                      "review": "needs_desktop", "shopkeeper": "needs_desktop", "footage_edit": "ok"}
 
 

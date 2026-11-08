@@ -16,6 +16,16 @@ from notifications.templates import TEMPLATES, render_template
 
 
 
+async def notification_language(db, user_id, device=None) -> str:
+    """``user_preferences.extra.ui_language`` when set, else the push device's locale, else zh-CN."""
+    from sqlalchemy import select as _select
+    from core.ui_language import from_preferences
+    from db.models.preference import UserPreference
+    extra = await db.scalar(_select(UserPreference.extra).where(UserPreference.user_id == user_id))
+    stored = from_preferences({"extra": extra} if isinstance(extra, dict) else None)
+    return stored or (device.locale if device and device.locale else "zh-CN")
+
+
 async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_id=None,
                action_id=None, guard=None, ttl_seconds=3600, link=None):
     # Notifications must not turn a valid business commit into an access error
@@ -23,7 +33,9 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
     if not await can_receive(db, user_id, workspace_id, session_id):
         return None
     device = await db.get(PushDevice, user_id)
-    title, body = render_template(kind, name, device.locale if device else "zh-CN")
+    # The interface language the App stored (extra.ui_language) wins; the device's
+    # registration locale is the fallback for accounts that never set one.
+    title, body = render_template(kind, name, await notification_language(db, user_id, device))
     await lock_notification(db, user_id)
     # The inbox row is the durable record; the push only points back at it.
     inbox = await add_inbox(db, user_id=user_id, workspace_id=workspace_id, kind=kind,

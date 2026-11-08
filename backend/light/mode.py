@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.log import create_logger
+from core.ui_language import ui_language_for
 from light.entries import Entry, light_entries
 from light.media import sign_media
 
@@ -93,11 +94,14 @@ def availability(entry: Entry, facts: dict) -> str:
     return "ok"
 
 
-async def entries_view(user_id: str, workspace_id: str) -> dict:
-    config = light_entries()
+async def entries_view(user_id: str, workspace_id: str, lang: str | None = None) -> dict:
+    """``lang`` is the request's interface language (``current_user["ui_language"]``); the stored preference otherwise."""
+    lang = lang or await ui_language_for(user_id)
+    config = light_entries(lang)
     facts = await _workspace_facts(workspace_id)
     return {
         "version": config.version,
+        "ui_language": lang,
         "ui_mode": await ui_mode(user_id),
         "plan_id": facts["plan_id"],
         "desktop": facts["desktop"],
@@ -108,9 +112,18 @@ async def entries_view(user_id: str, workspace_id: str) -> dict:
 
 # --- start a topic chat ---------------------------------------------------------
 
+#: The synthetic user bubble that opens a topic chat: 【做一条视频】选了「餐品展示 · 烟火气特写」 / 【做一条视频】开始.
+START_TEXT = {
+    "zh-CN": ("【{title}】选了「{picked}」", "【{title}】开始"),
+    "en-US": ("[{title}] picked “{picked}”", "[{title}] start"),
+    "vi-VN": ("[{title}] đã chọn “{picked}”", "[{title}] bắt đầu"),
+}
+
+
 async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: str | None = None,
-                subtype: str | None = None, sample: str | None = None) -> dict:
-    config = light_entries()
+                subtype: str | None = None, sample: str | None = None, lang: str | None = None) -> dict:
+    lang = lang or await ui_language_for(user_id)
+    config = light_entries(lang)
     entry = config.entry(entry_id)
     if entry is None:
         raise LightError("LIGHT_ENTRY_UNKNOWN", f"unknown entry {entry_id!r}")
@@ -143,7 +156,8 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
     await session_mod.update_session(session.id, user_id=user_id, light_entry=entry.id, **selection)
     opening = entry.opening(subtype, sample)
     picked = entry.picked_label(subtype, sample)
-    user_text = f"【{entry.title}】" + (f"选了「{picked}」" if picked else "开始")
+    with_pick, plain = START_TEXT.get(lang, START_TEXT["zh-CN"])
+    user_text = with_pick.format(title=entry.title, picked=picked) if picked else plain.format(title=entry.title)
     await chat.exchange(session.id, user_id, user_text=user_text, assistant_text=opening.text,
                         agent=session.agent, model=model, entrypoint=ENTRYPOINT)
     return {

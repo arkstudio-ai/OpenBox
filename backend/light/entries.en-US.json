@@ -1,0 +1,382 @@
+{
+  "version": "2026-11-08.1",
+  "entries": [
+    {
+      "id": "video",
+      "title": "Make a video",
+      "subtitle": "Shop interior / Dishes / Shop visit",
+      "price_hint": "15 s on the budget tier, about 4 credits",
+      "steps": [
+        {
+          "id": "topic",
+          "label": "Pick a topic"
+        },
+        {
+          "id": "photos",
+          "label": "Take photos"
+        },
+        {
+          "id": "confirm",
+          "label": "Set the script"
+        },
+        {
+          "id": "generate",
+          "label": "Generate"
+        },
+        {
+          "id": "deliver",
+          "label": "Save & post"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "dish",
+          "label": "Dish showcase",
+          "samples": [
+            {
+              "id": "dish_closeup",
+              "label": "Sizzling close-up",
+              "description": "Fresh from the wok: steam and glossy sauce, one dish start to finish",
+              "needs": "1–3 dish photos"
+            },
+            {
+              "id": "dish_dark",
+              "label": "Dark & premium",
+              "description": "Dark background, side lighting; for signature dishes and set meals",
+              "needs": "1–2 dish photos"
+            },
+            {
+              "id": "dish_fast",
+              "label": "Fast multi-dish",
+              "description": "Seven or eight dishes in quick succession, lively and generous",
+              "needs": "3 or more dish photos"
+            }
+          ]
+        },
+        {
+          "id": "shop",
+          "label": "Shop interior",
+          "samples": [
+            {
+              "id": "shop_evening",
+              "label": "Evening lights",
+              "description": "From the storefront into the shop: the crowd and the lights",
+              "needs": "1 storefront photo, 1 interior photo"
+            },
+            {
+              "id": "shop_clean",
+              "label": "Bright & tidy",
+              "description": "Daytime natural light; clean space and seating",
+              "needs": "1–2 interior photos"
+            },
+            {
+              "id": "shop_busy",
+              "label": "Full house",
+              "description": "Rush-hour buzz (people only in mid and wide shots)",
+              "needs": "1 interior photo"
+            }
+          ]
+        },
+        {
+          "id": "visit",
+          "label": "Shop visit",
+          "samples": [
+            {
+              "id": "visit_walk",
+              "label": "Walk in and eat",
+              "description": "First person: storefront → ordering → dishes arrive → wrap-up",
+              "needs": "1 storefront photo, 1 dish photo"
+            },
+            {
+              "id": "visit_recommend",
+              "label": "Three must-orders",
+              "description": "Three dishes, one reason to order each",
+              "needs": "3 dish photos"
+            },
+            {
+              "id": "visit_price",
+              "label": "Price per head",
+              "description": "Value for money: prices and portions",
+              "needs": "Dish and receipt photos"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "Pick a style first, or just take 1–3 photos (dishes or the storefront both work); no photos? Describe it in words.",
+        "chips": [
+          "Photos taken, here they are",
+          "No photos, I'll describe it",
+          "Show me other styles"
+        ],
+        "text_with_sample": "Great, a video in the “{sample}” style. Take 1–3 photos first (dishes or the storefront both work); no photos? Describe it in words."
+      }
+    },
+    {
+      "id": "voice_assistant",
+      "title": "Voice assistant",
+      "subtitle": "Make a call, say it once, done"
+    },
+    {
+      "id": "poster",
+      "title": "Make a poster",
+      "subtitle": "New dish / Holiday / Opening / Group deal",
+      "price_hint": "About 0.5 credits per poster",
+      "steps": [
+        {
+          "id": "purpose",
+          "label": "Purpose"
+        },
+        {
+          "id": "copy",
+          "label": "One line"
+        },
+        {
+          "id": "title",
+          "label": "Pick a title"
+        },
+        {
+          "id": "deliver",
+          "label": "Get the image"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "poster_style",
+          "label": "Style",
+          "samples": [
+            {
+              "id": "poster_bold",
+              "label": "Big-type promo",
+              "description": "Big headline, the price stands out",
+              "needs": "One line about the offer"
+            },
+            {
+              "id": "poster_photo",
+              "label": "Photo hero",
+              "description": "Your dish photo as the main image",
+              "needs": "1 dish photo"
+            },
+            {
+              "id": "poster_fresh",
+              "label": "Hand-drawn fresh",
+              "description": "Illustration style, for desserts and drinks",
+              "needs": "One line about the offer"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "What's this poster for? One line about the offer is enough; send a dish photo too if you have one.",
+        "chips": [
+          "New dish",
+          "Holiday event",
+          "Grand opening",
+          "Group deal"
+        ],
+        "text_with_sample": "A “{sample}” poster. What's it for? One line about the offer is enough; send a dish photo too if you have one."
+      }
+    },
+    {
+      "id": "footage_edit",
+      "title": "You shoot, we cut",
+      "subtitle": "Your own clips, cut into one video",
+      "price_hint": "5 credits per cut (≤60 s) + 1 credit per minute of clips",
+      "steps": [
+        {
+          "id": "type",
+          "label": "Video type"
+        },
+        {
+          "id": "upload",
+          "label": "Upload clips"
+        },
+        {
+          "id": "plan",
+          "label": "Edit plan"
+        },
+        {
+          "id": "compose",
+          "label": "Compose"
+        },
+        {
+          "id": "deliver",
+          "label": "Final cut"
+        }
+      ],
+      "opening_card": {
+        "text": "Which kind of video? Pick 3–10 clips you shot from your album (5 minutes in total at most), portrait or landscape; I'll pick the shots, add captions and your shop name.",
+        "chips": [
+          "Shop visit",
+          "New dish",
+          "Promotion",
+          "Daily life"
+        ]
+      }
+    },
+    {
+      "id": "menu",
+      "title": "Make a menu",
+      "subtitle": "Snap the old menu, get a new one",
+      "price_hint": "About 1 credit per version",
+      "steps": [
+        {
+          "id": "style",
+          "label": "Pick a style"
+        },
+        {
+          "id": "items",
+          "label": "Dishes & prices"
+        },
+        {
+          "id": "review",
+          "label": "Check"
+        },
+        {
+          "id": "layout",
+          "label": "Size"
+        },
+        {
+          "id": "deliver",
+          "label": "Get the image"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "menu_style",
+          "label": "Style",
+          "samples": [
+            {
+              "id": "menu_mono",
+              "label": "Minimal black & white",
+              "description": "Clean and crisp; for fast food and coffee",
+              "needs": "Dish names and prices"
+            },
+            {
+              "id": "menu_red",
+              "label": "Festive red",
+              "description": "Red with gold type; for Chinese food and late-night eats",
+              "needs": "Dish names and prices"
+            },
+            {
+              "id": "menu_chalk",
+              "label": "Chalkboard",
+              "description": "Blackboard look; for snacks and desserts",
+              "needs": "Dish names and prices"
+            },
+            {
+              "id": "menu_dark",
+              "label": "Dark & premium",
+              "description": "Dark base, thin column rules; for dining",
+              "needs": "Dish names and prices"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "Snap a photo of your old menu, or just type the dishes and prices; I'll do the layout.",
+        "chips": [
+          "Snap the old menu",
+          "I'll type dishes & prices",
+          "Tweak the last version"
+        ],
+        "text_with_sample": "A “{sample}” menu. Snap a photo of your old menu, or just type the dishes and prices; I'll do the layout."
+      }
+    },
+    {
+      "id": "douyin_publish",
+      "title": "Post to Douyin",
+      "subtitle": "Pick a video, write a caption, set a time",
+      "price_hint": "Free with your plan",
+      "steps": [
+        {
+          "id": "pick",
+          "label": "Pick a video"
+        },
+        {
+          "id": "caption",
+          "label": "Caption & tags"
+        },
+        {
+          "id": "when",
+          "label": "When to post"
+        },
+        {
+          "id": "check",
+          "label": "Pre-checks"
+        },
+        {
+          "id": "publish",
+          "label": "Post"
+        }
+      ],
+      "opening_card": {
+        "text": "Which one goes to Douyin? Pick from what you made recently, or upload from your album.",
+        "chips": [
+          "The latest one",
+          "Upload from album"
+        ]
+      }
+    },
+    {
+      "id": "review",
+      "title": "Performance review",
+      "subtitle": "Post-publish stats and account health",
+      "price_hint": "Free with your plan",
+      "steps": [
+        {
+          "id": "health",
+          "label": "Account health"
+        },
+        {
+          "id": "insight",
+          "label": "This week"
+        },
+        {
+          "id": "next",
+          "label": "What to make next"
+        }
+      ],
+      "opening_card": {
+        "text": "I'll check the plays, likes, comments and completion rate of each video on your Douyin over the last 7 days, then tell you what to make next.",
+        "chips": [
+          "Start",
+          "Only unanswered comments"
+        ]
+      }
+    },
+    {
+      "id": "shopkeeper",
+      "title": "Shopkeeper",
+      "subtitle": "List / delist · Reply to reviews · Check stats",
+      "price_hint": "Free with your plan",
+      "steps": [
+        {
+          "id": "status",
+          "label": "Shop status"
+        },
+        {
+          "id": "ask",
+          "label": "What to do"
+        },
+        {
+          "id": "confirm",
+          "label": "Confirm"
+        },
+        {
+          "id": "done",
+          "label": "Result"
+        }
+      ],
+      "opening_card": {
+        "text": "What needs doing at the shop today? One sentence is enough, e.g. “Take the crayfish set off the menu, back on Saturday”.",
+        "chips": [
+          "List / delist",
+          "Reply to reviews",
+          "Edit group deal",
+          "Check stats"
+        ]
+      }
+    }
+  ]
+}

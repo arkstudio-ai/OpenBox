@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Make the Light gallery samples through the real pipeline (docs/LIGHT_MODE_PLAN.md §4.3).
 
-Each sample in ``light/entries.json`` gets one real output, made the way a
+Each sample in ``light/entries.zh-CN.json`` gets one real output, made the way a
 person's would be: video samples through ``video_generate`` on the entry's
 default tier (15 s, 9:16), menu and poster samples through ``image_gen``.
 The output is copied to a stable key under ``--prefix`` so the entries file

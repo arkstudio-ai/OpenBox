@@ -38,6 +38,11 @@ def test_prompt_that_already_carries_the_label_is_accepted_as_is():
     "主播对镜头讲解这款面霜的三个卖点",
     "两个女孩在教室对话，气氛轻松",
     "画面+旁白：镜头缓慢推进草原上的烤全羊",
+    # light-test 2026-11-09: three news-anchor shots like this one were generated
+    # with audio on and then dubbed with an IMS voiceover — mouth and voice never matched.
+    "竖屏电视新闻演播厅播报画面，一位约35岁的中国男性新闻主播端坐在播报台前，正面面向镜头讲述新闻，"
+    "只有自然的口型开合与极轻微的手部动作，神情严肃专业。画面中不要出现任何文字、字幕、水印或 logo。",
+    "主播嘴部自然开合做播报口型，右手轻抬指向身后大屏",
 ])
 def test_speech_without_words_is_refused_before_paying(prompt):
     with pytest.raises(VideoRequestError, match="spoken_line"):

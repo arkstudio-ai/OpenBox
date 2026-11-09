@@ -206,6 +206,7 @@ class FakeLink:
         ref.room = dict(room) if room else None
         self.started.append(ref)
         ref.inbox_id = f"inbox-{len(self.started)}"
+        ref.client_message_id = f"client-{len(self.started)}"
 
     async def wait(self, ref, *, elapsed=0.0, on_message=None):
         self.on_message = on_message

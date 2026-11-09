@@ -20,12 +20,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'assistant_fixture.dart' show FixedI18n, TestWs, scope;
 
-Map<String, dynamic> _message(String id, String role, String text) => {
+Map<String, dynamic> _message(
+  String id,
+  String role,
+  String text, {
+  String? clientMessageId,
+}) => {
   'id': id,
   'session_id': 'main',
   'role': role,
   'finish': role == 'assistant' ? 'stop' : null,
   'created_at': DateTime.now().toUtc().toIso8601String(),
+  'client_message_id': ?clientMessageId,
   'parts': [
     {'id': '$id-text', 'type': 'text', 'text': text},
   ],
@@ -67,6 +73,9 @@ class _Backend {
   final dio = Dio(BaseOptions(baseUrl: 'http://assistant.invalid'));
   final requests = <RequestOptions>[];
 
+  /// Messages the newest history page gains after the first read.
+  final newer = <Map<String, dynamic>>[];
+
   List<String> get paths => [for (final r in requests) r.path];
 
   Map<String, dynamic>? _respond(RequestOptions options) =>
@@ -103,6 +112,7 @@ class _Backend {
                   'messages': [
                     _message('m03', 'user', 'How is the page coming along?'),
                     _message('m04', 'assistant', 'The page is dark now.'),
+                    ...newer,
                   ],
                   'has_more': true,
                 }
@@ -132,6 +142,99 @@ class _Backend {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets(
+    'words from a voice call show at once and give way to the server message',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final backend = _Backend();
+      final ws = TestWs();
+      final container = (await tester.runAsync(() async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final bundle = await I18nBundle.load();
+        return ProviderContainer(
+          overrides: [
+            prefsProvider.overrideWithValue(prefs),
+            wsClientProvider.overrideWithValue(ws),
+            assistantScopeProvider.overrideWithValue(scope),
+            assistantApiProvider(
+              scope,
+            ).overrideWithValue(AssistantApi(backend.dio, scope)),
+            appConfigProvider.overrideWith(
+              (ref) async => AppConfig.fromJson({
+                'models': <Map<String, dynamic>>[],
+                'default_model': 'test/model',
+              }),
+            ),
+            runningContainerProvider.overrideWith(
+              (ref) => throw StateError('Assistant discovered a desktop'),
+            ),
+            i18nProvider.overrideWith(
+              () => FixedI18n(
+                I18nState(language: 'en-US', bundle: bundle),
+                prefs,
+              ),
+            ),
+          ],
+        );
+      }))!;
+      container.read(authSessionProvider).userId = scope.userId;
+      container.read(workspaceScopeProvider).currentId = scope.workspaceId;
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: ThemeData(
+              extensions: [
+                BossipTokens.resolve(
+                  BossipThemeName.default_,
+                  Brightness.light,
+                ),
+              ],
+            ),
+            home: const Scaffold(body: AssistantScreen(scope: scope)),
+          ),
+        ),
+      );
+      Future<void> settle() async {
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+      }
+
+      await settle();
+      expect(find.text('The page is dark now.'), findsOneWidget);
+
+      // The call hands the words over: the bubble is there before any read.
+      final controller = container.read(
+        assistantControllerProvider(scope).notifier,
+      );
+      controller.showVoiceInput(clientMessageId: 'c1', text: '广西北海');
+      controller.showVoiceInput(clientMessageId: 'c1', text: '广西北海');
+      await tester.pump();
+      expect(find.text('广西北海'), findsOneWidget);
+      await settle();
+      expect(find.text('广西北海'), findsOneWidget);
+
+      // The assistant claims the turn: the server's copy takes the bubble's place.
+      backend.newer.add(
+        _message('m05', 'user', '广西北海', clientMessageId: 'c1'),
+      );
+      // Not awaited: the read runs on the test clock, advanced by pumping.
+      unawaited(controller.refresh());
+      await settle();
+      expect(find.text('广西北海'), findsOneWidget);
+      final shown = container.read(assistantControllerProvider(scope)).messages;
+      expect(shown.where((m) => m.id.startsWith('tmp-')), isEmpty);
+      expect(shown.last.id, 'm05');
+      container.dispose();
+    },
+  );
 
   testWidgets(
     'the assistant reads its conversation from history, merges older pages, copies locally and marks what was seen',

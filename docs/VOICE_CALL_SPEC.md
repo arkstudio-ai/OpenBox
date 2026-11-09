@@ -135,7 +135,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `playback.started` | `response_id` | 协商回执后，在该回复首个 PCM 帧之前发送；ID 包含供应商会话代次 |
 | `playback.finished` | `response_id` | 该回复生成完成，等待真实播放结束；不是“用户已听完” |
 | `phrase` | `key` ∈ greeting/progress/result_in_text/limit_reached/reconnected | 我们请求的一个回复开始（招呼、进度、固定提示；音频走普通二进制帧）；客户端只用于计时与调试，不显示文字。第二轮起 `progress` 取代 `still_working`；2026-10-10 起 `reconnected`：百炼会话断开后续上，用户当时被打断，请其再说一遍 |
-| `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空) | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息 |
+| `turn` | `turn_id`, `state` ∈ accepted/working/late/delivered/timeout/failed, `inbox_id`, `message_id` (可空)；仅 `accepted` 且是用户原话时另带 `text`、`client_message_id` | 一个语音轮次的进度；`accepted` 时消息尚未生成（`message_id` 为空），助理认领后发 `working` 并带 `message_id`，客户端据此让文字界面滚到该消息。认领要等上一轮结束，期间上一轮的回复文字会先落下、排在这句话前面，所以 `accepted` 直接带用户原话 `text` 和这条消息将来的 `client_message_id`（2026-11-09 起）：助理页立刻按该 client id 放一条待处理的用户气泡，服务端消息到达后原位替换；卡片作答等没有自己消息的轮次不带这两项 |
 | `cost` | 同现有 demo `CallMeter.snapshot()`：`total_yuan`, `confirmed_yuan`, `provisional_yuan`, `costs_yuan{input_text,input_audio,output_text,output_audio}`, `tokens{...}`, `settled_rounds`, `unreported_rounds`, `pending`, `final`, `price_date` | 每轮 `response.done` 后与挂断后各发一次 |
 | `heartbeat` | `elapsed_seconds` | 每 10 秒；客户端 30 秒没有任何帧视为断线 |
 | `limit` | `reason` = credits, `elapsed_seconds` | 积分耗尽：服务端先说明积分不足，再发 `ended{reason:quota}` |
@@ -144,7 +144,7 @@ idle/user_speaking ─response.created─► responding ─response.done─► i
 | `transcript` | `role` ∈ user/assistant, `text`, `item_id`, `final` (bool), `at` (epoch 秒) | 2026-11-02 起：本通电话里用户说的和前台答的，供通话页"对话卡"显示（VOICE_SEAM_PLAN §11.2）。`final=false` 是同一 `item_id` 的前台回复到目前为止的全文，最终行替换它。后台备注、静音保活回复不下发。旧客户端忽略 |
 | `focus` | `task` = `{task_id, title, session_id, progress}` 或 `null`，`bound` (bool) | 2026-11-02 起：这通电话当前在说哪个任务：某次交办把工作交给了它、刚播了它的结果、或用户正开着它的执行页（`view`）；接通时若 24 小时内有动过的任务也会发。`progress` 是该任务房间此刻在做的一步（"在生成视频"，空串表示空闲），变化时再发一次。`bound=true` 表示用户已口头进入这间（VOICE_SEAM_PLAN §9.4 步 3）：之后说的话直接交给该任务；对话卡据此自动切到"任务间"通道，`false` 切回通话 |
 
-转写只发给本通电话自己的客户端，仍不写入任何可被其他人读到的地方；服务端另用于 `VoiceTurn.transcript`、通话小结和调试日志（默认关）。
+转写只发给本通电话自己的客户端，仍不写入任何可被其他人读到的地方；服务端另用于 `VoiceTurn.transcript`、通话小结和调试日志（默认关）。`turn{accepted}` 的 `text` 是其中已交给助理的那句用户原话，与主会话里将要落库的用户消息内容相同，供文字对话按说话顺序先行显示（2026-11-09）。
 
 ### 5.4 客户端 → 服务端 JSON 事件
 

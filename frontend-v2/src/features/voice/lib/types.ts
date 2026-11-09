@@ -57,6 +57,10 @@ export interface TurnEvent {
   state: TurnState
   inbox_id?: string | null
   message_id?: string | null
+  /** With `accepted` only: the user's words and the client id their message will carry
+   *  once the assistant claims the turn (spec §5.3). */
+  text?: string | null
+  client_message_id?: string | null
 }
 
 export interface EndedEvent {

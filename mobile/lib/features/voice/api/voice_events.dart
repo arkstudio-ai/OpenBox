@@ -45,6 +45,8 @@ sealed class VoiceServerEvent {
           state: asString(json['state']) ?? 'accepted',
           inboxId: asString(json['inbox_id']),
           messageId: asString(json['message_id']),
+          text: asString(json['text']),
+          clientMessageId: asString(json['client_message_id']),
         ),
       ),
       'cost' => VoiceCostEvent(VoiceCost.fromJson(json)),

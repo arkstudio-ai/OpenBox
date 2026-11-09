@@ -102,6 +102,7 @@ async def test_start_accepts_a_voice_marked_turn_wakes_the_assistant_and_records
     assert item.origin_ref["entrypoint"] == "assistant_voice" and item.origin_ref["voice_call_id"] == link.call_id
     from assistant.identities import inbox_key
     assert item.origin_ref["client_message_id"] == inbox_key("voice-input", link.call_id, ref.provider_call_id)
+    assert ref.client_message_id == item.origin_ref["client_message_id"]
     assert quick_steps == [(main.id, owner)]
     row = await turn_row(ref)
     assert (row.call_id, row.inbox_id, row.outcome, row.transcript) == (link.call_id, ref.inbox_id, "pending", ref.text)

@@ -84,6 +84,18 @@ bool _definitive(Object error) {
 
 int _byId(ChatMessage a, ChatMessage b) => a.id.compareTo(b.id);
 
+/// A voice turn's pending bubble (`tmp-` keeps every optimistic-echo rule).
+const _voiceEchoPrefix = 'tmp-voice-';
+
+/// How long a voice bubble waits for its message. A turn the assistant never
+/// claims (the call failed before it got there) must not stay forever.
+const _voiceEchoTtl = Duration(minutes: 15);
+
+bool _staleVoiceEcho(ChatMessage m, DateTime now) =>
+    m.id.startsWith(_voiceEchoPrefix) &&
+    m.createdAt != null &&
+    now.difference(m.createdAt!) > _voiceEchoTtl;
+
 /// One owner/workspace-bound view. The transcript pages like an ordinary
 /// chat (V2): the newest turns from the session history, older pages as the
 /// reader scrolls up. Socket frames are hints to read again, never bodies.
@@ -242,10 +254,12 @@ class AssistantController
       _held
         ..clear()
         ..addEntries(transcript.map((m) => MapEntry(m.id, m)));
+      final now = DateTime.now();
       final echoes = state.messages.where(
         (m) =>
             m.id.startsWith('tmp-') &&
-            !transcript.any((v) => v.clientMessageId == m.clientMessageId),
+            !transcript.any((v) => v.clientMessageId == m.clientMessageId) &&
+            !_staleVoiceEcho(m, now),
       );
       final pendingActions = <String, String>{};
       for (final task in taskMap.values) {
@@ -290,6 +304,31 @@ class AssistantController
         );
       }
     }
+  }
+
+  /// Words a voice call handed to the assistant (`turn{accepted}`): shown at
+  /// once as a pending user bubble. Their message is only written when the
+  /// assistant claims the turn, which waits for the turn before it to end;
+  /// without this the reply to the earlier turn lands above these words. The
+  /// server's message carries [clientMessageId], so a refresh puts it in the
+  /// bubble's place (see [_refresh]).
+  void showVoiceInput({required String clientMessageId, required String text}) {
+    final main = _mainId;
+    if (!_current || main == null || text.trim().isEmpty) return;
+    if (_held.values.any((m) => m.isUser && m.clientMessageId == clientMessageId) ||
+        state.messages.any((m) => m.clientMessageId == clientMessageId)) {
+      return;
+    }
+    final echo = ChatMessage(
+      id: '$_voiceEchoPrefix$clientMessageId',
+      sessionId: main,
+      role: 'user',
+      clientMessageId: clientMessageId,
+      createdAt: DateTime.now(),
+      parts: [TextPart(id: 'tmp-part-$clientMessageId', text: text.trim())],
+    );
+    state = state.copyWith(messages: [...state.messages, echo]);
+    unawaited(refresh());
   }
 
   /// The turns before the oldest one held, put in front of it.

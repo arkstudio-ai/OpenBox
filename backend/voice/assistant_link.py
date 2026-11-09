@@ -110,6 +110,7 @@ class VoiceTurnRef:
     requested: float              # bridge clock
     inbox_id: str | None = None
     message_id: str | None = None
+    client_message_id: str | None = None  # the user message's client id, known from acceptance (start)
     status: str = "pending"       # pending, then ok / failed / timeout
     reason: str = ""              # a result's note: ok / timeout / failed / unavailable
     speech: str = ""
@@ -238,12 +239,16 @@ class AssistantLink:
         if words and ref.text and " ".join(ref.text.split()) != words:
             context["request"] = ref.text
 
+        from assistant.identities import inbox_key
+        # The claimed message carries this client id (agent/inbox.py), so a client that shows the
+        # words at acceptance can let the server's copy take their place.
+        ref.client_message_id = inbox_key("voice-input", self.call_id,
+                                          context.get("spoken_input_id") or ref.provider_call_id)
+
         async def accept(context: dict | None):
-            from assistant.identities import inbox_key
             return await inputs.accept_turn(
                 user_id=self.user_id, workspace_id=self.workspace_id, main_id=self.main_session_id,
-                client_id=inbox_key("voice-input", self.call_id,
-                                    (context or {}).get("spoken_input_id") or ref.provider_call_id), text=text, model=self.model,
+                client_id=ref.client_message_id, text=text, model=self.model,
                 variant=self.variant, entrypoint=VOICE_ENTRYPOINT,
                 extra_ref={"voice_call_id": self.call_id, **native_ref,
                            **({"voice_context": context} if context else {})})

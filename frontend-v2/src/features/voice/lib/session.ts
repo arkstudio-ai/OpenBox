@@ -244,9 +244,13 @@ export class VoiceCallSession {
         break
       case "turn":
         this.sink.mark(`turn:${event.state}`)
-        // The same turn shows up in the text conversation; bring it into view
-        // there. Its message exists once the assistant picks the turn up, so the
-        // id arrives with `working`, not with `accepted`.
+        // The same turn shows up in the text conversation. Its message exists
+        // once the assistant picks the turn up, which waits for the turn before
+        // it to end; the words come with `accepted` so the conversation can
+        // show them at once instead of under that earlier reply.
+        if (event.state === "accepted" && event.client_message_id && event.text?.trim())
+          emitAppEvent("chat.voice_input", { clientMessageId: event.client_message_id, text: event.text.trim() })
+        // Bring it into view there; the id arrives with `working`, not with `accepted`.
         if (event.message_id && (event.state === "accepted" || event.state === "working"))
           emitAppEvent("chat.reveal", { messageId: event.message_id })
         break

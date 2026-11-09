@@ -74,6 +74,7 @@
 
 ## 5. 与聊天列表联动
 
+- 收到 `turn{state:accepted, text, client_message_id}`：经事件总线发 `chat.voice_input`，助理页的 `useVoiceInputEcho` 立刻按 `client_message_id` 放一条 `tmp-` 用户气泡（与打字发送的乐观回显同一套替换规则：服务端消息到达即原位替换；15 分钟无人认领则丢弃）。不在助理页时不显示。
 - 收到 `turn{state:accepted, message_id}`：若当前在助理页，把对话滚到该消息（复用现有 `useAssistantEvents` 的刷新：`assistant.turn.accepted` 事件本来就会让列表刷新，这里只需在列表里找到 `message_id` 并 `scrollIntoView`）。不在助理页时不跳转。
 - 收到 `turn{state:delivered}`：不做额外动作（回复已由现有事件流进入列表）。
 - 通话中输入框照常可用：用户打字发的消息与语音轮次共用一个 Inbox，先后顺序由服务端决定。

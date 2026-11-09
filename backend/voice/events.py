@@ -52,9 +52,16 @@ def phrase(key: str) -> dict:
     return {"type": "phrase", "key": _member(key, PHRASE_KEYS, "phrase")}
 
 
-def turn(turn_id: str, state: str, *, inbox_id: str | None, message_id: str | None) -> dict:
-    return {"type": "turn", "turn_id": turn_id, "state": _member(state, TURN_STATES, "turn state"),
-            "inbox_id": inbox_id, "message_id": message_id}
+def turn(turn_id: str, state: str, *, inbox_id: str | None, message_id: str | None,
+         text: str | None = None, client_message_id: str | None = None) -> dict:
+    """``text`` and ``client_message_id`` come only with ``accepted`` for the user's own words: the
+    message does not exist until the assistant claims the turn, so the client shows the words as a
+    pending bubble under that client id and lets the server's message replace it (spec §5.3)."""
+    value = {"type": "turn", "turn_id": turn_id, "state": _member(state, TURN_STATES, "turn state"),
+             "inbox_id": inbox_id, "message_id": message_id}
+    if state == "accepted" and text and client_message_id:
+        value["text"], value["client_message_id"] = text, client_message_id
+    return value
 
 
 def transcript(role: str, text: str, *, item_id: str, final: bool, at: float) -> dict:

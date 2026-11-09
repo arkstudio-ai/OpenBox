@@ -1743,7 +1743,8 @@ _SPOKEN_LABEL = re.compile(r"(?:口播台词|spoken line)\s*[:：][ \t]*(?P<line
 
 #: Something in the prompt says a person speaks, narrates or sings.
 _SPEECH_CUES = re.compile(
-    r"说话|开口|讲话|讲解|解说|口播|台词|对白|对话|旁白|念白|念出|朗读|说道|说[:：]|喊道|唱歌|歌唱|唱着|配音"
+    r"说话|开口|讲话|讲解|讲述|解说|口播|播报|播音|主持|口型|台词|对白|对话|旁白|念白|念出|念稿|朗读|说道|说[:：]"
+    r"|喊道|发言|演讲|采访|访谈|唱歌|歌唱|唱着|配音"
     r"|\bspeak(?:s|ing)?\b|\bsays?\b|\bsaying\b|\btalk(?:s|ing)?\b|\bdialogue\b|\bdialog\b"
     r"|\bnarrat(?:es|ion|ing|or)\b|\bvoice-?over\b|\blip-?sync|\bsing(?:s|ing)?\b|\bmonologue\b",
     re.IGNORECASE,
@@ -3546,6 +3547,7 @@ VIDEO_GENERATE_DESCRIPTION = """\
 Generate video only through this tool. models lists capabilities; validate checks the exact shot and owned inputs without submitting. \
 Do not estimate credits, compare pricing or request a separate fee confirmation. submit requires prompt and idempotency_key. \
 Anyone speaking or narrating in a shot needs spoken_line (the exact words); a talking shot without it is refused; a shot where nobody speaks says no_speech=true. \
+A shot that will carry a video_compose voiceover shows nobody talking (no_speech=true, generate_audio=false); a presenter seen talking says spoken_line and gets no voiceover. \
 Before paying, clarify ambiguous asset selection or purpose. If a model cannot use requested references, \
 explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
 Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \

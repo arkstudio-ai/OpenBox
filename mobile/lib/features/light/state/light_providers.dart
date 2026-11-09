@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/auth_store.dart';
+import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/light.dart';
 import '../../../shared/models/light_autopilot.dart';
@@ -18,9 +19,13 @@ void _scope(Ref ref) {
 }
 
 /// The home entries with availability for the active workspace. Refetched
-/// on a workspace or account change and on pull-to-refresh.
+/// on a workspace or account change, on pull-to-refresh and when the
+/// interface language changes: the titles come from the server in the
+/// request's `Accept-Language`, so the cards would otherwise keep the old
+/// language until the next refresh.
 final lightEntriesProvider = FutureProvider<LightEntriesView>((ref) {
   _scope(ref);
+  ref.watch(i18nProvider.select((s) => s.language));
   return ref.watch(lightApiProvider).entries();
 });
 

@@ -126,6 +126,49 @@ def render_template(kind: str, name: str = '', locale: str = 'zh-CN') -> tuple[s
     return title, body.format(name=name)
 
 
+def recover(kind: str, title: str, body: str) -> tuple[str, str] | None:
+    """The ``(name, lang)`` a stored inbox row was rendered from, or ``None`` when it is not one of these templates.
+
+    Rows keep only the rendered title and body, so the name is read back out of the body; a platform
+    name goes back to its key so it can be rendered in another language, and the "no name" default
+    goes back to an empty name for the same reason. Test rows (prefixed title) and free-text rows stay
+    as they are."""
+    table = TEMPLATES.get(kind)
+    if not table:
+        return None
+    for lang, (t_title, t_body) in table.items():
+        if title != t_title:
+            continue
+        if '{name}' not in t_body:
+            if body == t_body:
+                return '', lang
+            continue
+        head, tail = t_body.split('{name}', 1)
+        if len(body) < len(head) + len(tail) or not body.startswith(head) or not body.endswith(tail):
+            continue
+        name = body[len(head):len(body) - len(tail)]
+        if name == pick(DEFAULT_NAME, lang):
+            name = ''
+        if kind == 'platform_auth_expired':
+            name = next((key for key, names in PLATFORMS.items() if name in names.values()), name)
+        return name, lang
+    return None
+
+
+def relocalize(kind: str, title: str, body: str, locale: str | None) -> tuple[str, str]:
+    """A stored row's title and body in ``locale``: re-rendered when the row came from a template, else as stored.
+
+    The inbox is read far more often than it is written and the person may switch the interface language
+    at any time (docs/LIGHT_MODE_I18N_PLAN.md §2.4), so the list follows the language of the request
+    rather than the one in force when the row was written."""
+    if not locale:
+        return title, body
+    found = recover(kind, title, body)
+    if found is None or found[1] == language(locale):
+        return title, body
+    return render_template(kind, found[0], locale)
+
+
 def test_template(kind: str, locale: str) -> tuple[str, str]:
     lang = language(locale)
     name = pick(SAMPLE_WORK if kind.startswith('publish_') else SAMPLE_TASK, lang)

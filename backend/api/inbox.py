@@ -34,7 +34,7 @@ async def list_inbox(
         except ValueError:
             raise HTTPException(400, detail={"code": "INBOX_BAD_CURSOR"})
         counts = await inbox.unread_counts(db, current_user["user_id"], current_user.get("workspace_id"))
-    return {"items": [inbox.public_item(r) for r in rows], "nextCursor": next_cursor, "unread": counts}
+    return {"items": [inbox.public_item(r, current_user.get("ui_language")) for r in rows], "nextCursor": next_cursor, "unread": counts}
 
 
 @router.get("/unread")
@@ -60,7 +60,7 @@ async def read_one(notification_id: str, current_user: dict = Depends(get_curren
         if row is None:
             raise HTTPException(404, detail="Notification not found")
         await db.commit()
-        return inbox.public_item(row)
+        return inbox.public_item(row, current_user.get("ui_language"))
 
 
 def public_topic(row: Topic) -> dict:

@@ -132,6 +132,42 @@ async def supersede_chain_locked(db, main, task, now) -> list[str]:
     return replaced
 
 
+async def coalesce_delegated_input_locked(db, execution, task, now) -> list[str]:
+    """A newer delegated instruction replaces the assistant's earlier ones nobody has started on.
+
+    light-test 2026-11-09: one video task took five delegated followups in four minutes (45 s / 30 s /
+    45 s / 30 s …), each a complete restatement from the phone. They ran one after another: the 45 s
+    remake started right after the 30 s cut was delivered, then the "back to 30 s" one, each paying for
+    generations the next one threw away. Every delegated followup is self-contained (voice prompt), so
+    an older one still queued is already stale: cancel it with a named code and let the newest run.
+    Only the assistant's own plain-text followups coalesce — the task's opening instruction, the user's
+    typed messages, inputs that carry attachments, steering and retained-continuation inputs keep their
+    place. Returns the ids."""
+    rows = (await db.scalars(select(AgentInboxItem).where(
+        AgentInboxItem.session_id == execution.id, AgentInboxItem.user_id == execution.user_id,
+        AgentInboxItem.state == "accepted", AgentInboxItem.delivery == "followup",
+        AgentInboxItem.origin == "assistant_delegation",
+    ).order_by(AgentInboxItem.created_at, AgentInboxItem.id).with_for_update())).all()
+    replaced: list[str] = []
+    for row in rows:
+        ref = row.origin_ref or {}
+        # The opening instruction (intent_revision 1) is the task's goal, never a stale restatement.
+        if (row.attachments or ref.get("continuation_authority") or ref.get("task_id") != task.id
+                or int(ref.get("intent_revision") or 0) <= 1):
+            continue
+        row.state, row.outcome = "canceled", "canceled"
+        row.error = {"code": "ASSISTANT_INPUT_SUPERSEDED",
+                     "message": "Replaced by a newer instruction from the assistant before it was started"}
+        row.canceled_at = row.updated_at = now
+        await record_submission_canceled_locked(db, execution, row, now=now)
+        await append_agent_event_locked(db, execution, kind="inbox.canceled",
+            payload={"item_id": row.id, "state": "canceled", "code": "ASSISTANT_INPUT_SUPERSEDED",
+                     "reason": row.error["message"]},
+            idempotency_key=f"inbox:{row.id}:canceled")
+        replaced.append(row.id)
+    return replaced
+
+
 def similar_task_title(first: str, second: str) -> bool:
     """Two titles that name the same piece of work: one contains the other, or most character bigrams match."""
     a, b = _title_key(first), _title_key(second)
@@ -560,6 +596,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             source_ref["revision_request"] = revision_request
             command.source_ref = dict(source_ref)
         superseded: list[str] = []
+        replaced_input: list[str] = []
         reopened = False
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
@@ -598,6 +635,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             if expected_run is not None:
                 from assistant.steering import require_steer_target_locked
                 await require_steer_target_locked(db, execution, expected_run)
+            if source is not None and not source.coordination_inbox_id and delivery == "followup" and not attachments:
+                replaced_input = await coalesce_delegated_input_locked(db, execution, task, now)
             task.control_revision += 1
             task.intent_revision += 1
             task.archived_at = None
@@ -681,6 +720,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                    "url": f"/app/s/{execution.id}"}
         if superseded:
             receipt["superseded_task_ids"] = superseded
+        if replaced_input:
+            # The helper never saw those: tell the user the requirements were updated, not sent twice.
+            receipt["superseded_inbox_ids"] = replaced_input
         if revision_request:
             receipt["superseded_request_id"] = revision_request["request_id"]
         if placement_row is not None:
@@ -710,6 +752,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
+    if replaced_input:
+        from agent.inbox import _notify
+        _notify(replaced_input)
     from assistant.control import publish_task_changed, publish_task_control
     publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
     if reopened:

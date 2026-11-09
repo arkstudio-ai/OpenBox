@@ -88,8 +88,15 @@ Call:
 ```
 video_generate(action="submit", prompt=<prompt>, duration=15, ratio="9:16",
                input_assets=[{"asset_id": <photo>, "role": "reference_image"}],   # omit without a photo
-               idempotency_key="light_video:<session>:<n>")
+               idempotency_key="light_video:<this conversation's session id>:<n>:<now, e.g. 1109-0308>")
 ```
+
+The key is scoped to the owner, not to this conversation: a plain
+`light_video:<session>:1` collides with the clip they made yesterday and the
+tool answers that the key "already belongs to a different request". That means
+the key, not the clip, is wrong: submit once more with a fresh key (new time
+suffix). Never resend the same key, and never copy a session id from the brief
+or an earlier task — use this conversation's own.
 
 Do not pass `model` or `resolution` (the page fixed them). Then
 `video_generate(action="wait", job_id=…, wait_seconds=25)` until it completes;

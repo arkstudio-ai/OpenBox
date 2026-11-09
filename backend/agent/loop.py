@@ -1518,6 +1518,14 @@ async def run_loop(
             latency_phase("tool_catalogue")
             with latency_span("catalogue.workdir"):
                 session_workdir = await workdir_for_session(session)
+            # Tools revealed by an earlier run of this session must stay
+            # callable without another capability_search: a deferred step
+            # skips reveal restoration, so defer only when nothing is live.
+            from session.internal_parts import has_live_reveals
+
+            live_reveals = has_live_reveals(
+                getattr(session, "tool_exposure_state", None), agent_name,
+            )
             with latency_span("catalogue.resolve_tools"):
                 resolved_step_tools = await resolve_step_tools(
                     agent_def,
@@ -1530,7 +1538,8 @@ async def run_loop(
                     in {"shadow", "portable", "native_auto"},
                     return_catalogue_state=True,
                     defer_remote=(exposure_mode == "portable" and session.kind == "normal"
-                                  and inherited_authority is None and not remote_catalogue_requested),
+                                  and inherited_authority is None and not remote_catalogue_requested
+                                  and not live_reveals),
                     compact_skills=exposure_mode == "portable",
                 )
             latency_phase("context")

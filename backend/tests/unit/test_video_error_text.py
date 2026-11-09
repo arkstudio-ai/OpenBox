@@ -101,3 +101,24 @@ def test_a_reply_that_did_arrive_is_still_scrubbed():
 
     assert message == "HTTP 500: Internal Server Error"
     assert "SECRET" not in message
+
+
+def test_idempotency_conflict_names_the_key_and_asks_for_a_new_one():
+    """2026-11-09 light-test: the Light skill's key pattern collided with the
+    owner's clip from two days earlier and the conflict reached the model as
+    "RuntimeError: operation failed", which it retried five times verbatim.
+    """
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from tool.video_production import idempotency_conflict_error
+
+    existing = SimpleNamespace(id="video_OLD", created_at=datetime(2026, 11, 7, 6, 46, tzinfo=timezone.utc))
+    exc = idempotency_conflict_error("light_video:session_X:1", existing)
+    text = _public_error(exc)
+
+    assert isinstance(exc, RuntimeError)  # compose's `except RuntimeError` still catches it
+    assert "light_video:session_X:1" in text
+    assert "video_OLD" in text and "2026-11-07" in text
+    assert "new key" in text and "Do not resubmit the same key" in text
+    assert "operation failed" not in text

@@ -5,6 +5,7 @@ import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
 import 'package:bossip_mobile/features/chat/api/chat_api.dart';
 import 'package:bossip_mobile/features/chat/state/assistant_controller.dart';
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
+import 'package:bossip_mobile/features/chat/state/task_card_fold.dart';
 import 'package:bossip_mobile/shared/api/api_error.dart';
 import 'package:bossip_mobile/shared/api/assistant_profile.dart';
 import 'package:bossip_mobile/shared/api/containers_api.dart';
@@ -345,11 +346,20 @@ class TestProfileApi extends AssistantProfileApi {
 }
 
 class Fixture {
-  Fixture(this.prefs, {TestApi? server, I18nState? i18n, ChatApi? legacy})
-    : api = server ?? TestApi() {
+  Fixture(
+    this.prefs, {
+    TestApi? server,
+    I18nState? i18n,
+    ChatApi? legacy,
+    this.foldCards = false,
+  }) : api = server ?? TestApi() {
     container = ProviderContainer(
       overrides: [
         prefsProvider.overrideWithValue(prefs),
+        // The fixture's task finished two hours ago, which the real default
+        // folds to one line; tests read the full card unless they ask for folding.
+        if (!foldCards)
+          taskCardFoldProvider.overrideWith(_OpenCardsFoldStore.new),
         wsClientProvider.overrideWithValue(ws),
         assistantProfileApiProvider.overrideWithValue(profileApi),
         assistantProfileOwnerProvider.overrideWithValue(scope.userId),
@@ -377,6 +387,7 @@ class Fixture {
     );
   }
   final SharedPreferences prefs;
+  final bool foldCards;
   final TestApi api;
   final ws = TestWs();
   final profileApi = TestProfileApi();
@@ -398,6 +409,11 @@ class Fixture {
     container.dispose();
     unawaited(ws.close());
   }
+}
+
+class _OpenCardsFoldStore extends TaskCardFoldStore {
+  @override
+  TaskCardFoldState build() => super.build().copyWith(autoFold: false);
 }
 
 class FixedI18n extends I18nController {

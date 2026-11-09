@@ -2,7 +2,7 @@
 // from the top bar. Waiting-on-you first, then work in progress, then what
 // finished lately. Following an existing conversation lives at its foot.
 import { useEffect, useState, type ReactNode } from "react"
-import { ListChecks, Plus } from "lucide-react"
+import { ChevronDown, ChevronRight, ListChecks, Plus } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { Dialog, DialogTitle } from "@/shared/ui/Dialog"
@@ -12,6 +12,7 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { useAssistantWatch, type AssistantWatchItem } from "../api/assistant-watch"
 import { useAssistantRequests } from "../api/assistant-requests"
 import { useAssistantTasksPanel } from "../stores/assistant-tasks-panel"
+import { useTaskCardFold } from "../stores/task-card-fold"
 import type { QuestionRequest } from "@/shared/types/api"
 import { isActiveTask, taskStatus, type TaskStatus } from "../lib/task-status"
 import { AssistantTaskCard } from "./AssistantTaskCard"
@@ -70,6 +71,9 @@ export function AssistantTasksSheet({ open, onClose, renderQuestion }: {
   const [following, setFollowing] = useState(false)
   const items = watch.data?.items ?? []
   const pending = useAssistantRequests(open)
+  // "最近完成" folds to its heading by default; the choice is kept in this browser.
+  const finishedOpen = useTaskCardFold((state) => state.finishedGroupOpen)
+  const setFinishedOpen = useTaskCardFold((state) => state.setFinishedGroupOpen)
   return (
     <>
       <Sheet
@@ -101,12 +105,22 @@ export function AssistantTasksSheet({ open, onClose, renderQuestion }: {
                 {GROUPS.map((group) => {
                   const rows = items.filter((item) => group.match(statusOf(item)))
                   if (rows.length === 0) return null
+                  const foldable = group.key === "finished"
+                  const shown = !foldable || finishedOpen
                   return (
                     <section key={group.key} aria-label={t(`assistant.taskList.groups.${group.key}`)}>
-                      <h3 className={cn("mb-1 text-sm font-medium", group.key === "waiting" ? "text-dangerink" : "text-n600")}>
-                        {t(`assistant.taskList.groups.${group.key}`)} · {rows.length}
-                      </h3>
-                      {rows.map((item) => (
+                      {foldable ? (
+                        <button type="button" aria-expanded={finishedOpen} onClick={() => setFinishedOpen(!finishedOpen)}
+                          className="text-n600 hover:text-n800 mb-1 flex items-center gap-1 text-sm font-medium">
+                          {finishedOpen ? <ChevronDown size={15} strokeWidth={2.2} aria-hidden /> : <ChevronRight size={15} strokeWidth={2.2} aria-hidden />}
+                          {t(`assistant.taskList.groups.${group.key}`)} · {rows.length}
+                        </button>
+                      ) : (
+                        <h3 className={cn("mb-1 text-sm font-medium", group.key === "waiting" ? "text-dangerink" : "text-n600")}>
+                          {t(`assistant.taskList.groups.${group.key}`)} · {rows.length}
+                        </h3>
+                      )}
+                      {shown && rows.map((item) => (
                         <div key={item.task_id}>
                           <AssistantTaskCard taskId={item.task_id} />
                           {(item.chain && item.chain.count > 1) || item.stale ? (

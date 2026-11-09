@@ -54,6 +54,10 @@ it("opens a drawer grouping what needs the user first, then unfinished, then fin
   const drawer = screen.getByRole("dialog")
   const groups = within(drawer).getAllByRole("region").map((group) => group.getAttribute("aria-label"))
   expect(groups).toEqual(["assistant.taskList.groups.waiting", "assistant.taskList.groups.active", "assistant.taskList.groups.finished"])
+  // "最近完成" starts folded to its heading; one click shows the cards, and the choice is kept.
+  expect(within(drawer).getAllByText(/^card:/).map((node) => node.textContent)).toEqual(
+    ["card:asking", "card:working", "card:paused"])
+  fireEvent.click(within(drawer).getByRole("button", { name: /assistant.taskList.groups.finished/ }))
   expect(within(drawer).getAllByText(/^card:/).map((node) => node.textContent)).toEqual(
     ["card:asking", "card:working", "card:paused", "card:finished"])
   expect(within(drawer).getByText("assistant.taskList.more")).toBeTruthy()

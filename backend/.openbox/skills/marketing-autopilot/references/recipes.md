@@ -9,10 +9,10 @@
 
 | form | 段数 × 时长 | 生成方式 | 台词 / 声音 | 字幕 | 合成 | 质检（tolerances） |
 |---|---|---|---|---|---|---|
-| **口播** | 2–4 段 × 5–8 s（跟 `structure`，总长 ≤ 热点时长，≤ 30 s） | 现有口播工艺：`prompt-recipes.md` 骨架 + 人物一致性（同一 `presenter` 描述与 seed / 参考图） | 台词按 `script_text` 重写成自己的版本（不抄原文），每段一句完整话；模型直接开口念 | `spoken_preset` 底部字幕，逐段 cue = 转写文本 | `video_compose` `spoken_preset`，转场 `dissolve` 0.3 s | **STT 相似度 ≥ `tolerances.stt_similarity`（默认 0.85，比对话里的 0.90 放宽）**；时长偏差 ≤ `duration_deviation_sec`；超出重生 ≤ `max_regenerations` 次，再超出弃用该条 |
-| **画面+旁白** | 3–5 段 × 4–6 s | 每段一个画面 prompt（来自 `structure[i].what` + `visual_style`），无人物开口 | 旁白：优先选**带音频生成**的模型档位念旁白；没有则**只出画面 + 字幕**（TTS 工具缺口，见计划 §2.6） | 顶部标题（`on_screen_text[0]` 改写）+ 底部旁白字幕 | 顺序拼接，转场 `dissolve`/`slide`，背景音乐留空 | 不做 STT（无人物台词）；只查时长偏差与每段是否成功 |
+| **口播** | 2–4 段 × 5–8 s（跟 `structure`，总长 ≤ 热点时长，≤ 30 s） | 现有口播工艺：`prompt-recipes.md` 骨架 + 人物一致性（同一 `presenter` 描述与 seed / 参考图） | 台词按 `script_text` 重写成自己的版本（不抄原文），每段一句完整话；模型直接开口念，提交时同一句话传 `spoken_line`（工具对说话镜头硬校验） | `spoken_preset` 底部字幕，逐段 cue = 转写文本 | `video_compose` `spoken_preset`，转场 `dissolve` 0.3 s | **STT 相似度 ≥ `tolerances.stt_similarity`（默认 0.85，比对话里的 0.90 放宽）**；时长偏差 ≤ `duration_deviation_sec`；超出重生 ≤ `max_regenerations` 次，再超出弃用该条 |
+| **画面+旁白** | 3–5 段 × 4–6 s | 每段一个画面 prompt（来自 `structure[i].what` + `visual_style`），无人物开口 | 旁白：优先选**带音频生成**的模型档位念旁白；没有则**只出画面 + 字幕**（TTS 工具缺口，见计划 §2.6）；念旁白的镜头把旁白原文作 `spoken_line` 提交，纯画面镜头加 `no_speech=true` | 顶部标题（`on_screen_text[0]` 改写）+ 底部旁白字幕 | 顺序拼接，转场 `dissolve`/`slide`，背景音乐留空 | 不做 STT（无人物台词）；只查时长偏差与每段是否成功 |
 | **产品展示** | 3–4 段 × 4–5 s（开场 → 细节 → 使用 → 收尾） | 画面 prompt 强调 `recreate_elements.scene` 与产品特写；可用客户素材图做首帧（`creator_context`） | 无口播；卖点做字幕 | 花字卖点 1 条/段（≤ 12 字） | 顺序拼接，转场 `zoom`/`dissolve` | 只查时长与成功数；**声明必选 `ai`**，带货再在简介写清 |
-| **剧情** | 3–4 段 × 5–7 s（起 → 转 → 结） | 每段一个场景 prompt，人物描述固定；对白改成字幕不让模型开口（口型/一致性差） | 无配音 | 对白字幕 + 场景说明花字 | 顺序拼接，转场 `cut`/`dissolve` | 只查时长与成功数；剧情不追求连贯度 |
+| **剧情** | 3–4 段 × 5–7 s（起 → 转 → 结） | 每段一个场景 prompt，人物描述固定；对白改成字幕不让模型开口（口型/一致性差），提交加 `no_speech=true` | 无配音 | 对白字幕 + 场景说明花字 | 顺序拼接，转场 `cut`/`dissolve` | 只查时长与成功数；剧情不追求连贯度 |
 | **混剪** | 4–6 段 × 3–4 s | 同一主题不同画面（`topics` 词做变体） | 无 | 一句顶部标题贯穿 | 快切 `cut`，可 `zoom` 入场 | 只查成功数；单段失败直接丢，够 4 段即成片 |
 | **字幕型** | 1–2 段 × 8–12 s | 背景画面 1–2 个（静态感、低运动） | 无 | **正文全部走字幕**：`on_screen_text` 改写成 3–6 条 cue，等分时长 | `spoken_preset` 或自定义 cue | 只查时长；文字合规自审（`prompt-recipes.md` 合规节） |
 | **其他** | — | 不复刻 | — | — | — | 记入报告「形态未识别，跳过」，换下一条热点 |

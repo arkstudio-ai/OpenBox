@@ -145,6 +145,17 @@ class VideoGenerateArgs(BaseModel):
     #: Seconds, or -1 to let the model choose.
     duration: int | None = Field(default=None, ge=-1, le=300)
     generate_audio: bool | None = None
+    #: The words heard in this shot. Without them a model that generates audio
+    #: improvises: wrong words, a closed mouth, lips no dub can match.
+    spoken_line: str | None = Field(default=None, max_length=600, description=(
+        "Exactly what is said aloud in this shot, verbatim and nothing else (two speakers: name each). "
+        "Required whenever anyone speaks or narrates; the server appends it as 口播台词：… and keeps audio on. "
+        "Never put @ in a prompt: the model reads it aloud."
+    ))
+    no_speech: bool = Field(default=False, description=(
+        "Nobody speaks in this shot; any sound is ambience or music. State it when the prompt mentions "
+        "a person talking or narration yet no words are meant to be heard."
+    ))
     watermark: bool | None = None
     #: Reuse one seed to hold a look steady across separate shots. 0 means
     #: "none": models that fill every schema field send 0 for an untouched
@@ -1688,6 +1699,99 @@ async def _resolve_open_inputs(
     return rows, roles
 
 
+# ── Spoken-line gate ────────────────────────────────────────────────────────
+# Measured on gw2, 2026-10-10..11-09: every shot submitted under the
+# video-production skill carried 口播台词： (116/116), while 532 of the 1210
+# shots of the period were generated with audio on and no line at all, from
+# ordinary chats that described someone talking ("she speaks in clear
+# Mandarin"). The model then invents the words, keeps the mouth shut, or does
+# something unrelated, and a dub laid over it can never match. Skills advise;
+# this is the one rule the tool refuses to leave to them.
+
+#: The line follows this label and ends its line (same regex as the skill's lint_prompt.py).
+_SPOKEN_LABEL = re.compile(r"(?:口播台词|spoken line)\s*[:：][ \t]*(?P<line>[^\n]*)", re.IGNORECASE)
+
+#: Something in the prompt says a person speaks, narrates or sings.
+_SPEECH_CUES = re.compile(
+    r"说话|开口|讲话|讲解|解说|口播|台词|对白|对话|旁白|念白|念出|朗读|说道|说[:：]|喊道|唱歌|歌唱|唱着|配音"
+    r"|\bspeak(?:s|ing)?\b|\bsays?\b|\bsaying\b|\btalk(?:s|ing)?\b|\bdialogue\b|\bdialog\b"
+    r"|\bnarrat(?:es|ion|ing|or)\b|\bvoice-?over\b|\blip-?sync|\bsing(?:s|ing)?\b|\bmonologue\b",
+    re.IGNORECASE,
+)
+
+#: …or explicitly says nobody does. A negation anywhere wins: the author has
+#: thought about speech and decided against it, which is all the gate asks.
+_SILENT_CUES = re.compile(
+    r"不(?:要|用|会|能|让)?(?:人物|模型|人)?(?:说话|开口|讲话|出声|配音)|无(?:人物|人)?(?:说话|开口|对白|台词|旁白|解说|人声|配音)"
+    r"|没有(?:台词|对白|说话|旁白|人声|配音)|不出现(?:台词|对白|人声)|静音|无声"
+    r"|\bno (?:dialogue|dialog|speech|talking|narration|voice-?over|spoken (?:words|lines)|lines)\b"
+    r"|\bsilent\b|\bwithout (?:dialogue|speech|narration|talking)\b|\bnobody speaks\b"
+    r"|\bdoes(?:n't| not) speak\b|\bmute(?:d)?\b",
+    re.IGNORECASE,
+)
+
+_SPOKEN_PUNCT = re.compile(r"[\s。！？；：，、,.!?;:…·~—\-\"\'“”‘’（）()《》<>【】\[\]]+")
+_SPOKEN_FILLERS = "嗯呃唔诶哦噢喔呀啊吧呢啦嘛"
+
+
+def normalize_spoken_text(value: str) -> str:
+    """What is audible: punctuation and fillers do not count (mirrors lint_prompt.py)."""
+    compact = _SPOKEN_PUNCT.sub("", value or "")
+    return compact.translate({ord(char): None for char in _SPOKEN_FILLERS})
+
+
+def resolve_spoken_line(
+    prompt: str, *, spoken_line: str | None, no_speech: bool, generate_audio: bool,
+) -> tuple[str, str | None]:
+    """The prompt the model will see and the line it must say, or a refusal.
+
+    A ``spoken_line`` is appended as ``口播台词：…`` unless the prompt already
+    carries the same line; a prompt that carries one on its own is accepted as
+    is. A prompt that mentions speech, with audio on and neither a line nor a
+    silence declaration, is refused before any money moves.
+    """
+    line = (spoken_line or "").strip()
+    labelled = _SPOKEN_LABEL.search(prompt)
+    labelled_line = labelled.group("line").strip() if labelled else ""
+    if line and no_speech:
+        raise _RequestError("spoken_line and no_speech=true contradict each other; send one of them")
+    if labelled and not labelled_line:
+        raise _RequestError("口播台词： is followed by nothing; put the exact words after it, or pass spoken_line")
+    if labelled_line and no_speech:
+        raise _RequestError("the prompt carries 口播台词： yet no_speech=true; remove one of them")
+    if line and labelled_line and normalize_spoken_text(line) != normalize_spoken_text(labelled_line):
+        raise _RequestError(
+            "spoken_line differs from the 口播台词： line already in the prompt; make them identical "
+            "or drop the one in the prompt so the server appends spoken_line"
+        )
+    resolved = labelled_line or line or None
+    if resolved:
+        if "@" in prompt or "@" in resolved:
+            raise _RequestError(
+                "a spoken shot must not contain @: the model reads it aloud (production STT heard 艾特 "
+                "before the line). Remove every @ and resubmit"
+            )
+        if not generate_audio:
+            raise _RequestError(
+                "this shot has spoken words but generate_audio=false; the presenter's voice is generated "
+                "with the picture, so leave generate_audio on (or drop the line for a silent shot)"
+            )
+        if not labelled_line:
+            prompt = prompt.rstrip() + "\n口播台词：" + line
+        return prompt, resolved
+    if no_speech or not generate_audio:
+        return prompt, None
+    if _SPEECH_CUES.search(prompt) and not _SILENT_CUES.search(prompt):
+        raise _RequestError(
+            "this shot describes someone speaking or narrating but gives no words, and audio is on, "
+            "so the model would improvise what is said (wrong words, a closed mouth, lips no dub can match). "
+            "Pass spoken_line=\"<exactly what is said in this shot>\" — the server appends it as 口播台词：… — "
+            "or set no_speech=true when nobody speaks and the sound is ambience or music only. "
+            "Nothing was submitted"
+        )
+    return prompt, None
+
+
 async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) -> dict[str, Any]:
     """Normalize an open request into the same shape an approved segment has.
 
@@ -1752,6 +1856,10 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         settings.default_generate_audio if args.generate_audio is None else args.generate_audio
     )
     watermark = settings.default_watermark if args.watermark is None else args.watermark
+    prompt, spoken_line = resolve_spoken_line(
+        args.prompt or "", spoken_line=args.spoken_line, no_speech=args.no_speech,
+        generate_audio=bool(generate_audio),
+    )
     dropped: list[str] = []
     if seed is not None and not getattr(declared, "supports_seed", False):
         # See validate_request: reproducibility is worth less than the shot.
@@ -1760,7 +1868,8 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
     return {
         "production_id": None,
         "segment_id": None,
-        "prompt": args.prompt or "",
+        "prompt": prompt,
+        "spoken_line": spoken_line,
         "model": model or None,
         "character_reference_asset": None,
         "input_assets": list(args.input_assets),
@@ -2555,6 +2664,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
+            if approved.get("spoken_line"):
+                # What the take must say, for the transcript comparison later.
+                request_data["spoken_line"] = approved["spoken_line"]
             if channel == "runninghub" or _quote.snapshot.get("partner"):
                 # The actual job owns this quote, so a rates (or tariff) update
                 # during a long-running generation cannot change its charge.
@@ -3397,6 +3509,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 VIDEO_GENERATE_DESCRIPTION = """\
 Generate video only through this tool. models lists capabilities; validate checks the exact shot and owned inputs without submitting. \
 Do not estimate credits, compare pricing or request a separate fee confirmation. submit requires prompt and idempotency_key. \
+Anyone speaking or narrating in a shot needs spoken_line (the exact words); a talking shot without it is refused; a shot where nobody speaks says no_speech=true. \
 Before paying, clarify ambiguous asset selection or purpose. If a model cannot use requested references, \
 explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
 Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \

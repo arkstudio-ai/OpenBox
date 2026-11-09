@@ -853,6 +853,8 @@
       "more": "More",
       "showResult": "Show full result",
       "hideResult": "Hide full result",
+      "fold": "Collapse",
+      "expand": "Expand",
       "retryReport": "Report again",
       "pause": "Pause",
       "resume": "Resume",

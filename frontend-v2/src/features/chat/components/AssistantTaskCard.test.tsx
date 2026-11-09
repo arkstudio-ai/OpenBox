@@ -7,6 +7,7 @@ import type { ToolPart } from "@/shared/types/api"
 import { toast } from "@/shared/ui/Toast"
 import { taskReceipt } from "../lib/task-receipt"
 import { AssistantTaskCard, AssistantTaskReceipts } from "./AssistantTaskCard"
+import { useTaskCardFold } from "../stores/task-card-fold"
 
 const api = vi.hoisted(() => ({ task: vi.fn(), retry: vi.fn(), report: vi.fn(), archive: vi.fn(), control: vi.fn(), watch: vi.fn() }))
 vi.mock("../api/assistant", () => ({
@@ -317,5 +318,42 @@ describe("one primary action per card", () => {
     render(<MemoryRouter><AssistantTaskCard taskId={value.task.id} /></MemoryRouter>)
     expect(screen.getByText("assistant.card.helperAsks")).toBeTruthy()
     expect(screen.getByRole("link", { name: /assistant.card.answer/ })).toBeTruthy()
+  })
+})
+
+describe("folding finished cards", () => {
+  const hourAgo = () => new Date(Date.now() - 60 * 60_000).toISOString()
+  beforeEach(() => {
+    localStorage.clear()
+    useTaskCardFold.setState({ overrides: {}, finishedGroupOpen: false })
+  })
+
+  it("folds a finished task to one line once it is no longer fresh, and expands on click", () => {
+    mount({ initial: { ...value, task: { ...value.task, updated_at: hourAgo() } } })
+    expect(screen.getByText("Prepare the report")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "assistant.card.more" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { expanded: false }))
+    expect(screen.getByRole("button", { name: "assistant.card.more" })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem("openbox.taskCardFold")!).overrides["task-01M48Y8NP3008"]).toBe("open")
+  })
+
+  it("keeps a just-finished task open so its result is seen once", () => {
+    mount()
+    expect(screen.getByRole("button", { name: "assistant.card.more" })).toBeTruthy()
+  })
+
+  it("never folds active work by default", () => {
+    mount({ initial: { ...value, task: { ...value.task, updated_at: hourAgo(), observed_state: "running" } } })
+    expect(screen.getByRole("button", { name: "assistant.card.more" })).toBeTruthy()
+  })
+
+  it("folds any card by hand and remembers the choice", () => {
+    mount()
+    fireEvent.click(screen.getByRole("button", { name: "assistant.card.fold" }))
+    expect(screen.queryByRole("button", { name: "assistant.card.more" })).toBeNull()
+    expect(JSON.parse(localStorage.getItem("openbox.taskCardFold")!).overrides["task-01M48Y8NP3008"]).toBe("folded")
+    cleanup()
+    mount()
+    expect(screen.queryByRole("button", { name: "assistant.card.more" })).toBeNull()
   })
 })

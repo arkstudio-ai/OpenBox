@@ -853,6 +853,8 @@
       "more": "更多",
       "showResult": "查看完整结果",
       "hideResult": "收起完整结果",
+      "fold": "收起",
+      "expand": "展开",
       "retryReport": "重新汇报",
       "pause": "暂停",
       "resume": "继续",

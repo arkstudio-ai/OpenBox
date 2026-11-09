@@ -14,6 +14,7 @@ import '../../../shared/widgets/toast.dart';
 import '../api/assistant_api.dart';
 import '../state/assistant_controller.dart';
 import '../state/assistant_watch.dart';
+import '../state/task_card_fold.dart';
 import '../utils/task_status.dart';
 import 'assistant_report.dart';
 
@@ -223,6 +224,23 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
       pendingQuestions: watched?.pendingQuestions ?? 0,
       outcome: asString(result['outcome']),
     );
+    // One line for finished work (status, title, when), the full card on tap.
+    final fold = ref.watch(taskCardFoldProvider);
+    if (fold.isFolded(task.id, status, task.updatedAt)) {
+      return _FoldedCard(
+        semanticsLabel: i18n.t(
+          'chat:assistant.card.label',
+          vars: {'title': task.title},
+        ),
+        title: task.title,
+        status: status,
+        statusLabel: i18n.t('chat:assistant.status.${status.name}'),
+        since: sinceLabel(task.updatedAt, i18n.language),
+        expandLabel: i18n.t('chat:assistant.card.expand'),
+        onExpand: () =>
+            ref.read(taskCardFoldProvider.notifier).setFold(task.id, false),
+      );
+    }
     // A notification can point at an older run; say so rather than pass it
     // off as the latest.
     final selected = widget.selectedResult;
@@ -364,6 +382,16 @@ class _AssistantTaskCardState extends ConsumerState<AssistantTaskCard> {
                         ),
                     ],
                   ),
+                ),
+                IconButton(
+                  key: const Key('task-fold'),
+                  tooltip: i18n.t('chat:assistant.card.fold'),
+                  icon: Icon(Icons.expand_less, size: 20, color: t.n700),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => ref
+                      .read(taskCardFoldProvider.notifier)
+                      .setFold(task.id, true),
                 ),
                 _TaskMenu(
                   busy: _busy,
@@ -514,6 +542,89 @@ String? _note(AssistantTask task, Map<String, dynamic> result) {
         : 'chat:assistant.card.note.inputCanceled';
   }
   return null;
+}
+
+/// A finished task as one line: dot, title, status, when — the whole card on
+/// tap (web `FoldedCard`).
+class _FoldedCard extends StatelessWidget {
+  const _FoldedCard({
+    required this.semanticsLabel,
+    required this.title,
+    required this.status,
+    required this.statusLabel,
+    required this.since,
+    required this.expandLabel,
+    required this.onExpand,
+  });
+  final String semanticsLabel;
+  final String title;
+  final TaskStatus status;
+  final String statusLabel;
+  final String since;
+  final String expandLabel;
+  final VoidCallback onExpand;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Semantics(
+      container: true,
+      label: semanticsLabel,
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: t.card,
+          borderRadius: BorderRadius.circular(Radii.xl),
+          border: Border.all(color: t.hair),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            key: const Key('task-expand'),
+            borderRadius: BorderRadius.circular(Radii.xl),
+            onTap: onExpand,
+            child: Semantics(
+              button: true,
+              label: expandLabel,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                child: Row(
+                  children: [
+                    _StatusDot(status: status),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: FontSizes.sm,
+                          fontWeight: FontWeight.w500,
+                          color: t.ink,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _StatusPill(status: status, label: statusLabel),
+                    if (since.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        since,
+                        style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                      ),
+                    ],
+                    const SizedBox(width: 4),
+                    Icon(Icons.expand_more, size: 18, color: t.n600),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _CardShell extends StatelessWidget {

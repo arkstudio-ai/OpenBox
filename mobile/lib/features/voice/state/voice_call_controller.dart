@@ -7,6 +7,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../shared/api/providers.dart';
 import '../../chat/api/assistant_api.dart';
+import '../../chat/state/assistant_controller.dart';
 import '../api/voice_events.dart';
 import '../api/voice_socket.dart';
 import '../audio/call_audio.dart';
@@ -24,6 +25,7 @@ class VoiceCallDeps {
     required this.audio,
     required this.permission,
     required this.ensureAssistant,
+    this.showVoiceInput = _noVoiceInput,
     this.now = DateTime.now,
     this.haptic = _haptic,
     this.keepScreenOn = _keepScreenOn,
@@ -36,6 +38,13 @@ class VoiceCallDeps {
 
   /// `POST /api/assistant/ensure`, for a socket closed with 4404.
   final Future<void> Function(AssistantScope scope) ensureAssistant;
+
+  /// Words the call handed to the assistant (`turn{accepted}` with `text`):
+  /// shown in the conversation as a pending user bubble until the assistant
+  /// claims the turn and the server's message, under the same client id,
+  /// takes its place.
+  final void Function(AssistantScope scope, String clientMessageId, String text)
+  showVoiceInput;
   final DateTime Function() now;
 
   /// `lightImpact` when connected or ended, `mediumImpact` on an error.
@@ -43,6 +52,8 @@ class VoiceCallDeps {
   final Future<void> Function(bool on) keepScreenOn;
   final SystemVoiceCall systemCall;
 }
+
+void _noVoiceInput(AssistantScope scope, String clientMessageId, String text) {}
 
 void _haptic({required bool strong}) => unawaited(
   strong ? HapticFeedback.mediumImpact() : HapticFeedback.lightImpact(),
@@ -63,6 +74,9 @@ final voiceCallDepsProvider = Provider<VoiceCallDeps>((ref) {
     audio: DeviceCallAudio.new,
     permission: const DeviceMicPermission(),
     ensureAssistant: (scope) => AssistantApi(dio, scope).ensure(),
+    showVoiceInput: (scope, clientMessageId, text) => ref
+        .read(assistantControllerProvider(scope).notifier)
+        .showVoiceInput(clientMessageId: clientMessageId, text: text),
     systemCall: ref.watch(systemVoiceCallProvider),
   );
 });
@@ -416,6 +430,14 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     final before = state;
     state = reduceVoiceEvent(before, event, now: _deps.now());
     switch (event) {
+      case VoiceTurnEvent(:final turn)
+          when turn.state == 'accepted' &&
+              (turn.text ?? '').trim().isNotEmpty &&
+              (turn.clientMessageId ?? '').isNotEmpty:
+        final scope = _scope;
+        if (scope != null && state.live) {
+          _deps.showVoiceInput(scope, turn.clientMessageId!, turn.text!.trim());
+        }
       case VoiceReadyEvent():
         if (before.status == VoiceCallStatus.connecting && state.live) {
           if (_viewedSessionId != null) _socket?.sendView(_viewedSessionId);

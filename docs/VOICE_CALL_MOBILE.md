@@ -184,3 +184,14 @@ mobile/assets/locales/{zh-CN,en-US}/voice.json      # 与网页字节一致
 待命显示“随时可以说话”，服务端 hearing=true 时显示“在听你说”；真实 PCM 播放未排空时仍显示“在说话”。麦克风是否静音与后台任务是否处理中仍是独立状态。
 
 定向验证：controller/reducer/PCM/page/banner 92 项；Android API 36 上由独立测试进程实际请求 CAN_DUCK、70 秒 TRANSIENT、永久 GAIN，验证继续通话、超过一分钟保留通话、自动恢复和点击恢复。测试源码 `integration_test/voice_audio_focus_test.dart`，外部焦点探针不打包到正式 APK。iOS 系统中断及恢复竞态有定向自动化覆盖，本轮未在实体手机上测试运营商来电。
+
+## 2026-11-09 语音原话立刻进对话
+
+用户说完的话进 Inbox 后，要等主会话认领才落成用户消息；上一轮还在跑时这句话一直隐身，
+上一轮的回复文字先到，排在它前面（gw2 近 30 天 329 轮里 64 轮如此，最长等 189 秒）。
+服务端自此在 `turn{accepted}` 带 `text` 与 `client_message_id`（只对用户原话，卡片作答没有）。
+App 侧：`VoiceCallDeps.showVoiceInput` → `AssistantController.showVoiceInput`，立刻追加一条
+`tmp-voice-<client_message_id>` 的用户气泡（复用打字发送的乐观回显规则：`_refresh` 发现
+历史里同 `client_message_id` 的消息就原位替换）；15 分钟无人认领的气泡在下次刷新丢弃。
+通话界面仍不显示任何文字。测试：`voice_call_controller_test` 「shows accepted words」、
+`assistant_history_test` 「words from a voice call」。

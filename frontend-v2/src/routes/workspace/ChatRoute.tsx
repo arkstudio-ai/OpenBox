@@ -29,6 +29,7 @@ import {
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatHistory } from "@/features/chat/hooks/useChatHistory"
 import { useStopWithConfirm } from "@/features/chat/hooks/useStopWithConfirm"
+import { useVoiceInputEcho } from "@/features/chat/hooks/useVoiceInputEcho"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { usePanelStore } from "@/features/workbench"
@@ -196,6 +197,8 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
 }) {
   const currentUserId = useAuthStore((state) => state.user?.id)
   useChatEvents(sessionId, chatEventSurface(assistant, realtimeSurface))
+  // A voice call's words land here before the assistant gets to them.
+  useVoiceInputEcho(sessionId, assistant)
 
   // `?panel=desktop&control=1` is the URL form of a takeover card's link
   // (paths.desktopTakeover): open the panel on arrival, then drop the params

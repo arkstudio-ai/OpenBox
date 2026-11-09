@@ -1517,7 +1517,11 @@ class TurnsMixin:
         return {ref.note_item for ref in self.deliveries if ref.note_item}
 
     def _turn(self, ref: VoiceTurnRef, state: str) -> None:
-        self.emit(events.turn(ref.id, state, inbox_id=ref.inbox_id, message_id=ref.message_id))
+        # The user's words go with acceptance: their message is only written when the assistant
+        # claims the turn, which waits for the turn before it to end (docs/VOICE_CALL_SPEC.md §5.3).
+        words = " ".join((ref.transcript or ref.text or "").split()) if ref.recorded else ""
+        self.emit(events.turn(ref.id, state, inbox_id=ref.inbox_id, message_id=ref.message_id,
+                              text=words or None, client_message_id=ref.client_message_id))
 
     def _spawn(self, coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine)

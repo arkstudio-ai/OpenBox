@@ -621,9 +621,7 @@ async def _create_pending_job(
         ).scalar_one_or_none()
         if existing:
             if existing.request_hash and existing.request_hash != request_hash:
-                raise RuntimeError(
-                    "idempotency key conflict: the existing job has a different request hash"
-                )
+                raise idempotency_conflict_error(idempotency_key, existing)
             asset = await db.get(FileAsset, existing.output_asset_id) if existing.output_asset_id else None
             return existing, asset, False
 
@@ -743,11 +741,31 @@ async def _create_pending_job(
             )
         ).scalar_one()
         if existing.request_hash and existing.request_hash != request_hash:
-            raise RuntimeError(
-                "idempotency key conflict: the existing job has a different request hash"
-            )
+            raise idempotency_conflict_error(idempotency_key, existing)
         asset = await db.get(FileAsset, existing.output_asset_id) if existing.output_asset_id else None
         return existing, asset, False
+
+
+def idempotency_conflict_error(idempotency_key: str, existing: Any) -> Exception:
+    """The caller reused a key that already names a *different* request.
+
+    Keys are scoped per user and kind, not per conversation, so a key pattern
+    like ``light_video:<session>:1`` collides with the same person's clip from
+    an earlier day. Scrubbing this to "operation failed" (2026-11-09 light-test)
+    left the model retrying the same key five times; the message names only the
+    caller's own key and the stored job's age, so it is safe to surface.
+    """
+    from tool.video_providers import VideoRequestError
+
+    created = getattr(existing, "created_at", None)
+    when = created.strftime("%Y-%m-%d %H:%M UTC") if created is not None else "earlier"
+    return VideoRequestError(
+        f"idempotency key conflict: '{idempotency_key}' already belongs to a different request submitted "
+        f"{when} (job {getattr(existing, 'id', '?')}). A key only retries the identical request; "
+        "this is a new take, so submit again with a new key that is unique to this conversation "
+        "(for example this session id plus the shot number and the current time). "
+        "Do not resubmit the same key."
+    )
 
 
 async def _existing_job_for_key(ctx: ToolContext, kind: str, idempotency_key: str):

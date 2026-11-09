@@ -996,6 +996,37 @@ async def rebuild_tool_exposure_state(
     return deepcopy(rebuilt)
 
 
+def has_live_reveals(
+    raw_state: Any,
+    agent_id: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """True when the durable projection still holds an unexpired reveal.
+
+    Read-only and cheap: a run starts with the remote catalogue deferred until
+    the model asks for a capability, and a deferred step cannot restore
+    persisted reveals (the catalogue generation it would validate against does
+    not exist yet). A session whose previous run already revealed tools must
+    therefore not defer, or the model loses those tools between runs: on
+    2026-11-09 a Light video session answered its review card and then called
+    ``video_generate`` three times into "not materialized for this step".
+    """
+    current = now or datetime.now(timezone.utc)
+    state = _normalize_state(raw_state)
+    agent_state = state.get("agents", {}).get(agent_id)
+    if not isinstance(agent_state, dict):
+        return False
+    revealed = agent_state.get("revealed")
+    if not isinstance(revealed, dict):
+        return False
+    for record in revealed.values():
+        expires = _parse_time(record.get("expires_at")) if isinstance(record, dict) else None
+        if expires is not None and expires > current:
+            return True
+    return False
+
+
 async def get_valid_revealed_ids(
     *,
     session_id: str,

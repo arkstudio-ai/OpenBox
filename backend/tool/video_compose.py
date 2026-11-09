@@ -120,6 +120,8 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
                 raise ComposeRefusal(f"shots[{index}].asset is {row.mime}; shots must be video or image")
             url = f"https://{oss.host}/{row.oss_key}"
         shots.append(shot.model_copy(update={"asset": url}))
+    if any(item.voiceover is not None for item in timeline.audio):
+        await _refuse_voiceover_over_spoken_shots(shots, timeline.audio, ctx, oss)
     audio = []
     for index, item in enumerate(timeline.audio):
         if item.voiceover is not None:
@@ -143,6 +145,63 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
             url = f"https://{oss.host}/{row.oss_key}"
         audio.append(item.model_copy(update={"asset": url}))
     return timeline.model_copy(update={"shots": shots, "audio": audio})
+
+
+async def _spoken_lines_by_key(keys: list[str], ctx: ToolContext) -> dict[str, str]:
+    """OSS key → the line the presenter was generated saying (``video_generate`` ``spoken_line``)."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+
+    if not keys:
+        return {}
+    async with get_db_session() as db:
+        rows = (await db.execute(
+            select(FileAsset.oss_key, VideoJob.request_data)
+            .join(VideoJob, VideoJob.output_asset_id == FileAsset.id)
+            .where(FileAsset.user_id == ctx.user_id, FileAsset.oss_key.in_(keys), VideoJob.kind == "segment")
+        )).all()
+    return {key: str((data or {}).get("spoken_line") or "") for key, data in rows if (data or {}).get("spoken_line")}
+
+
+async def _refuse_voiceover_over_spoken_shots(shots: list[Shot], audio: list, ctx: ToolContext, oss) -> None:
+    """A presenter generated saying a line (2026-11-09 decision: the presenter speaks for themselves)
+    is never dubbed over: the mouth follows the generated words and no narration can match it.
+
+    light-test 2026-11-09: three news-anchor shots whose mouths moved to nothing were composed under
+    an AI voiceover of a different text. Shot spans are the naive cumulative lengths (transitions
+    overlap a little); a shot of unknown length runs to the end of the cut.
+    """
+    keys = [shot.asset.split(f"https://{oss.host}/", 1)[1] for shot in shots if shot.asset.startswith(f"https://{oss.host}/")]
+    spoken = await _spoken_lines_by_key(keys, ctx)
+    if not spoken:
+        return
+    cursor = 0.0
+    for index, shot in enumerate(shots):
+        key = shot.asset.split(f"https://{oss.host}/", 1)[1] if shot.asset.startswith(f"https://{oss.host}/") else ""
+        length = shot.timeline_sec
+        start, end = cursor, (cursor + length if length is not None else None)
+        if key in spoken:
+            for j, item in enumerate(audio):
+                if item.voiceover is None:
+                    continue
+                v_end = item.to_sec if item.to_sec is not None else float("inf")
+                overlap = min(end if end is not None else float("inf"), v_end) - max(start, item.from_sec)
+                if overlap > 0.5:
+                    line = spoken[key]
+                    raise ComposeRefusal(
+                        f"shots[{index}] is a take in which the presenter speaks 「{line[:40]}{'…' if len(line) > 40 else ''}」 "
+                        f"(its video_generate spoken_line), and audio[{j}].voiceover ({item.from_sec}s–{item.to_sec}s) "
+                        "would be laid over it. A voice dubbed over a talking presenter never matches the mouth. "
+                        "Keep the presenter's own words: remove that voiceover span (narrate only over shots where nobody "
+                        "talks), or if narration is wanted instead, regenerate the shot with no_speech=true and "
+                        "generate_audio=false"
+                    )
+        if end is None:
+            break
+        cursor = end
 
 
 def _compile(timeline: Timeline, *, output_url: str) -> CompiledJob:

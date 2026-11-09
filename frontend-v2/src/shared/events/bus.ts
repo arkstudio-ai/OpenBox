@@ -10,6 +10,9 @@ type AppEventMap = {
   /** Bring a message into view in whichever conversation on screen holds it
    *  (a voice call's turn landing in the assistant's conversation). Never navigates. */
   "chat.reveal": { messageId: string }
+  /** Words a voice call handed to the assistant: the conversation shows them as a
+   *  pending user bubble until the server's message, under the same client id, replaces it. */
+  "chat.voice_input": { clientMessageId: string; text: string }
 }
 
 type AppEventName = keyof AppEventMap

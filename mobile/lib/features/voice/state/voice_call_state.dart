@@ -105,12 +105,24 @@ class VoiceCost {
 /// One request the call handed to the text assistant (`turn`).
 @immutable
 class VoiceTurn {
-  const VoiceTurn({required this.state, this.inboxId, this.messageId});
+  const VoiceTurn({
+    required this.state,
+    this.inboxId,
+    this.messageId,
+    this.text,
+    this.clientMessageId,
+  });
 
   /// accepted / working / late / delivered / timeout / failed.
   final String state;
   final String? inboxId;
   final String? messageId;
+
+  /// With `accepted` only: the user's words and the client id their message
+  /// will carry once the assistant claims the turn (spec §5.3). The
+  /// conversation shows them at once instead of waiting for that claim.
+  final String? text;
+  final String? clientMessageId;
 
   bool get open => state == 'accepted' || state == 'working' || state == 'late';
 }

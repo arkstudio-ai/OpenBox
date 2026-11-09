@@ -294,6 +294,9 @@ class VoiceRig {
   final systemCall = FakeSystemVoiceCall();
   int ensured = 0;
 
+  /// Words handed to the conversation as pending bubbles: (client id, text).
+  final voiceInputs = <(String, String)>[];
+
   /// The next [CallAudio] the controller creates; replaced after each call.
   FakeCallAudio nextAudio = FakeCallAudio();
 
@@ -316,6 +319,8 @@ class VoiceRig {
         },
         permission: permission,
         ensureAssistant: (_) async => ensured++,
+        showVoiceInput: (_, clientMessageId, text) =>
+            voiceInputs.add((clientMessageId, text)),
         now: clock.call,
         haptic: ({required strong}) => haptics.add(strong),
         keepScreenOn: (on) async => screenOn.add(on),

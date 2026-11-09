@@ -73,6 +73,43 @@ void main() {
     call.dispose();
     await tester.pump();
   });
+
+  testWidgets('shows accepted words in the conversation at once', (
+    tester,
+  ) async {
+    final call = _Call(VoiceRig());
+    await call.connect(tester);
+    call.socket
+      ..event({
+        'type': 'turn',
+        'turn_id': 't1',
+        'state': 'accepted',
+        'inbox_id': 'i1',
+        'message_id': null,
+        'text': ' 帮我查一下明天的天气 ',
+        'client_message_id': 'c1',
+      })
+      // Later states carry no words; a card's answer has no message of its own.
+      ..event({
+        'type': 'turn',
+        'turn_id': 't1',
+        'state': 'working',
+        'inbox_id': 'i1',
+        'message_id': 'm1',
+      })
+      ..event({
+        'type': 'turn',
+        'turn_id': 't2',
+        'state': 'accepted',
+        'inbox_id': 'i2',
+        'message_id': null,
+      });
+    await tester.pump();
+    expect(call.rig.voiceInputs, [('c1', '帮我查一下明天的天气')]);
+    expect(call.state.turns['t1']!.messageId, 'm1');
+    call.container.dispose();
+  });
+
   testWidgets('dials in order and sends no audio before ready', (tester) async {
     final call = _Call(VoiceRig());
     await call.dial(tester);

@@ -79,9 +79,12 @@ async def test_assistant_ask_is_acknowledged_at_once_and_reports_working(call):
     [ref] = link.started
     assert (ref.text, ref.provider_call_id, ref.transcript) == ("帮我看看贪吃蛇进展", "call-1", "帮我看看贪吃蛇进展")
     items = outbox(bridge)
+    # The words ride along with acceptance, under the client id the claimed message will carry,
+    # so the conversation can show them before the assistant gets to the turn.
     assert of_type(items, "turn") == [{"type": "turn", "turn_id": ref.id, "state": "accepted", "inbox_id": "inbox-1",
-                                       "message_id": None}]
-    assert of_type(items, "phase")[-1] == {"type": "phase", "value": "working", "working": True, "late": False}
+                                       "message_id": None, "text": "帮我看看贪吃蛇进展", "client_message_id": "client-1"}]
+    assert of_type(items, "phase")[-1] == {"type": "phase", "value": "working", "working": True, "late": False,
+                                           "hearing": False}
     assert not provider.response_purposes()  # it said its acknowledgement itself: nothing more to ask for
     link.on_message(ref)  # the run claimed the input: the client can scroll to the message
     assert states(outbox(bridge)) == ["working"]

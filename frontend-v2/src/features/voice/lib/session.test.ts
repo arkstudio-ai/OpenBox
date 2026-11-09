@@ -412,6 +412,19 @@ describe("in the call", () => {
     expect(shown).toEqual(["m2"])
   })
 
+  it("hands accepted words to the conversation, trimmed, and only with a client id", async () => {
+    const words: Array<{ clientMessageId: string; text: string }> = []
+    const stop = onAppEvent("chat.voice_input", (input) => words.push(input))
+    await connectedCall()
+    sockets[0].receive({ type: "turn", turn_id: "t1", state: "accepted", inbox_id: "i1", message_id: null,
+      text: " 帮我查一下明天的天气 ", client_message_id: "c1" })
+    // Later states carry no words; a card's answer has no message of its own.
+    sockets[0].receive({ type: "turn", turn_id: "t1", state: "working", inbox_id: "i1", message_id: "m1" })
+    sockets[0].receive({ type: "turn", turn_id: "t2", state: "accepted", inbox_id: "i2", message_id: null })
+    stop()
+    expect(words).toEqual([{ clientMessageId: "c1", text: "帮我查一下明天的天气" }])
+  })
+
   it("asks the text conversation to show an accepted turn, once", async () => {
     const shown: string[] = []
     const stop = onAppEvent("chat.reveal", ({ messageId }) => shown.push(messageId))

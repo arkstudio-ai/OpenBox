@@ -57,7 +57,22 @@ void main() {
         }),
         isA<VoiceTurnEvent>()
             .having((e) => e.turn.messageId, 'messageId', 'm1')
-            .having((e) => e.turn.open, 'open', isTrue),
+            .having((e) => e.turn.open, 'open', isTrue)
+            .having((e) => e.turn.text, 'text', isNull),
+      );
+      expect(
+        _event({
+          'type': 'turn',
+          'turn_id': 't2',
+          'state': 'accepted',
+          'inbox_id': 'i2',
+          'message_id': null,
+          'text': '帮我查一下明天的天气',
+          'client_message_id': 'c2',
+        }),
+        isA<VoiceTurnEvent>()
+            .having((e) => e.turn.text, 'text', '帮我查一下明天的天气')
+            .having((e) => e.turn.clientMessageId, 'clientMessageId', 'c2'),
       );
       final cost = _event({
         'type': 'cost',

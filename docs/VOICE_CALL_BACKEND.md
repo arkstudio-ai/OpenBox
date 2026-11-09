@@ -168,7 +168,7 @@ async def get_ticket(body: TicketBody | None = None, current_user=..., _workspac
 | --- | --- |
 | `input_audio_buffer.speech_started` | `user_started` |
 | `input_audio_buffer.speech_stopped` | `user_stopped(invalid=reason=="turn_invalid")` |
-| `conversation.item.input_audio_transcription.completed` | `user_transcript(text)`（只写 `VoiceTurn.transcript` 与调试日志，不转发客户端；delta 忽略） |
+| `conversation.item.input_audio_transcription.completed` | `user_transcript(text)`（写 `VoiceTurn.transcript` 与调试日志，不单独转发客户端；统一模式下进 Inbox 后随 `turn{accepted}` 的 `text`/`client_message_id` 告诉客户端这句话已交给助理，见 `voice/turns.py:_turn`、`voice/assistant_link.py:start`；delta 忽略） |
 | `response.created` | `response_started(response_id)` |
 | `response.audio.delta` | `audio(response_id, bytes, event_id)` |
 | `response.audio_transcript.done` | `assistant_transcript(response_id, text)`（仅调试日志，不转发客户端；delta 忽略） |

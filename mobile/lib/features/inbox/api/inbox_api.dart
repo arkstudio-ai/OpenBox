@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/providers.dart';
 import '../../../shared/events/app_lifecycle.dart';
+import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/ws/ws_client.dart';
 
@@ -127,6 +128,9 @@ class InboxFeed extends FamilyAsyncNotifier<InboxFeedState, String> {
   @override
   Future<InboxFeedState> build(String arg) async {
     _wireInboxInvalidation(ref, poll: const Duration(seconds: 15));
+    // The server re-renders template rows in the request's language, so a
+    // language switch reloads the first page rather than keeping old copy.
+    ref.watch(i18nProvider.select((s) => s.language));
     final page = await ref
         .watch(inboxApiProvider)
         .list(category: arg.isEmpty ? null : arg);

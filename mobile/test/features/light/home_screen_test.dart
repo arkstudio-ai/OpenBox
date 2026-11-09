@@ -66,9 +66,13 @@ class _FakeLightApi extends LightApi {
   LightEntriesView view = LightEntriesView.fromJson(_entriesJson());
   List<LightRecentGroup> groups = const [];
   bool recentDown = false;
+  int entriesCalls = 0;
 
   @override
-  Future<LightEntriesView> entries() async => view;
+  Future<LightEntriesView> entries() async {
+    entriesCalls++;
+    return view;
+  }
 
   @override
   Future<List<LightRecentGroup>> recent({int limit = 8}) async {
@@ -223,6 +227,34 @@ Future<(_FakeLightApi, GoRouter)> _mount(
 }
 
 void main() {
+  testWidgets('switching the interface language refetches the entries', (
+    tester,
+  ) async {
+    final (api, _) = await _mount(tester);
+    final before = api.entriesCalls;
+    expect(find.text('做一条视频'), findsOneWidget);
+    // The server answers in the request's language; the fake swaps the
+    // title so the refetch is visible.
+    api.view = LightEntriesView.fromJson({
+      ..._entriesJson(),
+      'entries': [
+        for (final entry in _entriesJson()['entries'] as List)
+          if ((entry as Map)['id'] == 'video')
+            {...entry.cast<String, dynamic>(), 'title': 'Làm một video'}
+          else
+            entry,
+      ],
+    });
+    final element = tester.element(find.byType(LightHomeScreen));
+    ProviderScope.containerOf(
+      element,
+    ).read(i18nProvider.notifier).setLanguage('vi-VN');
+    await tester.pumpAndSettle();
+    expect(api.entriesCalls, before + 1);
+    expect(find.text('Làm một video'), findsOneWidget);
+    expect(find.text('做一条视频'), findsNothing);
+  });
+
   testWidgets('the home draws the heading, every entry and the empty recent', (
     tester,
   ) async {

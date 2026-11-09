@@ -297,3 +297,60 @@ async def test_a_new_task_for_the_same_work_replaces_its_finished_predecessors_o
     listed = await list_tasks(user_id=owner, workspace_id=kwargs["workspace_id"], main_id=main.id)
     assert {row["id"]: row["superseded_by_task_id"] for row in listed["items"]} == {
         first["task_id"]: third["task_id"], second["task_id"]: third["task_id"], third["task_id"]: None}
+
+
+async def test_a_newer_delegated_followup_replaces_the_assistants_unstarted_earlier_ones():
+    """light-test 2026-11-09: five delegated restatements in four minutes (45 s / 30 s / …) ran one after
+    another and each paid for a remake the next one discarded. The assistant's own queued followups now
+    coalesce — the newest replaces unstarted earlier ones — while the user's typed input keeps its place."""
+    from assistant.commands import ToolSource
+    from models.message import ToolPartData, ToolStatus
+    from session.session import create_assistant_message, save_part
+    owner, _, _, main, kwargs = await setup_task()
+    await inbox.accept_inbox_item(session_id=main.id, user_id=owner, delivery="followup",
+        prompt="Make the finance clip", origin="human", origin_ref={"actor_user_id": owner})
+    lease = await reserve_run(main.id, owner)
+    try:
+        batch = await inbox.claim_inbox_boundary(lease, step=1, include_next_turn=True)
+        fence = (main.id, lease.run_id, lease.generation)
+        message = await create_assistant_message(main.id, batch.messages[0].id, agent="assistant",
+            model_id="test/model", user_id=owner, run_fence=fence)
+        calls = 0
+
+        async def call(tool):
+            nonlocal calls
+            calls += 1
+            part = ToolPartData(tool=tool, canonical_tool_id=tool, call_id=f"call-{calls}",
+                wire_tool_name=tool.replace(".", "_"), provider_binding_digest="a" * 64, provider_dialect="openai",
+                stream_seq=calls, status=ToolStatus.RUNNING, input={}, session_id=main.id, message_id=message.id)
+            await save_part(part, is_new=True, user_id=owner, run_fence=fence)
+            return ToolSource(part.id, lease.run_id, lease.generation, (batch.messages[0].id,))
+
+        created = await accept_task_command(**kwargs, source=await call("tasks.submit"))
+        follow = {**kwargs, "task_id": created["task_id"]}
+        first = await accept_task_command(**{**follow, "expected_revision": created["task_revision"],
+            "prompt": "做 45 秒版"}, source=await call("tasks.followup"))
+        assert "superseded_inbox_ids" not in first
+        second = await accept_task_command(**{**follow, "expected_revision": first["task_revision"],
+            "prompt": "改成 30 秒版"}, source=await call("tasks.followup"))
+        assert second["superseded_inbox_ids"] == [first["inbox_id"]]
+        # The user's own typed message is never replaced by the assistant's restatements.
+        typed = await accept_task_command(**{**follow, "idempotency_key": "typed-1",
+            "expected_revision": second["task_revision"], "prompt": "背景要蓝色", "client_message_id": "c1"})
+        third = await accept_task_command(**{**follow, "expected_revision": typed["task_revision"],
+            "prompt": "改成 30 秒版，背景蓝色"}, source=await call("tasks.followup"))
+        assert third["superseded_inbox_ids"] == [second["inbox_id"]]
+        async with get_db_session() as db:
+            states = {row.id: (row.state, (row.error or {}).get("code")) for row in (await db.scalars(
+                select(AgentInboxItem).where(AgentInboxItem.session_id == created["execution_session_id"]))).all()}
+            assert states[first["inbox_id"]] == ("canceled", "ASSISTANT_INPUT_SUPERSEDED")
+            assert states[second["inbox_id"]] == ("canceled", "ASSISTANT_INPUT_SUPERSEDED")
+            assert states[typed["inbox_id"]] == ("accepted", None)
+            assert states[third["inbox_id"]] == ("accepted", None)
+            assert states[created["inbox_id"]] == ("accepted", None)  # the task's opening input, still unstarted
+            submission = await db.get(TaskSubmission, first["submission_id"])
+            assert submission.disposition == "canceled"
+            task = await db.get(AssistantTask, created["task_id"])
+            assert task.observed_state == "queued" and task.desired_state == "running"
+    finally:
+        await lease.release(session_status="idle")

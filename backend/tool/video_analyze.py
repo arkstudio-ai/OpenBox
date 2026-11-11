@@ -421,7 +421,8 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="Video analysis (cached)", output="\n".join(_lines(job, (job.result_data or {}).get("analysis"), cached=True)),
                           metadata={"job_id": job.id, "status": "completed", "cached": True})
 
-    workdir = f"/tmp/obx-analyze/{job.id}"
+    from sandbox.managed_cache import task_directory
+    workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
     try:
         from autopilot import ledger as _autopilot
 
@@ -574,7 +575,8 @@ async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) ->
     if not created and job.status == "completed":
         return _screen_text_result(job, cached=True)
 
-    workdir = f"/tmp/obx-analyze/{job.id}"
+    from sandbox.managed_cache import task_directory
+    workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
     try:
         from autopilot import ledger as _autopilot
 

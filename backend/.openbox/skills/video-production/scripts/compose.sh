@@ -11,6 +11,9 @@
 set -euo pipefail
 
 OUT=final.mp4
+if [ -n "${OPENBOX_PENDING_ROOT:-}" ]; then
+  OUT="$OPENBOX_PENDING_ROOT/final-$(date +%s)-$$.mp4"
+fi
 WIDTH=720
 HEIGHT=1280
 FPS=24
@@ -61,6 +64,10 @@ else
   FILTERS+="[vcat]null[vout]"
 fi
 
+mkdir -p "$(dirname "$OUT")"
+STAGING=$(mktemp --suffix=.mp4 "${OUT}.partial.XXXXXX")
+# Keep interrupted output in pending for recovery; never silently delete the
+# sole render just because ffmpeg or the calling agent was interrupted.
 ffmpeg -y -hide_banner -loglevel error "${INPUTS[@]}" \
   -filter_complex "$FILTERS" \
   -map "[vout]" -map "[acat]" \
@@ -68,7 +75,8 @@ ffmpeg -y -hide_banner -loglevel error "${INPUTS[@]}" \
   -pix_fmt yuv420p -vsync cfr \
   -c:a aac -b:a "$ABR" -ar 48000 \
   -movflags +faststart -max_muxing_queue_size 2048 \
-  "$OUT"
+  "$STAGING"
+mv -- "$STAGING" "$OUT"
 
 echo "wrote $OUT"
 ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 "$OUT"

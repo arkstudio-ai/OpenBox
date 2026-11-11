@@ -121,9 +121,14 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list, *, i
             expires_sec=1800,
             internal=_use_internal_oss(oss),
         )
-        dest = f"{UPLOAD_DIR}/{asset.name}"
+        from project.workspace import asset_sandbox_path
+        from sandbox.managed_cache import enabled, materialize
+        dest = asset_sandbox_path(user_id or "", None, asset.name, asset_id=asset.id)
         cmd = f'PATH="$HOME/.local/bin:$PATH" obx-file get {shlex.quote(url)} {shlex.quote(dest)}'
         try:
+            if enabled():
+                landed.append(await materialize(client, asset, url))
+                continue
             result = await client.execute(cmd, timeout=120)
             if result.exit_code == 0:
                 landed.append(dest)
@@ -284,11 +289,18 @@ async def deliver_asset_ids(session_id: str, user_id: str, asset_ids,
         for asset, descriptor in zip(assets, contract["assets"]):
             async def transfer_one():
                 paths = await deliver(client, container_key, get_oss(), [asset], install_cli=False, **destination)
-                if paths != [f"{UPLOAD_DIR}/{asset.name}"]:
+                from project.workspace import asset_sandbox_path
+                if paths != [asset_sandbox_path(user_id, None, asset.name, asset_id=asset.id)]:
                     raise AssetDeliveryError(expected_asset_ids=asset_ids, missing_asset_ids=[asset.id])
                 return paths[0]
+            from sandbox.managed_cache import enabled as managed_cache_enabled
+            delivery_key = {"origin": contract["origin"], "asset_id": asset.id}
+            if managed_cache_enabled():
+                # A later run must reacquire pins and rematerialize after GC;
+                # the old effect receipt only certifies its original transfer.
+                delivery_key.update(storage="managed_cache_v1", run_fence=run_fence)
             path = await run_runtime_operation(client, session_id=session_id, user_id=user_id,
-                stage="attachment_delivery", key=request_hash({"origin": contract["origin"], "asset_id": asset.id}),
+                stage="attachment_delivery", key=request_hash(delivery_key),
                 payload={"origin": contract["origin"], "asset": descriptor},
                 operation=transfer_one, before_request=validate_sources)
             landed.append(path)
@@ -347,30 +359,45 @@ async def attach_sandbox_image(
     obj_name = name or path.split("/")[-1]
     asset_id = ascending("asset")
     key = f"assets/{ctx.user_id}/{asset_id}/{obj_name}"
-
-    # Keyed by the machine, not the conversation: obx-file is a property of
-    # the container, so a new chat must not reinstall it.
-    await ensure_cli(ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id)
-    put_url = oss.presign_put(
-        key,
-        mime,
-        expires_sec=600,
-        internal=_use_internal_oss(oss),
-    )
-    push = await ctx.sandbox.execute(
-        f'PATH="$HOME/.local/bin:$PATH" obx-file put {shlex.quote(path)} {shlex.quote(put_url)} {shlex.quote(mime)}',
-        timeout=120,
-    )
-    if push.exit_code != 0:
-        raise RuntimeError(push.stderr.strip()[:300] or "obx-file put failed")
+    from sandbox.managed_cache import enabled as managed_cache_enabled, stage_output
+    managed = managed_cache_enabled()
+    if managed:
+        # Recovery must be able to identify the owner and destination even if
+        # the worker crashes after copying the sole completed local output.
+        from session.session import _assert_run_fence
+        async with get_db_session() as db:
+            await _assert_run_fence(db, ctx.run_fence, session_id=ctx.session_id, user_id=ctx.user_id)
+            db.add(FileAsset(id=asset_id, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                session_id=ctx.session_id, project_id=await _session_project(db, ctx.session_id, ctx.user_id),
+                name=obj_name, oss_key=key, mime=mime, size=size, status="pending", source="agent",
+                transient=transient, created_at=datetime.now(timezone.utc)))
+            await db.commit()
+        path = await stage_output(ctx, path, entry_id=asset_id, name=obj_name, size=size,
+                                  oss_key=key, mime=mime, oss=oss)
+    else:
+        # Keyed by the machine, not the conversation.
+        await ensure_cli(ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id)
+        put_url = oss.presign_put(key, mime, expires_sec=600, internal=_use_internal_oss(oss))
+        push = await ctx.sandbox.execute(
+            f'PATH="$HOME/.local/bin:$PATH" obx-file put {shlex.quote(path)} {shlex.quote(put_url)} {shlex.quote(mime)}',
+            timeout=120,
+        )
+        if push.exit_code != 0:
+            raise RuntimeError(push.stderr.strip()[:300] or "obx-file put failed")
     head = await oss.head(key)
     if not head:
         raise RuntimeError("Object missing in OSS after upload")
+    if managed and head["size"] != size:
+        raise RuntimeError("Output retained; OSS size verification failed")
     verified = head["size"] or size
     from trajectory.artifacts import capture_result_asset_in_tx
 
     async with get_db_session() as db:
-        asset = FileAsset(
+        asset = await db.get(FileAsset, asset_id) if managed else None
+        if asset is not None:
+            asset.status, asset.size = "ready", verified
+        else:
+            asset = FileAsset(
                 id=asset_id,
                 user_id=ctx.user_id,
                 workspace_id=getattr(ctx, "workspace_id", None),
@@ -387,17 +414,28 @@ async def attach_sandbox_image(
                 transient=transient,
                 created_at=datetime.now(timezone.utc),
         )
-        db.add(asset)
+            db.add(asset)
         await capture_result_asset_in_tx(db, ctx, asset)
         await db.commit()
+
+    if managed:
+        from sandbox.managed_cache import command as cache_command
+        await cache_command(ctx.sandbox, "pending-ack", {"entry_id": asset_id, "size": verified,
+                                                       "etag": head.get("etag", "").lower()})
 
     if not pin_part:
         return asset_id, verified
 
+    part_path = path
+    if managed:
+        from project.workspace import asset_sandbox_path
+        # The pending copy is reclaimed after this run. Future turns reference
+        # the stable asset path, which the cache can rematerialize from OSS.
+        part_path = asset_sandbox_path(ctx.user_id, asset.project_id, obj_name, asset_id)
     await save_part(
         FilePart(
             id=ascending("part"),
-            path=path,
+            path=part_path,
             mime_type=mime,
             asset_id=asset_id,
             oss_key=key,

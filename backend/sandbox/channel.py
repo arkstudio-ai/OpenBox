@@ -268,6 +268,8 @@ class WuyingChannel:
         # only the built-in bundle before exposing this guest to its user.
         from sandbox.skill_runtime import ensure_desktop_video_skill
         await ensure_desktop_video_skill(desktop_id, authority_check=attempt.current)
+        from sandbox.cache_runtime import ensure_desktop_cache_runtime
+        await ensure_desktop_cache_runtime(desktop_id, authority_check=attempt.current)
 
         api_key = (
             decrypt_action_key(record["action_api_key_ciphertext"])

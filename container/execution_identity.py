@@ -182,7 +182,7 @@ def main(argv=None):
     target = json.loads(os.environ.get(_PAYLOAD_ENV, "{}"))
     if not isinstance(target, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in target.items()):
         raise IsolationError("Invalid child environment")
-    for name in (_PAYLOAD_ENV, _CONFIG_ENV, "OPENBOX_RESOURCE_CONTROL_DB"):
+    for name in (_PAYLOAD_ENV, _CONFIG_ENV, "OPENBOX_RESOURCE_CONTROL_DB", "OPENBOX_CACHE_CONTROL_DB"):
         target.pop(name, None)
     target.update(HOME=account.pw_dir, USER=account.pw_name, LOGNAME=account.pw_name)
     if args.terminal:

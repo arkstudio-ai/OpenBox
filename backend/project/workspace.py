@@ -30,6 +30,8 @@ WORKSPACE_ROOT = "/workspace"
 #: contains only the user's files. Snapshots in particular must stay outside
 #: the tree they are snapshotting.
 INTERNAL_ROOT = f"{WORKSPACE_ROOT}/.openbox"
+CACHE_ROOT = f"{INTERNAL_ROOT}/cache"
+PENDING_ROOT = f"{INTERNAL_ROOT}/pending"
 TRASH_ROOT = f"{INTERNAL_ROOT}/trash"
 SNAPSHOT_ROOT = f"{INTERNAL_ROOT}/snapshots"
 
@@ -99,10 +101,15 @@ def user_directory(user_id: str) -> str:
 
 def asset_sandbox_path(user_id: str, project_id: str | None, name: str,
                        asset_id: str | None = None) -> str:
-    """Keep the attachment path compatible with main's desktop delivery."""
+    """Stable asset identity; old callers without IDs retain their legacy path."""
     import posixpath
-    if not name or posixpath.basename(name) != name or name in {".", ".."}:
+    if not name or posixpath.basename(name) != name or name in {".", ".."} or "\\" in name or "\0" in name:
         raise ValueError("Invalid attachment filename")
+    from sandbox.managed_cache import enabled
+    if asset_id and enabled():
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", asset_id):
+            raise ValueError("Invalid asset ID")
+        return f"{CACHE_ROOT}/assets/{asset_id}/{name}"
     return f"{WORKSPACE_ROOT}/uploads/{name}"
 
 

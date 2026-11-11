@@ -39,7 +39,8 @@ async def sweep_if_due() -> None:
 
     # Each step is isolated: a sandbox that is unreachable must not stop the
     # database-side cleanup, which is the part that always works.
-    for step in (_sweep_temp_sessions, _sweep_old_runs, _sweep_workspace):
+    from sandbox.cache_recovery import sweep as sweep_cache_recovery
+    for step in (_sweep_temp_sessions, _sweep_old_runs, _sweep_workspace, sweep_cache_recovery):
         try:
             await step()
         except Exception as e:

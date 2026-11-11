@@ -53,6 +53,12 @@ async def upload_file(
     Lands in /workspace/uploads/<name> via chunked base64 through the
     container's /execute — the action server has no binary endpoint.
     """
+    from sandbox.managed_cache import enabled as managed_cache_enabled
+    if managed_cache_enabled():
+        # The normal composer already uses /api/assets and OSS. Its historical
+        # unconfigured-OSS fallback must not create an unarchived local-only
+        # attachment outside pending on a managed desktop.
+        raise HTTPException(status_code=503, detail="请通过 OSS 素材上传重试；本地临时上传暂不可用")
     raw = await file.read()
     if len(raw) > _UPLOAD_MAX_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 8 MB)")

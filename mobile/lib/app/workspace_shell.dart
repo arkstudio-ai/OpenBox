@@ -202,13 +202,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           FocusManager.instance.primaryFocus?.unfocus();
           return;
         }
-        // Light 模式 has no drawer to speak of: a root chat reached by a deep
-        // link goes back to the Light home instead (docs
-        // `LIGHT_MODE_IMPL_PLAN.md` §4.2 T2).
-        if (light) {
-          context.go(Paths.home);
-          return;
-        }
+        // Light 模式 has no drawer to speak of: `LightHomeAnchor` takes a
+        // root chat back to the Light home.
+        if (light) return;
         _scaffoldKey.currentState?.openDrawer();
       },
       child: Scaffold(
@@ -216,6 +212,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         backgroundColor: t.bg,
         appBar: AppBar(
           titleSpacing: 0,
+          // Light 模式 reaches a chat from its tabs, so the corner leads back
+          // there; the drawer is the pro workspace's way around.
+          leading: light
+              ? BackButton(
+                  key: const Key('light-chat-back'),
+                  onPressed: () => Navigator.maybePop(context),
+                )
+              : null,
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -265,10 +269,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             const SizedBox(width: 4),
           ],
         ),
-        drawer: SessionDrawer(
-          activeSessionId: widget.sessionId,
-          assistantUnread: assistantUnread,
-        ),
+        drawer: light
+            ? null
+            : SessionDrawer(
+                activeSessionId: widget.sessionId,
+                assistantUnread: assistantUnread,
+              ),
         onDrawerChanged: (isOpen) {
           // The drawer overlays the entire screen. A chat composer keyboard
           // must not cover its account/settings actions (including swipe-open).

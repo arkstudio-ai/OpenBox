@@ -202,13 +202,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           FocusManager.instance.primaryFocus?.unfocus();
           return;
         }
-        // Light 模式 has no drawer to speak of: a root chat reached by a deep
-        // link goes back to the Light home instead (docs
-        // `LIGHT_MODE_IMPL_PLAN.md` §4.2 T2).
-        if (light) {
-          context.go(Paths.home);
-          return;
-        }
+        // Light 模式 has no drawer to speak of: `LightHomeAnchor` takes a
+        // root chat back to the Light home.
+        if (light) return;
         _scaffoldKey.currentState?.openDrawer();
       },
       child: Scaffold(

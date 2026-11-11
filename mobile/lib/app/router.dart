@@ -49,6 +49,7 @@ import 'assistant_session_entry.dart';
 import 'auth_center_route.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
+import 'home_anchor.dart';
 import 'knowledge_routes.dart';
 import 'light_routes.dart';
 import 'workspace_shell.dart';
@@ -79,7 +80,8 @@ class _AuthRefresh extends ChangeNotifier {
 final routerProvider = Provider<GoRouter>((ref) {
   final refresh = _AuthRefresh(ref);
   ref.onDispose(refresh.dispose);
-  return GoRouter(
+  return HomeAnchoredRouter(
+    light: () => ref.read(uiModeProvider).isLight,
     // Explicit deep links keep their destination. A normal launch restores
     // the account's last chat once its workspace membership is known.
     initialLocation: Paths.landing,

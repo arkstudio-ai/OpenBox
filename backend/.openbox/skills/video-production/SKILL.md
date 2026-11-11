@@ -66,6 +66,14 @@ When the system prompt says the person is in Light mode (界面模式：Light), 
 
 ## Workflow
 
+Use `$TMPDIR` for extracted frames, audio and other reproducible intermediates.
+Keep plans, scripts and state in the project. Write completed renders under
+`$OPENBOX_PENDING_ROOT` and then call `share_file`; `compose.sh` uses that
+protected directory by default when the desktop supplies it. Never clear
+`.openbox/pending` yourself. Its upload/recovery service retains interrupted
+outputs until OSS and the resource centre confirm the archive. Asset cache
+paths may disappear after a completed task; fetch the same asset_id again.
+
 ### Keep preparation focused
 
 - Use the documented absolute paths directly. Do not list directories, search the filesystem, read script source, or request `--help` before using the commands below. If a required file is missing, report the exact missing dependency as an incomplete skill deployment; do not search `/` or substitute an unrelated file. An incomplete-looking tool result warrants one bounded read of the exact file, not broader exploration.

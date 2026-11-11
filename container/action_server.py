@@ -62,23 +62,27 @@ from execution_identity import (
 )
 validate_execution_identity()
 from file_worker import FileOperationMiddleware, FileWorkerError, PROTOCOL as FILE_PROTOCOL, json_operation as file_json_operation, storage_request
+from cache_api import configured_store, execution_environment as cache_execution_environment, mount as mount_cache_api
+from cache_control import CacheError
+from cache_control import PROTOCOL as CACHE_PROTOCOL
 
 # Persist beside other desktop state, outside workspace backup/restore. An
 # unconfigured legacy image does not advertise this protocol. A configured
 # but unreadable/corrupt journal fails startup rather than disabling the gate.
 _resource_db_path = os.environ.get("OPENBOX_RESOURCE_CONTROL_DB", "")
 if execution_user():
-    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py"):
+    for filename in ("action_server.py", "execution_identity.py", "file_worker.py", "resource_gate.py", "storage_migration.py", "cache_control.py", "cache_api.py"):
         protect_path(Path(globals().get("__file__", _ACTION_SERVER_DIR / "action_server.py")).absolute().parent / filename)
     if _resource_db_path:
         protect_path(_resource_db_path, create_parent=True)
         from storage_migration import require_ready
         require_ready(_resource_db_path, execution_user())
 _resource_gate = ResourceGate(_resource_db_path) if _resource_db_path else None
+_cache_store = configured_store(executor_identity(execution_user()) if execution_user() else None)
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.10.07-no-private-actors-v1"
+ACTION_SERVER_VERSION = "2026.10.29-managed-cache-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -249,6 +253,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 app.add_middleware(FileOperationMiddleware, enabled=lambda: bool(execution_user()), get_env=lambda: _exec_env())
 app.add_middleware(ResourceMiddleware, get_gate=lambda: _resource_gate, get_api_key=lambda: SESSION_API_KEY)
+mount_cache_api(app, _cache_store, resource_checkpoint, resource_quiescent, lambda: _resource_gate)
 
 
 @app.exception_handler(ResourceGateError)
@@ -429,6 +434,7 @@ async def alive():
             "catalogue_projection_v1",
             *([RESOURCE_PROTOCOL] if _resource_gate is not None else []),
             *([EXECUTION_PROTOCOL, FILE_PROTOCOL] if execution_user() else []),
+            *([CACHE_PROTOCOL] if _cache_store is not None else []),
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
@@ -710,7 +716,8 @@ async def execute(req: ExecuteRequest, request: Request):
     workdir = req.workdir or "/workspace"
     try:
         await resource_checkpoint(request)
-        argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+        argv, env = prepare_child(["/bin/sh", "-c", req.command],
+                                  await cache_execution_environment(_cache_store, request, _exec_env()))
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
@@ -745,6 +752,9 @@ async def execute(req: ExecuteRequest, request: Request):
         )
         _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
         return response
+    except CacheError:
+        _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
+        raise
     except Exception as e:
         _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
         raise HTTPException(status_code=500, detail=str(e))
@@ -965,7 +975,8 @@ async def execute_stream(req: ExecuteRequest, request: Request):
             # while it was queued; validate at the actual spawn boundary.
             await resource_checkpoint(request)
             await _validate_desktop_lease(request, req.command)
-            argv, env = prepare_child(["/bin/sh", "-c", req.command], _exec_env())
+            argv, env = prepare_child(["/bin/sh", "-c", req.command],
+                                      await cache_execution_environment(_cache_store, request, _exec_env()))
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
@@ -2729,6 +2740,7 @@ MCP_CONFIG_PATH = Path("/data/mcp/config.json")
 _MCP_ENV_DENYLIST = frozenset({
     "SESSION_API_KEY",
     "OPENBOX_RESOURCE_CONTROL_DB",
+    "OPENBOX_CACHE_CONTROL_DB",
     "OPENBOX_EXECUTOR_USER",
     "OPENBOX_CHILD_ENV_PAYLOAD",
     # Model provider keys bill to whoever owns the account, so an MCP server

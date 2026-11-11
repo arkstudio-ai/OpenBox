@@ -3379,6 +3379,14 @@ async def run_loop(
             ),
         )
         run_aborted = abort.is_set() and not (main_budget is not None and main_budget.error)
+        if inbox_outcome == "succeeded" and not failed and not run_aborted and last_finish == "stop":
+            try:
+                from sandbox.managed_cache import release_completed
+                await release_completed(sandbox)
+            except Exception as cache_error:
+                # Retain pins on uncertainty; recovery may prove completion
+                # later. Never turn a failed cleanup into data loss.
+                log.warning("Task cache retained after finalization: %s", type(cache_error).__name__)
         if (inbox_outcome == "succeeded" and not failed and last_finish == "stop"
                 and session.kind == "assistant" and main_budget is not None
                 and main_budget.mode == "ordinary" and config.compaction.auto):
@@ -3676,6 +3684,20 @@ async def _build_system_prompt(
         f"</env>"
     )
     parts.append(env_info)
+    from sandbox.managed_cache import enabled as managed_cache_enabled
+    if managed_cache_enabled():
+        parts.append(
+            "<local_files>\n"
+            "OSS is the durable source for attachments and completed media. Download an asset only when needed; "
+            "its stable path includes asset_id under /workspace/.openbox/cache/assets/. "
+            "Use $TMPDIR for processing inputs, extracted frames and temporary downloads. "
+            "Write final renders/deliverables into $OPENBOX_PENDING_ROOT, so a crash before share_file can recover them. "
+            "Keep source code and configuration in the project. Upload completed deliverables with share_file "
+            "before finishing the task; the platform protects uploads in /workspace/.openbox/pending/. "
+            "Do not manually clear pending. Completed task cache may be reclaimed; rematerialize an asset by "
+            "asset_id if its cached path is gone. A low-space refusal means defer large jobs until reclamation succeeds.\n"
+            "</local_files>"
+        )
     if agent_def.name in ("build", "plan") and frozen_subagent is None:
         parts.append(
             "<task_execution>\n"

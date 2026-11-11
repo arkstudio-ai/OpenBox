@@ -18,7 +18,9 @@ RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirement
     rm /tmp/requirements.txt
 
 COPY backend/ .
-COPY container/action_server.py /container/action_server.py
+# Every desktop-side module: scripts/wuying_bootstrap.py and wuying_deploy_action_server.py
+# push them from /container to desktops (resource gate, file worker, managed cache).
+COPY container/*.py /container/
 COPY container/dev-browser/ /container/dev-browser/
 # Verify the actual release artifact can construct every recovery payload.
 RUN python -c "from sandbox.browser_runtime import runtime_files; runtime_files()"

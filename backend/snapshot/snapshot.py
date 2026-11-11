@@ -32,6 +32,10 @@ EXCLUDE = [
     "node_modules/", ".venv/", "venv/", "__pycache__/", ".mypy_cache/",
     ".pytest_cache/", ".ruff_cache/", "dist/", "build/", ".next/", ".cache/",
     "target/", "*.pyc", ".DS_Store",
+    ".openbox/", "tmp/", "temp/", "renders/", "outputs/",
+    "*.[mM][pP]4", "*.[mM][oO][vV]", "*.mkv", "*.webm", "*.avi", "*.m4v",
+    "*.mp3", "*.wav", "*.m4a", "*.aac", "*.flac", "*.ogg",
+    "*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.zip", "*.tar", "*.gz",
 ]
 
 #: One lock per store, so two sessions in the same project cannot run git
@@ -73,7 +77,8 @@ async def _store(session_id: str) -> Store:
 
 async def _ensure_store(sandbox, store: Store) -> bool:
     """Create the store and its exclude file. Idempotent."""
-    if store.gitdir in _ready:
+    cache_key = (getattr(sandbox, "desktop_id", None) or getattr(sandbox, "base_url", None) or id(sandbox), store.gitdir)
+    if cache_key in _ready:
         return True
     excludes = "\n".join(EXCLUDE)
     script = (
@@ -90,7 +95,7 @@ async def _ensure_store(sandbox, store: Store) -> bool:
     if result.exit_code != 0:
         log.warning(f"Snapshot store init failed: {result.stderr}")
         return False
-    _ready.add(store.gitdir)
+    _ready.add(cache_key)
     return True
 
 
@@ -134,10 +139,11 @@ async def track(session_id: str, sandbox=None, user_id: str | None = None) -> st
             # nobody reads. Keep both commands in one remote request: a tunnel
             # can spend seconds establishing a new connection. && preserves
             # the rule that failed staging must not produce a snapshot.
-            result = await sandbox.execute(
-                f"{store.git('add -A')} && {store.git('write-tree')}",
-                workdir=store.workdir,
-            )
+            from sandbox.managed_cache import enabled as managed_cache_enabled
+            from snapshot.storage import command as managed_snapshot_command
+            script = (managed_snapshot_command(store.gitdir, store.workdir) if managed_cache_enabled()
+                      else f"{store.git('add -A')} && {store.git('write-tree')}")
+            result = await sandbox.execute(script, workdir=store.workdir)
             if result.exit_code != 0:
                 log.warning(f"Snapshot staging/write-tree failed: {result.stderr}")
                 return None

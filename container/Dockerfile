@@ -29,6 +29,8 @@ COPY resource_gate.py /opt/action_server/resource_gate.py
 COPY execution_identity.py /opt/action_server/execution_identity.py
 COPY file_worker.py /opt/action_server/file_worker.py
 COPY storage_migration.py /opt/action_server/storage_migration.py
+COPY cache_control.py /opt/action_server/cache_control.py
+COPY cache_api.py /opt/action_server/cache_api.py
 
 # 创建工作空间和持久化数据目录
 # /data 和 /workspace 会被 bind mount，镜像内的内容会被覆盖

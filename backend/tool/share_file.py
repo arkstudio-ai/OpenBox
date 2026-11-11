@@ -119,6 +119,10 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
     except Exception as e:
         return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300], metadata={"error": True})
 
+    from sandbox.managed_cache import enabled as managed_cache_enabled
+    if managed_cache_enabled():
+        from project.workspace import asset_sandbox_path
+        path = asset_sandbox_path(ctx.user_id, None, name, asset_id)
     output = (
         f"File attached to this reply for the user: {path} ({mime}, {verified} bytes)."
         if args.attach

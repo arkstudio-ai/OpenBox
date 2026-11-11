@@ -48,6 +48,7 @@ REMOTE_VIDEO_PRODUCTION_SKILL_DIR = "/opt/openbox/skills/video-production"
 SERVICE = "openbox-action-server"
 ACTION_SERVER_MODULES = (
     "action_server.py", "resource_gate.py", "execution_identity.py", "file_worker.py", "storage_migration.py",
+    "cache_control.py", "cache_api.py",
 )
 
 
@@ -126,66 +127,80 @@ print('retained chunk {index + 1}/{len(chunks)}')
 '''))
     expected = {name: data["sha256"] for name, data in files.items()}
     commands.append(_python(prelude + f'''
-import base64,gzip,hashlib,json,shutil
-expected={expected!r}
-blob=b''.join((stage/('chunk_%04d'%index)).read_bytes() for index in range({len(chunks)}))
-bundle=json.loads(gzip.decompress(base64.b64decode(blob)))
-if set(bundle)!=set(expected): raise RuntimeError('Release file set differs')
-contents={{}}
-for name, entry in bundle.items():
-    data=base64.b64decode(entry['content'],validate=True)
-    if hashlib.sha256(data).hexdigest()!=expected[name] or entry['sha256']!=expected[name]:
-        raise RuntimeError('Release checksum differs')
-    compile(data,name,'exec')
-    contents[name]=data
-backup=stage/'original'
-backup.mkdir(mode=0o700,exist_ok=True)
-protected(backup)
-original_index=stage/'original-files.json'
-if not original_index.exists():
-    originals={{name:(root/name).exists() for name in contents}}
-    with original_index.open('x') as stream:
-        json.dump(originals,stream,sort_keys=True); stream.flush(); os.fsync(stream.fileno())
-    original_index.chmod(0o600)
-originals=json.loads(original_index.read_text())
-if set(originals)!=set(contents): raise RuntimeError('Original file set differs')
-for name in contents:
-    target=root/name
-    saved=backup/name
-    if target.exists() or target.is_symlink():
-        protected(target)
-        if not target.is_file(): raise RuntimeError('Target is not a regular module')
-        if originals[name] and not saved.exists():
-            with saved.open('xb') as stream:
-                stream.write(target.read_bytes()); stream.flush(); os.fsync(stream.fileno())
-            saved.chmod(0o600)
-for name,data in contents.items():
-    target=root/name
-    if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest()==expected[name]: continue
-    staged=stage/('published-'+name)
-    if staged.exists():
-        protected(staged)
-        if staged.read_bytes()!=data: raise RuntimeError('Published source differs')
-    else:
-        with staged.open('xb') as stream:
+import base64,fcntl,gzip,hashlib,json,shutil
+publish_lock=os.open(root/'releases/.publication.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+try:
+    fcntl.flock(publish_lock,fcntl.LOCK_EX)
+    expected={expected!r}
+    blob=b''.join((stage/('chunk_%04d'%index)).read_bytes() for index in range({len(chunks)}))
+    bundle=json.loads(gzip.decompress(base64.b64decode(blob)))
+    if set(bundle)!=set(expected): raise RuntimeError('Release file set differs')
+    contents={{}}
+    for name, entry in bundle.items():
+        data=base64.b64decode(entry['content'],validate=True)
+        if hashlib.sha256(data).hexdigest()!=expected[name] or entry['sha256']!=expected[name]:
+            raise RuntimeError('Release checksum differs')
+        compile(data,name,'exec')
+        contents[name]=data
+    backup=stage/'original'
+    backup.mkdir(mode=0o700,exist_ok=True)
+    protected(backup)
+    original_index=stage/'original-files.json'
+    if not original_index.exists():
+        originals={{name:(root/name).exists() for name in contents}}
+        with original_index.open('x') as stream:
+            json.dump(originals,stream,sort_keys=True); stream.flush(); os.fsync(stream.fileno())
+        original_index.chmod(0o600)
+    originals=json.loads(original_index.read_text())
+    if set(originals)!=set(contents): raise RuntimeError('Original file set differs')
+    for name in contents:
+        target=root/name
+        saved=backup/name
+        if target.exists() or target.is_symlink():
+            protected(target)
+            if not target.is_file(): raise RuntimeError('Target is not a regular module')
+            if originals[name] and not saved.exists():
+                with saved.open('xb') as stream:
+                    stream.write(target.read_bytes()); stream.flush(); os.fsync(stream.fileno())
+                saved.chmod(0o600)
+    for name,data in contents.items():
+        target=root/name
+        if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest()==expected[name]: continue
+        # A retained deployment is resumable only from its own original or exact
+        # postimage. Never overwrite an intervening operator/runtime update.
+        saved=backup/name
+        if originals[name]:
+            protected(saved)
+            if not target.exists() or target.read_bytes()!=saved.read_bytes():
+                raise RuntimeError('Deployment preimage changed: '+name)
+        elif target.exists() or target.is_symlink():
+            raise RuntimeError('A new module appeared after deployment was frozen: '+name)
+        staged=stage/('published-'+name)
+        if staged.exists():
+            protected(staged)
+            if staged.read_bytes()!=data: raise RuntimeError('Published source differs')
+        else:
+            with staged.open('xb') as stream:
+                stream.write(data); stream.flush(); os.fsync(stream.fileno())
+            staged.chmod(0o644)
+        # Retain the staged source and original copy; this is the authorized code
+        # replacement, never a data-directory or permission migration.
+        with target.open('wb') as stream:
             stream.write(data); stream.flush(); os.fsync(stream.fileno())
-        staged.chmod(0o644)
-    # Retain the staged source and original copy; this is the authorized code
-    # replacement, never a data-directory or permission migration.
-    with target.open('wb') as stream:
-        stream.write(data); stream.flush(); os.fsync(stream.fileno())
-    target.chmod(0o644)
-for name,digest in expected.items():
-    if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
-        raise RuntimeError('Installed checksum differs')
-manifest=stage/'manifest.json'
-data=json.dumps({{'release_id':{release_id!r},'files':expected}},sort_keys=True).encode()
-if manifest.exists() and manifest.read_bytes()!=data: raise RuntimeError('Release manifest differs')
-if not manifest.exists():
-    with manifest.open('xb') as stream:
-        stream.write(data); stream.flush(); os.fsync(stream.fileno())
-    manifest.chmod(0o600)
-print(json.dumps({{'release_id':{release_id!r},'verified_modules':len(expected),'retained_originals':str(backup)}}))
+        target.chmod(0o644)
+    for name,digest in expected.items():
+        if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+            raise RuntimeError('Installed checksum differs')
+    manifest=stage/'manifest.json'
+    data=json.dumps({{'release_id':{release_id!r},'files':expected}},sort_keys=True).encode()
+    if manifest.exists() and manifest.read_bytes()!=data: raise RuntimeError('Release manifest differs')
+    if not manifest.exists():
+        with manifest.open('xb') as stream:
+            stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        manifest.chmod(0o600)
+    print(json.dumps({{'release_id':{release_id!r},'verified_modules':len(expected),'retained_originals':str(backup)}}))
+finally:
+    os.close(publish_lock)
 '''))
     return commands
 
@@ -260,6 +275,8 @@ def main() -> int:
     d.put(EXECUTION_IDENTITY, "/opt/action_server/execution_identity.py")
     d.put(FILE_WORKER, "/opt/action_server/file_worker.py")
     d.put(STORAGE_MIGRATION, "/opt/action_server/storage_migration.py")
+    d.put(REPO / "container" / "cache_control.py", "/opt/action_server/cache_control.py")
+    d.put(REPO / "container" / "cache_api.py", "/opt/action_server/cache_api.py")
     d.put(ACTION_SERVER, REMOTE_PATH)
     skill_files = sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file())
     remote_dirs = sorted(

@@ -397,6 +397,14 @@ class SandboxClient:
             headers["X-OpenBox-Operation"] = self._header_value(trace.operation, 48)
         if trace.lease_token:
             headers["X-OpenBox-Desktop-Lease"] = self._header_value(trace.lease_token, 160)
+        from sandbox.managed_cache import enabled as managed_cache_enabled
+        if managed_cache_enabled():
+            from agent.driver import _current_lease
+            lease = _current_lease.get()
+            if lease is not None:
+                headers.update({"X-OpenBox-Cache-Task": lease.session_id,
+                                "X-OpenBox-Cache-Run": lease.run_id,
+                                "X-OpenBox-Cache-Generation": str(lease.generation)})
         return headers
 
     @asynccontextmanager
@@ -649,6 +657,8 @@ print(json.dumps(out))
         workdir: str = "/workspace",
     ) -> ExecuteResult:
         """Execute a command in the sandbox."""
+        from sandbox.managed_cache import rehydrate_command
+        command = await rehydrate_command(self, command)
         async with self._client(timeout=timeout + 10) as client:
             resp = await client.post("/execute", headers=self._request_headers(), json={
                 "command": command,
@@ -687,6 +697,8 @@ print(json.dumps(out))
         IdleNotification when no output for idle_timeout seconds,
         and finally CommandExit (an int with optional output integrity).
         """
+        from sandbox.managed_cache import rehydrate_command
+        command = await rehydrate_command(self, command)
         pid = 0
         completed = False
         async with self._client(timeout=timeout + 10) as client:

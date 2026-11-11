@@ -109,6 +109,9 @@ def install_image_services(d: Desktop) -> None:
     d.run(r"""
 set -eu
 systemctl disable --now openbox-action-server openbox-tunnel 2>/dev/null || true
+systemctl disable --now openbox-cache-reclaim.timer openbox-cache-recover.timer 2>/dev/null || true
+systemctl stop openbox-cache-reclaim.service openbox-cache-recover.service 2>/dev/null || true
+rm -rf -- /var/lib/openbox-cache
 # Image mode also supports recycling an idle validation desktop. Remove all
 # workspace and user-installed runtime state before snapshotting so acceptance
 # artifacts cannot leak into every clone. The action server recreates the
@@ -303,6 +306,8 @@ def install_action_server(d: Desktop) -> None:
     d.put(REPO / "container" / "execution_identity.py", "/opt/action_server/execution_identity.py")
     d.put(REPO / "container" / "file_worker.py", "/opt/action_server/file_worker.py")
     d.put(REPO / "container" / "storage_migration.py", "/opt/action_server/storage_migration.py")
+    d.put(REPO / "container" / "cache_control.py", "/opt/action_server/cache_control.py")
+    d.put(REPO / "container" / "cache_api.py", "/opt/action_server/cache_api.py")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
     d.run(
         "rm -rf /opt/openbox/skills/video-production && "
@@ -337,6 +342,16 @@ echo "action server dependencies ok"
 """, timeout=900)
     # The HyperFrames renderer is gone with the media worker: composition is
     # now the agent running ffmpeg, which the desktop already has.
+
+
+def install_cache_services(d: Desktop, *, image_mode=False) -> None:
+    if str(REPO / "backend") not in sys.path:
+        sys.path.insert(0, str(REPO / "backend"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("openbox_cache_units", REPO / "backend/sandbox/cache_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    d.run(module.units_command(start=not image_mode), timeout=90)
 
 
 def install_dev_browser(d: Desktop) -> None:
@@ -497,12 +512,15 @@ def main() -> int:
         install_baseline_packages(d)
         install_desktop_tools(d)
         install_image_services(d)
+        install_cache_services(d, image_mode=True)
         print("\nImage mode complete: services are disabled and /etc/openbox is empty.")
         return 0
     if not args.relay:
         p.error("--relay is required unless --image-mode is used")
     api_key = args.api_key or secrets.token_hex(24)
     pub = install_services(d, api_key, args.relay, args.tunnel_port)
+    install_cache_services(d)
+    d.run("systemctl restart openbox-action-server", timeout=90)
 
     if args.relay_instance:
         authorize_relay(

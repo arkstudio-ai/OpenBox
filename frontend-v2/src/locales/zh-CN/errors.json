@@ -42,5 +42,9 @@
   "ASSISTANT_TASK_NOT_RUNNING": "任务暂时无法接收输入。如果任务已暂停，请先在任务卡片中恢复，再发送消息。",
   "ASSISTANT_TASK_HELD": "任务已暂停、已停止或暂不可用，请先查看任务卡片中的最新状态。",
   "ASSISTANT_EFFECT_UNRESOLVED": "任务停下时有一步的结果没来得及确认。请核对后点「我已核对，继续」，再发送这条消息。",
-  "ASSISTANT_DUPLICATE_TASK": "这件事已经有一个任务在做了，请在原任务里继续。"
+  "ASSISTANT_DUPLICATE_TASK": "这件事已经有一个任务在做了，请在原任务里继续。",
+  "AUTH_EMAIL_REQUIRED": "请填写邮箱。",
+  "AUTH_EMAIL_INVALID": "邮箱格式不正确。",
+  "AUTH_EMAIL_EXISTS": "这个邮箱已经注册过，请直接登录。",
+  "PAYMENT_REGION_UNAVAILABLE": "当前地区暂不支持在线支付，请联系管理员开通。"
 }

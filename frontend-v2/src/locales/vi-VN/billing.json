@@ -155,7 +155,8 @@
       "items": "{{value}} mục"
     },
     "kindFilter": "Loại",
-    "allKinds": "Tất cả loại"
+    "allKinds": "Tất cả loại",
+    "paymentRegionNote": "Khu vực của bạn chưa hỗ trợ thanh toán trực tuyến. Hãy liên hệ quản trị viên để được kích hoạt gói hoặc nạp điểm."
   },
   "orders": {
     "filters": "Lọc đơn hàng",

@@ -168,6 +168,7 @@
       "items": "{{value}} 条"
     },
     "kindFilter": "类型",
-    "allKinds": "全部类型"
+    "allKinds": "全部类型",
+    "paymentRegionNote": "当前地区暂不支持在线支付，请联系管理员为你开通套餐或充值。"
   }
 }

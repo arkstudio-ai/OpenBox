@@ -1,4 +1,5 @@
 """Authentication API routes — register, login, refresh, logout, ticket."""
+import re
 import hashlib as _hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -35,11 +36,14 @@ def init_auth_routes(cache):
 # ── Request/Response models ──
 
 class RegisterRequest(BaseModel):
-    username: str
+    #: Optional for an e-mail sign-up (``core/client_region.py``): the account
+    #: name is then derived from the address.
+    username: str | None = None
     password: str
     email: str | None = None
 
 class LoginRequest(BaseModel):
+    #: The account name, or the e-mail address the account was registered with.
     username: str
     password: str
 
@@ -125,6 +129,21 @@ async def _revoke_refresh_cookie(request: Request, response: Response) -> None:
     response.delete_cookie("refresh_token", path="/api/auth")
 
 
+_EMAIL = re.compile(r"[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s.]{2,24}")
+
+
+async def _username_for(email: str) -> str:
+    """An account name for an e-mail sign-up: the local part, made unique."""
+    import secrets
+    base = re.sub(r"[^A-Za-z0-9_.-]", "", email.split("@", 1)[0])[:24] or "user"
+    candidate = base
+    for _ in range(8):
+        if not await _user_repo.get_by_username(candidate):
+            return candidate
+        candidate = f"{base}-{secrets.token_hex(2)}"
+    return f"{base}-{secrets.token_hex(6)}"
+
+
 def _coded_error(status: int, code: str, message: str) -> HTTPException:
     """A refusal both clients can turn into their own copy.
 
@@ -150,15 +169,33 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     if err:
         raise HTTPException(status_code=400, detail=err)
 
-    # Check username taken
-    existing = await _user_repo.get_by_username(body.username)
-    if existing:
+    from core import client_region
+    ip = client_region.client_ip(request) or (request.client.host if request.client else "unknown")
+    email = (body.email or "").strip().lower() or None
+    username = (body.username or "").strip()
+    if client_region.enabled():
+        # Nothing confirms the address, and each new workspace is given
+        # credits: bound how many accounts one caller can open.
+        await _check_rate_limit(f"register:{ip}", limit=5, window=3600)
+        if not email:
+            raise _coded_error(400, "AUTH_EMAIL_REQUIRED", "An e-mail address is required")
+    if email:
+        if not _EMAIL.fullmatch(email):
+            raise _coded_error(400, "AUTH_EMAIL_INVALID", "Enter a valid e-mail address")
+        if await _user_repo.get_by_email(email):
+            raise _coded_error(409, "AUTH_EMAIL_EXISTS", "This e-mail address already has an account")
+    if not username:
+        if not email:
+            raise HTTPException(status_code=400, detail="username is required")
+        username = await _username_for(email)
+    elif await _user_repo.get_by_username(username):
+        # Check username taken
         raise _coded_error(409, "AUTH_USER_EXISTS", "Username already taken")
 
     # Create user
     user_id = generate_id()
     hashed = hash_password(body.password)
-    created = await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
+    created = await _user_repo.create(id=user_id, username=username, password_hash=hashed, email=email)
     from billing.signup_gift import grant_signup_gift_safely
     await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
     from light.first_video import offer as offer_first_video
@@ -192,10 +229,14 @@ async def register(body: RegisterRequest, request: Request, response: Response):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, request: Request, response: Response):
-    ip = request.client.host if request.client else "unknown"
+    from core import client_region
+    ip = client_region.client_ip(request) or (request.client.host if request.client else "unknown")
     await _check_rate_limit(f"login:{ip}", limit=5, window=60)
 
-    user = await _user_repo.get_by_username(body.username)
+    account = body.username.strip()
+    user = await _user_repo.get_by_username(account)
+    if not user and "@" in account:
+        user = await _user_repo.get_by_email(account.lower())
     if not user:
         raise _coded_error(401, "AUTH_INVALID_CREDENTIALS", "Invalid credentials")
 
@@ -245,13 +286,27 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
 
 @router.get("/logto/config")
-async def logto_config():
-    """Public values the browser needs to start the PKCE flow."""
+async def logto_config(request: Request):
+    """Public values the browser needs to start the PKCE flow.
+
+    ``sso_available`` says whether Logto is configured at all; ``enabled`` says
+    whether it is the way in for this caller. Outside mainland China the
+    default is the e-mail form (``preferred: "password"``), and ``enabled`` is
+    false so a client that predates these fields shows that form too.
+    """
     from auth.logto import public_config
+    from core import client_region
     from core.config import get_config
 
     config = get_config()
     data = public_config()
+    region = client_region.region_of(request)
+    data["sso_available"] = bool(data["enabled"])
+    data["region"] = region
+    data["region_gate"] = client_region.enabled()
+    data["preferred"] = "sso" if data["enabled"] and region == client_region.CN else "password"
+    if region != client_region.CN:
+        data["enabled"] = False
     data["redirect_uri"] = config.logto_redirect_uri
     data["post_logout_redirect_uri"] = config.logto_post_logout_redirect_uri
     return data

@@ -140,6 +140,11 @@ export function PlanOptions({
           </article>
         ))}
       </div>
+      {providers.data?.reason === "PAYMENT_REGION_UNAVAILABLE" && (
+        <p role="note" className="text-n700 text-xs">
+          {t("usage.paymentRegionNote")}
+        </p>
+      )}
       {providers.isError && (
         <p role="alert" className="text-n600 text-xs">
           {t("usage.providerError")}

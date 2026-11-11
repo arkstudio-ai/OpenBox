@@ -155,7 +155,8 @@
       "items": "{{value}} item(s)"
     },
     "kindFilter": "Kind",
-    "allKinds": "All kinds"
+    "allKinds": "All kinds",
+    "paymentRegionNote": "Online payment is not available in your region. Ask an administrator to enable a plan or add credits for you."
   },
   "orders": {
     "filters": "Filter orders",

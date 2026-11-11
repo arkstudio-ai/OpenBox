@@ -406,4 +406,37 @@ void main() {
       expect(find.byKey(_start), findsNothing);
     });
   }
+
+  testWidgets('outside mainland China the e-mail form is the default', (
+    tester,
+  ) async {
+    await _mount(
+      tester,
+      _Session(),
+      acceptPolicies: false,
+      config: () => {
+        'enabled': false,
+        'sso_available': true,
+        'preferred': 'password',
+        'region': 'intl',
+        'region_gate': true,
+        'endpoint': 'https://auth.example.test',
+        'native_app_id': 'native-app',
+      },
+    );
+    expect(find.text('password fallback'), findsOneWidget);
+    expect(find.byKey(_start), findsNothing);
+  });
+
+  testWidgets('the SSO panel offers the e-mail form on request', (
+    tester,
+  ) async {
+    await _mount(tester, _Session(), acceptPolicies: false);
+    expect(find.byKey(_start), findsOneWidget);
+    expect(find.text('password fallback'), findsNothing);
+    await tester.tap(find.byKey(const Key('sso-use-email')));
+    await tester.pump();
+    expect(find.text('password fallback'), findsOneWidget);
+    expect(find.byKey(_start), findsNothing);
+  });
 }

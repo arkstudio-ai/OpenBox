@@ -7,10 +7,23 @@ import 'providers.dart';
 
 /// Public Logto application settings a native client can safely receive.
 class LogtoSso {
-  const LogtoSso({required this.endpoint, required this.appId});
+  const LogtoSso({
+    required this.endpoint,
+    required this.appId,
+    this.emailFirst = false,
+    this.regionGate = false,
+  });
 
   final String endpoint;
   final String appId;
+
+  /// The server's default for this caller is the e-mail form (outside mainland
+  /// China); SSO stays reachable from it.
+  final bool emailFirst;
+
+  /// The deployment separates callers by region: e-mail sign-up then asks for
+  /// no account name.
+  final bool regionGate;
 }
 
 /// Null only when the server says Logto or its separate Native application is
@@ -23,11 +36,19 @@ final logtoSsoProvider = FutureProvider<LogtoSso?>((ref) async {
       .read(apiDioProvider)
       .get<Map<String, dynamic>>('/api/auth/logto/config');
   final data = asMap(resp.data);
-  if (asBool(data['enabled']) != true) return null;
+  // `sso_available` is "Logto is configured"; `enabled` is "it is this
+  // caller's default". A server without the first field only has the second.
+  final available = asBool(data['sso_available']) ?? asBool(data['enabled']);
+  if (available != true) return null;
   final endpoint = asString(data['endpoint']) ?? '';
   final appId = asString(data['native_app_id']) ?? '';
   if (endpoint.isEmpty || appId.isEmpty) return null;
-  return LogtoSso(endpoint: endpoint, appId: appId);
+  return LogtoSso(
+    endpoint: endpoint,
+    appId: appId,
+    emailFirst: asString(data['preferred']) == 'password',
+    regionGate: asBool(data['region_gate']) == true,
+  );
 });
 
 /// Injectable boundary around Logto's native SDK.

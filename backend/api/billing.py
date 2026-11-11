@@ -24,6 +24,11 @@ from db.models.session import Session
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
+def _payment_region(request: Request) -> None:
+    from core.client_region import require_payment_region
+    require_payment_region(request)
+
+
 def _error(exc: BillingError) -> HTTPException:
     status = {"PAYMENT_UNAVAILABLE": 503, "PAYMENT_INVALID_SIGNATURE": 401,
               "PAYMENT_ORDER_NOT_FOUND": 404, "PAYMENT_INVALID_CHECKOUT": 502,
@@ -156,8 +161,12 @@ async def ledger(page: int = Query(1, ge=1, le=1_000_000), page_size: int = Quer
 
 
 @router.get("/providers")
-async def payment_providers(workspace: dict = Depends(get_workspace)):
-    return {"items": [{"id": name, "name": provider.display_name,
+async def payment_providers(request: Request, workspace: dict = Depends(get_workspace)):
+    from core import client_region
+    if client_region.region_of(request) != client_region.CN:
+        # No way to pay from here: an operator grants plans and credits instead.
+        return {"items": [], "region": client_region.INTL, "reason": client_region.PAYMENT_REFUSAL}
+    return {"region": client_region.CN, "items": [{"id": name, "name": provider.display_name,
         "confirmation_mode": getattr(provider, "confirmation_mode", "callback"),
         "supports_status_query": callable(getattr(provider, "query_payment", None)),
         "supports_cancel": callable(getattr(provider, "close_payment", None)),
@@ -183,7 +192,7 @@ class SubscriptionOrderBody(BaseModel):
     request_key: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
-@router.post("/orders")
+@router.post("/orders", dependencies=[Depends(_payment_region)])
 async def new_order(body: OrderBody | SubscriptionOrderBody,
                     workspace: dict = Depends(require_workspace_role("owner", "admin")),
                     user: dict = Depends(get_current_user)):
@@ -236,7 +245,7 @@ async def orders(page: int = Query(1, ge=1, le=1_000_000), page_size: int = Quer
                 "items": [order_view(row) for row in rows]}
 
 
-@router.post("/orders/{order_id}/checkout")
+@router.post("/orders/{order_id}/checkout", dependencies=[Depends(_payment_region)])
 async def resume_checkout(order_id: str, workspace: dict = Depends(require_workspace_role("owner", "admin")),
                           user: dict = Depends(get_current_user)):
     try:
@@ -248,7 +257,7 @@ async def resume_checkout(order_id: str, workspace: dict = Depends(require_works
             "message": "Unable to create checkout; retry this order"}) from exc
 
 
-@router.post("/orders/{order_id}/app-checkout")
+@router.post("/orders/{order_id}/app-checkout", dependencies=[Depends(_payment_region)])
 async def native_app_checkout(order_id: str,
                               workspace: dict = Depends(require_workspace_role("owner", "admin")),
                               user: dict = Depends(get_current_user)):

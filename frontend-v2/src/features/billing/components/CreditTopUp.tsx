@@ -34,6 +34,8 @@ export function CreditTopUp({
   if (!canManage) return <p className="text-n600 text-sm">{t("plans.managerOnly")}</p>
   if (providers.isLoading) return null
   if (providers.isError) return <p className="text-n600 text-xs">{t("usage.providerError")}</p>
+  if (providers.data?.reason === "PAYMENT_REGION_UNAVAILABLE")
+    return <p className="text-n600 text-sm">{t("usage.paymentRegionNote")}</p>
   if (!providers.data?.items.length)
     return (
       <button type="button" disabled className="bg-n200 text-n600 self-start rounded-full px-4 py-2 text-sm">

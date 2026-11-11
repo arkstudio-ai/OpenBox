@@ -15,6 +15,7 @@ export function SsoEntry({ screen, children }: { screen: SsoScreen; children: Re
   const [accepted, setAccepted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [useEmail, setUseEmail] = useState(false)
   const start = async () => {
     if (!accepted || !logto || busy) return
     setBusy(true)
@@ -28,7 +29,8 @@ export function SsoEntry({ screen, children }: { screen: SsoScreen; children: Re
     }
   }
   if (isLoading) return <Spinner className="mx-auto my-8 size-6" />
-  if (!logto || failed) return <>{children}</>
+  // Outside mainland China the e-mail form is the default; its own SSO button stays available.
+  if (!logto || failed || useEmail || logto.preferred === "password") return <>{children}</>
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-3xl">{t(screen === "register" ? "registerTitle" : "loginTitle")}</h1>
@@ -41,6 +43,13 @@ export function SsoEntry({ screen, children }: { screen: SsoScreen; children: Re
         className="bg-ink text-bg h-11 rounded-lg text-sm disabled:opacity-50"
       >
         {t(busy ? "ssoRedirecting" : "sso")}
+      </button>
+      <button
+        type="button"
+        onClick={() => setUseEmail(true)}
+        className="text-a700 hover:text-ink self-start text-xs"
+      >
+        {t(screen === "register" ? "useEmailRegister" : "useEmailLogin")}
       </button>
     </div>
   )

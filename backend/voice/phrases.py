@@ -5,42 +5,70 @@ terminal transport notices have fallback text; normal speech is model generated.
 """
 import json
 
-LANGS = ("zh", "en")
+#: Call languages: ``zh`` / ``en`` / ``vi`` (the interface languages zh-CN / en-US / vi-VN). The model-facing
+#: instruction blocks below exist in zh and en only; a ``vi`` call gets the en block (docs/LIGHT_MODE_I18N_PLAN.md
+#: §2.2: vi-VN falls back to en-US), while the spoken fallback sentences are in all three.
+LANGS = ("zh", "en", "vi")
+FALLBACK = {"vi": "en"}
 PHRASES = {
     "result_in_text": {"zh": "语音结果没能播报，请到对话里查看处理情况。",
-                       "en": "I couldn't deliver the voice update. Please check the conversation for its status."},
+                       "en": "I couldn't deliver the voice update. Please check the conversation for its status.",
+                       "vi": "Tôi chưa đọc được kết quả bằng giọng nói. Bạn xem trong cuộc trò chuyện nhé."},
     "credits_exhausted": {"zh": "积分用完了，这通电话先到这里，充值后可以接着打。",
-                          "en": "You're out of credits, so I'll end the call here. Top up to call again."},
+                          "en": "You're out of credits, so I'll end the call here. Top up to call again.",
+                          "vi": "Bạn đã hết điểm, cuộc gọi dừng ở đây. Nạp thêm là gọi tiếp được."},
     "reconnected": {"zh": "刚才线路断了一下，您再说一遍？",
-                    "en": "The line dropped for a second. Could you say that again?"},
+                    "en": "The line dropped for a second. Could you say that again?",
+                    "vi": "Đường truyền vừa gián đoạn một chút. Bạn nói lại giúp tôi nhé?"},
 }
 SPEECHES = {
-    "timeout": {"zh": "暂时还没有处理结果，后续可以在对话里查看。", "en": "No result yet; check the conversation for updates."},
-    "room_pending": {"zh": "交给帮手了，做好了我叫你。", "en": "It is with the task now; I will tell you when it is done."},
-    "failed": {"zh": "没有取得可确认的结果，请在对话里查看处理情况。", "en": "No verified result is available; check the conversation for its status."},
-    "unavailable": {"zh": "没能提交给个人助理。", "en": "The request could not be submitted to the assistant."},
+    "timeout": {"zh": "暂时还没有处理结果，后续可以在对话里查看。", "en": "No result yet; check the conversation for updates.",
+                "vi": "Chưa có kết quả, bạn xem tiếp trong cuộc trò chuyện nhé."},
+    "room_pending": {"zh": "交给帮手了，做好了我叫你。", "en": "It is with the task now; I will tell you when it is done.",
+                     "vi": "Đã giao cho người giúp việc rồi, xong tôi sẽ báo bạn."},
+    "failed": {"zh": "没有取得可确认的结果，请在对话里查看处理情况。", "en": "No verified result is available; check the conversation for its status.",
+               "vi": "Chưa có kết quả xác nhận được, bạn xem tình trạng trong cuộc trò chuyện nhé."},
+    "unavailable": {"zh": "没能提交给个人助理。", "en": "The request could not be submitted to the assistant.",
+                    "vi": "Không gửi được cho trợ lý cá nhân."},
 }
-NOTE_PREFIX = {"zh": "（后台事件，不是用户说的话）", "en": "(Background event, not said by the user) "}
+NOTE_PREFIX = {"zh": "（后台事件，不是用户说的话）", "en": "(Background event, not said by the user) ",
+               "vi": "(Sự kiện nền, không phải lời người dùng nói) "}
 CARRIED_PREFIX = {"zh": "（通话线路刚才中断。下面是用户在中断前说的原话，还没有得到回答；请直接回答，不要让用户重复。）",
                   "en": "(The line dropped a moment ago. These are the user's own words from just before it, still "
-                        "unanswered; answer them directly and do not ask the user to repeat.) "}
+                        "unanswered; answer them directly and do not ask the user to repeat.) ",
+                  "vi": "(Đường truyền vừa gián đoạn. Đây là nguyên văn lời người dùng nói ngay trước đó, chưa được trả lời; "
+                        "hãy trả lời thẳng, đừng bắt người dùng nhắc lại.) "}
 
 
 def carried_utterance(words, lang):
     """The user's last unanswered utterance, carried into a replacement provider session."""
-    return CARRIED_PREFIX[_lang(lang)] + words
+    return _pick(CARRIED_PREFIX, lang) + words
 
 
 def _lang(lang):
     return lang if lang in LANGS else "zh"
 
 
+def english(lang) -> bool:
+    """Whether a call's fixed sentences are the English ones: ``en``, and ``vi`` (which may hear English, never Chinese)."""
+    return _lang(lang) in ("en", "vi")
+
+
+def _pick(table, lang):
+    """``table[lang]``, else its fallback (vi → en), else zh."""
+    lang = _lang(lang)
+    for candidate in (lang, FALLBACK.get(lang), "zh"):
+        if candidate in table:
+            return table[candidate]
+    raise KeyError(lang)
+
+
 def phrase_text(key, lang):
-    return PHRASES[key][_lang(lang)]
+    return _pick(PHRASES[key], lang)
 
 
 def speech_text(key, lang):
-    return SPEECHES[key][_lang(lang)]
+    return _pick(SPEECHES[key], lang)
 
 
 def phrase_instructions(key, lang):
@@ -69,7 +97,7 @@ def _greeting_instructions(lang, recap=True, *, first_call=False, unified=False)
             "must wait for the main assistant's fresh result.")
     if first_call:
         from assistant.secretary import FIRST_CONTACT
-        return FIRST_CONTACT + (" Use the user's current form of address once in this opening only; do not repeat it in subsequent replies. Use English for the introduction and conversation." if _lang(lang) == "en" else
+        return FIRST_CONTACT + (" Use the user's current form of address once in this opening only; do not repeat it in subsequent replies. Use English for the introduction and conversation." if english(lang) else
                                 "接通时使用一次用户的当前称呼，后续自然交流，不重复称呼。")
     return ("这是已有使用记录的用户接通。按实际聊天上下文和用户偏好简短接话，"
             "不重新介绍身份、职责或能力，不展开业务菜单；详细回答偏好不要求详细开场。" +
@@ -92,7 +120,7 @@ def note_body(status, user_text, speech, lang, *, report_title=None, asked="", r
 
 
 def joined_note(bodies, lang):
-    return NOTE_PREFIX[_lang(lang)] + json.dumps({"purpose": "deliver_results", "results": [json.loads(body) for body in bodies]}, ensure_ascii=False)
+    return _pick(NOTE_PREFIX, lang) + json.dumps({"purpose": "deliver_results", "results": [json.loads(body) for body in bodies]}, ensure_ascii=False)
 
 
 def note_text(status, user_text, speech, lang):
@@ -127,7 +155,7 @@ def together_instructions(count, unasked, speeches, lang):
 
 
 def card_note(user_text, speech, cards, lang):
-    return NOTE_PREFIX[_lang(lang)] + json.dumps({"source": "pending_decisions", "request": user_text,
+    return _pick(NOTE_PREFIX, lang) + json.dumps({"source": "pending_decisions", "request": user_text,
         "facts": speech, "cards": cards, "operation_state": "waiting_for_user"}, ensure_ascii=False)
 
 
@@ -147,7 +175,7 @@ def card_instructions(lang):
 
 
 def question_note(questions, lang):
-    return NOTE_PREFIX[_lang(lang)] + json.dumps({"source": "task_questions", "waiting_for_user": questions}, ensure_ascii=False)
+    return _pick(NOTE_PREFIX, lang) + json.dumps({"source": "task_questions", "waiting_for_user": questions}, ensure_ascii=False)
 
 
 def closed_decisions_note(decisions, lang):
@@ -162,7 +190,7 @@ def closed_decisions_note(decisions, lang):
         "Answered or skipped on screen, or withdrawn because the task changed: do not ask the user about them again; "
         "if asked, say they are taken care of or no longer need an answer, and read cards_pending's handled "
         "decisions before naming a choice.")
-    return NOTE_PREFIX[_lang(lang)] + json.dumps({"source": "task_questions", "no_longer_waiting": list(decisions),
+    return _pick(NOTE_PREFIX, lang) + json.dumps({"source": "task_questions", "no_longer_waiting": list(decisions),
                                                   "how": how}, ensure_ascii=False)
 
 
@@ -171,10 +199,13 @@ def question_instructions(lang):
     # was announced as 春禾果店's; the note named its own task in "conversation".
     return card_instructions(lang) + (
         "先用卡片 conversation 字段里的任务名说清是哪个任务在问，它可能不是刚才谈到的任务，不要套用其他任务的名字。"
-        "结合任务询问尚缺的决定，不填默认答案或推断进度。" if _lang(lang) == "zh" else
+        "结合任务询问尚缺的决定，不填默认答案或推断进度。"
+        "卡片带 already_presented 时，这个任务的方案本通话已经讲过：只说这次新增或变化的决定，一两句话问清，不再复述方案。" if _lang(lang) == "zh" else
         "First say which task is asking, by the task name in the card's conversation field; it may not be the task "
         "just discussed, so never borrow another task's name. "
-        "Ask about missing decisions in task context; do not fill defaults or infer progress.")
+        "Ask about missing decisions in task context; do not fill defaults or infer progress. "
+        "When the card carries already_presented, this call has read this task's plan before: say only what is new "
+        "or changed, in a sentence or two, without restating the plan.")
 
 
 def question_followup_instructions(lang):
@@ -296,17 +327,30 @@ def receipt_instructions(lang, *, delayed=False):
             "execution progress or an ETA.")
 
 
+#: interface language → call language
+CALL_LANG = {"zh-CN": "zh", "en-US": "en", "vi-VN": "vi"}
+
+
 async def user_language(user_id):
+    """The call language: the App's interface language (``extra.ui_language``) first, the web ``extra.locale`` next."""
+    from core.ui_language import from_preferences
     from db.repository.preference_repo import PgPreferenceRepo
     try:
-        locale = str(((await PgPreferenceRepo().get(user_id)) or {}).get("extra", {}).get("locale") or "")
+        row = await PgPreferenceRepo().get(user_id)
     except Exception:
         return "zh"
+    stored = from_preferences(row)
+    if stored:
+        return CALL_LANG[stored]
+    locale = str(((row or {}).get("extra") or {}).get("locale") or "")
     return "en" if locale.lower().startswith("en") else "zh"
 
 
 def room_interjection(title, lang):
     """Another task's result while the call is inside a room: one line, not the result."""
+    if _lang(lang) == "vi":
+        name = f"“{title}”" if title else "một việc khác"
+        return f"Người giúp việc đã làm xong {name}. Bạn muốn xem không?"
     name = f"「{title}」" if title else ("另一件活" if _lang(lang) == "zh" else "another task")
     return (f"{name}那边帮手做好了，要看吗？" if _lang(lang) == "zh" else
             f"The helper on {name} is done. Want to see?")

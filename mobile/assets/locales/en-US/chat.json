@@ -447,8 +447,8 @@
     "reasonLabel": "Blocked by",
     "site": "Site",
     "open": "Open the cloud desktop and take over",
-    "openHint": "Switches to the desktop panel with input control on. When the check is done, come back and pick \"我已完成，继续\".",
-    "ownBrowser": "The verification page is in your own browser — finish it there, then come back and pick \"我已完成，继续\".",
+    "openHint": "Switches to the desktop panel with input control on. When the check is done, come back and pick “Done, continue”.",
+    "ownBrowser": "The verification page is in your own browser — finish it there, then come back and pick “Done, continue”.",
     "record": "User took over: {{reason}} · {{host}}",
     "reason": {
       "captcha_slider": "slider captcha",
@@ -745,7 +745,7 @@
       "address": {
         "question": "What should I call you?",
         "useAccount": "Call me {{name}}",
-        "none": "Call me 老板",
+        "none": "Call me boss",
         "placeholder": "e.g. Andrew"
       },
       "name": {
@@ -853,6 +853,8 @@
       "more": "More",
       "showResult": "Show full result",
       "hideResult": "Hide full result",
+      "fold": "Collapse",
+      "expand": "Expand",
       "retryReport": "Report again",
       "pause": "Pause",
       "resume": "Resume",

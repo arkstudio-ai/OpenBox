@@ -523,3 +523,16 @@ async def test_a_restricted_turn_that_retires_an_untold_note_leaves_its_notice_t
     await drain()
     assert len(provider.commands("note")) == 2 and bridge.requested == f"delivery:{notice.id}"
     await bridge.close()
+
+
+async def test_a_light_home_redirect_is_told_as_nothing_arranged():
+    """2026-11-07: the assistant only pointed at 首页「做一条视频」; the front desk narrated it as a handover."""
+    bridge, _, _, _ = make()
+    ref = VoiceTurnRef("request", "tool", "做个30秒搞笑动画", "做个30秒搞笑动画", 1000,
+                      inbox_id="inbox", submissions=[], light_redirect=True)
+    ref.speech = "做短视频建议直接去首页的做一条视频，入口链接已经发在对话里了。"
+    body = json.loads(bridge._note_body(ref))
+    assert body["task_submission_check"] == "verified"
+    assert "没有派活" in body["task_submission_facts"]
+    assert "没有交给帮手" in body["light_redirect_note"] and "不得说已转交" in body["light_redirect_note"]
+    await bridge.close()

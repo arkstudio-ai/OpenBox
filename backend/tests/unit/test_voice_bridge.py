@@ -714,3 +714,28 @@ async def test_a_first_contact_is_greeted_even_right_after_a_dropped_call():
     [(_, instructions)] = provider.commands("create")
     assert instructions == phrases.greeting_instructions("zh", first_call=True)
     await bridge.close()
+
+
+async def test_instructions_carry_what_this_call_handed_over(call):
+    """2026-11-07: with nothing submitted the front desk said "是的，已经转交给帮手去做了" for six minutes."""
+    bridge, provider, link, clock = call
+    await greeted(bridge, provider)
+    assert "交办成功" not in bridge._instructions()  # nothing has come back yet
+
+    async def ask(words, call_id, response_id, **result):
+        await replay(bridge, event("user_transcript", text=words), started(response_id),
+                     tool_call(call_id, text=words, response_id=response_id), done(response_id))
+        link.finish(call_id, **result)
+        await drain()
+        [(_, note)] = provider.commands("note")[-1:]
+        await replay(bridge, item(f"note-{call_id}", text=note),
+                     started(f"tell-{call_id}"), audio(f"tell-{call_id}"), done(f"tell-{call_id}"))
+        await drain(30)
+
+    await ask("帮我看看贪吃蛇进展", "call-0", "ack-0", speech="贪吃蛇做完了。")
+    assert "本通话到目前为止没有任何任务交办成功" in bridge._instructions()
+    await ask("帮我做个30秒的搞笑动画", "call-1", "ack-1", speech="交给帮手了。",
+              running=[{"task_id": "t-1", "title": "30秒搞笑动画", "state": "queued"}])
+    text = bridge._instructions()
+    assert "交办成功、正在做的任务：「30秒搞笑动画」" in text and "没有任何任务交办成功" not in text
+    await bridge.close()

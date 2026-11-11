@@ -78,6 +78,9 @@ class PreferencesUpdate(BaseModel):
     #: under ``extra["onboarding"]`` and merged key-by-key server-side; an
     #: explicit ``{}`` clears it (settings → replay the tour).
     onboarding: dict | None = None
+    #: Interface language (``zh-CN`` / ``en-US`` / ``vi-VN``), stored as ``extra["ui_language"]``
+    #: (docs/LIGHT_MODE_I18N_PLAN.md §2.1); pushes, autopilot and voice read it when no request is in hand.
+    ui_language: Literal["zh-CN", "en-US", "vi-VN"] | None = None
 
 
 # ── Rate limiting helper ──
@@ -155,7 +158,13 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     # Create user
     user_id = generate_id()
     hashed = hash_password(body.password)
-    await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
+    created = await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
+    from billing.signup_gift import grant_signup_gift_safely
+    await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
+    from light.first_video import offer as offer_first_video
+    await offer_first_video(user_id)
+    from light.mode import default_mode_for_new_user
+    await default_mode_for_new_user(user_id)
 
     # Issue tokens only after creating the exclusive mobile lease.
     from auth.mobile import login_claims
@@ -358,10 +367,16 @@ async def _sign_in_logto_identity(
             username = f"{username}-{subject[:6]}"
 
         user_id = generate_id()
-        await _user_repo.create(
+        created = await _user_repo.create(
             id=user_id, username=username, password_hash=None, email=email,
             oauth_provider=PROVIDER, oauth_id=subject, avatar_url=avatar,
         )
+        from billing.signup_gift import grant_signup_gift_safely
+        await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
+        from light.first_video import offer as offer_first_video
+        await offer_first_video(user_id)
+        from light.mode import default_mode_for_new_user
+        await default_mode_for_new_user(user_id)
 
         user = await _user_repo.get(user_id)
         from audit import record
@@ -507,6 +522,14 @@ async def update_preferences(body: PreferencesUpdate, current_user: dict = Depen
         if not any(item["id"] == chosen and item["available"] for item in options(get_config())):
             raise HTTPException(status_code=400, detail="Image provider is not configured or unavailable")
         fields["extra"] = {**(fields.get("extra") or {}), KEY: chosen}
+    from core.ui_language import PREFERENCE_KEY as LANG_KEY, is_language
+    lang = fields.pop("ui_language", None)
+    if lang is None and LANG_KEY in (fields.get("extra") or {}):
+        lang = fields["extra"][LANG_KEY]
+    if lang is not None:
+        if not is_language(lang):
+            raise HTTPException(status_code=400, detail="ui_language must be zh-CN, en-US or vi-VN")
+        fields["extra"] = {**(fields.get("extra") or {}), LANG_KEY: lang}
     result = await _pref_repo.upsert(current_user["user_id"], **fields)
     return result
 

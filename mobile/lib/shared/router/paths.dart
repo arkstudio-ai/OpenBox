@@ -1,3 +1,5 @@
+import '../models/first_video.dart';
+
 /// Route path constants, mirroring frontend-v2 `shared/router/paths.ts`.
 /// Mobile addition: the workbench panel becomes a routed screen (`/app/w/…`).
 abstract final class Paths {
@@ -35,14 +37,58 @@ abstract final class Paths {
         : '$path?redirect=${Uri.encodeComponent(destination)}';
   }
 
-  static String postAuthDestination(Uri uri) {
+  /// Where a sign-in lands. A deep link's `redirect` keeps its destination;
+  /// otherwise the account's first-video state decides (docs
+  /// `FIRST_VIDEO.md`): offered at sign-up and untouched → the guided flow,
+  /// in flight → its making page, anything else (including accounts from
+  /// before the flow, which have no record) → the chat home.
+  static String postAuthDestination(
+    Uri uri, {
+    FirstVideoEntry entry = FirstVideoEntry.settled,
+  }) {
     final destination = uri.queryParameters['redirect'];
-    return destination != null && destination.startsWith('/')
-        ? destination
-        : app;
+    if (destination != null && destination.startsWith('/')) return destination;
+    return switch (entry) {
+      FirstVideoEntry.fresh => firstVideo,
+      FirstVideoEntry.making => firstVideoMaking,
+      FirstVideoEntry.settled => app,
+    };
   }
 
+  /// Mobile-only guided first video (Light 模式 M1). Root-navigator routes
+  /// outside the workspace shell; `firstVideo` itself forwards to the first
+  /// screen.
+  static const String firstVideo = '/app/first-video';
+  static const String firstVideoShop = '/app/first-video/shop';
+  static const String firstVideoTemplate = '/app/first-video/template';
+  static const String firstVideoPhoto = '/app/first-video/photo';
+  static const String firstVideoMaking = '/app/first-video/making';
+  static const String firstVideoResult = '/app/first-video/result';
+
   static String chat(String sessionId) => '/app/s/$sessionId';
+
+  /// Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): four tabs on a stateful
+  /// shell, outside `/app` so the pro route tree stays exactly as it is.
+  /// `home` is the mode's own start; `lightAssistant` / `lightInbox` embed the
+  /// personal assistant and the message centre; `me` holds the account.
+  static const String home = '/home';
+  static const String lightAssistant = '/assistant';
+  static const String lightInbox = '/inbox';
+  static const String me = '/me';
+  static const List<String> lightTabs = [home, lightAssistant, lightInbox, me];
+  static bool isLightTab(String path) => lightTabs.contains(path);
+
+  /// The topic pages (docs `LIGHT_MODE_PLAN.md` §4.4) sit on the root
+  /// navigator above the tabs: the sample gallery of one entry, then the
+  /// guided conversation it started.
+  static String lightTopic(String entryId) =>
+      '/light/topic/${Uri.encodeComponent(entryId)}';
+  static String lightChat(String sessionId) => '/light/s/$sessionId';
+
+  /// 省心托管: 托管中的事.
+  static const String lightAutopilot = '/light/autopilot';
+  static bool isLightPath(String path) =>
+      isLightTab(path) || path.startsWith('/light/');
 
   static const String cron = '/app/cron';
 

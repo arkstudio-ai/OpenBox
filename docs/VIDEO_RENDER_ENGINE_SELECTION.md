@@ -113,6 +113,26 @@
 | 帧率 | 24（跟源） | 25（固定） |
 | 帧精度核对 | 第 118 帧 = 第二段第 10 帧叠第一段第 118 帧，数学正确 | 转场在 4.4–4.9s 间真实混合 |
 
+### 4.3 2026-11-04 引擎能力解锁样片（work: 会话 scratchpad engine/sampler.json）
+
+QWH 的洗车与商场舞蹈素材拼的 23.4 秒样片，一次把新暴露的能力全部渲一遍（IMS 作业 `82f7…`/`c565…`，输出 `oss://bossip/light/spike/20261104/engine-sampler.mp4`），抽帧与分贝核对：
+
+| 能力 | 时间线字段 | 结果 |
+|---|---|---|
+| 变速 | `shots[].speed`（0.25–4，`In/Out` 仍是源时间，时间线长度 = duration/speed） | 0.5 倍慢动作、2 倍快放都按预期 |
+| 推拉 | `shots[].move`（KenBurns `Start/End` = `x,y,w,h` 比例） | `zoom_in` 6 秒内画面明显放大（已验证）；`pan_right` 与素材自身运镜分不开，未验证 |
+| 滤镜 | `shots[].filter` / `filter`（EffectTracks 按时间段） | `warm` 饱和度 35→84、r−b 9→48；`m7` 20→51、6→19（已验证） |
+| 横拍毛玻璃背景 | `shots[].backdrop=blur` + `fit=contain`（底层同素材 Cover + VFX `h_blur`，静音） | 上下是同画面的模糊放大，中间清晰原片（已验证） |
+| 画中画 | `overlays[]`（独立视频轨，X/Y/W/H 比例、Opacity） | 右上角 36%×20% 小窗正常，带 Opacity 0.95（已验证） |
+| AI 配音 | `audio[].voiceover`（AudioTrackClip `Type: AI_TTS`） | 纯配音样片 0–5 秒 −24 dB、之后 −120 dB；16 字约 5 秒（zhiyuan 已验证） |
+| 配乐压低 | `duck_under_voice` | 与字幕压低同一机制，按旁白区间切段 |
+| AI 配音音色 | `voiceover.voice` | 2026-11-05 同一句（15 字）再渲两个：`zhixiang` 知祥磁性男声、`zhitian_emo` 知甜甜美女声，都是 0–5 秒 −25 dB 左右、之后静音（`oss://bossip/light/spike/20261105/voice-*.mp4`）；三个音色已验证，分别给 温暖纪实 / 产品大片 / 快剪动感 三档风格；编译器按 0.3 秒/字估时长，区间不够会警告 |
+| 转场 | `transition_out.type` | IMS 提交时就校验名字：ffmpeg 风格的 `slideleft` 被拒（InvalidTimelineFormat，不扣费）；`wiperight`、`perlin` 已验证，目录只留 IMS 自己页面上的名字 |
+| 花字 | `style.color_style` | `neon_cyan` 渲染成普通白字描边，`EffectColorStyle` 单独不生效，未验证 |
+| 字体 | `style.font=KaiTi` | 抽帧看不出与默认字体的差别，未验证 |
+
+复跑：`python -m video.ims_compiler sampler.json --out-url oss://… --oss-region cn-shanghai --cli-args` → `aliyun ice submit-media-producing-job --region cn-shanghai …` → `get-media-producing-job`；抽帧用 swift AVFoundation（scratchpad `qwh/frames`），分贝用 `engine/audio`。
+
 ### 4.2 IMS 两个历史 bug 的定位（用户之前遇到过）
 **黑边**
 | 配置 | 结果 |

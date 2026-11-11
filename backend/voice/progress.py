@@ -11,6 +11,7 @@ it, answers to new requests wandered into the old ones (2026-10-09).
 import time
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.progress")
 
@@ -52,6 +53,7 @@ STEPS = {
     "status.publishing": ("在看发布渠道通不通", "checking the publishing route"),
     "status.skills": ("在看能用哪些技能", "checking the available skills"),
     "status.briefing": ("在看每日简报的设置", "checking the daily briefing"),
+    "light.entries": ("在看首页有哪些功能", "checking the home entries"),
     TEXT_STEP: ("在整理回复", "writing up the answer"),
 }
 PREFIX_STEPS = {
@@ -68,7 +70,7 @@ def step_phrase(tool: str, lang: str = "zh") -> str:
     """A tool id as a short spoken phrase; unknown tools are just "working"."""
     pair = STEPS.get(tool) or next((value for prefix, value in PREFIX_STEPS.items() if tool.startswith(prefix)),
                                    OTHER_STEP)
-    return pair[1] if lang == "en" else pair[0]
+    return pair[1] if english(lang) else pair[0]
 
 
 class Progress:
@@ -115,7 +117,7 @@ class Progress:
         asked = [ref for ref in pending if ref.lane != "remember"]
         if not asked:
             return ""
-        if self.lang == "en":
+        if english(self.lang):
             return "Handed to the personal assistant; awaiting results (not proof of execution): " + ", ".join(f"\"{_short(ref.text)}\"" for ref in asked) + "."
         return "已交给个人助理等待结果（不代表任务已开始执行）：" + "、".join(f"“{_short(ref.text)}”" for ref in asked) + "。"
 
@@ -161,7 +163,7 @@ ROOM_STEP_SECONDS = 180  # a step older than this is not "what it is doing now"
 def room_step_phrase(tool: str, lang: str = "zh") -> str:
     pair = ROOM_STEPS.get(tool) or next((value for prefix, value in ROOM_PREFIX_STEPS.items()
                                          if tool.startswith(prefix)), ROOM_OTHER_STEP)
-    return pair[1] if lang == "en" else pair[0]
+    return pair[1] if english(lang) else pair[0]
 
 
 class RoomProgress:

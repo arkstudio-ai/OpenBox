@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../shared/api/first_video_entry.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
@@ -10,6 +12,12 @@ import '../../../shared/legal/legal_links.dart';
 import '../../../shared/router/paths.dart';
 import '../api/logto.dart';
 import '../state/auth_flow.dart';
+
+/// Debug builds only: `--dart-define=AUTH_PASSWORD_FORM=true` shows the
+/// account/password form even where the server runs SSO, so a test
+/// environment's local accounts can be used without a browser sign-in
+/// (mobile README「测试环境的账密登录」). Unreachable in a release build.
+const _forcePasswordForm = bool.fromEnvironment('AUTH_PASSWORD_FORM');
 
 /// Hands the sign-in and sign-up screens over to Logto (web `SsoEntry`).
 ///
@@ -54,7 +62,12 @@ class _SsoGateState extends ConsumerState<SsoGate> {
             acceptedLegal: _accepted,
           );
       if (mounted) {
-        context.go(Paths.postAuthDestination(GoRouterState.of(context).uri));
+        context.go(
+          Paths.postAuthDestination(
+            GoRouterState.of(context).uri,
+            entry: ref.read(firstVideoEntryProvider),
+          ),
+        );
       }
     } on PlatformException catch (e) {
       // Dismissing the sheet is a decision, not a failure: leave the screen as
@@ -78,7 +91,9 @@ class _SsoGateState extends ConsumerState<SsoGate> {
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       ),
       error: (_, _) => _unavailable(context),
-      data: (config) => config == null ? widget.child : _panel(context, config),
+      data: (config) => config == null || (kDebugMode && _forcePasswordForm)
+          ? widget.child
+          : _panel(context, config),
     );
   }
 

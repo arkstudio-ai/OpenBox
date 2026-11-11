@@ -120,7 +120,88 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
                 raise ComposeRefusal(f"shots[{index}].asset is {row.mime}; shots must be video or image")
             url = f"https://{oss.host}/{row.oss_key}"
         shots.append(shot.model_copy(update={"asset": url}))
-    return timeline.model_copy(update={"shots": shots})
+    if any(item.voiceover is not None for item in timeline.audio):
+        await _refuse_voiceover_over_spoken_shots(shots, timeline.audio, ctx, oss)
+    audio = []
+    for index, item in enumerate(timeline.audio):
+        if item.voiceover is not None:
+            audio.append(item)   # spoken by the renderer from text: nothing to own or resolve
+            continue
+        if item.library_id:
+            from video.bgm_library import track
+
+            found = await track(item.library_id)
+            if found is None:
+                raise ComposeRefusal(f"audio[{index}].library_id {item.library_id!r} is not in the music library")
+            audio.append(item.model_copy(update={"source_sec": found.sec}))
+            continue
+        url = _owned_oss_url(item.asset, ctx, oss)
+        if url is None:
+            row = await _find_owned_asset(item.asset, ctx)
+            if not row:
+                raise ComposeRefusal(f"audio[{index}].asset {item.asset!r} is not a ready asset owned by you")
+            if not row.mime.startswith(("audio/", "video/")):
+                raise ComposeRefusal(f"audio[{index}].asset is {row.mime}; audio must be an audio or video file")
+            url = f"https://{oss.host}/{row.oss_key}"
+        audio.append(item.model_copy(update={"asset": url}))
+    return timeline.model_copy(update={"shots": shots, "audio": audio})
+
+
+async def _spoken_lines_by_key(keys: list[str], ctx: ToolContext) -> dict[str, str]:
+    """OSS key → the line the presenter was generated saying (``video_generate`` ``spoken_line``)."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+
+    if not keys:
+        return {}
+    async with get_db_session() as db:
+        rows = (await db.execute(
+            select(FileAsset.oss_key, VideoJob.request_data)
+            .join(VideoJob, VideoJob.output_asset_id == FileAsset.id)
+            .where(FileAsset.user_id == ctx.user_id, FileAsset.oss_key.in_(keys), VideoJob.kind == "segment")
+        )).all()
+    return {key: str((data or {}).get("spoken_line") or "") for key, data in rows if (data or {}).get("spoken_line")}
+
+
+async def _refuse_voiceover_over_spoken_shots(shots: list[Shot], audio: list, ctx: ToolContext, oss) -> None:
+    """A presenter generated saying a line (2026-11-09 decision: the presenter speaks for themselves)
+    is never dubbed over: the mouth follows the generated words and no narration can match it.
+
+    light-test 2026-11-09: three news-anchor shots whose mouths moved to nothing were composed under
+    an AI voiceover of a different text. Shot spans are the naive cumulative lengths (transitions
+    overlap a little); a shot of unknown length runs to the end of the cut.
+    """
+    keys = [shot.asset.split(f"https://{oss.host}/", 1)[1] for shot in shots if shot.asset.startswith(f"https://{oss.host}/")]
+    spoken = await _spoken_lines_by_key(keys, ctx)
+    if not spoken:
+        return
+    cursor = 0.0
+    for index, shot in enumerate(shots):
+        key = shot.asset.split(f"https://{oss.host}/", 1)[1] if shot.asset.startswith(f"https://{oss.host}/") else ""
+        length = shot.timeline_sec
+        start, end = cursor, (cursor + length if length is not None else None)
+        if key in spoken:
+            for j, item in enumerate(audio):
+                if item.voiceover is None:
+                    continue
+                v_end = item.to_sec if item.to_sec is not None else float("inf")
+                overlap = min(end if end is not None else float("inf"), v_end) - max(start, item.from_sec)
+                if overlap > 0.5:
+                    line = spoken[key]
+                    raise ComposeRefusal(
+                        f"shots[{index}] is a take in which the presenter speaks 「{line[:40]}{'…' if len(line) > 40 else ''}」 "
+                        f"(its video_generate spoken_line), and audio[{j}].voiceover ({item.from_sec}s–{item.to_sec}s) "
+                        "would be laid over it. A voice dubbed over a talking presenter never matches the mouth. "
+                        "Keep the presenter's own words: remove that voiceover span (narrate only over shots where nobody "
+                        "talks), or if narration is wanted instead, regenerate the shot with no_speech=true and "
+                        "generate_audio=false"
+                    )
+        if end is None:
+            break
+        cursor = end
 
 
 def _compile(timeline: Timeline, *, output_url: str) -> CompiledJob:
@@ -141,13 +222,22 @@ async def _execute_schema() -> ToolResult:
     rules = [
         "units: seconds and canvas fractions (0..1); never pixels",
         "shots[].asset: an asset_id you own (from video_generate or share_file), or your own oss:// / OSS https object",
-        "shots[].fit: cover (default, crops to fill) | contain (black bars) | fill (stretch)",
+        "shots[].fit: cover (default, crops to fill) | contain (black bars) | fill (stretch); a landscape clip on a portrait canvas with cover is centre-cropped",
+        "shots[].volume: the clip's own recorded sound, 1 as recorded (default), 0 muted",
+        "shots[].speed: 0.25–4; in_sec/duration_sec stay source times, the shot plays duration_sec/speed on the timeline (0.5 = slow motion, 2 = twice as fast); caption and text times are on the timeline after speed",
+        "shots[].move: a slow camera move — {\"preset\": zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down} or {\"start\": [x,y,w,h], \"end\": [x,y,w,h]} windows of the source frame; use on static or reveal shots, never on every shot",
+        "shots[].filter / filter: a colour preset on one shot or the whole cut; shots[].backdrop=blur with fit=contain puts the same clip, blurred and filling the canvas, behind a landscape clip instead of black bars",
+        "overlays[]: picture-in-picture or a logo over the main picture — asset, from_sec, to_sec, in_sec, x, y, width, height (canvas fractions), opacity, volume (muted by default); each on its own track",
+        "audio[].voiceover: narration spoken by the renderer's AI voice from text — {\"text\", \"voice\", \"speech_rate\", \"pitch_rate\"}; place it with from_sec/to_sec (the voice needs about 0.3 s per character at speech_rate 0; a shorter span is warned because the line's end may be cut off), volume 1; a bed with duck_under_voice=true drops while it speaks. Lay it only over shots in which nobody is seen talking (generated with no_speech=true and generate_audio=false): a presenter whose mouth moves to a dub never matches — such a shot speaks its own video_generate spoken_line instead",
+        "audio[]: optional sound beds (BGM, voice-over) on their own tracks: asset or library_id (a music-library track, icepublic-…), from_sec, to_sec, in_sec, volume (default 0.3), fade_in_sec, fade_out_sec, duck_under_captions + duck_volume (lower the bed while captions show); a library track shorter than its span repeats, a longer one is cut",
         "transition_out sits on the shot it leads out of and overlaps the next shot",
         "texts[].align=center ignores x; y is the top edge of the text box",
         "captions render bottom-centred at caption_style.bottom_ratio, one track, non-overlapping",
         "output is 25fps regardless of source fps",
         f"verified transitions: {sorted(cat.VERIFIED_TRANSITIONS)}; motion-in: {sorted(cat.VERIFIED_MOTION_IN)}; "
-        f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}",
+        f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}; "
+        f"filters: {sorted(cat.VERIFIED_FILTERS)}; moves: {sorted(cat.VERIFIED_MOVES)}; 花字 styles: {sorted(cat.VERIFIED_COLOR_STYLES)}; "
+        f"voices: {sorted(cat.VERIFIED_VOICES)} (all listed voices: {', '.join(f'{k}={v}' for k, v in cat.KNOWN_VOICES.items())})",
         "other documented values compile with a warning; unknown values are refused before submission",
         "use action=validate before action=submit; review the timeline content and warnings, without a pricing comparison or fee card",
     ]
@@ -276,8 +366,16 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         return ToolResult(title="Composition submit failed", output=_public(exc), metadata={"job_id": job.id})
     await vp._update_job(job.id, status="in_progress", provider_task_id=provider_job_id, started_at=_now(), attempt=1)
     job = await vp._owned_job(job.id, ctx, KIND)
+    extra = [f"warning={w}" for w in compiled.warnings]
+    from billing.footage import is_footage_session
+    if await is_footage_session(job.session_id):
+        # 你拍我剪: the cut is watched from here and lands in the chat by itself.
+        from video.compose_recovery import watch
+        watch(job.id)
+        extra.append("delivery=automatic: this cut is watched and attaches itself to the chat when it is done; "
+                     "end the turn now with one short line, do not call wait")
     return await _status_result(job, asset, ctx, is_wait=False, args=args, title="Composition submitted",
-                                extra=[f"warning={w}" for w in compiled.warnings])
+                                extra=extra)
 
 
 async def _execute_job_action(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:
@@ -368,11 +466,34 @@ async def poll_compose_job(job):
         await vp._mark_asset(job.output_asset_id, status="failed")
     else:
         await vp._update_job(job.id, status="in_progress", result_data={"ims_status": state.raw_status})
+    if state.status in ("completed", "failed"):
+        await _notify_footage(job, state.status)
     from db.base import get_db_session
     from db.models.video_job import VideoJob
 
     async with get_db_session() as db:
         return await db.get(VideoJob, job.id)
+
+
+async def _notify_footage(job, status: str) -> None:
+    """你拍我剪 (F9): the owner hears about the cut whether or not the chat is open."""
+    try:
+        from billing.footage import is_footage_session
+        if not await is_footage_session(job.session_id):
+            return
+        from db.base import get_db_session
+        from db.models.session import Session
+        from notifications.events import emit
+        async with get_db_session() as db:
+            session = await db.get(Session, job.session_id)
+            if session is None:
+                return
+            kind = "footage_edit_ready" if status == "completed" else "footage_edit_failed"
+            await emit(db, user_id=job.user_id, workspace_id=session.workspace_id, kind=kind,
+                       event_key=f"{kind}:{job.id}", name=session.title or "你拍我剪",
+                       session_id=job.session_id, ttl_seconds=3600)
+    except Exception as exc:  # the cut is in the chat either way
+        log.warning(f"compose {job.id}: footage notification not sent: {type(exc).__name__}")
 
 
 async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: VideoComposeArgs,

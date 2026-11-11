@@ -7,6 +7,7 @@ import '../features/workbench/widgets/desktop_activation_host.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/auth_store.dart';
+import '../shared/api/ui_mode_store.dart';
 import '../shared/appearance/tokens.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/models/workspace.dart';
@@ -81,18 +82,26 @@ class WorkspaceBootstrap extends ConsumerWidget {
         message: errorText(ref.watch(i18nProvider), error),
         onRetry: () => ref.invalidate(activeWorkspaceProvider),
       ),
-      data: (data) => data.currentId == null
-          ? _WorkspaceError(
-              message: ref.watch(i18nProvider).t('errors:WORKSPACE_FORBIDDEN'),
-              onRetry: () => ref.invalidate(activeWorkspaceProvider),
-            )
-          : DesktopActivationHost(
+      data: (data) {
+        if (data.currentId == null) {
+          return _WorkspaceError(
+            message: ref.watch(i18nProvider).t('errors:WORKSPACE_FORBIDDEN'),
+            onRetry: () => ref.invalidate(activeWorkspaceProvider),
+          );
+        }
+        // Cold start: the account's interface mode is fetched once, now that
+        // the authenticated UI is about to mount (the device cache decided
+        // the first paint; a different answer re-routes through the router's
+        // refresh listenable).
+        ref.read(uiModeProvider.notifier).ensureLoaded();
+        return DesktopActivationHost(
               key: ValueKey((auth.userId, data.currentId)),
               scope: (userId: auth.userId, workspaceId: data.currentId!),
               workspaceName: data.current?.name ?? '',
               canManage: data.current?.role.canManage ?? false,
               child: child,
-            ),
+            );
+      },
     );
   }
 }

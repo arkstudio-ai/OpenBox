@@ -57,6 +57,7 @@ export const paths = {
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
   adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
   adminPricing: "/app/admin/pricing",
+  adminExamples: (search?: string) => (search ? `/app/admin/examples?${search}` : "/app/admin/examples"),
   /** The lite view's user list (the column's landing page). `search` is an already-encoded query string without "?". */
   adminTrajectories: (search?: string) =>
     search ? `/app/admin/trajectories?${search}` : "/app/admin/trajectories",
@@ -118,6 +119,7 @@ export const routePatterns = {
   adminBilling: "billing/:tab?",
   adminWorkspace: "billing/workspaces/:workspaceId",
   adminPricing: "pricing",
+  adminExamples: "examples",
   adminTrajectories: "trajectories",
   adminTrajectorySessions: "trajectories/sessions",
   adminTrajectorySession: "trajectories/sessions/:sessionId",

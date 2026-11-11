@@ -54,6 +54,10 @@ Future<ProviderContainer> _mount(
   bool acceptPolicies = true,
   bool consentFail = false,
   List<RequestOptions>? requests,
+  // A brand-new account: sign-up wrote `extra.first_video.status = offered`,
+  // so the sign-in lands in the guided flow rather than on the chat home.
+  // The default (no record) is an account from before the flow existed.
+  bool freshAccount = false,
 }) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'en-US'});
   final prefs = await SharedPreferences.getInstance();
@@ -104,7 +108,13 @@ Future<ProviderContainer> _mount(
               requestOptions: options,
               statusCode: 200,
               data: options.path.endsWith('/preferences')
-                  ? <String, dynamic>{}
+                  ? (freshAccount
+                        ? <String, dynamic>{
+                            'extra': {
+                              'first_video': {'status': 'offered'},
+                            },
+                          }
+                        : <String, dynamic>{})
                   : response ??
                         {
                           'access_token': 'test-token',
@@ -135,6 +145,10 @@ Future<ProviderContainer> _mount(
       GoRoute(
         path: '/app',
         builder: (context, state) => const Scaffold(body: Text('workbench')),
+      ),
+      GoRoute(
+        path: '/app/first-video',
+        builder: (context, state) => const Scaffold(body: Text('first video')),
       ),
     ],
   );
@@ -245,6 +259,18 @@ void main() {
       'channel': 'native',
     });
     _expectRetry(tester, container);
+  });
+  testWidgets('a brand-new account signs in straight into its first video', (
+    tester,
+  ) async {
+    final session = _Session();
+    final container = await _mount(tester, session, freshAccount: true);
+    await tester.tap(find.byKey(_start));
+    session.result.complete('verified-id-token');
+    await tester.pumpAndSettle();
+    expect(container.read(authProvider).isAuthenticated, isTrue);
+    expect(find.text('first video'), findsOneWidget);
+    expect(find.text('workbench'), findsNothing);
   });
   testWidgets('double tap starts one auth request, success opens workbench', (
     tester,

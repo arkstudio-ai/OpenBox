@@ -503,6 +503,24 @@ describe("某用户的对话轮", () => {
 })
 
 describe("轮详情", () => {
+  it("opens 收进样例库 in place when the route provides the hook, so the reader keeps their spot", async () => {
+    const onCollectExample = vi.fn()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/app/admin/trajectories/users/user_a/turns/session_1/turn_1"]}>
+          <TrajectoryTurnPage userId="user_a" sessionId="session_1" turnId="turn_1" onCollectExample={onCollectExample} />
+          <Location />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const collect = await screen.findByTestId("lite-collect-example")
+    expect(collect.tagName).toBe("BUTTON")
+    fireEvent.click(collect)
+    expect(onCollectExample).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId("location").textContent).toBe("/app/admin/trajectories/users/user_a/turns/session_1/turn_1")
+  })
+
   it("leads with the verdict and shows the flow with folded files, a failed card and a sub-agent", async () => {
     renderAt("/app/admin/trajectories/users/user_a/turns/session_1/turn_1?back=status%3Dfailed")
     const verdict = await screen.findByTestId("lite-verdict")
@@ -539,6 +557,10 @@ describe("轮详情", () => {
     )
     expect(screen.getByRole("link", { name: "lite.turn.backToUser" }).getAttribute("href")).toBe(
       "/app/admin/trajectories/users/user_a?status=failed",
+    )
+    // Without the route's hook, 收进样例库 hands this session to the example library in the URL.
+    expect(screen.getByTestId("lite-collect-example").getAttribute("href")).toBe(
+      "/app/admin/examples?collect=session_1",
     )
     const raw = within(failed).getByRole("link", { name: /lite.turn.rawRecord/ })
     expect(raw.getAttribute("href")).toBe(

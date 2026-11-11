@@ -1,0 +1,967 @@
+{
+  "aigc": {
+    "label": "AI tạo",
+    "notice": "Nội dung do AI tạo, bạn nhớ kiểm tra lại những chi tiết quan trọng.",
+    "serviceTitle": "Về nội dung AI",
+    "close": "Đóng thông tin về nội dung AI",
+    "contentTitle": "Về nội dung được tạo",
+    "contentBody": "AI có thể giúp bạn sắp xếp thông tin, viết chữ và làm nội dung. Kết quả có thể sai hoặc thiếu. Pro, Nhanh và Sâu là tên các mức năng lực khác nhau.",
+    "labelsTitle": "Nhận biết nội dung AI",
+    "labelsBody": "Câu trả lời của AI luôn có nhãn nguồn. Ảnh và video đã xác nhận do AI tạo sẽ hiện nhãn mờ khi xem trước. Khi sao chép cả câu trả lời cũng sẽ kèm nhãn chữ.",
+    "useTitle": "Khi dùng kết quả",
+    "useBody": "Hãy kiểm tra thông tin quan trọng trước khi dùng. Khi đăng nội dung được tạo, hãy nói rõ là do AI tạo và tuân theo quy định gắn nhãn của nền tảng bạn đăng."
+  },
+  "suggestions": {
+    "title": "Gợi ý bước tiếp theo",
+    "loading": "Đang tạo gợi ý bước tiếp theo",
+    "send": "Gửi gợi ý: {{label}}",
+    "edit": "Sửa gợi ý: {{label}}",
+    "sendHint": "Bấm để gửi: {{prompt}}",
+    "editHint": "Xem và sửa trước khi gửi: {{prompt}}"
+  },
+  "thinking": "Đang nghĩ…",
+  "thoughtFor": "Đã nghĩ {{duration}}",
+  "thought": "Quá trình suy nghĩ",
+  "process": "Quá trình",
+  "processSummary": "{{count}} bước · tổng {{duration}}",
+  "sources": "Nguồn",
+  "reviewGo": "Xem lại →",
+  "copy": "Sao chép",
+  "copied": "Đã sao chép",
+  "outputs_one": "Tạo ra {{count}} tệp",
+  "outputs_other": "Tạo ra {{count}} tệp",
+  "changedFiles_one": "Đã sửa {{count}} tệp",
+  "changedFiles_other": "Đã sửa {{count}} tệp",
+  "changedFile": "Đã sửa {{path}}",
+  "kind": {
+    "skill": "Nạp kỹ năng",
+    "glob": "Tìm tệp",
+    "read": "Đọc tệp",
+    "bash": "Chạy lệnh",
+    "grep": "Tìm kiếm",
+    "webSearch": "Tìm kiếm",
+    "webFetch": "Tra cứu",
+    "mcp": "Gọi công cụ",
+    "edit": "Sửa tệp",
+    "write": "Ghi tệp",
+    "task": "Việc con",
+    "todo": "Kế hoạch",
+    "question": "Hỏi",
+    "tool": "Công cụ",
+    "memorySearch": "Tìm trong ghi nhớ",
+    "memorySources": "Xem lời gốc",
+    "memoryForget": "Quên một ghi nhớ",
+    "memory": "Ghi nhớ",
+    "taskState": "Xem tiến độ việc"
+  },
+  "toolMeta": {
+    "exit": "exit {{code}}",
+    "running": "đang chạy",
+    "failed": "lỗi"
+  },
+  "plan": {
+    "title": "Kế hoạch làm việc",
+    "stepCounter": "Bước {{current}} / {{total}}",
+    "stop": "Dừng",
+    "addStep": "+ Thêm một bước",
+    "review": {
+      "title": "Kế hoạch chờ bạn duyệt",
+      "accept": "Làm theo kế hoạch",
+      "reject": "Quay lại bàn bạc",
+      "edit": "Sửa kế hoạch",
+      "save": "Lưu",
+      "cancel": "Hủy",
+      "accepted": "Đã duyệt kế hoạch",
+      "rejected": "Đã yêu cầu viết lại",
+      "viaQuestion": "Hãy duyệt bản này hoặc yêu cầu sửa trong phần duyệt kế hoạch đang chờ."
+    }
+  },
+  "mode": {
+    "label": "Chế độ",
+    "build": "Thực hiện",
+    "plan": "Lên kế hoạch",
+    "buildDesc": "Đọc, ghi và chạy mọi thứ — làm xong việc cho bạn",
+    "planDesc": "Chỉ đọc: tra cứu rồi soạn kế hoạch để bạn duyệt",
+    "assistant": "Trợ lý riêng"
+  },
+  "todo": {
+    "title": "Danh sách việc",
+    "working": "Đang làm",
+    "allDone": "Đã xong {{total}} / {{total}} bước",
+    "addAfter": "Chèn một bước sau bước này",
+    "remove": "Bỏ bước này",
+    "addPlaceholder": "Mô tả việc cần làm, nhấn Enter để thêm",
+    "stoppedHere": "dừng ở đây",
+    "interruptedAt": "Bị ngắt · xong {{done}}/{{total}}, dừng ở bước {{at}}",
+    "unfinished": "Chưa xong · {{done}}/{{total}} bước"
+  },
+  "interrupted": {
+    "label": "Bị ngắt"
+  },
+  "permission": {
+    "title": "Xin quyền",
+    "body": "Agent muốn thực hiện thao tác này:",
+    "allow": "Cho phép",
+    "allowAlways": "Luôn cho phép",
+    "deny": "Từ chối",
+    "targets": "Đối tượng lần này: {{targets}}",
+    "alwaysScope": "Luôn cho phép sẽ lưu quyền {{tool}} cho cả tài khoản, phạm vi: {{patterns}}",
+    "details": "Xem đầy đủ chi tiết thao tác",
+    "expired": "Yêu cầu duyệt này đã hết hạn (không có trả lời trong 5 phút). Trợ lý đã tiếp tục mà không có quyền này; bạn không cần làm gì thêm."
+  },
+  "question": {
+    "title": "Agent muốn xác nhận",
+    "reject": "Từ chối",
+    "submit": "Xác nhận",
+    "skip": "Bỏ qua",
+    "other": "Hoặc tự viết câu trả lời",
+    "answer": "Viết câu trả lời của bạn",
+    "needAll": "Hãy trả lời đủ {{count}} câu hỏi",
+    "unanswered": "Chưa trả lời",
+    "answeredByAssistant": "{{name}} trả lời thay",
+    "waiting": "Đang chờ bạn trả lời",
+    "agentWaiting": "Agent đã tạm dừng — đang chờ bạn trả lời",
+    "cancelWaiting": "Hủy chờ",
+    "queued": "Đã nhận câu trả lời — đang chờ tiếp tục",
+    "submitting": "Đang gửi…",
+    "submitFailed": "Gửi không thành công. Câu trả lời của bạn vẫn được giữ, hãy thử lại.",
+    "gone": "Câu hỏi này không còn hiệu lực. Đã yêu cầu trạng thái mới nhất.",
+    "conflict": "Câu hỏi này đã được trả lời ở nơi khác. Đang đồng bộ trạng thái mới nhất.",
+    "superseded": "Đã thay bằng tin nhắn mới của bạn; câu hỏi này không còn hiệu lực",
+    "cancelled": "Câu hỏi này đã bị hủy",
+    "expired": "Xác nhận này đã hết hạn. Chưa cho phép thao tác nào.",
+    "skipAll": "Bỏ qua tất cả",
+    "progress": "Đã trả lời {{answered}} / {{count}} câu hỏi",
+    "navigation": "Trang câu hỏi",
+    "previous": "Câu trước",
+    "next": "Câu tiếp",
+    "page": "Câu {{current}} / {{count}}",
+    "customNextHint": "Điền xong thì nhấn Enter hoặc chọn Câu tiếp",
+    "multipleNextHint": "Chọn tất cả mục phù hợp, rồi chọn Câu tiếp",
+    "saving": "Đang lưu bản nháp…",
+    "draftFailed": "Bản nháp chưa đồng bộ lên máy chủ. Câu trả lời trên máy bạn vẫn được giữ.",
+    "draftConflict": "Bản nháp đã bị sửa ở nơi khác. Hãy mở lại để xem, hoặc thử lưu lại câu trả lời trên máy bạn.",
+    "retrySave": "Thử lưu lại",
+    "videoApproval": {
+      "fullScript": "Kịch bản đầy đủ",
+      "segment": "Đoạn {{number}}",
+      "role": "Vai trò: {{role}}",
+      "transcript": "Lời thoại từng chữ",
+      "prompt": "Mô tả hình ảnh",
+      "roles": {
+        "hook": "Mở đầu gây chú ý",
+        "body": "Nội dung chính",
+        "transition": "Chuyển cảnh",
+        "closing": "Kết",
+        "unknown": "Chưa rõ vai trò"
+      }
+    },
+    "resourcesHint": "Chọn từ tài nguyên hoặc tải lên ảnh, video, âm thanh và tệp. Chúng sẽ được gửi cùng câu trả lời này.",
+    "uploadResources": "Tải lên tư liệu cho câu trả lời",
+    "searchResources": "Tìm theo tên tài nguyên",
+    "removeResource": "Bỏ tư liệu {{name}}",
+    "resourceUnavailable": "Tư liệu không dùng được; hãy bỏ ra và chọn lại",
+    "resourceLoading": "Đang tải tư liệu…",
+    "resourceLimit": "Mỗi câu trả lời thêm tối đa 32 tư liệu",
+    "resourcesUploading": "Đang tải tư liệu lên. Tải xong thì gửi.",
+    "resourcesFailed": "Một số tư liệu tải lên không thành công. Hãy bỏ ra và tải lại.",
+    "resourcesProvided": "Đã gửi {{count}} tư liệu"
+  },
+  "compaction": "Đã nén ngữ cảnh",
+  "retry": "Thử lại lần {{attempt}}",
+  "agentSwitch": "Đã chuyển sang {{agent}}",
+  "subtask": "Việc con · {{agent}}",
+  "subagent": {
+    "summary": "{{count}} lần gọi · {{duration}}"
+  },
+  "stopGen": "Dừng tạo",
+  "attach": "Đính kèm",
+  "send": "Gửi",
+  "composerIdle": "Hôm nay mình làm gì nhỉ?",
+  "composerRunning": "Đang chạy — bạn vẫn có thể nói thêm…",
+  "model": {
+    "pick": "Đổi mô hình",
+    "hints": {
+      "balanced": "cân bằng",
+      "deep": "sâu",
+      "fast": "nhanh"
+    }
+  },
+  "reasoning": {
+    "pick": "Chọn mức suy nghĩ",
+    "current": "Mức suy nghĩ: {{level}}",
+    "default": "Mặc định",
+    "defaultWithLevel": "Mặc định ({{level}})",
+    "level": {
+      "off": "Tắt",
+      "none": "Tắt",
+      "minimal": "Thấp nhất",
+      "low": "Thấp",
+      "medium": "Vừa",
+      "high": "Cao",
+      "xhigh": "Rất cao",
+      "max": "Cao nhất"
+    }
+  },
+  "tier": {
+    "chat": {
+      "pick": "Đổi mức mô hình",
+      "high": "Sâu",
+      "medium": "Chuyên nghiệp",
+      "low": "Nhanh"
+    },
+    "video": {
+      "pick": "Đổi mức video",
+      "ultra": "Đỉnh",
+      "high": "Cao",
+      "medium": "Vừa",
+      "low": "Thấp",
+      "fast": "Nhanh",
+      "perSecond": "{{price}} điểm/giây"
+    },
+    "more": "Thêm mô hình…",
+    "less": "Ẩn danh sách mô hình"
+  },
+  "videoModel": {
+    "pick": "Đổi mô hình video"
+  },
+  "codeCopy": "Sao chép",
+  "scrollBottom": "Về cuối",
+  "loadingOlder": "Đang tải tin nhắn cũ hơn",
+  "empty": "Hãy mô tả việc cần làm cho agent",
+  "processSummaryShort": "{{count}} bước",
+  "attachTitle": "Đính kèm (tải lên sandbox)",
+  "attachNeedSandbox": "Cần sandbox đang chạy mới đính kèm được",
+  "attachUploading": "Đang tải lên…",
+  "attachFailed": "Tải lên thất bại",
+  "attachTooLarge": "Tệp vượt quá 1 GB",
+  "trace": {
+    "groupTitle": "Các bước xử lý",
+    "compaction": {
+      "title": "Tối ưu ngữ cảnh",
+      "running": "Đang sắp xếp lịch sử, giữ lại thông tin quan trọng",
+      "completed": "Đã xong · Mở rộng để xem tóm tắt",
+      "failed": "Tối ưu không thành công; ngữ cảnh gốc vẫn được giữ",
+      "interrupted": "Tối ưu bị ngắt; ngữ cảnh gốc vẫn được giữ",
+      "noSummary": "Chưa có tóm tắt để xem"
+    },
+    "process": {
+      "titleActive": "Đang xử lý",
+      "titleDone": "Đã xử lý",
+      "prepared": "Đã chuẩn bị {{tokens}} tokens ngữ cảnh",
+      "stageContext": "Lên kế hoạch ngữ cảnh",
+      "stageResult": "Kết quả yêu cầu",
+      "contextTokens": "Lượt này dùng {{tokens}} tokens ngữ cảnh",
+      "duration": "Mất {{duration}}"
+    },
+    "think": {
+      "titleActive": "Đang suy nghĩ",
+      "titleDone": "Đã suy nghĩ xong",
+      "subtitleActive": "Đang phân tích câu hỏi và gom các chi tiết chính",
+      "subtitleDone": "Đã hiểu, tổng hợp và suy luận xong"
+    },
+    "tool": {
+      "titleActive": "Đang chạy công cụ",
+      "titleDone": "Các lần gọi công cụ",
+      "summaryCount_one": "{{count}} lần gọi công cụ",
+      "summaryCount_other": "{{count}} lần gọi công cụ",
+      "expand": "Mở rộng",
+      "collapse": "Thu gọn",
+      "statusRunning": "Đang chạy",
+      "statusFailed": "Lỗi"
+    },
+    "work": {
+      "titleActive": "Đang làm",
+      "titleDone": "Nhật ký làm việc",
+      "checkpoint": "Điểm kiểm tra trang",
+      "omitted": "Đã thu gọn {{count}} ảnh chụp quá trình lặp lại"
+    }
+  },
+  "final": {
+    "title": "Trả lời cuối cùng",
+    "missingTitle": "Lượt này chưa có trả lời cuối cùng",
+    "missingBody": "Lượt chạy đã kết thúc. Ghi chú quá trình và kết quả trung gian vẫn còn để bạn xem."
+  },
+  "artifacts": {
+    "source": "Từ:",
+    "result": "Kết quả",
+    "finalVideo": "Video thành phẩm",
+    "videoSegment": "Đoạn video",
+    "segment": "Đoạn {{number}}",
+    "segmentCollection": "Tư liệu từng đoạn · {{count}}",
+    "generatedImages": "Ảnh đã tạo · {{count}}",
+    "revision": "Bản sửa {{number}}",
+    "prompt": "Mô tả",
+    "transcript": "Xem bản chép lời",
+    "sttOk": "Kiểm tra lời đọc đạt",
+    "sttReview": "Lời đọc cần xem lại",
+    "verification": "Trạng thái trang cuối cùng"
+  },
+  "message": {
+    "sentByAssistant": "Do {{name}} gửi",
+    "voiceRequest": "Từ cuộc gọi của bạn",
+    "voiceTranscript": "Xem lời gốc trong cuộc gọi"
+  },
+  "meta": {
+    "copyReply": "Sao chép",
+    "copied": "Đã sao chép",
+    "likeReply": "Trả lời tốt",
+    "dislikeReply": "Trả lời chưa tốt",
+    "reason": {
+      "title": "Chưa ổn ở đâu? Chọn một, lần sau tôi sẽ chú ý",
+      "too_long": "Quá dài",
+      "too_short": "Quá ngắn",
+      "off_topic": "Lạc đề",
+      "wrong": "Sai nội dung",
+      "tone": "Giọng điệu chưa đúng",
+      "thanks": "Cảm ơn, tôi đã ghi nhận.",
+      "failed": "Không lưu được lý do. Hãy thử lại."
+    },
+    "forkMessage": "Tách sang cuộc trò chuyện mới",
+    "forking": "Đang tách…",
+    "model": "Mô hình",
+    "inputTokens": "Tokens đầu vào",
+    "outputTokens": "Tokens đầu ra",
+    "cacheTokens": "Tokens đã lưu đệm",
+    "cost": "Điểm đã dùng",
+    "generationDuration": "Thời gian tạo",
+    "totalDuration": "Tổng thời gian",
+    "expandMessage": "Xem toàn bộ tin nhắn",
+    "collapseMessage": "Thu gọn",
+    "errorTitle": "Lượt này có lỗi",
+    "regenerate": "Tạo lại",
+    "regenerating": "Đang tạo lại…",
+    "dismissTurn": "Xóa lượt này",
+    "dismissing": "Đang xóa…",
+    "errorDetails": "Xem chi tiết"
+  },
+  "toolDetail": {
+    "request": "Yêu cầu",
+    "response": "Phản hồi",
+    "error": "Lỗi",
+    "expand": "Mở rộng",
+    "collapse": "Thu gọn",
+    "query": "Từ khóa",
+    "action": "Hành động",
+    "source": "Nguồn",
+    "sources": "Nguồn",
+    "command": "Lệnh",
+    "output": "Kết quả",
+    "exitCode": "Mã thoát",
+    "path": "Đường dẫn",
+    "pattern": "Mẫu tìm",
+    "matches": "Kết quả khớp",
+    "content": "Nội dung",
+    "diff": "Thay đổi",
+    "arguments": "Tham số",
+    "result": "Kết quả",
+    "truncated": "Kết quả đã bị cắt bớt",
+    "sourceFallback": "Nguồn {{index}}",
+    "memoryNotKept": "Nội dung ghi nhớ chỉ được đưa cho trợ lý lúc đó, không lưu trong cuộc trò chuyện này. Bạn có thể xem ghi nhớ của mình trong Kiến thức."
+  },
+  "toolStatus": {
+    "running": "Đang chạy",
+    "completed": "Đã xong",
+    "failed": "Lỗi"
+  },
+  "markdown": {
+    "expandCode": "Mở rộng mã",
+    "collapseCode": "Thu gọn mã",
+    "lines": "{{count}} dòng"
+  },
+  "composer": {
+    "placeholder": "Nhắn tin, hoặc dùng / để thêm ngữ cảnh và @ để thêm tài nguyên",
+    "placeholderRunning": "Đang chạy — bạn vẫn có thể nói thêm…",
+    "dropTitle": "Thả để tải lên sandbox",
+    "send": "Gửi",
+    "stop": "Dừng tạo",
+    "stopTask": "Dừng việc",
+    "tools": "Thêm",
+    "uploadFile": "Tải tệp lên",
+    "screenshot": "Chụp màn hình",
+    "screenshotFailed": "Chụp màn hình thất bại hoặc đã hủy",
+    "mention": {
+      "files": "Tệp",
+      "skills": "Kỹ năng",
+      "commands": "Lệnh",
+      "empty": "Không có kết quả khớp",
+      "needSandbox": "Cần sandbox đang chạy",
+      "loading": "Đang tìm…",
+      "resources": "Tài nguyên",
+      "allProjects": "Tất cả dự án",
+      "sourceAll": "Tất cả",
+      "sourceUser": "Của tôi",
+      "sourceAgent": "Mô hình tạo"
+    },
+    "sendShortcut": {
+      "label": "Phím tắt gửi",
+      "enter": "Enter để gửi",
+      "modEnter": "⌘/Ctrl + Enter để gửi",
+      "hintEnter": "Enter để gửi · Shift+Enter xuống dòng",
+      "hintModEnter": "⌘/Ctrl+Enter để gửi · Enter xuống dòng"
+    },
+    "resourceCenter": "Tài nguyên",
+    "placeholderRoom": "Thêm yêu cầu cho việc này…"
+  },
+  "diff": {
+    "unmodified_one": "{{count}} dòng không đổi",
+    "unmodified_other": "{{count}} dòng không đổi",
+    "more_one": "Còn {{count}} thay đổi · mở xem lại",
+    "more_other": "Còn {{count}} thay đổi · mở xem lại",
+    "loading": "Đang tải thay đổi…",
+    "empty": "Không có thay đổi theo dòng để xem trước",
+    "openReview": "Xem lại ở bảng bên"
+  },
+  "attachOpen": "Mở tệp đính kèm",
+  "download": {
+    "saveToAlbum": "Lưu vào Ảnh",
+    "savedToAlbum": "Đã lưu vào Ảnh",
+    "savedToFiles": "Đã lưu vào Tệp",
+    "albumDenied": "Không có quyền truy cập ảnh; đã lưu vào Tệp thay thế",
+    "busy": "Một lượt tải xuống khác vẫn đang chạy",
+    "downloading": "Đang tải xuống {{percent}}%",
+    "openFailed": "Không mở được liên kết này"
+  },
+  "gallery": {
+    "open": "Mở {{name}}",
+    "download": "Tải xuống",
+    "close": "Đóng",
+    "failed": "Tải không thành công",
+    "more_one": "Còn {{count}}",
+    "more_other": "Còn {{count}}",
+    "less": "Thu gọn"
+  },
+  "context": {
+    "title": "Cửa sổ ngữ cảnh",
+    "used": "Đã dùng {{used}} / {{limit}} ({{pct}}%)",
+    "left": "Còn {{tokens}}",
+    "compactAt": "Tự động tối ưu khi đạt {{tokens}} tokens ({{pct}}%)",
+    "compactSoon": "Sắp đầy — lịch sử sẽ sớm được nén lại",
+    "aria": "Ngữ cảnh đã dùng {{pct}}%"
+  },
+  "status": {
+    "thinking": "Đang suy nghĩ…",
+    "retrying": "Không có phản hồi — đang thử lại ({{attempt}}/{{total}})"
+  },
+  "takeover": {
+    "reasonLabel": "Bị chặn bởi",
+    "site": "Trang web",
+    "open": "Mở máy tính đám mây và tự làm",
+    "openHint": "Sẽ chuyển sang bảng máy tính đám mây và bật điều khiển. Xác minh xong, quay lại đây và chọn \"Tôi đã xong, tiếp tục\".",
+    "ownBrowser": "Trang xác minh nằm trong trình duyệt của bạn — làm xong ở đó, rồi quay lại chọn \"Tôi đã xong, tiếp tục\".",
+    "record": "Bạn đã tự làm: {{reason}} · {{host}}",
+    "reason": {
+      "captcha_slider": "captcha kéo thanh trượt",
+      "captcha_click": "captcha bấm chọn",
+      "captcha_math": "nhập mã xác minh",
+      "sms_code": "mã SMS / email",
+      "login_required": "cần bạn tự đăng nhập",
+      "risk_control": "kiểm tra an toàn",
+      "other": "xác minh thủ công"
+    }
+  },
+  "execution": {
+    "stopTask": {
+      "title": "Dừng cả việc này?",
+      "body": "Việc này do trợ lý giao đi. Dừng sẽ hủy nó; muốn tiếp tục sau, bạn cần xác nhận kết quả trước, rồi gửi lại tin nhắn.",
+      "confirm": "Dừng việc",
+      "keep": "Tiếp tục chạy"
+    },
+    "effectAck": {
+      "title": "Có một bước chưa kịp xác nhận kết quả",
+      "body": "Khi việc dừng lại, kết quả của một thao tác bên ngoài chưa được xác nhận. Hãy kiểm tra rồi bấm nút; sau đó gửi thêm một tin nhắn, việc sẽ tiếp tục.",
+      "action": "Tôi đã kiểm tra — tiếp tục",
+      "done": "Đã xác nhận. Gửi thêm một tin nhắn, việc sẽ tiếp tục.",
+      "pending": "Vẫn còn kết quả đang được kiểm tra; hãy thử lại sau ít phút."
+    }
+  },
+  "transcript": {
+    "loadFailed": "Không tải được bản ghi quá trình",
+    "empty": "Chưa có gì ở đây"
+  },
+  "assistant": {
+    "task": {
+      "currentState": "Trạng thái hiện tại:",
+      "changed": "Trạng thái việc đã thay đổi và đang làm mới. Hãy xem lại trước khi thử lại.",
+      "checkEffects": "Vẫn còn kết quả bên ngoài cần kiểm tra. Chưa thể tiếp tục; các thao tác này chưa được hoàn tác.",
+      "requesting": "Đang gửi yêu cầu điều khiển…",
+      "controlReceipt": "Biên nhận điều khiển mới nhất",
+      "control": {
+        "pause": "Tạm dừng",
+        "resume": "Tiếp tục",
+        "cancel": "Hủy việc"
+      },
+      "state": {
+        "paused": "Đã tạm dừng",
+        "pausing": "Đang tạm dừng",
+        "resuming": "Đang chờ tiếp tục",
+        "resumeBlocked": "Không tiếp tục được; hãy kiểm tra quyền và tài nguyên của việc gốc",
+        "canceled": "Đã hủy",
+        "canceling": "Đang hủy",
+        "effectUnknown": "Kết quả cần kiểm tra",
+        "running": "Đang chạy",
+        "queued": "Đang xếp hàng",
+        "waitingInput": "Đang chờ trả lời",
+        "completed": "Đã xong",
+        "error": "Lỗi",
+        "aborted": "Lượt chạy này đã dừng",
+        "unknown": "Chưa xác nhận",
+        "idle": "Sẵn sàng nhận yêu cầu"
+      }
+    },
+    "attachedRequest": "Bạn xem giúp tệp đính kèm ({{count}}).",
+    "replyDuration": "Thời gian trả lời",
+    "sendPending": "Đang gửi…",
+    "sendUncertain": "Chưa chắc đã đến — gửi lại đúng nội dung này sẽ kiểm tra được.",
+    "sendAccepted": "Đã nhận",
+    "loadingReport": "Đang tải kết quả gốc…",
+    "openSource": "Mở cuộc trò chuyện nguồn",
+    "moreReport": "Đọc tiếp",
+    "loadingTask": "Đang tải việc…",
+    "taskCard": "Việc của trợ lý",
+    "openTask": "Mở việc gốc",
+    "inputApplied": "Yêu cầu mới nhất đã được đưa vào thực hiện",
+    "inputAccepted": "Đã nhận yêu cầu mới nhất; đang chờ đưa vào thực hiện",
+    "inputCanceled": "Yêu cầu mới nhất đã bị hủy trước khi được đưa vào thực hiện.",
+    "inputAssetUnavailable": "Một tệp đính kèm không còn dùng được, nên yêu cầu này chưa được thực hiện. Hãy chọn lại tệp và gửi yêu cầu mới.",
+    "steerAccepted": "Đã nhận chỉnh sửa; đang chờ đưa vào lượt chạy đã chỉ định.",
+    "steerApplied": "Chỉnh sửa đã được đưa vào lượt chạy đã chỉ định; kết quả thực hiện hiển thị riêng.",
+    "steerNotApplied": "Lượt chạy đã chỉ định kết thúc trước khi nhận chỉnh sửa này. Gửi yêu cầu mới để tiếp tục việc gốc.",
+    "taskWaiting": "Việc này đang chờ trả lời. Hãy xem bảng câu hỏi hoặc mở cuộc trò chuyện gốc.",
+    "execution": "Thực hiện",
+    "executionPending": "Chưa kết thúc",
+    "executionSucceeded": "Thành công",
+    "executionStopped": "Đã dừng",
+    "executionFailed": "Lỗi",
+    "acceptance": "Trợ lý nhận kết quả",
+    "accepted": "Đã nhận",
+    "pending": "Đang chờ",
+    "processing": "Trợ lý báo lại",
+    "processed": "Đã lưu báo cáo",
+    "reportBlocked": "Báo cáo bị chặn",
+    "reading": "Trạng thái đọc",
+    "read": "Đã đọc",
+    "unread": "Chưa đọc",
+    "noAnswer": "Chưa có câu trả lời báo lại",
+    "receipt": "Biên nhận lệnh",
+    "originalReport": "Kết quả gốc và yêu cầu",
+    "retryReport": "Báo lại lần nữa",
+    "retryPending": "Đang yêu cầu…",
+    "reportStopped": "Bạn đã dừng lần báo lại này. Chỉ tiếp tục khi bạn yêu cầu thử lại.",
+    "reportFailure": "Báo lại chưa xong. Bạn có thể đọc kết quả gốc hoặc thử báo lại.",
+    "reload": "Thử lại",
+    "tasks": "Việc",
+    "noTasks": "Chưa có việc nào. Hãy bảo trợ lý bắt đầu một việc.",
+    "requests": {
+      "previous": "Thẻ trước",
+      "next": "Thẻ tiếp",
+      "position": "{{index}} / {{count}}",
+      "title": "Có {{count}} việc cần bạn",
+      "label": "Việc cần bạn",
+      "openTask": "Mở cuộc trò chuyện",
+      "more": "Xem thêm",
+      "review": "Đọc hết rồi trả lời bằng chữ",
+      "reviewHint": "Đọc xong toàn bộ phần dưới, bạn có thể trả lời tôi trong ô nhập.",
+      "reviewed": "Đã hiện đầy đủ. Bạn có thể trả lời trong ô nhập; \"OK\" chỉ đồng ý cho lần này.",
+      "morePermissions": "Xem thêm yêu cầu duyệt",
+      "replyUncertain": "Chưa chắc câu trả lời đã đến — hãy gửi lại đúng lựa chọn đó.",
+      "receipts": "Biên nhận trả lời gần đây",
+      "questionReceipts": "Trả lời câu hỏi gần đây",
+      "permissionReceipts": "Trả lời xin quyền gần đây",
+      "accepted": "Đã lưu trả lời, đang chờ áp dụng",
+      "applying": "Đã lưu trả lời, đang áp dụng",
+      "applied": "Đã áp dụng trả lời",
+      "failed": "Một câu trả lời của bạn chưa có hiệu lực — hãy mở cuộc trò chuyện xem.",
+      "otherConversations": "Các cuộc trò chuyện khác cũng đang chờ bạn trả lời:",
+      "answerThere": "Trả lời",
+      "untitled": "Cuộc trò chuyện chưa đặt tên",
+      "asks": "\"{{title}}\" đang hỏi bạn",
+      "needsApproval": "\"{{title}}\" cần bạn duyệt",
+      "askMe": "Hoặc cứ nói câu trả lời cho tôi, tôi sẽ trả lời thay bạn.",
+      "reminder": "Có {{count}} việc cần bạn · Xem trong Việc của tôi",
+      "reviewTasks": "Xem nhắc nhở trong Việc của tôi",
+      "dismissReminder": "Ẩn nhắc nhở (các việc vẫn còn trong Việc của tôi)",
+      "deckIdle": "Trò chuyện và phiếu việc"
+    },
+    "moreTasks": "Tải thêm việc",
+    "earlierResult": "Kết quả này thuộc yêu cầu trước đó, chưa gồm yêu cầu mới nhất.",
+    "continueAfterError": "Cứ gửi thêm một tin nhắn là tiếp tục được. Nếu việc nào báo lại không thành công, vào Thêm trên thẻ của nó để báo lại.",
+    "replyIncomplete": "Câu trả lời này chưa hoàn thành",
+    "link": {
+      "title": "Theo dõi một cuộc trò chuyện có sẵn",
+      "description": "Chọn một cuộc trò chuyện trước đây để tôi theo dõi. Lịch sử vẫn giữ nguyên, tôi sẽ không tự ý bắt đầu gì, và sau này bạn có thể bảo tôi tiếp tục trong đó. Với cuộc trò chuyện mà cả đội xem được, tôi sẽ hỏi bạn trước khi gửi gì vào đó.",
+      "action": "Giao cho trợ lý",
+      "reopen": "Theo dõi lại",
+      "linking": "Đang xử lý…",
+      "success": "Được rồi — \"{{title}}\" giờ do tôi theo dõi.",
+      "empty": "Hiện chưa có cuộc trò chuyện nào để theo dõi.",
+      "unavailable": "Cuộc trò chuyện này hiện chưa giao được.",
+      "workspaceVisible": "Cả đội xem được",
+      "watched": "Đang theo dõi",
+      "reasons": {
+        "ASSISTANT_LINK_CHILD": "Đây là cuộc trò chuyện con — hãy giao cho tôi cuộc trò chuyện chứa nó.",
+        "ASSISTANT_LINK_PENDING_REQUEST": "Trong đó còn câu hỏi đang chờ — hãy trả lời xong trước.",
+        "ASSISTANT_LINK_TOOL_ACTIVE": "Nó đang chạy một thao tác — hãy đợi xong đã.",
+        "ASSISTANT_LINK_CONTINUATION": "Lượt hiện tại của nó chưa kết thúc — hãy thử lại sau."
+      },
+      "loading": "Đang tải các cuộc trò chuyện của bạn…",
+      "untitled": "Cuộc trò chuyện chưa đặt tên",
+      "more": "Xem thêm"
+    },
+    "watch": {
+      "title": "Cuộc trò chuyện trợ lý đang theo dõi",
+      "more": "Thêm",
+      "pending": "Câu hỏi đang chờ bạn: {{count}}",
+      "archive": "Ngừng theo dõi",
+      "archiving": "Đang ngừng…",
+      "archived": "Không theo dõi",
+      "archiveHint": "Kết quả và báo cáo từ cuộc trò chuyện này sẽ dừng; bản thân cuộc trò chuyện không đổi.",
+      "state": {
+        "running": "Đang chạy",
+        "queued": "Đang xếp hàng",
+        "waiting_input": "Đang chờ bạn trả lời",
+        "idle": "Rảnh",
+        "error": "Có lỗi",
+        "completed": "Đã xong"
+      }
+    },
+    "memory": {
+      "label": "Thay đổi ghi nhớ",
+      "remembered": "Đã ghi nhớ: {{summary}}",
+      "undo": "Hoàn tác",
+      "undoing": "Đang hoàn tác…",
+      "undone": "Đã hoàn tác",
+      "undoChanged": "Ghi nhớ này đã bị sửa sau đó. Hãy quản lý nó ở trang Kiến thức.",
+      "alreadyRemembered": "Đã ghi nhớ từ trước",
+      "refused": "Không lưu: có thông tin nhạy cảm",
+      "paused": "Không lưu: việc lưu ghi nhớ đang tạm dừng",
+      "updated": "Đã cập nhật ghi nhớ: {{summary}}",
+      "forgotten": "Đã quên ghi nhớ này"
+    },
+    "recalled": {
+      "label_one": "Đã dùng {{count}} ghi nhớ",
+      "label_other": "Đã dùng {{count}} ghi nhớ",
+      "title": "Ghi nhớ đã nhớ lại trước khi trả lời",
+      "hint": "Sửa hoặc quên điều gì sai trong Kiến thức và nó sẽ không được dùng nữa.",
+      "manage": "Quản lý trong Kiến thức"
+    },
+    "notificationResult": "Bạn mở việc này từ thông báo",
+    "notificationUnavailable": "Kết quả mà thông báo này trỏ tới không còn nữa.",
+    "continuation": {
+      "active": "Đã cho phép làm tiếp; sau mỗi lần báo lại sẽ kiểm tra đã xong chưa",
+      "paused": "Việc làm tiếp đã tạm dừng",
+      "completed": "Việc làm tiếp đã xác nhận xong",
+      "needs_decision": "Việc làm tiếp cần bạn quyết định",
+      "exhausted": "Đã hết số lần tự động làm tiếp; cần bạn quyết định",
+      "revoked": "Quyền làm tiếp đã kết thúc",
+      "budget": "Tự động làm tiếp: {{used}} / {{limit}}"
+    },
+    "origin": {
+      "report": "Cập nhật việc",
+      "briefing": "Bản tin hằng ngày"
+    },
+    "activity": {
+      "thinking": "Đang nghĩ…",
+      "working": "Đang làm…",
+      "delegating": "Đang sắp xếp việc này…",
+      "updatingTask": "Đang cập nhật việc…",
+      "checkingWork": "Đang xem tiến độ…",
+      "remembering": "Đang ghi lại…",
+      "recalling": "Đang nhớ lại điều bạn đã nói…",
+      "reading": "Đang tra cứu…",
+      "checkingRequests": "Đang xem có gì cần bạn…",
+      "scheduling": "Đang đặt lịch…",
+      "updatingBrief": "Đang cập nhật ghi chú dự án…",
+      "handlingFiles": "Đang xử lý tệp…",
+      "checkingStatus": "Đang kiểm tra…"
+    },
+    "composer": {
+      "placeholder": "Tôi giúp gì được cho bạn? Cứ nói nhé",
+      "placeholderRunning": "Tôi đang làm — bạn cứ nói thêm nếu cần…"
+    },
+    "quick": {
+      "progress": {
+        "label": "Có gì mới không?",
+        "prompt": "Những việc tôi giao cho bạn đang thế nào rồi?"
+      },
+      "waiting": {
+        "label": "Có gì cần tôi không?",
+        "prompt": "Có việc gì cần tôi xác nhận hay trả lời không?"
+      },
+      "remember": {
+        "label": "Ghi nhớ…",
+        "prompt": "Ghi nhớ: "
+      }
+    },
+    "welcome": {
+      "greeting": {
+        "morning": "Chào buổi sáng, {{name}}",
+        "afternoon": "Chào buổi chiều, {{name}}",
+        "evening": "Chào buổi tối, {{name}}"
+      },
+      "greetingPlain": {
+        "morning": "Chào buổi sáng",
+        "afternoon": "Chào buổi chiều",
+        "evening": "Chào buổi tối"
+      },
+      "intro": "Tôi là trợ lý riêng của bạn. Cứ giao việc cho tôi: tôi sẽ làm trong đúng dự án, theo dõi tiến độ và báo bạn khi xong. Thói quen và sở thích của bạn tôi cũng sẽ nhớ.",
+      "introNamed": "Tôi là {{name}}, trợ lý riêng của bạn. Cứ giao việc cho tôi: tôi sẽ làm trong đúng dự án, theo dõi tiến độ và báo bạn khi xong. Thói quen và sở thích của bạn tôi cũng sẽ nhớ.",
+      "hint": "Cứ gõ bình thường — không cần định dạng gì đặc biệt. Mọi việc bạn giao đều hiện trong Việc của tôi ở góc trên bên phải.",
+      "ideas": {
+        "delegate": {
+          "title": "Giao cho tôi một việc",
+          "prompt": "Hãy làm việc này trong một dự án của tôi: "
+        },
+        "progress": {
+          "title": "Hỏi tiến độ",
+          "prompt": "Những việc tôi giao cho bạn đang thế nào rồi?"
+        },
+        "waiting": {
+          "title": "Có gì đang chờ tôi",
+          "prompt": "Có việc gì cần tôi xác nhận hay trả lời không?"
+        },
+        "remember": {
+          "title": "Nhớ thói quen của tôi",
+          "prompt": "Ghi nhớ: nói kết luận trước, rồi mới đến chi tiết."
+        },
+        "briefing": {
+          "title": "Bản tin mỗi ngày",
+          "prompt": "Mỗi sáng 8:30 gửi cho tôi một bản tin."
+        },
+        "credits": {
+          "title": "Xem điểm của tôi",
+          "prompt": "Tháng này tôi còn bao nhiêu điểm?"
+        }
+      }
+    },
+    "intro": {
+      "lead": "Cho tôi 30 giây để biết cách làm việc với bạn.",
+      "progress": "{{current}}/{{total}}",
+      "skip": "Bỏ qua",
+      "later": "Để sau",
+      "close": "Đóng",
+      "confirm": "OK",
+      "failed": "Không lưu được. Hãy thử lại.",
+      "address": {
+        "question": "Tôi nên gọi bạn là gì?",
+        "useAccount": "Gọi tôi là {{name}}",
+        "none": "Gọi tôi là Chủ quán",
+        "placeholder": "ví dụ: Anh Nam, Andrew"
+      },
+      "name": {
+        "question": "Bạn muốn đặt tên cho tôi không?",
+        "keep": "Giữ tên “Trợ lý riêng”",
+        "placeholder": "ví dụ: Mai, Mary"
+      },
+      "length": {
+        "question": "Bạn thích câu trả lời kiểu nào?",
+        "brief": "Ngắn gọn, đi thẳng",
+        "balanced": "Vừa phải",
+        "detailed": "Chi tiết hơn"
+      },
+      "business": {
+        "question": "Bạn kinh doanh ngành gì?",
+        "beauty": "Làm đẹp",
+        "food": "Ăn uống",
+        "retail": "Bán lẻ",
+        "other": "Khác",
+        "placeholder": "ví dụ: cửa hàng thú cưng, trung tâm dạy học"
+      },
+      "doneTitle": "Xong rồi, {{name}}. Bắt đầu với một việc nhé?",
+      "doneTitlePlain": "Xong rồi. Bắt đầu với một việc nhé?",
+      "doneLater": "Để tôi xem qua trước",
+      "suggest": {
+        "beauty": [
+          {
+            "title": "Bản tin kinh doanh mỗi sáng",
+            "prompt": "Mỗi sáng 8:30 gửi cho tôi một bản tin kinh doanh."
+          },
+          {
+            "title": "Video 30 giây cho gói trải nghiệm khách mới",
+            "prompt": "Làm một video 30 giây cho gói trải nghiệm khách mới; cho tôi xem kịch bản trước."
+          },
+          {
+            "title": "Bài quảng cáo cho combo chăm sóc cuối tuần",
+            "prompt": "Viết bài quảng cáo cho combo chăm sóc cuối tuần, ba phiên bản."
+          }
+        ],
+        "food": [
+          {
+            "title": "Bản tin kinh doanh mỗi sáng",
+            "prompt": "Mỗi sáng 8:30 gửi cho tôi một bản tin kinh doanh."
+          },
+          {
+            "title": "Video 30 giây cho món mới",
+            "prompt": "Làm một video 30 giây cho món mới; cho tôi xem kịch bản trước."
+          },
+          {
+            "title": "Bài quảng cáo cho combo gia đình cuối tuần",
+            "prompt": "Viết bài quảng cáo cho combo gia đình cuối tuần, ba phiên bản."
+          }
+        ],
+        "retail": [
+          {
+            "title": "Bản tin kinh doanh mỗi sáng",
+            "prompt": "Mỗi sáng 8:30 gửi cho tôi một bản tin kinh doanh."
+          },
+          {
+            "title": "Video 30 giây cho sản phẩm bán chạy",
+            "prompt": "Làm một video 30 giây cho sản phẩm bán chạy; cho tôi xem kịch bản trước."
+          },
+          {
+            "title": "Bài quảng cáo cho ngày hội viên",
+            "prompt": "Viết bài quảng cáo cho ngày hội viên, ba phiên bản."
+          }
+        ],
+        "general": [
+          {
+            "title": "Bản tin mỗi sáng",
+            "prompt": "Mỗi sáng 8:30 gửi cho tôi một bản tin."
+          },
+          {
+            "title": "Giao cho tôi một việc",
+            "prompt": "Hãy làm việc này trong một dự án của tôi: "
+          },
+          {
+            "title": "Ghi nhớ một điều",
+            "prompt": "Ghi nhớ: "
+          }
+        ]
+      },
+      "entry": "Để tôi hiểu bạn hơn",
+      "nudge": "Bạn muốn cho tôi biết nên gọi bạn là gì và thích trả lời kiểu nào không?",
+      "nudgeYes": "OK",
+      "nudgeNo": "Không cần",
+      "dialogTitle": "Làm quen với nhau"
+    },
+    "status": {
+      "waiting": "Chờ bạn",
+      "running": "Đang làm",
+      "queued": "Đang làm",
+      "paused": "Đã dừng",
+      "done": "Đã xong",
+      "failed": "Có lỗi",
+      "stopped": "Đã dừng",
+      "idle": "Đã dừng"
+    },
+    "card": {
+      "label": "Phiếu việc: {{title}}",
+      "loading": "Đang tải việc…",
+      "loadingResult": "Đang tải kết quả đầy đủ…",
+      "noResultText": "Lần này không có kết quả bằng chữ; bạn đến hiện trường xem nhé.",
+      "moreResult": "Xem tiếp",
+      "more": "Thêm",
+      "showResult": "Xem kết quả đầy đủ",
+      "hideResult": "Ẩn kết quả đầy đủ",
+      "fold": "Thu gọn",
+      "expand": "Mở rộng",
+      "retryReport": "Báo lại lần nữa",
+      "pause": "Tạm dừng",
+      "resume": "Tiếp tục",
+      "cancel": "Hủy việc",
+      "unfollow": "Ngừng theo dõi",
+      "unfollowed": "Được rồi — tôi sẽ ngừng theo dõi việc này. Cuộc trò chuyện vẫn giữ nguyên.",
+      "open": "Đến hiện trường",
+      "answer": "Đang hỏi bạn",
+      "waitingHint": "Trợ thủ đang chờ bạn trả lời; đến hiện trường để trả lời.",
+      "takeoverHint": {
+        "desktop": "Trợ thủ đang chờ bạn xác minh xong trên máy tính đám mây; xong thì bấm “Đã xong, tiếp tục” ở hiện trường.",
+        "extension": "Trợ thủ đang chờ bạn xác minh xong trong trình duyệt của bạn; xong thì quay lại hiện trường và bấm “Đã xong, tiếp tục”."
+      },
+      "followingUp": "Tôi sẽ theo đến khi xong (đã tự theo dõi {{used}}/{{limit}} lần)",
+      "continuation": {
+        "needs_decision": "Bước tiếp theo cần bạn quyết — mở cuộc trò chuyện xem.",
+        "exhausted": "Tôi đã dùng hết số lần tự động theo dõi. Có tiếp tục hay không là do bạn."
+      },
+      "note": {
+        "effectUnknown": "Kết quả của một bước chưa được xác nhận — hãy kiểm tra trong cuộc trò chuyện trước.",
+        "resumeBlocked": "Hiện chưa tiếp tục được; có thể quyền hoặc tài nguyên đã thay đổi. Mở cuộc trò chuyện xem.",
+        "reportStopped": "Bạn đã dừng lần báo lại này. Bạn có thể báo lại từ mục Thêm.",
+        "reportFailed": "Báo lại chưa xong. Báo lại từ mục Thêm, hoặc đọc kết quả đầy đủ.",
+        "steerNotApplied": "Yêu cầu bổ sung của bạn không kịp lượt trước — cứ nói lại với tôi.",
+        "notRunWaiting": "Một yêu cầu bổ sung chưa chạy: lúc đó cuộc trò chuyện đang chờ bạn xử lý một thẻ. Xử lý thẻ đó xong rồi nói lại với tôi.",
+        "assetUnavailable": "Tệp đính kèm không còn dùng được, nên yêu cầu bổ sung đó chưa chạy. Hãy chọn lại tệp.",
+        "inputCanceled": "Yêu cầu bổ sung mới nhất đã bị hủy trước khi chạy.",
+        "earlier": "Đây là kết quả từ thông báo; sau đó đã có tiến triển mới."
+      },
+      "effectAck": {
+        "hint": "Bạn đã kiểm tra các kết quả này trên máy tính đám mây chưa? Xác nhận sẽ ghi các bước chưa rõ là chưa xác nhận xong; việc tiếp tục từ trạng thái hiện tại, không làm lại các bước đó.",
+        "action": "Tôi đã kiểm tra — tiếp tục",
+        "done": "Được rồi, đã xác nhận.",
+        "pending": "Vẫn còn kết quả đang được kiểm tra; hãy thử lại sau ít phút."
+      },
+      "controlDone": {
+        "pause": "Đã yêu cầu tạm dừng — đang kết thúc bước hiện tại.",
+        "resume": "OK, làm tiếp.",
+        "cancel": "Đã yêu cầu hủy."
+      },
+      "checkEffects": "Vẫn còn kết quả cần kiểm tra; trước đó chưa thể tiếp tục và cũng chưa thể coi là đã hoàn tác.",
+      "changed": "Việc vừa thay đổi và đã được làm mới — hãy xem lại rồi thử lại.",
+      "waitingOnCard": "Việc này đang chờ bạn xử lý một thẻ ở hiện trường (ví dụ xác minh trên máy tính đám mây); không điều khiển được từ đây. Hãy đến hiện trường để xử lý hoặc hủy thẻ đó.",
+      "openTaskConversation": "Đến hiện trường",
+      "gone": "Cuộc trò chuyện ở hiện trường của việc này đã bị xóa.",
+      "again": "Thêm một lượt",
+      "helperAsks": "Trợ thủ hỏi: {{question}}"
+    },
+    "taskList": {
+      "title": "Việc của tôi",
+      "button": "Việc của tôi",
+      "buttonWaiting": "Việc của tôi, {{count}} việc đang chờ bạn trả lời",
+      "description": "Mọi việc bạn giao cho trợ lý đều ở đây, mỗi việc một phiếu; bấm “Đến hiện trường” để xem quá trình.",
+      "close": "Đóng",
+      "followExisting": "Để trợ lý theo dõi một cuộc trò chuyện có sẵn",
+      "emptyTitle": "Chưa có việc nào giao cho tôi",
+      "emptyHint": "Nói cho tôi biết cần làm gì trong ô bên dưới, ví dụ \"đổi trang chủ sang nền tối trong một dự án của tôi\".",
+      "groups": {
+        "waiting": "Chờ bạn trả lời",
+        "active": "Chưa xong",
+        "finished": "Mới xong gần đây"
+      },
+      "more": "Còn những việc cũ hơn — hỏi tôi \"liệt kê tất cả việc của tôi\" để xem.",
+      "pendingCount": "Cần bạn {{count}}",
+      "chain": "Lượt {{count}}",
+      "stale": "Lỗi đã hơn một ngày; nên ngừng theo dõi"
+    },
+    "tour": {
+      "title": "Cách chúng ta làm việc cùng nhau",
+      "button": "Cách dùng",
+      "skip": "Bỏ qua",
+      "next": "Tiếp theo",
+      "done": "Đã hiểu",
+      "position": "{{index}} / {{count}}",
+      "steps": {
+        "talk": {
+          "title": "Bạn chỉ cần nói với tôi",
+          "body": "Muốn làm gì, đổi gì hay dừng, cứ nói với tôi bằng chữ hoặc gọi điện."
+        },
+        "card": {
+          "title": "Tôi mở phiếu việc và cử trợ thủ đi làm",
+          "body": "Mỗi việc một phiếu, trên đó có ai đang làm và đến bước nào. Tôi tự chọn mức và dự án, bạn không cần chọn trước."
+        },
+        "site": {
+          "title": "Bấm phiếu việc để đến hiện trường xem",
+          "body": "Ở hiện trường bạn thấy từng bước trợ thủ làm và có thể thêm yêu cầu ngay tại đó; bấm “Về trợ lý” để quay lại."
+        },
+        "report": {
+          "title": "Xong tôi báo lại",
+          "body": "Khi trợ thủ làm xong hoặc bị kẹt, tôi báo bạn ngay; kết quả vẫn nằm trên phiếu việc."
+        }
+      }
+    }
+  },
+  "room": {
+    "here": "“{{title}}” · hiện trường",
+    "back": "Về trợ lý",
+    "entered": "Bạn đang ở hiện trường của “{{title}}”: những gì bạn nói ở đây là dành cho việc này",
+    "state": {
+      "running": "trợ thủ đang làm",
+      "queued": "trợ thủ đang xếp hàng",
+      "waiting": "trợ thủ chờ bạn",
+      "paused": "đã dừng",
+      "effect_unknown": "chờ bạn kiểm tra",
+      "canceled": "đã dừng",
+      "completed": "đã xong",
+      "error": "có lỗi"
+    }
+  }
+}

@@ -980,7 +980,8 @@
         "job": "后台任务：{{name}}",
         "artifact": "产物：{{name}}",
         "agent": "分派子任务：{{name}}"
-      }
+      },
+      "collectExample": "收进样例库"
     },
     "credits": {
       "none": "未计费"

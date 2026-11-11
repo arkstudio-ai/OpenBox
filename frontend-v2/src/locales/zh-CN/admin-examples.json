@@ -1,0 +1,87 @@
+{
+  "filters": {
+    "label": "筛选",
+    "entry": "入口",
+    "industry": "行业",
+    "shopType": "门店类型",
+    "status": "状态",
+    "keyword": "搜索",
+    "placeholder": "标题",
+    "all": "全部"
+  },
+  "status": {
+    "active": "启用",
+    "disabled": "停用"
+  },
+  "column": {
+    "title": "标题",
+    "entry": "入口",
+    "industry": "行业 / 门店类型",
+    "tags": "标签",
+    "rating": "评分",
+    "status": "状态",
+    "useCount": "引用",
+    "updatedAt": "更新",
+    "actions": "操作"
+  },
+  "action": {
+    "new": "手工新建",
+    "edit": "编辑",
+    "enable": "启用",
+    "disable": "停用",
+    "preview": "预览"
+  },
+  "list": {
+    "empty": "还没有样例。从轨迹监控的某一轮点「收进样例库」，或手工新建。",
+    "error": "样例库加载失败。",
+    "loading": "正在加载样例库…",
+    "total": "共 {{count}} 条"
+  },
+  "form": {
+    "collectTitle": "收进样例库",
+    "collectDescription": "下面这些是从会话里自动带回来的；补上门店类型、标签、评分和说明就能保存。",
+    "editTitle": "编辑样例",
+    "newTitle": "手工新建样例",
+    "newDescription": "产出和输入填已有的 asset_id；方案卡或提示词原文贴到「做法」里。",
+    "close": "关闭",
+    "entry": "入口",
+    "industry": "行业",
+    "shopType": "门店类型",
+    "subtype": "子类 / 样式（可选）",
+    "subtypePlaceholder": "如 dish_closeup、menu_red",
+    "title": "标题",
+    "tags": "标签",
+    "tagsHint": "用逗号分开，最多 12 个，如：探店, 傍晚, 人均 30",
+    "rating": "评分",
+    "ratingHint": "5 = 客户当场认可、可直接当模板；3 = 结构可用、文案一般；1 = 只作反例",
+    "notes": "说明",
+    "notesHint": "这条好在哪、AI 该学什么（会原样给到 AI）",
+    "recipe": "做法（方案卡 / 提示词原文）",
+    "inputs": "输入素材",
+    "outputs": "产出",
+    "assetIds": "asset_id，一行一个",
+    "source": "来源",
+    "sourceLine": "会话 {{session}} · 店名 {{shop}} · 主打 {{headline}}",
+    "noAssets": "没有带回产出。手工填 asset_id，或回到轨迹页选别的产出。",
+    "loading": "正在从会话里读取…",
+    "loadFailed": "读取会话失败。",
+    "save": "保存",
+    "saving": "保存中…",
+    "saved": "已收进样例库",
+    "needTitle": "标题不能为空",
+    "needOutput": "至少要有一条产出",
+    "remove": "移除",
+    "removeAsset": "移除 {{name}}",
+    "tooManyAssets": "{{kind}}最多 {{max}} 条，现在有 {{count}} 条，移除多余的再保存",
+    "recipeTooLong": "做法最多 {{max}} 字，现在有 {{count}} 字，删掉一些再保存",
+    "errors": {
+      "EXAMPLE_INVALID": "分类或 asset_id 不对：{{message}}",
+      "SESSION_NOT_FOUND": "找不到这个会话",
+      "HTTP_422": "内容超出限制或格式不对，检查后再保存",
+      "default": "保存失败，请稍后再试"
+    }
+  },
+  "preview": {
+    "unavailable": "暂时打不开"
+  }
+}

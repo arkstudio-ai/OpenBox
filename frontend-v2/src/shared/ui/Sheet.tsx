@@ -14,13 +14,21 @@ interface SheetProps {
   children: ReactNode
   /** Pinned under the scrolling body, e.g. a secondary action. */
   footer?: ReactNode
+  /** Whether a click on the dimmed page closes the sheet. Off for a form the
+   *  reader fills in, where that click would throw their work away; Escape and
+   *  the close button still work. Defaults to on. */
+  dismissOnBackdrop?: boolean
 }
 
 /** A panel that slides over the page from the end edge: a list you check and
  *  leave, beside the conversation rather than instead of it. Full width on a
  *  phone. Focus moves in on open, stays inside, and returns on close. */
-export function Sheet({ open, onClose, title, description, closeLabel, children, footer }: SheetProps) {
+export function Sheet({ open, onClose, title, description, closeLabel, children, footer, dismissOnBackdrop = true }: SheetProps) {
   const panel = useRef<HTMLDivElement>(null)
+  // A click counts as "outside" only when it both started and ended on the
+  // backdrop: selecting text in the panel and releasing past its edge fires a
+  // click on the backdrop too, and that must not close the sheet.
+  const pressedBackdrop = useRef(false)
   const close = useRef(onClose)
   useEffect(() => {
     close.current = onClose
@@ -45,7 +53,18 @@ export function Sheet({ open, onClose, title, description, closeLabel, children,
 
   if (!open) return null
   return createPortal(
-    <div className="bg-n900/25 fixed inset-0 z-50 flex justify-end" onClick={onClose} role="presentation">
+    <div
+      className="bg-n900/25 fixed inset-0 z-50 flex justify-end"
+      role="presentation"
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        const outside = pressedBackdrop.current && e.target === e.currentTarget
+        pressedBackdrop.current = false
+        if (outside && dismissOnBackdrop) onClose()
+      }}
+    >
       <div
         ref={panel}
         tabIndex={-1}

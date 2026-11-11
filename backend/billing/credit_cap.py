@@ -35,11 +35,11 @@ log = logging.getLogger(__name__)
 
 MEDIA_KINDS = ("video_generate", "video_compose", "video_transcribe", "image_gen")
 #: ``video_jobs.kind`` values whose charge arrives only when the job completes.
-IN_FLIGHT_JOB_KINDS = ("segment", "render")
+IN_FLIGHT_JOB_KINDS = ("segment", "render", "compose")
 #: Job states after which no charge will ever be settled.
 FAILED_JOB_STATUSES = ("failed", "cancelled", "transfer_failed")
 #: ``usage_events.idempotency_key`` prefix the settlement of each job kind uses.
-SETTLE_KEY_PREFIX = {"segment": "generate:", "render": "compose:"}
+SETTLE_KEY_PREFIX = {"segment": "generate:", "render": "compose:", "compose": "compose:"}
 MAX_CAP = Decimal("1000000")
 CODE = "CREDIT_CAP_EXCEEDED"
 

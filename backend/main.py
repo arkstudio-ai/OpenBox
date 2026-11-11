@@ -421,6 +421,9 @@ def create_app() -> FastAPI:
     async def assistant_task_held(_request, exc):
         return JSONResponse({"detail": {"code": exc.code, "message": str(exc)}}, status_code=exc.status)
 
+    # Accept-Language → request.state.ui_language (docs/LIGHT_MODE_I18N_PLAN.md §2.1).
+    from core.ui_language import UILanguageMiddleware
+    application.add_middleware(UILanguageMiddleware)
     application.add_middleware(
         CORSMiddlewareExemptingV1,
         allow_origins=config.cors_origins,
@@ -501,6 +504,14 @@ def create_app() -> FastAPI:
     from api.video_productions import router as video_productions_router
     application.include_router(video_productions_router)
 
+    from api.first_video import router as first_video_router
+    application.include_router(first_video_router)
+
+    from api.light import router as light_router
+    application.include_router(light_router)
+    from api.stores import router as stores_router
+    application.include_router(stores_router)
+
     from api.workspaces import router as workspaces_router
     from api.admin import router as admin_router
     from api.admin_billing import router as admin_billing_router
@@ -554,6 +565,8 @@ def create_app() -> FastAPI:
     application.include_router(inbox_router)
     application.include_router(topics_router)  # No auth — published topics are shareable
     application.include_router(admin_messages_router)
+    from api.admin_examples import router as admin_examples_router
+    application.include_router(admin_examples_router)  # Light 参考样例库
     application.include_router(douyin_webhook_router)  # No auth — signed by the platform
 
     # ── Agent routes ──

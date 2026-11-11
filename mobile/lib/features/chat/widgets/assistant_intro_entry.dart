@@ -20,6 +20,7 @@ class AssistantIntroEntry extends ConsumerStatefulWidget {
     required this.onPick,
     this.requested,
     this.onRequestDone,
+    this.autoOpen = false,
   });
 
   /// An answer has come and nothing is running.
@@ -34,6 +35,11 @@ class AssistantIntroEntry extends ConsumerStatefulWidget {
   /// The requested meeting closed; the page forgets the request.
   final VoidCallback? onRequestDone;
 
+  /// A first meeting that would start by itself opens here as the sheet,
+  /// over the page, instead of as a card inside the welcome (Light 模式,
+  /// 2026-11-04). Putting it off or dismissing the sheet counts as 以后再说.
+  final bool autoOpen;
+
   @override
   ConsumerState<AssistantIntroEntry> createState() =>
       _AssistantIntroEntryState();
@@ -43,10 +49,12 @@ class _AssistantIntroEntryState extends ConsumerState<AssistantIntroEntry> {
   bool _reminding = false;
   bool _nudgeSent = false;
   bool _open = false;
+  bool _autoOpened = false;
 
   Future<void> _openMeeting(String mode, {bool requested = false}) async {
     if (_open) return;
     _open = true;
+    var closedByItself = false;
     FocusScope.of(context).unfocus();
     // Arriving from Settings, which the drawer opened: the conversation, not
     // the drawer, sits behind the meeting.
@@ -72,13 +80,33 @@ class _AssistantIntroEntryState extends ConsumerState<AssistantIntroEntry> {
             mode: mode,
             framed: false,
             onPick: widget.onPick,
-            onClose: () => Navigator.of(sheetContext).pop(),
+            onClose: () {
+              closedByItself = true;
+              Navigator.of(sheetContext).pop();
+            },
           ),
         ),
       ),
     );
     _open = false;
+    // Swiping the sheet away or tapping the scrim is the same answer as
+    // 以后再说: recorded, so the meeting does not come back by itself.
+    if (mode == 'auto' && !closedByItself) {
+      ref
+          .read(assistantProfileProvider.notifier)
+          .recordIntro({'event': 'dismiss'})
+          .catchError((_) {});
+    }
     if (requested && mounted) widget.onRequestDone?.call();
+  }
+
+  void _followAutoOpen(AssistantProfile? profile) {
+    if (!widget.autoOpen || _autoOpened || _open || profile == null) return;
+    if (!introStartsByItself(profile)) return;
+    _autoOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openMeeting('auto');
+    });
   }
 
   void _followRequest() {
@@ -112,8 +140,10 @@ class _AssistantIntroEntryState extends ConsumerState<AssistantIntroEntry> {
       if (previous?.valueOrNull == null && next.valueOrNull != null) {
         _followRequest();
       }
+      _followAutoOpen(next.valueOrNull);
     });
     final profile = ref.watch(assistantProfileProvider).valueOrNull;
+    _followAutoOpen(profile);
     final undecided = profile == null
         ? 0
         : introStepsFor(profile, 'undecided').length;

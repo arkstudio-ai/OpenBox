@@ -1,0 +1,187 @@
+{
+  "tabs": {
+    "home": "首页",
+    "assistant": "助理",
+    "inbox": "消息",
+    "me": "我的"
+  },
+  "home": {
+    "greeting": "{{name}}",
+    "defaultShop": "我的店",
+    "taglines": [
+      "今天给店里拍一条视频吧",
+      "新菜上了？做张海报发出去",
+      "菜单换季了，重排一版",
+      "看看这周的成绩，下一条做什么",
+      "门头、餐品、探店，挑一样做视频",
+      "团购活动一句话，海报就有了",
+      "周末人多，先把菜单印好"
+    ],
+    "credits": "{{value}} 积分",
+    "creditsUnavailable": "积分读取失败",
+    "section": {
+      "todo": "今天可以做",
+      "make": "自己挑一件",
+      "more": "还能做",
+      "recent": "最近做的"
+    },
+    "ok": "可以开始",
+    "needsPlan": "需要开通套餐",
+    "needsDesktop": "需要云电脑",
+    "needsBinding": "需要先授权抖音",
+    "comingSoon": "即将上线",
+    "voiceUnavailable": "语音暂未开通",
+    "goPlan": "去开通 ›",
+    "goDesktop": "去开云电脑 ›",
+    "goBinding": "去授权 ›",
+    "banner": {
+      "title": "所有事都能省心托管",
+      "body": "出片、发布、回评价，定好时间自动做"
+    },
+    "recentEmpty": "还没有做过东西，从上面挑一件开始",
+    "recentFailed": "最近做的读不出来",
+    "outputs_other": "{{count}} 个产出",
+    "ask": "有别的事？直接跟助理说"
+  },
+  "gallery": {
+    "lede": "先挑一个样子，选定后进入对话，一步一步做。",
+    "needs": "需要准备：{{needs}}",
+    "pick": "就做这种",
+    "skip": "不挑了，直接开始",
+    "start": "开始",
+    "starting": "正在开始…",
+    "stepsTitle": "会这样进行",
+    "noSamples": "样片正在准备中，直接开始也可以。",
+    "unavailable": "这个入口现在用不了：{{reason}}",
+    "missing": "没有这个入口",
+    "play": "看样片",
+    "playFailed": "样片播放失败"
+  },
+  "topic": {
+    "input": {
+      "hint": "有话直接说",
+      "camera": "拍照",
+      "album": "相册",
+      "send": "发送",
+      "stop": "停止",
+      "uploading": "正在上传照片…",
+      "photosSent": "我拍好了，看这几张",
+      "clipsSent": "素材传好了，帮我剪",
+      "clipTooBig": "单段视频不能超过 200 兆，已跳过太大的",
+      "uploadingOf": "正在上传第 {{n}}/{{total}} 段…"
+    }
+  },
+  "card": {
+    "confirm": "就这样",
+    "next": "下一步",
+    "skip": "先跳过",
+    "typeHint": "也可以直接打字",
+    "pageOf": "第 {{current}} / {{count}} 步",
+    "recommended": "推荐"
+  },
+  "tool": {
+    "doing": "正在做：{{action}}",
+    "done_other": "做了 {{count}} 步",
+    "video": "生成视频",
+    "compose": "合成视频",
+    "image": "生成图片",
+    "transcribe": "识别语音",
+    "publish": "发布",
+    "desktop": "操作云电脑",
+    "schedule": "安排定时",
+    "question": "向你提问",
+    "skill": "准备技能",
+    "search": "查资料",
+    "fetch": "读网页",
+    "files": "整理素材",
+    "plan": "列计划",
+    "task": "分派子任务",
+    "working": "处理中"
+  },
+  "me": {
+    "title": "我的",
+    "billing": "订购与积分",
+    "authCenter": "授权中心",
+    "desktop": "云电脑",
+    "resources": "资源",
+    "settings": "设置",
+    "admin": "超管系统",
+    "signOut": "退出登录",
+    "signOutTitle": "确定退出登录？",
+    "cancel": "取消",
+    "autopilot": "托管中的事"
+  },
+  "uiMode": {
+    "title": "界面模式",
+    "light": "简易",
+    "lightBody": "首页按钮直达：做视频、做菜单、做海报",
+    "pro": "专业",
+    "proBody": "完整工作台：对话、项目、云电脑、技能",
+    "failed": "切换失败，请重试"
+  },
+  "testBuild": "测试版",
+  "result": {
+    "save": "保存",
+    "savePdf": "存为 PDF",
+    "publish": "发到抖音",
+    "again": "再做一条",
+    "againPrompt": "再做一条，换个样子",
+    "publishPrompt": "把这条发到抖音",
+    "publishLocked": "发布需要云电脑，开通套餐后就能一键发到抖音"
+  },
+  "autopilot": {
+    "switch": "以后省心托管这个",
+    "switchOn": "已托管 · {{when}}",
+    "sheetTitle": "以后省心托管这个",
+    "sheetLede": "到点自动做一条新的，发回这个对话；每次换个镜头，不重样。",
+    "when": "什么时候",
+    "how": "怎么做",
+    "cap": "每次最多花",
+    "repeat": {
+      "daily": "每天",
+      "weekdays": "工作日",
+      "weekly": "每周一"
+    },
+    "mode": {
+      "make_only": "只出片",
+      "make_and_publish": "做好直接发",
+      "publishLocked": "直接发（需要云电脑）"
+    },
+    "capValue": "{{value}} 积分",
+    "capLine": "每次最多 {{value}} 积分",
+    "confirm": "开始托管",
+    "started": "托管上了：{{when}} 自动做一条",
+    "paused": "已暂停，可以在「托管中的事」里继续或取消",
+    "resumed": "继续托管了",
+    "title": "托管中的事",
+    "lede": "到点自动做，做好的东西发回原来的对话，并通知你。超过每次上限就不做。",
+    "empty": "还没有托管的事。\n做完一条视频或一张图后，打开结果卡上的「以后省心托管这个」。",
+    "task": {
+      "video": "做一条视频",
+      "image": "做一张图",
+      "listing": "上下架",
+      "reviews": "回评价",
+      "report": "成绩复盘"
+    },
+    "statusPaused": "已暂停",
+    "statusRunning": "正在做",
+    "statusNext": "下次 {{when}}",
+    "last": {
+      "ok": "上次做好了",
+      "error": "上次没做成",
+      "skipped": "上次没做（超上限或积分不够）",
+      "running": "正在做"
+    },
+    "pause": "暂停",
+    "resume": "继续",
+    "open": "打开对话",
+    "cancel": "取消托管",
+    "keep": "先留着",
+    "cancelTitle": "不再托管这件事？",
+    "cancelBody": "取消后到点不会再做，已经做好的不受影响。",
+    "banner": "省心托管"
+  },
+  "conversations": {
+    "untitled": "未命名对话"
+  }
+}

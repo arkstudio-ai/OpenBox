@@ -126,14 +126,18 @@ const _monthsEn = [
   'Dec',
 ];
 
-/// A short date in the active language: "10月7日" / "Oct 7", with the year
-/// when asked for. Spelled out rather than through `intl` locale data, which
-/// the app does not load for every language.
+/// A short date in the active language: "10月7日" / "Oct 7" / "7 thg 10",
+/// with the year when asked for. Spelled out rather than through `intl`
+/// locale data, which the app does not load for every language.
 String shortDate(DateTime at, String language, {bool year = false}) {
   if (language.startsWith('zh')) {
     return year
         ? '${at.year}年${at.month}月${at.day}日'
         : '${at.month}月${at.day}日';
+  }
+  if (language.startsWith('vi')) {
+    final day = '${at.day} thg ${at.month}';
+    return year ? '$day, ${at.year}' : day;
   }
   final day = '${_monthsEn[at.month - 1]} ${at.day}';
   return year ? '$day, ${at.year}' : day;

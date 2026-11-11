@@ -60,7 +60,8 @@ async def overview(user, enabled, locale):
             PushDelivery, PushDelivery.message_id == PushMessage.id).where(
             PushMessage.user_id == user['user_id'], PushMessage.event_key.like('system_test:%'),
         ).order_by(PushMessage.created_at.desc()).limit(20))).all()
-        locale = ("zh-CN" if device.locale.startswith("zh") else "en-US") if device else locale
+        from notifications.templates import language
+        locale = language(device.locale) if device else locale
         current = device_status(device)
         configured = bool(device and device.provider in enabled)
         return {'device': {**current, 'appVersion': device.app_version if device else None,

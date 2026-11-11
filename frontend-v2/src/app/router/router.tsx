@@ -33,6 +33,7 @@ const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
 const AdminSkillsRoute = lazy(() => import("@/routes/admin/AdminSkillsRoute"))
 const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
 const AdminPricingRoute = lazy(() => import("@/routes/admin/AdminPricingRoute"))
+const AdminExamplesRoute = lazy(() => import("@/routes/admin/AdminExamplesRoute"))
 const AdminWorkspaceRoute = lazy(() => import("@/routes/admin/AdminWorkspaceRoute"))
 const AdminTrajectoriesRoute = lazy(() => import("@/routes/admin/AdminTrajectoriesRoute"))
 const AdminTrajectorySessionsRoute = lazy(() => import("@/routes/admin/AdminTrajectorySessionsRoute"))
@@ -119,6 +120,7 @@ export const router = createBrowserRouter([
               { path: routePatterns.adminWorkspace, element: <AdminWorkspaceRoute /> },
               { path: routePatterns.adminBilling, element: <AdminBillingRoute /> },
               { path: routePatterns.adminPricing, element: <AdminPricingRoute /> },
+              { path: routePatterns.adminExamples, element: <AdminExamplesRoute /> },
               { path: routePatterns.adminTrajectories, element: <AdminTrajectoriesRoute /> },
               { path: routePatterns.adminTrajectorySessions, element: <AdminTrajectorySessionsRoute /> },
               { path: routePatterns.adminTrajectorySession, element: <AdminTrajectorySessionRoute /> },

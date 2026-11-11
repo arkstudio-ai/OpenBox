@@ -263,3 +263,140 @@ def test_spoken_preset_matches_the_verified_spike_layout():
 def test_timeline_rejects_unknown_fields_so_agents_cannot_smuggle_ims_keys():
     with pytest.raises(ValidationError):
         Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4", "AdaptMode": "Cover"}]})
+
+
+def test_a_nested_object_sent_as_json_text_is_read_as_the_object():
+    # Seen on light-test 2026-11-03: the model sent every banner style as a JSON string.
+    timeline = Timeline.model_validate({
+        "shots": [{"asset": f"{B}/a.mp4", "duration_sec": 3, "transition_out": '{"type": "fade", "seconds": 0.4}'},
+                  {"asset": f"{B}/b.mp4", "duration_sec": 3}],
+        "caption_style": '{"bottom_ratio": 0.12}',
+        "texts": [{"text": "巷口面馆", "from_sec": 0.3, "to_sec": 5, "y": 0.76, "style": '{"size": 60, "outline": 4}'}],
+    })
+    assert (timeline.texts[0].style.size, timeline.texts[0].style.outline) == (60, 4)
+    assert timeline.shots[0].transition_out.seconds == 0.4
+    assert timeline.caption_style.bottom_ratio == 0.12
+    with pytest.raises(ValidationError):
+        Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4"}],
+                                 "texts": [{"text": "a", "from_sec": 0, "to_sec": 1, "y": 0.5, "style": "big"}]})
+    with pytest.raises(ValidationError):
+        Timeline.model_validate({"shots": [{"asset": f"{B}/a.mp4"}],
+                                 "texts": [{"text": "a", "from_sec": 0, "to_sec": 1, "y": 0.5, "style": '{"AdaptMode": 1}'}]})
+
+
+# ── rule 7: more than one track, every span explicit ────────────────────────
+
+from video.timeline import AudioClip, Move, Overlay, Voiceover  # noqa: E402
+
+
+def test_speed_changes_the_timeline_length_not_the_source_trim():
+    t = Timeline(shots=[
+        Shot(asset=f"{B}/a.mp4", in_sec=2, duration_sec=6, speed=2),
+        Shot(asset=f"{B}/b.mp4", duration_sec=4, speed=0.5),
+    ])
+    assert t.duration_sec == 11.0 and t.shot_spans() == [(0.0, 3.0), (3.0, 11.0)]
+    clips = compile_ims(t, output_url=OUT).timeline["VideoTracks"][0]["VideoTrackClips"]
+    assert (clips[0]["In"], clips[0]["Out"], clips[0]["Speed"]) == (2.0, 8.0, 2)
+    assert clips[1]["Speed"] == 0.5 and "Speed" not in compile_ims(_two_shots(), output_url=OUT).timeline["VideoTracks"][0]["VideoTrackClips"][0]
+
+
+def test_a_camera_move_compiles_to_kenburns_windows_and_warns_until_verified():
+    t = Timeline(shots=[
+        Shot(asset=f"{B}/a.mp4", duration_sec=4, move=Move(preset="zoom_in")),
+        Shot(asset=f"{B}/b.mp4", duration_sec=4, move=Move(start=[0, 0, 0.5, 0.5], end=[0.5, 0.5, 0.5, 0.5])),
+        Shot(asset=f"{B}/c.mp4", duration_sec=4, move=Move(preset="pan_left")),
+    ])
+    job = compile_ims(t, output_url=OUT)
+    effects = [c["Effects"] for c in job.timeline["VideoTracks"][0]["VideoTrackClips"]]
+    assert effects[0] == [{"Type": "KenBurns", "Start": "0,0,1,1", "End": "0.08,0.08,0.84,0.84"}]
+    assert effects[1] == [{"Type": "KenBurns", "Start": "0,0,0.5,0.5", "End": "0.5,0.5,0.5,0.5"}]
+    # zoom_in was verified in the 2026-11-04 sampler; pan_left was not.
+    assert not any("shots[0].move" in w for w in job.warnings)
+    assert any("shots[2].move" in w and "not yet verified" in w for w in job.warnings)
+    with pytest.raises(ValidationError):
+        Move(start=[0.6, 0, 0.5, 0.5], end=[0, 0, 1, 1])  # runs off the frame
+    with pytest.raises(ValidationError):
+        Move(preset="zoom_in", start=[0, 0, 1, 1], end=[0, 0, 1, 1])
+
+
+def test_filters_become_timed_effect_track_items_and_unknown_ones_are_refused():
+    t = Timeline(filter="warm", shots=[
+        Shot(asset=f"{B}/a.mp4", duration_sec=4, filter="m7", transition_out=Transition(seconds=0.5)),
+        Shot(asset=f"{B}/b.mp4", duration_sec=4),
+    ])
+    job = compile_ims(t, output_url=OUT)
+    assert job.timeline["EffectTracks"] == [{"EffectTrackItems": [
+        {"Type": "Filter", "SubType": "warm", "TimelineIn": 0, "TimelineOut": 7.5},
+        {"Type": "Filter", "SubType": "m7", "TimelineIn": 0.0, "TimelineOut": 4.0},
+    ]}]
+    with pytest.raises(TimelineCompileError, match="unknown filter"):
+        compile_ims(Timeline(shots=[Shot(asset=f"{B}/a.mp4", duration_sec=4, filter="sepia")]), output_url=OUT)
+
+
+def test_a_blurred_backdrop_is_its_own_track_under_the_main_one():
+    t = Timeline(shots=[
+        Shot(asset=f"{B}/a.mp4", duration_sec=4),
+        Shot(asset=f"{B}/wide.mp4", in_sec=3, duration_sec=5, fit="contain", backdrop="blur", speed=1),
+    ])
+    job = compile_ims(t, output_url=OUT)
+    tracks = job.timeline["VideoTracks"]
+    assert len(tracks) == 2 and tracks[1].get("MainTrack") is True
+    backdrop = tracks[0]["VideoTrackClips"]
+    assert backdrop == [{
+        "MediaURL": f"{B}/wide.mp4", "X": 0, "Y": 0, "Width": 720, "Height": 1280, "AdaptMode": "Cover",
+        "TimelineIn": 4.0, "TimelineOut": 9.0, "In": 3.0, "Out": 8.0,
+        "Effects": [{"Type": "VFX", "SubType": "h_blur"}, {"Type": "Volume", "Gain": 0}],
+    }]
+    assert tracks[1]["VideoTrackClips"][1]["AdaptMode"] == "Contain"
+
+
+def test_overlays_sit_on_their_own_tracks_in_canvas_fractions():
+    t = Timeline(shots=[Shot(asset=f"{B}/a.mp4", duration_sec=10)],
+                 overlays=[Overlay(asset=f"{B}/pip.mp4", from_sec=2, to_sec=6, in_sec=1, x=0.6, y=0.05, width=0.35, height=0.2, opacity=0.9)])
+    job = compile_ims(t, output_url=OUT)
+    tracks = job.timeline["VideoTracks"]
+    assert tracks[0].get("MainTrack") is True and len(tracks) == 2
+    assert tracks[1]["VideoTrackClips"] == [{
+        "MediaURL": f"{B}/pip.mp4", "X": 0.6, "Y": 0.05, "Width": 0.35, "Height": 0.2, "AdaptMode": "Cover",
+        "TimelineIn": 2.0, "TimelineOut": 6.0, "Out": 5.0, "In": 1.0, "Opacity": 0.9,
+        "Effects": [{"Type": "Volume", "Gain": 0.0}],
+    }]
+    with pytest.raises(ValidationError):
+        Overlay(asset=f"{B}/pip.mp4", from_sec=0, to_sec=1, x=0.8, width=0.3)
+
+
+def test_a_voiceover_is_an_ai_tts_clip_and_the_bed_ducks_under_it():
+    t = Timeline(
+        shots=[Shot(asset=f"{B}/a.mp4", duration_sec=12)],
+        audio=[
+            AudioClip(voiceover=Voiceover(text="三分钟还你新轮毂", voice="aiqi"), from_sec=1, to_sec=4, volume=1),
+            AudioClip(library_id="icepublic-abc", from_sec=0, to_sec=12, volume=0.3, duck_under_voice=True,
+                      duck_volume=0.1, source_sec=60),
+        ],
+    )
+    job = compile_ims(t, output_url=OUT)
+    voice, bed = job.timeline["AudioTracks"]
+    assert voice["AudioTrackClips"] == [{"Type": "AI_TTS", "Content": "三分钟还你新轮毂", "Voice": "aiqi",
+                                         "SpeechRate": 0, "PitchRate": 0, "TimelineIn": 1.0, "TimelineOut": 4.0}]
+    gains = [(c["TimelineIn"], c["TimelineOut"], c["Effects"][0]["Gain"]) for c in bed["AudioTrackClips"]]
+    assert gains == [(0.0, 0.8, 0.3), (0.8, 4.3, 0.1), (4.3, 12.0, 0.3)]
+    assert any("not yet verified" in w and "voice" in w for w in job.warnings)
+    with pytest.raises(TimelineCompileError, match="unknown voice"):
+        compile_ims(Timeline(shots=[Shot(asset=f"{B}/a.mp4", duration_sec=5)],
+                             audio=[AudioClip(voiceover=Voiceover(text="hi", voice="nobody"), from_sec=0, to_sec=3)]), output_url=OUT)
+    with pytest.raises(ValidationError):
+        AudioClip(voiceover=Voiceover(text="hi"), from_sec=0)  # needs to_sec
+
+
+def test_a_voiceover_line_longer_than_its_span_warns_before_the_render():
+    from video.ims_compiler import speech_seconds
+
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。") == 4.5   # 15 spoken characters, punctuation not counted
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。", speech_rate=500) == 2.25
+    assert speech_seconds("轮毂多久没洗了？三分钟还你新轮毂。", speech_rate=-500) == 9.0
+    short = Timeline(shots=[Shot(asset=f"{B}/a.mp4", duration_sec=12)],
+                     audio=[AudioClip(voiceover=Voiceover(text="轮毂多久没洗了？三分钟还你新轮毂。"), from_sec=1, to_sec=3, volume=1)])
+    job = compile_ims(short, output_url=OUT)
+    assert any("may be cut off" in w and "15 characters" in w for w in job.warnings)
+    roomy = short.model_copy(update={"audio": [AudioClip(voiceover=Voiceover(text="轮毂多久没洗了？三分钟还你新轮毂。"), from_sec=1, to_sec=6, volume=1)]})
+    assert not any("cut off" in w for w in compile_ims(roomy, output_url=OUT).warnings)

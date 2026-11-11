@@ -12,6 +12,7 @@ import hashlib
 import time
 
 from core.log import create_logger
+from voice.phrases import english
 
 log = create_logger("voice.cards")
 
@@ -54,6 +55,7 @@ class CardDesk:
         self.questions: dict[str, dict] = {}  # task questions actually offered in this call
         self._question_shown: dict[str, int] = {}
         self._raw: dict[str, dict] = {}       # card id → the card as last shown
+        self._presented_sessions: set[str] = set()  # tasks whose plan this call has already read out
 
     def show(self, card: dict) -> str:
         card_id = card["card_id"]
@@ -96,12 +98,23 @@ class CardDesk:
 
     def show_question(self, item: dict, lang: str) -> dict:
         value = spoken_question(item, lang)
+        session_id = value.get("session_id") or ""
         if identity := value.get("request_id"):
+            if session_id in self._presented_sessions and identity not in self.questions:
+                # A second card from the same task (2026-11-07: the helper re-posted the review card after a
+                # revision and the front desk read the whole plan again, a third time): only what is new.
+                value["already_presented"] = True
+                value["how_to_say"] = ("本通话已经向用户讲过这个任务的方案：只说这次新增或变化的决定，一两句话问清，"
+                                       "不再复述标题以外的方案内容。" if not english(lang) else
+                                       "This call already read this task's plan to the user: say only what is new or "
+                                       "changed, in a sentence or two, without restating the plan.")
             previous = self.questions.get(identity)
             if previous and previous.get("version") != value.get("version"):
                 self._question_shown[identity] = self.heard()[0]
             self.questions[identity] = value
             self._question_shown.setdefault(identity, self.heard()[0])
+            if session_id:
+                self._presented_sessions.add(session_id)
         return value
 
     def reconcile(self, main_cards: list[dict], questions: list[dict]) -> None:

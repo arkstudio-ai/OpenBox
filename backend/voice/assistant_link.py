@@ -33,6 +33,7 @@ from core.log import create_logger
 from voice import calls, phrases
 from voice.prompt import VOICE_ENTRYPOINT
 from voice.speech_text import clean
+from voice.phrases import english
 
 log = create_logger("voice.assistant_link")
 
@@ -130,6 +131,7 @@ class VoiceTurnRef:
     asked: str = ""               # a report answering a request of this call that was passed on: the user's words
     running: list | None = None   # the tasks the turn passed the work to, still at it when it ended
     submissions: list | None = None  # None: unread; []: no task input; otherwise exact durable receipts
+    light_redirect: bool = False   # the reply only pointed at a Light home entry: no work was arranged
     riders: list | None = None    # other results told in the same note and reply as this one
     context: dict | None = None   # the user's own words and the call's last lines, for the assistant (start)
     lane: str = "assistant"       # assistant / remember: a main-session turn
@@ -152,6 +154,19 @@ class VoiceTurnRef:
     def recorded(self) -> bool:
         """A request of this call (a VoiceTurn row), unlike an unsolicited task report."""
         return self.report is None
+
+
+LIGHT_ENTRY_PATH = "/light/topic/"
+
+
+def light_redirect(text: str) -> bool:
+    """The assistant's reply sent the user to a Light home entry instead of arranging the work.
+
+    In a call the user cannot tap that link, and the front desk must not
+    narrate the advice as a handover (2026-11-07: "已经转交给帮手了" for six
+    minutes while nothing had been submitted).
+    """
+    return LIGHT_ENTRY_PATH in (text or "")
 
 
 def turn_outcome(ref: VoiceTurnRef, *, heard: bool = False, pending: bool = False) -> str:
@@ -321,10 +336,17 @@ class AssistantLink:
             await self.read_submissions(ref)
             speech = clean(text, self.lang) or ("" if cards else phrases.phrase_text("result_in_text", self.lang))
             from voice.decisions import for_turn
-            versions, stale = await for_turn(self.main_session_id, self.user_id, self.workspace_id, ref.inbox_id)
+            # A revise turn supersedes the card it was bound to: that card
+            # going away is its own doing, not a decision made elsewhere
+            # (2026-11-07: the reply "已同步给帮手" was dropped as stale and the
+            # front desk asked the superseded card again).
+            revised = ((ref.context or {}).get("revision_request") or {}).get("request_id")
+            versions, stale = await for_turn(self.main_session_id, self.user_id, self.workspace_id, ref.inbox_id,
+                                             revised=revised)
             return {"status": "ok", "speech": speech, **({"cards": cards} if cards else {}),
                     **({"decision_versions": versions, "speech_stale": stale} if versions else {}),
-                    **({"running": running} if running else {})}
+                    **({"running": running} if running else {}),
+                    **({"light_redirect": True} if light_redirect(text) else {})}
         # The coordinator can time out after its command committed. Never
         # turn that reply failure into "the video failed; submit it again".
         from assistant.receipts import describe, for_inbox
@@ -337,12 +359,12 @@ class AssistantLink:
             await self.record(ref, settled=True, outcome="failed", result_message_id=receipt.result_message_id)
             return {"status": "unavailable", "execution_confirmed": False,
                     "speech": ("这轮回复没有完成，目前也无法核实任务指令是否已提交，请先查看原任务状态。"
-                               if self.lang != "en" else
+                               if not english(self.lang) else
                                "The reply did not finish and submission could not be verified. Check the task first.")}
         if submissions:
             await self.record(ref, settled=True, result_message_id=receipt.result_message_id,
                               message_id=receipt.message_id or ref.message_id)
-            speech = (("个人助理这轮回复未完成，但任务指令已有提交记录。" if self.lang != "en" else
+            speech = (("个人助理这轮回复未完成，但任务指令已有提交记录。" if not english(self.lang) else
                        "The assistant reply did not finish, but task instructions were submitted. ")
                       + describe(submissions, self.lang))
             return {"status": "ok", "reason": "submission_receipt", "speech": speech,

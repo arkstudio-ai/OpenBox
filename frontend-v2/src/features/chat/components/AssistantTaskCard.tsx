@@ -4,7 +4,7 @@
 // reach the page.
 import { useRef, useState } from "react"
 import { Link } from "react-router"
-import { ArrowUpRight, MoreHorizontal } from "lucide-react"
+import { ArrowUpRight, ChevronDown, ChevronUp, MoreHorizontal } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { MessagePart, ToolPart } from "@/shared/types/api"
 import { paths } from "@/shared/router/paths"
@@ -25,6 +25,7 @@ import { pendingSendIdentity } from "../lib/pending-send"
 import { requestEffectAcknowledge } from "../stores/effect-acknowledge"
 import { AssistantEffectAcknowledge } from "./AssistantEffectAcknowledge"
 import { taskReceipt } from "../lib/task-receipt"
+import { isFolded, useTaskCardFold } from "../stores/task-card-fold"
 import { TASK_STATUS_DOT, TASK_STATUS_TONE, plainSummary, sinceLabel, taskStatus, type TaskStatus } from "../lib/task-status"
 
 interface ReceiptsProps { parts: MessagePart[] }
@@ -240,6 +241,27 @@ function metaLine(value: AssistantTaskView, watch: AssistantWatchItem | undefine
 /** The task, its conversation or its project was deleted: nothing left to show or control. */
 const GONE = new Set(["ASSISTANT_EXECUTION_UNAVAILABLE", "ASSISTANT_TASK_UNAVAILABLE", "ASSISTANT_PROJECT_UNAVAILABLE"])
 
+/** A finished task as one line: dot, title, status, when — the whole card on click. */
+function FoldedCard({ title, status, updatedAt, className, onExpand }: {
+  title: string; status: TaskStatus; updatedAt: string; className?: string; onExpand: () => void
+}) {
+  const { t, i18n } = useTranslation("chat")
+  return (
+    <section aria-label={t("assistant.card.label", { title })}
+      className={cn("border-hair bg-card my-2 rounded-2xl border", className)}>
+      <button type="button" aria-expanded={false} onClick={onExpand}
+        className="hover:bg-hairsoft flex w-full items-center gap-3 rounded-2xl px-4 py-2.5 text-start">
+        <span className={cn("size-2 flex-none rounded-full", TASK_STATUS_DOT[status])} aria-hidden />
+        <span className="text-ink min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+        <StatusPill tone={TASK_STATUS_TONE[status]}>{t(`assistant.status.${status}`)}</StatusPill>
+        <span className="text-n600 hidden text-xs sm:inline">{sinceLabel(updatedAt, i18n?.language)}</span>
+        <ChevronDown size={16} strokeWidth={2.2} className="text-n600 flex-none" aria-hidden />
+        <span className="sr-only">{t("assistant.card.expand")}</span>
+      </button>
+    </section>
+  )
+}
+
 interface CardProps { taskId: string; initial?: AssistantTaskView; selectedResult?: AssistantResult; className?: string }
 export function AssistantTaskCard({ taskId, initial, selectedResult, className }: CardProps) {
   const { t, i18n } = useTranslation("chat")
@@ -251,6 +273,8 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
   // A control refused because the task waits on a card in its conversation: say so, with the way there.
   const [waitingCard, setWaitingCard] = useState(false)
   const errorMessage = useApiErrorMessage()
+  const foldOverrides = useTaskCardFold((state) => state.overrides)
+  const setFold = useTaskCardFold((state) => state.setFold)
   const value = initial ?? query.data
   if (!initial && query.error) {
     if (query.error instanceof ApiError && GONE.has(query.error.code)) {
@@ -266,6 +290,11 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
   const earlier = !!selectedResult && selectedResult.result_id !== value.latest_result?.result_id
   const summary = selectedResult || watch?.latest_result?.is_current === false
     ? null : plainSummary(watch?.latest_result?.summary ?? "") || null
+  // One line for finished work (status, title, when), the full card on demand.
+  if (isFolded(task.id, status, task.updated_at, foldOverrides)) {
+    return <FoldedCard title={task.title} status={status} updatedAt={task.updated_at} className={className}
+      onExpand={() => setFold(task.id, false)} />
+  }
   return (
     <section aria-label={t("assistant.card.label", { title: task.title })}
       className={cn("border-hair bg-card my-2 rounded-2xl border p-4", className)}>
@@ -292,6 +321,11 @@ export function AssistantTaskCard({ taskId, initial, selectedResult, className }
             </div>
           )}
         </div>
+        <button type="button" aria-label={t("assistant.card.fold")} title={t("assistant.card.fold")} aria-expanded
+          onClick={() => setFold(task.id, true)}
+          className="text-n700 hover:bg-hairsoft flex size-8 flex-none items-center justify-center rounded-full">
+          <ChevronUp size={17} strokeWidth={2.2} />
+        </button>
         <TaskMenu value={value} result={result} showResult={showResult} onToggleResult={() => setShowResult(!showResult)}
           onWaitingCard={() => setWaitingCard(true)} />
       </div>

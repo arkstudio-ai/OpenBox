@@ -1,0 +1,189 @@
+{
+  "tabs": {
+    "home": "Home",
+    "assistant": "Assistant",
+    "inbox": "Inbox",
+    "me": "Me"
+  },
+  "home": {
+    "greeting": "{{name}}",
+    "defaultShop": "My shop",
+    "taglines": [
+      "Shoot a video of your place today",
+      "New dish? Make a poster and post it",
+      "New season, new menu layout",
+      "Check this week's numbers and what to make next",
+      "Storefront, dishes or a visit: pick one for a video",
+      "One line about the deal and the poster is done",
+      "Busy weekend ahead: get the menu printed"
+    ],
+    "credits": "{{value}} credits",
+    "creditsUnavailable": "Credits unavailable",
+    "section": {
+      "todo": "Today you can",
+      "make": "Or pick one",
+      "more": "Also",
+      "recent": "Recently made"
+    },
+    "ok": "Ready",
+    "needsPlan": "Needs a plan",
+    "needsDesktop": "Needs a cloud desktop",
+    "needsBinding": "Link Douyin first",
+    "comingSoon": "Coming soon",
+    "voiceUnavailable": "Voice calls are not on yet",
+    "goPlan": "Get a plan ›",
+    "goDesktop": "Open the desktop ›",
+    "goBinding": "Link it ›",
+    "banner": {
+      "title": "Anything can run on autopilot",
+      "body": "Videos, posts, review replies — on a schedule, hands off"
+    },
+    "recentEmpty": "Nothing made yet. Pick something above to start.",
+    "recentFailed": "Recent work could not be loaded",
+    "outputs_one": "{{count}} result",
+    "outputs_other": "{{count}} results",
+    "ask": "Anything else? Tell the assistant"
+  },
+  "gallery": {
+    "lede": "Pick a look first; the chat then walks you through it step by step.",
+    "needs": "You'll need: {{needs}}",
+    "pick": "Make this one",
+    "skip": "Skip the look, just start",
+    "start": "Start",
+    "starting": "Starting…",
+    "stepsTitle": "How it goes",
+    "noSamples": "Samples are on their way; you can start right away.",
+    "unavailable": "This isn't available right now: {{reason}}",
+    "missing": "No such entry",
+    "play": "Watch the sample",
+    "playFailed": "Couldn't play the sample"
+  },
+  "topic": {
+    "input": {
+      "hint": "Say anything",
+      "camera": "Camera",
+      "album": "Album",
+      "send": "Send",
+      "stop": "Stop",
+      "uploading": "Uploading photos…",
+      "photosSent": "Here are my photos",
+      "clipsSent": "Here are my clips, please cut them",
+      "clipTooBig": "Clips over 200 MB were skipped",
+      "uploadingOf": "Uploading {{n}} of {{total}}…"
+    }
+  },
+  "card": {
+    "confirm": "That's it",
+    "next": "Next",
+    "skip": "Skip for now",
+    "typeHint": "Or type it",
+    "pageOf": "Step {{current}} / {{count}}",
+    "recommended": "Suggested"
+  },
+  "tool": {
+    "doing": "Working on: {{action}}",
+    "done_one": "{{count}} step done",
+    "done_other": "{{count}} steps done",
+    "video": "generating the video",
+    "compose": "composing the video",
+    "image": "generating the image",
+    "transcribe": "transcribing audio",
+    "publish": "publishing",
+    "desktop": "working on the cloud desktop",
+    "schedule": "scheduling",
+    "question": "asking you",
+    "skill": "loading a skill",
+    "search": "searching",
+    "fetch": "reading a page",
+    "files": "organizing material",
+    "plan": "planning",
+    "task": "delegating a task",
+    "working": "working"
+  },
+  "me": {
+    "title": "Me",
+    "billing": "Plans & credits",
+    "authCenter": "Authorization center",
+    "desktop": "Cloud desktop",
+    "resources": "Resources",
+    "settings": "Settings",
+    "admin": "Admin console",
+    "signOut": "Sign out",
+    "signOutTitle": "Sign out?",
+    "cancel": "Cancel",
+    "autopilot": "Running for you"
+  },
+  "uiMode": {
+    "title": "Interface",
+    "light": "Light",
+    "lightBody": "Home buttons go straight to video, menu and poster",
+    "pro": "Pro",
+    "proBody": "The full workbench: chats, projects, cloud desktop, skills",
+    "failed": "Could not switch, please retry"
+  },
+  "testBuild": "TEST BUILD",
+  "result": {
+    "save": "Save",
+    "savePdf": "Save PDF",
+    "publish": "Post to Douyin",
+    "again": "Make another",
+    "againPrompt": "Make another one in a different style",
+    "publishPrompt": "Post this one to Douyin",
+    "publishLocked": "Posting needs a cloud desktop; it comes with a plan"
+  },
+  "autopilot": {
+    "switch": "Keep doing this for me",
+    "switchOn": "On · {{when}}",
+    "sheetTitle": "Keep doing this for me",
+    "sheetLede": "A fresh one is made on schedule and posted back here, with a new camera each time.",
+    "when": "When",
+    "how": "How",
+    "cap": "At most per run",
+    "repeat": {
+      "daily": "Daily",
+      "weekdays": "Weekdays",
+      "weekly": "Mondays"
+    },
+    "mode": {
+      "make_only": "Just make it",
+      "make_and_publish": "Make and post",
+      "publishLocked": "Post too (needs a cloud desktop)"
+    },
+    "capValue": "{{value}} credits",
+    "capLine": "at most {{value}} credits",
+    "confirm": "Start",
+    "started": "Done: {{when}}, a new one is made",
+    "paused": "Paused; resume or cancel it under Running for you",
+    "resumed": "Resumed",
+    "title": "Running for you",
+    "lede": "Made on schedule and posted back to its conversation, with a notification. A run over the limit is skipped.",
+    "empty": "Nothing running yet.\nAfter a video or an image is done, turn on “Keep doing this for me” on its card.",
+    "task": {
+      "video": "A video",
+      "image": "An image",
+      "listing": "List / delist",
+      "reviews": "Reply to reviews",
+      "report": "Weekly review"
+    },
+    "statusPaused": "Paused",
+    "statusRunning": "Making it now",
+    "statusNext": "Next {{when}}",
+    "last": {
+      "ok": "Last run done",
+      "error": "Last run failed",
+      "skipped": "Last run skipped (limit or credits)",
+      "running": "Making it now"
+    },
+    "pause": "Pause",
+    "resume": "Resume",
+    "open": "Open chat",
+    "cancel": "Cancel",
+    "keep": "Keep it",
+    "cancelTitle": "Stop doing this?",
+    "cancelBody": "Nothing more is made on schedule; what was made stays.",
+    "banner": "Running for you"
+  },
+  "conversations": {
+    "untitled": "Untitled chat"
+  }
+}

@@ -43,7 +43,7 @@ def observed(payloads):
     return versions
 
 
-async def for_turn(session_id, user_id, workspace_id, inbox_id):
+async def for_turn(session_id, user_id, workspace_id, inbox_id, *, revised: str | None = None):
     from assistant.policy import require_membership
     from assistant.requests import question_version
     from db.base import get_db_session
@@ -66,6 +66,9 @@ async def for_turn(session_id, user_id, workspace_id, inbox_id):
             AgentEvent.turn_id == item.turn_id,
             AgentEvent.kind == "tool.result").order_by(AgentEvent.sequence))).all()
         versions = observed(payloads)
+        if revised:
+            # The card this turn was asked to revise is expected to be superseded by it.
+            versions.pop(revised, None)
         if not versions:
             return {}, False
         rows = (await db.scalars(select(QuestionCheckpoint).join(

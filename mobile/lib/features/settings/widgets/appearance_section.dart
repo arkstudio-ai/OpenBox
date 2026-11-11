@@ -5,12 +5,19 @@ import '../../../shared/appearance/appearance_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/widgets/ui_mode_switch.dart';
 
 /// Appearance settings (web `AppearancePage`): language (2-col), theme
 /// (2-col cards with temp pill + swatches), color mode (3-col), font size
 /// (4-col "Aa" previews).
 class AppearanceSection extends ConsumerWidget {
   const AppearanceSection({super.key});
+
+  static const _langLabelKeys = {
+    'zh-CN': 'settings:appearance.langZh',
+    'en-US': 'settings:appearance.langEn',
+    'vi-VN': 'settings:appearance.langVi',
+  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -22,37 +29,33 @@ class AppearanceSection extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // 界面模式 (Light 模式 T1): which home the account opens in.
+        _sectionLabel(t, i18n.t('light:uiMode.title')),
+        const UiModeSwitch(),
+        const SizedBox(height: 24),
         _sectionLabel(t, i18n.t('settings:appearance.language')),
-        Row(
-          children: [
-            Expanded(
-              child: _card(
-                t,
-                selected: i18n.language == 'zh-CN',
-                onTap: () => controller.setLanguage('zh-CN'),
-                child: _langLabel(
-                  t,
-                  i18n,
-                  'settings:appearance.langZh',
-                  i18n.language == 'zh-CN',
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (index, lang) in supportedLangs.indexed) ...[
+                if (index > 0) const SizedBox(width: 10),
+                Expanded(
+                  child: _card(
+                    t,
+                    selected: i18n.language == lang,
+                    onTap: () => controller.setLanguage(lang),
+                    child: _langLabel(
+                      t,
+                      i18n,
+                      _langLabelKeys[lang] ?? 'settings:appearance.langEn',
+                      i18n.language == lang,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _card(
-                t,
-                selected: i18n.language == 'en-US',
-                onTap: () => controller.setLanguage('en-US'),
-                child: _langLabel(
-                  t,
-                  i18n,
-                  'settings:appearance.langEn',
-                  i18n.language == 'en-US',
-                ),
-              ),
-            ),
-          ],
+              ],
+            ],
+          ),
         ),
         const SizedBox(height: 24),
         _sectionLabel(t, i18n.t('settings:appearance.theme')),
@@ -150,18 +153,24 @@ class AppearanceSection extends ConsumerWidget {
     );
   }
 
+  // Stacked, not side by side: three cards share the width and
+  // "Tiếng Việt · Hiện tại" does not fit on one line.
   Widget _langLabel(BossipTokens t, I18nState i18n, String key, bool selected) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           i18n.t(key),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: FontSizes.base, color: t.ink),
         ),
         if (selected) ...[
-          const SizedBox(width: 6),
+          const SizedBox(height: 2),
           Text(
             i18n.t('settings:appearance.current'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
           ),
         ],

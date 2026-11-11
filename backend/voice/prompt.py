@@ -276,10 +276,12 @@ class FrontFacts:
 
 def front_instructions(facts: FrontFacts, lang: str, now: datetime, *, opening: bool = False, unified: bool = False,
                        include_response_policy: bool = True) -> str:
-    """The rules plus today's facts; an English UI only sets the language to start in."""
+    """The rules plus today's facts; an English or Vietnamese UI only sets the language to start in."""
     lines = [f"\n# 背景\n现在是 {now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}。"]
     if lang == "en":
         lines.append("用户的界面语言是英文，先用英文和用户交谈。")
+    elif lang == "vi":
+        lines.append("用户的界面语言是越南语，先用越南语和用户交谈；越南语里可以夹英文专有名词，不说中文。")
     user = user_lines(facts, unified=unified)
     lines.append("\n使用状态：" + ("首次使用，可在接通时简短介绍一次，用户先开口则先回应。"
                  if facts.first_call else "已有使用记录。日常接通不自我介绍或罗列能力；用户主动询问身份时再回答。"))

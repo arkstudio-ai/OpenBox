@@ -1518,6 +1518,14 @@ async def run_loop(
             latency_phase("tool_catalogue")
             with latency_span("catalogue.workdir"):
                 session_workdir = await workdir_for_session(session)
+            # Tools revealed by an earlier run of this session must stay
+            # callable without another capability_search: a deferred step
+            # skips reveal restoration, so defer only when nothing is live.
+            from session.internal_parts import has_live_reveals
+
+            live_reveals = has_live_reveals(
+                getattr(session, "tool_exposure_state", None), agent_name,
+            )
             with latency_span("catalogue.resolve_tools"):
                 resolved_step_tools = await resolve_step_tools(
                     agent_def,
@@ -1530,7 +1538,8 @@ async def run_loop(
                     in {"shadow", "portable", "native_auto"},
                     return_catalogue_state=True,
                     defer_remote=(exposure_mode == "portable" and session.kind == "normal"
-                                  and inherited_authority is None and not remote_catalogue_requested),
+                                  and inherited_authority is None and not remote_catalogue_requested
+                                  and not live_reveals),
                     compact_skills=exposure_mode == "portable",
                 )
             latency_phase("context")
@@ -1896,6 +1905,14 @@ async def run_loop(
                 session_kind=session.kind,
                 memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
             )
+            try:
+                from light.prompt import light_mode_fragment
+                light_fragment = await light_mode_fragment(user_id, session)
+            except Exception as exc:  # the guided chrome is optional; the chat must still run
+                light_fragment = ""
+                log.warning(f"light prompt fragment skipped: {type(exc).__name__}")
+            if light_fragment:
+                system.append(light_fragment)
             if revision_repair:
                 system.append(repair_instruction(revision_repair))
             if task_recovery:
@@ -1923,7 +1940,9 @@ async def run_loop(
                 memory_fragment = render_memory_context(memory_bundle)
             if sandbox_error:
                 system.append("Sandbox availability: " + sandbox_error["detail"]
-                    + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools.")
+                    + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools."
+                    + " Cloud tools that need no desktop (video_generate, video_compose, image_gen, question)"
+                    " still work: use them when the task only needs them.")
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
                 strategy=runtime.provider_plan.strategy,
@@ -3583,7 +3602,16 @@ async def _build_system_prompt(
         from assistant.runtime import ASSISTANT_PROMPT
         # Who this user is to their assistant: its name, how to address them, how they like to be helped.
         section = await user_section(user_id, workspace_id) if user_id and not memory_packet else ""
-        return [ASSISTANT_PROMPT, *([section] if section else []), f"Today's date: {date.today().isoformat()}"]
+        # Which interface the user is in (Light or 专业) and, in Light, the home directory the
+        # assistant should send them to before arranging work (light/prompt.py::assistant_section).
+        try:
+            from light.prompt import assistant_section
+            light_section = await assistant_section(user_id, workspace_id)
+        except Exception as exc:  # the directory is a convenience; the assistant must still answer
+            light_section = ""
+            log.warning(f"assistant light section skipped: {type(exc).__name__}")
+        return [ASSISTANT_PROMPT, *([section] if section else []), *([light_section] if light_section else []),
+                f"Today's date: {date.today().isoformat()}"]
 
     parts = []
 

@@ -1,0 +1,382 @@
+{
+  "version": "2026-11-08.1",
+  "entries": [
+    {
+      "id": "video",
+      "title": "Làm một video",
+      "subtitle": "Không gian quán / Món ăn / Ghé quán",
+      "price_hint": "15 giây gói tiết kiệm, khoảng 4 điểm",
+      "steps": [
+        {
+          "id": "topic",
+          "label": "Chọn chủ đề"
+        },
+        {
+          "id": "photos",
+          "label": "Chụp ảnh"
+        },
+        {
+          "id": "confirm",
+          "label": "Chốt lời dẫn"
+        },
+        {
+          "id": "generate",
+          "label": "Tạo video"
+        },
+        {
+          "id": "deliver",
+          "label": "Lưu & đăng"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "dish",
+          "label": "Giới thiệu món",
+          "samples": [
+            {
+              "id": "dish_closeup",
+              "label": "Cận cảnh nóng hổi",
+              "description": "Món vừa ra lò, khói nóng và nước sốt bóng, kể trọn một món",
+              "needs": "1–3 ảnh món ăn"
+            },
+            {
+              "id": "dish_dark",
+              "label": "Tối sang trọng",
+              "description": "Nền tối, ánh sáng bên; hợp món chủ lực và combo",
+              "needs": "1–2 ảnh món ăn"
+            },
+            {
+              "id": "dish_fast",
+              "label": "Nhiều món nhịp nhanh",
+              "description": "Bảy tám món lần lượt lên, rộn ràng thịnh soạn",
+              "needs": "Từ 3 ảnh món ăn trở lên"
+            }
+          ]
+        },
+        {
+          "id": "shop",
+          "label": "Không gian quán",
+          "samples": [
+            {
+              "id": "shop_evening",
+              "label": "Chiều tối lên đèn",
+              "description": "Từ mặt tiền đi vào trong quán, đông vui và ánh đèn",
+              "needs": "1 ảnh mặt tiền, 1 ảnh trong quán"
+            },
+            {
+              "id": "shop_clean",
+              "label": "Sáng sủa gọn gàng",
+              "description": "Ánh sáng tự nhiên ban ngày, nổi bật sạch sẽ và chỗ ngồi",
+              "needs": "1–2 ảnh trong quán"
+            },
+            {
+              "id": "shop_busy",
+              "label": "Kín bàn đông khách",
+              "description": "Không khí giờ cao điểm (người chỉ quay trung và toàn cảnh)",
+              "needs": "1 ảnh trong quán"
+            }
+          ]
+        },
+        {
+          "id": "visit",
+          "label": "Ghé quán",
+          "samples": [
+            {
+              "id": "visit_walk",
+              "label": "Vừa đi vừa ăn",
+              "description": "Góc nhìn thứ nhất: mặt tiền → gọi món → lên món → kết",
+              "needs": "1 ảnh mặt tiền, 1 ảnh món"
+            },
+            {
+              "id": "visit_recommend",
+              "label": "Ba món phải gọi",
+              "description": "Ba món, mỗi món một lý do nên gọi",
+              "needs": "3 ảnh món ăn"
+            },
+            {
+              "id": "visit_price",
+              "label": "Bao nhiêu một người",
+              "description": "Cảm giác hời về giá và khẩu phần",
+              "needs": "Ảnh món ăn và hóa đơn"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "Chọn một kiểu trước, hoặc chụp luôn 1–3 ảnh (món ăn hay mặt tiền đều được); không có ảnh thì mô tả bằng chữ cũng được.",
+        "chips": [
+          "Chụp xong rồi, xem mấy ảnh này",
+          "Không có ảnh, mô tả bằng chữ",
+          "Xem kiểu khác trước"
+        ],
+        "text_with_sample": "Được, làm một video kiểu “{sample}”. Chụp 1–3 ảnh trước (món ăn hay mặt tiền đều được); không có ảnh thì mô tả bằng chữ cũng được."
+      }
+    },
+    {
+      "id": "voice_assistant",
+      "title": "Trợ lý giọng nói",
+      "subtitle": "Gọi một cuộc, nói một câu là xong"
+    },
+    {
+      "id": "poster",
+      "title": "Làm poster",
+      "subtitle": "Món mới / Lễ tết / Khai trương / Ưu đãi nhóm",
+      "price_hint": "Khoảng 0,5 điểm mỗi tấm",
+      "steps": [
+        {
+          "id": "purpose",
+          "label": "Mục đích"
+        },
+        {
+          "id": "copy",
+          "label": "Một câu"
+        },
+        {
+          "id": "title",
+          "label": "Chọn tiêu đề"
+        },
+        {
+          "id": "deliver",
+          "label": "Xuất ảnh"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "poster_style",
+          "label": "Kiểu",
+          "samples": [
+            {
+              "id": "poster_bold",
+              "label": "Chữ to khuyến mãi",
+              "description": "Tiêu đề lớn, giá nổi bật",
+              "needs": "Một câu về chương trình"
+            },
+            {
+              "id": "poster_photo",
+              "label": "Ảnh thật làm chủ",
+              "description": "Dùng ảnh món của bạn làm hình chính",
+              "needs": "1 ảnh món ăn"
+            },
+            {
+              "id": "poster_fresh",
+              "label": "Vẽ tay tươi mát",
+              "description": "Phong cách minh họa, hợp tráng miệng và đồ uống",
+              "needs": "Một câu về chương trình"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "Poster lần này để làm gì? Nói một câu về chương trình là đủ, có ảnh món thì gửi luôn cho tôi.",
+        "chips": [
+          "Ra món mới",
+          "Sự kiện lễ tết",
+          "Khai trương",
+          "Ưu đãi nhóm"
+        ],
+        "text_with_sample": "Làm một poster kiểu “{sample}”. Lần này để làm gì? Nói một câu về chương trình là đủ, có ảnh món thì gửi luôn cho tôi."
+      }
+    },
+    {
+      "id": "footage_edit",
+      "title": "Bạn quay tôi dựng",
+      "subtitle": "Clip bạn tự quay, dựng thành một video",
+      "price_hint": "Thành phẩm dưới 60 giây 5 điểm + mỗi phút tư liệu 1 điểm",
+      "steps": [
+        {
+          "id": "type",
+          "label": "Loại video"
+        },
+        {
+          "id": "upload",
+          "label": "Tải clip"
+        },
+        {
+          "id": "plan",
+          "label": "Kế hoạch dựng"
+        },
+        {
+          "id": "compose",
+          "label": "Ghép"
+        },
+        {
+          "id": "deliver",
+          "label": "Thành phẩm"
+        }
+      ],
+      "opening_card": {
+        "text": "Dựng kiểu nào? Chọn 3–10 đoạn bạn tự quay từ album (tổng không quá 5 phút), quay ngang hay dọc đều được; tôi sẽ chọn cảnh, thêm phụ đề và tên quán.",
+        "chips": [
+          "Ghé quán",
+          "Ra món mới",
+          "Khuyến mãi",
+          "Nhật ký thường ngày"
+        ]
+      }
+    },
+    {
+      "id": "menu",
+      "title": "Làm thực đơn",
+      "subtitle": "Chụp thực đơn cũ, ra thực đơn mới",
+      "price_hint": "Khoảng 1 điểm mỗi bản",
+      "steps": [
+        {
+          "id": "style",
+          "label": "Chọn kiểu"
+        },
+        {
+          "id": "items",
+          "label": "Tên món & giá"
+        },
+        {
+          "id": "review",
+          "label": "Kiểm tra"
+        },
+        {
+          "id": "layout",
+          "label": "Kích cỡ"
+        },
+        {
+          "id": "deliver",
+          "label": "Xuất ảnh"
+        }
+      ],
+      "subtypes": [
+        {
+          "id": "menu_style",
+          "label": "Kiểu",
+          "samples": [
+            {
+              "id": "menu_mono",
+              "label": "Đen trắng tối giản",
+              "description": "Gọn gàng sạch sẽ, hợp đồ ăn nhanh và cà phê",
+              "needs": "Tên món và giá"
+            },
+            {
+              "id": "menu_red",
+              "label": "Đỏ rực rỡ",
+              "description": "Nền đỏ chữ vàng, hợp món Hoa và ăn khuya",
+              "needs": "Tên món và giá"
+            },
+            {
+              "id": "menu_chalk",
+              "label": "Phấn viết tay",
+              "description": "Kiểu bảng đen, hợp ăn vặt và tráng miệng",
+              "needs": "Tên món và giá"
+            },
+            {
+              "id": "menu_dark",
+              "label": "Tối sang trọng",
+              "description": "Nền tối, kẻ cột mảnh, hợp nhà hàng",
+              "needs": "Tên món và giá"
+            }
+          ]
+        }
+      ],
+      "opening_card": {
+        "text": "Chụp một tấm thực đơn cũ gửi tôi, hoặc gõ thẳng tên món và giá, tôi sẽ dàn trang.",
+        "chips": [
+          "Chụp thực đơn cũ",
+          "Tôi gõ tên món và giá",
+          "Sửa bản lần trước"
+        ],
+        "text_with_sample": "Làm một bản thực đơn kiểu “{sample}”. Chụp một tấm thực đơn cũ gửi tôi, hoặc gõ thẳng tên món và giá, tôi sẽ dàn trang."
+      }
+    },
+    {
+      "id": "douyin_publish",
+      "title": "Đăng lên Douyin",
+      "subtitle": "Chọn video, viết tiêu đề, hẹn giờ",
+      "price_hint": "Miễn phí trong gói",
+      "steps": [
+        {
+          "id": "pick",
+          "label": "Chọn video"
+        },
+        {
+          "id": "caption",
+          "label": "Tiêu đề & hashtag"
+        },
+        {
+          "id": "when",
+          "label": "Đăng lúc nào"
+        },
+        {
+          "id": "check",
+          "label": "Kiểm tra trước"
+        },
+        {
+          "id": "publish",
+          "label": "Đăng"
+        }
+      ],
+      "opening_card": {
+        "text": "Đăng video nào lên Douyin? Chọn từ những video vừa làm, hoặc tải lên từ album.",
+        "chips": [
+          "Video vừa làm",
+          "Tải một video từ album"
+        ]
+      }
+    },
+    {
+      "id": "review",
+      "title": "Xem lại thành tích",
+      "subtitle": "Số liệu sau khi đăng và sức khỏe tài khoản",
+      "price_hint": "Miễn phí trong gói",
+      "steps": [
+        {
+          "id": "health",
+          "label": "Sức khỏe tài khoản"
+        },
+        {
+          "id": "insight",
+          "label": "Tuần này thế nào"
+        },
+        {
+          "id": "next",
+          "label": "Làm gì tiếp"
+        }
+      ],
+      "opening_card": {
+        "text": "Tôi sẽ xem lượt xem, thích, bình luận và tỷ lệ xem hết của từng video trên Douyin của bạn trong 7 ngày qua, rồi gợi ý video tiếp theo.",
+        "chips": [
+          "Bắt đầu xem",
+          "Chỉ xem bình luận chưa trả lời"
+        ]
+      }
+    },
+    {
+      "id": "shopkeeper",
+      "title": "Quản lý quán",
+      "subtitle": "Lên / gỡ món · Trả lời đánh giá · Xem số liệu",
+      "price_hint": "Miễn phí trong gói",
+      "steps": [
+        {
+          "id": "status",
+          "label": "Tình hình quán"
+        },
+        {
+          "id": "ask",
+          "label": "Cần làm gì"
+        },
+        {
+          "id": "confirm",
+          "label": "Xác nhận"
+        },
+        {
+          "id": "done",
+          "label": "Kết quả"
+        }
+      ],
+      "opening_card": {
+        "text": "Hôm nay quán cần làm việc gì? Nói một câu là được, ví dụ “Gỡ combo tôm hùm đất, thứ Bảy lên lại”.",
+        "chips": [
+          "Lên / gỡ món",
+          "Trả lời đánh giá",
+          "Sửa ưu đãi nhóm",
+          "Xem số liệu"
+        ]
+      }
+    }
+  ]
+}

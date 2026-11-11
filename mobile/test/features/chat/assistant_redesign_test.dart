@@ -784,6 +784,10 @@ void main() {
           tester.getTopLeft(find.text(heading)).dy,
       ];
       expect(heights, orderedEquals([...heights]..sort()));
+      // 最近完成 starts folded to its heading; one tap shows the cards.
+      expect(find.text('Finished work'), findsNothing);
+      await tester.tap(find.byKey(const Key('task-group-finished')));
+      await tester.pumpAndSettle();
       final cards = [
         for (final title in const [
           'Asking',

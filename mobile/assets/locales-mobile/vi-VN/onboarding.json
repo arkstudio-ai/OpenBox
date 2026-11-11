@@ -1,0 +1,209 @@
+{
+  "intro": {
+    "brand": "BOSSIP",
+    "title": "Quán của bạn cũng xứng đáng có một video riêng",
+    "lede": "Chụp một tấm ảnh, ra clip 15 giây. Video đầu tiên miễn phí.",
+    "sampleTag": "Mẫu · quán ăn nhỏ",
+    "sampleShop": "Quán Phở Đầu Ngõ",
+    "sampleLine": "Phở bò đặc biệt, nước dùng ninh xương mỗi ngày · 15 giây",
+    "sampleCaption": "Tự phát · có tên quán trên hình",
+    "cta": "Làm miễn phí một video cho quán của bạn",
+    "ctaHint": "Bấm xong đăng nhập trước, chỉ mất 30 giây",
+    "signIn": "Đã có tài khoản? Vào luôn"
+  },
+  "welcome": {
+    "title": "Chào {{name}}.",
+    "titlePlain": "Chào bạn.",
+    "lede": "Bắt đầu từ một việc thôi.",
+    "start": "Bắt đầu",
+    "steps": [
+      {
+        "title": "Nói điều bạn muốn",
+        "body": "Ví dụ: làm một video 30 giây giới thiệu gói trải nghiệm cho khách mới"
+      },
+      {
+        "title": "Nó tự làm, cần bạn thì sẽ hỏi",
+        "body": "Có máy tính đám mây, nó có thể mở web, đăng bài và lấy số liệu giúp bạn"
+      },
+      {
+        "title": "Kết quả về đây",
+        "body": "Bạn xem lại, chỉnh sửa, ưng rồi mới đăng"
+      }
+    ]
+  },
+  "starter": {
+    "label": "Thử mấy việc này",
+    "industry": {
+      "beauty": "Làm đẹp",
+      "food": "Ăn uống",
+      "retail": "Bán lẻ"
+    },
+    "cards": {
+      "beauty": [
+        {
+          "title": "Làm một video 30 giây giới thiệu gói trải nghiệm cho khách mới",
+          "hint": "Nó viết kịch bản cho bạn duyệt trước, rồi mới dựng video thành phẩm"
+        },
+        {
+          "title": "Gom số khách đến và khách quay lại tuần trước thành một trang",
+          "hint": "Đọc từ các nền tảng bạn đã liên kết, ra một trang dễ hiểu"
+        },
+        {
+          "title": "Viết bài quảng cáo cho combo chăm sóc cuối tuần",
+          "hint": "Ba phiên bản, chọn một rồi đăng luôn"
+        }
+      ],
+      "food": [
+        {
+          "title": "Làm một video 30 giây giới thiệu món mới",
+          "hint": "Nó viết kịch bản cho bạn duyệt trước, rồi mới dựng video thành phẩm"
+        },
+        {
+          "title": "Gom số lượt bàn và đơn giao hàng tuần trước thành một trang",
+          "hint": "Đọc từ các nền tảng bạn đã liên kết, ra một trang dễ hiểu"
+        },
+        {
+          "title": "Viết bài quảng cáo cho combo gia đình cuối tuần",
+          "hint": "Ba phiên bản, chọn một rồi đăng luôn"
+        }
+      ],
+      "retail": [
+        {
+          "title": "Làm một video 30 giây cho món bán chạy nhất",
+          "hint": "Nó viết kịch bản cho bạn duyệt trước, rồi mới dựng video thành phẩm"
+        },
+        {
+          "title": "Gom doanh số và tồn kho tuần trước thành một trang",
+          "hint": "Đọc từ các nền tảng bạn đã liên kết, ra một trang dễ hiểu"
+        },
+        {
+          "title": "Viết bài quảng cáo cho ngày hội viên",
+          "hint": "Ba phiên bản, chọn một rồi đăng luôn"
+        }
+      ]
+    }
+  },
+  "marks": {
+    "skipAll": "Bỏ qua tất cả",
+    "next": "Tiếp theo",
+    "done": "Đã hiểu",
+    "step": "{{current}} / {{total}}",
+    "composer": {
+      "title": "Cách nói cho rõ ý",
+      "body": "Gõ / để thêm ngữ cảnh, gõ @ để dẫn file trong Tài nguyên; mục \"Thêm\" bên phải dùng để tải tư liệu hoặc ảnh chụp màn hình lên."
+    },
+    "drawer": {
+      "projects": {
+        "title": "Dự án và cuộc trò chuyện",
+        "body": "Cuộc trò chuyện được xếp theo dự án; mỗi dự án là một việc dài hạn."
+      },
+      "resources": {
+        "title": "Tài nguyên",
+        "body": "File nó làm ra và tư liệu bạn tải lên đều nằm ở đây."
+      },
+      "inbox": {
+        "title": "Tin nhắn",
+        "body": "Kết quả công việc, nhắc nhở của hệ thống và thông báo chính thức."
+      },
+      "authCenter": {
+        "title": "Trung tâm ủy quyền",
+        "body": "Liên kết Douyin và các tài khoản khác xong, nó mới đăng bài và xem số liệu giúp bạn được. Trạng thái và ngày hết hạn ủy quyền đều ở đây."
+      },
+      "skills": {
+        "title": "Kỹ năng",
+        "body": "Trang bị khả năng cho nó, ví dụ làm video hay đăng lên Douyin."
+      },
+      "cron": {
+        "title": "Việc hẹn giờ",
+        "body": "Cho nó làm một việc đều đặn mỗi ngày hoặc mỗi tuần."
+      },
+      "billing": {
+        "title": "Gói",
+        "body": "Điểm và gói; xem mức dùng ở đây."
+      },
+      "desktop": {
+        "title": "Máy tính đám mây",
+        "body": "Mở máy tính đám mây của không gian làm việc này để xem nó đang làm gì; tick \"Cho phép điều khiển\" là bạn tiếp quản được."
+      }
+    },
+    "panelEntry": {
+      "title": "Bảng làm việc",
+      "body": "Xem máy tính đám mây, trình duyệt, file của nó và những thay đổi đang chờ bạn duyệt."
+    },
+    "desktopControl": {
+      "title": "Muốn tiếp quản thì tick ô này",
+      "body": "Đây là chiếc máy tính nó dùng để thao tác trên web thay bạn. Gặp mã xác nhận hay màn hình đăng nhập, tick \"Cho phép điều khiển\" là bạn tự bấm được; xong thì bỏ tick để trả lại cho nó. Không tick thì bạn chỉ xem thôi."
+    }
+  },
+  "notify": {
+    "title": "Chỉ nhắc khi bạn không có mặt",
+    "body": "Việc đã xong và việc cần bạn quyết sẽ được gửi về máy khi bạn khóa màn hình hoặc đang ở app khác. Khi bạn đang ở đây thì không làm phiền.",
+    "points": [
+      "Video hoặc báo cáo đã xong",
+      "Nó gặp mã xác nhận, cần bạn giúp",
+      "Ủy quyền nền tảng sắp hết hạn"
+    ],
+    "enable": "Bật nhắc nhở",
+    "later": "Để sau"
+  },
+  "takeover": {
+    "title": "Nó bị kẹt, cần bạn ra tay",
+    "body": "Mã xác nhận thì nó không tự làm được. Làm theo ba bước dưới đây; suốt lúc đó nó sẽ chờ bạn.",
+    "steps": [
+      "Bấm \"Mở máy tính đám mây\" bên dưới",
+      "Hoàn tất xác nhận trên máy tính đám mây",
+      "Quay lại đây và bấm \"Xong rồi, tiếp tục\""
+    ],
+    "done": "Đã hiểu"
+  },
+  "authCenter": {
+    "title": "Liên kết tài khoản Douyin trước đã",
+    "body": "Liên kết xong nó mới đăng video và xem số liệu giúp bạn được. Quét mã → xác nhận trong app Douyin → quay lại đây sẽ thấy \"Đã ủy quyền\".",
+    "done": "Đã hiểu"
+  },
+  "settings": {
+    "replay": "Xem lại hướng dẫn cho người mới",
+    "replayHint": "Về trang chủ và phát lại màn chào mừng cùng mọi gợi ý"
+  },
+  "m2": {
+    "inbox": {
+      "title": "Ba loại tin nhắn sẽ về đây",
+      "body": "Kết quả công việc bấm vào là mở thẳng cuộc trò chuyện; nhắc nhở của hệ thống gồm ủy quyền sắp hết hạn và việc cần bạn tiếp quản; thông báo chính thức là tính năng mới và tin tức.",
+      "done": "Đã hiểu"
+    },
+    "cronEmpty": {
+      "body": "Trong bất kỳ cuộc trò chuyện nào, chỉ cần nói \"mỗi sáng 9 giờ gom số liệu hôm qua cho tôi\" là nó tự đặt lịch; kết quả gửi về đúng cuộc trò chuyện đó.",
+      "cta": "Tạo từ cuộc trò chuyện"
+    },
+    "skillsEmpty": {
+      "body": "Kỹ năng là khả năng bạn trang bị cho nó: làm video ngắn, đăng lên Douyin, xem số liệu kinh doanh.",
+      "chat": "Tạo từ cuộc trò chuyện"
+    },
+    "resourcesEmpty": {
+      "body": "File ở đây đến từ hai nguồn: thứ các cuộc trò chuyện làm ra (video, báo cáo, bài viết) và thứ bạn tải lên. Gõ @ trong tin nhắn để dẫn file."
+    },
+    "credits": {
+      "title": "Điểm",
+      "body": "Làm video, tạo ảnh và trò chuyện đều trừ điểm theo mức dùng. Bấm vào đây để xem chi tiết mức dùng và các gói."
+    },
+    "cards": {
+      "done": "Đã hiểu",
+      "question": {
+        "title": "Nó đang chờ bạn trả lời",
+        "body": "Chưa trả lời thì nó tạm dừng mãi. Chọn một phương án hoặc tự viết."
+      },
+      "plan": {
+        "title": "Xác nhận rồi mới làm",
+        "body": "Đây là các bước nó định làm. Làm theo kế hoạch, bảo nó viết lại, hoặc tự sửa."
+      },
+      "permission": {
+        "title": "Bước này cần bạn gật đầu",
+        "body": "\"Cho phép\" chỉ cho qua lần này; \"Luôn cho phép\" thì không hỏi nữa. Không chắc thì từ chối."
+      },
+      "videoReview": {
+        "title": "Duyệt video thành phẩm rồi mới đăng",
+        "body": "Xem video, sửa lời thoại, tạo lại đoạn nào cũng ở đây; ưng rồi mới đăng."
+      }
+    }
+  }
+}

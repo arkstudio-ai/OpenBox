@@ -8,6 +8,7 @@ import '../../../shared/utils/error_text.dart';
 import '../api/assistant_api.dart';
 import '../state/assistant_pending.dart';
 import '../state/assistant_watch.dart';
+import '../state/task_card_fold.dart';
 import '../utils/task_status.dart';
 import 'assistant_link_existing.dart';
 import 'assistant_requests.dart';
@@ -202,6 +203,9 @@ class AssistantTasksSheet extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final watch = ref.watch(assistantWatchProvider(scope));
+    final finishedOpen = ref.watch(
+      taskCardFoldProvider.select((fold) => fold.finishedGroupOpen),
+    );
     final pending = ref.watch(assistantPendingProvider(scope)).valueOrNull;
     final current = ref.watch(assistantScopeProvider) == scope;
     return DraggableScrollableSheet(
@@ -272,62 +276,102 @@ class AssistantTasksSheet extends ConsumerWidget {
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 2,
-                                        top: 4,
-                                      ),
-                                      child: Text(
-                                        '${i18n.t('chat:assistant.taskList.groups.$key')} · ${rows.length}',
-                                        style: TextStyle(
-                                          fontSize: FontSizes.sm,
-                                          fontWeight: FontWeight.w500,
-                                          color: key == 'waiting'
-                                              ? t.dangerInk
-                                              : t.n600,
+                                    // 最近完成 folds to its heading by default;
+                                    // the choice is kept on this device.
+                                    if (key == 'finished')
+                                      InkWell(
+                                        key: const Key('task-group-finished'),
+                                        onTap: () => ref
+                                            .read(taskCardFoldProvider.notifier)
+                                            .setFinishedGroupOpen(
+                                              !finishedOpen,
+                                            ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 2,
+                                            top: 4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                finishedOpen
+                                                    ? Icons.expand_more
+                                                    : Icons.chevron_right,
+                                                size: 18,
+                                                color: t.n600,
+                                              ),
+                                              Text(
+                                                '${i18n.t('chat:assistant.taskList.groups.$key')} · ${rows.length}',
+                                                style: TextStyle(
+                                                  fontSize: FontSizes.sm,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: t.n600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 2,
+                                          top: 4,
+                                        ),
+                                        child: Text(
+                                          '${i18n.t('chat:assistant.taskList.groups.$key')} · ${rows.length}',
+                                          style: TextStyle(
+                                            fontSize: FontSizes.sm,
+                                            fontWeight: FontWeight.w500,
+                                            color: key == 'waiting'
+                                                ? t.dangerInk
+                                                : t.n600,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    for (final item in rows) ...[
-                                      AssistantTaskById(
-                                        key: ValueKey(item.taskId),
-                                        scope: scope,
-                                        taskId: item.taskId,
-                                        beforeOpen: () =>
-                                            Navigator.of(sheetContext).pop(),
-                                      ),
-                                      if (item.chainCount > 1 || item.stale)
-                                        Padding(
-                                          key: ValueKey('chain:${item.taskId}'),
-                                          padding: const EdgeInsets.fromLTRB(
-                                            6,
-                                            0,
-                                            6,
-                                            8,
-                                          ),
-                                          child: Text(
-                                            [
-                                              if (item.chainCount > 1)
-                                                i18n.t(
-                                                  'chat:assistant.taskList.chain',
-                                                  vars: {
-                                                    'count': item.chainCount,
-                                                  },
-                                                ),
-                                              if (item.stale)
-                                                i18n.t(
-                                                  'chat:assistant.taskList.stale',
-                                                ),
-                                            ].join(' · '),
-                                            style: TextStyle(
-                                              fontSize: FontSizes.xs,
-                                              color: item.stale
-                                                  ? t.dangerInk
-                                                  : t.n600,
+                                    if (key != 'finished' || finishedOpen)
+                                      for (final item in rows) ...[
+                                        AssistantTaskById(
+                                          key: ValueKey(item.taskId),
+                                          scope: scope,
+                                          taskId: item.taskId,
+                                          beforeOpen: () =>
+                                              Navigator.of(sheetContext).pop(),
+                                        ),
+                                        if (item.chainCount > 1 || item.stale)
+                                          Padding(
+                                            key: ValueKey(
+                                              'chain:${item.taskId}',
+                                            ),
+                                            padding: const EdgeInsets.fromLTRB(
+                                              6,
+                                              0,
+                                              6,
+                                              8,
+                                            ),
+                                            child: Text(
+                                              [
+                                                if (item.chainCount > 1)
+                                                  i18n.t(
+                                                    'chat:assistant.taskList.chain',
+                                                    vars: {
+                                                      'count': item.chainCount,
+                                                    },
+                                                  ),
+                                                if (item.stale)
+                                                  i18n.t(
+                                                    'chat:assistant.taskList.stale',
+                                                  ),
+                                              ].join(' · '),
+                                              style: TextStyle(
+                                                fontSize: FontSizes.xs,
+                                                color: item.stale
+                                                    ? t.dangerInk
+                                                    : t.n600,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                    ],
+                                      ],
                                   ],
                                 ),
                               ),

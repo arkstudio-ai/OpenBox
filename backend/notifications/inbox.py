@@ -28,6 +28,8 @@ CATEGORY_FOR_KIND = {
     "skill_pending": "system", "skill_listed": "system", "skill_rejected": "system", "skill_delisted": "system",
     "announcement": "notice", "system_test": "system",
     "assistant_result_ready": "session", "assistant_result_failed": "session", "assistant_result_stopped": "session",
+    "first_video_ready": "session", "first_video_failed": "session",
+    "footage_edit_ready": "session", "footage_edit_failed": "session",
 }
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.
@@ -325,10 +327,13 @@ async def sweep(db) -> int:
     return removed
 
 
-def public_item(row: Notification) -> dict:
+def public_item(row: Notification, lang: str | None = None) -> dict:
+    """``lang`` is the request's interface language: template rows are re-rendered in it (templates.relocalize)."""
+    from notifications.templates import relocalize
     def iso(value):
         return utc(value).isoformat() if value else None
-    return {"id": row.id, "category": row.category, "kind": row.kind, "title": row.title, "body": row.body,
+    title, body = relocalize(row.kind, row.title, row.body, lang)
+    return {"id": row.id, "category": row.category, "kind": row.kind, "title": title, "body": body,
             "link": row.link, "workspaceId": row.workspace_id, "announcementId": row.announcement_id,
             "readAt": iso(row.read_at), "resolvedAt": iso(row.resolved_at), "expiresAt": iso(row.expires_at),
             "createdAt": iso(row.created_at)}

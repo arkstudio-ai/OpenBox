@@ -20,6 +20,7 @@ Dio buildApiDio({
   required CookieJar cookieJar,
   required WorkspaceScope workspace,
   String? installationId,
+  String Function()? language,
 }) {
   final dio = Dio(
     BaseOptions(
@@ -57,6 +58,13 @@ Dio buildApiDio({
         if (workspaceId != null &&
             !options.headers.containsKey('X-Workspace-Id')) {
           options.headers['X-Workspace-Id'] = workspaceId;
+        }
+        // The interface language, per request (docs/LIGHT_MODE_I18N_PLAN.md
+        // §2.1): the server renders the Light home, opening cards and errors
+        // in it. The stored preference (ui_language) covers pushes and voice.
+        final lang = language?.call();
+        if (lang != null && !options.headers.containsKey('Accept-Language')) {
+          options.headers['Accept-Language'] = lang;
         }
         options.extra[_kRequestUser] = auth.userId;
         options.extra[_kRequestWorkspace] =

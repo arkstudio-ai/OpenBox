@@ -516,7 +516,9 @@ async def test_the_prompt_only_says_what_is_still_being_done(call):
     await replay(bridge, started("deliver"), audio("deliver"), done("deliver"))
     clock.advance(3)
     await bridge.fill_idle()
-    assert provider.commands("instructions")[-1][1] == "BASE\n已交给个人助理等待结果（不代表任务已开始执行）：“再建一个五子棋项目”。"
+    after_first_result = provider.commands("instructions")[-1][1]
+    assert after_first_result.endswith("已交给个人助理等待结果（不代表任务已开始执行）：“再建一个五子棋项目”。")
+    assert "本通话到目前为止没有任何任务交办成功" in after_first_result  # the call's handover facts, once a result is in
     remember = VoiceTurnRef(id="t-9", provider_call_id="remember:r9", text="记住用户长期偏好",
                             transcript="我对花生过敏", requested=clock(), lane="remember")
     assert bridge.progress.section([remember]) == ""  # nothing the user waits for

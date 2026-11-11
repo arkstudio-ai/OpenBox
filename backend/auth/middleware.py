@@ -77,11 +77,20 @@ async def get_optional_current_user(
 
 
 async def get_current_user(
+    request: Request,
     current_user: dict | None = Depends(get_optional_current_user),
 ) -> dict:
-    """Require the authenticated user for ordinary API routes."""
+    """Require the authenticated user for ordinary API routes.
+
+    ``ui_language`` is the interface language for this request: the normalised
+    ``Accept-Language`` header, else the stored preference, else ``zh-CN``
+    (``core/ui_language.py``). Routes that render copy read it from here.
+    """
     if current_user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if "ui_language" not in current_user:
+        from core.ui_language import resolve
+        current_user = {**current_user, "ui_language": await resolve(current_user.get("user_id"), request)}
     return current_user
 
 

@@ -29,6 +29,7 @@ from db.models.message import Message
 from db.models.part import Part
 from db.models.project import Project
 from db.models.session import Session
+from light.work_types import WORKFLOWS as LIGHT_WORKFLOWS
 from session.agent_event_log import append_agent_event_locked
 from session.internal_parts import begin_session_write
 from session.session import _new_session_record, _publish_session_created
@@ -39,8 +40,36 @@ from session.session import _new_session_record, _publish_session_created
 # got a bare brief, wrote a shot list, asked a card, and after the user chose
 # "start producing" replied with a plan and stopped: no video_generate call,
 # nothing charged, while the assistant reported the work as under way.
-VIDEO_WORKFLOWS = frozenset({"video-production", "video"})
+VIDEO_WORKFLOWS = frozenset({"video-production", "video"} | set(LIGHT_WORKFLOWS.values()))
+
+
+def _light_guidance(skill: str, job: str) -> str:
+    return (f"This is a Light home job: {job}. Load the `{skill}` skill first and follow it; it is completed "
+            "entirely in the cloud (image/video generation and composition tools, the question card), so do not "
+            "load video-production, and do not use bash, file or desktop tools, and do not ask for a desktop. "
+            "The user is a shop owner new to AI tools: one decision per card with options to tap, no model names, "
+            "tier names or credit estimates. Reuse the choices in the brief below; do not ask them again. "
+            "The task is done only when the finished piece exists and has been attached; a plan alone is not a result.")
+
+
+async def workflow_guidance(workflow: str, user_id: str | None) -> str:
+    """What the room is told before the brief; a Light job also hears which language the owner's App is in.
+
+    The room is not the guided session, so ``light.prompt.light_mode_fragment`` never reaches it; the same
+    ``output_language_line`` is appended here (docs/LIGHT_MODE_I18N_PLAN.md §2.5)."""
+    guidance = VIDEO_WORKFLOW_GUIDANCE[workflow]
+    if workflow in LIGHT_WORKFLOWS.values():
+        from core.ui_language import ui_language_for
+        from light.prompt import output_language_line
+        guidance = guidance + " " + output_language_line(await ui_language_for(user_id))
+    return guidance
+
+
 VIDEO_WORKFLOW_GUIDANCE = {
+    "light-video": _light_guidance("light-video", "做一条视频 (a short promotional clip from the owner's photos)"),
+    "menu-maker": _light_guidance("menu-maker", "做菜单 (a new menu image from the owner's old menu or dish list)"),
+    "poster-maker": _light_guidance("poster-maker", "做海报 (a promotional poster image)"),
+    "footage-edit": _light_guidance("footage-edit", "你拍我剪 (cut the owner's own footage into one clip)"),
     "video-production": (
         "Load the video-production skill before planning or generating this talking-head video. "
         "Follow its script, material, shot, transcript and delivery review stages. "
@@ -100,6 +129,42 @@ async def supersede_chain_locked(db, main, task, now) -> list[str]:
             payload={"task_id": old.id, "superseded_by": task.id, "task_revision": old.control_revision},
             idempotency_key=f"assistant-supersede:{old.id}:{task.id}")
         replaced.append(old.id)
+    return replaced
+
+
+async def coalesce_delegated_input_locked(db, execution, task, now) -> list[str]:
+    """A newer delegated instruction replaces the assistant's earlier ones nobody has started on.
+
+    light-test 2026-11-09: one video task took five delegated followups in four minutes (45 s / 30 s /
+    45 s / 30 s …), each a complete restatement from the phone. They ran one after another: the 45 s
+    remake started right after the 30 s cut was delivered, then the "back to 30 s" one, each paying for
+    generations the next one threw away. Every delegated followup is self-contained (voice prompt), so
+    an older one still queued is already stale: cancel it with a named code and let the newest run.
+    Only the assistant's own plain-text followups coalesce — the task's opening instruction, the user's
+    typed messages, inputs that carry attachments, steering and retained-continuation inputs keep their
+    place. Returns the ids."""
+    rows = (await db.scalars(select(AgentInboxItem).where(
+        AgentInboxItem.session_id == execution.id, AgentInboxItem.user_id == execution.user_id,
+        AgentInboxItem.state == "accepted", AgentInboxItem.delivery == "followup",
+        AgentInboxItem.origin == "assistant_delegation",
+    ).order_by(AgentInboxItem.created_at, AgentInboxItem.id).with_for_update())).all()
+    replaced: list[str] = []
+    for row in rows:
+        ref = row.origin_ref or {}
+        # The opening instruction (intent_revision 1) is the task's goal, never a stale restatement.
+        if (row.attachments or ref.get("continuation_authority") or ref.get("task_id") != task.id
+                or int(ref.get("intent_revision") or 0) <= 1):
+            continue
+        row.state, row.outcome = "canceled", "canceled"
+        row.error = {"code": "ASSISTANT_INPUT_SUPERSEDED",
+                     "message": "Replaced by a newer instruction from the assistant before it was started"}
+        row.canceled_at = row.updated_at = now
+        await record_submission_canceled_locked(db, execution, row, now=now)
+        await append_agent_event_locked(db, execution, kind="inbox.canceled",
+            payload={"item_id": row.id, "state": "canceled", "code": "ASSISTANT_INPUT_SUPERSEDED",
+                     "reason": row.error["message"]},
+            idempotency_key=f"inbox:{row.id}:canceled")
+        replaced.append(row.id)
     return replaced
 
 
@@ -531,6 +596,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             source_ref["revision_request"] = revision_request
             command.source_ref = dict(source_ref)
         superseded: list[str] = []
+        replaced_input: list[str] = []
         reopened = False
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
@@ -569,6 +635,8 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             if expected_run is not None:
                 from assistant.steering import require_steer_target_locked
                 await require_steer_target_locked(db, execution, expected_run)
+            if source is not None and not source.coordination_inbox_id and delivery == "followup" and not attachments:
+                replaced_input = await coalesce_delegated_input_locked(db, execution, task, now)
             task.control_revision += 1
             task.intent_revision += 1
             task.archived_at = None
@@ -621,7 +689,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 "video_model": video_model, "video_resolution": video_resolution}
         if workflow:
             origin_ref["workflow"] = workflow
-            prompt = VIDEO_WORKFLOW_GUIDANCE[workflow] + "\n\n" + prompt
+            prompt = await workflow_guidance(workflow, user_id) + "\n\n" + prompt
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,
@@ -652,6 +720,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                    "url": f"/app/s/{execution.id}"}
         if superseded:
             receipt["superseded_task_ids"] = superseded
+        if replaced_input:
+            # The helper never saw those: tell the user the requirements were updated, not sent twice.
+            receipt["superseded_inbox_ids"] = replaced_input
         if revision_request:
             receipt["superseded_request_id"] = revision_request["request_id"]
         if placement_row is not None:
@@ -681,6 +752,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             payload=receipt, idempotency_key=f"assistant-command:{command.id}")
     if new_session is not None:
         _publish_session_created(new_session)
+    if replaced_input:
+        from agent.inbox import _notify
+        _notify(replaced_input)
     from assistant.control import publish_task_changed, publish_task_control
     publish_task_changed(user_id, workspace_id, receipt["execution_session_id"])
     if reopened:

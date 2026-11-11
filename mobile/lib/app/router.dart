@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
+import '../features/billing/api/billing_api.dart';
 import '../features/billing/billing_screen.dart';
 import '../features/chat/api/assistant_api.dart';
 import '../features/chat/assistant_screen.dart';
@@ -14,6 +15,11 @@ import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/assistant_tour.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
+import '../features/first_video/making_page.dart';
+import '../features/first_video/photo_page.dart';
+import '../features/first_video/result_page.dart';
+import '../features/first_video/shop_page.dart';
+import '../features/first_video/template_page.dart';
 import '../features/inbox/inbox_screen.dart';
 import '../features/inbox/topic_screen.dart';
 import '../features/landing/landing_page.dart';
@@ -33,7 +39,10 @@ import '../features/workspace/state/active_workspace_store.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/assistant_profile.dart';
 import '../shared/api/auth_store.dart';
+import '../shared/api/first_video_entry.dart';
+import '../shared/api/ui_mode_store.dart';
 import '../shared/i18n/i18n.dart';
+import '../shared/models/ui_mode.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
@@ -41,6 +50,7 @@ import 'auth_center_route.dart';
 import 'auth_redirect.dart';
 import 'chat_location.dart';
 import 'knowledge_routes.dart';
+import 'light_routes.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -48,6 +58,12 @@ import 'workspace_shell.dart';
 class _AuthRefresh extends ChangeNotifier {
   _AuthRefresh(Ref ref) {
     ref.listen<AuthState>(authProvider, (_, _) => notifyListeners());
+    // The interface mode decides which home `/app` and the tabs resolve to;
+    // a late answer from the server (or the Settings switch) re-routes.
+    ref.listen<UiMode>(
+      uiModeProvider.select((s) => s.mode),
+      (_, _) => notifyListeners(),
+    );
     ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (
       before,
       after,
@@ -75,6 +91,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         location: state.matchedLocation,
         uri: state.uri,
         introSeen: () => ref.read(introSeenProvider),
+        firstVideoEntry: () => ref.read(firstVideoEntryProvider),
+        uiMode: () => ref.read(uiModeProvider).mode,
       );
       final returningHome =
           state.matchedLocation == Paths.landing ||
@@ -147,6 +165,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Paths.app,
         builder: (context, state) => const _EmptyChatRoute(),
       ),
+      // Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.2): the four tabs and the
+      // topic pages. Lives beside `/app`; `authRedirect` picks the home.
+      lightShellRoute(resources: composerResourceSlot),
+      ...lightRoutes(resources: composerResourceSlot),
       GoRoute(
         path: Paths.assistant,
         builder: (context, state) => _AssistantRoute(
@@ -161,6 +183,34 @@ final routerProvider = Provider<GoRouter>((ref) {
       // The call has no page of its own any more (VOICE_SEAM_PLAN §13): a
       // deep link to it lands on the assistant page, where the call sheet is.
       GoRoute(path: Paths.voice, redirect: (context, state) => Paths.assistant),
+      // Guided first video (Light 模式 M1): full-screen steps on the root
+      // navigator, outside the workspace shell. The bare path forwards to
+      // the first step so a sign-in can land on it.
+      GoRoute(
+        path: Paths.firstVideo,
+        redirect: (context, state) => Paths.firstVideoShop,
+      ),
+      GoRoute(
+        path: Paths.firstVideoShop,
+        builder: (context, state) => const FirstVideoShopPage(),
+      ),
+      GoRoute(
+        path: Paths.firstVideoTemplate,
+        builder: (context, state) => const FirstVideoTemplatePage(),
+      ),
+      GoRoute(
+        path: Paths.firstVideoPhoto,
+        builder: (context, state) => const FirstVideoPhotoPage(),
+      ),
+      GoRoute(
+        path: Paths.firstVideoMaking,
+        builder: (context, state) => const FirstVideoMakingPage(),
+      ),
+      GoRoute(
+        path: Paths.firstVideoResult,
+        builder: (context, state) =>
+            FirstVideoResultPage(canPublish: () => _canPublish(ref)),
+      ),
       GoRoute(
         path: '/app/s/:sessionId',
         builder: (context, state) {
@@ -245,6 +295,18 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Publishing needs the cloud desktop, which comes with a paid plan. The
+/// first-video result page asks through this seam (features never import
+/// each other); anything short of a clear yes sends people to the plans.
+Future<bool> _canPublish(Ref ref) async {
+  try {
+    final subscription = await ref.read(billingApiProvider).getSubscription();
+    return subscription.planId.isNotEmpty && subscription.planId != 'free';
+  } catch (_) {
+    return false;
+  }
+}
 
 /// The composition layer's job (§分层): the resources feature owns the data,
 /// the chat composer owns the menu that shows it, and they meet here — the

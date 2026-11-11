@@ -1,0 +1,367 @@
+{
+  "title": "Chính sách và thông báo",
+  "intro": "Tìm hiểu quy tắc dịch vụ, cách xử lý thông tin và việc sử dụng AI của BossIP.",
+  "publicAccess": "Tài liệu công khai · Không cần đăng nhập",
+  "home": "Về trang chủ",
+  "back": "Quay lại",
+  "directory": "Tài liệu",
+  "updated": "Cập nhật",
+  "versionLabel": "Phiên bản tài liệu",
+  "openBrowser": "Mở trong trình duyệt",
+  "language": "English",
+  "contactAction": "Gửi email",
+  "privacyAction": "Yêu cầu về quyền riêng tư / đóng tài khoản",
+  "reportAction": "Khiếu nại về nội dung / quyền lợi",
+  "emailHint": "Không gửi mật khẩu hoặc thông tin nhạy cảm không liên quan qua email.",
+  "consentLabel": "Tôi đã đọc và đồng ý với Điều khoản, đồng thời xác nhận đã biết Chính sách quyền riêng tư và quy tắc dịch vụ AI.",
+  "consentRequired": "Vui lòng đọc và xác nhận các chính sách trước.",
+  "continue": "Đồng ý và tiếp tục",
+  "readTerms": "Điều khoản",
+  "readPrivacy": "Quyền riêng tư",
+  "readAi": "Thông báo về AI",
+  "saved": "Đã ghi nhận phiên bản chính sách",
+  "operator": "Nanning Beizhibao Technology Co., Ltd.",
+  "brand": "BossIP",
+  "version": "2026-09-28",
+  "updatedAt": "2026-09-28",
+  "siteIcp": "桂ICP备2025071816号-2",
+  "appIcp": "桂ICP备2025071816号-3A",
+  "icpUrl": "https://beian.miit.gov.cn/",
+  "contactEmail": "hello@bossip.ai",
+  "publicOrigin": "https://ai.bossipai.com.cn",
+  "providerLinks": [
+    {
+      "label": "Quyền riêng tư của Jiguang",
+      "url": "https://www.jiguang.cn/license/privacy"
+    },
+    {
+      "label": "Quyền riêng tư của Apple",
+      "url": "https://www.apple.com/legal/privacy/"
+    }
+  ],
+  "documents": {
+    "terms": {
+      "slug": "terms",
+      "title": "Điều khoản dịch vụ",
+      "summary": "Tài khoản, dịch vụ, quyền đối với nội dung và quy tắc sử dụng.",
+      "sections": [
+        {
+          "id": "provider",
+          "title": "1. Bên cung cấp và phạm vi",
+          "paragraphs": [
+            "BossIP được cung cấp bởi Nanning Beizhibao Technology Co., Ltd.. Các điều khoản này điều chỉnh tài khoản, tạo nội dung bằng AI, xử lý tệp và hỗ trợ công việc trên đám mây trên trang web cũng như ứng dụng iOS/Android của chúng tôi. Các tính năng khả dụng phụ thuộc vào phiên bản và gói của bạn."
+          ]
+        },
+        {
+          "id": "account",
+          "title": "2. Tài khoản và ủy quyền",
+          "paragraphs": [
+            "Hãy cung cấp thông tin đăng ký chính xác, hợp pháp và cần thiết, đồng thời bảo vệ tài khoản của bạn. Chỉ kết nối các tài khoản, tệp và không gian làm việc mà bạn được phép sử dụng, và rà soát quyền truy cập của nhóm. Quản lý các tài khoản đã kết nối trong trung tâm ủy quyền. Sử dụng mục Liên hệ và khiếu nại để yêu cầu đóng tài khoản hoặc rút lại sự đồng ý."
+          ]
+        },
+        {
+          "id": "billing",
+          "title": "3. Thanh toán và tác vụ",
+          "paragraphs": [
+            "Gói, điểm, đơn vị tính phí và giá được hiển thị trong giao diện mua hoặc giao diện sử dụng. Thời gian tạo nội dung, kết quả của mô hình và kết quả từ bên thứ ba có thể thay đổi. Hãy liên hệ bộ phận hỗ trợ về tranh chấp thanh toán, tác vụ thất bại hoặc yêu cầu hoàn tiền; các quyền theo luật định không bị ảnh hưởng."
+          ]
+        },
+        {
+          "id": "rights",
+          "title": "4. Dữ liệu đầu vào, đầu ra và quyền lợi",
+          "paragraphs": [
+            "Bạn phải có quyền gửi dữ liệu đầu vào và ủy quyền xử lý dữ liệu đó ở mức cần thiết cho tác vụ của bạn. Việc bảo hộ quyền tác giả và xung đột với quyền của bên thứ ba phụ thuộc vào nội dung và pháp luật áp dụng. Chúng tôi không cam kết nội dung mặc nhiên được bảo hộ quyền tác giả hay không xâm phạm quyền của người khác. Hãy kiểm tra sự thật, giấy phép, quyền sử dụng hình ảnh và giọng nói trước khi công bố hoặc sử dụng cho mục đích thương mại."
+          ]
+        },
+        {
+          "id": "labels",
+          "title": "5. Nhãn AI và việc công bố",
+          "paragraphs": [
+            "Các quy tắc gắn nhãn trong thông báo dịch vụ AI của chúng tôi là một phần của các điều khoản này. Câu trả lời của AI có kèm thông báo nguồn, và nội dung đa phương tiện được xác định là do AI tạo sẽ hiển thị nhãn \"do AI tạo\" trong trình xem tương ứng. Hãy giữ nguyên nhãn nguồn gốc, khai báo việc sử dụng AI khi công bố và sử dụng công cụ gắn nhãn của nền tảng đăng tải. Không được cố ý gỡ bỏ, sửa đổi, giả mạo hoặc che giấu nhãn."
+          ]
+        },
+        {
+          "id": "conduct",
+          "title": "6. Sử dụng hợp pháp và biện pháp xử lý",
+          "paragraphs": [
+            "Hãy tuân thủ pháp luật Trung Quốc và tôn trọng trật tự công cộng, quyền sở hữu trí tuệ, quyền riêng tư và quyền đối với thông tin cá nhân. Không tạo hoặc phát tán nội dung trái pháp luật, thực hiện hành vi lừa đảo, mạo danh người khác hoặc gây hại cho người chưa thành niên. Tùy theo tình huống, chúng tôi có thể cảnh báo, hạn chế hoặc tạm ngừng dịch vụ, đồng thời cung cấp kênh khiếu nại và kháng nghị."
+          ]
+        },
+        {
+          "id": "changes",
+          "title": "7. Thay đổi, trách nhiệm và tranh chấp",
+          "paragraphs": [
+            "Những thay đổi quan trọng sẽ được thông báo qua dịch vụ hoặc một kênh phù hợp khác. Chúng tôi sẽ xin lại sự đồng ý khi pháp luật yêu cầu. Hãy đọc Thông báo rủi ro cùng với các điều khoản này; trách nhiệm pháp lý không thể loại trừ vẫn không bị ảnh hưởng. Tranh chấp có thể được nêu với chúng tôi trước, và nếu không giải quyết được, sẽ được đưa ra tòa án có thẩm quyền theo pháp luật."
+          ]
+        }
+      ]
+    },
+    "privacy": {
+      "slug": "privacy",
+      "title": "Chính sách quyền riêng tư",
+      "summary": "Cách thông tin được sử dụng và lưu giữ, và cách thực hiện quyền của bạn.",
+      "sections": [
+        {
+          "id": "scope",
+          "title": "1. Chúng tôi là ai",
+          "paragraphs": [
+            "Nanning Beizhibao Technology Co., Ltd. xử lý thông tin cá nhân để cung cấp BossIP. Hãy đọc chính sách này cùng với các thông báo về thu thập thông tin, bên thứ ba/SDK và quyền truy cập. Không cần tài khoản để đọc các tài liệu này."
+          ]
+        },
+        {
+          "id": "collect",
+          "title": "2. Thu thập và sử dụng",
+          "paragraphs": [
+            "Dịch vụ tài khoản xử lý tên người dùng, địa chỉ email đã gửi và dữ liệu xác thực cần thiết. Các tính năng AI xử lý câu lệnh, ngữ cảnh cuộc trò chuyện liên quan đến tác vụ, tệp tải lên đã chọn và kết quả đầu ra. Đơn hàng và mức sử dụng phục vụ việc tính phí và đối soát. Bảo mật và xử lý sự cố có thể sử dụng địa chỉ IP, phiên bản hệ thống và nhật ký hoạt động cần thiết. Xem thông báo về thu thập thông tin để biết chi tiết."
+          ]
+        },
+        {
+          "id": "tools",
+          "title": "3. AI, công cụ đám mây và bên thứ ba",
+          "paragraphs": [
+            "Khi bạn bật thực thi trên đám mây, kết nối tài khoản hoặc ủy quyền đăng tải, các tệp liên quan đến tác vụ, nội dung web, trạng thái ủy quyền, ảnh chụp màn hình và nhật ký thao tác có thể được xử lý. Không gửi dữ liệu của người khác khi chưa được phép, mật khẩu, bí mật kinh doanh hoặc dữ liệu nhạy cảm không cần thiết. Quyền của không gian làm việc quyết định quyền truy cập của các thành viên trong nhóm."
+          ]
+        },
+        {
+          "id": "providers",
+          "title": "4. Bên xử lý và xử lý xuyên biên giới",
+          "paragraphs": [
+            "Mô hình, xác thực, lưu trữ và gửi thông báo đẩy có thể sử dụng bên thứ ba. Hãy tham khảo thông báo về bên thứ ba, thông báo của từng tính năng và dịch vụ thực tế được sử dụng. Việc chỉ có cổng kết nối trong nước không đủ để xác định rằng quá trình xử lý ở phía thượng nguồn diễn ra trong nước. Khi pháp luật yêu cầu sự đồng ý riêng đối với việc cung cấp cho bên khác, dữ liệu nhạy cảm hoặc xử lý xuyên biên giới, cần có thông báo và sự đồng ý riêng; việc chấp nhận chung không thể thay thế."
+          ]
+        },
+        {
+          "id": "retention",
+          "title": "5. Lưu giữ và xóa",
+          "paragraphs": [
+            "Thông tin được lưu giữ để cung cấp dịch vụ liên quan, giải quyết tranh chấp hoặc thực hiện nghĩa vụ pháp lý. Thời gian lưu giữ tài khoản phụ thuộc vào hoạt động và việc đóng tài khoản; cuộc trò chuyện và tài nguyên phụ thuộc vào việc lưu trữ, xóa và chia sẻ trong không gian làm việc; hồ sơ bảo mật và giao dịch tuân theo yêu cầu pháp lý áp dụng. Sau khi xóa hoặc đóng tài khoản, thông tin không còn cần thiết phải được xóa hoặc ẩn danh hóa, và việc xử lý các hồ sơ phải lưu giữ theo luật sẽ bị hạn chế."
+          ]
+        },
+        {
+          "id": "choices",
+          "title": "6. Quyền và yêu cầu của bạn",
+          "paragraphs": [
+            "Bạn có thể yêu cầu truy cập, sao chép, chỉnh sửa, bổ sung hoặc xóa thông tin của mình, rút lại sự đồng ý áp dụng hoặc yêu cầu đóng tài khoản. Hãy sử dụng liên kết yêu cầu về quyền riêng tư tại mục Liên hệ và khiếu nại. Chúng tôi sẽ xác minh danh tính khi cần thiết và giải thích kết quả hoặc lý do hợp pháp cho bất kỳ sự chậm trễ nào. Việc rút lại sự đồng ý không ảnh hưởng đến việc xử lý hợp pháp đã diễn ra trước đó."
+          ]
+        },
+        {
+          "id": "minors",
+          "title": "7. Người chưa thành niên và cập nhật",
+          "paragraphs": [
+            "Sản phẩm chủ yếu dành cho mục đích kinh doanh và công việc. Người chưa thành niên nên sử dụng dưới sự giám sát của người giám hộ. Việc xử lý thông tin của trẻ em dưới mười bốn tuổi đòi hỏi sự đồng ý phù hợp theo pháp luật của người giám hộ và các quy tắc bảo vệ đặc biệt. Người giám hộ có thể liên hệ với chúng tôi qua kênh yêu cầu về quyền riêng tư. Các bản cập nhật có kèm phiên bản và ngày, cùng thông báo bổ sung đối với những thay đổi quan trọng."
+          ]
+        }
+      ]
+    },
+    "ai": {
+      "slug": "ai",
+      "title": "Thông báo dịch vụ AI",
+      "summary": "Năng lực, thông tin mô hình, nhãn nội dung và việc công bố.",
+      "sections": [
+        {
+          "id": "content",
+          "title": "Về nội dung do AI tạo",
+          "paragraphs": [
+            "BossIP sử dụng AI để hỗ trợ nghiên cứu, viết lách, sáng tạo nội dung đa phương tiện và các công việc khác. Kết quả đầu ra có thể chứa sai sót về sự thật, thiếu sót, thiên kiến hoặc thông tin lỗi thời. Hãy kiểm tra nội dung quan trọng trước khi sử dụng hoặc công bố. Người, giọng nói và cảnh trong nội dung đa phương tiện có thể là do AI tạo ra hoặc tổng hợp."
+          ]
+        },
+        {
+          "id": "models",
+          "title": "Mô hình và các mức năng lực",
+          "paragraphs": [
+            "\"Nhanh\", \"Chuyên nghiệp\" và \"Sâu\" là các mức năng lực, không phải tên mô hình đã đăng ký. Các chức năng khác nhau có thể sử dụng các dịch vụ mô hình khác nhau. Thông tin về nhà cung cấp và hồ sơ đăng ký mô hình phải dựa trên các công bố đã được xác minh. Số đăng ký của trang web/ứng dụng và tài liệu bản quyền không chứng minh việc đăng ký mô hình. Trang này không xác nhận các chứng nhận mô hình chưa được xác minh; hãy liên hệ với chúng tôi để xác minh thông tin dịch vụ áp dụng."
+          ]
+        },
+        {
+          "id": "labels",
+          "title": "Cách nhận biết nội dung AI",
+          "paragraphs": [
+            "Câu trả lời của AI hiển thị nhãn nguồn. Hình ảnh và video được xác định là do AI tạo có nhãn \"do AI tạo\" bán trong suốt trong ảnh thu nhỏ và trình xem phóng to, và phần hiển thị âm thanh cũng nêu rõ nguồn. Khi sao chép toàn bộ một câu trả lời của AI, văn bản sẽ kèm theo nhãn. Tệp gốc do bạn tải lên, mã QR và ảnh chụp màn hình làm bằng chứng không được gắn nhãn chỉ vì chúng xuất hiện trong cuộc trò chuyện."
+          ]
+        },
+        {
+          "id": "export",
+          "title": "Tải xuống và phân phối lại",
+          "paragraphs": [
+            "Lớp phủ trong trình xem và nhãn nhúng trong tệp là hai thứ riêng biệt. Nhãn hiển thị khi xem trước không có nghĩa là tệp tải xuống chứa cùng hình mờ hoặc đầy đủ siêu dữ liệu nguồn gốc. Trước khi phân phối lại, hãy kiểm tra nhãn trong tệp và khai báo nội dung do AI tạo theo yêu cầu của nền tảng đích. Nhãn khi xem trước không phải là bằng chứng cho thấy các yêu cầu về phân phối đã được đáp ứng."
+          ]
+        },
+        {
+          "id": "use",
+          "title": "Sử dụng và quyền hạn",
+          "paragraphs": [
+            "Hãy kiểm tra các sự thật quan trọng và quyền đối với tư liệu gốc. Việc chỉnh sửa khuôn mặt hoặc giọng nói đòi hỏi thông báo, ủy quyền phù hợp và sự đồng ý riêng khi pháp luật áp dụng yêu cầu. Không sử dụng AI để lừa dối, mạo danh, xâm phạm quyền của người khác hoặc tạo/phát tán nội dung trái pháp luật. Hãy báo cáo vấn đề hoặc kháng nghị qua mục Liên hệ và khiếu nại."
+          ]
+        }
+      ]
+    },
+    "disclaimer": {
+      "slug": "disclaimer",
+      "title": "Thông báo rủi ro và miễn trừ trách nhiệm",
+      "summary": "Hiểu rõ giới hạn của nội dung do AI tạo và tự động hóa.",
+      "sections": [
+        {
+          "id": "accuracy",
+          "title": "Độ chính xác",
+          "paragraphs": [
+            "Kết quả của AI chỉ mang tính hỗ trợ và có thể không chính xác, không đầy đủ hoặc không phù hợp với tình huống của bạn. Hãy kiểm tra các vấn đề y tế, pháp lý, đầu tư và các vấn đề có ảnh hưởng lớn khác bằng nguồn đáng tin cậy và chuyên gia phù hợp."
+          ]
+        },
+        {
+          "id": "rights",
+          "title": "Quyền lợi và sử dụng thương mại",
+          "paragraphs": [
+            "Nội dung do AI tạo có thể xung đột với các tác phẩm hiện có hoặc các quyền khác. Trước khi công bố hoặc sử dụng cho mục đích thương mại, hãy kiểm tra sự thật, giấy phép, quyền sử dụng hình ảnh/giọng nói và quy tắc của nền tảng. Việc sử dụng dịch vụ không mặc nhiên cấp cho bạn quyền sử dụng tác phẩm, nhãn hiệu hoặc quyền nhân thân của bên thứ ba."
+          ]
+        },
+        {
+          "id": "automation",
+          "title": "Tự động hóa và dịch vụ bên ngoài",
+          "paragraphs": [
+            "Tự động hóa có thể hiểu sai chỉ dẫn, thất bại, lặp lại thao tác hoặc gặp trạng thái đã thay đổi ở bên thứ ba. Hãy rà soát ủy quyền, đối tượng tác động và kết quả khi đăng tải, gửi, thanh toán, sửa đổi hoặc xóa thông tin quan trọng. Các dịch vụ bên ngoài có thể có quy tắc riêng và giới hạn về khả năng sẵn sàng."
+          ]
+        },
+        {
+          "id": "liability",
+          "title": "Trách nhiệm pháp lý",
+          "paragraphs": [
+            "Thông báo này không loại trừ hoặc hạn chế trách nhiệm mà pháp luật không cho phép loại trừ hoặc hạn chế. Quyền khiếu nại, kháng nghị, quyền đối với thông tin cá nhân và quyền của người tiêu dùng không bị ảnh hưởng. Tranh chấp sẽ được xử lý theo sự thật, pháp luật áp dụng và các thỏa thuận có hiệu lực."
+          ]
+        }
+      ]
+    },
+    "contact": {
+      "slug": "contact",
+      "title": "Liên hệ và khiếu nại",
+      "summary": "Hỗ trợ, báo cáo nội dung, khiếu nại về quyền lợi và yêu cầu về quyền riêng tư.",
+      "sections": [
+        {
+          "id": "channels",
+          "title": "Kênh liên hệ",
+          "paragraphs": [
+            "Hãy sử dụng các liên kết email trên trang này để liên hệ với Nanning Beizhibao Technology Co., Ltd.. Không cần đăng nhập để gửi thắc mắc, khiếu nại hoặc yêu cầu về quyền riêng tư. Hãy ghi \"BossIP\" và loại vấn đề trong tiêu đề email."
+          ]
+        },
+        {
+          "id": "materials",
+          "title": "Nội dung cần cung cấp",
+          "paragraphs": [
+            "Hãy nêu mô tả vấn đề, liên kết hoặc mã định danh của nội dung liên quan, thời điểm xảy ra vấn đề và địa chỉ nhận phản hồi. Khiếu nại về quyền lợi có thể kèm theo bằng chứng cần thiết về quyền sở hữu. Không gửi mật khẩu, thông tin thanh toán đầy đủ hoặc thông tin nhạy cảm không liên quan. Việc xác minh danh tính đối với yêu cầu về dữ liệu chỉ giới hạn ở mức cần thiết."
+          ]
+        },
+        {
+          "id": "process",
+          "title": "Xử lý và phản hồi",
+          "paragraphs": [
+            "Sau khi nhận được yêu cầu, chúng tôi sẽ xem xét tài liệu, đề nghị làm rõ khi cần thiết và phản hồi về việc tiếp nhận cũng như cách xử lý trong vòng mười lăm ngày làm việc. Nếu vấn đề phức tạp cần thêm thời gian, chúng tôi sẽ giải thích lý do và thời gian dự kiến. Hãy trả lời email ban đầu để cập nhật hoặc yêu cầu xem xét lại. Các yêu cầu theo luật định áp dụng được ưu tiên."
+          ]
+        }
+      ]
+    },
+    "collection": {
+      "slug": "privacy/collection",
+      "title": "Thu thập thông tin",
+      "summary": "Thông tin và mục đích theo từng tính năng.",
+      "sections": [
+        {
+          "id": "account",
+          "title": "Tài khoản, xác thực và tùy chọn",
+          "paragraphs": [
+            "Thông tin: tên người dùng, email đã gửi, mã định danh xác thực cần thiết, trạng thái đăng nhập, tùy chọn ngôn ngữ và giao diện. Mục đích: tài khoản, bảo mật và khôi phục tùy chọn. Thu thập từ bạn, từ phản hồi xác thực hoặc trong quá trình sử dụng; lưu giữ theo hoạt động và việc đóng tài khoản."
+          ]
+        },
+        {
+          "id": "content",
+          "title": "Cuộc trò chuyện, tệp và ghi nhớ",
+          "paragraphs": [
+            "Thông tin: câu lệnh, ngữ cảnh liên quan đến tác vụ, tệp tải lên đã chọn, kết quả đầu ra và các ghi nhớ đã bật. Mục đích: thực hiện tác vụ, duy trì tính liên tục và lưu kết quả. Do bạn gửi hoặc được tạo ra trong quá trình sử dụng; thời gian lưu giữ tuân theo việc lưu trữ và xóa cuộc trò chuyện/tài nguyên. Quản lý thông qua sản phẩm hoặc yêu cầu về quyền riêng tư."
+          ]
+        },
+        {
+          "id": "execution",
+          "title": "Thực thi trên đám mây và tài khoản đã kết nối",
+          "paragraphs": [
+            "Thông tin: trạng thái tài khoản đã kết nối, nội dung web liên quan đến tác vụ, ảnh chụp màn hình, tệp và bản ghi thao tác. Mục đích: thực hiện các tác vụ được ủy quyền và trả kết quả. Được xử lý cho các tính năng liên quan; quản lý kết nối trong trung tâm ủy quyền và yêu cầu về dữ liệu qua kênh quyền riêng tư."
+          ]
+        },
+        {
+          "id": "operations",
+          "title": "Đơn hàng, bảo mật và thông báo",
+          "paragraphs": [
+            "Thông tin: mã đơn hàng, mức sử dụng, kết quả thanh toán, địa chỉ IP, thông tin hệ thống/nhật ký cần thiết và, khi bật thông báo đẩy, mã định danh đẩy cùng trạng thái thông báo. Mục đích: tính phí, bảo mật và thông báo tác vụ. Hồ sơ giao dịch/bảo mật tuân theo yêu cầu lưu giữ áp dụng; mã định danh đẩy phục vụ việc gửi thông báo trong thời gian còn liên kết. Xem thông báo về bên thứ ba."
+          ]
+        }
+      ]
+    },
+    "third-parties": {
+      "slug": "privacy/third-parties",
+      "title": "Bên thứ ba và SDK",
+      "summary": "Dịch vụ xác thực, thông báo đẩy, thanh toán, đám mây và mô hình.",
+      "sections": [
+        {
+          "id": "push",
+          "title": "Thông báo đẩy",
+          "paragraphs": [
+            "Android sử dụng JPush/JCore của Shenzhen Hexun Huagu Information Technology Co., Ltd.; các thiết bị được hỗ trợ có thể sử dụng kênh của nhà sản xuất. iOS sử dụng dịch vụ Apple Push Notification. Thông báo tác vụ/hệ thống liên quan đến mã định danh đăng ký, thông tin thiết bị/mạng cần thiết và nội dung tin nhắn, tùy theo nền tảng, phiên bản SDK và các kênh đã bật. Trên Android, việc khởi tạo nghiệp vụ diễn ra sau khi đăng nhập và cấp quyền thông báo."
+          ]
+        },
+        {
+          "id": "auth",
+          "title": "Xác thực",
+          "paragraphs": [
+            "Các bản triển khai có thể sử dụng Logto để xác thực, xử lý mã định danh danh tính cần thiết, trạng thái ủy quyền và thông tin tài khoản được phép. Việc sử dụng thành phần này không hàm ý một bên nhận dữ liệu trên đám mây công cộng cụ thể; hãy tham khảo trang đăng nhập thực tế và thông báo của bản triển khai."
+          ]
+        },
+        {
+          "id": "cloud",
+          "title": "Lưu trữ đám mây và máy tính đám mây",
+          "paragraphs": [
+            "Các bản triển khai có thể sử dụng dịch vụ lưu trữ đối tượng của Alibaba Cloud và máy tính đám mây Wuying. Việc tải lên, xem trước, tải xuống hoặc chạy tác vụ trên đám mây có thể xử lý các tệp đã chọn, phiên được ủy quyền, thao tác của tác vụ và nhật ký cần thiết. Hãy xác minh khu vực lưu trữ và bên nhận dữ liệu của bản triển khai bạn dùng qua kênh yêu cầu về quyền riêng tư."
+          ]
+        },
+        {
+          "id": "payment",
+          "title": "Thanh toán và mô hình",
+          "paragraphs": [
+            "Alipay xử lý đơn hàng, số tiền và kết quả thanh toán liên quan khi được chọn; hãy tham khảo thông báo tại bước thanh toán. Yêu cầu AI có thể gửi câu lệnh, ngữ cảnh và nội dung đa phương tiện cần thiết đến dịch vụ mô hình đã chọn. Tên giao thức của cổng kết nối không xác định đơn vị vận hành thực tế ở phía thượng nguồn. Hãy xác minh nhà cung cấp, khu vực, việc sử dụng dữ liệu để huấn luyện và thông tin đăng ký của dịch vụ được sử dụng."
+          ]
+        }
+      ]
+    },
+    "permissions": {
+      "slug": "privacy/permissions",
+      "title": "Quyền của ứng dụng",
+      "summary": "Mục đích, thời điểm và cách tắt các quyền.",
+      "sections": [
+        {
+          "id": "notifications",
+          "title": "Thông báo",
+          "paragraphs": [
+            "Sau khi bạn bật và cấp quyền thông báo, thông báo sẽ báo về việc hoàn thành tác vụ và tin nhắn hệ thống. Hãy tắt trong cài đặt hệ thống; cuộc trò chuyện và hộp thư trong ứng dụng vẫn khả dụng."
+          ]
+        },
+        {
+          "id": "files",
+          "title": "Tệp và ảnh",
+          "paragraphs": [
+            "Trình chọn tệp/ảnh của hệ thống được sử dụng khi bạn chọn tải lên, lưu hoặc chia sẻ tệp. Chỉ các tệp đã chọn được xử lý. Việc từ chối hoặc hủy lựa chọn không ngăn cản việc trò chuyện bằng văn bản. Bảng lưu của hệ thống quyết định vị trí lưu. Quản lý quyền truy cập ảnh trên iOS trong cài đặt hệ thống."
+          ]
+        },
+        {
+          "id": "call-overlay",
+          "title": "Cuộc gọi chạy nền và nút nổi",
+          "paragraphs": [
+            "Âm thanh chạy nền chỉ được sử dụng trong cuộc gọi thoại do bạn khởi tạo. Android khởi chạy một dịch vụ tiền cảnh dùng micrô kèm thông báo cuộc gọi; khi cho phép hiển thị trên các ứng dụng khác, một nút điện thoại nổi sẽ xuất hiện để quay lại cuộc gọi hiện tại. Việc từ chối quyền hiển thị đè, ẩn nút hoặc chuyển ứng dụng xuống nền không kết thúc cuộc gọi. iOS sử dụng lối vào cuộc gọi của hệ thống mà không cần quyền hiển thị đè. Kết thúc cuộc gọi sẽ dừng âm thanh chạy nền và gỡ bỏ lối quay lại cuộc gọi."
+          ]
+        },
+        {
+          "id": "network",
+          "title": "Mạng và tài khoản đã kết nối",
+          "paragraphs": [
+            "Kết nối mạng phục vụ xác thực, yêu cầu AI, đồng bộ cuộc trò chuyện và truyền tệp. Việc kết nối tài khoản, điều khiển máy tính đám mây và đăng tải được khởi tạo thông qua các tính năng tương ứng; quyền truy cập mạng không phải là sự ủy quyền cho các thao tác này. Tệp khai báo (manifest) Android chính hiện tại đã loại bỏ các quyền không cần thiết về vị trí, trạng thái điện thoại và danh sách ứng dụng."
+          ]
+        }
+      ]
+    }
+  },
+  "openFailed": "Không thể mở ứng dụng bên ngoài. Vui lòng sao chép địa chỉ và mở thủ công."
+}

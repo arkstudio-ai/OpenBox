@@ -1,0 +1,187 @@
+{
+  "tabs": {
+    "home": "Trang chủ",
+    "assistant": "Trợ lý",
+    "inbox": "Tin nhắn",
+    "me": "Tôi"
+  },
+  "home": {
+    "greeting": "{{name}}",
+    "defaultShop": "Quán của tôi",
+    "taglines": [
+      "Hôm nay quay một video cho quán nhé",
+      "Có món mới? Làm poster rồi đăng luôn",
+      "Sang mùa mới, sắp lại thực đơn",
+      "Xem kết quả tuần này, tính xem làm gì tiếp",
+      "Mặt tiền, món ăn hay ghé quán: chọn một để làm video",
+      "Một câu về khuyến mãi là có ngay poster",
+      "Cuối tuần đông khách, in thực đơn sẵn đi"
+    ],
+    "credits": "{{value}} điểm",
+    "creditsUnavailable": "Chưa đọc được điểm",
+    "section": {
+      "todo": "Hôm nay bạn có thể",
+      "more": "Ngoài ra còn",
+      "recent": "Mới làm gần đây"
+    },
+    "ok": "Sẵn sàng",
+    "needsPlan": "Cần mở gói",
+    "needsDesktop": "Cần máy tính đám mây",
+    "needsBinding": "Cần liên kết Douyin trước",
+    "comingSoon": "Sắp ra mắt",
+    "goPlan": "Mở gói ›",
+    "goDesktop": "Mở máy tính đám mây ›",
+    "goBinding": "Liên kết ngay ›",
+    "banner": {
+      "title": "Việc gì cũng có thể tự động lo giúp",
+      "body": "Làm video, đăng bài, trả lời đánh giá — đặt lịch là tự chạy"
+    },
+    "recentEmpty": "Chưa làm gì cả. Chọn một việc ở trên để bắt đầu.",
+    "recentFailed": "Chưa tải được việc mới làm",
+    "outputs_one": "{{count}} sản phẩm",
+    "outputs_other": "{{count}} sản phẩm",
+    "ask": "Có việc khác? Cứ nói với trợ lý"
+  },
+  "gallery": {
+    "lede": "Chọn một kiểu trước; sau đó vào trò chuyện, tôi dẫn bạn làm từng bước.",
+    "needs": "Cần chuẩn bị: {{needs}}",
+    "pick": "Làm kiểu này",
+    "skip": "Không chọn, bắt đầu luôn",
+    "start": "Bắt đầu",
+    "starting": "Đang bắt đầu…",
+    "stepsTitle": "Sẽ làm như sau",
+    "noSamples": "Video mẫu đang chuẩn bị; bạn có thể bắt đầu ngay.",
+    "unavailable": "Mục này hiện chưa dùng được: {{reason}}",
+    "missing": "Không có mục này",
+    "play": "Xem video mẫu",
+    "playFailed": "Không phát được video mẫu"
+  },
+  "topic": {
+    "input": {
+      "hint": "Cứ nói gì cũng được",
+      "camera": "Chụp ảnh",
+      "album": "Thư viện",
+      "send": "Gửi",
+      "stop": "Dừng",
+      "uploading": "Đang tải ảnh lên…",
+      "photosSent": "Ảnh của tôi đây",
+      "clipsSent": "Clip của tôi đây, cắt giúp tôi nhé",
+      "clipTooBig": "Clip trên 200 MB đã bị bỏ qua",
+      "uploadingOf": "Đang tải {{n}}/{{total}}…"
+    }
+  },
+  "card": {
+    "confirm": "Cứ vậy",
+    "next": "Tiếp theo",
+    "skip": "Để sau",
+    "typeHint": "Hoặc gõ chữ",
+    "pageOf": "Bước {{current}} / {{count}}",
+    "recommended": "Gợi ý"
+  },
+  "tool": {
+    "doing": "Đang làm: {{action}}",
+    "done_one": "Đã xong {{count}} bước",
+    "done_other": "Đã xong {{count}} bước",
+    "video": "tạo video",
+    "compose": "ghép video",
+    "image": "tạo hình ảnh",
+    "transcribe": "nhận dạng giọng nói",
+    "publish": "đăng bài",
+    "desktop": "thao tác trên máy tính đám mây",
+    "schedule": "đặt lịch",
+    "question": "hỏi bạn",
+    "skill": "chuẩn bị kỹ năng",
+    "search": "tìm kiếm",
+    "fetch": "đọc trang web",
+    "files": "sắp xếp tư liệu",
+    "plan": "lên kế hoạch",
+    "task": "giao việc cho trợ thủ",
+    "working": "đang xử lý"
+  },
+  "me": {
+    "title": "Tôi",
+    "billing": "Gói & điểm",
+    "authCenter": "Trung tâm ủy quyền",
+    "desktop": "Máy tính đám mây",
+    "resources": "Tài nguyên",
+    "settings": "Cài đặt",
+    "admin": "Bảng quản trị",
+    "signOut": "Đăng xuất",
+    "signOutTitle": "Đăng xuất?",
+    "cancel": "Hủy",
+    "autopilot": "Việc đang tự động làm"
+  },
+  "uiMode": {
+    "title": "Giao diện",
+    "light": "Light",
+    "lightBody": "Nút ở trang chủ đi thẳng tới làm video, thực đơn, poster",
+    "pro": "Pro",
+    "proBody": "Bàn làm việc đầy đủ: trò chuyện, dự án, máy tính đám mây, kỹ năng",
+    "failed": "Chưa chuyển được, thử lại nhé"
+  },
+  "testBuild": "BẢN THỬ NGHIỆM",
+  "result": {
+    "save": "Lưu",
+    "savePdf": "Lưu PDF",
+    "publish": "Đăng lên Douyin",
+    "again": "Làm thêm một cái",
+    "againPrompt": "Làm thêm một cái theo kiểu khác",
+    "publishPrompt": "Đăng cái này lên Douyin",
+    "publishLocked": "Đăng bài cần máy tính đám mây; mở gói là có"
+  },
+  "autopilot": {
+    "switch": "Từ nay tự động làm việc này",
+    "switchOn": "Đang bật · {{when}}",
+    "sheetTitle": "Từ nay tự động làm việc này",
+    "sheetLede": "Đến giờ tôi tự làm một cái mới rồi gửi về đây; mỗi lần đổi góc quay, không trùng lặp.",
+    "when": "Khi nào",
+    "how": "Làm thế nào",
+    "cap": "Tối đa mỗi lần",
+    "repeat": {
+      "daily": "Hằng ngày",
+      "weekdays": "Ngày làm việc",
+      "weekly": "Thứ Hai hằng tuần"
+    },
+    "mode": {
+      "make_only": "Chỉ làm thôi",
+      "make_and_publish": "Làm xong đăng luôn",
+      "publishLocked": "Đăng luôn (cần máy tính đám mây)"
+    },
+    "capValue": "{{value}} điểm",
+    "capLine": "tối đa {{value}} điểm",
+    "confirm": "Bắt đầu",
+    "started": "Đã bật: {{when}} tự làm một cái mới",
+    "paused": "Đã tạm dừng; vào «Việc đang tự động làm» để tiếp tục hoặc hủy",
+    "resumed": "Đã tiếp tục",
+    "title": "Việc đang tự động làm",
+    "lede": "Đến giờ tự làm, làm xong gửi về cuộc trò chuyện cũ và báo cho bạn. Vượt mức tối đa thì bỏ qua lần đó.",
+    "empty": "Chưa có việc nào đang tự động làm.\nLàm xong một video hay một ảnh, bật «Từ nay tự động làm việc này» trên thẻ kết quả.",
+    "task": {
+      "video": "Làm một video",
+      "image": "Làm một ảnh",
+      "listing": "Lên / gỡ món",
+      "reviews": "Trả lời đánh giá",
+      "report": "Tổng kết tuần"
+    },
+    "statusPaused": "Đã tạm dừng",
+    "statusRunning": "Đang làm",
+    "statusNext": "Lần tới {{when}}",
+    "last": {
+      "ok": "Lần trước đã xong",
+      "error": "Lần trước bị lỗi",
+      "skipped": "Lần trước bỏ qua (vượt mức hoặc thiếu điểm)",
+      "running": "Đang làm"
+    },
+    "pause": "Tạm dừng",
+    "resume": "Tiếp tục",
+    "open": "Mở trò chuyện",
+    "cancel": "Hủy",
+    "keep": "Giữ lại",
+    "cancelTitle": "Không tự động làm việc này nữa?",
+    "cancelBody": "Sau khi hủy, đến giờ sẽ không làm nữa; những gì đã làm vẫn giữ nguyên.",
+    "banner": "Tự động lo giúp"
+  },
+  "conversations": {
+    "untitled": "Trò chuyện chưa đặt tên"
+  }
+}

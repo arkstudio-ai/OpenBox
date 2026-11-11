@@ -47,6 +47,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
     this.taskId,
     this.resultId,
     this.intro,
+    this.embedded = false,
   });
   final AssistantScope scope;
   final ComposerResourceSlot? resources;
@@ -56,6 +57,11 @@ class AssistantScreen extends ConsumerStatefulWidget {
   /// `all`: opened from Settings' "重新认识一下" to go through the first
   /// meeting again.
   final String? intro;
+
+  /// Hosted as the Light 模式 「对话」 tab rather than inside the workspace
+  /// shell: the screen has no chrome of its own there, and what it navigates
+  /// to stays on the tab.
+  final bool embedded;
   @override
   ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
@@ -251,23 +257,33 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
             resultId: widget.resultId!,
           ),
         Expanded(
-          child: SizedBox(
-            key: _viewport,
-            child: empty
-                ? AssistantWelcome(onPick: _fill)
-                : ChatFlow(
-                    rows: widgets,
-                    controller: _scroll,
-                    olderCount: anchor < 0 ? 0 : anchor,
-                    topKey: state.messages.firstOrNull?.id,
-                    forceScrollToken: rows
-                        .whereType<UserRowData>()
-                        .lastOrNull
-                        ?.message
-                        .id,
-                    onNearTop: state.hasMore ? controller.loadOlder : null,
-                    loadingOlder: state.loadingOlder,
-                  ),
+          child: _FadedBottom(
+            // Light 模式: the page fades out above the composer instead of
+            // being cut by its top edge (2026-11-04 feedback).
+            enabled: widget.embedded,
+            child: SizedBox(
+              key: _viewport,
+              child: empty
+                  ? AssistantWelcome(
+                      onPick: _fill,
+                      // Light 模式 meets the person in a sheet over the page
+                      // instead of a card inside it (2026-11-04).
+                      inlineMeeting: !widget.embedded,
+                    )
+                  : ChatFlow(
+                      rows: widgets,
+                      controller: _scroll,
+                      olderCount: anchor < 0 ? 0 : anchor,
+                      topKey: state.messages.firstOrNull?.id,
+                      forceScrollToken: rows
+                          .whereType<UserRowData>()
+                          .lastOrNull
+                          ?.message
+                          .id,
+                      onNearTop: state.hasMore ? controller.loadOlder : null,
+                      loadingOlder: state.loadingOlder,
+                    ),
+            ),
           ),
         ),
         if (receipt != null)
@@ -286,6 +302,7 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
           ),
         const AssistantTourAutoOpen(),
         AssistantIntroEntry(
+          autoOpen: widget.embedded,
           // Settled after an answer: the person's own words alone are not
           // yet a quiet moment.
           quiet:
@@ -294,7 +311,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
               !state.sending,
           onPick: _fill,
           requested: widget.intro,
-          onRequestDone: () => GoRouter.maybeOf(context)?.go(Paths.assistant),
+          onRequestDone: () => GoRouter.maybeOf(
+            context,
+          )?.go(widget.embedded ? Paths.lightAssistant : Paths.assistant),
         ),
         SafeArea(
           top: false,
@@ -388,4 +407,43 @@ class _VisibleAnswerState extends State<_VisibleAnswer>
 
   @override
   Widget build(BuildContext context) => widget.child;
+}
+
+/// The scroll area ends in a short fade into the background, so whatever is
+/// cut at the bottom reads as "more below" rather than as something the
+/// composer is covering. Touches pass through the fade.
+class _FadedBottom extends StatelessWidget {
+  const _FadedBottom({required this.enabled, required this.child});
+
+  final bool enabled;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    final bg = context.tokens.bg;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 36,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [bg.withValues(alpha: 0), bg],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

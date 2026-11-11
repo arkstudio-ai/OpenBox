@@ -11,6 +11,7 @@ import '../../../shared/utils/format.dart';
 import '../api/assets_api.dart';
 import '../utils/content_origin.dart';
 import 'ai_disclosure.dart';
+import 'light_chat_scope.dart';
 
 const _visibleByDefault = 6;
 
@@ -276,22 +277,24 @@ class _VideoTile extends ConsumerWidget {
             ),
           ),
         ),
-        Positioned(
-          left: 6,
-          right: 6,
-          bottom: 4,
-          child: Text(
-            _baseName(part.path),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: FontSizes.xs2,
-              color: Colors.white,
-              fontFamily: 'Menlo',
-              fontFamilyFallback: ['monospace'],
+        // A file name is pro-chat detail; a Light page shows only the clip.
+        if (!LightChatScope.isLight(context))
+          Positioned(
+            left: 6,
+            right: 6,
+            bottom: 4,
+            child: Text(
+              _baseName(part.path),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: FontSizes.xs2,
+                color: Colors.white,
+                fontFamily: 'Menlo',
+                fontFamilyFallback: ['monospace'],
+              ),
             ),
           ),
-        ),
       ],
     );
   }

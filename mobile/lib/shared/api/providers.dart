@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../i18n/i18n.dart';
 import 'auth_session.dart';
 import 'http_client.dart';
 import 'installation.dart';
@@ -30,6 +31,7 @@ final apiDioProvider = Provider<Dio>(
     cookieJar: ref.watch(cookieJarProvider),
     workspace: ref.watch(workspaceScopeProvider),
     installationId: ref.read(installationIdProvider),
+    language: () => ref.read(i18nProvider).language,
   ),
 );
 

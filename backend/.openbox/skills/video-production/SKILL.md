@@ -56,6 +56,10 @@ monitoring, advertising and scheduled reports are separate scopes, not automatic
 6. Delivery means `share_file` for a sandbox-composed file. A successful `video_compose` result already attaches the final file and needs no duplicate share. Until the selected delivery path returns a playable/downloadable result, never say “已交付”. In user-facing text, 不暴露内部 id/路径/工具名; translate errors into plain language.
 7. Two ways to compose, never a third. A plain cut — concat plus burnt ASS captions — is ffmpeg + libass in the sandbox (`$S/build_ass.py` + `$S/compose.sh`). A cut that needs transitions, styled captions with motion, a hook title or a lower third goes through `video_compose` (cloud, Aliyun IMS): `action="schema"` for the timeline format, `action="validate"` (free) before `action="submit"`, then `wait` on the job_id. Shots are the accepted takes' asset_ids; the output attaches to the chat like a generated shot. HyperFrames is retired; never reintroduce it, and never render in the sandbox with Chrome.
 
+## Light mode
+
+When the system prompt says the person is in Light mode (界面模式：Light), they are on a guided topic page, not in a chat. Ask one thing per `question` card and offer the answers as options (`custom` only when free text is truly needed); set `step_id` on every card from the step list the prompt gives, so the page lights the step up. Fold the script, the shots, the duration and the materials into a single review card instead of separate ones. The style picked in the opening card is the brief: do not ask for it again. Never mention model names, tier internals or credits per second; the page shows the whole-clip price from its own configuration, so do not compute credits. Everything else in this skill still applies.
+
 ## Never probe for parameters
 
 `video_generate(action="models")` is the authority for live ids, resolutions, ratios, duration bounds, references, and its second-line `person_selected_model=<id>`. `action="validate"` checks exact parameters and input ownership without submitting or pricing. A paid submit used to discover a limit spends real money on each guess: read, plan, validate, then follow the approved production scope.
@@ -132,7 +136,7 @@ Use `person`, `scene`, `outfit`, `prop` to describe creative purposes; see `refe
 
 For Turbo image modes, now prepare the **whole approved scope's** material set using `references/minimax-turbo-frames.md`. For N consecutive shots in one scene, first/last-frame mode normally uses N+1 planned images; adjacent shots share the exact boundary asset. Generate or resolve all needed images, inspect them, show their shot assignments, and obtain acceptance before submitting video. Existing accepted pictures need no repeat card; text-only mode needs no images or image-confirmation card. Record the preparation decision and each shot's structured frame mapping in state. Frame preparation can depend on a common identity image, but video shots must not depend on earlier generated videos to supply their inputs.
 
-Write every prompt in full. Put the exact line after `口播台词：` and end the line there, use tone not speed, restrain scene decoration, and forbid text in the picture with the full negative form — `画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成` — placed right after the visual base, not after the line (a bare `无字幕` only earns a lint warning; it lowers the odds and proves nothing, so step 7 still looks at the frames). Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
+Write every prompt in full. Put the exact line after `口播台词：` and end the line there (the same words go to `video_generate` as `spoken_line`; the tool checks they match), use tone not speed, restrain scene decoration, and forbid text in the picture with the full negative form — `画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成` — placed right after the visual base, not after the line (a bare `无字幕` only earns a lint warning; it lowers the odds and proves nothing, so step 7 still looks at the frames). Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
 
 ```bash
 python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "<逐字台词>" --anchor "<逐字基底>" --images <N> --videos <N>
@@ -176,7 +180,7 @@ Record the actual production decision with `state.py confirm --kind shots` only 
 
 ### 6. Submit together and record immediately
 
-Submit only the confirmed plan, concurrently: one per shot, `shot=<N>`, unique `<slug>:shot<N>:v1`. All in the same response, then poll together. Split first, then generate. On each return immediately record `$S/state.py shot --job`; keep ids in state, not user text.
+Submit only the confirmed plan, concurrently: one per shot, `shot=<N>`, `spoken_line=<本段逐字台词>` (the tool refuses a shot in which someone speaks without it and appends the `口播台词：` line itself when the prompt lacks one; a b-roll shot with nobody talking says `no_speech=true`), unique `<slug>:shot<N>:v1`. All in the same response, then poll together. Split first, then generate. On each return immediately record `$S/state.py shot --job`; keep ids in state, not user text.
 
 Serialize `state.py` writes for the same slug: it updates one JSON file, so concurrent record writes can overwrite each other even though provider jobs run in parallel.
 

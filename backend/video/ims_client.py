@@ -160,3 +160,21 @@ async def get_media_producing_job(job_id: str) -> ImsJobState:
         code=(job.get("Code") or None),
         message=(job.get("Message") or None),
     )
+
+
+async def list_public_bgm(page_size: int = 100) -> list[dict[str, Any]]:
+    """IMS's public music library (``BusinessType=bgm``), every page, as the raw MediaInfos."""
+    items: list[dict[str, Any]] = []
+    for page in range(1, 11):
+        body = await _rpc("ListPublicMediaBasicInfos", {
+            "BusinessType": "bgm", "PageNo": str(page), "PageSize": str(page_size),
+            "IncludeFileBasicInfo": "true",
+        })
+        batch = body.get("MediaInfos") if isinstance(body, dict) else None
+        if not isinstance(batch, list) or not batch:
+            break
+        items.extend(item for item in batch if isinstance(item, dict))
+        total = body.get("TotalCount")
+        if len(batch) < page_size or (isinstance(total, int) and len(items) >= total):
+            break
+    return items

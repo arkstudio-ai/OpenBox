@@ -32,6 +32,12 @@
       ],
       "result": "file"
     },
+    "footage_analyze": {
+      "label": "分析实拍素材"
+    },
+    "light.entries": {
+      "label": "查看 Light 首页入口"
+    },
     "video_analyze": {
       "label": "分析视频",
       "args": [
@@ -52,6 +58,14 @@
         "prompt:40"
       ],
       "result": "count:已生成 {n} 张"
+    },
+    "image_to_pdf": {
+      "label": "导出 PDF",
+      "args": [
+        "name",
+        "paper"
+      ],
+      "result": "sent"
     },
     "share_file": {
       "label": "把文件发给用户",

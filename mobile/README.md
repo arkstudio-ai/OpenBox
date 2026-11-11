@@ -61,6 +61,60 @@ flutter build ios --simulator --debug \
 - 聊天投稿二维码保持完整正方形，下方显示授权/结果入口。新后端工具 metadata 的 `expiresAt` / `launchUrl` 提供同机快捷打开；旧后端和历史消息保持二维码兜底。
 - 本轮通过 65 项 Flutter 回归、23 项相关后端测试和 Android/iOS debug 构建；iOS 模拟器已连接生产验证页面及二维码保存流程。真实授权、抖音原生唤起和实际发布仍待真机验收，本轮代码未部署。详细范围与证据见对齐清单 §9。
 
+## Light 模式（2026-11-01，M2 App 工作包 T1–T8）
+
+方案与拆解见 [`docs/LIGHT_MODE_PLAN.md`](../docs/LIGHT_MODE_PLAN.md) §4 与
+[`docs/LIGHT_MODE_IMPL_PLAN.md`](../docs/LIGHT_MODE_IMPL_PLAN.md) §4.2；后端契约见
+`docs/LIGHT_MODE_BACKEND.md`（`feat/light-mode-backend`）。这条线在集成分支 `light-mode`
+上单独开发、单独测，不进 gw2 生产。
+
+- **界面模式** `UiMode { light, pro }`（`shared/models/ui_mode.dart`，与外观的 `ColorMode.light`
+  无关）。真相是账号偏好 `extra.ui_mode`，通过 `GET|PUT /api/light/mode` 读写；
+  `shared/api/ui_mode_store.dart` 按账号缓存在设备上，冷启动先用缓存决定首页、再取一次服务端
+  （`WorkspaceBootstrap.ensureLoaded`）。老用户为空读作 `pro`，不会被动切换；新注册默认 `light`
+  （服务端写，`AuthFlow.register` 在偏好读不到时也按 light）。开关在「设置 → 外观 → 界面模式」和
+  Light 的「我的」tab（`shared/widgets/ui_mode_switch.dart`），切换后直接进该模式的首页。
+- **四 tab 壳** `app/light_routes.dart`：`StatefulShellRoute.indexedStack`，`/home` `/assistant`
+  `/inbox` `/me`，与 `/app` 并列。`authRedirect` 按模式分流：light 下 `/app → /home`、
+  `/app/assistant → /assistant`、`/app/inbox → /inbox`（带 query）；pro 下反向。其余路由（聊天、
+  设置、订购…）两边共用；pro 路由树一字未动。light 下 `WorkspaceShell` 的「返回＝开抽屉」改为回
+  `/home`。`InboxScreen` / `SettingsScreen` / `AssistantScreen` 多一个 `embedded: true`。
+- **首页** `features/light/home_screen.dart`：店名（`extra.first_video.shop_name`，没有则用户名）、
+  积分、入口卡按 `GET /api/light/entries` 的 `kind` 与 `availability` 渲染——灰卡写明缺什么，点了
+  去订购（免费档）/ 云电脑（付费档）/ 授权中心；「省心托管」黑横幅暂指 `/app/cron`（M2.5 前）；
+  「最近做的」按会话分组读 `GET /api/light/recent`，图/视频混排；底部输入条进「对话」tab。
+- **专题页**：样片画廊 `topic_gallery_page.dart`（子类切换 → 「就做这种」→ `POST /api/light/start`；
+  `sample_media` 目前为空，画廊有占位块，无样片的入口展示步骤预览直接开始）→
+  `topic_chat_screen.dart` 复用 `ChatScreen`（新参数 `light: true` + `inputBuilder`）：顶部步骤条
+  按 `question` 卡 `detail.light.step_id` 点亮、不回退；Light 大芯片卡
+  `chat/widgets/cards/light_question_card.dart`（`QuestionDock` 只多一处分发；单选单题点一下即提交）；
+  工具轨迹折叠成一行 `chat/widgets/traces/light_tool_line.dart`（`utils/light_tool_names.dart`
+  是简明模式口吻的中文字典）；上下文输入条 `widgets/light_input_bar.dart`（开场卡 chips + 文本 +
+  拍照/相册，照片走 `/api/assets` 直传后作为附件发送）。
+- **「对话」tab**：个人助理 + 「全部对话」合并列表（`/api/agent/session` 叠 `/api/assistant/sessions`
+  的跟进状态），专题会话带入口小标，按时间排。**「我的」tab**：订购、授权中心、云电脑、资源、
+  设置（push 到根导航器）、界面模式开关、退出。
+- 文案在移动端专用命名空间 `assets/locales-mobile/*/light.json`（`check_locales.sh` 不做 web 镜像比对，但键对齐和中英纯度检查覆盖它；纯度规则与例外见脚本头注释）。
+- 分层说明：`features/light` 依赖 `features/chat`（`ChatScreen`、`pendingProvider`）、
+  `features/billing`（余额）、`features/workspace`（当前工作空间），与 `user_row.dart` /
+  `session_drawer.dart` 既有的跨特性引用同类；`UiMode` 存储放 `shared/`，因为路由、壳、设置和
+  Light 都要读。
+
+### 测试环境的账密登录
+
+联调机 `https://light-test.bossipai.com.cn` 开着 Logto SSO，App 登录页只有 SSO 面板。无人值守
+联调时可用调试开关让 `SsoGate` 显示账密表单（仅 `kDebugMode`，release 不可达，默认关）：
+
+```bash
+cd mobile
+flutter run --dart-define=API_BASE=https://light-test.bossipai.com.cn \
+  --dart-define=WEB_BASE=https://light-test.bossipai.com.cn \
+  --dart-define=AUTH_PASSWORD_FORM=true
+```
+
+然后用 App 注册页建 `light-m2-*` 测试账号（该环境 `/api/auth/register` 可用，新账号默认 `ui_mode=light`）。
+不要在生产 `https://ai.bossipai.com.cn` 用这个开关。
+
 ## 单点登录(Logto)
 
 登录/注册两屏由 `SsoGate` 接管,走 [`logto_dart_sdk`](https://pub.dev/packages/logto_dart_sdk):

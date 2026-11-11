@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:ui' show Locale, PlatformDispatcher;
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart' show FlutterError;
+import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,13 +12,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// The locale JSON files under assets/locales/ are copied VERBATIM from
 /// frontend-v2/src/locales — keep them in sync, never edit independently.
-const supportedLangs = ['zh-CN', 'en-US'];
-const _fallbackLang = 'en-US';
+const supportedLangs = ['zh-CN', 'en-US', 'vi-VN'];
+
+/// Where a language looks when it lacks a key (docs `LIGHT_MODE_I18N_PLAN.md`
+/// §2.2): Vietnamese may show English; Chinese and English look nowhere, so a
+/// missing key shows as the key and the locale gate (`scripts/check_locales`)
+/// is what keeps them complete.
+const langFallbacks = <String, List<String>>{
+  'vi-VN': ['en-US'],
+};
+
+/// The languages whose bundle files may be missing on disk: those with a
+/// fallback, which then serves the whole namespace.
+bool _bundleOptional(String lang) => langFallbacks[lang]?.isNotEmpty ?? false;
+
 const _langStorageKey = 'bossip:lang';
 
 /// Mobile-only namespaces live under assets/locales-mobile/ and are NOT
 /// mirrored from the web bundle (scripts/check_locales.sh ignores them).
-const _mobileNamespaces = ['onboarding'];
+const _mobileNamespaces = ['onboarding', 'first_video', 'light'];
 
 const _namespaces = [
   'admin',
@@ -54,24 +67,45 @@ class I18nBundle {
 
   static Future<I18nBundle> load() async {
     final data = <String, Map<String, dynamic>>{};
+    // The manifest says which files shipped; a missing file is skipped (or
+    // refused) up front, because asking rootBundle for an absent asset reports
+    // its error outside the awaiting future and never resolves it.
+    final shipped = (await AssetManifest.loadFromAssetBundle(
+      rootBundle,
+    )).listAssets().toSet();
     for (final lang in supportedLangs) {
       final byNs = <String, dynamic>{};
       for (final ns in _namespaces) {
-        final raw = await rootBundle.loadString(
-          'assets/locales/$lang/$ns.json',
-        );
-        byNs[ns] = jsonDecode(raw);
+        final raw = await _read('assets/locales/$lang/$ns.json', lang, shipped);
+        if (raw != null) byNs[ns] = jsonDecode(raw);
       }
       for (final ns in _mobileNamespaces) {
-        final raw = await rootBundle.loadString(
+        final raw = await _read(
           'assets/locales-mobile/$lang/$ns.json',
+          lang,
+          shipped,
         );
-        byNs[ns] = jsonDecode(raw);
+        if (raw != null) byNs[ns] = jsonDecode(raw);
       }
       data[lang] = byNs;
     }
     return I18nBundle(data);
   }
+
+  /// A bundle file; null when [lang] may lack it. A language without a
+  /// fallback has nothing to show instead, so its missing file is an error.
+  static Future<String?> _read(
+    String asset,
+    String lang,
+    Set<String> shipped,
+  ) async {
+    if (shipped.contains(asset)) return rootBundle.loadString(asset);
+    if (_bundleOptional(lang)) return null;
+    throw FlutterError('Locale file missing from the bundle: $asset');
+  }
+
+  /// Which namespaces [lang] has on disk (tests; the fallback fills the rest).
+  Set<String> namespacesOf(String lang) => _data[lang]?.keys.toSet() ?? {};
 
   dynamic lookup(String lang, String namespace, String path) {
     dynamic node = _data[lang]?[namespace];
@@ -121,7 +155,7 @@ class I18nState {
     final colon = key.indexOf(':');
     final namespace = colon == -1 ? 'common' : key.substring(0, colon);
     final path = colon == -1 ? key : key.substring(colon + 1);
-    for (final lang in [language, _fallbackLang]) {
+    for (final lang in [language, ...?langFallbacks[language]]) {
       if (count != null) {
         final suffix = count == 1 && lang.startsWith('en') ? '_one' : '_other';
         final plural = bundle.lookup(lang, namespace, '$path$suffix');
@@ -147,9 +181,17 @@ class I18nController extends Notifier<I18nState> {
   String _detectInitialLanguage() {
     final stored = _prefs.getString(_langStorageKey);
     if (stored != null && supportedLangs.contains(stored)) return stored;
-    final device = PlatformDispatcher.instance.locale.toLanguageTag();
-    return device.startsWith('zh') ? 'zh-CN' : 'en-US';
+    return languageForDevice(PlatformDispatcher.instance.locale);
   }
+
+  /// The language a device locale opens in: Chinese and Vietnamese by their
+  /// own, everything else English.
+  static String languageForDevice(Locale locale) =>
+      switch (locale.languageCode) {
+        'zh' => 'zh-CN',
+        'vi' => 'vi-VN',
+        _ => 'en-US',
+      };
 
   void setLanguage(String lang) {
     if (!supportedLangs.contains(lang) || lang == state.language) return;

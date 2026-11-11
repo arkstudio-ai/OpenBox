@@ -77,10 +77,14 @@ class AppearanceController extends Notifier<AppearanceState> {
     if (fontSize != null) {
       next = next.copyWith(fontSize: UiFontSizeX.parse(fontSize));
     }
-    final locale = asString(extra['locale']);
+    // The App's own key first; the web's locale for accounts from before it.
+    final locale = asString(extra['ui_language']) ?? asString(extra['locale']);
     if (locale != null) ref.read(i18nProvider.notifier).setLanguage(locale);
     state = next;
     _persistLocal();
+    // An account that never stored ui_language gets this device's choice, so
+    // pushes and voice calls use the language the person is looking at.
+    if (asString(extra['ui_language']) == null) _syncServer();
   }
 
   void _apply(AppearanceState next) {
@@ -110,6 +114,7 @@ class AppearanceController extends Notifier<AppearanceState> {
             '/api/auth/me/preferences',
             data: {
               'theme': state.theme.wire,
+              'ui_language': ref.read(i18nProvider).language,
               'extra': {
                 'mode': state.mode.wire,
                 'fontSize': state.fontSize.wire,

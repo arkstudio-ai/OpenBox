@@ -18,7 +18,8 @@ export interface LoginBody {
   password: string
 }
 export interface RegisterBody {
-  username: string
+  /** Omitted for an e-mail sign-up: the server derives the account name. */
+  username?: string
   password: string
   email?: string
 }

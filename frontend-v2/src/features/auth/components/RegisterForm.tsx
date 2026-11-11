@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { paths } from "@/shared/router/paths"
-import { useRegister, useCompleteAuth } from "@/features/auth/api/auth"
+import { useRegister, useCompleteAuth, useLogtoConfig } from "@/features/auth/api/auth"
 import { useAuthErrorMessage } from "@/features/auth/lib/errors"
 import { TextField, PasswordField } from "@/features/auth/components/AuthFields"
 
@@ -14,6 +14,8 @@ export function RegisterForm() {
   const register = useRegister()
   const complete = useCompleteAuth()
   const toMessage = useAuthErrorMessage()
+  // Region-separated deployments sign people up by e-mail: no account name to invent.
+  const emailOnly = useLogtoConfig().data?.region_gate === true
 
   const [account, setAccount] = useState("")
   const [email, setEmail] = useState("")
@@ -30,7 +32,7 @@ export function RegisterForm() {
       setError(t("legal:consentRequired"))
       return
     }
-    if (!account.trim() || !password) {
+    if ((emailOnly ? !email.trim() : !account.trim()) || !password) {
       setError(t("errors.required"))
       return
     }
@@ -43,7 +45,7 @@ export function RegisterForm() {
     try {
       stageLegalConsent()
       const result = await register.mutateAsync({
-        username: account.trim(),
+        username: emailOnly ? undefined : account.trim(),
         password,
         email: email.trim() || undefined,
       })
@@ -61,13 +63,15 @@ export function RegisterForm() {
       <p className="text-n700 mt-2 text-sm">{t("registerBody")}</p>
 
       <div className="mt-6">
-        <TextField
-          label={t("accountLabel")}
-          value={account}
-          onChange={setAccount}
-          placeholder={t("accountPlaceholder")}
-          autoComplete="username"
-        />
+        {!emailOnly && (
+          <TextField
+            label={t("accountLabel")}
+            value={account}
+            onChange={setAccount}
+            placeholder={t("accountPlaceholder")}
+            autoComplete="username"
+          />
+        )}
         <TextField
           label={t("emailLabel")}
           value={email}

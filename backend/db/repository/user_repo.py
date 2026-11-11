@@ -1,7 +1,7 @@
 """PostgreSQL implementation of IUserRepo."""
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from db.base import get_db_session
 from db.models.user import User
@@ -94,6 +94,14 @@ class PgUserRepo:
             )
             user = result.scalar_one_or_none()
             return _to_dict(user) if user else None
+
+    async def get_by_email(self, email: str) -> dict | None:
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(User).where(func.lower(User.email) == email.lower(), User.is_deleted == False)
+            )
+            row = result.scalars().first()
+            return _to_dict(row) if row else None
 
     async def get_by_username(self, username: str) -> dict | None:
         async with get_db_session() as session:

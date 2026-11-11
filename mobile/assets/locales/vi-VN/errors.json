@@ -42,5 +42,9 @@
   "ASSISTANT_TASK_NOT_RUNNING": "Việc này tạm thời chưa nhận được tin nhắn. Nếu việc đang tạm dừng, hãy cho chạy tiếp từ phiếu việc rồi mới gửi tin nhắn.",
   "ASSISTANT_TASK_HELD": "Việc này đang tạm dừng, đã dừng hoặc tạm không dùng được. Hãy xem trạng thái mới nhất trên phiếu việc trước khi tiếp tục.",
   "ASSISTANT_EFFECT_UNRESOLVED": "Lúc việc dừng lại, có một bước chưa kịp xác nhận kết quả. Hãy kiểm tra rồi bấm \"Tôi đã kiểm tra — tiếp tục\", sau đó gửi lại tin nhắn này.",
-  "ASSISTANT_DUPLICATE_TASK": "Việc này đã có một phiếu việc đang làm rồi. Hãy tiếp tục trong phiếu việc đó."
+  "ASSISTANT_DUPLICATE_TASK": "Việc này đã có một phiếu việc đang làm rồi. Hãy tiếp tục trong phiếu việc đó.",
+  "AUTH_EMAIL_REQUIRED": "Vui lòng nhập địa chỉ e-mail.",
+  "AUTH_EMAIL_INVALID": "Địa chỉ e-mail không hợp lệ.",
+  "AUTH_EMAIL_EXISTS": "E-mail này đã có tài khoản. Vui lòng đăng nhập.",
+  "PAYMENT_REGION_UNAVAILABLE": "Khu vực của bạn chưa hỗ trợ thanh toán trực tuyến. Hãy liên hệ quản trị viên."
 }

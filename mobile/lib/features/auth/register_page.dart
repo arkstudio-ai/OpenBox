@@ -9,6 +9,7 @@ import '../../shared/i18n/i18n.dart';
 import '../../shared/legal/legal_links.dart';
 import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
+import 'api/logto.dart';
 import 'state/auth_flow.dart';
 import 'widgets/auth_fields.dart';
 import 'widgets/auth_shell.dart';
@@ -40,13 +41,20 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     super.dispose();
   }
 
+  /// Region-separated servers sign people up by e-mail alone.
+  bool _emailOnly() => ref.read(logtoSsoProvider).value?.regionGate == true;
+
   Future<void> _submit() async {
     final i18n = ref.read(i18nProvider);
     if (!_accepted) {
       setState(() => _error = i18n.t('legal:consentRequired'));
       return;
     }
-    if (_account.text.trim().isEmpty || _password.text.isEmpty) {
+    final emailOnly = _emailOnly();
+    if ((emailOnly
+            ? _email.text.trim().isEmpty
+            : _account.text.trim().isEmpty) ||
+        _password.text.isEmpty) {
       setState(() => _error = i18n.t('auth:errors.required'));
       return;
     }
@@ -62,7 +70,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
       await ref
           .read(authFlowProvider)
           .register(
-            _account.text.trim(),
+            emailOnly ? '' : _account.text.trim(),
             _password.text,
             email: _email.text.trim(),
             acceptedLegal: _accepted,
@@ -108,13 +116,15 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
           style: TextStyle(fontSize: FontSizes.sm, color: t.n600, height: 1.55),
         ),
         const SizedBox(height: 20),
-        AuthTextField(
-          label: i18n.t('auth:accountLabel'),
-          controller: _account,
-          placeholder: i18n.t('auth:accountPlaceholder'),
-          textInputAction: TextInputAction.next,
-        ),
-        const SizedBox(height: 14),
+        if (!_emailOnly()) ...[
+          AuthTextField(
+            label: i18n.t('auth:accountLabel'),
+            controller: _account,
+            placeholder: i18n.t('auth:accountPlaceholder'),
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 14),
+        ],
         AuthTextField(
           label: i18n.t('auth:emailLabel'),
           controller: _email,

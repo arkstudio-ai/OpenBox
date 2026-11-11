@@ -46,6 +46,7 @@ class _SsoGateState extends ConsumerState<SsoGate> {
   bool _busy = false;
   bool _accepted = false;
   bool _failed = false;
+  bool _useEmail = false;
 
   Future<void> _start(LogtoSso sso) async {
     if (_busy || !_accepted) return;
@@ -91,7 +92,13 @@ class _SsoGateState extends ConsumerState<SsoGate> {
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       ),
       error: (_, _) => _unavailable(context),
-      data: (config) => config == null || (kDebugMode && _forcePasswordForm)
+      // Outside mainland China the e-mail form is the default, and anyone may
+      // ask for it from the SSO panel.
+      data: (config) =>
+          config == null ||
+              config.emailFirst ||
+              _useEmail ||
+              (kDebugMode && _forcePasswordForm)
           ? widget.child
           : _panel(context, config),
     );
@@ -206,6 +213,15 @@ class _SsoGateState extends ConsumerState<SsoGate> {
           ),
         ],
         const SizedBox(height: 16),
+        GestureDetector(
+          key: const Key('sso-use-email'),
+          onTap: () => setState(() => _useEmail = true),
+          child: Text(
+            i18n.t(register ? 'auth:useEmailRegister' : 'auth:useEmailLogin'),
+            style: TextStyle(fontSize: FontSizes.sm, color: t.a700),
+          ),
+        ),
+        const SizedBox(height: 12),
         GestureDetector(
           key: const Key('sso-switch'),
           onTap: () => context.go(

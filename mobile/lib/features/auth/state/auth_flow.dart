@@ -47,7 +47,8 @@ class AuthFlow {
         .post<Map<String, dynamic>>(
           '/api/auth/register',
           data: {
-            'username': username,
+            // Empty for an e-mail sign-up: the server derives the name.
+            if (username.isNotEmpty) 'username': username,
             'password': password,
             if (email != null && email.isNotEmpty) 'email': email,
           },

@@ -70,7 +70,7 @@ export interface UsageEntry {
     tier?: string
     resolution?: string
     images?: number
-  items?: number
+    items?: number
   }
   total_tokens: number
   credits: string | null
@@ -204,7 +204,11 @@ export function usePaymentProviders() {
   return useQuery({
     queryKey: [...scope.key, "providers"],
     enabled: scope.enabled,
-    queryFn: () => http.get<{ items: PaymentProvider[] }>("/api/billing/providers", scope.options),
+    queryFn: () =>
+      http.get<{ items: PaymentProvider[]; region?: "cn" | "intl"; reason?: string }>(
+        "/api/billing/providers",
+        scope.options,
+      ),
   })
 }
 

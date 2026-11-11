@@ -1,7 +1,9 @@
 import 'package:bossip_mobile/app/workspace_shell.dart';
 import 'package:bossip_mobile/features/workspace/state/workspace_store.dart';
+import 'package:bossip_mobile/shared/api/ui_mode_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
+import 'package:bossip_mobile/shared/models/ui_mode.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -22,7 +24,55 @@ class _OfflineWsClient extends AgentWsClient {
   Future<void> connect() async {}
 }
 
+class _LightMode extends UiModeController {
+  @override
+  UiModeState build() =>
+      const UiModeState(userId: 'u1', mode: UiMode.light, loaded: true);
+}
+
 void main() {
+  testWidgets('Light: a chat has a back arrow, not the drawer', (tester) async {
+    SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
+    final prefs = await SharedPreferences.getInstance();
+    final bundle = (await tester.runAsync(I18nBundle.load))!;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+          workspaceProvider.overrideWith(_EmptyWorkspace.new),
+          wsClientProvider.overrideWithValue(_OfflineWsClient()),
+          uiModeProvider.overrideWith(_LightMode.new),
+        ],
+        child: MaterialApp(
+          theme: ThemeData(
+            extensions: [
+              BossipTokens.resolve(BossipThemeName.default_, Brightness.light),
+            ],
+          ),
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const WorkspaceShell(child: Text('chat')),
+                ),
+              ),
+              child: const Text('open chat'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open chat'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.menu), findsNothing);
+    expect(tester.widget<Scaffold>(find.byType(Scaffold)).drawer, isNull);
+
+    await tester.tap(find.byKey(const Key('light-chat-back')));
+    await tester.pumpAndSettle();
+    expect(find.text('chat'), findsNothing);
+    expect(find.text('open chat'), findsOneWidget);
+  });
+
   testWidgets(
     'system back pops overlays and child pages, then opens the menu',
     (tester) async {

@@ -9,7 +9,22 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-07 00:05 `20261107-turnorder-986a21ab`（简明模式对话轮列表「从旧到新」开关）
+## 当前应用版本：2026-11-12 22:02 `20261112-dispatch-0b2a5c47`（语音交办改造 M0–M4，新模式默认关）
+
+- PR [#180](https://github.com/arkstudio-ai/OpenBox/pull/180)（含叠在其上的 [#181](https://github.com/arkstudio-ai/OpenBox/pull/181)）合并至 `main@0b2a5c47`，方案与逐轮记录见 [VOICE_DISPATCH_PLAN_20261112.md](VOICE_DISPATCH_PLAN_20261112.md) 第 5 节。同时带上了此前已合并未发布的 #178（地区分流，`REGION_GATE` 未配置即不生效）的后端代码；#179 只改 App。
+- **只发后端与轨迹 worker**，前端仍是 `openbox-frontend-v2:20261111-light-794509e3`。后端 `openbox-backend:20261112-dispatch-0b2a5c47`：本机 buildx amd64 从 `main` 同内容的干净归档全量构建（不叠补丁），经 `oss://bossip/_deploy-tmp/20261112-dispatch-0b2a5c47/` 中转，gw2 `sha256sum -c` 后装载。切换前 `docker diff` 确认线上容器没有手工改动的源码。
+- 迁移 `pm39f0a1b2c3 → pn4a0b1c2d3e`（新增空表 `voice_lines`，容器启动时自动执行）。**配置未改**：`voice.dispatch_mode=model`、`dispatch_server_users` 为空、`voice.line_log=false`，所以通话的交办判定与播报仍是原来的路径，逐句记录一行不写。
+- 对所有入口立即生效、不受开关控制的三处：① 助理对同一任务的新交办会带上被它取代的、还没开始的旧交办内容（原来直接取代）；② 成片不再因为任务在等卡或要求已改而永远不出现（等卡的等卡处理完再交回；要求已改的在对话空闲时直接贴进对话）；③ 来电轮次的指令多了一段"电话里点不了链接，该派就直接派"，Light 的助理规则改为引用它。
+- 切换 `releases/20261112-dispatch-0b2a5c47/activate.sh`：文件锁 → 空闲门禁一次即 0（无在跑轮次、无通话、3 分钟内无用户消息）→ 配置快照 + 业务库 dump 271M（`backups/20261112-dispatch-0b2a5c47/`，`pg_restore -l` 校验）→ backend → worker，均 healthy，约 14:02 UTC 完成。失败回滚含"删 `voice_lines` 并把 alembic 版本改回"。
+- 验证：公网首页与 Logto 配置 200；容器内读配置为上面三项默认值；`voice_lines` 0 行；backend 日志 10 分钟内无 traceback / ERROR；在线上容器里用线上的模型配置跑判定测速一轮（`scripts/voice_route_bench.py --prompts route --rounds 1`）31/32，p50 0.57s / p90 0.80s，说明 `voice.route_model` 在生产可用。**没有做真实通话**；新模式（`dispatch_mode=server`）在任何环境都还没有打过一通电话。
+- 开新模式：在 `config/openbox.json` 的 `voice` 里加 `"dispatch_server_users": ["<用户 id>"]`（单个账号）或 `"dispatch_mode": "server"`（全部），重启 backend；改回即关。逐句记录另由 `"line_log": true` 打开，开之前要先定保留期限。
+- 回滚：恢复 `releases/20261112-dispatch-0b2a5c47/before/docker-compose.override.yml`（两项回 `20261111-light-794509e3`），库里执行 `drop table voice_lines; update alembic_version set version_num='pm39f0a1b2c3';`，再 `docker compose up -d --no-deps backend trajectory-worker`。AWS、高德、gw3 未发布。
+
+## 历史应用版本：2026-11-11 16:46 `20261111-light-794509e3`（Light 线并入 main，首个从 main 干净全量构建的镜像）
+
+- PR #176（Light）与 #177（managed cache 合回 main）合并至 `main@794509e3` 后全量构建前后端；迁移 `ph95b6c7d8e9 → pm39f0a1b2c3`。当时未写入本文件，此条为 2026-11-12 补记，细节以 gw2 `releases/20261111-light-794509e3/` 与 `backups/20261111-light-794509e3/` 为准。
+
+## 历史应用版本：2026-11-07 00:05 `20261107-turnorder-986a21ab`（简明模式对话轮列表「从旧到新」开关）
 
 - PR [#156](https://github.com/arkstudio-ai/OpenBox/pull/156) 合并至 `main@986a21ab`。对话轮列表默认最新在上，读对话时序是反的；`GET /api/admin/trajectories/users/{id}/turns` 新增 `order=asc`，翻页由服务端反转，前端筛选区加「从旧到新」开关（URL `order=asc`）。无迁移、无配置变更。
 - 后端补丁 **2 个文件**：以线上 `20261104-gatefix-538e43b6` 为底 COPY `trajectory/lite.py`、`trajectory/worker/routes.py`（`releases/20261107-turnorder-986a21ab/patch/`）。切换前核对：这两个文件线上与 `538e43b6` 逐字节一致；`build.sh` 核对镜像内文件一致、`/app` 其余文件与底镜像清单一致、模块可导入。**线上其余未入库文件原样保留。**

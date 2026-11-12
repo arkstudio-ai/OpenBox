@@ -327,8 +327,12 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         # known), so the cap check leaves it out and, still under the session's
         # cap lock, prices it: the next guard of this session counts it in
         # flight at this quote until settle_compose writes the usage row.
-        async with _credit_cap.reserve(ctx.session_id, step="compose", credits=_price.credits,
-                                       note=f"{compiled.duration_sec}s {_price.tier}", exclude_job_id=job.id):
+        from billing.media import hold_for_submit as _hold_for_submit
+
+        async with _hold_for_submit(ctx.session_id, credits=_price.credits, step="视频合成",
+                                    exclude_job_id=job.id), \
+                _credit_cap.reserve(ctx.session_id, step="compose", credits=_price.credits,
+                                    note=f"{compiled.duration_sec}s {_price.tier}", exclude_job_id=job.id):
             await vp._update_job(job.id, request_data={
                 "timeline": resolved,
                 "ims_timeline": compiled.timeline,

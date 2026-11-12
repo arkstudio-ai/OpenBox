@@ -61,13 +61,112 @@ CHECK += (
     "不要重写或复述授权原文，后台会根据这个来源标识绑定真实原话。其余字段遵守上述 JSON 结构。")
 
 
+# Asked before the reply, not after it (docs/VOICE_DISPATCH_PLAN_20261112.md §4.1): one short four-way
+# question. Measured 2026-11-12 on the incident utterances with qwen3.8-flash: p50 0.55 s, p90 0.82 s,
+# 77/81 right; the long check above took 0.98 / 1.51 s on the same model and 2.6 / 4.1 s on the summary model.
+ROUTES = ("chat", "lookup", "answer", "dispatch", "card")
+ROUTE_TIMEOUT_SECONDS = 2.5
+ROUTE = (
+    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|answer|dispatch|card\",\"card\":\"卡片标识或空\"}。\n"
+    "dispatch：用户要人去办事——创建交付物、修改或继续已有任务、催执行、外部操作、定时安排、"
+    "要求新建对话或把谈好的内容递交出去；把决定权交给你（“你定吧”）且前文是在交办，也算。\n"
+    "lookup：只是问用户自己这边的现状——任务进度、是否已提交、余额、日程、云电脑和发布渠道的状态。\n"
+    "answer：一个要查一下外面的实时信息或读一下文件才能答、但一两步就能答完的问题——天气、汇率、当天的新闻、"
+    "某个文件里写了什么。不产出交付物，不改任何任务。解释名词、讲道理、给建议不用查，是 chat。\n"
+    "card：open_cards 里有卡片，且这句话本身明确选了其中一个选项。改要求、提问、犹豫、暂缓都不是 card。\n"
+    "chat：其余——闲聊、解释、澄清、讨论方案、假设性提问、应声、调整说话方式。\n"
+    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。"
+    "card 字段：route 为 card 时填所选卡片的标识；route 为 dispatch 且这句话是在改 open_cards 里某一张卡上的方案"
+    "（换档位、改时长、改文案、换素材等）时填那张卡的标识；是另一件事或看不出针对哪张卡就填空字符串。"
+    "context_withheld 为 true 时只依据 latest_user 判断，指代不明就选 chat。")
+
+
+CLAIM = (
+    "电话里前台刚对用户说了一句话。判断两件事，只输出一个 JSON 对象：{\"claims\":true|false,\"work\":true|false}。\n"
+    "claims：assistant_said 是否在告诉用户，他这次要办的事已经交出去、已提交、已安排、正在做或已经做好。"
+    "说“还没交”“我现在去交”“要不要我安排”、转述查到的别的任务的进度、泛泛地说自己能做什么，都不算。\n"
+    "work：user_words 是否是要人去办事（创建、修改、继续、催办、发布、定时等）；只是询问、闲聊或为空则为 false。")
+
+
+async def claimed(said: str, words: str) -> dict:
+    """Whether a spoken reply told the user their work was handed over, and whether their words asked for work
+    (plan §4.2 说错即更正). One short question to the route model; anything but the two booleans is an error."""
+    from core.config import get_config
+    from voice.summary import complete
+
+    answer = await complete(get_config().voice.route_model, CLAIM,
+                            json.dumps({"assistant_said": said, "user_words": words}, ensure_ascii=False),
+                            ROUTE_TIMEOUT_SECONDS)
+    value = json.loads(_unfenced(answer))
+    if not isinstance(value, dict) or not all(isinstance(value.get(key), bool) for key in ("claims", "work")):
+        raise ValueError("invalid claim reading")
+    return {"claims": value["claims"], "work": value["work"]}
+
+
 @dataclass(frozen=True)
 class HandoffRequest:
     request: str
 
 
+@dataclass(frozen=True)
+class QuickAnswer:
+    """A question the assistant answers within its own turn: handed over, no task card (plan §4.5)."""
+
+
+@dataclass(frozen=True)
+class Revision:
+    """Work to hand over that changes the plan on a task card the call showed (its request id)."""
+    request_id: str
+
+
+async def route(words: str, context: str, request_words: tuple[str, ...] = (), cards: tuple = (),
+                withheld: bool = False, task_state: tuple = (), repair: bool = False, questions: tuple = ()):
+    """``required``'s answers, from the short question: True for work to hand over (a ``Revision`` when it
+    changes a task card the call showed), False for talk or a quick read, the user's choice for an assistant
+    card the call showed (settled by ``required``'s own binding).
+
+    ``questions``: the task cards the call showed. A choice on one of them is the front desk's own
+    ``task_question_answer`` and is left to it (False); forwarded as a request it would not answer the card.
+    """
+    from core.config import get_config
+    from voice.summary import complete
+
+    model = get_config().voice.route_model
+    payload = {"context": context, "latest_user": words}
+    if withheld:
+        payload["context_withheld"] = True
+    if request_words:
+        payload["same_request_user_words"] = list(request_words)
+    task_cards = {item["request_id"]: item for item in questions if item.get("request_id")}
+    if cards or task_cards:
+        payload["open_cards"] = [{"card": card["card"], "title": card.get("title", ""),
+                                  "options": [{"id": option["id"], "label": option["label"]}
+                                              for option in card.get("options") or []]} for card in cards] + [
+            {"card": identity, "title": item.get("conversation", ""),
+             "questions": [{"question": (question.get("question") or question.get("header") or "")[:200],
+                            "options": [str(option)[:80] for option in question.get("options") or []][:8]}
+                           for question in (item.get("questions") or [])[:4]]}
+            for identity, item in task_cards.items()]
+    answer = await complete(model, ROUTE, json.dumps(payload, ensure_ascii=False), ROUTE_TIMEOUT_SECONDS)
+    value = json.loads(_unfenced(answer))
+    chosen = value.get("route") if isinstance(value, dict) else None
+    if chosen not in ROUTES:
+        raise ValueError("invalid route")
+    named = value.get("card") if isinstance(value.get("card"), str) else ""
+    if chosen == "card":
+        if named in task_cards or not cards:
+            return False
+        # Which card and option, bound to the user's own words and the options actually shown.
+        return await required(words, context, request_words, cards, withheld, task_state, model=model)
+    if chosen == "dispatch" and named in task_cards:
+        return Revision(named)
+    if chosen == "answer":
+        return QuickAnswer()
+    return chosen == "dispatch"
+
+
 async def required(words: str, context: str, request_words: tuple[str, ...] = (), cards: tuple = (),
-                   withheld: bool = False, task_state: tuple = (), repair: bool = False):
+                   withheld: bool = False, task_state: tuple = (), repair: bool = False, model: str | None = None):
     """A request/True: missed handoff; False: none; a dict: the user's open-card choice.
 
     ``withheld``: the utterance's read policy kept everything but its own words
@@ -89,7 +188,7 @@ async def required(words: str, context: str, request_words: tuple[str, ...] = ()
                                               for option in card.get("options") or []]} for card in cards]
     instructions = CHECK + ("上次输出未通过结构或用户来源校验。重新根据同一份用户证据判断；"
         "只输出一个 JSON 对象，使用合法 authorization_source，不要额外字段或解释。" if repair else "")
-    answer = await complete(get_config().voice.summary_model, instructions,
+    answer = await complete(model or get_config().voice.summary_model, instructions,
         json.dumps(payload, ensure_ascii=False), TIMEOUT_SECONDS)
     value = json.loads(_unfenced(answer))
     if isinstance(value, dict) and "authorization_source" in value:
@@ -169,8 +268,11 @@ def _unfenced(answer: str) -> str:
 
 
 class HandoffGuard:
-    def __init__(self, bridge, checker):
+    def __init__(self, bridge, checker, *, early: bool = False):
         self.bridge, self.checker = bridge, checker
+        # voice.dispatch_mode=server: checked as soon as the words are heard, so work is handed over by the
+        # server whether or not the reply being spoken remembers to; otherwise only after a reply that did not.
+        self.early = early
         self.checked: set[str] = set()
         self.required: set[str] = set()
         self.attempted: set[str] = set()
@@ -180,6 +282,8 @@ class HandoffGuard:
         self.pending: tuple[str, str] | None = None  # source item, recover / failed
         self.refs: dict[str, object] = {}
         self.requests: dict[str, str] = {}
+        self.revisions: dict[str, str] = {}  # source item → the task card its words change (server dispatch)
+        self.quick: set[str] = set()         # source items handed over as a question to answer within the turn
         self.responses: dict[str, str] = {}
 
     def current(self, source: str) -> bool:
@@ -187,10 +291,11 @@ class HandoffGuard:
 
     def warm(self) -> None:
         """Warm the check's connection while the user is still speaking."""
-        if self.checker is required:
+        if self.checker is required or self.checker is route:
             from core.config import get_config
             from voice.summary import warm
-            self.bridge._spawn(warm(get_config().voice.summary_model))
+            voice = get_config().voice
+            self.bridge._spawn(warm(voice.route_model if self.checker is route else voice.summary_model))
 
     def heard(self, source: str) -> None:
         if len(self.finished | self.attempted | self.checked) > 128:
@@ -203,9 +308,11 @@ class HandoffGuard:
             self.required.intersection_update(keep)
             self.refs = {key: value for key, value in self.refs.items() if key in keep}
             self.requests = {key: value for key, value in self.requests.items() if key in keep}
+            self.revisions = {key: value for key, value in self.revisions.items() if key in keep}
+            self.quick.intersection_update(keep)
             self.responses = {key: value for key, value in self.responses.items()
                               if value.split(":", 1)[-1] in keep}
-        if source in self.finished:
+        if self.early or source in self.finished:
             self.check(source)
 
     def response_done(self, source: str, kind: str | None, completed: bool) -> None:
@@ -239,13 +346,19 @@ class HandoffGuard:
         context = "\n".join(f"{line.role}: {line.text}" for line in b.spoken.context_lines[-20:])
         context = (b.keeper.summary + "\n" + context)[-10000:]
         earlier = tuple(b._request_words(source)[:-1])  # the latest one is ``words`` itself
-        cards = tuple(card for card in b.desk.call_context(b.lang) if card.get("kind_of") == "assistant_card")
-        b._spawn(self._check(source, words, context, earlier, cards))
+        shown = b.desk.call_context(b.lang)
+        cards = tuple(card for card in shown if card.get("kind_of") == "assistant_card")
+        # Task cards go to the early route only: it leaves a choice on one to the front desk's own tool and
+        # binds a change to the card it changes; the after-reply check never saw them.
+        questions = tuple(card for card in shown if card.get("kind_of") != "assistant_card") if self.early else ()
+        b._spawn(self._check(source, words, context, earlier, cards, questions=questions))
 
     async def _check(self, source: str, words: str, context: str, earlier: tuple = (), cards: tuple = (),
-                     withheld: dict | None = None) -> None:
+                     withheld: dict | None = None, questions: tuple = ()) -> None:
         extra = (earlier,) if earlier else ()
         shown = {"cards": cards} if cards else {}
+        if questions:
+            shown["questions"] = questions
         shown.update(withheld or {})
         needed = None
         for attempt in (1, 2):
@@ -293,6 +406,10 @@ class HandoffGuard:
             if needed and self.current(source) and source not in self.attempted:
                 if isinstance(needed, HandoffRequest):
                     self.requests[source] = needed.request
+                elif isinstance(needed, Revision):
+                    self.revisions[source] = needed.request_id
+                elif isinstance(needed, QuickAnswer):
+                    self.quick.add(source)
                 self.required.add(source)
                 log.info("missed handoff call=%s source=%s", self.bridge.call_id, source)
                 # Another spoken reminder can itself omit the tool, be held by

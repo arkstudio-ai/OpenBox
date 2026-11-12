@@ -6,7 +6,7 @@ so it has to come back in about two seconds. This measures candidates on the
 utterances behind the plan (scripts/voice_dispatch_scenarios.json), two ways:
 
 - ``check``: today's after-the-reply handoff check (voice/handoff.py ``required``), unchanged;
-- ``route``: one short four-way question (chat / lookup / dispatch / card), the M1 candidate.
+- ``route``: one short five-way question (chat / lookup / answer / dispatch / card), the M1 candidate.
 
 Read-only and offline from the call: no audio, no task is created. Run from
 ``backend/`` with the server's environment (model routes and keys resolve as
@@ -33,16 +33,21 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 SCENARIOS = Path(__file__).resolve().parent / "voice_dispatch_scenarios.json"
-ROUTES = ("chat", "lookup", "dispatch", "card")
+ROUTES = ("chat", "lookup", "answer", "dispatch", "card")
 TIMEOUT_SECONDS = 15.0
 ROUTE = (
-    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|dispatch|card\"}。\n"
+    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|answer|dispatch|card\",\"card\":\"卡片标识或空\"}。\n"
     "dispatch：用户要人去办事——创建交付物、修改或继续已有任务、催执行、外部操作、定时安排、"
     "要求新建对话或把谈好的内容递交出去；把决定权交给你（“你定吧”）且前文是在交办，也算。\n"
-    "lookup：只是问现状——进度、是否已提交、余额、日程、天气这类查一下就能答的。\n"
+    "lookup：只是问用户自己这边的现状——任务进度、是否已提交、余额、日程、云电脑和发布渠道的状态。\n"
+    "answer：一个要查一下外面的实时信息或读一下文件才能答、但一两步就能答完的问题——天气、汇率、当天的新闻、"
+    "某个文件里写了什么。不产出交付物，不改任何任务。解释名词、讲道理、给建议不用查，是 chat。\n"
     "card：open_cards 里有卡片，且这句话本身明确选了其中一个选项。改要求、提问、犹豫、暂缓都不是 card。\n"
     "chat：其余——闲聊、解释、澄清、讨论方案、假设性提问、应声、调整说话方式。\n"
-    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。")
+    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。"
+    "card 字段：route 为 card 时填所选卡片的标识；route 为 dispatch 且这句话是在改 open_cards 里某一张卡上的方案"
+    "（换档位、改时长、改文案、换素材等）时填那张卡的标识；是另一件事或看不出针对哪张卡就填空字符串。"
+    "context_withheld 为 true 时只依据 latest_user 判断，指代不明就选 chat。")
 
 
 def load(path: Path = SCENARIOS) -> list[dict]:
@@ -71,7 +76,8 @@ def route_of_check(value) -> str:
 
 
 def agrees(prompt: str, got: str, expect: str) -> bool:
-    return got == expect or (prompt == "check" and got == "direct" and expect in ("chat", "lookup"))
+    return got == expect or (prompt == "check" and (got == "direct" and expect in ("chat", "lookup")
+                                                    or got == "handoff" and expect == "answer"))
 
 
 async def ask(prompt: str, model: str, case: dict) -> str:
@@ -91,7 +97,8 @@ async def ask(prompt: str, model: str, case: dict) -> str:
     if case["cards"]:
         payload["open_cards"] = [{"card": card["card"], "title": card["title"], "options": card["options"]}
                                  for card in case["cards"]]
-    answer = await complete(model, ROUTE, json.dumps(payload, ensure_ascii=False), TIMEOUT_SECONDS)
+    answer = await complete(model, getattr(handoff, "ROUTE", ROUTE), json.dumps(payload, ensure_ascii=False),
+                            TIMEOUT_SECONDS)
     route = json.loads(handoff._unfenced(answer)).get("route")
     return route if route in ROUTES else f"invalid:{str(route)[:20]}"
 

@@ -411,6 +411,13 @@ class VoiceConfig(BaseModel):
     summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
+    # Who decides that the user's words are work to hand over (docs/VOICE_DISPATCH_PLAN_20261112.md §4.1).
+    # model: the realtime model calls assistant_ask, checked only after a reply that did not. server: every
+    # utterance is routed by route_model as it is heard and work is handed over by the server itself.
+    # dispatch_server_users puts single users on "server" while the mode stays "model".
+    dispatch_mode: Literal["model", "server"] = "model"
+    dispatch_server_users: list[str] = Field(default_factory=list)
+    route_model: str = "openai/qwen3.8-flash"
     # Keep each call's lines (user, assistant, notes, interruptions) in voice_lines for the dispatch metrics
     # (voice/metrics.py). Off: nothing is written and those metrics report "not measured".
     line_log: bool = False

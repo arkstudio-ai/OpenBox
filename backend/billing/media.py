@@ -16,11 +16,13 @@ change with a ``source`` next to it, like every model rate.
 """
 from __future__ import annotations
 
+import asyncio
 import math
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, AsyncIterator
 
 from billing.pricing import PRECISION, catalogue, cost_fx, cost_snapshot
 from billing.service import BillingError, billing_mode, lock_balance, post_ledger
@@ -351,6 +353,121 @@ async def precheck_compose(session_id: str | None) -> None:
         await ensure_period_allowance(db, account, datetime.now(timezone.utc))
         if account.balance <= 0:
             raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+
+
+#: How long an unsettled job keeps holding credits. Generation and compose
+#: finish in minutes; a job stuck longer must not lock a workspace forever.
+HOLD_WINDOW = timedelta(hours=24)
+#: Job states whose charge has either landed or will never come.
+_NO_HOLD_STATUSES = ("completed", "failed", "cancelled", "transfer_failed")
+
+
+def job_hold(job: Any) -> Decimal:
+    """Credits an unsettled job will be charged, from what was saved on it at submission; 0 if unknown."""
+    request = job.request_data if isinstance(job.request_data, dict) else {}
+    raw = request.get("balance_hold")
+    if raw is None:
+        quote = request.get("billing_quote")
+        raw = quote.get("credits") if isinstance(quote, dict) else None
+    try:
+        amount = Decimal(str(raw)) if raw is not None else Decimal(0)
+    except ArithmeticError:
+        return Decimal(0)
+    return amount if amount.is_finite() and amount > 0 else Decimal(0)
+
+
+async def workspace_in_flight(db, workspace_id: str, *, exclude_job_id: str | None = None) -> Decimal:
+    """Credits of this workspace's paid jobs that were submitted but are not settled yet.
+
+    Generation and compose are charged when the job finishes, minutes after
+    submit, and the video skill submits every shot of a round at once. So
+    the balance alone says nothing about what is already committed: 11-11 a
+    workspace with 252 credits passed seven concurrent 72-credit submits.
+    """
+    from sqlalchemy import select
+
+    from billing.credit_cap import IN_FLIGHT_JOB_KINDS, SETTLE_KEY_PREFIX
+    from db.models.billing import UsageEvent
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - HOLD_WINDOW
+    jobs = (await db.execute(
+        select(VideoJob).join(Session, Session.id == VideoJob.session_id).where(
+            Session.workspace_id == workspace_id, VideoJob.created_at >= since,
+            VideoJob.kind.in_(IN_FLIGHT_JOB_KINDS), VideoJob.status.not_in(_NO_HOLD_STATUSES))
+    )).scalars().all()
+    jobs = [job for job in jobs if job.id != exclude_job_id]
+    if not jobs:
+        return Decimal(0)
+    keys = [SETTLE_KEY_PREFIX[job.kind] + job.id for job in jobs]
+    settled = set((await db.execute(
+        select(UsageEvent.idempotency_key).where(UsageEvent.idempotency_key.in_(keys)))).scalars().all())
+    return sum((job_hold(job) for job in jobs if SETTLE_KEY_PREFIX[job.kind] + job.id not in settled), Decimal(0))
+
+
+def _credits_text(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.01")), "f")
+
+
+_hold_locks: dict[str, asyncio.Lock] = {}
+_hold_users: dict[str, int] = {}
+
+
+@asynccontextmanager
+async def _workspace_lock(workspace_id: str) -> AsyncIterator[None]:
+    """Serialise submits of one workspace in this process (the balance row lock does it across processes)."""
+    lock = _hold_locks.setdefault(workspace_id, asyncio.Lock())
+    _hold_users[workspace_id] = _hold_users.get(workspace_id, 0) + 1
+    try:
+        async with lock:
+            yield
+    finally:
+        _hold_users[workspace_id] -= 1
+        if _hold_users[workspace_id] <= 0:
+            _hold_users.pop(workspace_id, None)
+            _hold_locks.pop(workspace_id, None)
+
+
+@asynccontextmanager
+async def hold_for_submit(session_id: str | None, *, credits: Decimal | None, step: str,
+                          exclude_job_id: str | None = None, already_admitted: bool = False) -> AsyncIterator[None]:
+    """Admit one paid submit only if the balance still covers it after everything in flight.
+
+    Enforce mode only. Holds the workspace's balance row lock until the body
+    has written (or priced) the job row, so concurrent submits of one
+    workspace, in any process, are checked one after another and each sees
+    the jobs admitted before it. ``credits`` None (no price known up front)
+    only requires a positive balance, the old rule. ``already_admitted`` is
+    an idempotent re-submit of an existing job: nothing new is bought.
+    """
+    if billing_mode() != "enforce" or already_admitted:
+        yield
+        return
+    from db.base import get_db_session
+    from db.models.session import Session
+
+    async with get_db_session() as db:
+        session = await db.get(Session, session_id or "")
+    if session is None:
+        raise BillingError("BILLING_SESSION_REQUIRED", "A billable session is required")
+    async with _workspace_lock(session.workspace_id), get_db_session() as db:
+        account = await lock_balance(db, session.workspace_id)
+        from billing.subscriptions import ensure_period_allowance
+        await ensure_period_allowance(db, account, datetime.now(timezone.utc))
+        if account.balance <= 0:
+            raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
+        need = Decimal(credits) if credits is not None and credits > 0 else Decimal(0)
+        in_flight = await workspace_in_flight(db, session.workspace_id, exclude_job_id=exclude_job_id)
+        available = account.balance - in_flight
+        if available < need:
+            raise BillingError(
+                "INSUFFICIENT_CREDITS",
+                f"积分不足：这一步（{step}）预计 {_credits_text(need)} 积分，当前余额 {_credits_text(account.balance)}，"
+                f"进行中的任务还将扣 {_credits_text(in_flight)}，可用 {_credits_text(max(available, Decimal(0)))}。"
+                "未提交、未扣费。请先充值，或减少镜头数/时长/清晰度后再提交。",
+            )
+        yield
 
 
 async def settle_compose(job, asset, *, width: int, height: int, duration_sec: float | None) -> Decimal | None:

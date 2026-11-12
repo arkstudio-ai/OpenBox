@@ -2614,6 +2614,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
+            if _quote.credits is not None:
+                # What this job holds against the workspace balance until it
+                # settles (billing.media.hold_for_submit). Not the charge itself.
+                request_data["balance_hold"] = str(_quote.credits)
             if channel == "runninghub" or _quote.snapshot.get("partner"):
                 # The actual job owns this quote, so a rates (or tariff) update
                 # during a long-running generation cannot change its charge.
@@ -2629,7 +2633,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             logical_request_data = {
                 key: value
                 for key, value in request_data.items()
-                if key not in {"provider_route_fingerprint", "submit_run_id", "billing_quote"}
+                if key not in {"provider_route_fingerprint", "submit_run_id", "billing_quote", "balance_hold"}
             }
             request_hash = content_hash(
                 {
@@ -2691,11 +2695,17 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             # then see this one's quote. An idempotent re-submit was admitted
             # when its row was created and is not charged against the cap again.
             from billing import credit_cap as _credit_cap
+            from billing.media import hold_for_submit as _hold_for_submit
 
             admitted = await _existing_job_for_key(ctx, "segment", args.idempotency_key or "")
-            async with _credit_cap.reserve(ctx.session_id, step="generation", credits=_quote.credits,
-                                           note=f"{target.model} {resolution} {duration}s",
-                                           already_admitted=admitted is not None):
+            # Same for the workspace balance: generation is charged when the
+            # job finishes, so concurrent shots are admitted one at a time
+            # against balance minus what is already in flight.
+            async with _hold_for_submit(ctx.session_id, credits=_quote.credits, step="视频生成",
+                                        already_admitted=admitted is not None), \
+                    _credit_cap.reserve(ctx.session_id, step="generation", credits=_quote.credits,
+                                        note=f"{target.model} {resolution} {duration}s",
+                                        already_admitted=admitted is not None):
                 job, asset, created = await _create_pending_job(
                     ctx=ctx,
                     kind="segment",

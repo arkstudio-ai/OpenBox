@@ -1,53 +1,188 @@
 {
   "about": "What users said in the calls behind the dispatch plan (docs/VOICE_DISPATCH_PLAN_20261112.md §3), reworded and without names. Each utterance carries the route it must get: chat (answer on the phone), lookup (answer from a quick read), dispatch (hand to the assistant: new work, a change, a push to proceed, a new conversation), card (a choice on a card the call showed). The same lines feed the route benchmark (scripts/voice_route_bench.py) and the live replay (tests/manual/voice_replay.py --utterances).",
   "scenarios": [
-    {"id": "claimed-new-conversation", "source": "2026-11-02 call, 2h57m without one handover", "turns": [
-      {"user": "我想做一组新品上架的短视频，你觉得从哪个角度切入比较好", "expect": "chat"},
-      {"front": "可以从使用场景切入，先拍开箱再拍上手。"},
-      {"user": "行，那你直接在默认空间新建一个对话接着处理", "expect": "dispatch"},
-      {"front": "好的，新对话已经建好了。"},
-      {"user": "建好了吗", "expect": "lookup"},
-      {"user": "我并没有看到新的对话建立，你先建好", "expect": "dispatch"}
-    ]},
-    {"id": "light-redirect-claim", "source": "2026-11-07 Light call, six minutes of 'already handed over'", "turns": [
-      {"user": "帮我做一条店里新品的视频", "expect": "dispatch"},
-      {"front": "好的，已经转交给帮手了，正在处理。"},
-      {"user": "你已经在做了吗", "expect": "lookup"},
-      {"user": "提交了吗", "expect": "lookup"},
-      {"user": "需要建立一个新对话，把刚才说的递交过去", "expect": "dispatch"}
-    ]},
-    {"id": "change-while-card-waits", "source": "2026-10-20 seafood video; 2026-11-07 tier change", "cards": [
-      {"card": "card-1", "title": "新品视频方案确认", "what": "十五秒，三个镜头，快速档", "options": [
-        {"id": "confirm", "label": "确认并开始制作"}, {"id": "cancel", "label": "取消"}]}], "turns": [
-      {"user": "可以的，但是换成专业档来做", "expect": "dispatch"},
-      {"user": "每样海鲜分开一个砂锅拍，最后加一个全家福镜头", "expect": "dispatch"},
-      {"user": "这个先放一放，我再想想", "expect": "chat"},
-      {"user": "时长十五秒是什么意思，能不能再长一点", "expect": "chat"},
-      {"user": "确认，开始做吧", "expect": "card"}
-    ]},
-    {"id": "push-to-proceed", "source": "2026-10-31 effect_unknown incident", "turns": [
-      {"front": "「香氛新品视频」停了，等你核对。"},
-      {"user": "继续推进，刚刚我把商品参考图发给他了", "expect": "dispatch"},
-      {"user": "它怎么还没动", "expect": "lookup"}
-    ]},
-    {"id": "delegated-decision", "source": "handoff check: same-request words", "turns": [
-      {"user": "帮我做个十秒的风景视频", "expect": "dispatch"},
-      {"front": "要口播还是纯画面？"},
-      {"user": "你定吧", "expect": "dispatch"}
-    ]},
-    {"id": "quick-questions", "source": "2026-11-09 feedback: weather took ten minutes", "turns": [
-      {"user": "今天上海天气怎么样", "expect": "lookup"},
-      {"user": "我还剩多少积分", "expect": "lookup"},
-      {"user": "那条酒吧视频做到哪了", "expect": "lookup"},
-      {"user": "口播是什么意思", "expect": "chat"},
-      {"user": "嗯，好的，知道了", "expect": "chat"},
-      {"user": "你说话可以再慢一点", "expect": "chat"}
-    ]},
-    {"id": "plan-is-not-an-order", "source": "handoff check: discussing is not delegating", "turns": [
-      {"user": "如果做一条探店视频，一般要准备哪些素材", "expect": "chat"},
-      {"user": "假如我想每天早上九点自动发一条，能做到吗", "expect": "chat"},
-      {"user": "那就每天早上九点帮我发一条昨天的成片到抖音", "expect": "dispatch"},
-      {"user": "把刚才那条视频的字幕改成黄色", "expect": "dispatch"}
-    ]}
+    {
+      "id": "claimed-new-conversation",
+      "source": "2026-11-02 call, 2h57m without one handover",
+      "turns": [
+        {
+          "user": "我想做一组新品上架的短视频，你觉得从哪个角度切入比较好",
+          "expect": "chat"
+        },
+        {
+          "front": "可以从使用场景切入，先拍开箱再拍上手。"
+        },
+        {
+          "user": "行，那你直接在默认空间新建一个对话接着处理",
+          "expect": "dispatch"
+        },
+        {
+          "front": "好的，新对话已经建好了。"
+        },
+        {
+          "user": "建好了吗",
+          "expect": "lookup"
+        },
+        {
+          "user": "我并没有看到新的对话建立，你先建好",
+          "expect": "dispatch"
+        }
+      ]
+    },
+    {
+      "id": "light-redirect-claim",
+      "source": "2026-11-07 Light call, six minutes of 'already handed over'",
+      "turns": [
+        {
+          "user": "帮我做一条店里新品的视频",
+          "expect": "dispatch"
+        },
+        {
+          "front": "好的，已经转交给帮手了，正在处理。"
+        },
+        {
+          "user": "你已经在做了吗",
+          "expect": "lookup"
+        },
+        {
+          "user": "提交了吗",
+          "expect": "lookup"
+        },
+        {
+          "user": "需要建立一个新对话，把刚才说的递交过去",
+          "expect": "dispatch"
+        }
+      ]
+    },
+    {
+      "id": "change-while-card-waits",
+      "source": "2026-10-20 seafood video; 2026-11-07 tier change",
+      "cards": [
+        {
+          "card": "card-1",
+          "title": "新品视频方案确认",
+          "what": "十五秒，三个镜头，快速档",
+          "options": [
+            {
+              "id": "confirm",
+              "label": "确认并开始制作"
+            },
+            {
+              "id": "cancel",
+              "label": "取消"
+            }
+          ],
+          "version": "v1"
+        }
+      ],
+      "turns": [
+        {
+          "user": "可以的，但是换成专业档来做",
+          "expect": "dispatch"
+        },
+        {
+          "user": "每样海鲜分开一个砂锅拍，最后加一个全家福镜头",
+          "expect": "dispatch"
+        },
+        {
+          "user": "这个先放一放，我再想想",
+          "expect": "chat"
+        },
+        {
+          "user": "时长十五秒是什么意思，能不能再长一点",
+          "expect": "chat"
+        },
+        {
+          "user": "确认，开始做吧",
+          "expect": "card"
+        }
+      ]
+    },
+    {
+      "id": "push-to-proceed",
+      "source": "2026-10-31 effect_unknown incident",
+      "turns": [
+        {
+          "front": "「香氛新品视频」停了，等你核对。"
+        },
+        {
+          "user": "继续推进，刚刚我把商品参考图发给他了",
+          "expect": "dispatch"
+        }
+      ]
+    },
+    {
+      "id": "delegated-decision",
+      "source": "handoff check: same-request words",
+      "turns": [
+        {
+          "user": "帮我做个十秒的风景视频",
+          "expect": "dispatch"
+        },
+        {
+          "front": "要口播还是纯画面？"
+        },
+        {
+          "user": "你定吧",
+          "expect": "dispatch"
+        }
+      ]
+    },
+    {
+      "id": "quick-questions",
+      "source": "2026-11-09 feedback: weather took ten minutes",
+      "turns": [
+        {
+          "user": "今天上海天气怎么样",
+          "expect": "lookup"
+        },
+        {
+          "user": "我还剩多少积分",
+          "expect": "lookup"
+        },
+        {
+          "user": "那条酒吧视频做到哪了",
+          "expect": "lookup"
+        },
+        {
+          "user": "那条酒吧视频怎么还没动，卡在哪了",
+          "expect": "lookup"
+        },
+        {
+          "user": "口播是什么意思",
+          "expect": "chat"
+        },
+        {
+          "user": "嗯，好的，知道了",
+          "expect": "chat"
+        },
+        {
+          "user": "你说话可以再慢一点",
+          "expect": "chat"
+        }
+      ]
+    },
+    {
+      "id": "plan-is-not-an-order",
+      "source": "handoff check: discussing is not delegating",
+      "turns": [
+        {
+          "user": "如果做一条探店视频，一般要准备哪些素材",
+          "expect": "chat"
+        },
+        {
+          "user": "假如我想每天早上九点自动发一条，能做到吗",
+          "expect": "chat"
+        },
+        {
+          "user": "那就每天早上九点帮我发一条昨天的成片到抖音",
+          "expect": "dispatch"
+        },
+        {
+          "user": "把刚才那条视频的字幕改成黄色",
+          "expect": "dispatch"
+        }
+      ]
+    }
   ]
 }

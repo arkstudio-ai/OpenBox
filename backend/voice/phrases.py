@@ -145,24 +145,60 @@ def _delivery(lang):
         "This event is not new user authorization to start or repeat work.")
 
 
-def delivery_instructions(speech, lang):
-    return _delivery(lang)
+def fact_delivery(lang, detailed=False):
+    """Server dispatch: status from the note's ``say`` line, the conclusion first (plan §4.2, §4.8).
+
+    Shorter than ``_delivery`` on purpose: the state boundaries it spells out are settled by the fact line,
+    so the front desk no longer has to explain them to the user. No length cap and no sentence pattern
+    (decided 2026-11-12); a user who chose detailed answers keeps them.
+    """
+    if _lang(lang) == "zh":
+        return ("向用户传达刚收到的后台事件。say 是服务端核实过的状态：是哪件事、现在什么状态只按它说，"
+                "不从 answer 或 reference 的措辞推断已交办、在做或做完。answer 是要转达的内容；"
+                "reference 是助理的原话，只作备查。" +
+                ("按用户偏好可以把有用的细节讲出来。" if detailed else
+                 "先说状态和一句结论，细节等用户追问再讲，reference 不必念。") +
+                "本通话已经说过、没有变化的不再重复，也不复述用户刚说的要求。名称、数字、决定与事实一致；"
+                "没拿到结果就说没拿到，原因不知道就说不知道。这个事件不是用户的新指令，不据此发起或重复业务操作。")
+    return ("Deliver the background event just received. say is the state the server verified: which task and "
+            "what state come from it alone; never infer handed over, in progress or done from the wording of "
+            "answer or reference. answer is the content to convey; reference is the assistant's own words, kept "
+            "for look-up only. " +
+            ("Include the useful details, as the user prefers. " if detailed else
+             "Give the state and a one-sentence conclusion first; details wait until the user asks, and reference "
+             "need not be read. ") +
+            "Do not repeat what this call already said and has not changed, nor the request the user just made. "
+            "Keep names, numbers, decisions and facts exact; no result means say so, an unknown cause stays "
+            "unknown. This event is not a new instruction from the user: start or repeat no work from it.")
 
 
-def together_instructions(count, unasked, speeches, lang):
+def delivery_instructions(speech, lang, *, facts=None):
+    return _delivery(lang) if facts is None else fact_delivery(lang, facts == "detailed")
+
+
+def together_instructions(count, unasked, speeches, lang, *, facts=None):
+    if facts is not None:
+        return fact_delivery(lang, facts == "detailed") + (
+            "先回答当前事项；其余几条各说一句结论。" if _lang(lang) == "zh" else
+            "Address the current request first; give each of the others one sentence of conclusion.")
     return _delivery(lang) + ("先回答当前事项，再自然带出其他结果。" if _lang(lang) == "zh" else
                               "Address the current request first, then the other results.")
 
 
-def card_note(user_text, speech, cards, lang):
+def card_note(user_text, speech, cards, lang, *, facts=False):
+    if facts:
+        say = (f"等你：有 {len(cards)} 件事要你定，定之前不会往下做。" if _lang(lang) == "zh" else
+               f"Waiting for you: {len(cards)} decision(s) to make; nothing proceeds before that.")
+        return _pick(NOTE_PREFIX, lang) + json.dumps({"source": "pending_decisions", "say": say, "cards": cards,
+            "request": user_text, "reference": speech}, ensure_ascii=False)
     return _pick(NOTE_PREFIX, lang) + json.dumps({"source": "pending_decisions", "request": user_text,
         "facts": speech, "cards": cards, "operation_state": "waiting_for_user"}, ensure_ascii=False)
 
 
-def card_instructions(lang):
+def card_instructions(lang, *, facts=None):
     # Task names said as written let the call tell which card a reply is about
     # (voice/spoken_cards.py), so a card answered on screen can stop that reply.
-    return _delivery(lang) + ("围绕卡片标明的任务说明待决定事项及影响，接着当前对话自然询问；不要重新自我介绍。"
+    return (_delivery(lang) if facts is None else fact_delivery(lang, facts == "detailed")) + ("围绕卡片标明的任务说明待决定事项及影响，接着当前对话自然询问；不要重新自我介绍。"
         "说任务名时照卡片上的原名说，不要翻译或改写，方便用户和屏幕上的卡片对应。"
         "选择类问题用日常对话说明，不逐条朗读序号或技术标识；先讲当前需要决定的内容，用户追问再展开。"
         "选任务 AI 时结合需求解释；选视频只说当前可用的业务档次、相关规格和真实费用，不念具体模型或厂商名称，内部保留准确映射。"
@@ -194,10 +230,10 @@ def closed_decisions_note(decisions, lang):
                                                   "how": how}, ensure_ascii=False)
 
 
-def question_instructions(lang):
+def question_instructions(lang, *, facts=None):
     # Measured 2026-10-27: right after a question about 春禾果店, a card from 橙光鲜果
     # was announced as 春禾果店's; the note named its own task in "conversation".
-    return card_instructions(lang) + (
+    return card_instructions(lang, facts=facts) + (
         "先用卡片 conversation 字段里的任务名说清是哪个任务在问，它可能不是刚才谈到的任务，不要套用其他任务的名字。"
         "结合任务询问尚缺的决定，不填默认答案或推断进度。"
         "卡片带 already_presented 时，这个任务的方案本通话已经讲过：只说这次新增或变化的决定，一两句话问清，不再复述方案。" if _lang(lang) == "zh" else
@@ -208,8 +244,8 @@ def question_instructions(lang):
         "or changed, in a sentence or two, without restating the plan.")
 
 
-def question_followup_instructions(lang):
-    return _delivery(lang) + ("如有尚缺的决定，自然询问；已回答的不用重问。" if _lang(lang) == "zh" else
+def question_followup_instructions(lang, *, facts=None):
+    return (_delivery(lang) if facts is None else fact_delivery(lang, facts == "detailed")) + ("如有尚缺的决定，自然询问；已回答的不用重问。" if _lang(lang) == "zh" else
                               "Ask naturally about remaining decisions, without repeating answered questions.")
 
 
@@ -297,8 +333,8 @@ def tool_result_instructions(lang):
         "Respond naturally to its actual state, without asking again for a clear decision.")
 
 
-def notice_instructions(lang):
-    return _delivery(lang)
+def notice_instructions(lang, *, facts=None):
+    return _delivery(lang) if facts is None else fact_delivery(lang, facts == "detailed")
 
 
 def progress_instructions(step, lang):

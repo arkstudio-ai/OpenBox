@@ -144,8 +144,13 @@ class TurnsMixin:
                 guard.attempted.add(source)
             # Visible tasks are hints; acceptance still resolves the target and
             # retains every confirmation gate. Assistant speech grants no consent.
-            context = {**self._call_context(words, source_item=source), "spoken_input_id": source,
-                       "handover_source": handover_source}
+            revised = self._revision_target(source)
+            context = {**self._call_context(words, question_id=revised, source_item=source),
+                       "spoken_input_id": source, "handover_source": handover_source}
+            if revised:
+                shown = self.desk.questions[revised]
+                context["revision_request"] = {"request_id": revised, "version": shown["version"],
+                                               "session_id": shown["session_id"]}
             key = inbox_key("voice-handoff", self.call_id, self.session, source)
             request = guard.requests.get(source, words) if guard is not None else words
             ref = VoiceTurnRef(id=key, provider_call_id=key, text=request, transcript=words,
@@ -172,6 +177,20 @@ class TurnsMixin:
             self._update_phase()
             return True
 
+    def _revision_target(self, source: str) -> str:
+        """The task card the server's route bound these words to as a change: still shown, and shown before
+        the words were said (the same test the model's own assistant_ask(mode=revise) passes)."""
+        identity = self.handoff.revisions.get(source, "") if self.handoff is not None else ""
+        if not identity or identity not in self.desk.questions or self._context_withheld(source):
+            return ""
+        sequence = self._user_utterances.get(source, 0)
+        return identity if sequence > self.desk._question_shown.get(identity, sequence) else ""
+
+    @property
+    def server_dispatch(self) -> bool:
+        """voice.dispatch_mode=server for this call (docs/VOICE_DISPATCH_PLAN_20261112.md)."""
+        return self.handoff is not None and self.handoff.early
+
     def _init_turns(self) -> None:
         self.followup_due = False   # tool outputs no reply has answered yet
         self._direct: set[str] = set()  # direct reads still running
@@ -193,6 +212,7 @@ class TurnsMixin:
         self._asked: tuple[int, VoiceTurnRef] | None = None  # a told result asking the user something
         self._passed_on: dict[str, str] = {}  # task id → the user's words of the request it was passed to
         self._handed_tasks: dict[str, str] = {}  # task id → title: work this call handed over successfully
+        self._opened_tasks: set[str] = set()  # task cards told as opened (server dispatch, control_note)
         self._notified_questions: set[tuple[str, str]] = set()
         self._initial_cards: dict[str, str] = {}
         self._initial_questions: dict[str, str] = {}
@@ -838,6 +858,9 @@ class TurnsMixin:
         if ref.lane == "remember" and not ref.cards:
             await self._kept_quietly(ref)
             return
+        if self._opening_told(ref):
+            await self._kept_quietly(ref)
+            return
         if not self._claim_delivery(ref):
             # A report observer may win the race. The requesting VoiceTurn
             # still needs the real playback outcome, not a false cancellation.
@@ -855,6 +878,26 @@ class TurnsMixin:
         self.deliveries.append(ref)
         self._update_phase()
         await self.fill_idle()
+
+    def _opening_told(self, ref: VoiceTurnRef) -> bool:
+        """This receipt only says what "the task card is open" said (plan §4.8: said once).
+
+        The receipt of a handover whose tasks were all announced as opened. An announcement still waiting
+        gives way to the receipt instead, which says the same and has the assistant's words; a reply that
+        asks the user something is always told.
+        """
+        if (ref.status != "ok" or ref.reason != "running" or ref.cards or not ref.running
+                or not all(task["task_id"] in self._opened_tasks for task in ref.running)):
+            return False
+        waiting = [item for item in self.deliveries if item.delivery == "queued" and item.reason == "control"
+                   and item.task_id in {task["task_id"] for task in ref.running}
+                   and item.note_item is None and not item.note_pending]
+        if waiting:
+            for item in waiting:
+                self.deliveries.remove(item)
+                item.delivery, item.finished = "superseded", self.clock()
+            return False
+        return "？" not in ref.speech and "?" not in ref.speech
 
     async def _kept_quietly(self, ref: VoiceTurnRef) -> None:
         """Something said in passing, remembered (lane ``remember``): nobody asked to hear about it, so it is
@@ -905,7 +948,8 @@ class TurnsMixin:
                 rider.delivery = "riding"
             if ref.cards:  # handles are issued as the card's content goes to the model
                 shown = [cards.spoken_card(card, self.desk.show(card), self.lang) for card in ref.cards]
-                ref.note = phrases.card_note(ref.transcript or ref.text, self._note_speech(ref), shown, self.lang)
+                ref.note = phrases.card_note(ref.transcript or ref.text, self._note_speech(ref), shown, self.lang,
+                                             facts=self.server_dispatch)
             elif ref.questions:
                 shown = [self.desk.show_question(question, self.lang) for question in ref.questions]
                 ref.note = phrases.question_note(shown, self.lang)
@@ -923,20 +967,22 @@ class TurnsMixin:
         ref.delivery = "creating"
         self.requested = f"delivery:{ref.id}"
         group = [ref, *(ref.riders or [])]
+        # Server dispatch: status from the fact line, the conclusion first unless the user chose detail.
+        facts = {"facts": self.detail} if self.server_dispatch else {}
         if ref.cards:
-            instructions = phrases.card_instructions(self.lang)
+            instructions = phrases.card_instructions(self.lang, **facts)
         elif ref.questions:
-            instructions = phrases.question_instructions(self.lang)
+            instructions = phrases.question_instructions(self.lang, **facts)
         elif ref.status != "ok" or ref.reason == "running":  # nothing found yet, whatever the reply's wording
-            instructions = phrases.notice_instructions(self.lang)
+            instructions = phrases.notice_instructions(self.lang, **facts)
         elif len(group) == 1 and (ref.context or {}).get("task_questions"):
-            instructions = phrases.question_followup_instructions(self.lang)
+            instructions = phrases.question_followup_instructions(self.lang, **facts)
         elif len(group) > 1 or (ref.report is not None and not ref.asked):
             instructions = phrases.together_instructions(
                 len(group), sum(item.report is not None and not item.asked for item in group),
-                [item.speech for item in group], self.lang)
+                [item.speech for item in group], self.lang, **facts)
         else:
-            instructions = phrases.delivery_instructions(ref.speech, self.lang)
+            instructions = phrases.delivery_instructions(ref.speech, self.lang, **facts)
         if any(item.interrupted for item in group):
             instructions += ("\n上次汇报被打断，没有确认完整播放。结合用户刚才的话和当前结果简短接续，"
                 "不要重复称呼、问候、‘好的老板’或开场白；不要假定上次整段已听完。")
@@ -983,7 +1029,29 @@ class TurnsMixin:
         settings = (getattr(self, "memory_packet", None) or {}).get("settings", {})
         return without_salutation(ref.speech, settings.get("address"))
 
+    def _fact_body(self, ref: VoiceTurnRef) -> str:
+        """Server dispatch: one verified ``say`` line first, the assistant's words after it (voice/facts.py)."""
+        from voice import facts
+        from voice.model_names import public_model_names
+        speech = public_model_names(self._note_speech(ref))
+        say, about_tasks = facts.line(
+            lang=self.lang, status=ref.status, reason=ref.reason, recorded=bool(ref.recorded),
+            submissions=ref.submissions, running=ref.running, light_redirect=bool(ref.light_redirect),
+            report=ref.report, speech=speech)
+        body = {"source": "background_result", "say": public_model_names(say), "request_id": ref.id}
+        if request := public_model_names(ref.asked or ref.transcript or ref.text):
+            body["request"] = request
+        if ref.report:
+            body["task"] = public_model_names(ref.report)
+        if ref.reason != "control" and speech:
+            body["reference" if about_tasks else "answer"] = speech
+        if questions := (ref.context or {}).get("task_questions"):
+            body["answer_context"] = questions
+        return json.dumps(body, ensure_ascii=False)
+
     def _note_body(self, ref: VoiceTurnRef) -> str:
+        if self.server_dispatch:
+            return self._fact_body(ref)
         body = json.loads(phrases.note_body(ref.reason, ref.transcript or ref.text, self._note_speech(ref), self.lang,
                           report_title=ref.report, asked=ref.asked,
                           running=[task["title"] for task in ref.running or []]))
@@ -1086,19 +1154,37 @@ class TurnsMixin:
         if not self._report_batch:
             await self.fill_idle()
 
-    async def control_note(self, task_id: str, title: str, text: str, control_revision: int) -> None:
+    async def control_note(self, task_id: str, title: str, text: str, control_revision: int, *,
+                           kind: str = "") -> None:
         """A task was stopped, paused, released or resumed while the call is on (voice/control_notes.py): one
         short note with the next step, told unasked at the next quiet moment. Several changes of the same task
-        before the first is told collapse into the latest one."""
-        if not text or self.closing or not self.tell_reports:
+        before the first is told collapse into the latest one.
+
+        ``created`` (server dispatch): the task card a request of this call opened, told as soon as it
+        exists, whatever the report setting: it answers the user's own request. Not told when its receipt
+        already was, nor for a task opened elsewhere while nothing of this call is with the assistant.
+        """
+        if kind == "created":
+            if (not text or self.closing or task_id in self._handed_tasks or task_id in self._opened_tasks
+                    or not self._request_pending()):
+                return
+            # It answers a request still being done, so it does not wait behind that request like a report.
+            asked = next((ref.transcript or ref.text for ref in self.pending_calls.values()
+                          if ref.lane != "remember"), "")
+            self._opened_tasks.add(task_id)
+            self._handed_tasks[task_id] = title
+            self._ack_at = None  # "received" and "the card is open" seconds apart: only the latter is said
+        elif not text or self.closing or not self.tell_reports:
             return
+        else:
+            asked = ""
         key = f"control:{task_id}"
         queued = next((ref for ref in self.deliveries if ref.provider_call_id == key and ref.delivery == "queued"), None)
         if queued is not None:
             queued.speech, queued.inbox_id, queued.control_revision = text, f"{key}:{control_revision}", control_revision
             return
         ref = VoiceTurnRef(id=generate_id(), provider_call_id=key, text=title, transcript="",
-                           requested=self.clock(), report=title, asked="", inbox_id=f"{key}:{control_revision}",
+                           requested=self.clock(), report=title, asked=asked, inbox_id=f"{key}:{control_revision}",
                            task_id=task_id, control_revision=control_revision)
         ref.status, ref.speech, ref.reason, ref.settled = "ok", text, "control", self.clock()
         if not self._claim_delivery(ref):

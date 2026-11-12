@@ -19,7 +19,7 @@ log = create_logger("voice.control_notes")
 class ControlNote:
     task_id: str
     title: str
-    kind: str          # canceled / effect_unknown / paused / resumed / blocked
+    kind: str          # canceled / effect_unknown / paused / resumed / blocked / created
     text: str          # what the front desk says, in the call's language
     control_revision: int
 
@@ -62,12 +62,29 @@ def note_text(kind: str, title: str, lang: str, *, by_user_on_page: bool = False
     }[kind]
 
 
+def created_text(title: str, observed: str, lang: str) -> str:
+    """A task card opened during the call, with the state its row has: the one audible sign that the work
+    really left the call (docs/VOICE_DISPATCH_PLAN_20261112.md §4.3). A fact for the front desk to word."""
+    working = observed in ("running", "resuming")
+    if english(lang):
+        name = f"“{title}”" if title else "the new task"
+        return f"The task card {name} is open; " + ("a helper is working on it." if working else
+            "it is waiting for you." if observed == "waiting_input" else "it is queued and has not started.")
+    name = f"「{title}」" if title else ""
+    return f"任务单{name}开好了，" + ("帮手在做。" if working else
+        "在等你。" if observed == "waiting_input" else "排着队，还没开始。")
+
+
 class ControlWatcher:
     """Control revisions of one main session's tasks that moved since the call began."""
 
-    def __init__(self, *, user_id: str, main_session_id: str, workspace_id: str, call_id: str = "", lang: str = "zh"):
+    def __init__(self, *, user_id: str, main_session_id: str, workspace_id: str, call_id: str = "", lang: str = "zh",
+                 announce_created: bool = False):
         self.user_id, self.main_session_id, self.workspace_id = user_id, main_session_id, workspace_id
         self.call_id, self.lang = call_id, lang
+        # voice.dispatch_mode=server: a task opened during the call is told once. Otherwise only its receipt
+        # tells it, which comes when the assistant's whole turn has ended.
+        self.announce_created = announce_created
         self._seen: dict[str, tuple[int, str, str]] | None = None  # task → (revision, desired, observed)
 
     async def start(self) -> None:
@@ -82,6 +99,11 @@ class ControlWatcher:
         for task in await self._tasks():
             known = self._seen.get(task.id)
             self._seen[task.id] = (task.control_revision, task.desired_state, task.observed_state)
+            if known is None and self.announce_created and task.desired_state == "running":
+                notes.append(ControlNote(task.id, task.title, "created",
+                                         created_text(task.title, task.observed_state, self.lang),
+                                         task.control_revision))
+                continue
             if known is None or known[0] >= task.control_revision:
                 continue  # a task created during the call is told by its own receipt; nothing moved otherwise
             kind = kind_of(task.desired_state, task.observed_state, previous_desired=known[1], previous_observed=known[2])

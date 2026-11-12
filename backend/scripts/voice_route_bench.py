@@ -36,13 +36,16 @@ SCENARIOS = Path(__file__).resolve().parent / "voice_dispatch_scenarios.json"
 ROUTES = ("chat", "lookup", "dispatch", "card")
 TIMEOUT_SECONDS = 15.0
 ROUTE = (
-    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|dispatch|card\"}。\n"
+    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|dispatch|card\",\"card\":\"卡片标识或空\"}。\n"
     "dispatch：用户要人去办事——创建交付物、修改或继续已有任务、催执行、外部操作、定时安排、"
     "要求新建对话或把谈好的内容递交出去；把决定权交给你（“你定吧”）且前文是在交办，也算。\n"
     "lookup：只是问现状——进度、是否已提交、余额、日程、天气这类查一下就能答的。\n"
     "card：open_cards 里有卡片，且这句话本身明确选了其中一个选项。改要求、提问、犹豫、暂缓都不是 card。\n"
     "chat：其余——闲聊、解释、澄清、讨论方案、假设性提问、应声、调整说话方式。\n"
-    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。")
+    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。"
+    "card 字段：route 为 card 时填所选卡片的标识；route 为 dispatch 且这句话是在改 open_cards 里某一张卡上的方案"
+    "（换档位、改时长、改文案、换素材等）时填那张卡的标识；是另一件事或看不出针对哪张卡就填空字符串。"
+    "context_withheld 为 true 时只依据 latest_user 判断，指代不明就选 chat。")
 
 
 def load(path: Path = SCENARIOS) -> list[dict]:

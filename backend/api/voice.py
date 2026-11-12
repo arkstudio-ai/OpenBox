@@ -219,7 +219,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
 
     async def deliver_controls(notes):
         for note in notes:
-            await bridge.control_note(note.task_id, note.title, note.text, note.control_revision)
+            await bridge.control_note(note.task_id, note.title, note.text, note.control_revision, kind=note.kind)
             if bridge.room and note.task_id == bridge.room["task_id"] and note.kind == "canceled":
                 await bridge.leave_room()  # the room's work was stopped: back to the assistant
 
@@ -399,7 +399,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     tasks, ending, answered = [], CallEnded("network", close=None), False
     reports = ReportWatcher(user_id=user_id, main_session_id=main_id, call_id=call_id, workspace_id=workspace_id)
     controls = ControlWatcher(user_id=user_id, main_session_id=main_id, workspace_id=workspace_id, call_id=call_id,
-                              lang=lang)
+                              lang=lang, announce_created=server_dispatch)
     room_watcher = RoomWatcher(user_id=user_id, workspace_id=workspace_id, call_id=call_id,
                                room=lambda: bridge.room, lang=lang)
     try:

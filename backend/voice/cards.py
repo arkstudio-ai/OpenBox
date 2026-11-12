@@ -25,6 +25,12 @@ CONTEXT_CHARS, CALL_CONTEXT_CHARS = 300, 4000  # open decisions repeated in ever
 KINDS = {"assistant_confirm": "确认", "assistant_send": "确认发送", "memory_proposal": "记忆",
          "assistant_placement": "安排位置", "assistant_task_setup": "任务准备"}
 
+def _registered_label(kind: str | None) -> str | None:
+    from question import cards
+    registered = cards.get(kind)
+    return registered.voice_label if registered else None
+
+
 def version(card: dict) -> str:
     """Content identity, independent of wording interpretation or list position."""
     fields = {key: card.get(key) for key in (
@@ -185,7 +191,7 @@ def spoken_card(card: dict, handle: str, lang: str = "zh") -> dict:
     """One main-session card as the model reads it: what will be done, its impact, the exact options."""
     from assistant.placement import new_project_option
     what = str(card.get("prompt") or "").split("\n影响：", 1)[0]
-    return {"card": handle, "kind": KINDS.get(card.get("kind"), "确认"), "title": card.get("header") or "",
+    return {"card": handle, "kind": KINDS.get(card.get("kind")) or _registered_label(card.get("kind")) or "确认", "title": card.get("header") or "",
             **({"task": card["task_title"], "task_context": card.get("task_instructions", "")}
                if card.get("task_title") else {}),
             "what": _spoken(what, lang, WHAT_CHARS),
@@ -389,8 +395,10 @@ async def _answer(scope, arguments: dict) -> dict:
         return {"status": "conflict", "this_call_applied": False, "execution_confirmed": False}
     if receipt.get("applied") is False:
         return {"status": "already_answered", "this_call_applied": False, "execution_confirmed": False}
-    # These card types publish their cancellation option last. This is card structure, not speech parsing.
-    declined = chosen == len(card["options"]) - 1
+    # Registered cards name each option's role; the older card types publish
+    # their cancellation option last. This is card structure, not speech parsing.
+    roles = card.get("option_roles")
+    declined = roles[chosen] == "cancel" if roles else chosen == len(card["options"]) - 1
     desk.answered[card_id] = choice
     desk.answers.append({"card_id": card_id, "choice": choice, "words": words, "kind": card["kind"],
                          "declined": declined, "what": spoken_card(card, "", scope.lang)["what"], "after": before})

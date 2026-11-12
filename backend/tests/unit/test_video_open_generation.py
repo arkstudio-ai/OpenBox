@@ -172,15 +172,16 @@ def test_validate_needs_no_idempotency_key():
     assert args.idempotency_key is None
 
 
-def test_model_schema_tells_the_agent_the_persons_pick_is_authoritative():
+def test_model_schema_tells_the_agent_not_to_pick_a_model_itself():
     model_schema = VideoGenerateArgs.model_json_schema()["properties"]["model"]
 
-    assert "authoritative" in model_schema["description"]
-    assert "Never silently substitute" in model_schema["description"]
+    assert "conversation's video model decides" in model_schema["description"]
+    assert "switch card" in model_schema["description"]
+    assert "Never pick a different model yourself" in model_schema["description"]
 
 
-def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p"):
-    config = type(
+def _video_config():
+    return type(
         "C",
         (),
         {
@@ -188,6 +189,7 @@ def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p")
                 model="wan3.0-video",
                 default_resolution="720p",
                 models=[
+                    VideoModelConfig(id="wan3.0-video", channel="ark", resolutions=["480p", "720p", "1080p"]),
                     VideoModelConfig(
                         id="MiniMax-H3", channel="sd2", resolutions=["720p", "1080p"]
                     ),
@@ -201,20 +203,37 @@ def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p")
         },
     )()
 
-    async def selected_model(_ctx):
-        return model
 
-    async def selected_resolution(_ctx):
-        return resolution
+def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p", kind="normal"):
+    from types import SimpleNamespace
+    from tool import video_model_card
+
+    config = _video_config()
+    row = SimpleNamespace(kind=kind, parent_id=None)
+
+    async def state(_ctx):
+        return row, model or "", resolution or ""
 
     monkeypatch.setattr("core.config.get_config", lambda: config)
-    monkeypatch.setattr(video_production, "_session_video_model_id", selected_model)
-    monkeypatch.setattr(video_production, "_session_video_resolution", selected_resolution)
-    return object()
+    monkeypatch.setattr(video_model_card, "session_state", state)
+    locked = []
+
+    async def lock_default(_ctx, choice):
+        locked.append(choice)
+
+    monkeypatch.setattr(video_model_card, "lock_default", lock_default)
+    asked = []
+
+    async def ask_switch(_ctx, _config, current, requested, *, picked):
+        asked.append((current, requested, picked))
+
+    monkeypatch.setattr(video_model_card, "ask_switch", ask_switch)
+    return SimpleNamespace(session_id="s1", user_id="u1", part_id="p1", message_id="m1",
+                           locked=locked, asked=asked)
 
 
 @pytest.mark.asyncio
-async def test_person_selected_model_cannot_be_silently_overridden(monkeypatch):
+async def test_person_selected_model_is_not_switched_without_a_card(monkeypatch):
     ctx = _selected_preferences(monkeypatch)
     args = VideoGenerateArgs(
         action="validate",
@@ -222,12 +241,26 @@ async def test_person_selected_model_cannot_be_silently_overridden(monkeypatch):
         model="doubao-seedance-2-0-260128",
     )
 
-    with pytest.raises(video_providers.VideoRequestError, match="authoritative.*MiniMax-H3"):
+    with pytest.raises(video_providers.VideoRequestError, match="generates with model 'MiniMax-H3'"):
         await video_production._resolve_open_submission(args, ctx)
+    current, requested, picked = ctx.asked[0]
+    assert (current.model, current.resolution) == ("MiniMax-H3", "720p")
+    assert (requested.model, requested.resolution) == ("doubao-seedance-2-0-260128", "720p")
+    assert picked is True
 
 
 @pytest.mark.asyncio
-async def test_person_selected_resolution_cannot_be_silently_overridden(monkeypatch):
+async def test_validate_never_files_a_switch_card(monkeypatch):
+    ctx = _selected_preferences(monkeypatch)
+    args = VideoGenerateArgs(action="validate", prompt="小狗玩球", model="doubao-seedance-2-0-260128")
+
+    with pytest.raises(video_providers.VideoRequestError):
+        await video_production._resolve_open_submission(args, ctx, may_ask=False)
+    assert ctx.asked == []
+
+
+@pytest.mark.asyncio
+async def test_person_selected_resolution_is_not_switched_without_a_card(monkeypatch):
     ctx = _selected_preferences(monkeypatch)
     args = VideoGenerateArgs(
         action="validate",
@@ -236,8 +269,9 @@ async def test_person_selected_resolution_cannot_be_silently_overridden(monkeypa
         resolution="1080p",
     )
 
-    with pytest.raises(video_providers.VideoRequestError, match="resolution.*720p"):
+    with pytest.raises(video_providers.VideoRequestError, match="at '720p'"):
         await video_production._resolve_open_submission(args, ctx)
+    assert ctx.asked[0][1].resolution == "1080p"
 
 
 @pytest.mark.asyncio
@@ -250,6 +284,45 @@ async def test_omitted_video_preferences_use_the_persons_exact_selection(monkeyp
 
     assert approved["model"] == "MiniMax-H3"
     assert approved["resolution"] == "720p"
+    assert ctx.locked == [] and ctx.asked == []
+
+
+@pytest.mark.asyncio
+async def test_no_pick_locks_the_default_onto_the_conversation(monkeypatch):
+    ctx = _selected_preferences(monkeypatch, model=None, resolution=None)
+
+    approved = await video_production._resolve_open_submission(
+        VideoGenerateArgs(action="submit", prompt="小狗玩球", idempotency_key="k:1"), ctx
+    )
+
+    assert (approved["model"], approved["resolution"]) == ("wan3.0-video", "720p")
+    assert [(row.model, row.resolution) for row in ctx.locked] == [("wan3.0-video", "720p")]
+
+
+@pytest.mark.asyncio
+async def test_no_pick_and_another_model_asks_instead_of_using_it(monkeypatch):
+    """The 11-12 finding: without a pick the agent chose a different model per shot."""
+    ctx = _selected_preferences(monkeypatch, model=None, resolution=None)
+
+    with pytest.raises(video_providers.VideoRequestError, match="wan3.0-video"):
+        await video_production._resolve_open_submission(
+            VideoGenerateArgs(action="submit", prompt="小狗玩球", idempotency_key="k:1", model="MiniMax-H3"), ctx
+        )
+    current, requested, picked = ctx.asked[0]
+    assert (current.model, requested.model, picked) == ("wan3.0-video", "MiniMax-H3", False)
+    assert ctx.locked == []
+
+
+@pytest.mark.asyncio
+async def test_unattended_runs_keep_the_agents_model(monkeypatch):
+    ctx = _selected_preferences(monkeypatch, model=None, resolution=None, kind="cron")
+
+    approved = await video_production._resolve_open_submission(
+        VideoGenerateArgs(action="submit", prompt="小狗玩球", idempotency_key="k:1", model="MiniMax-H3"), ctx
+    )
+
+    assert approved["model"] == "MiniMax-H3"
+    assert ctx.asked == [] and ctx.locked == []
 
 
 @pytest.mark.asyncio

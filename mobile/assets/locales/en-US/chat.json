@@ -963,5 +963,9 @@
       "completed": "done",
       "error": "failed"
     }
+  },
+  "card": {
+    "later": "Later",
+    "recommended": "Recommended"
   }
 }

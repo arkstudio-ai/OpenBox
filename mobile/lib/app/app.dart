@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../features/voice/widgets/voice_call_host.dart';
+import '../features/chat/cards/card_popup_host.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
+import '../features/voice/widgets/voice_call_host.dart';
 import '../shared/appearance/appearance_store.dart';
 import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
@@ -67,8 +68,11 @@ class BossipApp extends ConsumerWidget {
                     if (focus != null && focus.context != null) focus.unfocus();
                   },
                   // The call bar pushes every screen — and the toasts — down.
-                  child: VoiceCallHost(
-                    child: Stack(children: [?child, const ToastHost()]),
+                  // Server cards pop up over the call sheet too.
+                  child: CardPopupHost(
+                    child: VoiceCallHost(
+                      child: Stack(children: [?child, const ToastHost()]),
+                    ),
                   ),
                 ),
               ),

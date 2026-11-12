@@ -132,7 +132,24 @@ async def supersede_chain_locked(db, main, task, now) -> list[str]:
     return replaced
 
 
-async def coalesce_delegated_input_locked(db, execution, task, now) -> list[str]:
+MERGED_REVISIONS, MERGED_REVISION_CHARS = 5, 2000
+
+
+def merged_revisions(earlier: list[str], prompt: str) -> str:
+    """The instruction a helper reads once for several changes queued behind its current work.
+
+    A replaced instruction is not always restated by the next one ("再加个字幕" after "改成 30 秒"): replacing
+    alone would lose it, running each would redo the work per change (docs/VOICE_DISPATCH_PLAN_20261112.md §4.4).
+    """
+    if not earlier:
+        return prompt
+    lines = [f"{index}. {text}" for index, text in enumerate([*earlier, prompt], 1)]
+    return ("【同一任务排队中的修改要求，按时间先后列出，帮手还没开始做其中任何一条。一次读完、一次做完，不要逐条重做；"
+            "后面的与前面冲突时以后面的为准，不冲突的都要做到。】\n" + "\n".join(lines[:-1])
+            + "\n" + lines[-1].replace(". ", ".（最新）", 1))
+
+
+async def coalesce_delegated_input_locked(db, execution, task, now, kept: list[str] | None = None) -> list[str]:
     """A newer delegated instruction replaces the assistant's earlier ones nobody has started on.
 
     light-test 2026-11-09: one video task took five delegated followups in four minutes (45 s / 30 s /
@@ -142,7 +159,8 @@ async def coalesce_delegated_input_locked(db, execution, task, now) -> list[str]
     an older one still queued is already stale: cancel it with a named code and let the newest run.
     Only the assistant's own plain-text followups coalesce — the task's opening instruction, the user's
     typed messages, inputs that carry attachments, steering and retained-continuation inputs keep their
-    place. Returns the ids."""
+    place. Returns the ids; ``kept`` collects what the replaced ones asked for, oldest first, for the newest
+    to carry (``merged_revisions``)."""
     rows = (await db.scalars(select(AgentInboxItem).where(
         AgentInboxItem.session_id == execution.id, AgentInboxItem.user_id == execution.user_id,
         AgentInboxItem.state == "accepted", AgentInboxItem.delivery == "followup",
@@ -155,6 +173,8 @@ async def coalesce_delegated_input_locked(db, execution, task, now) -> list[str]
         if (row.attachments or ref.get("continuation_authority") or ref.get("task_id") != task.id
                 or int(ref.get("intent_revision") or 0) <= 1):
             continue
+        if kept is not None:
+            kept.extend([*(ref.get("earlier_prompts") or []), ref.get("own_prompt") or row.prompt])
         row.state, row.outcome = "canceled", "canceled"
         row.error = {"code": "ASSISTANT_INPUT_SUPERSEDED",
                      "message": "Replaced by a newer instruction from the assistant before it was started"}
@@ -597,6 +617,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             command.source_ref = dict(source_ref)
         superseded: list[str] = []
         replaced_input: list[str] = []
+        earlier_prompts: list[str] = []
         reopened = False
         if task_id:
             task, execution = await task_locked(db, user_id=user_id, workspace_id=workspace_id,
@@ -636,7 +657,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                 from assistant.steering import require_steer_target_locked
                 await require_steer_target_locked(db, execution, expected_run)
             if source is not None and not source.coordination_inbox_id and delivery == "followup" and not attachments:
-                replaced_input = await coalesce_delegated_input_locked(db, execution, task, now)
+                replaced_input = await coalesce_delegated_input_locked(db, execution, task, now, earlier_prompts)
             task.control_revision += 1
             task.intent_revision += 1
             task.archived_at = None
@@ -687,6 +708,12 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         if video_model is not None:
             origin_ref["confirmed_setup"] = {"task_model": model or execution.model,
                 "video_model": video_model, "video_resolution": video_resolution}
+        if earlier_prompts:
+            # What the replaced, never-started instructions asked for rides along once (bounded), so a later
+            # replacement can carry it on without nesting.
+            earlier_prompts = [text[:MERGED_REVISION_CHARS] for text in earlier_prompts[-MERGED_REVISIONS:]]
+            origin_ref["earlier_prompts"], origin_ref["own_prompt"] = earlier_prompts, prompt[:MERGED_REVISION_CHARS]
+            prompt = merged_revisions(earlier_prompts, prompt)
         if workflow:
             origin_ref["workflow"] = workflow
             prompt = await workflow_guidance(workflow, user_id) + "\n\n" + prompt

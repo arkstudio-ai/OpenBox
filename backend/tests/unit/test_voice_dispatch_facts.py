@@ -201,3 +201,22 @@ async def test_model_dispatch_notes_are_unchanged():
     await bridge.control_note("t1", "酒吧视频", "x", 1, kind="created")  # no pending request: nothing
     assert not bridge.deliveries
     await bridge.close()
+
+
+async def test_a_yes_after_a_home_entry_reply_carries_the_request_it_agrees_to():
+    bridge, provider, link, _ = routed({"帮我做一条酒吧视频": True, "要": True, "再做张海报": True})
+    await greeted(bridge, provider)
+    await replay(bridge, event("user_started"), item("u1"), transcript("帮我做一条酒吧视频", "u1"),
+                 event("user_stopped"), started("r1"), audio("r1"), done("r1"))
+    link.finish(link.started[0].provider_call_id, speech="可以到首页做视频入口来做。", light_redirect=True)
+    await replay(bridge, started("r2"), audio("r2"), done("r2"))
+    await replay(bridge, event("user_started"), item("u2"), transcript("要", "u2"), event("user_stopped"),
+                 started("r3"), audio("r3"), done("r3"))
+    yes = link.started[1]
+    assert yes.transcript == "要"  # the conversation shows what the user said
+    assert "帮我做一条酒吧视频" in yes.text and "直接" in yes.text
+    link.finish(yes.provider_call_id, speech="好的。", running=[{"task_id": "t1", "title": "酒吧视频", "state": "queued"}])
+    await replay(bridge, started("r4"), audio("r4"), done("r4"))
+    await replay(bridge, event("user_started"), item("u3"), transcript("再做张海报", "u3"), event("user_stopped"))
+    assert link.started[2].text == "再做张海报"  # only the words right after the entry reply carry it
+

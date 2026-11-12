@@ -390,3 +390,47 @@ def room_interjection(title, lang):
     name = f"「{title}」" if title else ("另一件活" if _lang(lang) == "zh" else "another task")
     return (f"{name}那边帮手做好了，要看吗？" if _lang(lang) == "zh" else
             f"The helper on {name} is done. Want to see?")
+
+
+def after_redirect(earlier: str, words: str, lang: str) -> str:
+    """The request for words said right after the assistant answered ``earlier`` with only a home entry."""
+    if english(lang):
+        return (f"{words}\n(Call context: the user's previous request was \"{earlier}\"; the reply only pointed at a "
+                "home-screen entry, which cannot be opened on the phone, and nothing was arranged. If these words "
+                "agree to going ahead, do that request directly in the background, with no entry link. If they are "
+                "about something else, handle them as they are.)")
+    return (f"{words}\n（来电上下文：用户上一条要求是「{earlier}」，当时只回了首页入口，电话里点不了，没有交办。"
+            "这句话如果是同意直接做，就在后台直接把那件事派出去，不要再给入口；如果说的是另一件事，就按这句话本身处理。）")
+
+
+def correction_instructions(claim: str, handed: bool, lang: str) -> str:
+    """One sentence taking back a status the front desk said that no record supports (plan §4.2)."""
+    if english(lang):
+        return ("The server asks for one sentence of correction, not a business answer. You just said: "
+                + json.dumps(claim, ensure_ascii=False) + ". The verified fact: at that moment nothing had been "
+                "handed to the assistant. " + ("The user's own words have now been handed over and the reply is "
+                "pending." if handed else "Nothing is handed over now either; if the user wants it done, ask them "
+                "to say what to do.") + " Correct it naturally in one sentence: no rules explained, no long "
+                "apology, no repeating of the request.")
+    return ("这是服务端要求的一句更正，不是业务回答。你刚才说了：" + json.dumps(claim, ensure_ascii=False)
+            + "。核实的事实是：当时这件事还没有交给助理。"
+            + ("现在已经把用户的原话交过去了，在等回复。" if handed else
+               "现在也没有交办任何任务；用户确实要做的话，请他说一下要做什么。")
+            + "用一句话自然地更正，不解释规则，不反复道歉，不复述用户的要求。")
+
+
+def task_progress_instructions(title: str, doing: str, lang: str) -> str:
+    """One unasked line on a task this call handed over, from the helper's live step (plan §4.3)."""
+    if english(lang):
+        return ("The server asks for one line of progress, not a business answer. Verified fact: on the task "
+                + json.dumps(title, ensure_ascii=False) + " the helper is " + doing + ". It is not finished. Say "
+                "this in one short sentence; no finishing time, nothing said before, no repeating of the request.")
+    return ("这是服务端要求的一句进度，不是业务回答。核实的事实：任务单" + json.dumps(title, ensure_ascii=False)
+            + "的帮手" + doing + "，还没做完。用一句短话告诉用户，不说完成时间，不重复之前说过的，不复述用户的要求。")
+
+
+REPLAY = {"zh": "\n用户刚才开口把这条结果盖住了，他的话已经回答过。现在只用一句话补上这条结果的结论；"
+                "用户刚才表示不想听的话，只说结果在对话里。",
+          "en": "\nThe user spoke over this result and their words have been answered. Now give its conclusion in one "
+                "sentence; if they said they did not want to hear it, only say it is in the conversation."}
+

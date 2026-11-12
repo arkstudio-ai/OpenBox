@@ -348,6 +348,14 @@ async def test_a_newer_delegated_followup_replaces_the_assistants_unstarted_earl
             assert states[typed["inbox_id"]] == ("accepted", None)
             assert states[third["inbox_id"]] == ("accepted", None)
             assert states[created["inbox_id"]] == ("accepted", None)  # the task's opening input, still unstarted
+            # What the replaced ones asked for is not lost: the newest carries them, flat, to be read once.
+            rows = {row.id: row for row in (await db.scalars(select(AgentInboxItem).where(
+                AgentInboxItem.session_id == created["execution_session_id"]))).all()}
+            merged = rows[third["inbox_id"]].prompt
+            assert merged.index("1. 做 45 秒版") < merged.index("2. 改成 30 秒版") < merged.index(
+                "3.（最新）改成 30 秒版，背景蓝色")
+            assert merged.count("一次读完") == 1 and rows[third["inbox_id"]].origin_ref["own_prompt"] == "改成 30 秒版，背景蓝色"
+            assert rows[typed["inbox_id"]].prompt == "背景要蓝色"
             submission = await db.get(TaskSubmission, first["submission_id"])
             assert submission.disposition == "canceled"
             task = await db.get(AssistantTask, created["task_id"])

@@ -194,7 +194,9 @@ async def resume_unattached_completions() -> None:
         ~select(AgentInboxItem.id).where(
             AgentInboxItem.session_id == VideoJob.session_id,
             AgentInboxItem.user_id == VideoJob.user_id,
-            AgentInboxItem.client_id == "vjob:" + VideoJob.id,
+            AgentInboxItem.client_id.like("vjob:" + VideoJob.id + "%"),
+            # A wake closed unrun because a card owned the turn handed nothing over: it is tried again.
+            or_(AgentInboxItem.outcome.is_(None), AgentInboxItem.outcome != "not_run"),
         ).exists(),
     ]
     if _completion_scan_after is not None:
@@ -351,6 +353,9 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
             # shot that wake leaves unshown is swept again afterwards.
             return False
         reference = await _resume_reference(job)
+        if reference is MOVED_ON:
+            # Made for a goal the task has since left: no turn may take it up, yet it is paid for.
+            return await deliver_superseded(job) if prompt is RESUME_PROMPT else False
         if reference is None:
             return False
         receipt = await accept_inbox_item(
@@ -358,7 +363,7 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
             user_id=user_id,
             delivery="followup",
             prompt=prompt.format(job_id=job.id),
-            client_id=f"vjob:{job.id}",
+            client_id=await _wake_key(job),
             system=True,
             origin_ref=reference,
         )
@@ -368,6 +373,95 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
     except Exception as exc:
         log.warning(f"Could not resume conversation for video job {job.id}: {type(exc).__name__}: {exc}")
         return False
+
+
+MOVED_ON = {"moved_on": True}  # _resume_reference: the task's goal changed after this job was submitted
+DIRECT_CLAIM = "direct-delivery"
+SUPERSEDED_PROMPT = "（按之前的要求生成好的一段视频，贴进对话）"
+SUPERSEDED_TEXT = {
+    "zh-CN": "这一段是按之前的要求生成的，已经做好了，先放在这里。后来改的要求不受影响，照新的继续。",
+    "en-US": "This clip was made to the earlier request and is finished, so here it is. The later changes "
+             "stand; work goes on to the new request.",
+    "vi-VN": "Đoạn này được làm theo yêu cầu trước và đã xong nên gửi bạn ở đây. Các thay đổi sau vẫn giữ "
+             "nguyên, công việc tiếp tục theo yêu cầu mới.",
+}
+
+
+async def _wake_key(job) -> str:
+    """The wake's inbox key: the job's own, or a fresh one after wakes a pending card closed unrun."""
+    from sqlalchemy import func, select
+
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+
+    async with get_db_session() as db:
+        unrun = await db.scalar(select(func.count()).select_from(AgentInboxItem).where(
+            AgentInboxItem.session_id == job.session_id, AgentInboxItem.user_id == job.user_id,
+            AgentInboxItem.client_id.like(f"vjob:{job.id}%"), AgentInboxItem.outcome == "not_run")) or 0
+    return f"vjob:{job.id}" if not unrun else f"vjob:{job.id}:{unrun}"
+
+
+async def deliver_superseded(job) -> bool:
+    """Show a finished segment made for a goal its task has since left, without an agent turn.
+
+    light-test 2026-11-09: two 45-second clips finished after the request went back to 30 seconds; nothing
+    could take them up and they stayed invisible though paid for (docs/VOICE_DISPATCH_PLAN_20261112.md §4.4).
+    Only into a conversation at rest — no live run, no card waiting, nothing queued: messages written into a
+    suspended turn break its transcript (2026-11-04). Otherwise it is swept again. Its own exchange, like
+    video/compose_recovery.py ``deliver``; the job is claimed first so two sweeps post it once.
+    """
+    from sqlalchemy import select, update
+
+    from assistant.blocking import blocked_by_locked
+    from core.ui_language import ui_language_for
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.file_asset import FileAsset
+    from db.models.question import SessionExecution
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+    from light import chat
+    from session import session as session_mod
+    from tool import video_production as vp
+    from tool.tool import ToolContext
+
+    async with get_db_session() as db:
+        session = await db.get(Session, job.session_id)
+        if session is None or session.is_deleted or job.attached_message_id or not job.output_asset_id:
+            return False
+        execution = await db.get(SessionExecution, job.session_id)
+        waiting = await db.scalar(select(AgentInboxItem.id).where(
+            AgentInboxItem.session_id == job.session_id, AgentInboxItem.user_id == job.user_id,
+            AgentInboxItem.state.in_(("accepted", "claimed"))).limit(1))
+        if ((execution is not None and execution.run_id is not None) or waiting is not None
+                or await blocked_by_locked(db, session) is not None
+                or await db.get(FileAsset, job.output_asset_id) is None):
+            return False
+        claimed = await db.execute(update(VideoJob).where(
+            VideoJob.id == job.id, VideoJob.attached_message_id.is_(None)).values(attached_message_id=DIRECT_CLAIM))
+        if claimed.rowcount != 1:
+            return False
+    try:
+        lang = await ui_language_for(job.user_id)
+        user_message = await session_mod.create_user_message(
+            session_id=job.session_id, text=SUPERSEDED_PROMPT, agent=session.agent, model=None,
+            synthetic=True, user_id=job.user_id, origin="human",
+            origin_ref={"actor_user_id": job.user_id, "entrypoint": "superseded_delivery", "job_id": job.id})
+        assistant = await session_mod.create_assistant_message(
+            job.session_id, user_message.id, model_id=None, agent=session.agent, user_id=job.user_id)
+        ctx = ToolContext(session_id=job.session_id, user_id=job.user_id, workspace_id=session.workspace_id,
+                          project_id=session.project_id or "", message_id=assistant.id)
+        attached = await vp._attach_completed(job, ctx, claimed_as=DIRECT_CLAIM)
+        await chat.say(job.session_id, assistant.id, job.user_id,
+                       SUPERSEDED_TEXT.get(lang, SUPERSEDED_TEXT["zh-CN"]) if attached else SUPERSEDED_PROMPT)
+        await chat.finish(job.session_id, assistant.id, job.user_id)
+        if not attached:  # the asset went away in between: the exchange stands, the job is not posted again
+            await vp._update_job(job.id, attached_message_id=assistant.id)
+    except Exception:
+        await vp._update_job(job.id, attached_message_id=None)  # nothing shown: swept again
+        raise
+    log.info(f"Delivered superseded video job {job.id} to {job.session_id} without an agent turn")
+    return True
 
 
 async def _continuation_queued(job) -> bool:
@@ -409,6 +503,11 @@ async def _resume_reference(job) -> dict | None:
             return {}
         if task.archived_at is not None:
             return None
+        from assistant.blocking import blocked_by_locked
+        if await blocked_by_locked(db, session) is not None:
+            # A card owns the turn: a wake now would be closed unrun and the video never shown. It is swept
+            # again and handed over once the card is handled.
+            return None
         query = select(AgentInboxItem).where(
             AgentInboxItem.session_id == session.id, AgentInboxItem.user_id == job.user_id,
             AgentInboxItem.state.in_(("claimed", "settled")),
@@ -424,7 +523,7 @@ async def _resume_reference(job) -> dict | None:
             AgentInboxItem.claimed_at.desc(), AgentInboxItem.id.desc()).limit(1))
         ref = source.origin_ref if source is not None else {}
         if ref.get("intent_revision") != task.intent_revision:
-            return None
+            return MOVED_ON if source is not None else None
         return {"task_id": task.id, "intent_revision": ref["intent_revision"],
                 "source_refs": ref.get("source_refs", []), "video_job_id": job.id}
 

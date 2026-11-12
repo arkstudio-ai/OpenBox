@@ -29,6 +29,11 @@ LIVE_WORK_ROWS, LIVE_WORK_CHARS = 8, 1600
 # The user's own utterances for one request, carried with its handoff.
 REQUEST_WORDS, REQUEST_WORD_CHARS, REQUEST_WORDS_CHARS = 6, 400, 1600
 ACK_WAIT_SECONDS = 3.0
+# Server dispatch (plan §4.8): what the call says unasked about one handed-over task before its result.
+PROACTIVE_PER_TASK = 3           # the opened line and progress lines together
+TASK_PROGRESS_GAP_SECONDS = 60.0
+QUIET_BEFORE_PROACTIVE_SECONDS = 3.0
+PROGRESS_PER_TURN_SERVER = 2     # while the assistant itself is still answering: a second line only for a new step
 TRANSCRIPT_WAIT_SECONDS = 2.5
 # A reply's text is compared by meaning (voice/reply_focus.py) once it has this
 # many characters, then again each time it grows by the second number (a short
@@ -147,12 +152,16 @@ class TurnsMixin:
             revised = self._revision_target(source)
             context = {**self._call_context(words, question_id=revised, source_item=source),
                        "spoken_input_id": source, "handover_source": handover_source}
+            if guard is not None and source in guard.quick:
+                context["direct_answer"] = True  # answered within the assistant's own turn, no task card
             if revised:
                 shown = self.desk.questions[revised]
                 context["revision_request"] = {"request_id": revised, "version": shown["version"],
                                                "session_id": shown["session_id"]}
             key = inbox_key("voice-handoff", self.call_id, self.session, source)
             request = guard.requests.get(source, words) if guard is not None else words
+            if earlier := self._redirected_request():
+                request = phrases.after_redirect(earlier, words, self.lang)
             ref = VoiceTurnRef(id=key, provider_call_id=key, text=request, transcript=words,
                                requested=self.clock(), context=context)
             try:
@@ -176,6 +185,102 @@ class TurnsMixin:
             self._spawn(self._observe_transcript(ref))
             self._update_phase()
             return True
+
+    def _redirected_request(self) -> str:
+        """The request the assistant last answered with only a Light home entry (nothing arranged), while
+        that is still the latest thing it answered: the user's next words are most likely the "要" to the
+        front desk's "直接在后台做吗", and passed on alone they would say nothing to do."""
+        if not self.server_dispatch:
+            return ""  # the model's own assistant_ask restates the request
+        last = next((ref for ref in reversed(self.refs) if ref.settled is not None and ref.report is None), None)
+        if last is None or not last.light_redirect or not last.recorded:
+            return ""
+        return last.transcript or last.text or ""
+
+    # --- server dispatch, plan M2: take back an unsupported status, offer a spoken-over result once more,
+    # --- keep saying what the helper is doing, all within a budget.
+
+    async def _check_said(self, source: str, said: str) -> None:
+        """A reply of the front desk's own that said work was handed over while no record of this call supports
+        it: one sentence of correction, and the user's words handed over now when they asked for work.
+
+        Spoken words cannot be unsaid; this is the net under the route, not the path (plan §4.2).
+        2026-11-07: "是的，确实已经提交" for six minutes with nothing submitted.
+        """
+        from voice.handoff import TIMEOUT_SECONDS, claimed
+        from voice.metrics import claims
+        guard = self.handoff
+        found = claims(said)
+        if not found or guard is None or self.closing or self._backed(source):
+            return
+        words = next((line.text for line in reversed(self.spoken.lines)
+                      if line.role == "user" and line.item_id == source), "")
+        try:
+            verdict = await asyncio.wait_for(claimed(found[0], words), TIMEOUT_SECONDS)
+        except Exception as exc:  # no reading is no ground for a correction
+            log.warning("voice claim check unavailable call=%s error=%s", self.call_id, type(exc).__name__)
+            return
+        if not verdict["claims"] or self.closing or self._backed(source):
+            return
+        handed = False
+        if verdict["work"] and source and guard.current(source) and source not in guard.attempted:
+            guard.required.add(source)
+            handed = bool(await self._recover_handoff(source))
+            if handed:
+                self._ack_at = None  # the correction says it is with the assistant now
+        self._correction = (found[0], handed)
+        log.info("voice unsupported claim call=%s source=%s handed=%s", self.call_id, source or "-", handed)
+        await self.fill_idle()
+
+    def _backed(self, source: str) -> bool:
+        """Something of this call is with the assistant or a helper: a status said about it has a record."""
+        guard = self.handoff
+        return bool(self._handed_tasks or self._request_pending() or source in self._spoken_actions
+                    or (guard is not None and (source in guard.refs or source in guard.fulfilled)))
+
+    async def _say_correction(self) -> None:
+        claim, handed = self._correction
+        if await self.say_phrase("correction", phrases.correction_instructions(claim, handed, self.lang)):
+            self._correction = None
+
+    def _resume_spoken_over(self, said: str) -> None:
+        """A report the user spoke over, once their words are answered: told once more, in a sentence, unless
+        the answer already named its task (plan §4.3). It stayed untold until the call ended before."""
+        from voice.handoff import _comparable
+        for ref in self.deliveries:
+            if ref.delivery != "paused" or ref.replayed:
+                continue
+            ref.replayed = True
+            if ref.report and _comparable(ref.report) in _comparable(said):
+                continue  # the reply that answered the interruption told it from the task's facts
+            ref.paused_by_user, ref.delivery, ref.interrupted = False, "queued", True
+            log.info("voice spoken-over report offered again call=%s turn=%s", self.call_id, ref.id)
+
+    def _task_progress_due(self) -> dict | None:
+        """The handed-over task this call is about, when its helper is at a step not said yet and the budget
+        allows a line (plan §4.3, §4.8)."""
+        task = self.focus_task or {}
+        task_id, session_id = task.get("task_id"), task.get("session_id")
+        if (not self.server_dispatch or self.room_progress is None or not self.tell_reports or self.room
+                or not session_id or task_id not in self._handed_tasks or task_id in self._tasks_reported
+                or self._request_pending() or self.deliveries
+                or self._proactive.get(task_id, 0) >= PROACTIVE_PER_TASK):
+            return None
+        now = self.clock()
+        if (now - self.quiet_since < QUIET_BEFORE_PROACTIVE_SECONDS
+                or (self._proactive_at is not None and now - self._proactive_at < TASK_PROGRESS_GAP_SECONDS)):
+            return None
+        doing = self.room_progress.step(session_id)
+        if not doing or doing == self._task_step_told.get(task_id):
+            return None
+        return {"task_id": task_id, "title": task.get("title", ""), "doing": doing}
+
+    async def _say_task_progress(self, due: dict) -> None:
+        if await self.say_phrase("task_progress", phrases.task_progress_instructions(
+                due["title"], due["doing"], self.lang)):
+            self._proactive[due["task_id"]] = self._proactive.get(due["task_id"], 0) + 1
+            self._proactive_at = self.clock()
+            self._task_step_told[due["task_id"]] = due["doing"]
 
     def _revision_target(self, source: str) -> str:
         """The task card the server's route bound these words to as a change: still shown, and shown before
@@ -252,6 +357,12 @@ class TurnsMixin:
         self._focus_chars = 0
         self._focus_final = self._focus_read = False
         self._ack_at: float | None = None     # a silent handover is acknowledged then, unless its result came
+        self._correction: tuple[str, bool] | None = None  # (what was said, handed over since): one sentence due
+        self._proactive: dict[str, int] = {}   # task id → unasked lines said about it before its result
+        self._proactive_at: float | None = None
+        self._task_step_told: dict[str, str] = {}  # task id → the helper's step last said
+        self._tasks_reported: set[str] = set()     # tasks whose result came: no progress after that
+        self._progress_step_told = -1              # Progress.version at the last progress line
         self._heard_replies: deque[str] = deque(maxlen=16)  # the latest replies the user heard words of
         self._silent_responses: deque[str] = deque(maxlen=32)  # keepalive tools may arrive after response.done
         self._delivery_sources: dict[str, VoiceTurnRef] = {}
@@ -837,7 +948,10 @@ class TurnsMixin:
             self._passed_on.update({task["task_id"]: ref.transcript or ref.text for task in ref.running})
             self._handed_tasks.update({task["task_id"]: task.get("title", "") for task in ref.running})
             self.set_focus_task({"task_id": ref.running[0]["task_id"], "title": ref.running[0].get("title", ""),
-                                 "state": "刚交办过去，正在做" if not english(self.lang) else "just handed over, in progress"})
+                                 "state": "刚交办过去，正在做" if not english(self.lang) else "just handed over, in progress",
+                                 # the helper's live step is said unasked only under server dispatch
+                                 **({"session_id": ref.running[0].get("session_id")} if self.server_dispatch else {})})
+            self._proactive_at = self.clock()
         if not self.pending_calls and self.progress is not None:
             self.progress.reset()
         if not self._request_pending():
@@ -983,7 +1097,9 @@ class TurnsMixin:
                 [item.speech for item in group], self.lang, **facts)
         else:
             instructions = phrases.delivery_instructions(ref.speech, self.lang, **facts)
-        if any(item.interrupted for item in group):
+        if any(item.replayed for item in group):
+            instructions += phrases.REPLAY["en" if english(self.lang) else "zh"]
+        elif any(item.interrupted for item in group):
             instructions += ("\n上次汇报被打断，没有确认完整播放。结合用户刚才的话和当前结果简短接续，"
                 "不要重复称呼、问候、‘好的老板’或开场白；不要假定上次整段已听完。")
         await self._create(instructions)
@@ -1144,6 +1260,8 @@ class TurnsMixin:
             return
         self._passed_on.pop(task_id, None)
         if task_id:
+            if not running:
+                self._tasks_reported.add(task_id)
             self.set_focus_task({"task_id": task_id, "title": title,
                                  "state": "刚出了结果" if not english(self.lang) else "just reported a result"})
         ref.delivery = "queued"
@@ -1173,6 +1291,8 @@ class TurnsMixin:
                           if ref.lane != "remember"), "")
             self._opened_tasks.add(task_id)
             self._handed_tasks[task_id] = title
+            self._proactive[task_id] = self._proactive.get(task_id, 0) + 1
+            self._proactive_at = self.clock()
             self._ack_at = None  # "received" and "the card is open" seconds apart: only the latter is said
         elif not text or self.closing or not self.tell_reports:
             return

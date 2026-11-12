@@ -28,7 +28,7 @@ def test_todays_check_is_scored_on_what_it_can_say():
 
 
 async def test_a_model_is_timed_and_its_misses_are_listed(monkeypatch):
-    answers = {"今天上海天气怎么样": "lookup"}
+    answers = {"今天上海天气怎么样": "answer"}
 
     async def fake(prompt, model, case):
         if case["words"] == "你定吧":

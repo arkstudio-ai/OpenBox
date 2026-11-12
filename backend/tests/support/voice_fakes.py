@@ -221,10 +221,11 @@ class FakeLink:
         return list(self.waiting_cards)
 
     def finish(self, call_id, status="ok", speech="贪吃蛇的收尾自检做完了。", cards=None, running=None,
-               decision_versions=None, speech_stale=False):
+               decision_versions=None, speech_stale=False, light_redirect=False):
         future = self.results.setdefault(call_id, asyncio.get_running_loop().create_future())
         future.set_result({"status": status, "speech": speech, **({"cards": cards} if cards else {}),
                            **({"running": running} if running else {}),
+                           **({"light_redirect": True} if light_redirect else {}),
                            **({"decision_versions": decision_versions, "speech_stale": speech_stale}
                               if decision_versions is not None else {})})
 

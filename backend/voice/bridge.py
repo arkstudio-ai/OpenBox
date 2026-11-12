@@ -29,7 +29,7 @@ from voice.provider import ProviderEvent, refuses_reply
 from voice.transcript import CallTranscript
 from voice.freshness import FreshnessMixin, work_claim
 from voice.playback import PlaybackMixin
-from voice.turns import ACK_WAIT_SECONDS, REMOVED_DECISION_SECONDS, TurnsMixin
+from voice.turns import ACK_WAIT_SECONDS, PROGRESS_PER_TURN_SERVER, REMOVED_DECISION_SECONDS, TurnsMixin
 from voice.upkeep import ContextKeeper
 from voice.memory_context import DEGRADE_AFTER_SECONDS, MemoryContextMixin, RecentContext, keeps_call_context
 
@@ -713,7 +713,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         else:
             self.state, self.interrupted = "responding", False
             if kind.startswith("phrase:") or kind == "progress":
-                self.emit(events.phrase(kind.split(":", 1)[-1]))
+                key = kind.split(":", 1)[-1]  # a correction or a task's progress is "progress" to the clients
+                self.emit(events.phrase(key if key in events.PHRASE_KEYS else "progress"))
         self._update_phase()
 
     async def _on_audio(self, event) -> None:
@@ -777,6 +778,11 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if self.handoff is not None:
             self.handoff.response_done(self._answering.get(event.response_id or "", ""), kind,
                                        event.status == "completed")
+        if (self.server_dispatch and kind in {"model", "followup"} and heard and event.status == "completed"
+                and not self.interrupted):
+            self._resume_spoken_over(said)
+            if said:
+                self._spawn(self._check_said(self._answering.get(event.response_id or "", ""), said))
         if kind in {"model", "followup"} and heard and event.status == "completed" and not self.interrupted:
             self._answered_item = self._answering.get(event.response_id or "", "") or self._answered_item
         if (kind in {"model", "followup"} and heard and event.status == "completed"
@@ -893,6 +899,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             return self._say_memory_answer
         if self.next_phrase:
             return self._say_next_phrase
+        if self._correction is not None:
+            return self._say_correction  # ahead of everything else unasked (plan §4.8)
         if self._carry_due:
             return self._say_carried
         # A read can finish between response.done and its function output.
@@ -909,6 +917,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             return self._acknowledge
         if due := self._progress_due():
             return lambda: self._say_progress(due)
+        if task := self._task_progress_due():
+            return lambda: self._say_task_progress(task)
         return None
 
     async def _say_next_phrase(self) -> None:
@@ -1188,8 +1198,14 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         if (now - self.quiet_since < self.late_after
                 or (self.last_progress is not None and now - self.last_progress < PROGRESS_GAP_SECONDS)):
             return []
+        if not self.server_dispatch:
+            return [ref for ref in self.pending_calls.values() if ref.lane != "remember"
+                    and ref.progress < PROGRESS_PER_TURN and now - ref.requested >= self.late_after]
+        # Server dispatch: it keeps saying where the assistant is, a second time only at a new step.
+        moved = self.progress is not None and self.progress.version != self._progress_step_told
         return [ref for ref in self.pending_calls.values() if ref.lane != "remember"
-                and ref.progress < PROGRESS_PER_TURN and now - ref.requested >= self.late_after]
+                and now - ref.requested >= self.late_after
+                and (ref.progress == 0 or (ref.progress < PROGRESS_PER_TURN_SERVER and moved))]
 
     async def _say_progress(self, due: list) -> None:
         """One sentence on what is really going on."""
@@ -1199,6 +1215,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                 ref.late = True
                 self._turn(ref, "late")
         self.last_progress = self.clock()
+        self._progress_step_told = self.progress.version if self.progress is not None else -1
         await self._sync_instructions(force=True)
         self.requested = "progress"
         await self._create(phrases.receipt_instructions(self.lang, delayed=True) if self.unified else

@@ -64,13 +64,15 @@ CHECK += (
 # Asked before the reply, not after it (docs/VOICE_DISPATCH_PLAN_20261112.md §4.1): one short four-way
 # question. Measured 2026-11-12 on the incident utterances with qwen3.8-flash: p50 0.55 s, p90 0.82 s,
 # 77/81 right; the long check above took 0.98 / 1.51 s on the same model and 2.6 / 4.1 s on the summary model.
-ROUTES = ("chat", "lookup", "dispatch", "card")
+ROUTES = ("chat", "lookup", "answer", "dispatch", "card")
 ROUTE_TIMEOUT_SECONDS = 2.5
 ROUTE = (
-    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|dispatch|card\",\"card\":\"卡片标识或空\"}。\n"
+    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|answer|dispatch|card\",\"card\":\"卡片标识或空\"}。\n"
     "dispatch：用户要人去办事——创建交付物、修改或继续已有任务、催执行、外部操作、定时安排、"
     "要求新建对话或把谈好的内容递交出去；把决定权交给你（“你定吧”）且前文是在交办，也算。\n"
-    "lookup：只是问现状——进度、是否已提交、余额、日程、天气这类查一下就能答的。\n"
+    "lookup：只是问用户自己这边的现状——任务进度、是否已提交、余额、日程、云电脑和发布渠道的状态。\n"
+    "answer：一个要查一下外面的实时信息或读一下文件才能答、但一两步就能答完的问题——天气、汇率、当天的新闻、"
+    "某个文件里写了什么。不产出交付物，不改任何任务。解释名词、讲道理、给建议不用查，是 chat。\n"
     "card：open_cards 里有卡片，且这句话本身明确选了其中一个选项。改要求、提问、犹豫、暂缓都不是 card。\n"
     "chat：其余——闲聊、解释、澄清、讨论方案、假设性提问、应声、调整说话方式。\n"
     "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。"
@@ -79,9 +81,36 @@ ROUTE = (
     "context_withheld 为 true 时只依据 latest_user 判断，指代不明就选 chat。")
 
 
+CLAIM = (
+    "电话里前台刚对用户说了一句话。判断两件事，只输出一个 JSON 对象：{\"claims\":true|false,\"work\":true|false}。\n"
+    "claims：assistant_said 是否在告诉用户，他这次要办的事已经交出去、已提交、已安排、正在做或已经做好。"
+    "说“还没交”“我现在去交”“要不要我安排”、转述查到的别的任务的进度、泛泛地说自己能做什么，都不算。\n"
+    "work：user_words 是否是要人去办事（创建、修改、继续、催办、发布、定时等）；只是询问、闲聊或为空则为 false。")
+
+
+async def claimed(said: str, words: str) -> dict:
+    """Whether a spoken reply told the user their work was handed over, and whether their words asked for work
+    (plan §4.2 说错即更正). One short question to the route model; anything but the two booleans is an error."""
+    from core.config import get_config
+    from voice.summary import complete
+
+    answer = await complete(get_config().voice.route_model, CLAIM,
+                            json.dumps({"assistant_said": said, "user_words": words}, ensure_ascii=False),
+                            ROUTE_TIMEOUT_SECONDS)
+    value = json.loads(_unfenced(answer))
+    if not isinstance(value, dict) or not all(isinstance(value.get(key), bool) for key in ("claims", "work")):
+        raise ValueError("invalid claim reading")
+    return {"claims": value["claims"], "work": value["work"]}
+
+
 @dataclass(frozen=True)
 class HandoffRequest:
     request: str
+
+
+@dataclass(frozen=True)
+class QuickAnswer:
+    """A question the assistant answers within its own turn: handed over, no task card (plan §4.5)."""
 
 
 @dataclass(frozen=True)
@@ -131,6 +160,8 @@ async def route(words: str, context: str, request_words: tuple[str, ...] = (), c
         return await required(words, context, request_words, cards, withheld, task_state, model=model)
     if chosen == "dispatch" and named in task_cards:
         return Revision(named)
+    if chosen == "answer":
+        return QuickAnswer()
     return chosen == "dispatch"
 
 
@@ -252,6 +283,7 @@ class HandoffGuard:
         self.refs: dict[str, object] = {}
         self.requests: dict[str, str] = {}
         self.revisions: dict[str, str] = {}  # source item → the task card its words change (server dispatch)
+        self.quick: set[str] = set()         # source items handed over as a question to answer within the turn
         self.responses: dict[str, str] = {}
 
     def current(self, source: str) -> bool:
@@ -277,6 +309,7 @@ class HandoffGuard:
             self.refs = {key: value for key, value in self.refs.items() if key in keep}
             self.requests = {key: value for key, value in self.requests.items() if key in keep}
             self.revisions = {key: value for key, value in self.revisions.items() if key in keep}
+            self.quick.intersection_update(keep)
             self.responses = {key: value for key, value in self.responses.items()
                               if value.split(":", 1)[-1] in keep}
         if self.early or source in self.finished:
@@ -375,6 +408,8 @@ class HandoffGuard:
                     self.requests[source] = needed.request
                 elif isinstance(needed, Revision):
                     self.revisions[source] = needed.request_id
+                elif isinstance(needed, QuickAnswer):
+                    self.quick.add(source)
                 self.required.add(source)
                 log.info("missed handoff call=%s source=%s", self.bridge.call_id, source)
                 # Another spoken reminder can itself omit the tool, be held by

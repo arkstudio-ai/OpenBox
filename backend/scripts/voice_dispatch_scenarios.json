@@ -1,5 +1,5 @@
 {
-  "about": "What users said in the calls behind the dispatch plan (docs/VOICE_DISPATCH_PLAN_20261112.md §3), reworded and without names. Each utterance carries the route it must get: chat (answer on the phone), lookup (answer from a quick read), dispatch (hand to the assistant: new work, a change, a push to proceed, a new conversation), card (a choice on a card the call showed). The same lines feed the route benchmark (scripts/voice_route_bench.py) and the live replay (tests/manual/voice_replay.py --utterances).",
+  "about": "What users said in the calls behind the dispatch plan (docs/VOICE_DISPATCH_PLAN_20261112.md §3), reworded and without names. Each utterance carries the route it must get: chat (answer on the phone), lookup (answer from a quick read of the user's own state), answer (a small outside question the assistant answers within its turn, no task card), dispatch (hand to the assistant: new work, a change, a push to proceed, a new conversation), card (a choice on a card the call showed). The same lines feed the route benchmark (scripts/voice_route_bench.py) and the live replay (tests/manual/voice_replay.py --utterances).",
   "scenarios": [
     {
       "id": "claimed-new-conversation",
@@ -134,7 +134,7 @@
       "turns": [
         {
           "user": "今天上海天气怎么样",
-          "expect": "lookup"
+          "expect": "answer"
         },
         {
           "user": "我还剩多少积分",
@@ -180,6 +180,35 @@
         },
         {
           "user": "把刚才那条视频的字幕改成黄色",
+          "expect": "dispatch"
+        }
+      ]
+    },
+    {
+      "id": "quick-answers",
+      "source": "plan §4.5: small questions answered within the turn, no task card",
+      "turns": [
+        {
+          "user": "明天上海天气怎么样，适合出外景吗",
+          "expect": "answer"
+        },
+        {
+          "front": "我查一下。"
+        },
+        {
+          "user": "现在美元兑人民币大概多少",
+          "expect": "answer"
+        },
+        {
+          "user": "我上次传的那个菜单文件里，招牌菜写的是哪几道",
+          "expect": "answer"
+        },
+        {
+          "user": "我还剩多少积分",
+          "expect": "lookup"
+        },
+        {
+          "user": "那你帮我按这个天气做一条外景预告视频",
           "expect": "dispatch"
         }
       ]

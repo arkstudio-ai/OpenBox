@@ -116,3 +116,29 @@ iOS：**1.1.0 (104)** 2026-11-04 03:26 已上 TestFlight（只挂内部组「Lig
 | 2026-11-09 16:40 | `20261109-light-45954e8a` | light-mode（#171） | 说话镜头台词硬校验：`video_generate` 新增 `spoken_line`/`no_speech`，提到说话/播报/口型却无台词且开音频即拒绝，台词落 `request_data.spoken_line`；`video_compose` 的 AI 旁白盖在带台词镜头上即拒绝（拍板「主播自己念」）。探针静默（busy 0 / 10 分钟真人消息 0 / 在途 0）后 16:37 切，healthy、head `pm39f0a1b2c3` 不变、0 traceback；机上容器内复核：主播口型无台词 REFUSE、带台词追加「口播台词：」、纯画面 PASS。main 版见 #172（未合） |
 | 2026-11-09 17:43 | `20261109-light-94664391` | light-mode（#173 + #174） | 完成态任务卡自动折成一行、可手动收起/展开，「最近完成」整组折起（Web；App 侧同 PR，需出 1.1.0(109)）；助理的新 followup 取代同任务里它自己还没开始的旧 followup（`ASSISTANT_INPUT_SUPERSEDED`，回执 `superseded_inbox_ids`）。用户要求直接切（探针显示 QWH 正开着任务页轮询）；healthy、head 不变、0 traceback；机上复核 coalesce/gate 存在、前端包含 fold store。教训：16:40 那次切换时探针只看消息/忙会话，漏了开着页面的人，造成 35 秒 502；探针已补「lighthouse 日志近 3 分钟真人非轮询请求」（scratchpad lt_active.sh，待入库） |
 | 2026-11-09 18:38 | `20261109-light-718f6c64` | light-mode（#175 + App 110 bump） | 消息中心模板行按请求语言重渲染（`templates.recover/relocalize`，`/api/inbox` 带 `ui_language`），App 首页卡/消息列表跟随语言切换。用户要求直接切；healthy、head `pm39f0a1b2c3` 不变、0 traceback，容器内复核 relocalize/recover/coalesce 存在。**App 1.1.0(110) 双端同出**（109 的 iOS 已在 TestFlight、缺 #175，构建号不能复用，故双端统一 110） |
+
+## 停机与数据存档（2026-11-11）
+
+Light 线并入 main 后，这台测试机的后端与轨迹 worker 于 2026-11-11 停止，此后不再重启；域名 `light-test.bossipai.com.cn` 已改为跳转到正式环境。停机时对两个库做了整库存档，这是 Light 测试期间全部数据的唯一留存。
+
+| 项 | 内容 |
+| --- | --- |
+| 位置 | `oss://bossip/light-test-archive/20261111/`（上海，标准存储；该桶没有生命周期规则，不会自动过期） |
+| `business.dump` | 业务库 `openbox`，`pg_dump -Fc`，19,031,894 字节，SHA-256 `aa8dfbd513ac5cd4fce98b83b44cc7d0f6ba3933789f08d22b8ead877cdf1166` |
+| `trace.dump` | 轨迹库 `openbox_trace`，`pg_dump -Fc`，22,783,263 字节，SHA-256 `c1c24c7c561cd7e5b9d89a00d8d5e7311b11cca1171b8154d7977f1c7170bfd4` |
+| `SHA256SUMS` | 上面两项的校验和 |
+| 机上副本 | 测试机 `/opt/openbox/backups/final-20261111/`，随机器 2026-12-01 到期释放而消失 |
+| 库结构版本 | alembic `pm39f0a1b2c3` |
+
+存档里有而正式环境没有的：21 个本地注册的探针账号及其数据；9 个在正式环境已有账号的人在测试机上产生的会话；所有人的记忆、推送、平台登录态、桌面与支付记录；整个轨迹库。已经迁到正式环境（gw2）的：只在测试机注册的 11 个用户（账号、工作区、订阅、积分账本、会话、通话个人设置）、8 条样例、2 个门店。用户文件本来就在共用的 `bossip` 桶里，没有单独存档。
+
+取回查看（只读核对用，不要恢复进正式业务库）：
+
+```bash
+aliyun oss cp oss://bossip/light-test-archive/20261111/ ./lt-archive/ -r --region cn-shanghai
+(cd lt-archive && shasum -a 256 -c SHA256SUMS)
+createdb lt_stage && pg_restore --no-owner -d lt_stage lt-archive/business.dump
+```
+
+2026-11-11 迁移时曾在 gw2 的 Postgres 里按上面的办法恢复过一份临时库 `lt_stage`（132 MB）。2026-11-12 用它核对过 11 个迁移用户的通话个人设置与存档逐项一致，随后已删除；gw2 上不再有这份数据，要再查就从 OSS 取回。
+

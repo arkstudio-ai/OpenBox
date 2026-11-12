@@ -62,7 +62,7 @@ from db.models.api_key import ApiKey
 from db.models.partner import PartnerTariff, PartnerRebate
 from db.models.resource_control import ResourceControlLease
 from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob, MemoryExtractionCursor, MemoryPipelineEnrollment
-from db.models.voice import VoiceCall, VoiceTurn
+from db.models.voice import VoiceCall, VoiceLine, VoiceTurn
 from db.models.memory_protocol import MemoryChangeClock, MemoryWriteReceipt, MemoryExperience
 from db.models.light_example import LightExample
 from db.models.store import Store
@@ -73,7 +73,7 @@ __all__ = [
     "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
     "ExternalEffect", "ExternalEffectEvidence", "ResourceControlLease",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
-    "MemoryPipelineEnrollment", "VoiceCall", "VoiceTurn", "LightExample", "Store",
+    "MemoryPipelineEnrollment", "VoiceCall", "VoiceLine", "VoiceTurn", "LightExample", "Store",
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",

@@ -411,6 +411,9 @@ class VoiceConfig(BaseModel):
     summary_model: str = "openai/qwen3.8-flash"
     # QA only: log each turn's transcript to check the front desk invents nothing.
     debug_transcripts: bool = False
+    # Keep each call's lines (user, assistant, notes, interruptions) in voice_lines for the dispatch metrics
+    # (voice/metrics.py). Off: nothing is written and those metrics report "not measured".
+    line_log: bool = False
 
 
 class DesktopPublishConfig(BaseModel):

@@ -69,13 +69,15 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  quick_return: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
-                 context_sink=None, context_reader=None,
+                 context_sink=None, context_reader=None, line_sink=None,
                  prepare_memory=None, refresh_memory=None, prewarm_memory=None, focus=None, focus_task=None,
                  room_progress=None):
         self.provider, self.link, self.lang = provider, link, lang
         self.unified = unified
         self.shared_context = ""
         self.context_sink = context_sink
+        # voice.line_log: every line as said, for the dispatch metrics (voice/metrics.py); never awaited by the call.
+        self.line_sink, self._line_seq, self._response_kinds = line_sink, 0, {}
         self._context_dirty = False
         self._context_task = None
         self.decision_context = ""
@@ -312,6 +314,9 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self.emit(events.playback_clear())
         self._update_phase()  # never keep showing "speaking" while awaiting a provider ACK
         log.info("voice interruption call=%s source=%s", self.call_id, source)
+        if source in ("provider_vad", "partial_transcript") and self.active_response and self.audio_sent:
+            # The user cut off something being played: which purpose it had is the measurement.
+            self._keep_line("event", source, kind="interrupt:" + (self.response_kind or "").split(":", 1)[0])
         self._playing_until = None  # the client has stopped playing
         await self._cancel_playbacks()
         if self.active_response:
@@ -458,7 +463,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         await self._track_spoken_cards(event)
         if (event.response_id or self.active_response) in self._stale_responses:
             return  # placing these words may itself have discovered an obsolete claim
-        self._said("assistant", event.text, event.item_id)
+        self._said("assistant", event.text, event.item_id,
+                   kind=self._response_kinds.get(event.response_id) or self.response_kind or "")
         if event.response_id:
             self._replies[event.response_id] = self._replies.get(event.response_id, "") + event.text
 
@@ -522,8 +528,23 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._room_progress_seen = (-1, "")
         self.emit(events.focus(self._focus_with_progress(), bound=self.room is not None))
 
-    def _said(self, speaker: str, text: str, item_id: str = "") -> bool:
+    def _keep_line(self, role: str, text: str, *, kind: str = "", item_id: str = "") -> None:
+        if self.line_sink is None or self.closing:
+            return
+        self._line_seq += 1
+        self._spawn(self._send_line(self._line_seq, role, text, kind.split(":", 1)[0] if role != "event" else kind,
+                                    item_id))
+
+    async def _send_line(self, seq, role, text, kind, item_id) -> None:
+        try:
+            await self.line_sink(seq=seq, role=role, text=text, kind=kind, item_id=item_id)
+        except Exception as exc:  # a measurement, never a reason to disturb the call
+            log.warning("voice line not kept call=%s error=%s", self.call_id, type(exc).__name__)
+
+    def _said(self, speaker: str, text: str, item_id: str = "", *, kind: str = "") -> bool:
         added = self.spoken.add(speaker, text, item_id)
+        if added:
+            self._keep_line(speaker, self.spoken.lines[-1].text, kind=kind, item_id=item_id)
         if added and speaker in events.TRANSCRIPT_ROLES:
             # The caller's own words and the replies they heard, for the call page's conversation card.
             self._partials.pop(item_id, None)
@@ -575,6 +596,10 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
             await self._keepalive_started(event)
             return
         self.active_response, self.response_kind, self.awaiting_since = event.response_id, kind, None
+        if self.line_sink is not None and event.response_id:
+            if len(self._response_kinds) > 64:
+                self._response_kinds.pop(next(iter(self._response_kinds)))
+            self._response_kinds[event.response_id] = kind
         if self.handoff is not None and kind.startswith(("handoff_retry:", "handoff_failed:")) and event.response_id:
             self.handoff.responses[event.response_id] = kind
         if kind.startswith("handoff_retry:") and event.response_id:

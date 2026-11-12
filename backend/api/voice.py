@@ -196,6 +196,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
                     keepalive_after=upkeep.keepalive_seconds(config.model, config.keepalive_seconds),
                     reply_gap=REPLY_GAP_SECONDS, context_sink=lambda lines: publish_context(scope, lines),
                     context_reader=shared_context.read,
+                    line_sink=((lambda **line: calls.add_line(call_id=call_id, user_id=user_id, **line))
+                               if config.line_log else None),
                     prepare_memory=prepare_memory if native_memory else None,
                     refresh_memory=refresh_memory if native_memory else None,
                     prewarm_memory=prewarm_memory if native_memory else None,

@@ -177,7 +177,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             await fresh.close()
             raise
         return fresh
-    from voice.handoff import required as handoff_required
+    from voice.handoff import required as handoff_required, route as handoff_route
+    server_dispatch = config.dispatch_mode == "server" or user_id in config.dispatch_server_users
     from voice.live_context import publish as publish_context
     from core.config import get_config
     from voice.memory_context import prepare as prepare_memory, refresh as refresh_memory, prewarm as prewarm_memory
@@ -188,7 +189,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     bridge = Bridge(provider, link, lang=lang, late_after=config.late_after_seconds,
                     debug_transcripts=config.debug_transcripts, scope=scope, instructions=instructions,
                     opening_instructions=opening_instructions,
-                    handoff_checker=handoff_required,
+                    handoff_checker=handoff_route if server_dispatch else handoff_required,
+                    handoff_early=server_dispatch,
                     progress=Progress(user_id=user_id, main_session_id=main_id, lang=lang), opener=opener,
                     rates=prices.rates, price_date=prices.date,
                     recap=facts.recap, tell_reports=facts.reports,

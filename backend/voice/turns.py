@@ -50,7 +50,8 @@ class TurnsMixin:
         guard = self.handoff
         if guard is None or source not in guard.required or not guard.current(source):
             return False
-        accepted = bool(await self._pass_words_on(source, "verified_missing_handoff"))
+        accepted = bool(await self._pass_words_on(
+            source, "server_route" if guard.early else "verified_missing_handoff"))
         if accepted and self._still_current(source):
             # A read-only reply may already be describing the old task while
             # the independent check accepts this newer execution request.
@@ -742,7 +743,8 @@ class TurnsMixin:
         2026-11-07: with nothing submitted, the front desk answered "你已经在做了吗" with "是的" and
         "我刚才查了一下…确实已经提交" for six minutes, without a single assistant_ask.
         """
-        if not any(ref.settled is not None and ref.recorded for ref in self.refs):
+        early = self.handoff is not None and self.handoff.early
+        if not early and not any(ref.settled is not None and ref.recorded for ref in self.refs):
             return ""  # nothing has come back from the assistant yet: the greeting and first ask stay as they are
         if english(self.lang):
             titles = "、".join(f"「{title or task_id}」" for task_id, title in self._handed_tasks.items())

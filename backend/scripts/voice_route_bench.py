@@ -91,7 +91,8 @@ async def ask(prompt: str, model: str, case: dict) -> str:
     if case["cards"]:
         payload["open_cards"] = [{"card": card["card"], "title": card["title"], "options": card["options"]}
                                  for card in case["cards"]]
-    answer = await complete(model, ROUTE, json.dumps(payload, ensure_ascii=False), TIMEOUT_SECONDS)
+    answer = await complete(model, getattr(handoff, "ROUTE", ROUTE), json.dumps(payload, ensure_ascii=False),
+                            TIMEOUT_SECONDS)
     route = json.loads(handoff._unfenced(answer)).get("route")
     return route if route in ROUTES else f"invalid:{str(route)[:20]}"
 

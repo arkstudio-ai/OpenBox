@@ -61,13 +61,58 @@ CHECK += (
     "不要重写或复述授权原文，后台会根据这个来源标识绑定真实原话。其余字段遵守上述 JSON 结构。")
 
 
+# Asked before the reply, not after it (docs/VOICE_DISPATCH_PLAN_20261112.md §4.1): one short four-way
+# question. Measured 2026-11-12 on the incident utterances with qwen3.8-flash: p50 0.55 s, p90 0.82 s,
+# 77/81 right; the long check above took 0.98 / 1.51 s on the same model and 2.6 / 4.1 s on the summary model.
+ROUTES = ("chat", "lookup", "dispatch", "card")
+ROUTE_TIMEOUT_SECONDS = 2.5
+ROUTE = (
+    "判断电话里用户最新一句话该走哪条路，只输出一个 JSON 对象：{\"route\":\"chat|lookup|dispatch|card\"}。\n"
+    "dispatch：用户要人去办事——创建交付物、修改或继续已有任务、催执行、外部操作、定时安排、"
+    "要求新建对话或把谈好的内容递交出去；把决定权交给你（“你定吧”）且前文是在交办，也算。\n"
+    "lookup：只是问现状——进度、是否已提交、余额、日程、天气这类查一下就能答的。\n"
+    "card：open_cards 里有卡片，且这句话本身明确选了其中一个选项。改要求、提问、犹豫、暂缓都不是 card。\n"
+    "chat：其余——闲聊、解释、澄清、讨论方案、假设性提问、应声、调整说话方式。\n"
+    "对卡片上的方案提出修改是 dispatch。只依据用户原话判断，前台说过什么不算用户的决定。"
+    "context_withheld 为 true 时只依据 latest_user 判断，指代不明就选 chat。")
+
+
 @dataclass(frozen=True)
 class HandoffRequest:
     request: str
 
 
+async def route(words: str, context: str, request_words: tuple[str, ...] = (), cards: tuple = (),
+                withheld: bool = False, task_state: tuple = (), repair: bool = False):
+    """``required``'s answers, from the short question: True for work to hand over, False for talk or a
+    quick read, the user's choice for a card the call showed (settled by ``required``'s own binding)."""
+    from core.config import get_config
+    from voice.summary import complete
+
+    model = get_config().voice.route_model
+    payload = {"context": context, "latest_user": words}
+    if withheld:
+        payload["context_withheld"] = True
+    if request_words:
+        payload["same_request_user_words"] = list(request_words)
+    if cards:
+        payload["open_cards"] = [{"card": card["card"], "title": card.get("title", ""),
+                                  "options": [{"id": option["id"], "label": option["label"]}
+                                              for option in card.get("options") or []]} for card in cards]
+    answer = await complete(model, ROUTE, json.dumps(payload, ensure_ascii=False), ROUTE_TIMEOUT_SECONDS)
+    value = json.loads(_unfenced(answer))
+    chosen = value.get("route") if isinstance(value, dict) else None
+    if chosen not in ROUTES:
+        raise ValueError("invalid route")
+    if chosen == "card":
+        # Which card and option, bound to the user's own words and the options actually shown.
+        return (await required(words, context, request_words, cards, withheld, task_state, model=model)
+                if cards else False)
+    return chosen == "dispatch"
+
+
 async def required(words: str, context: str, request_words: tuple[str, ...] = (), cards: tuple = (),
-                   withheld: bool = False, task_state: tuple = (), repair: bool = False):
+                   withheld: bool = False, task_state: tuple = (), repair: bool = False, model: str | None = None):
     """A request/True: missed handoff; False: none; a dict: the user's open-card choice.
 
     ``withheld``: the utterance's read policy kept everything but its own words
@@ -89,7 +134,7 @@ async def required(words: str, context: str, request_words: tuple[str, ...] = ()
                                               for option in card.get("options") or []]} for card in cards]
     instructions = CHECK + ("上次输出未通过结构或用户来源校验。重新根据同一份用户证据判断；"
         "只输出一个 JSON 对象，使用合法 authorization_source，不要额外字段或解释。" if repair else "")
-    answer = await complete(get_config().voice.summary_model, instructions,
+    answer = await complete(model or get_config().voice.summary_model, instructions,
         json.dumps(payload, ensure_ascii=False), TIMEOUT_SECONDS)
     value = json.loads(_unfenced(answer))
     if isinstance(value, dict) and "authorization_source" in value:
@@ -169,8 +214,11 @@ def _unfenced(answer: str) -> str:
 
 
 class HandoffGuard:
-    def __init__(self, bridge, checker):
+    def __init__(self, bridge, checker, *, early: bool = False):
         self.bridge, self.checker = bridge, checker
+        # voice.dispatch_mode=server: checked as soon as the words are heard, so work is handed over by the
+        # server whether or not the reply being spoken remembers to; otherwise only after a reply that did not.
+        self.early = early
         self.checked: set[str] = set()
         self.required: set[str] = set()
         self.attempted: set[str] = set()
@@ -187,10 +235,11 @@ class HandoffGuard:
 
     def warm(self) -> None:
         """Warm the check's connection while the user is still speaking."""
-        if self.checker is required:
+        if self.checker is required or self.checker is route:
             from core.config import get_config
             from voice.summary import warm
-            self.bridge._spawn(warm(get_config().voice.summary_model))
+            voice = get_config().voice
+            self.bridge._spawn(warm(voice.route_model if self.checker is route else voice.summary_model))
 
     def heard(self, source: str) -> None:
         if len(self.finished | self.attempted | self.checked) > 128:
@@ -205,7 +254,7 @@ class HandoffGuard:
             self.requests = {key: value for key, value in self.requests.items() if key in keep}
             self.responses = {key: value for key, value in self.responses.items()
                               if value.split(":", 1)[-1] in keep}
-        if source in self.finished:
+        if self.early or source in self.finished:
             self.check(source)
 
     def response_done(self, source: str, kind: str | None, completed: bool) -> None:

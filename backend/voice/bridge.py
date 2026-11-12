@@ -65,7 +65,7 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
     def __init__(self, provider, link, *, lang: str = "zh", late_after: float = 20.0, clock=time.monotonic,
                  debug_transcripts: bool = False, scope=None, progress=None, instructions: str = "",
                  opening_instructions: str | None = None,
-                 opener=None, summarizer=None, handoff_checker=None, wall_clock=None, rates=None, price_date=None,
+                 opener=None, summarizer=None, handoff_checker=None, handoff_early=False, wall_clock=None, rates=None, price_date=None,
                   recap: bool = True, tell_reports: bool = True, detail: str = "brief", first_call: bool = False,
                  quick_return: bool = False,
                  keepalive_after: float | None = None, reply_gap: float | None = None, unified: bool = False,
@@ -159,7 +159,8 @@ class Bridge(MemoryContextMixin, FreshnessMixin, PlaybackMixin, TurnsMixin):
         self._init_freshness(context_reader)
         self._init_playback()
         from voice.handoff import HandoffGuard
-        self.handoff = HandoffGuard(self, handoff_checker) if handoff_checker is not None and not unified else None
+        self.handoff = (HandoffGuard(self, handoff_checker, early=handoff_early)
+                        if handoff_checker is not None and not unified else None)
 
     def emit(self, item) -> None:
         """Queue for the client; after hang-up the socket sends only the final events itself."""

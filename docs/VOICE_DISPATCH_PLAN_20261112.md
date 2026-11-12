@@ -1,6 +1,6 @@
 # 语音交办改造方案：交没交由系统定，助理只说真话（2026-11-12 草案）
 
-状态：**方案 2026-11-12 拍板；M0 已实现（分支 `feat/voice-dispatch-m0`，未合并未发布，见 5.1）**。基线 `origin/main@da491125`。前置文档：[填缝与任务间方案](VOICE_SEAM_PLAN_20261031.md)（10-31 至 11-03 已上线九轮）、[语义改造](VOICE_SEMANTIC_REFACTOR_20261011.md)、[漏转交保护](VOICE_HANDOFF_GUARD_20261021.md)。
+状态：**方案 2026-11-12 拍板；M0 已实现（PR #180，见 5.1）；M1 第一步已实现（分支 `feat/voice-dispatch-m1`，见 5.2）；均未合并未发布，开关默认关**。基线 `origin/main@da491125`。前置文档：[填缝与任务间方案](VOICE_SEAM_PLAN_20261031.md)（10-31 至 11-03 已上线九轮）、[语义改造](VOICE_SEMANTIC_REFACTOR_20261011.md)、[漏转交保护](VOICE_HANDOFF_GUARD_20261021.md)。
 
 ## 1. 一句话
 
@@ -155,6 +155,18 @@ M1 做完后，`_FRONT` 里关于"何时转交、不能说已安排"的规则可
 1. 发布并打开 `voice.line_log`（带迁移），攒几天数据后跑一次 `voice_metrics.py` 得到基线。逐句记录是新增的用户语音文字留存，开之前要确认保留期限。
 2. ~~判定模型测速~~ 已做，见上表。
 3. 真人声回放（需要 QA 账号和运行中的后端）。
+
+### 5.2 M1 第一步实施记录（2026-11-12，分支 `feat/voice-dispatch-m1`，叠在 M0 上）
+
+只做了 4.1 的判定前置与服务端代交，加 4.2 的"事实行从接通起就带"。开关默认关，关着时行为与现在完全一样。
+
+- 配置：`voice.dispatch_mode = model | server`（默认 `model`）、`voice.dispatch_server_users`（单独把几个用户放到 server，用于灰度）、`voice.route_model`（默认 `openai/qwen3.8-flash`）。
+- `voice/handoff.py` 新增 `route()`：四选一短提示词，2.5 秒超时；回答与现有 `required()` 同形（要办事 → True，闲聊/查一下 → False，答卡 → 交给 `required()` 按用户原话和已展示选项绑定具体卡片与选项，同样用快模型）。回答不是四类之一按错误处理，不猜。
+- `HandoffGuard(early=True)`：用户这句话的最终转写一到就判，不再等语音模型说完。判为要办事时走原有的 `_recover_handoff → _pass_words_on`：原话入主会话（来源标记 `server_route`），正在播的那句回复被打断，随后按回执应一声。语音模型自己也调了 `assistant_ask` 时，按同一句话去重，只有一份。
+- server 模式下 `_handoff_facts` 从接通起就在每轮指令里（"本通话到目前为止没有任何任务交办成功"），不再等第一条结果回来。
+- 测试：新增 `test_voice_dispatch_route.py` 15 项通过；语音相关测试文件 984 通过、3 失败（与 main 相同的那 3 项）。
+
+M1 还没做的部分：回执的事实行替代文字助理散文（4.2）、任务单开了说一句（4.3）、结果与卡片先说结论（4.8）、带卡片时把修改绑定为 revise（现在作为普通转交，由文字助理结合卡片上下文判断）。真实通话未验证：打断时机、应声是否自然，需要在测试环境对单个账号开 `dispatch_server_users` 试。
 
 ## 6. 不做什么
 

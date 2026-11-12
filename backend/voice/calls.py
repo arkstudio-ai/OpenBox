@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 
 from core.identifier import generate_id
 from db.base import get_db_session
-from db.models.voice import VoiceCall, VoiceTurn
+from db.models.voice import VoiceCall, VoiceLine, VoiceTurn
 from voice.meter import RATES, call_prices
 
 LOCK_TTL_SECONDS = 60
@@ -150,3 +150,14 @@ async def update_turn(turn_id: str, **fields) -> None:
     if fields:
         async with get_db_session() as db:
             await db.execute(update(VoiceTurn).where(VoiceTurn.id == turn_id).values(**fields))
+
+
+LINE_CHARS = 4000
+
+
+async def add_line(*, call_id: str, user_id: str, seq: int, role: str, text: str, kind: str = "",
+                   item_id: str = "") -> None:
+    """One line of the call as it was said (``voice.line_log``); bookkeeping only, the caller never waits on it."""
+    async with get_db_session() as db:
+        db.add(VoiceLine(id=generate_id(), call_id=call_id, user_id=user_id, seq=seq, at=_now(), role=role,
+                         kind=kind[:48], text=text[:LINE_CHARS], item_id=(item_id or "")[:64]))

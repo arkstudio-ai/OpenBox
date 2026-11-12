@@ -78,6 +78,8 @@ def bounded_context(context: dict, budget: int = 6200) -> dict:
         kept["handover_source"] = context["handover_source"]
     if context.get("revision_request"):
         kept["revision_request"] = context["revision_request"]
+    if context.get("direct_answer"):
+        kept["direct_answer"] = True
     if context.get("viewed_task"):
         kept["viewed_task"] = context["viewed_task"]
     if questions := context.get("task_questions"):
@@ -146,6 +148,7 @@ class VoiceTurnRef:
     control_revision: int | None = None  # pause/resume/cancel count its report was read at
     interrupted: bool = False
     paused_by_user: bool = False  # interrupted unsolicited speech yields to the conversation
+    replayed: bool = False        # server dispatch: a report the user spoke over was offered once more
     heard: bool = False
     duplicate_of: "VoiceTurnRef | None" = None
     listeners: "list[VoiceTurnRef] | None" = None  # local turn receipts sharing this single delivery
@@ -497,7 +500,7 @@ async def running_tasks(session_id: str, user_id: str, inbox_id: str | None) -> 
             .order_by(AssistantCommand.created_at))).all()
     from voice.work import task_version
     return list({task.id: {"task_id": task.id, "title": task.title, "state": task.observed_state,
-                          "intent_revision": task.intent_revision,
+                          "intent_revision": task.intent_revision, "session_id": task.execution_session_id,
                           "task_version": task_version(task)} for task in rows}.values())
 
 

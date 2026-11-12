@@ -893,7 +893,9 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
             await capture_asset_in_tx(db, trace, asset)
 
 
-async def _attach_completed(job, ctx: ToolContext) -> bool:
+async def _attach_completed(job, ctx: ToolContext, *, claimed_as: str | None = None) -> bool:
+    """``claimed_as``: the placeholder a direct delivery put in ``attached_message_id`` before it wrote its
+    messages (video/job_recovery.py), so two sweeps never post the same video twice."""
     if not job.output_asset_id or not ctx.message_id or job.attached_message_id:
         return bool(job.attached_message_id)
     from db.base import get_db_session
@@ -907,7 +909,8 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
     async with get_db_session() as db:
         result = await db.execute(
             update(VideoJob)
-            .where(VideoJob.id == job.id, VideoJob.attached_message_id.is_(None))
+            .where(VideoJob.id == job.id, VideoJob.attached_message_id.is_(None) if claimed_as is None
+                   else VideoJob.attached_message_id == claimed_as)
             .values(attached_message_id=ctx.message_id, updated_at=datetime.now(timezone.utc))
         )
         claimed = result.rowcount == 1

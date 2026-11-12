@@ -60,6 +60,18 @@ VOICE_TURN_BLOCK = (
     "(task questions). Use request_id for a specific main card; read all only when the user asks about all "
     "pending work. Background and earlier replies are navigation, not current card evidence. "
     "An unrelated question needs no card read or card reminder.")
+# The one place the rule for work asked for on the phone is written; every product line's assistant prompt
+# refers to it instead of restating it (2026-11-07: Light's own wording sent callers to a home-screen entry).
+PHONE_DISPATCH = (
+    "\nOn the phone the caller cannot tap links or open pages. A rule that would send the user to a page or a "
+    "home-screen entry for work they asked for does not apply to this turn, in any interface mode: when you "
+    "would arrange the work, arrange it yourself now with tasks.submit or tasks.followup and the work type that "
+    "fits. Whatever was not arranged in this turn has not started: say so, never that it was handed over or is "
+    "being done.\n")
+DIRECT_ANSWER = (
+    "\nThis one is a small question to answer within this turn: use your own tools (search, reading a file, a "
+    "calculation) and answer it now. Do not open or change a task for it (no tasks.submit, no tasks.followup). "
+    "If it turns out to be minutes of work, say that and handle it the usual way.\n")
 VOICE_LENGTH = {"brief": "be concise and leave space for conversation",
                 "detailed": "include the useful details the user asked for"}
 VOICE_CONTEXT_BLOCK = (
@@ -94,7 +106,8 @@ VOICE_QUESTION_BLOCK = (
 def voice_turn_block(context: dict | None) -> str:
     """The voice-turn instruction, plus the call it came from when the front desk sent it along."""
     context = context or {}
-    block = VOICE_TURN_BLOCK.format(length=VOICE_LENGTH.get(context.get("detail"), VOICE_LENGTH["brief"])) + SPOKEN_GUIDANCE
+    block = (VOICE_TURN_BLOCK.format(length=VOICE_LENGTH.get(context.get("detail"), VOICE_LENGTH["brief"]))
+             + SPOKEN_GUIDANCE + (DIRECT_ANSWER if context.get("direct_answer") else PHONE_DISPATCH))
     if not any(context.get(key) for key in ("heard", "call", "request", "user_words", "earlier_user_words",
                                             "task_questions", "summary", "call_truncated", "viewed_task")):
         return block

@@ -14,6 +14,7 @@ from db.base import Base, JSONType
 
 CALL_STATUSES = ("active", "ended", "failed", "limit")
 TURN_OUTCOMES = ("pending", "delivered", "late", "timeout", "failed", "cancelled")
+LINE_ROLES = ("user", "assistant", "note", "event")
 
 
 class VoiceCall(Base):
@@ -73,4 +74,32 @@ class VoiceTurn(Base):
         Index("ix_voice_turns_call", "call_id", "requested_at"),
         CheckConstraint("outcome IN ('pending','delivered','late','timeout','failed','cancelled')",
                         name="ck_voice_turns_outcome"),
+    )
+
+
+class VoiceLine(Base):
+    """One line of a call as it was said, kept only while ``voice.line_log`` is on (docs/VOICE_DISPATCH_PLAN_20261112.md M0).
+
+    The measurements a turn row cannot give: what the assistant claimed and
+    when, how long a telling ran, and which tellings the user cut off. ``kind``
+    is the reply's purpose for an assistant line (model, followup, delivery,
+    progress, ...) and ``interrupt:<purpose>`` for an event.
+    """
+    __tablename__ = "voice_lines"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    call_id: Mapped[str] = mapped_column(String(64), ForeignKey("voice_calls.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    at: Mapped[datetime] = mapped_column(nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False, server_default=text("''"))
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
+    # Last: the column's name shadows sqlalchemy's ``text`` for the rest of the class body.
+    text: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+
+    __table_args__ = (
+        Index("ix_voice_lines_call", "call_id", "seq"),
+        Index("ix_voice_lines_at", "at"),
+        CheckConstraint("role IN ('user','assistant','note','event')", name="ck_voice_lines_role"),
     )

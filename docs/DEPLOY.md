@@ -17,6 +17,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 对所有入口立即生效、不受开关控制的三处：① 助理对同一任务的新交办会带上被它取代的、还没开始的旧交办内容（原来直接取代）；② 成片不再因为任务在等卡或要求已改而永远不出现（等卡的等卡处理完再交回；要求已改的在对话空闲时直接贴进对话）；③ 来电轮次的指令多了一段"电话里点不了链接，该派就直接派"，Light 的助理规则改为引用它。
 - 切换 `releases/20261112-dispatch-0b2a5c47/activate.sh`：文件锁 → 空闲门禁一次即 0（无在跑轮次、无通话、3 分钟内无用户消息）→ 配置快照 + 业务库 dump 271M（`backups/20261112-dispatch-0b2a5c47/`，`pg_restore -l` 校验）→ backend → worker，均 healthy，约 14:02 UTC 完成。失败回滚含"删 `voice_lines` 并把 alembic 版本改回"。
 - 验证：公网首页与 Logto 配置 200；容器内读配置为上面三项默认值；`voice_lines` 0 行；backend 日志 10 分钟内无 traceback / ERROR；在线上容器里用线上的模型配置跑判定测速一轮（`scripts/voice_route_bench.py --prompts route --rounds 1`）31/32，p50 0.57s / p90 0.80s，说明 `voice.route_model` 在生产可用。**没有做真实通话**；新模式（`dispatch_mode=server`）在任何环境都还没有打过一通电话。
+- **2026-11-12 22:05 新模式已对全部账号打开**（用户决定）：gw2 `config/openbox.json` 的 `voice.dispatch_mode` 改为 `server`（改前备份 `config/openbox.json.bak-20261112T140449Z`，语义比对只有这一项变化），空闲门禁一次通过后重启 backend，healthy，容器内读到 `dispatch_mode=server`、`line_log=false`，日志无报错。打开时仍没有打过真实通话。关闭：把该项改回 `model`（或恢复备份）并重启 backend。
 - 开新模式：在 `config/openbox.json` 的 `voice` 里加 `"dispatch_server_users": ["<用户 id>"]`（单个账号）或 `"dispatch_mode": "server"`（全部），重启 backend；改回即关。逐句记录另由 `"line_log": true` 打开，开之前要先定保留期限。
 - 回滚：恢复 `releases/20261112-dispatch-0b2a5c47/before/docker-compose.override.yml`（两项回 `20261111-light-794509e3`），库里执行 `drop table voice_lines; update alembic_version set version_num='pm39f0a1b2c3';`，再 `docker compose up -d --no-deps backend trajectory-worker`。AWS、高德、gw3 未发布。
 

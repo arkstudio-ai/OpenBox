@@ -9,7 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-12 22:02 `20261112-dispatch-0b2a5c47`（语音交办改造 M0–M4，新模式默认关）
+## 当前应用版本：2026-11-12 23:0x `20261112-balancehold-14ade473`（视频提交按「余额 − 在途报价」预检）
+
+- PR [#185](https://github.com/arkstudio-ai/OpenBox/pull/185) 合并至 `main@14ade473`。起因：用户 winne 余额 -254.57——11-11 同一秒并发提交 7 条 Seedance 2.0 1080p（共 505 积分），当时余额约 252.8；视频完成才结算，原预检只判 `balance <= 0`，7 条全放行。修法：`billing.media.hold_for_submit` 在镜头生成与合成提交时按 workspace 串行（进程内锁 + 余额行 `FOR UPDATE`），`余额 − 未结算在途 job 报价 < 本条报价` 即拒 `INSUFFICIENT_CREDITS`；镜头 job 写 `request_data.balance_hold`（不进 hash、不影响结算）；超过 24 小时未结算的 job 不占额度。
+- **只发后端与轨迹 worker**，前端仍 `20261111-light-794509e3`。本机 buildx amd64 从 `main@14ade473` 干净归档全量构建，经 `oss://bossip/_deploy-tmp/` 中转（已删），gw2 `sha256sum -c` 后装载；切换前 `docker diff` 无手改源码。无迁移（仍 `pn4a0b1c2d3e`）、无配置变更（`BILLING_MODE=enforce`、`voice.dispatch_mode=server` 照旧）。
+- 切换沿用 `releases/<tag>/activate.sh`（复制自 dispatch 版本）：空闲门禁一次即 0 → dump 271M（`backups/20261112-balancehold-14ade473/`）→ backend → worker 均 healthy，Logto 配置 200，切换后 tracebacks=0。
+- 验证：线上容器内 `workspace_in_flight` 对 winne 的 workspace 查询正常返回 0（证明 join 查询在生产 Postgres 可用）。**没有做真实视频提交验收**；winne 的负余额未处理（待运营决定）。
+- 回滚：恢复 `releases/20261112-balancehold-14ade473/before/docker-compose.override.yml`（回 `20261112-dispatch-0b2a5c47`），`docker compose up -d --no-deps backend trajectory-worker`；无库回滚。AWS、高德、gw3 未发布。
+
+## 历史应用版本：2026-11-12 22:02 `20261112-dispatch-0b2a5c47`（语音交办改造 M0–M4，新模式默认关）
 
 - PR [#180](https://github.com/arkstudio-ai/OpenBox/pull/180)（含叠在其上的 [#181](https://github.com/arkstudio-ai/OpenBox/pull/181)）合并至 `main@0b2a5c47`，方案与逐轮记录见 [VOICE_DISPATCH_PLAN_20261112.md](VOICE_DISPATCH_PLAN_20261112.md) 第 5 节。同时带上了此前已合并未发布的 #178（地区分流，`REGION_GATE` 未配置即不生效）的后端代码；#179 只改 App。
 - **只发后端与轨迹 worker**，前端仍是 `openbox-frontend-v2:20261111-light-794509e3`。后端 `openbox-backend:20261112-dispatch-0b2a5c47`：本机 buildx amd64 从 `main` 同内容的干净归档全量构建（不叠补丁），经 `oss://bossip/_deploy-tmp/20261112-dispatch-0b2a5c47/` 中转，gw2 `sha256sum -c` 后装载。切换前 `docker diff` 确认线上容器没有手工改动的源码。

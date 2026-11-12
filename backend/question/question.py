@@ -40,6 +40,9 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     "projects.delete": "question",
     "sessions.delete": "question",
     "tasks.delete": "question",
+    # Asking for another video model than the conversation's files a
+    # switch card (tool.video_model_card).
+    "video_generate": "question",
     # A sensitive memory the assistant may keep only after confirmation.
     "memory.remember": "memory_proposal",
 }

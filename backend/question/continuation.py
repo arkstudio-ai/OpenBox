@@ -82,6 +82,11 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
         events.extend(await _switch_plan_agent(db, session, row, "build" if approved else "plan", content, reply_ref))
         return {"title": "Plan approved" if approved else "Plan not approved", "output": content,
                 "metadata": {**metadata, "approved": approved, "plan_part_id": row.continuation["plan_part_id"]}}, events
+    from question import cards
+    if (applied := await cards.apply(db, session, row)) is not None:
+        value, card_events = applied
+        value["metadata"] = {**metadata, **value["metadata"]}
+        return value, [*events, *card_events]
     if row.status == "rejected":
         if kind == "memory_forget":
             return {"title": "Memory kept", "output": "The user dismissed the question. Nothing was forgotten; do not say it was.",
@@ -368,7 +373,9 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
                         await record("message.committed", {"message": message_data}, db=db,
                                      context=context.derive(message_id=message_data["id"], part_id=None))
                     elif event["type"] == "session.updated":
-                        await record("session.settings_changed", {"after": {"agent": session.agent},
+                        changed = {key: value for key, value in event_data.items()
+                                   if key not in {"userId", "sessionId"}}
+                        await record("session.settings_changed", {"after": changed or {"agent": session.agent},
                                                                    "source_kind": "question"},
                                      db=db, context=context)
             row.applied = True

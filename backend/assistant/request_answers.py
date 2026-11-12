@@ -66,6 +66,13 @@ async def answerable(db, row: QuestionCheckpoint, session: Session, answers=None
         if answers != [[ANSWER_DONE]]:
             return TAKEOVER_REASON.format(done=ANSWER_DONE), False
         return None, False
+    from question import cards
+    if cards.card_of(row.continuation) is not None:
+        # A registered card (question.cards) declares whether the assistant may
+        # pick an option on the user's own words; the server applies the choice.
+        if not cards.voice_answerable(row.continuation):
+            return "It asks the user for a decision only they can make on the card.", False
+        return None, False
     if tool not in ANSWERABLE_TOOLS:
         return "It asks the user for a decision or an action.", False
     high_risk = False

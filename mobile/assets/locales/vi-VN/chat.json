@@ -963,5 +963,9 @@
       "completed": "đã xong",
       "error": "có lỗi"
     }
+  },
+  "card": {
+    "later": "Để sau",
+    "recommended": "Đề xuất"
   }
 }

@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent.driver import LeaseLostError
+from question.question import QuestionSuspended
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -127,8 +128,9 @@ class VideoGenerateArgs(BaseModel):
         default=None,
         max_length=160,
         description=(
-            "ID from action=models. person_selected_model is authoritative: omit or repeat it exactly. "
-            "Never silently substitute; only the person may change the composer model."
+            "Omit it: the conversation's video model decides. Name another ID from action=models only "
+            "when the person asked for that model in their own words; submit then shows them a switch "
+            "card and waits for their answer. Never pick a different model yourself."
         ),
     )
     resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
@@ -1826,28 +1828,67 @@ def resolve_spoken_line(
     return prompt, None
 
 
-async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) -> dict[str, Any]:
+async def _resolve_open_submission(
+    args: VideoGenerateArgs, ctx: ToolContext, *, may_ask: bool = True,
+) -> dict[str, Any]:
     """Normalize an open request into the same shape an approved segment has.
 
-    Defaults come from the person's composer choice and the model's own
-    declaration, never from a hard-coded house style: a caller who says
-    nothing gets the configured default, and a caller who says 16:9 gets 16:9.
+    The conversation owns the video model and resolution (tool.video_model_card):
+    the person's composer pick, else the default tier, which the first submit
+    locks onto the conversation. A request for anything else files a switch
+    card instead of running (``may_ask``), or is refused when no card can be
+    shown. Other defaults come from the model's own declaration, never from a
+    hard-coded house style: a caller who says 16:9 gets 16:9.
     """
     from core.config import get_config
     from tool import video_providers
+    from tool import video_model_card
 
     config = get_config()
     settings = config.video_generation
     requested_model = (args.model or "").strip()
-    selected_model = await _session_video_model_id(ctx)
-    if selected_model and requested_model and requested_model != selected_model:
-        raise _RequestError(
-            f"model '{requested_model}' does not match the person's authoritative "
-            f"composer selection '{selected_model}'. Use '{selected_model}' or omit "
-            "model. To switch models, ask the person to change the video model in "
-            "the composer first; never substitute one silently."
-        )
-    model = selected_model or requested_model
+    requested_resolution = (args.resolution or "").strip()
+    session_row, selected_model, selected_resolution = await video_model_card.session_state(ctx)
+    if video_model_card.unattended(session_row, getattr(ctx, "session_id", "")):
+        # Nobody can answer a card: the session's pick if any, else the caller's.
+        if selected_model and requested_model and requested_model != selected_model:
+            raise _RequestError(
+                f"model '{requested_model}' does not match the person's authoritative "
+                f"composer selection '{selected_model}'. Use '{selected_model}' or omit "
+                "model; never substitute one silently."
+            )
+        if selected_resolution and requested_resolution and requested_resolution != selected_resolution:
+            raise _RequestError(
+                f"resolution '{requested_resolution}' does not match the person's "
+                f"authoritative composer selection '{selected_resolution}'. Use "
+                f"'{selected_resolution}' or omit resolution."
+            )
+        model = selected_model or requested_model
+        resolution = selected_resolution or requested_resolution
+    else:
+        locked = (video_model_card.VideoChoice(
+                      selected_model, selected_resolution or video_model_card.default_resolution(config, selected_model))
+                  if selected_model else video_model_card.default_choice(config))
+        wanted_model = requested_model or locked.model
+        wanted = video_model_card.VideoChoice(
+            wanted_model,
+            requested_resolution or (locked.resolution if wanted_model == locked.model
+                                     else video_model_card.default_resolution(config, wanted_model)))
+        if wanted != locked:
+            if may_ask and not getattr(session_row, "parent_id", None):
+                # Suspends this call until the person answers; returns only when
+                # no card can be shown here (nested call, no persisted part).
+                await video_model_card.ask_switch(ctx, config, locked, wanted, picked=bool(selected_model))
+            raise _RequestError(
+                f"This conversation generates with model '{locked.model}' at '{locked.resolution}'. "
+                f"'{wanted.model}' at '{wanted.resolution}' was not used. Omit model and resolution to use "
+                "the conversation's choice. Only the person changes it: call video_generate submit directly "
+                "(not inside batch) with the model they asked for to show them a switch card, or ask them to "
+                "pick the video tier in the composer."
+            )
+        if not selected_model and may_ask:
+            await video_model_card.lock_default(ctx, locked)
+        model, resolution = locked.model, locked.resolution
     declared = video_providers.declared_model(model or settings.model, config)
 
     # A caller that populates every schema field sends the zero value for an
@@ -1857,20 +1898,6 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
     seed = args.seed or None
     duration_arg = args.duration or None
 
-    requested_resolution = (args.resolution or "").strip()
-    selected_resolution = await _session_video_resolution(ctx)
-    if (
-        selected_resolution
-        and requested_resolution
-        and requested_resolution != selected_resolution
-    ):
-        raise _RequestError(
-            f"resolution '{requested_resolution}' does not match the person's "
-            f"authoritative composer selection '{selected_resolution}'. Use "
-            f"'{selected_resolution}' or omit resolution. To switch resolution, ask "
-            "the person to change it in the composer first; never substitute one silently."
-        )
-    resolution = selected_resolution or requested_resolution
     allowed = list(getattr(declared, "resolutions", None) or [])
     if resolution and allowed and resolution not in allowed:
         raise _RequestError(
@@ -2170,6 +2197,11 @@ async def _execute_models(ctx: ToolContext) -> ToolResult:
     chosen = await _session_video_model_id(ctx)
     if chosen:
         lines.insert(1, f"person_selected_model={chosen}")
+    else:
+        from tool.video_model_card import default_choice
+        default = default_choice(config)
+        lines.insert(1, f"conversation_video_model={default.model} {default.resolution} (default; the first "
+                        "submit keeps it for this conversation. Omit model and resolution to use it.)")
     from assistant.model_choices import business_video_tiers
     from api.metadata import _video_models
     tiers = business_video_tiers(config, _video_models(config))
@@ -2189,7 +2221,7 @@ async def _execute_validate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
     from tool import video_providers
 
     try:
-        approved = await _resolve_open_submission(args, ctx)
+        approved = await _resolve_open_submission(args, ctx, may_ask=False)
         target, _settings = _configured_target(approved["model"])
         inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
         video_providers.validate_request(
@@ -2966,6 +2998,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
+        except QuestionSuspended:
+            # The switch card was filed before any job existed; the call waits for it.
+            raise
         except RunRevoked as exc:
             if "job" in locals() and created:
                 # A refused dispatch never reached the provider: close the job.

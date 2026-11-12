@@ -202,7 +202,8 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str, *, messag
             .order_by(QuestionCheckpoint.created_at, QuestionCheckpoint.id))).all())
     if message_id is not None:
         rows = [row for row in rows if row.message_id == message_id]
-    now, cards = runtime.now(), []
+    from question import cards as registry
+    now, listed = runtime.now(), []
     for row in rows:
         if not row.questions or (row.expires_at and runtime.utc(row.expires_at) <= now):
             continue
@@ -218,6 +219,9 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str, *, messag
             kind, card, action, high_risk = "assistant_placement", continuation["assistant_placement"], "task_placement", False
         elif continuation.get("kind") == "question" and continuation.get("assistant_task_setup"):
             kind, card, action, high_risk = "assistant_task_setup", continuation["assistant_task_setup"], "task_setup", False
+        elif (registered := registry.card_of(continuation)) is not None and registry.voice_answerable(continuation):
+            # Registered cards (question.cards) say their own roles; nothing per kind here.
+            kind, card, action, high_risk = registered["kind"], {}, "card", False
         else:
             continue
         question = row.questions[0]
@@ -226,7 +230,7 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str, *, messag
             from assistant.placement import new_project_option
             placement_fields["new_project_option"] = new_project_option(card)
         from assistant.requests import question_version
-        cards.append({"card_id": row.id, "kind": kind, "action": action, "question_version": question_version(row),
+        listed.append({"card_id": row.id, "kind": kind, "action": action, "question_version": question_version(row),
                       **({"task_title": card["input"].get("title", ""),
                           "task_instructions": card["input"].get("instructions", "")}
                          if kind in {"assistant_task_setup", "assistant_placement"} else {}),
@@ -237,8 +241,10 @@ async def pending_cards(user_id: str, workspace_id: str, main_id: str, *, messag
                       "generation": row.generation,
                       "created_at": runtime.utc(row.created_at).isoformat(),
                       "expires_at": runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
-                      "high_risk": high_risk, **placement_fields})
-    return cards
+                      "high_risk": high_risk, **placement_fields,
+                      **({"option_roles": [option.get("role", "choose") for option in registered["options"]]}
+                         if action == "card" else {})})
+    return listed
 
 
 async def card_status(user_id: str, workspace_id: str, main_id: str, card_id: str) -> str:

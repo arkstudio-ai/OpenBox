@@ -9,7 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
-## 当前应用版本：2026-11-12 23:0x `20261112-balancehold-14ade473`（视频提交按「余额 − 在途报价」预检）
+## 当前应用版本：2026-11-12 23:30 `20261112-cards-f9469174`（服务端弹窗卡片管线 + 换视频模型卡）
+
+- PR [#187](https://github.com/arkstudio-ai/OpenBox/pull/187) 合并至 `main@f9469174`，设计见 [SERVER_CARDS.md](SERVER_CARDS.md)。起因：gw2 近 14 天 48 个没选定视频模型的对话里 12 个在同一条视频里混用了 2–4 个模型（AI 自己填、服务端不拦）。
+- 行为变化（对所有有人值守的对话立即生效）：没在输入框选视频档位的对话，第一次出片把默认档锁到对话上（gw2 默认 = 快速档 `MiniMax-H3-Max-Turbo` 768p，0.77 积分/秒）；之后 AI 传别的模型或分辨率不再直接出片，而是弹「换视频模型」卡（换成 X / 保持 Y），用户在 App 弹窗、对话卡或通话里口头选择。定时任务（cron）与自动营销保留旧规则。App 弹窗要 1.1.0(113)；旧版本 App 与 Web 显示为对话里的普通选项卡，照样能答。
+- **只发后端与轨迹 worker**，前端仍 `20261111-light-794509e3`。本机 buildx amd64 从 `main@f9469174` 干净归档全量构建，经 `oss://bossip/_deploy-tmp/` 中转（已删），gw2 `sha256sum -c` 后装载；切换前 `docker diff` 无手改源码。无迁移（仍 `pn4a0b1c2d3e`）、无配置变更。
+- 切换 `releases/20261112-cards-f9469174/activate.sh`（复制自 balancehold）：空闲门禁一次即 0 → dump 271M（`backups/20261112-cards-f9469174/`）→ backend → worker 均 healthy，Logto 配置 200，tracebacks=0，15:30 UTC 完成。
+- 验证：线上容器内卡种注册表为 `['video_model_switch']`、`video_generate` 已在可出卡工具清单、默认档解析为快速档 768p 0.77/秒；`/api/agent/question` 匿名 401；切换后 5 分钟 backend 无 ERROR。**没有做真实出卡验收**（没在生产让帮手换模型、没打通话）。
+- 回滚：恢复 `releases/20261112-cards-f9469174/before/docker-compose.override.yml`（回 `20261112-balancehold-14ade473`），`docker compose up -d --no-deps backend trajectory-worker`；无库回滚。回滚后已被锁到对话上的 `sessions.video_model` 会保留（旧规则下等同用户选过）。AWS、高德、gw3 未发布。
+
+## 历史应用版本：2026-11-12 23:0x `20261112-balancehold-14ade473`（视频提交按「余额 − 在途报价」预检）
 
 - PR [#185](https://github.com/arkstudio-ai/OpenBox/pull/185) 合并至 `main@14ade473`。起因：用户 winne 余额 -254.57——11-11 同一秒并发提交 7 条 Seedance 2.0 1080p（共 505 积分），当时余额约 252.8；视频完成才结算，原预检只判 `balance <= 0`，7 条全放行。修法：`billing.media.hold_for_submit` 在镜头生成与合成提交时按 workspace 串行（进程内锁 + 余额行 `FOR UPDATE`），`余额 − 未结算在途 job 报价 < 本条报价` 即拒 `INSUFFICIENT_CREDITS`；镜头 job 写 `request_data.balance_hold`（不进 hash、不影响结算）；超过 24 小时未结算的 job 不占额度。
 - **只发后端与轨迹 worker**，前端仍 `20261111-light-794509e3`。本机 buildx amd64 从 `main@14ade473` 干净归档全量构建，经 `oss://bossip/_deploy-tmp/` 中转（已删），gw2 `sha256sum -c` 后装载；切换前 `docker diff` 无手改源码。无迁移（仍 `pn4a0b1c2d3e`）、无配置变更（`BILLING_MODE=enforce`、`voice.dispatch_mode=server` 照旧）。

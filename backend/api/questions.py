@@ -84,6 +84,12 @@ async def reject_question(request_id: str, current_user: dict = Depends(get_curr
         **(body.binding() if body else {})))
 
 
+@router.post("/question/{request_id}/fold")
+async def fold_question(request_id: str, current_user: dict = Depends(get_current_user)):
+    """Put a card away for later without answering; it then expires (question.FOLDED_MINUTES)."""
+    return await _question_action(q_mod.fold(request_id, user_id=current_user["user_id"]))
+
+
 @router.put("/question/{request_id}/draft")
 async def save_question_draft(request_id: str, body: QuestionDraftBody,
                               current_user: dict = Depends(get_current_user)):

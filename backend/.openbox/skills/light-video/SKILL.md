@@ -51,6 +51,10 @@ Options: `就这样，开始做` / `换个画面` / `custom`. No prices, no mode
 no "(Recommended)" labels — the page shows the price itself. If they change
 something, apply it and go straight to generation unless the change is unclear.
 
+If the owner skips the card or puts it away (the tool says it was skipped or expired), nothing is approved:
+do not generate. Say in one short line that nothing has been made or charged and that you will start when
+they say so, then stop. The server refuses generation until they speak again.
+
 Post this card once. A change that arrives after it (a revision from the owner
 or relayed by their assistant, "可以的，但是…", a new line or a new look) is the
 answer: apply it and generate, do not post the review card again. The owner is

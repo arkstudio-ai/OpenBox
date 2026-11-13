@@ -69,9 +69,11 @@ PHONE_DISPATCH = (
     "fits. Whatever was not arranged in this turn has not started: say so, never that it was handed over or is "
     "being done.\n")
 DIRECT_ANSWER = (
-    "\nThis one is a small question to answer within this turn: use your own tools (search, reading a file, a "
-    "calculation) and answer it now. Do not open or change a task for it (no tasks.submit, no tasks.followup). "
-    "If it turns out to be minutes of work, say that and handle it the usual way.\n")
+    "\nThis one was read as a small question to answer within this turn: use your own tools (search, reading a "
+    "file, a calculation) and answer it now, without opening or changing a task for a question (no tasks.submit, "
+    "no tasks.followup). If it turns out to be minutes of work, say that and handle it the usual way. If the "
+    "caller is in fact asking for something to be made or changed (a video, a poster, a menu, an edit), it is not a "
+    "question: the phone rule above applies, so arrange it, never point them to a page.\n")
 VOICE_LENGTH = {"brief": "be concise and leave space for conversation",
                 "detailed": "include the useful details the user asked for"}
 VOICE_CONTEXT_BLOCK = (
@@ -107,7 +109,7 @@ def voice_turn_block(context: dict | None) -> str:
     """The voice-turn instruction, plus the call it came from when the front desk sent it along."""
     context = context or {}
     block = (VOICE_TURN_BLOCK.format(length=VOICE_LENGTH.get(context.get("detail"), VOICE_LENGTH["brief"]))
-             + SPOKEN_GUIDANCE + (DIRECT_ANSWER if context.get("direct_answer") else PHONE_DISPATCH))
+             + SPOKEN_GUIDANCE + PHONE_DISPATCH + (DIRECT_ANSWER if context.get("direct_answer") else ""))
     if not any(context.get(key) for key in ("heard", "call", "request", "user_words", "earlier_user_words",
                                             "task_questions", "summary", "call_truncated", "viewed_task")):
         return block

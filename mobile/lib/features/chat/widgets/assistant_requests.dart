@@ -16,6 +16,7 @@ import '../../../shared/utils/error_text.dart';
 import '../../../shared/ws/ws_client.dart';
 import '../api/assistant_api.dart';
 import '../state/question_draft.dart';
+import '../state/question_fold.dart';
 import 'assistant_request_review.dart';
 import 'cards/permission_card.dart';
 import 'cards/question_dock.dart';
@@ -390,6 +391,23 @@ class _Request extends ConsumerWidget {
     // The question dock carries its own side margin; line up with it.
     final inset = EdgeInsets.symmetric(horizontal: kind == 'question' ? 12 : 0);
     final revision = asMap(item['assistant'])['request_revision'];
+    if (kind == 'question') {
+      // Put away with 「稍后再说」: the whole entry is the dock's one row, with
+      // no heading or review link to keep pushing the replies up.
+      final request = QuestionRequest.fromJson(item);
+      final fold = ref.watch(
+        questionFoldProvider.select((folds) => folds[request.id]),
+      );
+      if (questionFoldable(request) && (fold?.collapsed ?? request.folded)) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: QuestionDock(
+            key: ValueKey('${item['id']}:$revision'),
+            request: request,
+          ),
+        );
+      }
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(

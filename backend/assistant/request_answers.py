@@ -162,7 +162,7 @@ async def answer_question(ctx, *, request_id: str, answers: list[list[str]],
             assets = await questions.validate_attachment_ownership(db, session, files) if any(files) else {}
         except ValueError as exc:
             raise AssistantError(400, "ASSISTANT_ANSWER_INVALID", str(exc)) from exc
-        title, saved = session.title or "", list(row.questions)
+        title, visibility, saved = session.title or "", session.visibility, list(row.questions)
         names = [[assets[asset_id].name for asset_id in ids] for ids in files]
     confirmation = None
     if high_risk or requires_confirmation:

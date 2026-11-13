@@ -15,6 +15,35 @@ def digest(card):
         "user": card.user_id, "part": card.part_id, "questions": card.questions})
 
 
+def is_review(card, data) -> bool:
+    """Whether a displayed card proposed something for approval (``purpose=review``).
+
+    New cards carry it in ``detail.purpose``. Older ones only in the tool call's raw input, which is what
+    the model sent, not what the tool validated: gw2 2026-11-13, a ``questions`` array sent as a JSON string
+    was repaired for execution but stored as sent, and every later followup to that conversation died on
+    ``'str' object has no attribute 'get'``.
+    """
+    for item in card.questions or []:
+        if isinstance(item, dict) and ((item.get("detail") or {}).get("purpose") == "review"):
+            return True
+    raw = data.get("input") if isinstance(data, dict) else None
+    if isinstance(raw, str):
+        raw = _decoded(raw)
+    questions = raw.get("questions") if isinstance(raw, dict) else None
+    if isinstance(questions, str):
+        questions = _decoded(questions)
+    return any(isinstance(q, dict) and q.get("purpose") == "review" and q.get("review_content")
+               for q in (questions if isinstance(questions, list) else []))
+
+
+def _decoded(text: str):
+    import json
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
 async def bind_locked(db, session, origin, ref):
     if (session.kind != "normal" or origin not in {"human", "assistant_delegation"}
             or ref.get("revision_request")):
@@ -32,8 +61,7 @@ async def bind_locked(db, session, origin, ref):
         data = part.data or {}
         if ((part.canonical_tool_id or data.get("tool")) != "question" or data.get("ignored")):
             continue
-        questions = (data.get("input") or {}).get("questions", [])
-        if any(q.get("purpose") == "review" and q.get("review_content") for q in questions):
+        if is_review(card, data):
             # A settled proposal is historical context, not the baseline of
             # every subsequent operation (e.g. publishing a completed video).
             # Stop at the newest review instead of falling back to an older

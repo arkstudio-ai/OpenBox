@@ -15,8 +15,10 @@ import '../../api/assistant_reply.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
+import '../../state/question_fold.dart';
 import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
+import 'folded_question_row.dart';
 import 'light_question_card.dart';
 import 'question_resources.dart';
 import 'video_approval_detail.dart';
@@ -39,6 +41,7 @@ class QuestionDock extends ConsumerStatefulWidget {
 class _QuestionDockState extends ConsumerState<QuestionDock> {
   late final List<TextEditingController> _custom;
   String? _submitError;
+  bool _folding = false;
 
   int get _count => widget.request.questions.length;
 
@@ -73,8 +76,21 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
   Future<void> _resolve(
     List<List<String>>? answers, {
     List<List<String>>? attachments,
-  }) async {
+  }) => _resolver()(answers, attachments: attachments);
+
+  /// The reply, with everything it needs read now. A transcript row arriving
+  /// destroys this element, and `ref` is unusable afterwards: that is what
+  /// left an answered card on screen — the reply landed, the agent moved on,
+  /// and the card that could no longer be dismissed took every further tap.
+  /// So nothing is read after an await, including the one a confirmation
+  /// dialog is ([_reject]).
+  Future<void> Function(
+    List<List<String>>? answers, {
+    List<List<String>>? attachments,
+  })
+  _resolver() {
     final request = widget.request;
+    final count = _count;
     final auth = ref.read(authSessionProvider);
     final workspace = ref.read(workspaceScopeProvider);
     final userId = auth.userId;
@@ -82,16 +98,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     bool current() =>
         auth.userId == userId && workspace.currentId == workspaceId;
     final drafts = ref.read(questionDraftProvider.notifier);
-    if (drafts.of(request.id, _count).submitting ||
-        drafts.of(request.id, _count).transferring) {
-      return;
-    }
-    drafts.setSubmitting(request.id, true);
-    setState(() => _submitError = null);
-    // Read before awaiting: a transcript row arriving mid-request destroys
-    // this element, and `ref` is unusable afterwards. That is what left an
-    // answered card on screen — the reply landed, the agent moved on, and the
-    // card that could no longer be dismissed took every further tap.
+    final folds = ref.read(questionFoldProvider.notifier);
     final api = ref.read(chatApiProvider);
     final pending = ref.read(pendingProvider.notifier);
     final toast = ref.read(toastProvider.notifier);
@@ -100,31 +107,130 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     final service = request.assistant == null
         ? null
         : ref.read(assistantReplyProvider);
-    try {
-      if (service != null) {
-        final receipt = await service.reply(
-          kind: 'question',
-          id: request.id,
-          binding: request.assistant!,
-          answer: {
-            'answers': ?answers,
-            if (attachments?.any((row) => row.isNotEmpty) ?? false)
-              'attachments': attachments,
-          },
-          reject: answers == null,
-        );
-        if (!current()) return;
-        toast.info(i18n.t(replyStateKey(receipt['state'])));
-      } else if (answers == null) {
-        await api.rejectQuestion(request.id);
-      } else {
-        await api.replyQuestion(request.id, answers, attachments: attachments);
+    return (answers, {attachments}) async {
+      if (drafts.of(request.id, count).submitting ||
+          drafts.of(request.id, count).transferring) {
+        return;
       }
+      drafts.setSubmitting(request.id, true);
+      if (mounted) setState(() => _submitError = null);
+      try {
+        if (service != null) {
+          final receipt = await service.reply(
+            kind: 'question',
+            id: request.id,
+            binding: request.assistant!,
+            answer: {
+              'answers': ?answers,
+              if (attachments?.any((row) => row.isNotEmpty) ?? false)
+                'attachments': attachments,
+            },
+            reject: answers == null,
+          );
+          if (!current()) return;
+          toast.info(i18n.t(replyStateKey(receipt['state'])));
+        } else if (answers == null) {
+          await api.rejectQuestion(request.id);
+        } else {
+          await api.replyQuestion(
+            request.id,
+            answers,
+            attachments: attachments,
+          );
+        }
+        if (!current()) return;
+        // Do not wait for the WS `question.replied` event to take the card
+        // away: the socket may be down while the app is backgrounded.
+        pending.removeQuestion(request.id);
+        folds.discard(request.id);
+        events.emit('question.resolved', {'sessionId': request.sessionId});
+      } catch (error) {
+        if (!current()) return;
+        final code = apiErrorOf(error)?.status;
+        if (code == 404 || code == 410) {
+          pending.removeQuestion(request.id);
+          toast.error(i18n.t('chat:question.gone'));
+          await pending.refreshQuestions();
+        } else {
+          final message = i18n.t(
+            apiErrorOf(error)?.code == 'ASSISTANT_SEND_UNCERTAIN'
+                ? 'chat:assistant.requests.replyUncertain'
+                : code == 409
+                ? 'chat:question.conflict'
+                : 'chat:question.submitFailed',
+          );
+          if (mounted) setState(() => _submitError = message);
+          toast.error(message);
+          if (code == 409) await pending.refreshQuestions();
+        }
+      } finally {
+        if (current()) drafts.setSubmitting(request.id, false);
+      }
+    };
+  }
+
+  /// 「跳过」 closes the question for good, and people tapped it only to get
+  /// the card out of the way — so it says what it does first.
+  Future<void> _reject() async {
+    final resolve = _resolver();
+    final i18n = ref.read(i18nProvider);
+    final t = context.tokens;
+    FocusScope.of(context).unfocus();
+    final skip = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        backgroundColor: t.card,
+        title: Text(
+          i18n.t('light:card.skipConfirm.title'),
+          style: TextStyle(fontSize: FontSizes.xl, color: t.ink),
+        ),
+        content: Text(
+          i18n.t('light:card.skipConfirm.body'),
+          style: TextStyle(fontSize: FontSizes.base, color: t.n700),
+        ),
+        actions: [
+          TextButton(
+            key: const Key('question-skip-cancel'),
+            onPressed: () => Navigator.of(dialog).pop(false),
+            child: Text(i18n.t('light:card.skipConfirm.cancel')),
+          ),
+          TextButton(
+            key: const Key('question-skip-confirm'),
+            onPressed: () => Navigator.of(dialog).pop(true),
+            child: Text(i18n.t('light:card.skipConfirm.confirm')),
+          ),
+        ],
+      ),
+    );
+    if (skip == true) await resolve(null);
+  }
+
+  /// 「稍后再说」: the card becomes one row and the server starts its expiry.
+  /// Nothing is answered. Closing a card that is already put away is local.
+  Future<void> _fold() async {
+    final request = widget.request;
+    final folds = ref.read(questionFoldProvider.notifier);
+    FocusScope.of(context).unfocus();
+    if (request.folded || ref.read(questionFoldProvider)[request.id] != null) {
+      folds.setCollapsed(request.id, true);
+      return;
+    }
+    if (_folding) return;
+    final auth = ref.read(authSessionProvider);
+    final workspace = ref.read(workspaceScopeProvider);
+    final userId = auth.userId;
+    final workspaceId = workspace.currentId;
+    bool current() =>
+        auth.userId == userId && workspace.currentId == workspaceId;
+    final api = ref.read(chatApiProvider);
+    final pending = ref.read(pendingProvider.notifier);
+    final toast = ref.read(toastProvider.notifier);
+    final i18n = ref.read(i18nProvider);
+    setState(() => _folding = true);
+    try {
+      final folded = await api.foldQuestion(request.id);
       if (!current()) return;
-      // Do not wait for the WS `question.replied` event to take the card
-      // away: the socket may be down while the app is backgrounded.
-      pending.removeQuestion(request.id);
-      events.emit('question.resolved', {'sessionId': request.sessionId});
+      folds.fold(request.id, expiresAt: folded.expiresAt);
     } catch (error) {
       if (!current()) return;
       final code = apiErrorOf(error)?.status;
@@ -133,23 +239,12 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         toast.error(i18n.t('chat:question.gone'));
         await pending.refreshQuestions();
       } else {
-        final message = i18n.t(
-          apiErrorOf(error)?.code == 'ASSISTANT_SEND_UNCERTAIN'
-              ? 'chat:assistant.requests.replyUncertain'
-              : code == 409
-              ? 'chat:question.conflict'
-              : 'chat:question.submitFailed',
-        );
-        if (mounted) setState(() => _submitError = message);
-        toast.error(message);
-        if (code == 409) await pending.refreshQuestions();
+        toast.error(i18n.t('light:card.foldFailed'));
       }
     } finally {
-      if (current()) drafts.setSubmitting(request.id, false);
+      if (mounted) setState(() => _folding = false);
     }
   }
-
-  Future<void> _reject() => _resolve(null);
 
   void _goTo(int page) {
     if (page < 0 || page >= _count) return;
@@ -201,6 +296,20 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         QuestionDraft.empty(_count);
     final complete = draft.complete;
     if (_count == 0) return const SizedBox.shrink();
+    final foldable = questionFoldable(widget.request);
+    final fold = ref.watch(questionFoldProvider)[widget.request.id];
+    if (foldable && (fold?.collapsed ?? widget.request.folded)) {
+      return FoldedQuestionRow(
+        key: ValueKey('${widget.request.id}:folded'),
+        request: widget.request,
+        expiresAt:
+            fold?.expiresAt ??
+            (widget.request.folded ? widget.request.expiresAt : null),
+        onExpand: () => ref
+            .read(questionFoldProvider.notifier)
+            .setCollapsed(widget.request.id, false),
+      );
+    }
     final page = draft.page.clamp(0, _count - 1);
     final isLastPage = page == _count - 1;
     final canContinue = isLastPage ? complete : draft.answered(page);
@@ -221,7 +330,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     // A card the agent tagged for Light 模式 wears the big-chip skin.
     final question = widget.request.questions[page];
     if (question.detail?['light'] is Map<String, dynamic>) {
-      final busy = draft.submitting || draft.transferring;
+      final busy = draft.submitting || draft.transferring || _folding;
       return LightQuestionCard(
         key: ValueKey('${widget.request.id}:$page:light'),
         request: widget.request,
@@ -239,6 +348,8 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ? () => isLastPage ? _submit(draft) : _completePage(page)
             : null,
         onReject: busy ? null : _reject,
+        onLater: !foldable || busy ? null : _fold,
+        showLater: foldable,
         onPage: _goTo,
       );
     }
@@ -325,6 +436,39 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                     ),
                   ),
                 ),
+              // Up here rather than beside 「跳过」: a third button wraps the
+              // action row on a narrow screen, and that row has to stay
+              // reachable under the keyboard.
+              if (foldable)
+                Flexible(
+                  child: TextButton(
+                    key: const Key('question-later'),
+                    onPressed:
+                        (draft.submitting || draft.transferring || _folding)
+                        ? null
+                        : _fold,
+                    style: TextButton.styleFrom(
+                      foregroundColor: t.n600,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            i18n.t('chat:card.later'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: FontSizes.sm),
+                          ),
+                        ),
+                        const Icon(Icons.expand_less, size: 16),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -382,7 +526,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 ),
               ),
               TextButton(
-                onPressed: (draft.submitting || draft.transferring)
+                onPressed: (draft.submitting || draft.transferring || _folding)
                     ? null
                     : _reject,
                 child: Text(

@@ -78,7 +78,17 @@
     "skip": "Skip for now",
     "typeHint": "Or type it",
     "pageOf": "Step {{current}} / {{count}}",
-    "recommended": "Suggested"
+    "recommended": "Suggested",
+    "folded": "Put away · expires if left for 30 minutes",
+    "foldedMinutes": "Put away · expires in {{minutes}} min",
+    "foldFailed": "Couldn't put it away. Please try again.",
+    "foldedExpand": "Open to answer",
+    "skipConfirm": {
+      "title": "Skip this step?",
+      "body": "If you skip, this step won't start and no credits are used. Just tell me when you want to go on.",
+      "confirm": "Skip",
+      "cancel": "Go back"
+    }
   },
   "tool": {
     "doing": "Working on: {{action}}",

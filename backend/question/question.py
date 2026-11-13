@@ -1,7 +1,7 @@
 """Durable human-input checkpoints. Asking suspends; replying schedules work."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -91,6 +91,8 @@ class QuestionRequest(BaseModel):
     draft_revision: int = 0
     expires_at: str | None = None
     assistant: dict | None = None
+    #: The user put the card away ("稍后再说"); it now expires (``FOLDED_MINUTES``, or when their call ends).
+    folded: bool = False
 
 
 class QuestionReply(BaseModel):
@@ -128,6 +130,7 @@ def _request(row: QuestionCheckpoint) -> QuestionRequest:
         created_at=runtime.utc(row.created_at).isoformat(),
         expires_at=runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
         assistant=(row.continuation or {}).get("assistant_request"),
+        folded=bool((row.continuation or {}).get("folded_at")),
     )
 
 
@@ -362,6 +365,50 @@ async def reply(request_id: str, answers: list[list[str]], user_id: str = "defau
 
 async def get_request(request_id: str, user_id: str) -> QuestionRequest:
     return _request(await _owned_request(request_id, user_id))
+
+
+#: A card the user put away without answering lapses after this long (gw2 2026-11-13: one had sat at the
+#: foot of the assistant conversation for ten days, with 跳过 as the only way to get rid of it).
+FOLDED_MINUTES = 30
+
+
+def _set_deadline(row: QuestionCheckpoint, deadline: datetime) -> None:
+    """Bring a pending card's expiry forward, keeping an assistant binding's revision true to the row."""
+    if row.expires_at is not None and runtime.utc(row.expires_at) <= deadline:
+        return
+    row.expires_at = deadline
+    binding = (row.continuation or {}).get("assistant_request")
+    if binding and binding.get("request_revision"):
+        from assistant.requests import _revision
+        row.continuation = {**row.continuation,
+                            "assistant_request": {**binding, "request_revision": _revision(row, binding)}}
+
+
+async def fold(request_id: str, user_id: str = "default") -> QuestionRequest:
+    """Put a pending card away without answering it: nothing is decided, and it expires in ``FOLDED_MINUTES``
+    (sooner if the user's call ends, see ``expire_folded``). An expired card approves nothing."""
+    owned = await _owned_request(request_id, user_id)
+    async with runtime.transaction(owned.session_id, user_id, fence=False) as (db, session, execution):
+        row = await db.get(QuestionCheckpoint, request_id)
+        _check_pending(row, execution)
+        if not (row.continuation or {}).get("folded_at"):
+            row.continuation = {**(row.continuation or {}), "folded_at": runtime.now().isoformat()}
+            _set_deadline(row, runtime.now() + timedelta(minutes=FOLDED_MINUTES))
+        view = _request(row)
+    return view
+
+
+async def expire_folded(user_id: str) -> int:
+    """The user's call ended: every card they had put away lapses now (the expiry sweep settles them)."""
+    async with get_db_session() as db:
+        rows = (await db.scalars(select(QuestionCheckpoint).where(
+            QuestionCheckpoint.user_id == user_id, QuestionCheckpoint.status == "pending",
+            QuestionCheckpoint.expires_at.is_not(None)).with_for_update())).all()
+        due = [row for row in rows if (row.continuation or {}).get("folded_at")]
+        for row in due:
+            _set_deadline(row, runtime.now())
+        await db.commit()
+    return len(due)
 
 
 async def reject(request_id: str, user_id: str = "default", **reply_binding) -> dict:

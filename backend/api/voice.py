@@ -545,6 +545,12 @@ async def _end(websocket, bridge, provider, ending: CallEnded, *, call_id, user_
     except Exception as exc:
         log.error("voice call=%s not recorded error=%s", call_id, type(exc).__name__)
     try:
+        # Cards the caller put away during the call do not outlive it.
+        from question.question import expire_folded
+        await expire_folded(user_id)
+    except Exception as exc:
+        log.warning("voice call=%s folded cards not expired error=%s", call_id, type(exc).__name__)
+    try:
         # One usage row per call, keyed on it: the provider's usage at the billing catalogue's prices.
         await settle_voice_call(call_id=call_id, workspace_id=workspace_id, user_id=user_id, session_id=main_id,
                                 model_id=model, snapshot=snapshot, duration_sec=duration)

@@ -1114,6 +1114,18 @@ async def process_step(
                     tool_part.metadata = {"blocked": True, "failure_code": "pending_question",
                                           "execution_outcome": "not_started"}
                     return ToolCallPreparation.ready(_ToolCallOutcome(tool_part, is_new=is_new))
+                from question import skip_gate
+                if skip_gate.spends(canonical_tool_id, tool_args):
+                    from db.base import get_db_session
+                    async with get_db_session() as gate_db:
+                        skipped = await skip_gate.standing_skip(gate_db, session_id, user_id)
+                    if skipped:
+                        tool_part.status = ToolStatus.ERROR
+                        tool_part.title = "Waiting for the user"
+                        tool_part.error = skip_gate.MESSAGE
+                        tool_part.metadata = {"blocked": True, "failure_code": skip_gate.FAILURE_CODE,
+                                              "question_id": skipped, "execution_outcome": "not_started"}
+                        return ToolCallPreparation.ready(_ToolCallOutcome(tool_part, is_new=is_new))
                 await save_part(
                     tool_part,
                     is_new=is_new,

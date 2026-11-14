@@ -9,6 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-14 15:19 gw2 → `20261114-fold-d0d82480`（backend + trajectory-worker）
+
+- 内容：PR #189（跳过或失效的卡不再放行付费生成、卡片收起 30 分钟失效、派活规则、滚动摘要止血与计时、两个报错）、#190（语音关闭时 Light 首页不下发语音卡）、#191（「店长」文案加经营数据分析）、#192（MiniMax-M3.1-Flash 价表与摘要兜底）。
+- **只发后端与轨迹 worker**，前端仍 `20261111-light-794509e3`。本机 buildx amd64 从 `main@d0d82480` 干净归档全量构建，经 `oss://bossip/_deploy-tmp/` 中转（已删），gw2 `sha256sum -c` 后装载；切换前 `docker diff` 只有三个挂载文件，无手改源码。无迁移（仍 `pn4a0b1c2d3e`）。配置沿用当天早些时候改好的（`voice.enabled=false`、专业档 MiniMax）。
+- 切换 `releases/20261114-fold-d0d82480/activate.sh`（复制自 cards）：空闲门禁一次即 0 → dump 284M（`backups/20261114-fold-d0d82480/`）→ backend → worker 均 healthy，Logto 配置 200，tracebacks=0，07:19 UTC 完成。
+- 切换后容器内核对：`/api/agent/question/{id}/fold` 路由存在（匿名 401）、`FOLDED_MINUTES=30`、付费闸门覆盖 `image_gen` / `video_generate` / `video_compose`、「店长」副标题为新文案、专业档 MiniMax 计价 1 + 4。
+- **未验证**：跳过后拦截、收起失效、挂断失效都没有在真实对话里触发过；滚动摘要慢的根因仍未知，上线后看日志里 `Compaction interrupted … stages`。
+- 回滚：`activate.sh 20261112-cards-f9469174 20261114-fold-d0d82480 --no-gate`（旧镜像仍在机上）。
+
 ## 2026-11-14 gw2：语音隐藏、专业档换 MiniMax-M3.1-Flash（只改配置，镜像未动）
 
 - 14:17 `config/openbox.json` 的 `voice.enabled=false`，重启 backend。备份 `config/openbox.json.bak-20261114T061711Z`。恢复改回 `true` 再重启。

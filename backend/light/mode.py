@@ -99,6 +99,10 @@ async def entries_view(user_id: str, workspace_id: str, lang: str | None = None)
     lang = lang or await ui_language_for(user_id)
     config = light_entries(lang)
     facts = await _workspace_facts(workspace_id)
+    # A deployment that takes no calls (``voice.enabled`` off) has no voice card either: released Apps would
+    # otherwise show it greyed out on the home screen (gw2 2026-11-14, voice hidden while it is being fixed).
+    from voice.config import enabled as voice_enabled
+    calls = voice_enabled()
     return {
         "version": config.version,
         "ui_language": lang,
@@ -106,7 +110,7 @@ async def entries_view(user_id: str, workspace_id: str, lang: str | None = None)
         "plan_id": facts["plan_id"],
         "desktop": facts["desktop"],
         "entries": [{**entry.public(sign_media), "availability": availability(entry, facts)}
-                    for entry in config.entries],
+                    for entry in config.entries if entry.action != "voice_call" or calls],
     }
 
 

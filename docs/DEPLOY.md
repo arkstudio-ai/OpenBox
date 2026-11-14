@@ -9,6 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-14 gw2：语音隐藏、专业档换 MiniMax-M3.1-Flash（只改配置，镜像未动）
+
+- 14:17 `config/openbox.json` 的 `voice.enabled=false`，重启 backend。备份 `config/openbox.json.bak-20261114T061711Z`。恢复改回 `true` 再重启。
+- 15:06 专业档（`model_tiers.chat` 的 medium）从 `openai/gemini-3.8-flash-high` 换成 `openai/MiniMax-M3.1-Flash`，不带 variant（该模型没有思考档位）；`models` 加了这一条（`max_tokens` 64000、`context_limit` 1000000、`vision` true）。快速档和默认模型仍是 gemini。备份 `config/openbox.json.bak-20261114T070646Z`。
+- 同时在挂载的计价文件 `releases/model-config-20261029/billing-rates.json`（`BILLING_RATES_FILE`）加了 `minimax-m3.1-flash`：售价 = 百炼刊例成本，输入 1 / 输出 4 / 缓存命中 0.1 元每百万 token。备份同目录 `.bak-20261114T070646Z`。计费是 enforce，未定价的模型会被拒，换模型必须先加价。重启了 backend 与 trajectory-worker。
+- 上游：自有 new-api 新建 131 号渠道 `bailian-minimax-m31`（直连百炼 compatible-mode，别名 `MiniMax-M3.1-Flash` → `MiniMax/MiniMax-M3.1-Flash`，只给 openbox 组）。第三方模型要先在百炼控制台开通，密钥权限「全部」不含这一步。
+- 实测（直连、经 new-api、容器内走后端自己的调用路径）：并行工具调用、工具结果回传、图片链接与内嵌图片、流式用量与缓存命中都正常，首字约 1 秒。已知：不遵守 `tool_choice`（`none` 时可能把工具调用标记当正文吐出，`required` 被无视），思考关不掉。
+- 回滚：两份备份拷回原位，`docker compose restart backend trajectory-worker`。
+
 ## 当前应用版本：2026-11-12 23:30 `20261112-cards-f9469174`（服务端弹窗卡片管线 + 换视频模型卡）
 
 - PR [#187](https://github.com/arkstudio-ai/OpenBox/pull/187) 合并至 `main@f9469174`，设计见 [SERVER_CARDS.md](SERVER_CARDS.md)。起因：gw2 近 14 天 48 个没选定视频模型的对话里 12 个在同一条视频里混用了 2–4 个模型（AI 自己填、服务端不拦）。

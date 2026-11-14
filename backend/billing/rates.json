@@ -256,6 +256,25 @@
         "source": "RovinAI 模型广场充值折算价（页面标 $6/$30/$0.7，充值按 1 元 = 1 显示美元÷6.78）；2026-10-10 拍板以此为 gemini 成本口径",
         "verified_at": "2026-10-10"
       }
+    },
+    "minimax-m3.1-flash": {
+      "vendor": "minimax",
+      "currency": "CNY",
+      "region": "cn-beijing",
+      "input": "1",
+      "output": "4",
+      "cache_read": "0.1",
+      "source": "2026-11-14 拍板：专业档换 MiniMax-M3.1-Flash，按百炼刊例成本价卖",
+      "cost": {
+        "basis": "bailian-list",
+        "channel": "自有 new-api ch131 → 百炼（直连）",
+        "currency": "CNY",
+        "input": "1",
+        "output": "4",
+        "cache_read": "0.1",
+        "source": "https://help.aliyun.com/zh/model-studio/minimax-m3-1-flash",
+        "verified_at": "2026-11-14"
+      }
     }
   },
   "aliases": {

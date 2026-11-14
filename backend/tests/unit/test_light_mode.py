@@ -130,12 +130,18 @@ async def test_entries_endpoint_marks_desktop_entries_for_a_free_workspace(monke
         return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
 
     monkeypatch.setattr(light_mode, "_workspace_facts", facts)
+    monkeypatch.setattr("voice.config.enabled", lambda config=None: True)
     async with _client(_app(user)) as client:
         body = (await client.get("/api/light/entries")).json()
     assert body["ui_mode"] == "pro" and body["plan_id"] == "free"
     by_id = {entry["id"]: entry["availability"] for entry in body["entries"]}
     assert by_id == {"video": "ok", "voice_assistant": "ok", "menu": "ok", "poster": "ok", "douyin_publish": "needs_desktop",
                      "review": "needs_desktop", "shopkeeper": "needs_desktop", "footage_edit": "ok"}
+    # A deployment that takes no calls shows no voice card: a released App would draw it greyed out.
+    monkeypatch.setattr("voice.config.enabled", lambda config=None: False)
+    async with _client(_app(user)) as client:
+        hidden = (await client.get("/api/light/entries")).json()
+    assert {entry["id"] for entry in hidden["entries"]} == set(by_id) - {"voice_assistant"}
 
 
 async def test_start_creates_a_guided_session_with_its_opening_card(monkeypatch):

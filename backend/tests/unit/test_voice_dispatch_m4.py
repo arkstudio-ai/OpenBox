@@ -34,7 +34,9 @@ async def test_route_reads_the_fifth_way(monkeypatch):
 def test_the_phone_dispatch_rule_is_written_once_and_reaches_every_phone_turn():
     from light import prompt as light_prompt
     block = prompt.voice_turn_block({})
-    assert prompt.PHONE_DISPATCH in block and prompt.PHONE_DISPATCH not in prompt.voice_turn_block({"direct_answer": True})
+    # A turn read as a small question keeps it too (gw2 2026-11-13: "帮我做条视频呗" was read as one, the rule
+    # was swapped out and Light's home-entry wording came back on the phone, twice).
+    assert prompt.PHONE_DISPATCH in block and prompt.PHONE_DISPATCH in prompt.voice_turn_block({"direct_answer": True})
     rules = "".join(light_prompt.ASSISTANT_LIGHT_RULES)
     assert "以那段来电上下文里写的为准" in rules
     # Light keeps no wording of its own for the phone: no second place to drift (2026-11-07).

@@ -118,6 +118,7 @@ class QuestionRequest {
     this.draft = const [],
     this.draftRevision = 0,
     this.expiresAt,
+    this.folded = false,
     this.assistant,
   });
 
@@ -138,6 +139,7 @@ class QuestionRequest {
             .toList(),
         draftRevision: asInt(json['draft_revision']) ?? 0,
         expiresAt: asDate(json['expires_at']),
+        folded: asBool(json['folded']) ?? false,
         assistant: json['assistant'] is Map<String, dynamic>
             ? asMap(json['assistant'])
             : null,
@@ -153,6 +155,10 @@ class QuestionRequest {
   final List<QuestionDraftAnswer> draft;
   final int draftRevision;
   final DateTime? expiresAt;
+
+  /// Put away with "稍后再说": still answerable, but the server lets it expire
+  /// (30 minutes after folding, or when the voice call ends).
+  final bool folded;
   final Map<String, dynamic>? assistant;
 }
 

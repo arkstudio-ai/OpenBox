@@ -241,6 +241,14 @@ class ChatApi {
     await _dio.post<dynamic>('/api/agent/question/$requestId/reject');
   }
 
+  /// Puts the card away without answering it; the server starts its expiry.
+  Future<QuestionRequest> foldQuestion(String requestId) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/agent/question/$requestId/fold',
+    );
+    return QuestionRequest.fromJson(response.data ?? const {});
+  }
+
   Future<QuestionRequest> getQuestion(String requestId) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/api/agent/question/$requestId',

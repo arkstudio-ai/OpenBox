@@ -32,6 +32,30 @@ class _FakeApi extends ChatApi {
     skipped.add(requestId);
   }
 
+  final folded = <String>[];
+  int? foldFailure;
+
+  @override
+  Future<QuestionRequest> foldQuestion(String requestId) async {
+    if (foldFailure != null) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/fold'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/fold'),
+          statusCode: foldFailure,
+        ),
+      );
+    }
+    folded.add(requestId);
+    return QuestionRequest(
+      id: requestId,
+      sessionId: 's1',
+      questions: current!.questions,
+      folded: true,
+      expiresAt: DateTime.now().add(const Duration(minutes: 30)),
+    );
+  }
+
   @override
   Future<List<QuestionRequest>> listQuestions() async => [];
 
@@ -181,11 +205,151 @@ void main() {
     ]);
   });
 
-  testWidgets('先跳过 rejects the question', (tester) async {
+  testWidgets('先跳过 asks first, and rejects only on 跳过', (tester) async {
     final api = await _mount(tester, _single());
     await tester.tap(find.text('先跳过'));
     await tester.pumpAndSettle();
+    expect(find.text('跳过这一步？'), findsOneWidget);
+    expect(find.textContaining('不会扣积分'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('question-skip-cancel')));
+    await tester.pumpAndSettle();
+    expect(api.skipped, isEmpty);
+    expect(find.byKey(const Key('light-question-card')), findsOneWidget);
+
+    await tester.tap(find.text('先跳过'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('question-skip-confirm')));
+    await tester.pumpAndSettle();
     expect(api.skipped, ['q1']);
+    expect(find.byKey(const Key('light-question-card')), findsNothing);
+  });
+
+  testWidgets('a plain card asks before 跳过 too', (tester) async {
+    final api = await _mount(tester, _plain());
+    await tester.tap(find.text('跳过'));
+    await tester.pumpAndSettle();
+    expect(api.skipped, isEmpty);
+    await tester.tap(find.byKey(const Key('question-skip-confirm')));
+    await tester.pumpAndSettle();
+    expect(api.skipped, ['q3']);
+  });
+
+  testWidgets('稍后再说 folds the card to one row that opens again', (
+    tester,
+  ) async {
+    final api = await _mount(tester, _single());
+    await tester.tap(find.byKey(const Key('light-question-later')));
+    await tester.pumpAndSettle();
+    expect(api.folded, ['q1']);
+    expect(api.skipped, isEmpty);
+    expect(api.replies, isEmpty);
+    expect(find.byKey(const Key('light-question-card')), findsNothing);
+    expect(find.byKey(const Key('question-folded-row')), findsOneWidget);
+    expect(find.text('多长？'), findsOneWidget);
+    expect(find.text('已收起 · 还有 30 分钟失效'), findsOneWidget);
+
+    // Opening it is local, and it can still be answered.
+    await tester.tap(find.byKey(const Key('question-folded-row')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('light-question-card')), findsOneWidget);
+    expect(api.folded, ['q1']);
+    // Putting it away again does not restart the server's clock.
+    await tester.tap(find.byKey(const Key('light-question-later')));
+    await tester.pumpAndSettle();
+    expect(api.folded, ['q1']);
+    await tester.tap(find.byKey(const Key('question-folded-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('15 秒'));
+    await tester.pumpAndSettle();
+    expect(api.replies['q1'], [
+      ['15 秒'],
+    ]);
+  });
+
+  testWidgets('a plain card folds with 稍后再说', (tester) async {
+    final api = await _mount(tester, _plain());
+    await tester.tap(find.byKey(const Key('question-later')));
+    await tester.pumpAndSettle();
+    expect(api.folded, ['q3']);
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.byKey(const Key('question-folded-row')), findsOneWidget);
+  });
+
+  testWidgets('a card the server says is folded starts collapsed', (
+    tester,
+  ) async {
+    final api = await _mount(
+      tester,
+      const QuestionRequest(
+        id: 'q4',
+        sessionId: 's1',
+        folded: true,
+        questions: [
+          QuestionItem(
+            header: '时长',
+            question: '多长？',
+            options: [QuestionOption(label: '15 秒')],
+            detail: _light,
+          ),
+        ],
+      ),
+    );
+    expect(find.byKey(const Key('light-question-card')), findsNothing);
+    expect(find.text('时长'), findsOneWidget);
+    expect(find.text('已收起 · 30 分钟内不处理会失效'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('question-folded-row')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('light-question-card')), findsOneWidget);
+    expect(api.folded, isEmpty);
+  });
+
+  testWidgets('a card that is gone when folded leaves the screen', (
+    tester,
+  ) async {
+    final api = await _mount(tester, _single());
+    api.foldFailure = 410;
+    await tester.tap(find.byKey(const Key('light-question-later')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('light-question-card')), findsNothing);
+    expect(find.byKey(const Key('question-folded-row')), findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('cards with their own flow cannot be put away', (tester) async {
+    await _mount(
+      tester,
+      const QuestionRequest(
+        id: 'q5',
+        sessionId: 's1',
+        folded: true,
+        questions: [
+          QuestionItem(
+            question: '确认脚本？',
+            options: [QuestionOption(label: '确认')],
+            detail: {'kind': 'video_script_approval', 'script_text': '讲稿'},
+          ),
+        ],
+      ),
+    );
+    expect(find.byKey(const Key('question-folded-row')), findsNothing);
+    expect(find.byKey(const Key('question-later')), findsNothing);
+    expect(find.text('稍后再说'), findsNothing);
+  });
+
+  test('QuestionRequest reads folded and expires_at', () {
+    final request = QuestionRequest.fromJson(const {
+      'id': 'q',
+      'session_id': 's',
+      'questions': <Object>[],
+      'folded': true,
+      'expires_at': '2026-11-13T10:30:00Z',
+    });
+    expect(request.folded, isTrue);
+    expect(request.expiresAt, DateTime.utc(2026, 11, 13, 10, 30));
+    expect(
+      QuestionRequest.fromJson(const {'id': 'q', 'session_id': 's'}).folded,
+      isFalse,
+    );
   });
 
   testWidgets('a plain card is untouched', (tester) async {

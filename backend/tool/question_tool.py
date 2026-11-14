@@ -88,7 +88,8 @@ def to_questions(args: QuestionArgs) -> list:
             custom=q.custom,
             allow_attachments=q.allow_attachments,
             requires_confirmation=q.requires_confirmation,
-            detail={"light": {"step_id": q.step_id}} if q.step_id else None,
+            detail=({**({"light": {"step_id": q.step_id}} if q.step_id else {}),
+                     **({"purpose": "review"} if q.purpose == "review" else {})} or None),
         )
         for q in args.questions
     ]

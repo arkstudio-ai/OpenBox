@@ -73,10 +73,20 @@
   "card": {
     "confirm": "Cứ vậy",
     "next": "Tiếp theo",
-    "skip": "Để sau",
+    "skip": "Tạm bỏ qua",
     "typeHint": "Hoặc gõ chữ",
     "pageOf": "Bước {{current}} / {{count}}",
-    "recommended": "Gợi ý"
+    "recommended": "Gợi ý",
+    "folded": "Đã thu gọn · để quá 30 phút sẽ hết hiệu lực",
+    "foldedMinutes": "Đã thu gọn · còn {{minutes}} phút nữa hết hiệu lực",
+    "foldFailed": "Chưa thu gọn được, bạn thử lại nhé.",
+    "foldedExpand": "Mở ra để trả lời",
+    "skipConfirm": {
+      "title": "Bỏ qua bước này?",
+      "body": "Nếu bỏ qua, bước này sẽ không bắt đầu và cũng không bị trừ điểm. Khi nào muốn làm tiếp, bạn cứ nói với tôi.",
+      "confirm": "Bỏ qua",
+      "cancel": "Để tôi nghĩ lại"
+    }
   },
   "tool": {
     "doing": "Đang làm: {{action}}",

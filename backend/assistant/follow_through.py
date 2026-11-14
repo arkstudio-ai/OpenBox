@@ -37,6 +37,60 @@ REMINDER = (
     "</system-reminder>")
 
 
+# "The helper is on it", "passed it on": a status about work in someone else's hands.
+UNDER_WAY = re.compile(
+    r"正在[^。！？\n]{0,24}(?:做|制作|排版|出图|处理|生成|剪辑|推进|设计)"
+    r"|(?:已经?|都|全部)(?:转交|交给|同步给|交代给?|安排|发给|转给|转进|同步)[^。！？\n]{0,12}(?:帮手|现场)"
+    r"|帮手(?:那边)?(?:已经|正在|早就|马上)"
+    r"|\b(?:is|are) (?:working on|making|generating|producing)\b|\b(?:handed|passed) (?:it |this |that )?(?:over|on)\b",
+    re.IGNORECASE)
+# What puts new work or new input into a helper's hands.
+HANDOVER_TOOLS = frozenset({"tasks.submit", "tasks.followup", "assets.attach", "requests.revise",
+                            "requests.answer", "requests.reply"})
+HANDOVER_REMINDER = (
+    "<system-reminder>\n"
+    "Every attempt in this turn to pass work or input to a helper failed (see the tool results above): nothing new "
+    "reached the helper and nothing is being made because of this turn. Your reply says otherwise. Read the task's "
+    "current state with tasks.get and retry once with corrected arguments if the error tells you how; otherwise tell "
+    "the user plainly, in their language, that their latest request or file did NOT get through, what the task's "
+    "actual state is, and what they can do. Do not say it was passed on or is being worked on. Do not mention this "
+    "reminder.\n"
+    "</system-reminder>")
+
+
+def _succeeded(data) -> bool:
+    data = data or {}
+    return (data.get("status") == "completed" and not data.get("error")
+            and not (data.get("metadata") or {}).get("error"))
+
+
+async def handover_failed(*, session_kind: str | None, text: str | None, session_id: str, user_id: str,
+                          message_ids) -> bool:
+    """The reply says work is in a helper's hands while every hand-over this run tried failed.
+
+    gw2 2026-11-13: tasks.followup and assets.attach failed three times on a server error and the assistant
+    answered "帮手那边正在按照这六道菜和对应价格做排版出图"; the task had finished minutes earlier.
+    """
+    if session_kind != "assistant" or not (text and UNDER_WAY.search(text)):
+        return False
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.part import Part
+    ids = [message_id for message_id in message_ids if message_id]
+    if not ids:
+        return False
+    try:
+        async with get_db_session() as db:
+            rows = (await db.scalars(select(Part.data).where(
+                Part.session_id == session_id, Part.user_id == user_id, Part.message_id.in_(ids),
+                Part.type == "tool"))).all()
+    except Exception as exc:  # unknown: the reply stands as it is
+        log.warning("hand-over check skipped session=%s error=%s", session_id, type(exc).__name__)
+        return False
+    attempts = [data for data in rows if (data or {}).get("tool") in HANDOVER_TOOLS]
+    return bool(attempts) and not any(_succeeded(data) for data in attempts)
+
+
 def promises_later(text: str | None) -> bool:
     return bool(text and LATER.search(text))
 
@@ -53,8 +107,7 @@ async def started_background_work(session_id: str, user_id: str, message_ids) ->
         rows = (await db.scalars(select(Part.data).where(
             Part.session_id == session_id, Part.user_id == user_id, Part.message_id.in_(ids),
             Part.type == "tool"))).all()
-    return any((data or {}).get("tool") in BACKGROUND_TOOLS and (data or {}).get("status") == "completed"
-               and not (data or {}).get("error") for data in rows)
+    return any((data or {}).get("tool") in BACKGROUND_TOOLS and _succeeded(data) for data in rows)
 
 
 async def needs_another_step(*, session_kind: str | None, text: str | None, session_id: str, user_id: str,

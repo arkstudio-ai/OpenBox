@@ -317,7 +317,9 @@ class SubmitArgs(Arguments):
         "other_video for another confirmed video type. General excludes video production. "
         "light_video / menu / poster / footage_edit are the Light home jobs (做一条视频 / 做菜单 / 做海报 / 你拍我剪): "
         "a cloud helper with that entry's skill, no desktop, no format or tier card; use them only when the user "
-        "explicitly asked you to do it here instead of going to the home entry.")
+        "explicitly asked you to do it here instead of going to the home entry. light_video is one clip of footage "
+        "with the shop name on it: no presenter, no speech, no script. A video with someone talking to camera, a "
+        "spoken script or several shots cut together is spoken_video / other_video, never light_video.")
     video_kind_question: str | None = Field(default=None, max_length=500)
     video_tier: Literal["fast", "low", "medium", "high", "ultra", "standard", "premium"] | None = Field(default=None,
         description="Business tier ID from status.models.video_tiers; the server resolves its model and resolution.")
@@ -727,7 +729,16 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
                     from assistant.placement import require_placement, task_input
                     placement = args.placement.model_dump() if args.placement is not None else None
                     # Workflow intent is structured state, not words to match in a prompt.
-                    from light.work_types import WORKFLOWS as LIGHT_WORKFLOWS
+                    from light.work_types import WORKFLOWS as LIGHT_WORKFLOWS, asks_for_presenter
+                    # The one exception is refusing a contradiction: this helper cannot put a speaker in the clip.
+                    spoken = asks_for_presenter(args.instructions) if args.work_type == "light_video" else None
+                    if spoken:
+                        raise AssistantError(400, "ASSISTANT_WORK_TYPE_MISMATCH", (
+                            f"light_video makes one clip of footage with the shop name on it: no presenter, no "
+                            f"speech, no script, but the instructions ask for 「{spoken}」. Nothing was created. "
+                            "Repeat tasks.submit with work_type=spoken_video (someone talking to camera), "
+                            "other_video (several shots, voice-over) or video (format undecided). Keep light_video "
+                            "only if the user did not ask for that; then take it out of the instructions."))
                     workflow = {"spoken_video": "video-production", "other_video": "video",
                                 **LIGHT_WORKFLOWS}.get(args.work_type)
                     values = task_input(project_id=args.project_id,

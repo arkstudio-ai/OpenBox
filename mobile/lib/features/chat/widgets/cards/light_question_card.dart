@@ -29,6 +29,8 @@ class LightQuestionCard extends ConsumerWidget {
     required this.onSubmit,
     required this.onReject,
     required this.onPage,
+    this.onLater,
+    this.showLater = false,
     this.submitError,
   });
 
@@ -42,6 +44,11 @@ class LightQuestionCard extends ConsumerWidget {
   final ValueChanged<String> onCustom;
   final VoidCallback? onSubmit;
   final VoidCallback? onReject;
+
+  /// 「稍后再说」: put the card away without answering. Shown when
+  /// [showLater]; null while a reply is in flight.
+  final VoidCallback? onLater;
+  final bool showLater;
   final ValueChanged<int> onPage;
   final String? submitError;
 
@@ -205,9 +212,25 @@ class LightQuestionCard extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              if (showLater)
+                TextButton(
+                  key: const Key('light-question-later'),
+                  onPressed: onLater,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: Text(
+                    i18n.t('chat:card.later'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
+                ),
               TextButton(
                 onPressed: onReject,
-                style: TextButton.styleFrom(minimumSize: const Size(56, 48)),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
                 child: Text(
                   i18n.t('light:card.skip'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.n600),

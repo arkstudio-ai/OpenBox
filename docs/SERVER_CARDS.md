@@ -62,6 +62,22 @@ await ask_card(ctx, kind="xxx", header="...", question="...", options=[CardOptio
 - 「稍后再说」/点遮罩只收起弹窗，不作答；卡仍留在对话里。在别处答掉（对话里、其他设备、语音）后弹窗自动消失。
 - App 启动时主动拉一次待答列表，后台帮手出的卡不用先打开那个对话也能弹。
 
+## 跳过、收起与失效（2026-11-13）
+
+来源：gw2 账号 e 的反馈（确认卡被「跳过」后帮手照样出片扣了积分；待答卡挂在助理页底部十天，只能跳过）。
+
+- **跳过或失效不是批准**。普通问答卡（`continuation.kind == "question"`，不含登记卡种）被跳过或过期后，
+  在用户再次开口（本人消息或助理转达）之前，同一对话里的付费生成一律拒绝：`image_gen`、
+  `video_generate submit`、`video_compose submit` 返回 `failure_code=question_skipped`
+  （`question/skip_gate.py`，挂在 `agent/processor.py` 与「待答卡拦截」同一处）。登记卡种的「取消」含义仍由各自的 `apply` 决定。
+- **收起**：`POST /api/agent/question/{id}/fold`。不作答，卡保持 pending，`continuation.folded_at` 记时间，
+  `expires_at` 提前到 30 分钟后（`question.FOLDED_MINUTES`）；语音通话结束时该用户所有已收起的卡立即到期
+  （`question.expire_folded`，`api/voice.py` 收尾处调用）。到期沿用原有清理器 `expire_questions`，卡变 `expired`，
+  帮手不会被唤醒。请求视图多一个 `folded` 字段。没收起的卡不设期限，行为不变。
+- 助理绑定卡的 `request_revision` 含 `expires`，收起时同步重算（`question._set_deadline`），否则卡会被判为已变更。
+- 新审核卡把 `purpose=review` 存进 `detail.purpose`；旧卡仍从工具入参读取，入参可能是模型原样发来的 JSON 字符串
+  （`assistant/review_baseline.is_review` 兼容）。
+
 ## 没做 / 已知
 
 - 卡片文字目前是中文（与现有任务准备卡一致），没走 Light 三语。

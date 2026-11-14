@@ -95,7 +95,10 @@ async def _apply(db, session, row: QuestionCheckpoint, *, command=None) -> tuple
             return {"title": "Memory proposal parked",
                 "output": "The user dismissed the confirmation. The proposal stays pending, not approved. Do not re-propose it in this conversation.",
                 "metadata": {**metadata, "rejected": True, "memory_id": row.continuation["memory_id"], "decision": "dismissed"}}, events
-        return {"title": "Question skipped", "output": "The user skipped these questions. No approval was granted.",
+        return {"title": "Question skipped",
+                "output": ("The user skipped these questions. No approval was granted: skipping is not a go-ahead "
+                           "and not a choice of your recommended option. Do not start generation or any other paid or "
+                           "external step on your own assumptions; say in one short line what you still need, then stop and wait."),
                 "metadata": {**metadata, "rejected": True}}, events
     if kind == "question":
         text = "; ".join(f"{q}: {', '.join(a)}" for q, a in zip(questions, answers))

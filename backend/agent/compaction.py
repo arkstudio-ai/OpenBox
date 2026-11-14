@@ -499,7 +499,16 @@ async def process_compaction(
         run_fence=run_fence,
     )
 
+    # Where the time went. gw2 2026-11-13: fifteen rolling summaries in a row were cut at their deadline after
+    # 220-325 s without one provider call on record, and nothing said which stage had taken it.
+    marks: dict[str, float] = {}
+
+    def mark(stage: str) -> None:
+        marks[stage] = round(time.monotonic() - compaction_started, 1)
+
     async def finish_interrupted():
+        log.warning("Compaction interrupted for session %s after %.1fs; stages reached (s since start): %s",
+                    session_id, time.monotonic() - compaction_started, marks)
         assistant.finish = "aborted"
         assistant.summary = False
         await update_message_info(assistant, user_id=user_id, run_fence=run_fence)
@@ -543,6 +552,7 @@ async def process_compaction(
         bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
         await record_failure(reason=str(exc))
         return "stop"
+    mark("range_frozen")
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
     provenance = None
@@ -562,11 +572,13 @@ async def process_compaction(
         compaction_messages = (await build_messages(messages) if build_messages
                                else _to_llm_messages(messages, user_id=user_id, memory_projection_verified=True))
 
+    mark("messages_built")
     # Estimate total tokens
     source_token_count = await asyncio.to_thread(count_payload, compaction_messages)
     estimated_tokens = (await asyncio.to_thread(measure_request, model_id, compaction_messages + [
         {"role": "user", "content": summary_prompt},
     ], prefix, max_output_tokens=output_limit)).input_tokens
+    mark("measured")
     context_limit = get_model_context_limit(model_id)
     safe_limit = context_limit - output_limit
 
@@ -634,6 +646,7 @@ async def process_compaction(
         if measure_request(model_id, compaction_messages, prefix,
                            max_output_tokens=output_limit).input_tokens > safe_limit:
             raise CompactionPreparationError("Combined summaries and request prefix exceed the input budget")
+        mark("request_sent")
         async for event in _summary_stream(
             abort=abort,
             provenance=provenance,
@@ -650,6 +663,8 @@ async def process_compaction(
             tool_choice="none",
         ):
             if event["type"] == "text_delta":
+                if not summary_text:
+                    mark("first_text")
                 summary_text += event["text"]
                 # Stream to frontend in real-time
                 delta_payload = {
@@ -695,7 +710,7 @@ async def process_compaction(
         # Don't create a compaction boundary on failure (matching opencode:
         # filterCompacted requires both summary=True AND finish to be set).
         # Leave finish unset so this doesn't become a boundary.
-        log.warning(f"Compaction failed for session {session_id}, not creating boundary")
+        log.warning(f"Compaction failed for session {session_id}, not creating boundary; stages (s): {marks}")
         assistant.summary = True  # Mark as summary attempt
         # assistant.finish deliberately NOT set — prevents bad boundary
         assistant.error = {"message": "Compaction failed to produce a complete summary"}
@@ -1029,3 +1044,41 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
                     if isinstance(e, (RunRevoked, LeaseLostError)):
                         raise
                     log.warning(f"Failed to persist pruned part {part_id}: {e}")
+
+
+#: After a rolling summary was cut short, the same conversation is left alone this long.
+ROLLING_RETRY_MINUTES = 30
+
+
+async def rolling_summary_due(session_id: str, user_id: str) -> bool:
+    """Whether the personal assistant's after-turn summary should run now.
+
+    It holds the conversation's run while it works, so everything the user says meanwhile waits behind it.
+    gw2 2026-11-13: it was cut at its deadline after every turn of a call, fifteen times, each one keeping the
+    caller's next sentence waiting four minutes or more. Two things keep it out of the way: input already waiting
+    goes first (the next quiet turn summarises), and an attempt that was cut short is not repeated for
+    ``ROLLING_RETRY_MINUTES``.
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.message import Message
+    async with get_db_session() as db:
+        if await input_waiting(db, session_id, user_id):
+            return False
+        last = (await db.execute(select(Message.finish, Message.created_at).where(
+            Message.session_id == session_id, Message.user_id == user_id, Message.role == "assistant",
+            Message.agent == "compaction").order_by(Message.created_at.desc()).limit(1))).first()
+    if last is None or last.finish == "stop":
+        return True
+    created = last.created_at if last.created_at.tzinfo else last.created_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created > timedelta(minutes=ROLLING_RETRY_MINUTES)
+
+
+async def input_waiting(db, session_id: str, user_id: str) -> bool:
+    from sqlalchemy import select
+    from db.models.agent_inbox import AgentInboxItem
+    return (await db.execute(select(AgentInboxItem.id).where(
+        AgentInboxItem.session_id == session_id, AgentInboxItem.user_id == user_id,
+        AgentInboxItem.state == "accepted").limit(1))).scalar_one_or_none() is not None

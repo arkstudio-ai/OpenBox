@@ -77,7 +77,17 @@
     "skip": "先跳过",
     "typeHint": "也可以直接打字",
     "pageOf": "第 {{current}} / {{count}} 步",
-    "recommended": "推荐"
+    "recommended": "推荐",
+    "folded": "已收起 · 30 分钟内不处理会失效",
+    "foldedMinutes": "已收起 · 还有 {{minutes}} 分钟失效",
+    "foldFailed": "没收起来，请再试一次",
+    "foldedExpand": "点开继续回答",
+    "skipConfirm": {
+      "title": "跳过这一步？",
+      "body": "跳过后这一步不会开始，也不会扣积分；要继续时再跟我说一声。",
+      "confirm": "跳过",
+      "cancel": "再想想"
+    }
   },
   "tool": {
     "doing": "正在做：{{action}}",

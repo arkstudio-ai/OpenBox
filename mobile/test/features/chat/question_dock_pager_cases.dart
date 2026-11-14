@@ -136,7 +136,10 @@ void _registerPagerCases() {
     );
     api.gate = Completer<void>();
     await tester.tap(find.text('Skip'));
-    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(api.skipped, isEmpty);
+    await tester.tap(find.byKey(const Key('question-skip-confirm')));
+    await tester.pumpAndSettle();
     tester.state<_TranscriptState>(find.byType(_Transcript)).grow();
     await tester.pump();
     expect(
@@ -584,6 +587,8 @@ void _registerPagerCases() {
     await tester.tap(find.text('30s'));
     await tester.pump();
     await tester.tap(find.text('Skip all'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('question-skip-confirm')));
     await tester.pumpAndSettle();
     expect(api.skipped, ['skip-pages']);
     expect(api.replies, isEmpty);

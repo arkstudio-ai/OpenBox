@@ -1210,6 +1210,9 @@ async def run_loop(
                 )
                 if len(surface.messages) <= ASSISTANT_ROLLING_MESSAGES:
                     return
+                from agent.compaction import input_waiting, rolling_summary_due
+                if not await rolling_summary_due(session_id, user_id):
+                    return
                 # Not "auto": no continuation input follows the summary.
                 request = await create_compaction(
                     session_id, auto=False, user_id=user_id, messages=list(surface.messages),
@@ -1227,7 +1230,21 @@ async def run_loop(
                     await abort.wait()
                     stop.set()
 
+                async def yield_to_input():
+                    # Whatever the user says while this runs waits behind it: stop and let it through.
+                    from db.base import get_db_session
+                    while not stop.is_set():
+                        await asyncio.sleep(2)
+                        try:
+                            async with get_db_session() as db:
+                                if await input_waiting(db, session_id, user_id):
+                                    log.info("Rolling summary yields to waiting input for session %s", session_id)
+                                    stop.set()
+                        except Exception:
+                            pass
+
                 relay = asyncio.create_task(relay_stop())
+                yielding = asyncio.create_task(yield_to_input())
                 deadline = asyncio.get_running_loop().call_later(ASSISTANT_ROLLING_SECONDS, stop.set)
                 # Maintenance, not the settled turn's budget.
                 budget_token = assistant_budget.current.set(None)
@@ -1245,6 +1262,7 @@ async def run_loop(
                     assistant_budget.current.reset(budget_token)
                     deadline.cancel()
                     relay.cancel()
+                    yielding.cancel()
                     await set_session_status(session_id, previous, user_id=user_id,
                                              generation=lease.generation, run_fence=run_fence)
             except (question_runtime.RunRevoked, LeaseLostError, asyncio.CancelledError):
@@ -3104,6 +3122,10 @@ async def run_loop(
                         reminder = await follow_through.unfinished_batch(ctx, run_message_ids)
                 if reminder is None:
                     reminder = await follow_through.unverified_publication(ctx, run_message_ids)
+                if reminder is None and await follow_through.handover_failed(
+                        session_kind=session.kind, text=collected_text, session_id=session_id,
+                        user_id=user_id, message_ids=run_message_ids):
+                    reminder = follow_through.HANDOVER_REMINDER
                 if reminder is None and await follow_through.needs_another_step(
                         session_kind=session.kind, text=collected_text, session_id=session_id,
                         user_id=user_id, message_ids=run_message_ids):

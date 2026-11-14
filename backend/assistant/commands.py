@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from hashlib import sha256
 import json
@@ -49,7 +49,9 @@ def _light_guidance(skill: str, job: str) -> str:
             "load video-production, and do not use bash, file or desktop tools, and do not ask for a desktop. "
             "The user is a shop owner new to AI tools: one decision per card with options to tap, no model names, "
             "tier names or credit estimates. Reuse the choices in the brief below; do not ask them again. "
-            "The task is done only when the finished piece exists and has been attached; a plan alone is not a result.")
+            "The task is done only when the finished piece exists and has been attached; a plan alone is not a result. "
+            "A card the user skipped or left unanswered approves nothing: do not generate on your own choice, say in "
+            "one short line what you are waiting for and stop.")
 
 
 async def workflow_guidance(workflow: str, user_id: str | None) -> str:
@@ -186,6 +188,20 @@ async def coalesce_delegated_input_locked(db, execution, task, now, kept: list[s
             idempotency_key=f"inbox:{row.id}:canceled")
         replaced.append(row.id)
     return replaced
+
+
+#: A finished task older than this is history, not work in progress: the same words a day later ("帮我做条视频")
+#: are a new request. gw2 2026-11-13: one was continued into the room that had delivered the day before, a second
+#: clip was charged there and the assistant said the helper "had been working on it all along".
+FINISHED_TASK_HOURS = 12
+
+
+def finished_long_ago(task, now) -> bool:
+    if task.desired_state == "canceled" or task.observed_state != "completed" or task.updated_at is None:
+        return False
+    updated = task.updated_at if task.updated_at.tzinfo else task.updated_at.replace(tzinfo=timezone.utc)
+    current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    return current - updated > timedelta(hours=FINISHED_TASK_HOURS)
 
 
 def similar_task_title(first: str, second: str) -> bool:
@@ -674,13 +690,19 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                     AssistantTask.assistant_session_id == main.id, AssistantTask.user_id == user_id,
                     AssistantTask.archived_at.is_(None),
                 ).order_by(AssistantTask.created_at.desc()).limit(50))).all()
-                duplicate = next((row for row in existing if similar_task_title(row.title, title)), None)
+                duplicate = next((row for row in existing if similar_task_title(row.title, title)
+                                  and not finished_long_ago(row, now)), None)
                 if duplicate is not None:
+                    finished = duplicate.desired_state != "canceled" and duplicate.observed_state == "completed"
                     raise AssistantError(409, "ASSISTANT_DUPLICATE_TASK", (
                         f"A task for this work already exists in this conversation: 「{duplicate.title}」 "
                         f"({duplicate.desired_state}/{duplicate.observed_state}, task_id {duplicate.id}). Continue it "
                         "instead of creating another: tasks.get, then tasks.followup while it runs, tasks.resume when it "
                         "is paused or stopped, and tasks.acknowledge_effects first when its outcomes are unverified. "
+                        + ("That task has FINISHED and delivered its result: a tasks.followup there starts a new, "
+                           "separately charged round on top of the delivered piece. Tell the user it is a redo or change "
+                           "of the finished 「" + duplicate.title + "」, never that the helper was already working on it. "
+                           if finished else "") +
                         "If the user only wants to see or talk about that work, answer with its current state and "
                         "the link in details.url so they go back into it. Only when the user explicitly asked for a "
                         "new, separate task repeat tasks.submit with new_despite_similar=true."), details={

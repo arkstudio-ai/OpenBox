@@ -1,5 +1,6 @@
 """Context compaction: overflow detection, compression, and pruning."""
 import asyncio
+import re
 from bus import bus
 from bus.events import SESSION_COMPACTION_START, SESSION_COMPACTION_COMPLETE
 from models.message import TokenUsage
@@ -264,6 +265,12 @@ class CompactionPreparationError(RuntimeError):
 
 class CompactionInterrupted(RuntimeError):
     """The owning turn stopped while waiting for summary output."""
+
+
+# A model that does not honour ``tool_choice="none"`` can answer with its raw tool-call markup as text
+# (MiniMax-M3.1-Flash on 2026-11-14: "]<]minimax[>[<tool_call>…" when told not to call a tool). That is not a
+# summary: taking it would replace the conversation's history with it.
+TOOL_MARKUP = re.compile(r"<tool_call>|</tool_call>|\]<\]minimax\[>\[|<\|tool_calls?_(?:begin|start)\|>", re.IGNORECASE)
 
 
 async def _summary_stream(*, abort: asyncio.Event | None = None, provenance=None, **kwargs):
@@ -680,7 +687,7 @@ async def process_compaction(
         log.error(f"Compaction stream error for session {session_id}: {e}")
         llm_error = True
 
-    if llm_error or not finished or not summary_text.strip():
+    if llm_error or not finished or not summary_text.strip() or TOOL_MARKUP.search(summary_text):
         # Partial provider output is useful diagnostics, but without the CAS
         # replacement event it is never a compaction boundary.
         text_part.text = summary_text or ""

@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08.1",
+  "version": "2026-11-14.1",
   "entries": [
     {
       "id": "video",
@@ -348,7 +348,7 @@
     {
       "id": "shopkeeper",
       "title": "Store manager",
-      "subtitle": "List / delist · Reply to reviews · Check stats",
+      "subtitle": "List / delist · Reply to reviews · Business analysis",
       "price_hint": "Free with your plan",
       "steps": [
         {
@@ -369,12 +369,12 @@
         }
       ],
       "opening_card": {
-        "text": "What needs doing at the shop today? One sentence is enough, e.g. “Take the crayfish set off the menu, back on Saturday”.",
+        "text": "What needs doing at the shop today? One sentence is enough, e.g. “Take the crayfish set off the menu, back on Saturday”. You can also ask how business is going, e.g. “How did we sell this week, and what should I change?” — I'll read the shop's business data and tell you what I found and what I'd do.",
         "chips": [
           "List / delist",
           "Reply to reviews",
           "Edit group deal",
-          "Check stats"
+          "Business analysis"
         ]
       }
     }

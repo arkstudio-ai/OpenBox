@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08.1",
+  "version": "2026-11-14.1",
   "entries": [
     {
       "id": "video",
@@ -348,7 +348,7 @@
     {
       "id": "shopkeeper",
       "title": "Quản lý quán",
-      "subtitle": "Lên / gỡ món · Trả lời đánh giá · Xem số liệu",
+      "subtitle": "Lên / gỡ món · Trả lời đánh giá · Phân tích kinh doanh",
       "price_hint": "Miễn phí trong gói",
       "steps": [
         {
@@ -369,12 +369,12 @@
         }
       ],
       "opening_card": {
-        "text": "Hôm nay quán cần làm việc gì? Nói một câu là được, ví dụ “Gỡ combo tôm hùm đất, thứ Bảy lên lại”.",
+        "text": "Hôm nay quán cần làm việc gì? Nói một câu là được, ví dụ “Gỡ combo tôm hùm đất, thứ Bảy lên lại”. Muốn biết quán buôn bán ra sao cũng cứ hỏi, ví dụ “Tuần này bán thế nào, nên chỉnh gì?” — tôi sẽ xem số liệu kinh doanh của quán rồi nói kết quả và gợi ý cho bạn.",
         "chips": [
           "Lên / gỡ món",
           "Trả lời đánh giá",
           "Sửa ưu đãi nhóm",
-          "Xem số liệu"
+          "Phân tích kinh doanh"
         ]
       }
     }

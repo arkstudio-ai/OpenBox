@@ -9,6 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-16 00:09 gw2 → `20261116-videoex-495184bf`（backend + trajectory-worker）
+
+- 内容：PR #203，引导对话里 `question` / `image_gen` / `footage_analyze` 调用前服务端确认已加载入口技能，否则挡回（最多 3 次，方案文档 §12）；PR #204，做一条视频加「挑样例」一步（类型 = 进对话前选的页签 dish / shop / visit），样例按入口区分图片和视频、放错入口的不再生效，后台保存时校验（方案文档 §13）。
+- 只发后端与轨迹 worker，前端仍 `20261115-examplepick-2571d237`，无迁移（仍 `pp6c2d3e4f5a`）。本机 buildx 从 `main@495184bf` 全量构建，OSS 中转已删。切换脚本沿用 gate 那份，门禁一次通过，backend → worker healthy，tracebacks=0。
+- 发布前的数据修正（11-15 深夜）：误挂在 `video` 入口下的 5 条菜单设计（4 启用 1 停用）改到 `menu`，备份 `backups/20261115-example-entry-fix/video-examples-before.jsonl`。现在样例库：menu 6 条启用，video / poster / footage_edit 启用数都是 0。
+- 容器内核对：四个入口的 `media` 与类型、三语步骤（做一条视频为 选主题 → 挑样例 → 拍照片 → 定讲稿 → 生成 → 保存发布）、技能门、`example_pick` 在 build 工具清单里；做菜单能取到三条候选且预览可用，做一条视频候选为空。
+- **模拟器（正式环境，bbdwxh_admin）走做一条视频**：餐品展示 → 烟火气特写 → 步骤条六步含「挑样例」→ 点「没照片，用文字描述」→ 助理调用 `example_pick`，库里没有视频样例所以不出卡，会话记 `light_scene=dish`、`light_example_id=skipped`，步骤条直接走到「拍照片」并发出问答卡。技能门没有误挡正常流程。到问答卡为止，没有出片，没花积分。
+- **没验证的**：视频样例卡的样子、视频封面抽帧、选中样例对成片的影响（库里没有视频样例）；技能门真正触发的情况（这次助理自己加载了技能）。
+- 回滚：`activate.sh 20261115-gate-a4e66408 20261116-videoex-495184bf --no-gate`。
+
 ## 2026-11-15 18:07 gw2 → `20261115-gate-a4e66408`（backend + trajectory-worker）
 
 - 内容：PR #201，助理跳过挑样例时由服务端补发样例卡（`light/example_gate.py`，方案文档 §11）。起因见下一条的走查。

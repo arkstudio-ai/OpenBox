@@ -83,7 +83,7 @@ def public(row) -> dict:
         "subtype": row.subtype, "scene": row.scene,
         "scene_label": taxonomy().scene_label(row.entry_id, row.scene) if row.scene else "",
         "tags": list(row.tags or []), "rating": row.rating, "status": row.status,
-        "title": row.title, "notes": row.notes or "", "recipe": row.recipe or "",
+        "title": row.title, "notes": row.notes or "", "recipe": row.recipe or "", "look": row.look or "",
         "inputs": list(row.inputs or []), "outputs": list(row.outputs or []), "source": dict(row.source or {}),
         "created_by": row.created_by, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at),
         "use_count": row.use_count or 0, "pick_count": row.pick_count or 0,
@@ -279,7 +279,12 @@ def render(rows: list, ctx: dict | None = None, *, chosen: bool = False) -> str:
         if row.notes:
             head += f"：{_clean(row.notes, NOTES_LIMIT)}"
         lines.append(head)
-        if row.recipe:
+        look = (row.look or "").strip() if chosen else ""
+        if look:
+            # The look is what the owner chose; the old prompt names another shop's dishes and prices.
+            lines.append("   样子说明（出图提示词的 Style 和 Layout 两行照这个写，配色、版式、图片用法、装饰都跟它走）：")
+            lines.extend("   " + line for line in look.splitlines())
+        elif row.recipe:
             lines.append("   当时的方案卡/提示词：" + _clean(row.recipe, RECIPE_LIMIT))
         links = []
         for output in row.outputs or []:

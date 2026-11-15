@@ -47,13 +47,17 @@ carries the menu photo — call `example_pick` once with the style as `scene`:
 深色高级 → `menu_dark`. The tool shows the owner up to three finished menus
 and waits for the pick; write nothing about them yourself.
 
-- **An example was picked**: it is the look of this menu — background,
-  heading treatment, how categories and prices are set, the badges. Describe
-  that look in the `Style:` line instead of the plain style note, even when
-  the example is of another style than the one named (the owner chose it
-  with their eyes). Only the look: every dish, price and the shop name are
-  this owner's, never the example's. Say one short line
-  (「好，照「<样例标题>」的样子排。」) and go on to the dishes.
+- **An example was picked**: it is the look of this menu. The tool result
+  carries 样子说明 — six lines on the picked picture's 版式, 配色, 字体, 图片,
+  装饰 and 菜名价格. Write the prompt's `Style:` and `Layout:` lines from
+  those six lines, all of them: its palette even when it is not the named
+  style's (the owner chose it with their eyes), its columns or cards rather
+  than the default list, its badges and frames. When its 图片 line has dish
+  photos or illustrations, ask for one per listed dish in that same shape
+  and place, and for no dish that is not on the list. Only the look: every
+  dish, price and the shop name are this owner's, never the example's. Say
+  one short line (「好，照「<样例标题>」的样子排。」) and go on to the dishes.
+  If the result has no 样子说明, take the look from what it does give.
 - **No example** (the tool says none applies, or the owner chose none): use
   the named style's note below and do not mention examples.
 
@@ -121,7 +125,7 @@ above. Prompt shape:
 Use case: productivity-visual
 Asset type: restaurant menu, <A4 print | phone portrait | landscape table card>
 Style: <the picked example's look in your own words, or without one the chosen style, e.g. 烟火红：deep red background, warm gold headings, festive but tidy>
-Layout: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders; signature dishes marked with a small 「招牌」 badge; a blank square labeled 「扫码点餐」 bottom right
+Layout: <the picked example's layout from 样子说明, or without one: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders>; signature dishes marked with a small 「招牌」 badge that covers no name or price; a blank square labeled 「扫码点餐」 bottom right
 Text (verbatim, render every character exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
 <the confirmed table, one line per dish, with ¥ before each price>
 Constraints: no other text, no invented dishes, no photos of people; prices aligned in one column; generous margins for printing
@@ -136,7 +140,8 @@ Style notes:
 
 After the image comes back, look at it and check **every** dish name and
 price against the confirmed table. If anything is wrong, call `image_gen`
-once more with the same prompt plus `Fix: <exact lines that were wrong>`. If
+once more with the same prompt — the same `Style:` and `Layout:` lines, so
+the picked look is not lost on the way — plus `Fix: <exact lines that were wrong>`. If
 the second image is still wrong, deliver the better one and list the wrong
 lines in plain words so the owner can tell you to try again; never claim it
 is correct when it is not.

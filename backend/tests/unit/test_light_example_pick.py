@@ -48,6 +48,10 @@ async def quiet(monkeypatch):
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
     monkeypatch.setattr("core.oss.get_oss", lambda: _Oss())
     monkeypatch.setattr("light.media.sign_media", lambda value: value and value.replace("oss:", "https://signed/"))
+
+    async def no_vision(row, ctx):  # no test reaches a vision model unless it sets its own reader
+        raise ValueError("no vision model in tests")
+    monkeypatch.setattr("light.example_look.read", no_vision)
     MAIN_MESSAGES.clear()
     yield
     from sqlalchemy import delete
@@ -420,3 +424,106 @@ async def test_console_takes_a_scene_filters_by_it_and_counts_the_cells():
         "new_item": 0, "holiday": 0, "opening": 1, "groupbuy": 2}  # active only
     assert poster["unclassified"] == 1 and poster["total"] == 4
     assert next(row for row in coverage["entries"] if row["entry_id"] == "video")["scenes"] == []
+
+
+# --- the look of a picked example (light/example_look.py) --------------------------------------
+
+LOOK = ("版式：横版，左右两栏，左栏是招牌区\n配色：深蓝底，金色标题\n字体：粗宋体标题，正文细黑\n"
+        "图片：每道菜一张圆形照片\n装饰：金色「推荐」徽章\n菜名价格：菜名在图下，价格在右")
+
+
+def test_look_cleaning_takes_out_names_and_prices():
+    from light import example_look
+    cleaned = example_look.clean("版式：竖版，顶部是「好味来烧腊」标题\n\n配色：橙色  底，价格 ¥25 和 优惠价17元 用红色\n装饰：「招牌」徽章")
+    assert cleaned == "版式：竖版，顶部是文字标题\n配色：橙色 底，价格 价格 和 优惠价价格 用红色\n装饰：「招牌」徽章"
+    assert len(example_look.clean("字" * 5000)) == example_look.LOOK_LIMIT
+
+
+async def test_the_card_reads_each_candidates_look_once_and_a_cut_is_not_read(monkeypatch):
+    from light import example_look
+    read = []
+
+    async def fake_read(row, ctx):
+        read.append(row.id)
+        if row.title == "读不出来":
+            raise ValueError("vision down")
+        return LOOK
+    monkeypatch.setattr(example_look, "read", fake_read)
+    owner, session = await _guided("menu")
+    good = await _example("menu", "韩料模板", scene="menu_red", rating=5)
+    broken = await _example("menu", "读不出来", scene="menu_red", rating=4)
+    known = await _example("menu", "已经读过", scene="menu_red", rating=3, look="版式：早就读过")
+    _, request_id = await _call(session, owner, scene="menu_red")
+    assert sorted(read) == sorted([good.id, broken.id])  # the one with a look is not read again
+    async with get_db_session() as db:
+        assert (await db.get(LightExample, good.id)).look == LOOK
+        assert (await db.get(LightExample, broken.id)).look == ""  # a failed reading leaves the card as it was
+        assert (await db.get(LightExample, known.id)).look == "版式：早就读过"
+    assert [o["id"] for o in (await card(request_id)).questions[0]["detail"]["options"]][:3] == [good.id, broken.id, known.id]
+
+    # A cut's plan card is its model; nothing looks at a frame of it.
+    clip = await _example("footage_edit", "探店快剪", mime="video/mp4")
+    assert example_look.readable(clip) is None and await example_look.ensure(clip, None) == ""
+    assert read.count(clip.id) == 0
+
+
+async def test_a_picked_example_hands_over_its_look_instead_of_the_old_prompt(monkeypatch):
+    from light import example_look
+
+    async def fake_read(row, ctx):
+        return LOOK
+    monkeypatch.setattr(example_look, "read", fake_read)
+    owner, session = await _guided("menu")
+    liked = await _example("menu", "韩料模板", scene="menu_red", recipe="生成提示词：好味来烧腊 经典烧鹅饭 优惠价 25元")
+    _, request_id = await _call(session, owner, scene="menu_red")
+    await q.reply(request_id, [["韩料模板"]], owner)
+    assert await apply_answers(session.id, owner) is not None
+    row = await card(request_id)
+    async with get_db_session() as db:
+        output = (await db.get(Part, row.part_id)).data["output"]
+    assert "样子说明" in output and "配色：深蓝底，金色标题" in output and "图片：每道菜一张圆形照片" in output
+    assert "Style and Layout lines" in output and "unchanged on any retry" in output
+    assert "好味来烧腊" not in output and "25元" not in output  # the other shop's dishes and prices stay out
+    fragment = await light_mode_fragment(owner, await get_session(session.id, user_id=owner))
+    assert "配色：深蓝底，金色标题" in fragment and "好味来烧腊" not in fragment
+    # Without a look (the reading failed), the old prompt is still what the agent gets.
+    plain = await _example("poster", "没读过", recipe="生成提示词：大字促销")
+    assert "当时的方案卡/提示词：生成提示词：大字促销" in examples.render([plain], chosen=True)
+    # The automatic three keep their prompts: nobody chose them, and three looks would blur into one.
+    assert "样子说明" not in examples.render([liked]) and "好味来烧腊" in examples.render([liked])
+
+
+async def test_console_keeps_a_look_and_drops_it_when_the_picture_changes():
+    from api.admin_examples import router
+    from db.models.file_asset import FileAsset
+    from db.repository.user_repo import PgUserRepo
+    uid = uuid4().hex
+    admin = await PgUserRepo().create(id=uid, username="lk" + uid[:8], password_hash=None, role="admin")
+    ws = admin["default_workspace_id"]
+    ids = []
+    async with get_db_session() as db:
+        for name in ("a.png", "b.png"):
+            asset_id = "asset_" + uuid4().hex[:10]
+            ids.append(asset_id)
+            db.add(FileAsset(id=asset_id, user_id=uid, workspace_id=ws, name=name, mime="image/png", size=1,
+                             oss_key=f"assets/{uid}/{asset_id}/{name}", status="ready", source="agent",
+                             transient=False, is_deleted=False, created_at=_now()))
+        await db.commit()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": uid, "role": "admin"}
+    body = {"entry_id": "menu", "industry": "food", "shop_type": "noodle", "title": "红底菜单",
+            "outputs": [{"asset_id": ids[0]}]}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        created = (await client.post("/api/admin/examples", json=body)).json()
+        assert created["look"] == ""
+        async with get_db_session() as db:
+            (await db.get(LightExample, created["id"])).look = LOOK
+            await db.commit()
+        kept = (await client.put(f"/api/admin/examples/{created['id']}", json={**body, "title": "红底菜单二"})).json()
+        assert kept["look"] == LOOK  # an edit that leaves the picture alone keeps what was read
+        edited = (await client.put(f"/api/admin/examples/{created['id']}", json={**body, "look": "版式：人工改的"})).json()
+        assert edited["look"] == "版式：人工改的"
+        swapped = (await client.put(f"/api/admin/examples/{created['id']}",
+                                    json={**body, "outputs": [{"asset_id": ids[1]}]})).json()
+        assert swapped["look"] == ""  # another picture: read again next time the card shows it

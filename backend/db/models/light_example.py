@@ -40,6 +40,9 @@ class LightExample(Base):
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     #: What makes this one good, in the team's words; shown to the model as the summary.
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
+    #: How the finished picture looks, in words and with none of its content
+    #: (light/example_look.py); "" until it was read. What a picked example hands the agent.
+    look: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
     #: The review card and/or generation prompt as they were in the session.
     recipe: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
     #: [{asset_id, oss_key, name, mime}] of the photos or footage the owner supplied.

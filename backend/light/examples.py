@@ -42,6 +42,8 @@ _COUNTED: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 _COUNTED_LIMIT = 4096
 #: ``sessions.light_example_id`` when the owner looked at the card and chose none of them.
 DECLINED = "none"
+#: ``sessions.light_example_id`` when the card had nothing to show; the prompt keeps the library's own pick.
+SKIPPED = "skipped"
 #: Where the last pick per entry and scene is remembered (``user_preferences.extra``).
 PICKS_KEY = "light_example_picks"
 #: Preview links on the card; the App asks again (``/api/light/examples/{id}/preview``) when one expired.
@@ -239,7 +241,7 @@ def preview(row) -> dict | None:
 
 async def get_active(example_id: str | None):
     """One active example by id; None for the declined marker, an unknown id or a disabled one."""
-    if not example_id or example_id == DECLINED:
+    if not example_id or example_id in (DECLINED, SKIPPED):
         return None
     from db.base import get_db_session
     from db.models.light_example import LightExample

@@ -88,8 +88,8 @@ async def _guided(entry_id="poster", **fields):
     return owner, session
 
 
-async def _call(session, owner, **arguments):
-    """One ``example_pick`` call in a real turn: its result, or the id of the card it waits on."""
+async def _call(session, owner, *, _tool="example_pick", _run=None, **arguments):
+    """One tool call in a real turn (``example_pick`` unless named): its result, or the id of the card it waits on."""
     await inbox.accept_inbox_item(session_id=session.id, user_id=owner, delivery="followup", prompt="团购",
                                   origin="human", origin_ref={"actor_user_id": owner})
     lease = await reserve_run(session.id, owner)
@@ -101,11 +101,14 @@ async def _call(session, owner, **arguments):
         fence = (session.id, lease.run_id, lease.generation)
         message = await create_assistant_message(session.id, batch.messages[0].id, agent="build",
                                                  model_id="test/model", user_id=owner, run_fence=fence)
-        part = ToolPartData(session_id=session.id, message_id=message.id, tool="example_pick", status="running")
+        part = ToolPartData(session_id=session.id, message_id=message.id, tool=_tool, status="running")
         await save_part(part, is_new=True, user_id=owner, run_fence=fence)
-        ctx = SimpleNamespace(session_id=session.id, user_id=owner, message_id=message.id, part_id=part.id)
+        from tool.tool import ToolContext
+        ctx = ToolContext(session_id=session.id, user_id=owner, message_id=message.id, part_id=part.id,
+                          run_id=lease.run_id, run_generation=lease.generation,
+                          workspace_id=getattr(session, "workspace_id", "") or "")
         try:
-            result = await ep.execute(ep.ExamplePickArgs(**arguments), ctx)
+            result = await (_run(ctx) if _run else ep.execute(ep.ExamplePickArgs(**arguments), ctx))
         except q.QuestionSuspended as suspended:
             request_id = suspended.request_id
             message.finish = "waiting_input"
@@ -280,7 +283,7 @@ async def test_no_card_without_examples_outside_a_guided_chat_or_with_nobody_the
     owner, session = await _guided("poster")
     result, waiting = await _call(session, owner, scene="groupbuy")  # an empty library
     assert waiting is None and "no finished example" in result.output
-    assert (await _row(session.id)).light_example_id is None  # nothing was asked, so nothing is recorded
+    assert (await _row(session.id)).light_example_id == examples.SKIPPED  # recorded, so the server does not look again
 
     await _example("poster", "团购大字报", scene="groupbuy")
     monkeypatch.setattr("tool.video_model_card.unattended", lambda session, session_id: True)
@@ -527,3 +530,114 @@ async def test_console_keeps_a_look_and_drops_it_when_the_picture_changes():
         swapped = (await client.put(f"/api/admin/examples/{created['id']}",
                                     json={**body, "outputs": [{"asset_id": ids[1]}]})).json()
         assert swapped["look"] == ""  # another picture: read again next time the card shows it
+
+
+# --- the server keeps the step (light/example_gate.py) ------------------------------------------
+
+def _ask(step_id, text="核对一下"):
+    from tool import question_tool as qt
+
+    async def run(ctx):
+        return await qt.execute(qt.QuestionArgs(questions=[qt.QuestionItem(question=text, step_id=step_id)]), ctx)
+    return run
+
+
+async def test_a_later_card_is_held_and_the_example_card_is_shown_on_that_call():
+    from light import example_gate
+    owner, session = await _guided("menu", light_scene="menu_red")
+    liked = await _example("menu", "韩料模板", scene="menu_red")
+    # The agent skipped 挑样例 and went to the review card: the owner sees the example card instead.
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("review"))
+    assert result is None and request_id
+    row = await card(request_id)
+    [question] = row.questions
+    assert question["detail"]["kind"] == ep.KIND and question["detail"]["light"] == {"step_id": "example"}
+    assert question["question"] != "核对一下"
+    assert row.continuation["card"]["payload"] == {"entry_id": "menu", "scene": "menu_red",
+                                                   "example_ids": [liked.id], "via": "question"}
+    # A second call while it waits is refused rather than filing a second card.
+    async def gate(ctx):
+        return await example_gate.before(ctx, tool="image_gen")
+    await q.reply(request_id, [["韩料模板"]], owner)
+    assert await apply_answers(session.id, owner) is not None
+    async with get_db_session() as db:
+        part = await db.get(Part, row.part_id)
+    assert part.data["title"] == "照「韩料模板」做"
+    assert "your `question` call did not run" in part.data["output"].replace("that `question` call", "your `question` call")
+    assert "Make it again now" in part.data["output"]
+    assert (await _row(session.id)).light_example_id == liked.id
+    # The step is behind us: the same card now goes through as itself.
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("review"))
+    assert result is None and (await card(request_id)).questions[0]["question"] == "核对一下"
+
+
+async def test_a_card_before_the_step_and_a_conversation_without_the_step_pass_untouched():
+    owner, session = await _guided("menu")
+    await _example("menu", "韩料模板", scene="menu_red")
+    _, request_id = await _call(session, owner, _tool="question", _run=_ask("style", "要哪种样式？"))
+    assert (await card(request_id)).questions[0]["question"] == "要哪种样式？"  # 选样式 comes before 挑样例
+    assert (await _row(session.id)).light_example_id is None
+
+    video_owner, video = await _guided("video")  # 做一条视频 has no 挑样例 step
+    await _example("video", "视频样例")
+    _, request_id = await _call(video, video_owner, _tool="question", _run=_ask("confirm"))
+    assert (await card(request_id)).questions[0]["question"] == "核对一下"
+
+    plain_owner, _, workspace, main = await assistant()
+    plain = await conversation(plain_owner, workspace, main, "普通对话", visibility="private")
+    _, request_id = await _call(plain, plain_owner, _tool="question", _run=_ask(None))
+    assert (await card(request_id)).questions[0]["question"] == "核对一下"
+
+
+async def test_with_nothing_to_show_the_held_call_runs_and_the_library_is_not_searched_again(monkeypatch):
+    from light import example_gate
+    owner, session = await _guided("poster")
+    _, request_id = await _call(session, owner, _tool="question", _run=_ask("copy"))
+    assert (await card(request_id)).questions[0]["question"] == "核对一下"  # an empty library holds nothing up
+    assert (await _row(session.id)).light_example_id == examples.SKIPPED
+    # A skipped step keeps the library's own pick in the prompt once examples exist.
+    await _example("poster", "后来才有的样例")
+    assert "「后来才有的样例」" in await light_mode_fragment(owner, await get_session(session.id, user_id=owner))
+
+    calls = []
+
+    async def spy(ctx, **kwargs):
+        calls.append(kwargs)
+    monkeypatch.setattr(ep, "show", spy)
+    async def gate(ctx):
+        return await example_gate.before(ctx, tool="image_gen")
+    result, waiting = await _call(session, owner, _tool="image_gen", _run=gate)
+    assert result is None and waiting is None and calls == []  # the step is recorded as done
+
+
+async def test_production_tools_are_held_too_and_parallel_calls_ask_once():
+    from light import example_gate
+    owner, session = await _guided("footage_edit")
+    clip = await _example("footage_edit", "探店快剪", scene="visit", mime="video/mp4")
+    from session.session import create_user_message
+    await create_user_message(session_id=session.id, text="探店", user_id=owner)  # the owner tapped the chip
+
+    async def gate(ctx):
+        return await example_gate.before(ctx, tool="footage_analyze")
+    result, request_id = await _call(session, owner, _tool="footage_analyze", _run=gate)
+    assert result is None and request_id
+    payload = (await card(request_id)).continuation["card"]["payload"]
+    assert payload["via"] == "footage_analyze" and payload["example_ids"] == [clip.id]
+    assert payload["scene"] == "visit"  # read from the chip the owner tapped
+
+    async def second(ctx):
+        return await example_gate.before(ctx, tool="image_gen")
+    lease = None
+    ctx = SimpleNamespace(session_id=session.id, user_id=owner, message_id="m", part_id="p")
+    held = await example_gate.before(ctx, tool="image_gen")
+    assert held is not None and held.metadata == {"blocked": True, "gate": "light_example"}
+
+
+async def test_nobody_there_means_no_gate(monkeypatch):
+    from light import example_gate
+    owner, session = await _guided("menu", light_scene="menu_red")
+    await _example("menu", "韩料模板", scene="menu_red")
+    monkeypatch.setattr("tool.video_model_card.unattended", lambda session, session_id: True)
+    ctx = SimpleNamespace(session_id=session.id, user_id=owner, message_id="m", part_id="p")
+    assert await example_gate.before(ctx, tool="image_gen") is None
+    assert (await _row(session.id)).light_example_id is None

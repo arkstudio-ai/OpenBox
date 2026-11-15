@@ -65,6 +65,8 @@ class ImageModel:
     max_inputs: int = 10
     max_input_mb: int = 10
     max_prompt: int = 20_000
+    #: "size" models: the largest width × height the endpoint takes; None = no cap known.
+    max_pixels: int | None = None
 
 
 #: The registry: id -> endpoints and limits. Display names match RunningHub's.
@@ -77,7 +79,9 @@ MODELS: dict[str, ImageModel] = {model.id: model for model in (
     ImageModel("rhart-image-g-2", "GPT Image 2", "rhart-image-g-2/text-to-image",
                "rhart-image-g-2/image-to-image", "ratio", _G2_RATIOS, _G2_RATIOS, max_input_mb=30),
     ImageModel("seedream-v5-pro", "Seedream v5 Pro", "seedream-v5-pro/text-to-image",
-               "seedream-v5-pro/image-to-image", "size", resolutions=("1k", "2k"), max_prompt=5_000),
+               "seedream-v5-pro/image-to-image", "size", resolutions=("1k", "2k"), max_prompt=5_000,
+               # 1007 "image area must be at most 4194304 pixels" (gw2 2026-11-15: every 2048x2896 failed).
+               max_pixels=2048 * 2048),
 )}
 
 
@@ -217,6 +221,13 @@ def plan_request(model: ImageModel, *, prompt: str, size: str, image_urls: list[
             width, height = 2048, 2048
         if not (240 <= width <= 8192 and 240 <= height <= 8192):
             raise ImageRequestRefused(f"{model.name} accepts width and height from 240 to 8192 pixels")
+        if model.max_pixels and width * height > model.max_pixels:
+            # Same shape, the largest that fits: a refused task makes nothing, a slightly smaller image does.
+            scale = (model.max_pixels / (width * height)) ** 0.5
+            fitted = tuple(max(240, int(side * scale) // 8 * 8) for side in (width, height))
+            note = (f"size {width}x{height} is above {model.name}'s limit of {model.max_pixels:,} pixels; "
+                    f"it was made at {fitted[0]}x{fitted[1]}, the same shape")
+            width, height = fitted
         body.update(width=width, height=height, outputFormat="png" if output_format == "png" else "jpeg")
         tier = "1k" if width * height <= 1024 * 1024 else "2k"
     else:

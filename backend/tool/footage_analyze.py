@@ -284,6 +284,11 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
 
 
 async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
+    # A guided Light page shows its example card before the clips are read and charged (light/example_gate.py).
+    from light import example_gate
+    held = await example_gate.before(ctx, tool="footage_analyze")
+    if held is not None:
+        return held
     from billing.footage import quote_analysis, settle_analysis
     from core.oss import OssNotConfigured, get_oss
 

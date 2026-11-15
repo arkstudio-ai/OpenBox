@@ -46,6 +46,10 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     # The Light example card: which finished piece this one should look like
     # (tool.example_pick).
     "example_pick": "question",
+    # The same card, filed by the server when the agent went past the step
+    # (light.example_gate); `question` above is the third tool it can stand on.
+    "image_gen": "question",
+    "footage_analyze": "question",
     # A sensitive memory the assistant may keep only after confirmation.
     "memory.remember": "memory_proposal",
 }

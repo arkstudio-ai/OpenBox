@@ -107,6 +107,15 @@ def _skip(reason: str) -> ToolResult:
 
 
 async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
+    return await show(ctx, scene=args.scene, again=args.again)
+
+
+async def show(ctx: ToolContext, *, scene: str | None, again: bool = False, via: str | None = None) -> ToolResult:
+    """Show the example card for this conversation, or say why there is none.
+
+    ``via``: the card is filed by the server on another tool's call (light/example_gate.py) because the
+    agent went past the step; that call does not run and its result is the card's answer.
+    """
     from core.ui_language import ui_language_for
     from db.repository.preference_repo import PgPreferenceRepo
     from light import examples
@@ -117,13 +126,13 @@ async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
     entry_id = getattr(session, "light_entry", None)
     if session is None or not entry_id or entry_id not in taxonomy().entry_ids():
         return _skip("this is not a guided Light conversation")
-    scene = args.scene if args.scene in taxonomy().scene_ids(entry_id) else None
+    scene = scene if scene in taxonomy().scene_ids(entry_id) else None
     if scene and scene != session.light_scene:
         await _set(ctx, light_scene=scene)
     if unattended(session, ctx.session_id) or session.parent_id:
         return _skip("nobody is here to answer a card")
 
-    if session.light_example_id and not args.again:
+    if session.light_example_id and not again:
         chosen = await examples.get_active(session.light_example_id)
         if chosen is not None:
             from light import example_look
@@ -140,6 +149,9 @@ async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
     previews = [(row, examples.preview(row)) for row in rows]
     previews = [(row, shown) for row, shown in previews if shown is not None]
     if not previews:
+        # Recorded, so the server does not look again before every later card (light/example_gate.py).
+        if not session.light_example_id:
+            await _set(ctx, light_example_id=examples.SKIPPED)
         return _skip("the library has no finished example for this entry yet")
     # What each candidate looks like, in words, so the one picked can be followed (read once per example).
     from light import example_look
@@ -154,7 +166,8 @@ async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
     ]
     options.append(CardOption(id=DECLINE_ID, label=text["decline"], role="cancel"))
     await ask_card(ctx, kind=KIND, header=text["header"], question=text["question"], options=options,
-                   payload={"entry_id": entry_id, "scene": scene, "example_ids": [row.id for row, _ in previews]},
+                   payload={"entry_id": entry_id, "scene": scene, "example_ids": [row.id for row, _ in previews],
+                            **({"via": via} if via else {})},
                    display={"light": {"step_id": STEP_ID}})
     raise AssertionError("ask_card() always suspends")  # pragma: no cover
 
@@ -167,12 +180,17 @@ async def _apply(db, session, row, payload: dict, option: dict | None) -> dict[s
     from light import examples
 
     chosen = await db.get(LightExample, option["id"]) if option else None
+    # Filed by the server on another tool's call: that call did not run, so say what happened and to repeat it.
+    via = payload.get("via")
+    again = ("" if not via else
+             f"\nThe server showed the owner the example card before your `{via}` call, because the 挑样例 step "
+             f"had been skipped; that `{via}` call did not run. Make it again now, with the look above in mind.")
     if chosen is None or chosen.status != "active":
         session.light_example_id = examples.DECLINED
         return {"title": "不参考样例",
                 "output": ("The owner looked at the examples and chose none of them. Go on with the skill's own "
                            "defaults for the look, without any library example, and do not show the card again "
-                           "unless the owner asks to see examples."),
+                           "unless the owner asks to see examples." + again),
                 "metadata": {"example_id": None}}
     session.light_example_id = chosen.id
     await db.execute(update(LightExample).where(LightExample.id == chosen.id)
@@ -183,7 +201,7 @@ async def _apply(db, session, row, payload: dict, option: dict | None) -> dict[s
                                               payload.get("scene"), chosen.id)
     except Exception as exc:  # remembering the pick is a convenience; the pick itself stands
         log.warning("example pick not remembered session=%s error=%s", session.id, type(exc).__name__)
-    return {"title": f"照「{chosen.title}」做", "output": _chosen_output(chosen),
+    return {"title": f"照「{chosen.title}」做", "output": _chosen_output(chosen) + again,
             "metadata": {"example_id": chosen.id, "example_title": chosen.title}}
 
 

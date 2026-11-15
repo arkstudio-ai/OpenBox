@@ -104,6 +104,12 @@ async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
     if rejection is not None:
         return rejection
 
+    # A guided Light page shows its example card before any later card (light/example_gate.py).
+    from light import example_gate
+    held = await example_gate.before(ctx, tool="question", step_ids=[q.step_id for q in args.questions])
+    if held is not None:
+        return held
+
     questions = to_questions(args)
 
     # Unattended callers (API keys) get a deadline from their key policy;

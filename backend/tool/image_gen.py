@@ -2236,6 +2236,11 @@ async def _notify_image_failure(ctx: ToolContext) -> None:
 
 
 async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
+    # A guided Light page shows its example card before anything is drawn (light/example_gate.py).
+    from light import example_gate
+    held = await example_gate.before(ctx, tool="image_gen")
+    if held is not None:
+        return held
     ctx._image_notification_key = None
     try:
         result = await _execute(args, ctx)

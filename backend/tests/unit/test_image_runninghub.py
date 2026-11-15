@@ -412,3 +412,34 @@ async def test_unsupported_requests_never_reach_runninghub(runninghub):
     assert many.metadata["failure_code"] == "image_request_unsupported" and "one image per request" in many.output
     assert huge.title == "Invalid image size" and "240 to 8192" in huge.output
     assert runninghub.submits == []
+
+
+def test_a_size_over_the_models_pixel_limit_is_made_smaller_in_the_same_shape():
+    """Seedream refuses anything above 2048x2048 pixels of area (code 1007); an A4 menu asked for 2048x2896."""
+    seedream = rh.MODELS["seedream-v5-pro"]
+    assert seedream.max_pixels == 4_194_304
+    plan = rh.plan_request(seedream, prompt="p", size="2048x2896", image_urls=[], output_format="png")
+    width, height = plan.body["width"], plan.body["height"]
+    assert (width, height) == (1720, 2432) and width * height <= seedream.max_pixels
+    assert abs(height / width - 2896 / 2048) < 0.01 and width % 8 == 0 and height % 8 == 0
+    assert "2048x2896" in plan.note and "1720x2432" in plan.note and plan.tier == "2k"
+    # At or under the limit nothing changes and nothing is said.
+    for size in ("2048x2048", "1712x2416", "1024x1536"):
+        kept = rh.plan_request(seedream, prompt="p", size=size, image_urls=[], output_format="png")
+        assert f'{kept.body["width"]}x{kept.body["height"]}' == size and kept.note is None
+    wide = rh.plan_request(seedream, prompt="p", size="3840x2160", image_urls=[], output_format="png")
+    assert wide.body["width"] * wide.body["height"] <= seedream.max_pixels
+    assert abs(wide.body["width"] / wide.body["height"] - 16 / 9) < 0.01
+
+
+def test_the_menu_skill_asks_for_an_a4_size_the_image_model_accepts():
+    import re
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[2] / ".openbox" / "skills" / "menu-maker" / "SKILL.md").read_text("utf-8")
+    sizes = [(int(w), int(h)) for w, h in re.findall(r"\| `(\d+)x(\d+)` \|", text)]
+    assert len(sizes) == 3
+    for width, height in sizes:
+        assert width * height <= rh.MODELS["seedream-v5-pro"].max_pixels
+        assert width % 16 == 0 and height % 16 == 0  # gpt-image-2 needs the 16-pixel grid
+    a4 = sizes[0]
+    assert abs(a4[1] / a4[0] - 297 / 210) < 0.04  # image_to_pdf's A4 tolerance

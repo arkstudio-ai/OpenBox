@@ -1,7 +1,7 @@
 """image_to_pdf: wrap a generated image (a menu, a poster) into a one-page PDF.
 
 A restaurant prints its menu at the copy shop, and the copy shop wants a PDF,
-not a 2048×2896 PNG that comes out of the printer at the wrong size. The
+not a 1712×2416 PNG that comes out of the printer at the wrong size. The
 image already lives in OSS as an owned ``file_assets`` row; this tool pulls
 the bytes, lays them on an A4 page (or a page the image's own size), stores
 the PDF as a new asset and attaches it to the reply next to the image —

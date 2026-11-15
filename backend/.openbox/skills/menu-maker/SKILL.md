@@ -108,7 +108,7 @@ option `不写店名`. Leave a plain square near the bottom right labeled
 
 | choice | `size` | notes |
 |---|---|---|
-| A4 打印 | `2048x2896` | portrait A4 ratio; prints sharp at A4 |
+| A4 打印 | `1712x2416` | portrait A4 ratio; about 200 dpi on A4, and inside the image model's size limit (a larger A4 such as 2048x2896 is refused) |
 | 手机竖图 | `1152x2048` | 9:16 |
 | 桌贴 | `1536x1024` | landscape; keep to the signature dishes if the list is long |
 

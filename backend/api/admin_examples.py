@@ -93,6 +93,12 @@ async def _apply(row: LightExample, body: ExampleIn) -> None:
     outputs = await examples.resolve_assets([ref.asset_id for ref in body.outputs])
     if body.outputs and not outputs:
         raise _bad("outputs name no known asset")
+    kind = taxonomy().media(body.entry_id)
+    if outputs and kind and not any(str(o.get("mime") or "").startswith(kind + "/") for o in outputs):
+        # A menu made in a 做一条视频 chat is a menu example; filed under the video entry it would be
+        # fed to every video as a model (gw2 2026-11-15: all four "video" examples were menu designs).
+        raise _bad("this entry's examples need a video output" if kind == "video"
+                   else "this entry's examples need an image output")
     row.entry_id, row.industry, row.shop_type = body.entry_id, body.industry, body.shop_type
     row.subtype = body.subtype or None
     row.scene = body.scene or None

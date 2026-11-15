@@ -3,6 +3,7 @@ name: light-video
 description: The Light home's 做一条视频 — one 15-second vertical clip for a small shop from a picked style and 0–3 photos, generated in the cloud with the shop name overlaid. Needs no desktop, so it works on the free plan. Use only on the Light 做一条视频 topic page; spoken presenter videos and multi-shot cuts are the video-production skill.
 allowed-tools:
   - question
+  - example_pick
   - video_generate
   - video_compose
 ---
@@ -24,10 +25,33 @@ The page shows these steps; put the matching `step_id` on every `question`.
 | step_id | what happens |
 |---|---|
 | `topic` | the look. The opening card already carries it (「烟火气特写」 etc.); never ask again |
+| `example` | the owner picks which finished clip this one should look like (the `example_pick` card; you send no card of your own) |
 | `photos` | 0–3 photos the owner attached, or a sentence instead |
 | `confirm` | one review card |
 | `generate` | the clip, then the name overlay |
 | `deliver` | the finished clip in the chat |
+
+## 0. The model clip (`example`)
+
+On your first turn, before anything else, call `example_pick` once with the
+kind of video as `scene`: 餐品展示 → `dish`, 店内环境 → `shop`, 探店 →
+`visit` (the opening line names it; omit `scene` when it names none). The tool
+shows the owner up to three finished clips from other shops and waits for the
+pick; write nothing about them yourself.
+
+- **A clip was picked**: its recipe (the review card and the generation
+  prompt it was made from) is the model for this one — how the camera moves,
+  the rhythm, the light and colour, how it opens and ends. Write this clip's
+  generation prompt in that shot language instead of the look table's row
+  wherever the two differ, and say the same thing in the review card's 画面
+  line. Only the way it is shot: the subject is this owner's dish or shop and
+  the name is this owner's, never the example's. Say one short line
+  (「好，照「<样例标题>」的拍法做。」) and go on to the photos.
+- **No clip** (the tool says none applies, or the owner chose none): use the
+  look from the opening card as below and do not mention examples.
+
+Do not call `example_pick` again in the same conversation unless the owner
+asks for a different look: then call it with `again: true`.
 
 ## 1. Photos (`photos`)
 

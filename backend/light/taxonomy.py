@@ -12,6 +12,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ID = r"^[a-z][a-z0-9_]*$"
@@ -30,6 +32,10 @@ class TaxonomyEntry(BaseModel):
     label: str = Field(min_length=1, max_length=20)
     #: The types the entry's opening step offers; an example carries one (``light_examples.scene``).
     scenes: list[Scene] = Field(default_factory=list)
+    #: What a finished piece of this entry is: an example needs one of these to count for the entry.
+    media: Literal["image", "video"] = "image"
+    #: The opening card's chips are the scenes, in order (a poster's 用途, a cut's 成片类型).
+    chips_are_scenes: bool = False
 
     @model_validator(mode="after")
     def _unique_scenes(self) -> "TaxonomyEntry":
@@ -78,6 +84,14 @@ class Taxonomy(BaseModel):
 
     def entry_ids(self) -> list[str]:
         return [entry.id for entry in self.entries]
+
+    def entry(self, entry_id: str | None) -> TaxonomyEntry | None:
+        return next((item for item in self.entries if item.id == entry_id), None)
+
+    def media(self, entry_id: str | None) -> str | None:
+        """``image`` or ``video`` for a known entry; None for one the taxonomy does not list."""
+        entry = self.entry(entry_id)
+        return entry.media if entry else None
 
     def scene_ids(self, entry_id: str | None) -> list[str]:
         entry = next((item for item in self.entries if item.id == entry_id), None)

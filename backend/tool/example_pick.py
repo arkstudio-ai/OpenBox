@@ -71,8 +71,15 @@ def _labels(rows: list) -> list[str]:
 
 def _chosen_output(row) -> str:
     from light import examples
-    return ("The owner picked this example. Make this piece in its structure, rhythm and style, and say so in "
-            "one short line before the next step.\n" + examples.render([row], chosen=True))
+    lead = ("The owner picked this example. Make this piece in its structure, rhythm and style, and say so in "
+            "one short line before the next step.")
+    if (row.look or "").strip():
+        lead += (" It comes with 样子说明, a description of the picked picture: write the image prompt's Style and "
+                 "Layout lines from it (palette, layout, imagery, decoration, how names and prices are set), in "
+                 "place of the skill's default style note and default layout line and even where it differs from "
+                 "a style named earlier. Keep those two lines unchanged on any retry; a retry changes only what "
+                 "the failure was about.")
+    return lead + "\n" + examples.render([row], chosen=True)
 
 
 async def _session(ctx: ToolContext):
@@ -119,6 +126,8 @@ async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
     if session.light_example_id and not args.again:
         chosen = await examples.get_active(session.light_example_id)
         if chosen is not None:
+            from light import example_look
+            await example_look.ensure(chosen, ctx)
             return ToolResult(title=f"沿用样例「{chosen.title}」", output=_chosen_output(chosen),
                               metadata={"example_id": chosen.id, "example_title": chosen.title, "reused": True})
         if session.light_example_id == examples.DECLINED:
@@ -132,6 +141,9 @@ async def execute(args: ExamplePickArgs, ctx: ToolContext) -> ToolResult:
     previews = [(row, shown) for row, shown in previews if shown is not None]
     if not previews:
         return _skip("the library has no finished example for this entry yet")
+    # What each candidate looks like, in words, so the one picked can be followed (read once per example).
+    from light import example_look
+    await example_look.ensure_all([row for row, _ in previews], ctx)
 
     text = _texts(await ui_language_for(ctx.user_id))
     options = [

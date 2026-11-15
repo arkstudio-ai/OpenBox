@@ -5,6 +5,7 @@ example by hand from existing assets, edit, enable or disable, list with
 filters, and see how often each one was shown to the model. Files are never
 copied: an example points at the assets by id and bucket key.
 """
+import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -42,6 +43,8 @@ class ExampleIn(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     notes: str = Field(default="", max_length=2000)
     recipe: str = Field(default="", max_length=20_000)
+    #: The look in words; omit to keep what was read from the picture (light/example_look.py).
+    look: str | None = Field(default=None, max_length=1200)
     inputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     outputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     source: dict = Field(default_factory=dict)
@@ -56,6 +59,17 @@ class PrefillIn(BaseModel):
 class StatusIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: Literal["active", "disabled"]
+
+
+#: Look readings started by a save; kept so the tasks are not collected mid-flight.
+_READING: set[asyncio.Task] = set()
+
+
+def _read_look_later(example_id: str, user: dict) -> None:
+    from light import example_look
+    task = asyncio.create_task(example_look.read_for_console(example_id, user["user_id"], user.get("workspace_id")))
+    _READING.add(task)
+    task.add_done_callback(_READING.discard)
 
 
 def _bad(message: str):
@@ -86,7 +100,12 @@ async def _apply(row: LightExample, body: ExampleIn) -> None:
     row.rating, row.status, row.title = body.rating, body.status, body.title
     row.notes, row.recipe = body.notes, body.recipe
     row.inputs = await examples.resolve_assets([ref.asset_id for ref in body.inputs])
+    shown_before = (examples._shown_output(row) or {}).get("oss_key") if row.outputs else None
     row.outputs = outputs
+    if body.look is not None:
+        row.look = body.look
+    elif (examples._shown_output(row) or {}).get("oss_key") != shown_before:
+        row.look = ""  # another picture leads now; it is read again when the card next shows it
     row.source = {k: v for k, v in body.source.items()
                   if k in ("session_id", "job_id", "user_id", "workspace_id", "shop_name", "headline") and v is not None}
     row.updated_at = examples._now()
@@ -174,6 +193,7 @@ async def create_example(body: ExampleIn, request: Request, user=Depends(live_ad
         view = examples.public(row)
     await record(user["user_id"], None, "admin.light_example_create", "light_example", row.id,
                  {"entry_id": row.entry_id, "industry": row.industry, "shop_type": row.shop_type}, request)
+    _read_look_later(row.id, user)
     return view
 
 
@@ -191,6 +211,7 @@ async def update_example(example_id: str, body: ExampleIn, request: Request, use
         await db.commit()
         view = examples.public(row)
     await record(user["user_id"], None, "admin.light_example_update", "light_example", example_id, None, request)
+    _read_look_later(example_id, user)
     return view
 
 

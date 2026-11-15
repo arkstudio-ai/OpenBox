@@ -185,6 +185,10 @@ BUILD_ONLY_WORKFLOW_TOOLS = frozenset({
     "desktop_publish",
     "autopilot_run",
     "desktop_login",
+    # Light delivery and the example card: they attach to, or ask on, the
+    # owner's own conversation (tool/image_to_pdf.py, tool/example_pick.py).
+    "image_to_pdf",
+    "example_pick",
 })
 
 
@@ -199,7 +203,8 @@ AGENTS: dict[str, AgentDef] = {
             "plan_enter", "skill", "skill_search", "capability_search",
             "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode", "browser_action", "desktop_takeover",
-            "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "footage_analyze", "hot_trends",
+            "image_gen", "image_to_pdf", "example_pick",
+            "video_generate", "video_transcribe", "video_compose", "video_analyze", "footage_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
             "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state", "memory_forget",
         ],

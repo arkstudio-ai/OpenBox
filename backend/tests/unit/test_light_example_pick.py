@@ -347,6 +347,14 @@ def test_entries_skills_and_the_registry_carry_the_example_step():
     register_builtin_tools(load_custom=False)
     assert get_tool("example_pick") is not None
     assert q.QUESTION_TOOL_CONTINUATIONS["example_pick"] == "question"
+    # A registered tool the build agent may not use is one the model can neither call nor discover
+    # (gw2 2026-11-15: capability_search("example_pick") found nothing; image_to_pdf had the same gap).
+    from agent.agent import AGENTS, BUILD_ONLY_WORKFLOW_TOOLS
+    from agent.tool_exposure import INTENT_PACKS
+    for tool_id in ("example_pick", "image_to_pdf"):
+        assert tool_id in AGENTS["build"].tools and tool_id in BUILD_ONLY_WORKFLOW_TOOLS
+        assert tool_id in INTENT_PACKS["image"]
+    assert "capability_search" in entry_fragment("menu")
     assert cards.get(ep.KIND).present == "inline"
 
 

@@ -48,7 +48,9 @@ def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
     ]
     if any(step.id == EXAMPLE_STEP for step in entry.steps):
         lines.append("步骤条里的 example（挑样例）不用你发 question：类型一确定就调用一次 example_pick，"
-                     "样例卡由它发出并等对方选；选中的那条会在工具结果里给你，这次就照它做。")
+                     "样例卡由它发出并等对方选；选中的那条会在工具结果里给你，这次就照它做。"
+                     "工具列表里暂时没有 example_pick 时，先调用 capability_search（names 填 example_pick）取到它，"
+                     "下一步再调用，不要因此跳过这一步。")
     return " ".join(lines)
 
 

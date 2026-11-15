@@ -9,6 +9,13 @@ first production call (``image_gen``, ``footage_analyze``) does not run:
 the example card is filed on that very tool call instead. Its answer comes
 back as that call's result and tells the agent to make the call again.
 
+The same hook keeps one more thing the agent sometimes drops: the entry's
+skill. A guided menu chat that never loaded ``menu-maker`` wrote its image
+prompt without "render every character exactly, no invented dishes" and the
+menu came back with two dishes the owner never listed. So before any card or
+production call of a guided conversation, the entry's skill must have been
+loaded in it; until then the call is turned back with that instruction.
+
 Nothing happens when the step is behind us (an example was picked, the owner
 chose none, or the library had nothing to show), when nobody is there to
 answer, or for a card that belongs before the step (a poster's 用途, a menu's
@@ -21,6 +28,56 @@ from core.log import create_logger
 log = create_logger(__name__)
 
 EXAMPLE_STEP = "example"
+#: How often one conversation is turned back for a missing skill before the gate stands aside
+#: (a skill that cannot be loaded must not stop the conversation for good).
+SKILL_REFUSALS = 3
+_refused: dict[str, int] = {}
+_REFUSED_LIMIT = 2048
+
+
+def _guided_entry(session):
+    """The Light entry of a guided conversation (any entry with a skill), or None."""
+    from light.entries import light_entries
+    entry = light_entries().entry(getattr(session, "light_entry", None) or "")
+    return entry if entry is not None and entry.skill else None
+
+
+async def skill_loaded(session_id: str, skill: str) -> bool:
+    """The agent loaded this skill in this conversation (a completed ``skill`` call naming it)."""
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.part import Part
+    async with get_db_session() as db:
+        rows = (await db.scalars(select(Part.data).where(Part.session_id == session_id, Part.type == "tool")
+                                 .order_by(Part.created_at).limit(400))).all()
+    for data in rows:
+        if not isinstance(data, dict) or data.get("tool") != "skill" or data.get("status") != "completed":
+            continue
+        arguments = data.get("input") if isinstance(data.get("input"), dict) else {}
+        if arguments.get("skill") == skill and str(data.get("title") or "").startswith("Loaded skill"):
+            return True
+    return False
+
+
+async def _skill_refusal(session, entry, tool: str):
+    """Turn the call back until the entry's skill is loaded; None when it is, or after enough refusals."""
+    from tool.tool import ToolResult
+    if await skill_loaded(session.id, entry.skill):
+        _refused.pop(session.id, None)
+        return None
+    count = _refused.get(session.id, 0)
+    if count >= SKILL_REFUSALS:
+        log.warning("light skill gate stood aside session=%s skill=%s tool=%s", session.id, entry.skill, tool)
+        return None
+    if len(_refused) >= _REFUSED_LIMIT:
+        _refused.clear()
+    _refused[session.id] = count + 1
+    log.info("light skill gate: %s turned back session=%s skill=%s", tool, session.id, entry.skill)
+    return ToolResult(title="先加载技能", metadata={"blocked": True, "gate": "light_skill", "skill": entry.skill}, output=(
+        f"Not executed: this is the guided 「{entry.title}」 page and its skill `{entry.skill}` has not been loaded "
+        f"in this conversation. Call the `skill` tool with skill=\"{entry.skill}\" now, follow it from its first "
+        f"step (the owner's earlier answers still count), and only then make this `{tool}` call again if the "
+        "skill calls for it. Do not write the owner's content, the image prompt or a card from memory."))
 
 
 def _entry(session):
@@ -87,10 +144,16 @@ async def before(ctx, *, tool: str, step_ids: list[str | None] | None = None):
     from tool.video_model_card import unattended
     try:
         session = await example_pick._session(ctx)
-        entry = _entry(session) if session is not None else None
-        if entry is None or session.light_example_id or session.parent_id:
+        guided = _guided_entry(session) if session is not None else None
+        if guided is None or session.parent_id or unattended(session, ctx.session_id):
             return None
-        if unattended(session, ctx.session_id) or not getattr(ctx, "part_id", "") or not getattr(ctx, "message_id", ""):
+        refusal = await _skill_refusal(session, guided, tool)
+        if refusal is not None:
+            return refusal
+        entry = _entry(session)
+        if entry is None or session.light_example_id:
+            return None
+        if not getattr(ctx, "part_id", "") or not getattr(ctx, "message_id", ""):
             return None
         if tool == "question" and before_the_step(entry, list(step_ids or [])):
             return None

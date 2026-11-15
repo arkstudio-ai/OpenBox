@@ -16,6 +16,14 @@ from video.media_probe import meta_from_media_info
 
 
 @pytest.fixture(autouse=True)
+def skill_already_loaded(monkeypatch):
+    """These tests call the tools directly; a real turn loads footage-edit first (light/example_gate.py)."""
+    async def loaded(session_id, skill):
+        return True
+    monkeypatch.setattr("light.example_gate.skill_loaded", loaded)
+
+
+@pytest.fixture(autouse=True)
 def _music_library_from_the_snapshot(monkeypatch):
     """The music library is IMS's; tests read the checked-in snapshot instead of asking it."""
     import time

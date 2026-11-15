@@ -9,6 +9,17 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-15 14:52 gw2 → `20261115-examplepick-2571d237`（backend + trajectory-worker + frontend）
+
+- 内容：PR #194 Light「挑样例」常驻步骤（做海报 / 做菜单 / 你拍我剪在类型答完后给最多三条样例库成品让老板选，之后只照选中的那条做），方案与实现记录见 [LIGHT_EXAMPLE_PICK_PLAN.md](LIGHT_EXAMPLE_PICK_PLAN.md)。超管后台样例库加「类型」、类型筛选、被选用次数和「入口 × 类型」条数表。
+- 本机 buildx amd64 从 `main@2571d237` 干净归档全量构建后端与前端，经 `oss://bossip/_deploy-tmp/` 中转（已删），gw2 `sha256sum -c` 后装载；切换前 `docker diff` 只有两个挂载的配置文件，无手改源码。
+- 迁移 `pn4a0b1c2d3e` → `po5b1c2d3e4f`：`light_examples.scene` / `pick_count` 与索引，`sessions.light_scene` / `light_example_id`。配置没改。
+- 切换 `releases/20261115-examplepick-2571d237/activate.sh <新tag> <旧后端tag> <旧前端tag> [--no-gate]`（在 fold 那份上加了前端切换和本次迁移的回滚）：空闲门禁一次即 0 → dump 293M（`backups/20261115-examplepick-2571d237/`）→ backend → worker → frontend 均 healthy，Logto 配置 200，tracebacks=0，06:52 UTC 完成。
+- 切换后核对：容器内卡片类型含 `light_example_pick`、工具 `example_pick` 已注册、三个入口三种语言第二步都是「挑样例」、海报已无固定样式页、三个技能文件含 `example_pick`；公网 `app-build` 为新 tag；新接口匿名 401。用线上真实样例实测预览：OSS 现算的缩略图 200（约 90 KB 的 JPEG），原图可取。
+- **线上样例库现状**（决定这一步现在能不能出现）：做菜单 2 条启用、做一条视频 4 条启用、你拍我剪 1 条且停用、做海报 0 条，全部还没填「类型」。所以眼下只有做菜单会出样例卡（2 条），海报和你拍我剪不出卡、照旧直接做。要内容团队在后台按条数表补库并补「类型」。
+- **未验证**：没有在真实对话里走过出卡、选中、照着做的整条链路；模型是否每次都在类型答完后调用 `example_pick` 未知；视频样例的抽帧预览没有实测（线上没有可用的视频成品样例）。
+- 回滚：`activate.sh 20261114-fold-d0d82480 20261115-examplepick-2571d237 20261115-examplepick-2571d237 --no-gate` 只换镜像不回迁移；旧后端不认新列但不受影响（都是可空列或带默认值）。要连库一起回退，按脚本里 `rollback()` 的四条 SQL 手工执行。
+
 ## 2026-11-14 15:19 gw2 → `20261114-fold-d0d82480`（backend + trajectory-worker）
 
 - 内容：PR #189（跳过或失效的卡不再放行付费生成、卡片收起 30 分钟失效、派活规则、滚动摘要止血与计时、两个报错）、#190（语音关闭时 Light 首页不下发语音卡）、#191（「店长」文案加经营数据分析）、#192（MiniMax-M3.1-Flash 价表与摘要兜底）。

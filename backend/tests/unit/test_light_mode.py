@@ -155,7 +155,7 @@ async def test_start_creates_a_guided_session_with_its_opening_card(monkeypatch)
         started = (await client.post("/api/light/start", json={
             "entry_id": "video", "subtype": "dish", "sample": "dish_closeup"})).json()
         assert started["opening_card"]["text"].startswith("好，做一条「餐品展示 · 烟火气特写」")
-        assert [step["id"] for step in started["steps"]] == ["topic", "photos", "confirm", "generate", "deliver"]
+        assert [step["id"] for step in started["steps"]] == ["topic", "example", "photos", "confirm", "generate", "deliver"]
         assert (await client.post("/api/light/start", json={"entry_id": "nope"})).status_code == 400
         blocked = await client.post("/api/light/start", json={"entry_id": "douyin_publish"})
         assert blocked.status_code == 409 and blocked.json()["detail"]["availability"] == "needs_desktop"

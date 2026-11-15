@@ -144,7 +144,11 @@ def test_taxonomy_names_the_scenes_of_the_three_entries():
     assert tax.scene_ids("poster") == ["new_item", "holiday", "opening", "groupbuy"]
     assert tax.scene_ids("footage_edit") == ["visit", "new_item", "promo", "daily"]
     assert tax.scene_ids("menu") == ["menu_mono", "menu_red", "menu_chalk", "menu_dark"]
-    assert tax.scene_ids("video") == [] and tax.scene_ids("nothing") == []
+    assert tax.scene_ids("video") == ["dish", "shop", "visit"] and tax.scene_ids("nothing") == []
+    assert [tax.media(e) for e in ("video", "footage_edit", "menu", "poster", "nothing")] == [
+        "video", "video", "image", "image", None]
+    # A video's scene is its gallery tab, so the tab picked before the chat is the scene.
+    assert [s.id for s in light_entries().entry("video").subtypes] == tax.scene_ids("video")
     assert tax.scene_label("poster", "groupbuy") == "团购" and tax.scene_label("poster", "zzz") == "zzz"
     # A menu's scene is its gallery style, so the pick made before the chat needs no second question.
     menu = light_entries().entry("menu")
@@ -351,15 +355,18 @@ def test_entries_skills_and_the_registry_carry_the_example_step():
         assert config.entry("poster").step_ids() == ["purpose", "example", "copy", "title", "deliver"]
         assert config.entry("menu").step_ids() == ["style", "example", "items", "review", "layout", "deliver"]
         assert config.entry("footage_edit").step_ids() == ["type", "example", "upload", "plan", "compose", "deliver"]
-        assert "example" not in config.entry("video").step_ids()
+        assert config.entry("video").step_ids() == ["topic", "example", "photos", "confirm", "generate", "deliver"]
+        assert "example" not in config.entry("shopkeeper").step_ids()
         # The poster's look now comes from the example card, not from a fixed style page before the chat.
         assert config.entry("poster").subtypes == [] and config.entry("poster").opening_card.text_with_sample is None
     assert {light_entries(lang).entry("poster").steps[1].label for lang in ("zh-CN", "en-US", "vi-VN")} == {
         "挑样例", "Pick a look", "Chọn mẫu"}
-    assert "example_pick" in entry_fragment("poster") and "example_pick" not in entry_fragment("video")
+    assert "example_pick" in entry_fragment("poster") and "example_pick" in entry_fragment("video")
+    assert "example_pick" not in entry_fragment("shopkeeper")
     skills = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
     for name, scenes in (("poster-maker", taxonomy().scene_ids("poster")), ("menu-maker", taxonomy().scene_ids("menu")),
-                         ("footage-edit", taxonomy().scene_ids("footage_edit"))):
+                         ("footage-edit", taxonomy().scene_ids("footage_edit")),
+                         ("light-video", taxonomy().scene_ids("video"))):
         text = (skills / name / "SKILL.md").read_text(encoding="utf-8")
         assert "  - example_pick\n" in text.split("---")[1] and "| `example` |" in text
         assert all(f"`{scene}`" in text for scene in scenes), name
@@ -438,7 +445,8 @@ async def test_console_takes_a_scene_filters_by_it_and_counts_the_cells():
     assert {cell["scene"]: cell["count"] for cell in poster["scenes"]} == {
         "new_item": 0, "holiday": 0, "opening": 1, "groupbuy": 2}  # active only
     assert poster["unclassified"] == 1 and poster["total"] == 4
-    assert next(row for row in coverage["entries"] if row["entry_id"] == "video")["scenes"] == []
+    assert [cell["scene"] for cell in next(row for row in coverage["entries"] if row["entry_id"] == "video")["scenes"]] == [
+        "dish", "shop", "visit"]
 
 
 # --- the look of a picked example (light/example_look.py) --------------------------------------
@@ -590,9 +598,8 @@ async def test_a_card_before_the_step_and_a_conversation_without_the_step_pass_u
     assert (await card(request_id)).questions[0]["question"] == "要哪种样式？"  # 选样式 comes before 挑样例
     assert (await _row(session.id)).light_example_id is None
 
-    video_owner, video = await _guided("video")  # 做一条视频 has no 挑样例 step
-    await _example("video", "视频样例")
-    _, request_id = await _call(video, video_owner, _tool="question", _run=_ask("confirm"))
+    keeper_owner, keeper = await _guided("shopkeeper")  # 店长 has no 挑样例 step
+    _, request_id = await _call(keeper, keeper_owner, _tool="question", _run=_ask("confirm"))
     assert (await card(request_id)).questions[0]["question"] == "核对一下"
 
     plain_owner, _, workspace, main = await assistant()
@@ -681,11 +688,11 @@ async def test_cards_and_production_wait_for_the_entrys_skill():
 
 async def test_the_skill_gate_covers_entries_without_the_example_step_and_stands_aside_after_three_refusals():
     from light import example_gate
-    owner, session = await _guided("video")  # 做一条视频: no 挑样例 step, but it has a skill
+    owner, session = await _guided("shopkeeper")  # 店长: no 挑样例 step, but it has a skill
     _NO_SKILL.add(session.id)
     for _ in range(example_gate.SKILL_REFUSALS):
         result, request_id = await _call(session, owner, _tool="question", _run=_ask("confirm"))
-        assert request_id is None and result.metadata["skill"] == "light-video"
+        assert request_id is None and result.metadata["skill"] == "business-operations"
     # A skill that cannot be loaded must not stop the conversation for good.
     result, request_id = await _call(session, owner, _tool="question", _run=_ask("confirm"))
     assert result is None and (await card(request_id)).questions[0]["question"] == "核对一下"
@@ -722,3 +729,90 @@ async def test_skill_loaded_reads_the_conversations_own_completed_skill_calls():
                                  title="Loaded skill: menu-maker", input={"skill": "menu-maker"},
                                  session_id=session.id, message_id=am.id), is_new=True, user_id=owner)
     assert await _real_skill_loaded(session.id, "menu-maker") is True
+
+
+# --- a video entry takes video examples, and 做一条视频 has the step ------------------------------
+
+async def test_an_example_counts_for_its_entry_only_with_a_piece_of_the_entrys_kind():
+    menu_in_video = await _example("video", "门口引流大菜单设计", scene="dish", rating=5)  # a picture under 做一条视频
+    clip = await _example("video", "红烧肉特写", scene="dish", rating=3, mime="video/mp4")
+    text_only = await _example("video", "只有方案", scene="dish", rating=1, outputs=[])
+    mixed = await _example("video", "图和片都有", rating=2, outputs=[
+        {"asset_id": "p", "oss_key": "assets/u/p/cover.png", "name": "cover.png", "mime": "image/png"},
+        {"asset_id": "v", "oss_key": "assets/u/v/final.mp4", "name": "final.mp4", "mime": "video/mp4"}])
+    assert examples.fits_entry(menu_in_video) is False and examples.fits_entry(clip) and examples.fits_entry(text_only)
+    assert examples._shown_output(mixed)["name"] == "final.mp4"  # the clip, not the cover picture
+    # The card shows clips only; the prompt's own pick leaves the misfiled picture out too.
+    assert [r.id for r in await examples.candidates("video", "dish", "food", "noodle")] == [clip.id, mixed.id]
+    assert [r.id for r in await examples.pick("video", "food", "noodle", scene="dish")] == [clip.id, text_only.id, mixed.id]
+    assert examples.preview(clip)["poster_url"].endswith("?video/snapshot,t_1000,f_jpg,w_720,m_fast,ar_auto")
+    # The other way round: a clip filed under 做菜单 is not a menu example.
+    assert examples.fits_entry(await _example("menu", "视频误放", mime="video/mp4")) is False
+
+
+async def test_a_video_chat_starts_with_its_tab_as_the_scene_and_shows_clips_on_the_card(monkeypatch):
+    from light import mode
+    owner, _, workspace, _ = await assistant()
+
+    async def exchange(*args, **kwargs):
+        return None
+    monkeypatch.setattr("light.chat.exchange", exchange)
+    started = await mode.start(user_id=owner, workspace_id=workspace, entry_id="video", subtype="shop",
+                               sample="shop_evening")
+    assert (await _row(started["session_id"])).light_scene == "shop"
+    assert [step["id"] for step in started["steps"]][:2] == ["topic", "example"]
+
+    owner, session = await _guided("video", light_scene="dish")
+    await _example("video", "门口引流大菜单设计", scene="dish", rating=5)  # a picture: never on a video card
+    clip = await _example("video", "红烧肉特写", scene="dish", mime="video/mp4")
+    from session.session import create_user_message
+    await create_user_message(session_id=session.id, text="我拍好了，看这几张", user_id=owner)  # a chip, not a scene
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("confirm"))
+    assert result is None
+    row = await card(request_id)
+    assert [o["id"] for o in row.questions[0]["detail"]["options"]] == [clip.id, "none"]
+    assert row.questions[0]["detail"]["options"][0]["mime"] == "video/mp4"
+    assert row.continuation["card"]["payload"]["scene"] == "dish"
+
+
+async def test_console_refuses_pictures_under_a_video_entry_and_prefill_leaves_the_entry_open():
+    from api.admin_examples import router
+    from db.models.file_asset import FileAsset
+    from db.repository.user_repo import PgUserRepo
+    from session.session import create_session
+    uid = uuid4().hex
+    admin = await PgUserRepo().create(id=uid, username="vk" + uid[:8], password_hash=None, role="admin")
+    ws = admin["default_workspace_id"]
+    ids = {}
+    async with get_db_session() as db:
+        for name, mime in (("menu.png", "image/png"), ("final.mp4", "video/mp4")):
+            asset_id = "asset_" + uuid4().hex[:10]
+            ids[mime] = asset_id
+            db.add(FileAsset(id=asset_id, user_id=uid, workspace_id=ws, name=name, mime=mime, size=1,
+                             oss_key=f"assets/{uid}/{asset_id}/{name}", status="ready", source="agent",
+                             transient=False, is_deleted=False, created_at=_now()))
+        await db.commit()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": uid, "role": "admin"}
+    body = {"industry": "food", "shop_type": "noodle", "title": "样例"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        wrong = await client.post("/api/admin/examples", json={**body, "entry_id": "video",
+                                                               "outputs": [{"asset_id": ids["image/png"]}]})
+        assert wrong.status_code == 422 and "video output" in wrong.text
+        assert (await client.post("/api/admin/examples", json={**body, "entry_id": "menu", "outputs": [
+            {"asset_id": ids["video/mp4"]}]})).status_code == 422
+        ok = await client.post("/api/admin/examples", json={**body, "entry_id": "video", "scene": "dish",
+                                                            "outputs": [{"asset_id": ids["video/mp4"]}]})
+        assert ok.status_code == 201 and ok.json()["scene_label"] == "餐品展示"
+        assert (await client.post("/api/admin/examples", json={**body, "entry_id": "menu", "outputs": [
+            {"asset_id": ids["image/png"]}]})).status_code == 201
+        # A menu made in a 做一条视频 chat: prefill does not suggest the video entry for it.
+        session = await create_session(model="m", agent="build", title="做一条视频", user_id=uid, workspace_id=ws)
+        await update_session(session.id, user_id=uid, light_entry="video")
+        draft = (await client.post("/api/admin/examples/prefill", json={
+            "session_id": session.id, "asset_id": ids["image/png"]})).json()
+        assert draft["entry_id"] is None and [o["asset_id"] for o in draft["outputs"]] == [ids["image/png"]]
+        clip_draft = (await client.post("/api/admin/examples/prefill", json={
+            "session_id": session.id, "asset_id": ids["video/mp4"]})).json()
+        assert clip_draft["entry_id"] == "video"

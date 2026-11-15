@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-15.1",
+  "version": "2026-11-15.2",
   "entries": [
     {
       "id": "video",
@@ -10,6 +10,10 @@
         {
           "id": "topic",
           "label": "Chọn chủ đề"
+        },
+        {
+          "id": "example",
+          "label": "Chọn mẫu"
         },
         {
           "id": "photos",

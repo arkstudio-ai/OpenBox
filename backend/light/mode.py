@@ -160,8 +160,11 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
     # A sample that is also a library scene (a menu's style) is the conversation's scene from the start,
     # so the example card can show pieces of that look (tool/example_pick.py).
     from light.taxonomy import taxonomy
-    if chosen_sample is not None and chosen_sample.id in taxonomy().scene_ids(entry.id):
+    scenes = taxonomy().scene_ids(entry.id)
+    if chosen_sample is not None and chosen_sample.id in scenes:  # a menu: the style is the scene
         selection["light_scene"] = chosen_sample.id
+    elif chosen_subtype is not None and chosen_subtype.id in scenes:  # a video: 餐品展示 / 店内环境 / 探店
+        selection["light_scene"] = chosen_subtype.id
     await session_mod.update_session(session.id, user_id=user_id, light_entry=entry.id, **selection)
     opening = entry.opening(subtype, sample)
     picked = entry.picked_label(subtype, sample)

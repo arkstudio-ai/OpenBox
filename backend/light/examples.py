@@ -173,7 +173,7 @@ async def pick(entry_id: str, industry: str | None, shop_type: str | None, tags:
     then rating, then the newest.
     """
     wanted = set(_tags(list(tags or [])))
-    rows = await _active(entry_id)
+    rows = [row for row in await _active(entry_id) if fits_entry(row)]
     if not rows:
         return []
     levels = []
@@ -209,11 +209,20 @@ def _signed(output: dict) -> str | None:
 
 
 def _shown_output(row) -> dict | None:
-    """The finished image or clip an owner can look at; None when the example has none."""
+    """The finished piece an owner can look at: a clip for a video entry, a picture for the others.
+
+    None when the example has no such piece — a menu design filed under 做一条视频 is not a video example."""
+    kind = taxonomy().media(row.entry_id)
+    wanted = (kind + "/",) if kind else OUTPUT_MIMES
     for output in row.outputs or []:
-        if isinstance(output, dict) and output.get("oss_key") and str(output.get("mime") or "").startswith(OUTPUT_MIMES):
+        if isinstance(output, dict) and output.get("oss_key") and str(output.get("mime") or "").startswith(wanted):
             return output
     return None
+
+
+def fits_entry(row) -> bool:
+    """False for an example whose pieces are all the wrong kind for its entry (pictures under a video entry)."""
+    return not row.outputs or _shown_output(row) is not None
 
 
 def preview(row) -> dict | None:
@@ -450,6 +459,9 @@ async def prefill(session_id: str, asset_id: str | None = None) -> dict | None:
     outputs = await resolve_assets(outputs)
     ctx = await shop_context(session.user_id)
     entry_id = session.light_entry if session.light_entry in taxonomy().entry_ids() else None
+    kind = taxonomy().media(entry_id)
+    if entry_id and outputs and kind and not any(str(o.get("mime") or "").startswith(kind + "/") for o in outputs):
+        entry_id = None  # pictures made in a video chat: the team picks the entry they belong to
     return {
         "entry_id": entry_id,
         "industry": ctx["industry"] or "other",

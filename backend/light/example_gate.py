@@ -103,13 +103,16 @@ async def _scene_from_words(session, entry) -> str | None:
     from db.models.part import Part
     from light.entries import light_entries
     from light.taxonomy import taxonomy
+    listed = taxonomy().entry(entry.id)
+    if listed is None or not listed.chips_are_scenes:
+        return None  # this entry's chips are ways to start (拍照片 / 打字), not its scenes
     scenes = taxonomy().scene_ids(entry.id)
     labels: dict[str, str] = {}
     for lang in ("zh-CN", "en-US", "vi-VN"):
         translated = light_entries(lang).entry(entry.id)
         chips = translated.opening_card.chips if translated and translated.opening_card else []
         if len(chips) != len(scenes):
-            return None  # this entry's chips are not its scenes (a menu's are ways to send the dishes)
+            return None
         labels.update({chip: scene for chip, scene in zip(chips, scenes)})
     async with get_db_session() as db:
         rows = (await db.execute(select(Part.data).join(Message, Message.id == Part.message_id).where(

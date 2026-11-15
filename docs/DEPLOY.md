@@ -9,6 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-15 16:45 gw2 → `20261115-a4size-45eeefff`（backend + trajectory-worker）
+
+- 内容：PR #198。做菜单选 A4 时技能要 `2048x2896`（约 593 万像素），Seedream v5 Pro 上限 4,194,304 像素，上游返回 1007 `image area must be at most 4194304 pixels`；gw2 近三周这个尺寸 16 次全失败，模型只能退到 1024x1536。现在按尺寸出图的模型带 `max_pixels`，超限请求按原比例缩到上限内再发并在结果里说明；技能的 A4 改为 `1712x2416`。
+- 只发后端与轨迹 worker，前端仍 `20261115-examplepick-2571d237`。本机 buildx 从 `main@45eeefff` 全量构建，OSS 中转已删。无迁移。
+- 切换用 `releases/20261115-a4size-45eeefff/activate.sh`（同 examplefix）。第一次门禁 6 分钟没等到空闲（QWH 在跑图片任务），未切换；等他跑完后重跑通过 → backend → worker healthy，tracebacks=0。
+- **切换后模拟器（正式环境，bbdwxh_admin）再走一遍做菜单选 A4**：第一句直接发菜名价格 → 样例卡（上次选的那条排第一并带「上次选的」）→ 选另一条 → 直接到核对卡 → A4 → `image_gen` 以 `1712x2416` 一次成功（PNG 6.4 MB，72 秒）→ `image_to_pdf` A4 成功。
+- 这次成片里「招牌」徽章压住了 Beef Noodles 的价格 ¥28，助理仍说「都对过一遍」。出图后的核对没拦住这种遮挡，**没处理**。
+- 回滚：`activate.sh 20261115-examplefix-c4b5b5c8 20261115-a4size-45eeefff --no-gate`。
+
 ## 2026-11-15 15:56 gw2 → `20261115-examplefix-c4b5b5c8`（backend + trajectory-worker）
 
 - 内容：PR #196。模拟器连正式环境走做菜单时样例卡没出现：`example_pick` 已注册但不在 build agent 的工具清单里，模型调用不到也搜不到（`capability_search("example_pick")` 无结果），直接跳过了这一步。`image_to_pdf` 是同一个缺口，自 11-07 上线以来线上 0 次调用。两个工具都加进了清单；Light 提示词补了一句「工具列表里没有就先用 capability_search 取」。

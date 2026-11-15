@@ -84,6 +84,7 @@ def kinds() -> dict[str, CardKind]:
 def _load() -> None:
     """Import the modules that register kinds; registration is a side effect of import."""
     import tool.video_model_card  # noqa: F401
+    import tool.example_pick  # noqa: F401
 
 
 def card_of(continuation: dict | None) -> dict | None:

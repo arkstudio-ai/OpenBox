@@ -22,8 +22,23 @@ vi.mock("@/shared/api/http", async (importOriginal) => {
 const TAXONOMY: Taxonomy = {
   version: "t",
   entries: [
-    { id: "video", label: "做一条视频" },
-    { id: "poster", label: "做海报" },
+    { id: "video", label: "做一条视频", scenes: [] },
+    {
+      id: "poster",
+      label: "做海报",
+      scenes: [
+        { id: "new_item", label: "新品上市" },
+        { id: "holiday", label: "节日活动" },
+      ],
+    },
+    {
+      id: "footage_edit",
+      label: "你拍我剪",
+      scenes: [
+        { id: "visit", label: "探店" },
+        { id: "new_item", label: "新品上市" },
+      ],
+    },
   ],
   industries: [
     {
@@ -119,6 +134,8 @@ describe("collect sheet", () => {
     expect((within(dialog).getByLabelText("入口") as HTMLSelectElement).value).toBe("video")
     expect((within(dialog).getByLabelText("行业") as HTMLSelectElement).value).toBe("food")
     expect((within(dialog).getByLabelText("门店类型") as HTMLSelectElement).value).toBe("noodle")
+    // 做一条视频 is not split by scene: the select is there but cannot be set.
+    expect((within(dialog).getByLabelText("类型") as HTMLSelectElement).disabled).toBe(true)
     expect((within(dialog).getByLabelText(/做法/) as HTMLTextAreaElement).value).toContain("画面：牛肉面特写")
     expect(within(dialog).getByTestId("example-source").textContent).toContain("巷口面馆")
     expect(within(dialog).getByTestId("example-source").textContent).toContain("红烧牛肉面")
@@ -139,6 +156,7 @@ describe("collect sheet", () => {
       industry: "food",
       shop_type: "hotpot",
       subtype: null,
+      scene: null,
       tags: ["探店", "傍晚"],
       rating: 5,
       status: "active",
@@ -202,6 +220,54 @@ describe("collect sheet", () => {
     expect(await within(dialog).findByText("内容超出限制或格式不对，检查后再保存")).toBeTruthy()
   })
 
+  it("starts from the scene the session was read with and saves it", async () => {
+    vi.mocked(http.post).mockImplementation(async (path: string) => {
+      if (path.endsWith("/prefill")) return { ...DRAFT, entry_id: "poster", scene: "holiday" }
+      return { ...DRAFT, id: "lex_new", status: "active" }
+    })
+    mount("/app/admin/examples?collect=session_1")
+    const dialog = await screen.findByRole("dialog")
+    await within(dialog).findByLabelText("标题")
+    expect((within(dialog).getByLabelText("类型") as HTMLSelectElement).value).toBe("holiday")
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }))
+    await waitFor(() => expect(vi.mocked(http.post).mock.calls.some(([path]) => path === "/api/admin/examples")).toBe(true))
+    const [, body] = vi.mocked(http.post).mock.calls.find(([path]) => path === "/api/admin/examples") as [string, Record<string, unknown>]
+    expect(body).toMatchObject({ entry_id: "poster", scene: "holiday" })
+  })
+
+  it("offers the chosen entry's scenes and drops one the new entry does not have", async () => {
+    vi.mocked(http.post).mockResolvedValue({ ...DRAFT, id: "lex_new", status: "active" })
+    mount("/app/admin/examples")
+    fireEvent.click(await screen.findByRole("button", { name: "手工新建" }))
+    const dialog = await screen.findByRole("dialog")
+    const entry = within(dialog).getByLabelText("入口")
+    const scene = within(dialog).getByLabelText("类型") as HTMLSelectElement
+    const values = () => Array.from(scene.options).map((option) => option.value)
+    expect(scene.disabled).toBe(true)
+
+    fireEvent.change(entry, { target: { value: "poster" } })
+    expect(scene.disabled).toBe(false)
+    expect(values()).toEqual(["", "new_item", "holiday"])
+    fireEvent.change(scene, { target: { value: "new_item" } })
+    // 你拍我剪 has 新品上市 too, so the choice stays; it has no 节日活动.
+    fireEvent.change(entry, { target: { value: "footage_edit" } })
+    expect(values()).toEqual(["", "visit", "new_item"])
+    expect(scene.value).toBe("new_item")
+    fireEvent.change(entry, { target: { value: "poster" } })
+    fireEvent.change(scene, { target: { value: "holiday" } })
+    fireEvent.change(entry, { target: { value: "footage_edit" } })
+    expect(scene.value).toBe("")
+    fireEvent.change(scene, { target: { value: "visit" } })
+
+    fireEvent.change(within(dialog).getByLabelText("标题"), { target: { value: "探店样例" } })
+    fireEvent.change(within(dialog).getByLabelText(/产出 asset_id/), { target: { value: "asset_a" } })
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }))
+    await waitFor(() => expect(http.post).toHaveBeenCalledTimes(1))
+    const [, body] = vi.mocked(http.post).mock.calls[0] as [string, Record<string, unknown>]
+    expect(body).toMatchObject({ entry_id: "footage_edit", scene: "visit" })
+
+  })
+
   it("lets a hand-made example take asset ids and switches the shop types with the industry", async () => {
     vi.mocked(http.post).mockRejectedValue(new ApiError(422, "EXAMPLE_INVALID", "outputs name no known asset"))
     mount("/app/admin/examples")
@@ -230,6 +296,6 @@ describe("form conversions", () => {
   })
   it("sends a blank subtype as null and typed ids after listed ones", () => {
     const write = toWrite({ ...EMPTY, title: " x ", outputs: [{ asset_id: "a" }], outputIds: "b a" })
-    expect(write).toMatchObject({ title: "x", subtype: null, outputs: [{ asset_id: "a" }, { asset_id: "b" }], inputs: [] })
+    expect(write).toMatchObject({ title: "x", subtype: null, scene: null, outputs: [{ asset_id: "a" }, { asset_id: "b" }], inputs: [] })
   })
 })

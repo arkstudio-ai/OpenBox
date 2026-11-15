@@ -87,6 +87,17 @@ async def start(body: StartBody, current_user: dict = Depends(get_current_user))
         _raise(exc)
 
 
+@router.get("/examples/{example_id}/preview")
+async def example_preview(example_id: str, current_user: dict = Depends(get_current_user)):
+    """Fresh links for one example on the pick card (the card's own links last half a day)."""
+    from light import examples
+    row = await examples.get_active(example_id)
+    shown = examples.preview(row) if row is not None else None
+    if shown is None:
+        raise HTTPException(404, detail={"code": "LIGHT_EXAMPLE_NOT_FOUND", "message": "No such example"})
+    return shown
+
+
 @router.get("/recent")
 async def recent(limit: int = Query(8, ge=1, le=30), current_user: dict = Depends(get_current_user)):
     user_id, workspace_id = _scope(current_user)

@@ -83,6 +83,46 @@ class LightSample {
   String? get thumbUrl => posterUrl ?? (isVideo ? null : mediaUrl);
 }
 
+/// One library example as a 挑样例 card shows it (backend
+/// `light/examples.py` `preview()`): the same fields ride on the card's
+/// option and come back from `GET /api/light/examples/{id}/preview`.
+class LightExamplePreview {
+  const LightExamplePreview({
+    required this.exampleId,
+    this.title = '',
+    this.mime = '',
+    this.mediaUrl,
+    this.posterUrl,
+  });
+
+  static LightExamplePreview? fromJson(dynamic json) {
+    if (json is! Map<String, dynamic>) return null;
+    final id = asString(json['example_id']);
+    if (id == null || id.isEmpty) return null;
+    final media = asString(json['media_url']);
+    final poster = asString(json['poster_url']);
+    return LightExamplePreview(
+      exampleId: id,
+      title: asString(json['title']) ?? '',
+      mime: asString(json['mime']) ?? '',
+      mediaUrl: media == null || media.isEmpty ? null : media,
+      posterUrl: poster == null || poster.isEmpty ? null : poster,
+    );
+  }
+
+  final String exampleId;
+  final String title;
+  final String mime;
+
+  /// The piece itself (a signed link): the full image or the mp4.
+  final String? mediaUrl;
+
+  /// A JPEG still for the tile: the image scaled down, or a frame of the clip.
+  final String? posterUrl;
+
+  bool get isVideo => mime.startsWith('video/');
+}
+
 class LightSubtype {
   const LightSubtype({
     required this.id,

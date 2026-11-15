@@ -8,7 +8,7 @@ import i18n from "@/shared/i18n"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { http } from "@/shared/api/http"
 import { ExamplesPage } from "./ExamplesPage"
-import type { Example, ExampleList, Taxonomy } from "./types"
+import type { Coverage, Example, ExampleList, Taxonomy } from "./types"
 
 vi.mock("@/shared/api/http", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/shared/api/http")>()
@@ -20,6 +20,14 @@ const TAXONOMY: Taxonomy = {
   entries: [
     { id: "video", label: "做一条视频" },
     { id: "menu", label: "做菜单" },
+    {
+      id: "poster",
+      label: "做海报",
+      scenes: [
+        { id: "new_item", label: "新品上市" },
+        { id: "holiday", label: "节日活动" },
+      ],
+    },
   ],
   industries: [
     {
@@ -41,6 +49,8 @@ function example(overrides: Partial<Example>): Example {
     industry: "food",
     shop_type: "noodle",
     subtype: null,
+    scene: null,
+    scene_label: "",
     tags: ["探店"],
     rating: 5,
     status: "active",
@@ -54,6 +64,7 @@ function example(overrides: Partial<Example>): Example {
     created_at: "2026-11-04T00:00:00Z",
     updated_at: "2026-11-04T00:00:00Z",
     use_count: 7,
+    pick_count: 0,
     industry_label: "餐饮",
     shop_type_label: "餐饮 / 面馆 / 粉店",
     ...overrides,
@@ -124,6 +135,81 @@ describe("ExamplesPage", () => {
     await waitFor(() => expect(calls.some((path) => path.includes("industry=beauty&shop_type=nail"))).toBe(true))
     fireEvent.change(screen.getByLabelText("状态"), { target: { value: "disabled" } })
     await waitFor(() => expect(calls.some((path) => path.includes("status=disabled"))).toBe(true))
+  })
+
+  it("shows the scene and the pick count, and filters by the entry's scenes or by none", async () => {
+    const calls: string[] = []
+    vi.mocked(http.get).mockImplementation(async (path: string) => {
+      calls.push(path)
+      if (path.endsWith("/taxonomy")) return TAXONOMY
+      if (path.endsWith("/coverage")) return { target: 3, entries: [] }
+      return list([example({ entry_id: "poster", scene: "holiday", scene_label: "节日活动", pick_count: 12 })])
+    })
+    mount()
+    const rows = await screen.findAllByRole("row")
+    expect(within(rows[1]!).getByText("做海报")).toBeTruthy()
+    expect(within(rows[1]!).getByText("节日活动")).toBeTruthy()
+    expect(within(rows[1]!).getByText("12")).toBeTruthy()
+
+    const scene = screen.getByLabelText("类型") as HTMLSelectElement
+    const labels = () => Array.from(scene.options).map((option) => option.textContent)
+    expect(labels()).toEqual(["全部", "未分类"])
+    fireEvent.change(scene, { target: { value: "none" } })
+    await waitFor(() => expect(calls.some((path) => path.includes("scene=none"))).toBe(true))
+    // Unclassified reads the same under any entry, so it survives the entry change; a named scene does not.
+    fireEvent.change(screen.getByLabelText("入口"), { target: { value: "poster" } })
+    await waitFor(() => expect(calls.some((path) => path.includes("entry_id=poster&scene=none"))).toBe(true))
+    expect(labels()).toEqual(["全部", "新品上市", "节日活动", "未分类"])
+    fireEvent.change(scene, { target: { value: "holiday" } })
+    await waitFor(() => expect(calls.some((path) => path.includes("entry_id=poster&scene=holiday"))).toBe(true))
+    fireEvent.change(screen.getByLabelText("入口"), { target: { value: "menu" } })
+    await waitFor(() => expect(calls.some((path) => path === "/api/admin/examples?entry_id=menu&limit=50")).toBe(true))
+  })
+
+  it("counts active examples per entry and scene and flags the cells under the target", async () => {
+    const calls: string[] = []
+    const coverage: Coverage = {
+      target: 3,
+      entries: [
+        { entry_id: "video", label: "做一条视频", scenes: [], unclassified: 4, total: 4 },
+        {
+          entry_id: "poster",
+          label: "做海报",
+          scenes: [
+            { scene: "new_item", label: "新品上市", count: 3 },
+            { scene: "holiday", label: "节日活动", count: 1 },
+          ],
+          unclassified: 2,
+          total: 6,
+        },
+      ],
+    }
+    vi.mocked(http.get).mockImplementation(async (path: string) => {
+      calls.push(path)
+      if (path.endsWith("/taxonomy")) return TAXONOMY
+      if (path.endsWith("/coverage")) return coverage
+      return list([])
+    })
+    mount()
+    const section = await screen.findByTestId("example-coverage")
+    // Only entries that are split by scene get a row.
+    expect(within(section).getAllByTestId("coverage-row").length).toBe(1)
+    const cells = within(section).getAllByTestId("coverage-cell")
+    expect(cells.map((cell) => [cell.textContent, cell.dataset.under])).toEqual([
+      ["新品上市 3/3", "false"],
+      ["节日活动 1/3", "true"],
+    ])
+    expect(cells[1]!.className).toContain("text-dangerink")
+    expect(cells[0]!.className).not.toContain("text-dangerink")
+    expect(cells[1]!.getAttribute("title")).toBe("还差 2 条")
+    expect(within(section).getByTestId("coverage-unclassified").textContent).toBe("未分类 2")
+
+    // A cell is a shortcut to that slice of the list.
+    fireEvent.click(cells[1]!)
+    await waitFor(() => expect(calls.some((path) => path.includes("entry_id=poster&scene=holiday"))).toBe(true))
+    expect((screen.getByLabelText("类型") as HTMLSelectElement).value).toBe("holiday")
+    fireEvent.click(within(section).getByTestId("coverage-unclassified"))
+    await waitFor(() => expect(calls.some((path) => path.includes("entry_id=poster&scene=none"))).toBe(true))
   })
 
   it("previews an output through the admin link and toggles status", async () => {

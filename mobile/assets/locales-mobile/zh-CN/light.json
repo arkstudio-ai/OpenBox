@@ -89,6 +89,12 @@
       "cancel": "再想想"
     }
   },
+  "example": {
+    "use": "就照这个做",
+    "lastPick": "上次选的",
+    "view": "点开看看",
+    "viewFailed": "打不开，请稍后再试"
+  },
   "tool": {
     "doing": "正在做：{{action}}",
     "done_other": "做了 {{count}} 步",
@@ -100,6 +106,7 @@
     "desktop": "操作云电脑",
     "schedule": "安排定时",
     "question": "向你提问",
+    "example_pick": "挑样例",
     "skill": "准备技能",
     "search": "查资料",
     "fetch": "读网页",

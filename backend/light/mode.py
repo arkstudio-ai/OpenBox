@@ -157,6 +157,11 @@ async def start(*, user_id: str, workspace_id: str, entry_id: str, project_id: s
         model=model, agent=default_agent_name(), title=entry.title,
         user_id=user_id, workspace_id=workspace_id, project_id=project_id,
     )
+    # A sample that is also a library scene (a menu's style) is the conversation's scene from the start,
+    # so the example card can show pieces of that look (tool/example_pick.py).
+    from light.taxonomy import taxonomy
+    if chosen_sample is not None and chosen_sample.id in taxonomy().scene_ids(entry.id):
+        selection["light_scene"] = chosen_sample.id
     await session_mod.update_session(session.id, user_id=user_id, light_entry=entry.id, **selection)
     opening = entry.opening(subtype, sample)
     picked = entry.picked_label(subtype, sample)

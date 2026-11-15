@@ -256,7 +256,7 @@ def test_vietnamese_falls_back_to_english_then_chinese_per_string(monkeypatch, t
         menu_vi, menu_en, menu_zh = vi.entry("menu"), en.entry("menu"), base.entry("menu")
         assert menu_vi.title == "Làm thực đơn"  # its own
         assert menu_vi.steps[0].label == "Pick a style" and menu_en.steps[0].label == "Pick a style"  # vi → en
-        assert menu_vi.steps[1].label == menu_zh.steps[1].label == "菜名价格"  # neither has it: the structure's
+        assert menu_vi.steps[2].label == menu_zh.steps[2].label == "菜名价格"  # neither has it: the structure's
         assert menu_vi.opening_card.chips == ["Snap it"] and menu_vi.opening_card.text == menu_zh.opening_card.text
         assert en.entry("video").title == "做一条视频"  # en-US does not fall back to anything but the structure
         assert menu_vi.skill == "menu-maker" and menu_vi.subtypes[0].samples[0].media_url == menu_zh.subtypes[0].samples[0].media_url

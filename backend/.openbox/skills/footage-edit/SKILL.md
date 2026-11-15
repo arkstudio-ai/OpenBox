@@ -2,6 +2,7 @@
 name: footage-edit
 description: 你拍我剪 — cut a small shop owner's own phone clips (3–10 clips, up to 5 minutes) into one vertical video with captions, the shop name and a music bed, priced by the finished cut. Reads the clips with footage_analyze (no desktop needed), proposes one plan card, then composes with video_compose. Use for 你拍我剪 / 帮我剪 / 把这几段剪成一条 / 实拍剪辑, and for the Light home's 你拍我剪 entry.
 allowed-tools:
+  - example_pick
   - footage_analyze
   - video_compose
   - question
@@ -25,6 +26,7 @@ The Light page shows these steps; put the matching `step_id` on every
 | step_id | what happens |
 |---|---|
 | `type` | 探店 / 新品上市 / 活动促销 / 日常记录 (the opening card offers them) |
+| `example` | the owner picks which finished cut this one should look like (the `example_pick` card; you send no card of your own) |
 | `upload` | the owner sends the clips (and maybe a sentence about what to stress) |
 | `plan` | one plan card |
 | `compose` | the cut is made |
@@ -36,6 +38,26 @@ The first reply usually names the type. If it does not, ask once on `type`.
 Clips arrive as video attachments with asset ids. If there are none yet, ask
 on `upload`: 「从相册选 3–10 段（总共不超过 5 分钟），想突出什么也可以说一句」, options
 `选好了` / `custom`. One long clip is fine too.
+
+## 1b. The look (`example`)
+
+As soon as the type is known, call `example_pick` once with it as `scene`:
+探店 → `visit`, 新品上市 → `new_item`, 活动促销 → `promo`, 日常记录 →
+`daily`. Do it before `footage_analyze`, even when the clips are already
+attached; the tool shows the owner up to three finished cuts and waits for
+the pick. Write nothing about them yourself.
+
+- **An example was picked**: its recipe (the plan card it was made from) is
+  the model for this cut — which of the four styles below it is, its tempo,
+  how it opens and closes, how much text it carries, music or not. Take the
+  style from it rather than from the type's default, and put one line on the
+  plan card: `参考：照「<样例标题>」的样子`. Only the shape: the shots come
+  from this owner's clips and every word on screen from this owner.
+- **No example** (the tool says none applies, or the owner chose none): pick
+  the style as described under 风格 and do not mention examples.
+
+Do not call `example_pick` again in the same conversation unless the owner
+asks for a different look: then call it with `again: true`.
 
 ## 2. Read the clips
 
@@ -217,6 +239,7 @@ Then **one** `question` card on `plan`, `purpose` review, in plain words:
 
 ```
 成片：约 <N> 秒竖屏，<type>
+<参考：照「<样例标题>」的样子 — only when the owner picked an example>
 风格：<风格名>（<三五个字说它长什么样>）
 开场：<hook 画面一句话>，字幕「<hook line>」
 镜头：

@@ -1,12 +1,13 @@
 // Form state and the pure conversions behind the example sheet, kept out of
 // the component file so fast refresh keeps working.
-import type { AssetRef, ExampleWrite } from "./types"
+import type { AssetRef, ExampleWrite, Scene, Taxonomy } from "./types"
 
 export interface FormState {
   entry_id: string
   industry: string
   shop_type: string
   subtype: string
+  scene: string
   title: string
   tags: string
   rating: number
@@ -29,6 +30,7 @@ export const EMPTY: FormState = {
   industry: "food",
   shop_type: "other",
   subtype: "",
+  scene: "",
   title: "",
   tags: "",
   rating: 4,
@@ -40,6 +42,11 @@ export const EMPTY: FormState = {
   outputIds: "",
   source: {},
   status: "active",
+}
+
+/** The scenes one entry is split into; none for an entry without them or before the taxonomy is read. */
+export function scenesOf(taxonomy: Taxonomy | undefined, entryId: string): Scene[] {
+  return taxonomy?.entries.find((entry) => entry.id === entryId)?.scenes ?? []
 }
 
 export function splitTags(text: string): string[] {
@@ -70,6 +77,7 @@ export function toWrite(state: FormState): ExampleWrite {
     industry: state.industry,
     shop_type: state.shop_type,
     subtype: state.subtype.trim() || null,
+    scene: state.scene || null,
     tags: splitTags(state.tags),
     rating: state.rating,
     status: state.status,

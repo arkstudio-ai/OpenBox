@@ -88,6 +88,12 @@
       "cancel": "Để tôi nghĩ lại"
     }
   },
+  "example": {
+    "use": "Làm theo mẫu này",
+    "lastPick": "Lần trước bạn chọn",
+    "view": "Chạm để xem",
+    "viewFailed": "Không mở được, thử lại sau"
+  },
   "tool": {
     "doing": "Đang làm: {{action}}",
     "done_one": "Đã xong {{count}} bước",
@@ -100,6 +106,7 @@
     "desktop": "thao tác trên máy tính đám mây",
     "schedule": "đặt lịch",
     "question": "hỏi bạn",
+    "example_pick": "chọn mẫu",
     "skill": "chuẩn bị kỹ năng",
     "search": "tìm kiếm",
     "fetch": "đọc trang web",

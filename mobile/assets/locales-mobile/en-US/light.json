@@ -90,6 +90,12 @@
       "cancel": "Go back"
     }
   },
+  "example": {
+    "use": "Use this look",
+    "lastPick": "Your last pick",
+    "view": "Tap to view",
+    "viewFailed": "Couldn't open it, try again later"
+  },
   "tool": {
     "doing": "Working on: {{action}}",
     "done_one": "{{count}} step done",
@@ -102,6 +108,7 @@
     "desktop": "working on the cloud desktop",
     "schedule": "scheduling",
     "question": "asking you",
+    "example_pick": "picking a look",
     "skill": "loading a skill",
     "search": "searching",
     "fetch": "reading a page",

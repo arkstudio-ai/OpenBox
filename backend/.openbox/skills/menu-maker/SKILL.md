@@ -3,6 +3,7 @@ name: menu-maker
 description: Turn a restaurant's old menu photo or a typed list of dishes and prices into a clean new menu image (A4 print, phone portrait, or table card). Use for 做菜单 / 换菜单 / 菜单排版 / 价目表, and for the Light home's 做菜单 entry.
 allowed-tools:
   - question
+  - example_pick
   - image_gen
   - image_to_pdf
   - share_file
@@ -28,12 +29,36 @@ The Light page shows these steps; put the matching `step_id` on every
 | step_id | what happens |
 |---|---|
 | `style` | the look: 简约黑白 / 烟火红 / 手写粉笔 / 深色高级. If the opening card already named one, that is the style; do not ask again |
+| `example` | the owner picks which finished menu this one should look like (the `example_pick` card; you send no card of your own) |
 | `items` | get the dishes: a photo of the old menu, typed lines, or "改上次那版" |
 | `review` | one card with the whole dish table for the owner to confirm or correct |
 | `layout` | size and extras: A4 打印 / 手机竖图 / 桌贴, shop name on top, a space for the ordering QR code |
 | `deliver` | the image, checked, plus the PDF for printing, with "再做一版" options |
 
 Outside Light mode the same order applies; just skip the step ids.
+
+## 0. The look (`style`, `example`)
+
+The style is known when the opening card named one; otherwise ask once on
+`style` with the four as options. As soon as it is known — on your first turn
+when the opening card named it, even if the owner's first message already
+carries the menu photo — call `example_pick` once with the style as `scene`:
+简约黑白 → `menu_mono`, 烟火红 → `menu_red`, 手写粉笔 → `menu_chalk`,
+深色高级 → `menu_dark`. The tool shows the owner up to three finished menus
+and waits for the pick; write nothing about them yourself.
+
+- **An example was picked**: it is the look of this menu — background,
+  heading treatment, how categories and prices are set, the badges. Describe
+  that look in the `Style:` line instead of the plain style note, even when
+  the example is of another style than the one named (the owner chose it
+  with their eyes). Only the look: every dish, price and the shop name are
+  this owner's, never the example's. Say one short line
+  (「好，照「<样例标题>」的样子排。」) and go on to the dishes.
+- **No example** (the tool says none applies, or the owner chose none): use
+  the named style's note below and do not mention examples.
+
+Do not call `example_pick` again in the same conversation unless the owner
+asks for a different look: then call it with `again: true`.
 
 ## 1. Get the dishes (`items`)
 
@@ -95,7 +120,7 @@ above. Prompt shape:
 ```text
 Use case: productivity-visual
 Asset type: restaurant menu, <A4 print | phone portrait | landscape table card>
-Style: <the chosen style, e.g. 烟火红：deep red background, warm gold headings, festive but tidy>
+Style: <the picked example's look in your own words, or without one the chosen style, e.g. 烟火红：deep red background, warm gold headings, festive but tidy>
 Layout: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders; signature dishes marked with a small 「招牌」 badge; a blank square labeled 「扫码点餐」 bottom right
 Text (verbatim, render every character exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
 <the confirmed table, one line per dish, with ¥ before each price>

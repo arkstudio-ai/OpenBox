@@ -26,6 +26,9 @@ export interface Example {
   industry: string
   shop_type: string
   subtype: string | null
+  /** One of the entry's scenes (taxonomy), or null while nobody classified it. */
+  scene: string | null
+  scene_label: string
   tags: string[]
   rating: number
   status: ExampleStatus
@@ -39,6 +42,8 @@ export interface Example {
   created_at: string | null
   updated_at: string | null
   use_count: number
+  /** Times an owner chose this example on the in-app example card. */
+  pick_count: number
   industry_label: string
   shop_type_label: string
 }
@@ -56,6 +61,7 @@ export interface ExampleDraft {
   industry: string
   shop_type: string
   subtype: string | null
+  scene?: string | null
   title: string
   recipe: string
   inputs: AssetRef[]
@@ -68,6 +74,7 @@ export interface ExampleWrite {
   industry: string
   shop_type: string
   subtype: string | null
+  scene: string | null
   tags: string[]
   rating: number
   status: ExampleStatus
@@ -89,10 +96,33 @@ export interface Industry {
   label: string
   shop_types: ShopType[]
 }
+export interface Scene {
+  id: string
+  label: string
+}
+export interface TaxonomyEntry {
+  id: string
+  label: string
+  /** Empty or absent for an entry the example card does not split by scene (video). */
+  scenes?: Scene[]
+}
 export interface Taxonomy {
   version: string
-  entries: { id: string; label: string }[]
+  entries: TaxonomyEntry[]
   industries: Industry[]
+}
+
+/** `GET /coverage`: active examples per entry and scene; a cell under `target` cannot fill the card's row. */
+export interface CoverageEntry {
+  entry_id: string
+  label: string
+  scenes: { scene: string; label: string; count: number }[]
+  unclassified: number
+  total: number
+}
+export interface Coverage {
+  target: number
+  entries: CoverageEntry[]
 }
 
 export interface AssetLink {

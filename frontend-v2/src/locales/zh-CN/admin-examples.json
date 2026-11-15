@@ -4,6 +4,8 @@
     "entry": "入口",
     "industry": "行业",
     "shopType": "门店类型",
+    "scene": "类型",
+    "unclassified": "未分类",
     "status": "状态",
     "keyword": "搜索",
     "placeholder": "标题",
@@ -15,12 +17,13 @@
   },
   "column": {
     "title": "标题",
-    "entry": "入口",
+    "entry": "入口 / 类型",
     "industry": "行业 / 门店类型",
     "tags": "标签",
     "rating": "评分",
     "status": "状态",
     "useCount": "引用",
+    "pickCount": "选用",
     "updatedAt": "更新",
     "actions": "操作"
   },
@@ -37,6 +40,13 @@
     "loading": "正在加载样例库…",
     "total": "共 {{count}} 条"
   },
+  "coverage": {
+    "title": "入口 × 类型 条数",
+    "hint": "只算启用的样例；每格满 {{target}} 条，客户的样例卡才排得满",
+    "cell": "{{label}} {{count}}/{{target}}",
+    "under": "还差 {{missing}} 条",
+    "unclassified": "未分类 {{count}}"
+  },
   "form": {
     "collectTitle": "收进样例库",
     "collectDescription": "下面这些是从会话里自动带回来的；补上门店类型、标签、评分和说明就能保存。",
@@ -49,6 +59,9 @@
     "shopType": "门店类型",
     "subtype": "子类 / 样式（可选）",
     "subtypePlaceholder": "如 dish_closeup、menu_red",
+    "scene": "类型",
+    "sceneNone": "未分类",
+    "sceneUnused": "这个入口不分类型",
     "title": "标题",
     "tags": "标签",
     "tagsHint": "用逗号分开，最多 12 个，如：探店, 傍晚, 人均 30",

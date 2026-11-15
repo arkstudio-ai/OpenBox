@@ -9,8 +9,8 @@ import { Spinner } from "@/shared/ui/Spinner"
 import { useQuery } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { exampleKeys, prefillExample, useAssetLink, useSaveExample, useTaxonomy } from "./api"
-import { EMPTY, MAX_ASSETS, MAX_RECIPE, toWrite, type FormState } from "./lib"
-import { ENTRY_IDS, type AssetRef, type Example, type ExampleDraft, type ExampleWrite, type Taxonomy } from "./types"
+import { EMPTY, MAX_ASSETS, MAX_RECIPE, scenesOf, toWrite, type FormState } from "./lib"
+import { ENTRY_IDS, type AssetRef, type Example, type ExampleDraft, type ExampleWrite, type Scene, type Taxonomy } from "./types"
 
 export type SheetMode =
   | { kind: "collect"; sessionId: string; assetId?: string | null }
@@ -27,6 +27,7 @@ function fromDraft(draft: ExampleDraft): FormState {
     industry: draft.industry || "food",
     shop_type: draft.shop_type || "other",
     subtype: draft.subtype ?? "",
+    scene: draft.scene ?? "",
     title: draft.title,
     recipe: draft.recipe,
     inputs: draft.inputs,
@@ -42,6 +43,7 @@ function fromExample(example: Example): FormState {
     industry: example.industry,
     shop_type: example.shop_type,
     subtype: example.subtype ?? "",
+    scene: example.scene ?? "",
     title: example.title,
     tags: example.tags.join(", "),
     rating: example.rating,
@@ -118,6 +120,29 @@ function shopTypesOf(taxonomy: Taxonomy | undefined, industry: string) {
   return taxonomy?.industries.find((item) => item.id === industry)?.shop_types ?? []
 }
 
+/** A scene belongs to one entry: it is kept only where that entry lists it (or while the taxonomy is unread). */
+function sceneIn(taxonomy: Taxonomy | undefined, entryId: string, scene: string): string {
+  return !taxonomy || scenesOf(taxonomy, entryId).some((item) => item.id === scene) ? scene : ""
+}
+
+/** The entry's scenes; an entry that is not split by scene keeps the select in place but unusable. */
+function SceneField({ id, scenes, value, onChange }: { id: string; scenes: Scene[]; value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation("admin-examples")
+  const options = scenes.length || !value ? scenes : [{ id: value, label: value }]
+  return (
+    <Field id={id} label={t("form.scene")} hint={scenes.length ? undefined : t("form.sceneUnused")}>
+      <select id={id} className={`${FIELD} disabled:opacity-50`} value={value} disabled={!scenes.length} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t("form.sceneNone")}</option>
+        {options.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  )
+}
+
 function modeKey(mode: SheetMode): string {
   if (mode.kind === "edit") return `edit:${mode.example.id}:${mode.example.updated_at ?? ""}`
   if (mode.kind === "collect") return `collect:${mode.sessionId}:${mode.assetId ?? ""}`
@@ -156,7 +181,9 @@ function SheetForm({
   const patch = (changes: Partial<FormState>) => setState((prev) => ({ ...prev, ...changes }))
 
   const shopTypes = shopTypesOf(taxonomy, state.industry)
-  const write = toWrite(state)
+  const scenes = scenesOf(taxonomy, state.entry_id)
+  const scene = sceneIn(taxonomy, state.entry_id, state.scene)
+  const write = toWrite({ ...state, scene })
   const { outputsOver, inputsOver, problem } = useFormProblems(write)
   const removeOutput = (assetId: string) => patch({ outputs: state.outputs.filter((asset) => asset.asset_id !== assetId) })
   const removeInput = (assetId: string) => patch({ inputs: state.inputs.filter((asset) => asset.asset_id !== assetId) })
@@ -195,9 +222,15 @@ function SheetForm({
             })}
           </p>
         )}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field id={`${id}-entry`} label={t("form.entry")}>
-            <select id={`${id}-entry`} className={FIELD} value={state.entry_id} onChange={(e) => patch({ entry_id: e.target.value })}>
+            <select
+              id={`${id}-entry`}
+              className={FIELD}
+              value={state.entry_id}
+              // A scene belongs to one entry; it survives the change only when the new entry has it too.
+              onChange={(e) => patch({ entry_id: e.target.value, scene: sceneIn(taxonomy, e.target.value, scene) })}
+            >
               {(taxonomy?.entries ?? ENTRY_IDS.map((entry) => ({ id: entry, label: entry }))).map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.label}
@@ -205,6 +238,7 @@ function SheetForm({
               ))}
             </select>
           </Field>
+          <SceneField id={`${id}-scene`} scenes={scenes} value={scene} onChange={(value) => patch({ scene: value })} />
           <Field id={`${id}-industry`} label={t("form.industry")}>
             <select
               id={`${id}-industry`}

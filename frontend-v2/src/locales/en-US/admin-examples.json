@@ -4,6 +4,8 @@
     "entry": "Entry",
     "industry": "Industry",
     "shopType": "Shop type",
+    "scene": "Scene",
+    "unclassified": "Unclassified",
     "status": "Status",
     "keyword": "Search",
     "placeholder": "Title",
@@ -15,12 +17,13 @@
   },
   "column": {
     "title": "Title",
-    "entry": "Entry",
+    "entry": "Entry / scene",
     "industry": "Industry / shop type",
     "tags": "Tags",
     "rating": "Rating",
     "status": "Status",
     "useCount": "Uses",
+    "pickCount": "Picks",
     "updatedAt": "Updated",
     "actions": "Actions"
   },
@@ -37,6 +40,13 @@
     "loading": "Loading examples…",
     "total": "{{count}} in all"
   },
+  "coverage": {
+    "title": "Entry × scene counts",
+    "hint": "Active examples only; a cell needs {{target}} for the owner's example card to show a full row",
+    "cell": "{{label}} {{count}}/{{target}}",
+    "under": "{{missing}} short",
+    "unclassified": "Unclassified {{count}}"
+  },
   "form": {
     "collectTitle": "Add to examples",
     "collectDescription": "These fields came from the session; add the shop type, tags, rating and notes, then save.",
@@ -49,6 +59,9 @@
     "shopType": "Shop type",
     "subtype": "Subtype / style (optional)",
     "subtypePlaceholder": "e.g. dish_closeup, menu_red",
+    "scene": "Scene",
+    "sceneNone": "Unclassified",
+    "sceneUnused": "This entry has no scenes",
     "title": "Title",
     "tags": "Tags",
     "tagsHint": "Comma separated, up to 12, e.g. visit, evening, ¥30 per head",

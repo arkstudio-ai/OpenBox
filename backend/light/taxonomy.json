@@ -1,10 +1,25 @@
 {
-  "version": "2026-11-04",
+  "version": "2026-11-15",
   "entries": [
     { "id": "video", "label": "做一条视频" },
-    { "id": "menu", "label": "做菜单" },
-    { "id": "poster", "label": "做海报" },
-    { "id": "footage_edit", "label": "你拍我剪" }
+    { "id": "menu", "label": "做菜单", "scenes": [
+      { "id": "menu_mono", "label": "简约黑白" },
+      { "id": "menu_red", "label": "烟火红" },
+      { "id": "menu_chalk", "label": "手写粉笔" },
+      { "id": "menu_dark", "label": "深色高级" }
+    ] },
+    { "id": "poster", "label": "做海报", "scenes": [
+      { "id": "new_item", "label": "新品上市" },
+      { "id": "holiday", "label": "节日活动" },
+      { "id": "opening", "label": "开业" },
+      { "id": "groupbuy", "label": "团购" }
+    ] },
+    { "id": "footage_edit", "label": "你拍我剪", "scenes": [
+      { "id": "visit", "label": "探店" },
+      { "id": "new_item", "label": "新品上市" },
+      { "id": "promo", "label": "活动促销" },
+      { "id": "daily", "label": "日常记录" }
+    ] }
   ],
   "industries": [
     {

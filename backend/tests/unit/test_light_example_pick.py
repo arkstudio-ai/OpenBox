@@ -33,6 +33,11 @@ def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+#: Sessions whose entry skill counts as not loaded (see the ``quiet`` fixture).
+_NO_SKILL: set[str] = set()
+from light.example_gate import skill_loaded as _real_skill_loaded  # noqa: E402  (the fixture replaces the name)
+
+
 class _Oss:
     def presign_get(self, key, expires_sec=3600, download_name=None, *, internal=False):
         return f"https://signed/{key}"
@@ -52,6 +57,13 @@ async def quiet(monkeypatch):
     async def no_vision(row, ctx):  # no test reaches a vision model unless it sets its own reader
         raise ValueError("no vision model in tests")
     monkeypatch.setattr("light.example_look.read", no_vision)
+
+    async def loaded(session_id, skill):  # conversations here have their skill loaded unless a test says otherwise
+        return session_id not in _NO_SKILL
+    monkeypatch.setattr("light.example_gate.skill_loaded", loaded)
+    _NO_SKILL.clear()
+    from light import example_gate
+    example_gate._refused.clear()
     MAIN_MESSAGES.clear()
     yield
     from sqlalchemy import delete
@@ -641,3 +653,72 @@ async def test_nobody_there_means_no_gate(monkeypatch):
     ctx = SimpleNamespace(session_id=session.id, user_id=owner, message_id="m", part_id="p")
     assert await example_gate.before(ctx, tool="image_gen") is None
     assert (await _row(session.id)).light_example_id is None
+
+
+# --- the entry's skill is loaded before anything is asked or made --------------------------------
+
+async def test_cards_and_production_wait_for_the_entrys_skill():
+    from light import example_gate
+    owner, session = await _guided("menu", light_scene="menu_red")
+    await _example("menu", "韩料模板", scene="menu_red")
+    _NO_SKILL.add(session.id)
+    # The agent went straight to a card without loading menu-maker: the card is not shown.
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("review"))
+    assert request_id is None and result.metadata == {"blocked": True, "gate": "light_skill", "skill": "menu-maker"}
+    assert 'skill="menu-maker"' in result.output and "`question` call again" in result.output
+    assert (await _row(session.id)).light_example_id is None  # and no example card was filed in its place
+
+    async def draw(ctx):
+        return await example_gate.before(ctx, tool="image_gen")
+    result, request_id = await _call(session, owner, _tool="image_gen", _run=draw)
+    assert request_id is None and result.metadata["gate"] == "light_skill"
+
+    # Once the skill is loaded the same call goes on to the example card.
+    _NO_SKILL.discard(session.id)
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("review"))
+    assert result is None and (await card(request_id)).questions[0]["detail"]["kind"] == ep.KIND
+
+
+async def test_the_skill_gate_covers_entries_without_the_example_step_and_stands_aside_after_three_refusals():
+    from light import example_gate
+    owner, session = await _guided("video")  # 做一条视频: no 挑样例 step, but it has a skill
+    _NO_SKILL.add(session.id)
+    for _ in range(example_gate.SKILL_REFUSALS):
+        result, request_id = await _call(session, owner, _tool="question", _run=_ask("confirm"))
+        assert request_id is None and result.metadata["skill"] == "light-video"
+    # A skill that cannot be loaded must not stop the conversation for good.
+    result, request_id = await _call(session, owner, _tool="question", _run=_ask("confirm"))
+    assert result is None and (await card(request_id)).questions[0]["question"] == "核对一下"
+
+
+async def test_the_skill_gate_leaves_ordinary_and_unattended_conversations_alone(monkeypatch):
+    from light import example_gate
+    plain_owner, _, workspace, main = await assistant()
+    plain = await conversation(plain_owner, workspace, main, "普通对话", visibility="private")
+    _NO_SKILL.add(plain.id)
+    _, request_id = await _call(plain, plain_owner, _tool="question", _run=_ask(None))
+    assert (await card(request_id)).questions[0]["question"] == "核对一下"
+
+    owner, session = await _guided("menu")
+    _NO_SKILL.add(session.id)
+    monkeypatch.setattr("tool.video_model_card.unattended", lambda session, session_id: True)
+    ctx = SimpleNamespace(session_id=session.id, user_id=owner, message_id="m", part_id="p")
+    assert await example_gate.before(ctx, tool="image_gen") is None
+
+
+async def test_skill_loaded_reads_the_conversations_own_completed_skill_calls():
+    from session.session import create_user_message
+    owner, session = await _guided("menu")
+    assert await _real_skill_loaded(session.id, "menu-maker") is False
+    um = await create_user_message(session_id=session.id, text="做菜单", user_id=owner)
+    am = await create_assistant_message(session.id, um.id, user_id=owner)
+    for skill, status, title in (("poster-maker", "completed", "Loaded skill: poster-maker"),
+                                 ("menu-maker", "error", "Skill not found: menu-maker")):
+        await save_part(ToolPartData(tool="skill", call_id="c" + uuid4().hex[:6], status=status, title=title,
+                                     input={"skill": skill}, session_id=session.id, message_id=am.id),
+                        is_new=True, user_id=owner)
+    assert await _real_skill_loaded(session.id, "menu-maker") is False  # another skill, and a failed load
+    await save_part(ToolPartData(tool="skill", call_id="c" + uuid4().hex[:6], status="completed",
+                                 title="Loaded skill: menu-maker", input={"skill": "menu-maker"},
+                                 session_id=session.id, message_id=am.id), is_new=True, user_id=owner)
+    assert await _real_skill_loaded(session.id, "menu-maker") is True

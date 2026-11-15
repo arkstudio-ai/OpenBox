@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { http } from "@/shared/api/http"
-import type { AssetLink, Example, ExampleDraft, ExampleList, ExampleWrite, Taxonomy } from "./types"
+import type { AssetLink, Coverage, Example, ExampleDraft, ExampleList, ExampleWrite, Taxonomy } from "./types"
 
 export const BASE = "/api/admin/examples"
 export const PAGE_SIZE = 50
@@ -13,6 +13,7 @@ export interface ListFilters {
   entry: string
   industry: string
   shopType: string
+  scene: string
   status: string
   q: string
   offset: string
@@ -26,6 +27,7 @@ export const exampleKeys = {
   all: (userId: string) => ["admin-examples", userId] as const,
   list: (userId: string, query: string) => ["admin-examples", userId, "list", query] as const,
   taxonomy: (userId: string) => ["admin-examples", userId, "taxonomy"] as const,
+  coverage: (userId: string) => ["admin-examples", userId, "coverage"] as const,
   asset: (userId: string, assetId: string) => ["admin-examples", userId, "asset", assetId] as const,
 }
 
@@ -34,6 +36,8 @@ export function listQuery(filters: ListFilters): string {
   if (filters.entry) search.set("entry_id", filters.entry)
   if (filters.industry) search.set("industry", filters.industry)
   if (filters.shopType) search.set("shop_type", filters.shopType)
+  // `none` is the server's word for the examples nobody gave a scene yet.
+  if (filters.scene) search.set("scene", filters.scene)
   if (filters.status) search.set("status", filters.status)
   if (filters.q.trim()) search.set("q", filters.q.trim())
   search.set("limit", String(PAGE_SIZE))
@@ -57,6 +61,15 @@ export function useTaxonomy() {
     queryKey: exampleKeys.taxonomy(userId),
     queryFn: ({ signal }) => http.get<Taxonomy>(`${BASE}/taxonomy`, { signal }),
     staleTime: 60 * 60_000,
+  })
+}
+
+export function useCoverage() {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: exampleKeys.coverage(userId),
+    queryFn: ({ signal }) => http.get<Coverage>(`${BASE}/coverage`, { signal }),
+    staleTime: 15_000,
   })
 }
 

@@ -19,6 +19,7 @@ import '../../state/question_fold.dart';
 import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
 import 'folded_question_row.dart';
+import 'light_example_card.dart';
 import 'light_question_card.dart';
 import 'question_resources.dart';
 import 'video_approval_detail.dart';
@@ -327,6 +328,20 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         }
       },
     );
+    // 挑样例 shows its pieces side by side; a tap on one is the whole answer.
+    if (LightExampleCard.of(widget.request) case final card?) {
+      final busy = draft.submitting || draft.transferring || _folding;
+      return LightExampleCard(
+        key: ValueKey('${widget.request.id}:example'),
+        card: card,
+        submitError: _submitError,
+        onAnswer: busy
+            ? null
+            : (label) => _resolve([
+                [label],
+              ]),
+      );
+    }
     // A card the agent tagged for Light 模式 wears the big-chip skin.
     final question = widget.request.questions[page];
     if (question.detail?['light'] is Map<String, dynamic>) {

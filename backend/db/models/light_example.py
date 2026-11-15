@@ -30,6 +30,9 @@ class LightExample(Base):
     shop_type: Mapped[str] = mapped_column(String(32), nullable=False, default="other", server_default=text("'other'"))
     #: The entry's subtype or sample id when known (``dish_closeup``, ``menu_red``…).
     subtype: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: What it was made for: a poster's purpose, a cut's type, a menu's style
+    #: (light/taxonomy.json ``entries[].scenes``); NULL when nobody said.
+    scene: Mapped[str | None] = mapped_column(String(32), nullable=True)
     tags: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
     #: 1–5, the team's verdict; the matcher prefers higher.
     rating: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default=text("3"))
@@ -50,8 +53,11 @@ class LightExample(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     #: Times the matcher put this example in front of the model.
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    #: Times an owner chose this one on the example card (tool/example_pick.py).
+    pick_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
 
     __table_args__ = (
         Index("ix_light_examples_match", "entry_id", "industry", "shop_type", "status"),
         Index("ix_light_examples_created", "created_at"),
+        Index("ix_light_examples_scene", "entry_id", "scene", "status"),
     )

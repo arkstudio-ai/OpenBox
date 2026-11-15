@@ -45,6 +45,17 @@ class LightApi {
     return LightStartResult.fromJson(resp.data ?? const {});
   }
 
+  /// Fresh signed links for one library example on a 挑样例 card (the card's
+  /// own links last about twelve hours). 404 when the example is gone.
+  Future<LightExamplePreview> examplePreview(String exampleId) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/light/examples/${Uri.encodeComponent(exampleId)}/preview',
+    );
+    final preview = LightExamplePreview.fromJson(resp.data);
+    if (preview == null) throw StateError('The server returned no preview');
+    return preview;
+  }
+
   /// 省心托管 jobs of this workspace.
   Future<List<LightAutopilot>> autopilots() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/light/autopilot');

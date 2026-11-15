@@ -167,7 +167,7 @@ def test_footage_skill_and_entry_ship():
     from light.entries import light_entries
     entry = light_entries().entry("footage_edit")
     assert entry.kind == "primary" and entry.skill == "footage-edit" and not entry.requires.desktop
-    assert [step.id for step in entry.steps] == ["type", "upload", "plan", "compose", "deliver"]
+    assert [step.id for step in entry.steps] == ["type", "example", "upload", "plan", "compose", "deliver"]
     root = Path(__file__).resolve().parents[2] / ".openbox" / "skills" / "footage-edit"
     assert (root / "SKILL.md").is_file() and (root / "references" / "structure-templates.md").is_file()
 

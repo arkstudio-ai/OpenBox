@@ -3,6 +3,7 @@ name: poster-maker
 description: Make a promotion poster for a small restaurant or shop — new dish, holiday event, opening, group-buy deal — from one sentence and an optional dish photo, in WeChat-Moments portrait and in-store landscape versions. Use for 做海报 / 活动海报 / 新品海报 / 团购海报, and for the Light home's 做海报 entry.
 allowed-tools:
   - question
+  - example_pick
   - image_gen
   - share_file
 ---
@@ -22,13 +23,33 @@ The Light page shows these steps; put the matching `step_id` on every
 | step_id | what happens |
 |---|---|
 | `purpose` | 新品上市 / 节日活动 / 开业 / 团购. The opening card offered these as chips; the first reply usually answers it |
+| `example` | the owner picks which finished poster this one should look like (the `example_pick` card; you send no card of your own) |
 | `copy` | one sentence about the offer (what, how much, until when) and, if they have one, a photo of the dish |
 | `title` | three headline options on one card |
 | `deliver` | the poster, checked, with follow-up options |
 
-If the opening card named a style (大字促销 / 实拍主图 / 手绘清新), use it and
-do not ask again; otherwise pick the one that fits the purpose (团购 →
-大字促销, 新品 with a photo → 实拍主图, 甜品饮品 → 手绘清新).
+## 0. The look (`example`)
+
+As soon as the purpose is known, call `example_pick` once with it as `scene`:
+新品上市 → `new_item`, 节日活动 → `holiday`, 开业 → `opening`, 团购 →
+`groupbuy` (omit `scene` when the purpose is none of these). Do this before
+asking for the offer, even when the first reply already contains it. The tool
+shows the owner up to three finished posters and waits for the pick; write
+nothing about them yourself.
+
+- **An example was picked**: it is the look of this poster — its layout, how
+  big the headline is, where the price sits, photo or illustration, the
+  palette. Describe that look in the `Style:` line of the prompt instead of
+  one of the three named styles. Only the look: the headline, the offer, the
+  shop name, the dishes and the prices are this owner's, never the example's.
+  Say one short line (「好，照「<样例标题>」的样子做。」) and go on.
+- **No example** (the tool says none applies, or the owner chose none): pick
+  the style that fits the purpose — 团购 → 大字促销 (bold headline, price in a
+  burst), 新品 with a photo → 实拍主图 (the dish photo as hero), 甜品饮品 →
+  手绘清新 (soft illustration) — and do not mention examples.
+
+Do not call `example_pick` again in the same conversation unless the owner
+asks for a different look (「换个样子」): then call it with `again: true`.
 
 ## 1. The offer (`copy`)
 
@@ -55,7 +76,7 @@ option rather than making both up front.
 ```text
 Use case: ads-marketing
 Asset type: restaurant promotion poster, portrait for WeChat Moments
-Style: <大字促销: bold headline, price in a burst, high contrast | 实拍主图: the dish photo as hero, clean type band | 手绘清新: soft illustration, pastel>
+Style: <the picked example's look in your own words, or without one — 大字促销: bold headline, price in a burst, high contrast | 实拍主图: the dish photo as hero, clean type band | 手绘清新: soft illustration, pastel>
 Text (verbatim, render exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
   Headline: "<chosen headline>"
   Offer: "<the offer line>"

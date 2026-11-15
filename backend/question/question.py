@@ -43,6 +43,9 @@ QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
     # Asking for another video model than the conversation's files a
     # switch card (tool.video_model_card).
     "video_generate": "question",
+    # The Light example card: which finished piece this one should look like
+    # (tool.example_pick).
+    "example_pick": "question",
     # A sensitive memory the assistant may keep only after confirmation.
     "memory.remember": "memory_proposal",
 }

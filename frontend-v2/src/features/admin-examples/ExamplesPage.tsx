@@ -9,11 +9,14 @@ import { formatSince } from "@/shared/lib/format"
 import { DataTable, type DataTableColumn } from "@/shared/ui/DataTable"
 import { StatusPill } from "@/shared/ui/StatusPill"
 import { toast } from "@/shared/ui/Toast"
-import { PAGE_SIZE, useExamples, useSetExampleStatus, useTaxonomy } from "./api"
+import { PAGE_SIZE, useCoverage, useExamples, useSetExampleStatus, useTaxonomy } from "./api"
 import { AssetTile, ExampleSheet, type SheetMode } from "./ExampleSheet"
-import type { Example } from "./types"
+import { scenesOf } from "./lib"
+import type { Coverage, Example } from "./types"
 
-const DEFAULTS = { entry: "", industry: "", shopType: "", status: "", q: "", offset: "0" }
+const DEFAULTS = { entry: "", industry: "", shopType: "", scene: "", status: "", q: "", offset: "0" }
+/** The server's word for "no scene yet". */
+const NO_SCENE = "none"
 const SELECT = "border-hair bg-bg text-ink min-h-9 min-w-0 rounded-lg border px-2 text-xs"
 const BUTTON = "border-hair hover:bg-hairsoft rounded-full border px-3 py-1 text-xs disabled:opacity-50"
 
@@ -32,12 +35,58 @@ function Select({ label, value, options, onChange }: { label: string; value: str
   )
 }
 
+const CELL = "rounded-full px-2.5 py-1 text-xs tabular-nums"
+
+/** Active examples per entry and scene; a cell under the target is one the example card cannot fill. */
+function CoverageSection({ coverage, onPick }: { coverage: Coverage; onPick: (entry: string, scene: string) => void }) {
+  const { t } = useTranslation("admin-examples")
+  const entries = (coverage.entries ?? []).filter((entry) => entry.scenes.length > 0)
+  if (!entries.length) return null
+  return (
+    <section className="border-hair bg-card flex flex-col gap-3 rounded-xl border p-4" aria-label={t("coverage.title")} data-testid="example-coverage">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-ink text-sm font-semibold">{t("coverage.title")}</h3>
+        <p className="text-n500 text-2xs">{t("coverage.hint", { target: coverage.target })}</p>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {entries.map((entry) => (
+          <li key={entry.entry_id} className="flex flex-wrap items-center gap-2" data-testid="coverage-row">
+            <span className="text-n700 w-24 shrink-0 text-xs font-medium">{entry.label}</span>
+            {entry.scenes.map((cell) => {
+              const under = cell.count < coverage.target
+              return (
+                <button
+                  key={cell.scene}
+                  type="button"
+                  data-testid="coverage-cell"
+                  data-under={under}
+                  title={under ? t("coverage.under", { missing: coverage.target - cell.count }) : undefined}
+                  className={`${CELL} ${under ? "bg-dangersoft text-dangerink" : "bg-hairsoft text-n700"}`}
+                  onClick={() => onPick(entry.entry_id, cell.scene)}
+                >
+                  {t("coverage.cell", { label: cell.label, count: cell.count, target: coverage.target })}
+                </button>
+              )
+            })}
+            {entry.unclassified > 0 && (
+              <button type="button" data-testid="coverage-unclassified" className={`${CELL} border-hair text-n600 border`} onClick={() => onPick(entry.entry_id, NO_SCENE)}>
+                {t("coverage.unclassified", { count: entry.unclassified })}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export function ExamplesPage() {
   const { t } = useTranslation("admin-examples")
   const [values, setValues] = useUrlState(DEFAULTS)
   const [search, setSearch] = useSearchParams()
   const taxonomy = useTaxonomy()
   const list = useExamples(values)
+  const coverage = useCoverage()
   const setStatus = useSetExampleStatus()
   const [sheet, setSheet] = useState<SheetMode | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -60,6 +109,7 @@ export function ExamplesPage() {
   const entries = useMemo(() => taxonomy.data?.entries ?? [], [taxonomy.data])
   const industries = taxonomy.data?.industries ?? []
   const shopTypes = industries.find((item) => item.id === values.industry)?.shop_types ?? []
+  const scenes = scenesOf(taxonomy.data, values.entry)
 
   const columns = useMemo<DataTableColumn<Example>[]>(
     () => [
@@ -73,7 +123,16 @@ export function ExamplesPage() {
           </div>
         ),
       },
-      { key: "entry", header: t("column.entry"), render: (row) => entries.find((entry) => entry.id === row.entry_id)?.label ?? row.entry_id },
+      {
+        key: "entry",
+        header: t("column.entry"),
+        render: (row) => (
+          <div className="flex min-w-0 flex-col">
+            <span>{entries.find((entry) => entry.id === row.entry_id)?.label ?? row.entry_id}</span>
+            {row.scene_label && <span className="text-n500 text-2xs">{row.scene_label}</span>}
+          </div>
+        ),
+      },
       { key: "industry", header: t("column.industry"), render: (row) => row.shop_type_label },
       {
         key: "tags",
@@ -95,6 +154,7 @@ export function ExamplesPage() {
         render: (row) => <StatusPill tone={row.status === "active" ? "ok" : "muted"}>{t(`status.${row.status}`)}</StatusPill>,
       },
       { key: "use_count", header: t("column.useCount"), className: "tabular-nums", render: (row) => String(row.use_count) },
+      { key: "pick_count", header: t("column.pickCount"), className: "tabular-nums", render: (row) => String(row.pick_count ?? 0) },
       { key: "updated", header: t("column.updatedAt"), render: (row) => (row.updated_at ? formatSince(row.updated_at) : "") },
       {
         key: "actions",
@@ -130,7 +190,13 @@ export function ExamplesPage() {
   return (
     <div className="flex flex-col gap-4">
       <form className="border-hair bg-card flex flex-wrap items-end gap-3 rounded-xl border p-4" aria-label={t("filters.label")} onSubmit={(event) => event.preventDefault()}>
-        <Select label={t("filters.entry")} value={values.entry} options={[all, ...entries.map((entry) => ({ value: entry.id, label: entry.label }))]} onChange={(entry) => setValues({ entry })} />
+        <Select label={t("filters.entry")} value={values.entry} options={[all, ...entries.map((entry) => ({ value: entry.id, label: entry.label }))]} onChange={(entry) => setValues({ entry, scene: values.scene === NO_SCENE ? NO_SCENE : "" })} />
+        <Select
+          label={t("filters.scene")}
+          value={values.scene}
+          options={[all, ...scenes.map((scene) => ({ value: scene.id, label: scene.label })), { value: NO_SCENE, label: t("filters.unclassified") }]}
+          onChange={(scene) => setValues({ scene })}
+        />
         <Select
           label={t("filters.industry")}
           value={values.industry}
@@ -156,6 +222,8 @@ export function ExamplesPage() {
         </div>
       </form>
 
+      {coverage.data && <CoverageSection coverage={coverage.data} onPick={(entry, scene) => setValues({ entry, scene })} />}
+
       <section className="border-hair bg-card rounded-xl border p-4">
         <DataTable
           columns={columns}
@@ -166,7 +234,7 @@ export function ExamplesPage() {
           emptyText={t("list.empty")}
           errorText={t("list.error")}
           loadingLabel={t("list.loading")}
-          minWidth="min-w-[64rem]"
+          minWidth="min-w-[68rem]"
         />
         {total > PAGE_SIZE && (
           <div className="mt-3 flex items-center justify-end gap-2 text-xs">

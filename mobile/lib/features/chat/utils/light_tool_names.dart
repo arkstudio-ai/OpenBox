@@ -7,6 +7,8 @@ String lightToolKey(MessagePart? part) {
   if (part is SubtaskPart) return 'task';
   if (part is! ToolPart) return 'working';
   final name = part.tool.toLowerCase();
+  // backend tool/example_pick.py: the 挑样例 card of a guided conversation.
+  if (name == 'example_pick') return 'example_pick';
   if (name.contains('compose')) return 'compose';
   if (name.contains('video')) return 'video';
   if (name.contains('image')) return 'image';

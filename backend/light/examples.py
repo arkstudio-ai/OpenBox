@@ -6,6 +6,11 @@ tags, falling back level by level), render them as a 参考样例 section of the
 Light prompt fragment, and count each use. ``prefill`` reads one finished
 session back into the fields of a new example so the team only adds the
 shop type, tags, rating and notes.
+
+The owner can also choose: after the entry's type step the ``example_pick``
+tool shows up to three finished pieces (``candidates``), and the one picked is
+kept on the conversation (``sessions.light_example_id``). From then on the
+prompt section holds that one example only (docs/LIGHT_EXAMPLE_PICK_PLAN.md).
 """
 from __future__ import annotations
 
@@ -35,6 +40,13 @@ RULES = (
 #: conversation, not one per turn the fragment is rebuilt for.
 _COUNTED: "OrderedDict[tuple[str, str], None]" = OrderedDict()
 _COUNTED_LIMIT = 4096
+#: ``sessions.light_example_id`` when the owner looked at the card and chose none of them.
+DECLINED = "none"
+#: Where the last pick per entry and scene is remembered (``user_preferences.extra``).
+PICKS_KEY = "light_example_picks"
+#: Preview links on the card; the App asks again (``/api/light/examples/{id}/preview``) when one expired.
+PREVIEW_SECONDS = 12 * 3600
+PREVIEW_WIDTH = 720
 
 
 def _now() -> datetime:
@@ -68,11 +80,13 @@ def public(row) -> dict:
     """The console's view of one example."""
     return {
         "id": row.id, "entry_id": row.entry_id, "industry": row.industry, "shop_type": row.shop_type,
-        "subtype": row.subtype, "tags": list(row.tags or []), "rating": row.rating, "status": row.status,
+        "subtype": row.subtype, "scene": row.scene,
+        "scene_label": taxonomy().scene_label(row.entry_id, row.scene) if row.scene else "",
+        "tags": list(row.tags or []), "rating": row.rating, "status": row.status,
         "title": row.title, "notes": row.notes or "", "recipe": row.recipe or "",
         "inputs": list(row.inputs or []), "outputs": list(row.outputs or []), "source": dict(row.source or {}),
         "created_by": row.created_by, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at),
-        "use_count": row.use_count or 0,
+        "use_count": row.use_count or 0, "pick_count": row.pick_count or 0,
         "industry_label": taxonomy().label(row.industry),
         "shop_type_label": taxonomy().label(row.industry, row.shop_type),
     }
@@ -112,21 +126,52 @@ async def shop_context(user_id: str | None) -> dict:
 
 # --- matching ---------------------------------------------------------------
 
-async def pick(entry_id: str, industry: str | None, shop_type: str | None, tags: Iterable[str] | None = None,
-               limit: int = 3) -> list:
-    """Active examples of ``entry_id`` for this shop, best first, falling back level by level.
-
-    Levels: same industry and shop type → same industry → the generic pool
-    (industry ``other``) → anything active for the entry. Within a level, more
-    shared tags first, then rating, then the newest.
-    """
+async def _active(entry_id: str) -> list:
     from sqlalchemy import select
     from db.base import get_db_session
     from db.models.light_example import LightExample
-    wanted = set(_tags(list(tags or [])))
     async with get_db_session() as db:
-        rows = list((await db.scalars(select(LightExample).where(
+        return list((await db.scalars(select(LightExample).where(
             LightExample.entry_id == entry_id, LightExample.status == "active"))).all())
+
+
+def _fit(row, industry: str | None, shop_type: str | None) -> int:
+    """0 same industry and shop type, 1 same industry, 2 the generic pool, 3 anything else."""
+    if industry and row.industry == industry:
+        return 0 if shop_type and row.shop_type == shop_type else 1
+    return 2 if row.industry == "other" else 3
+
+
+async def candidates(entry_id: str, scene: str | None, industry: str | None, shop_type: str | None,
+                     *, limit: int = 3, first: str | None = None) -> list:
+    """What the example card shows: up to ``limit`` active examples with a finished piece to look at.
+
+    Unlike ``pick`` this fills up: the same scene first, then how well the shop
+    fits (shop type → industry → generic → any), then rating, then the newest;
+    examples of other scenes make up the number when the scene has too few.
+    ``first`` (the owner's last pick for this entry and scene) leads when it is
+    still among them.
+    """
+    rows = [row for row in await _active(entry_id) if _shown_output(row) is not None]
+    rows.sort(key=lambda r: (0 if scene and r.scene == scene else 1, _fit(r, industry, shop_type),
+                             -(r.rating or 0), -((r.created_at or _now()).timestamp()), r.id))
+    last = next((row for row in rows if row.id == first), None) if first else None
+    if last is not None:
+        rows = [last] + [row for row in rows if row.id != last.id]
+    return rows[:limit]
+
+
+async def pick(entry_id: str, industry: str | None, shop_type: str | None, tags: Iterable[str] | None = None,
+               limit: int = 3, scene: str | None = None) -> list:
+    """Active examples of ``entry_id`` for this shop, best first, falling back level by level.
+
+    Levels: same industry and shop type → same industry → the generic pool
+    (industry ``other``) → anything active for the entry. Within a level, the
+    conversation's ``scene`` first when it is known, then more shared tags,
+    then rating, then the newest.
+    """
+    wanted = set(_tags(list(tags or [])))
+    rows = await _active(entry_id)
     if not rows:
         return []
     levels = []
@@ -140,7 +185,8 @@ async def pick(entry_id: str, industry: str | None, shop_type: str | None, tags:
     seen: set[str] = set()
     for level in levels:
         pool = [r for r in rows if r.id not in seen and level(r)]
-        pool.sort(key=lambda r: (-len(wanted & set(r.tags or [])), -(r.rating or 0),
+        pool.sort(key=lambda r: (0 if scene and r.scene == scene else 1,
+                                 -len(wanted & set(r.tags or [])), -(r.rating or 0),
                                  -((r.created_at or _now()).timestamp()), r.id))
         for row in pool:
             if len(chosen) >= limit:
@@ -160,12 +206,74 @@ def _signed(output: dict) -> str | None:
     return sign_media("oss:" + str(key))
 
 
-def render(rows: list, ctx: dict | None = None) -> str:
-    """The 参考样例 section: a summary, the recipe as it was, the output links, then the rules."""
+def _shown_output(row) -> dict | None:
+    """The finished image or clip an owner can look at; None when the example has none."""
+    for output in row.outputs or []:
+        if isinstance(output, dict) and output.get("oss_key") and str(output.get("mime") or "").startswith(OUTPUT_MIMES):
+            return output
+    return None
+
+
+def preview(row) -> dict | None:
+    """``{example_id, title, mime, media_url, poster_url}`` for the card; None without a piece or without OSS.
+
+    ``poster_url`` is a still the bucket renders on the signed GET itself: the
+    picture scaled down, or the clip's frame at one second.
+    """
+    output = _shown_output(row)
+    if output is None:
+        return None
+    key, mime = str(output["oss_key"]), str(output.get("mime") or "")
+    process = (f"video/snapshot,t_1000,f_jpg,w_{PREVIEW_WIDTH},m_fast,ar_auto" if mime.startswith("video/")
+               else f"image/resize,w_{PREVIEW_WIDTH}/format,jpg/quality,q_85")
+    try:
+        from core.oss import get_oss
+        oss = get_oss()
+        media = oss.presign_get(key, PREVIEW_SECONDS)
+        poster = oss._presign("GET", key, PREVIEW_SECONDS, subresource={"x-oss-process": process})
+    except Exception as exc:
+        log.warning("light examples: preview not signed example=%s error=%s", row.id, type(exc).__name__)
+        return None
+    return {"example_id": row.id, "title": row.title, "mime": mime, "media_url": media, "poster_url": poster}
+
+
+async def get_active(example_id: str | None):
+    """One active example by id; None for the declined marker, an unknown id or a disabled one."""
+    if not example_id or example_id == DECLINED:
+        return None
+    from db.base import get_db_session
+    from db.models.light_example import LightExample
+    async with get_db_session() as db:
+        row = await db.get(LightExample, example_id)
+    return row if row is not None and row.status == "active" else None
+
+
+def last_pick(extra: dict | None, entry_id: str, scene: str | None) -> str | None:
+    """The example this owner chose last time for the same entry and scene."""
+    picks = (extra or {}).get(PICKS_KEY)
+    by_entry = picks.get(entry_id) if isinstance(picks, dict) else None
+    value = by_entry.get(scene or "_") if isinstance(by_entry, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def with_pick(extra: dict | None, entry_id: str, scene: str | None, example_id: str) -> dict:
+    """``extra`` with this pick remembered; the other entries and scenes keep theirs."""
+    extra = dict(extra or {})
+    picks = dict(extra.get(PICKS_KEY) or {}) if isinstance(extra.get(PICKS_KEY), dict) else {}
+    picks[entry_id] = {**(picks.get(entry_id) if isinstance(picks.get(entry_id), dict) else {}), scene or "_": example_id}
+    extra[PICKS_KEY] = picks
+    return extra
+
+
+def render(rows: list, ctx: dict | None = None, *, chosen: bool = False) -> str:
+    """The 参考样例 section: a summary, the recipe as it was, the output links, then the rules.
+
+    ``chosen``: the one row is what the owner picked on the example card."""
     if not rows:
         return ""
     tax = taxonomy()
-    lines = ["参考样例（同行业同类门店做过、团队认可的产出，照它们的结构和风格做）："]
+    lines = ["参考样例（老板在样例卡上亲自选的这一条，这次就照它的结构、节奏和风格做，不再参考别的）："
+             if chosen else "参考样例（同行业同类门店做过、团队认可的产出，照它们的结构和风格做）："]
     for index, row in enumerate(rows, 1):
         head = f"{index}. 「{row.title}」（{tax.label(row.industry, row.shop_type)}，评分 {row.rating}/5）"
         if row.notes:
@@ -211,13 +319,18 @@ async def examples_fragment(user_id: str | None, session) -> str:
     entry_id = getattr(session, "light_entry", None) if session is not None else None
     if not entry_id or entry_id not in taxonomy().entry_ids():
         return ""
+    picked = getattr(session, "light_example_id", None)
+    if picked == DECLINED:  # the owner looked at the card and wanted none of them
+        return ""
     try:
         ctx = await shop_context(user_id)
-        rows = await pick(entry_id, ctx["industry"], ctx["shop_type"])
+        chosen = await get_active(picked)
+        rows = [chosen] if chosen is not None else await pick(
+            entry_id, ctx["industry"], ctx["shop_type"], scene=getattr(session, "light_scene", None))
         if not rows:
             return ""
         await _count(getattr(session, "id", "") or "", rows)
-        return render(rows, ctx)
+        return render(rows, ctx, chosen=chosen is not None)
     except Exception as exc:  # the library never breaks a chat
         log.warning("light examples: fragment skipped session=%s error=%s", getattr(session, "id", None), type(exc).__name__)
         return ""
@@ -335,6 +448,7 @@ async def prefill(session_id: str, asset_id: str | None = None) -> dict | None:
         "industry": ctx["industry"] or "other",
         "shop_type": ctx["shop_type"] or "other",
         "subtype": None,
+        "scene": session.light_scene if session.light_scene in taxonomy().scene_ids(entry_id) else None,
         "title": _clean(session.title, 120) or "",
         "recipe": _recipe_from(questions, prompts),
         "inputs": inputs,

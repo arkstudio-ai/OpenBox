@@ -63,7 +63,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "vision": ("view_image",),
     "delivery": ("share_file", "image_to_pdf"),
     "automation": ("cron",),
-    "image": ("image_gen", "view_image", "image_to_pdf"),
+    "image": ("image_gen", "view_image", "image_to_pdf", "example_pick"),
     "video": (
         # Generate, recover and deliver first: an in-progress production needs
         # these to fetch completed clips without resubmitting (and paying) again.
@@ -78,6 +78,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
         "hot_trends",
         "desktop_publish",
         "autopilot_run",
+        "example_pick",
     ),
     "skill_admin": ("skill_manage", "share_file"),
 })

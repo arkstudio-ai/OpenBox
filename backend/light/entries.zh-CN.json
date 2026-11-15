@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-14.1",
+  "version": "2026-11-15.1",
   "entries": [
     {
       "id": "video",
@@ -162,6 +162,10 @@
           "label": "用途"
         },
         {
+          "id": "example",
+          "label": "挑样例"
+        },
+        {
           "id": "copy",
           "label": "一句话"
         },
@@ -174,38 +178,7 @@
           "label": "出图"
         }
       ],
-      "subtypes": [
-        {
-          "id": "poster_style",
-          "label": "样式",
-          "samples": [
-            {
-              "id": "poster_bold",
-              "label": "大字促销",
-              "description": "大标题、价格醒目",
-              "needs": "活动一句话",
-              "media_url": "oss:light/samples/20261102/poster_bold.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_bold_thumb.jpg"
-            },
-            {
-              "id": "poster_photo",
-              "label": "实拍主图",
-              "description": "用你的菜品照做主图",
-              "needs": "1 张菜品照片",
-              "media_url": "oss:light/samples/20261102/poster_photo.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_photo_thumb.jpg"
-            },
-            {
-              "id": "poster_fresh",
-              "label": "手绘清新",
-              "description": "插画风，适合甜品饮品",
-              "needs": "活动一句话",
-              "media_url": "oss:light/samples/20261102/poster_fresh.jpg",
-              "poster_url": "oss:light/samples/20261102/poster_fresh_thumb.jpg"
-            }
-          ]
-        }
-      ],
+      "subtypes": [],
       "opening_card": {
         "text": "这次海报是为了什么？说一句活动内容就行，有菜的照片也发我。",
         "chips": [
@@ -213,8 +186,7 @@
           "节日活动",
           "开业",
           "团购"
-        ],
-        "text_with_sample": "做一张「{sample}」海报。这次是为了什么？说一句活动内容就行，有菜的照片也发我。"
+        ]
       },
       "sample_media": []
     },
@@ -231,6 +203,10 @@
         {
           "id": "type",
           "label": "成片类型"
+        },
+        {
+          "id": "example",
+          "label": "挑样例"
         },
         {
           "id": "upload",
@@ -274,6 +250,10 @@
         {
           "id": "style",
           "label": "选样式"
+        },
+        {
+          "id": "example",
+          "label": "挑样例"
         },
         {
           "id": "items",

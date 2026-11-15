@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-14.1",
+  "version": "2026-11-15.1",
   "entries": [
     {
       "id": "video",
@@ -128,6 +128,10 @@
           "label": "Mục đích"
         },
         {
+          "id": "example",
+          "label": "Chọn mẫu"
+        },
+        {
           "id": "copy",
           "label": "Một câu"
         },
@@ -140,32 +144,6 @@
           "label": "Xuất ảnh"
         }
       ],
-      "subtypes": [
-        {
-          "id": "poster_style",
-          "label": "Kiểu",
-          "samples": [
-            {
-              "id": "poster_bold",
-              "label": "Chữ to khuyến mãi",
-              "description": "Tiêu đề lớn, giá nổi bật",
-              "needs": "Một câu về chương trình"
-            },
-            {
-              "id": "poster_photo",
-              "label": "Ảnh thật làm chủ",
-              "description": "Dùng ảnh món của bạn làm hình chính",
-              "needs": "1 ảnh món ăn"
-            },
-            {
-              "id": "poster_fresh",
-              "label": "Vẽ tay tươi mát",
-              "description": "Phong cách minh họa, hợp tráng miệng và đồ uống",
-              "needs": "Một câu về chương trình"
-            }
-          ]
-        }
-      ],
       "opening_card": {
         "text": "Poster lần này để làm gì? Nói một câu về chương trình là đủ, có ảnh món thì gửi luôn cho tôi.",
         "chips": [
@@ -173,8 +151,7 @@
           "Sự kiện lễ tết",
           "Khai trương",
           "Ưu đãi nhóm"
-        ],
-        "text_with_sample": "Làm một poster kiểu “{sample}”. Lần này để làm gì? Nói một câu về chương trình là đủ, có ảnh món thì gửi luôn cho tôi."
+        ]
       }
     },
     {
@@ -186,6 +163,10 @@
         {
           "id": "type",
           "label": "Loại video"
+        },
+        {
+          "id": "example",
+          "label": "Chọn mẫu"
         },
         {
           "id": "upload",
@@ -223,6 +204,10 @@
         {
           "id": "style",
           "label": "Chọn kiểu"
+        },
+        {
+          "id": "example",
+          "label": "Chọn mẫu"
         },
         {
           "id": "items",

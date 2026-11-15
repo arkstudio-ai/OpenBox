@@ -67,6 +67,13 @@
       ],
       "result": "sent"
     },
+    "example_pick": {
+      "label": "挑样例",
+      "args": [
+        "scene"
+      ],
+      "result": "answers"
+    },
     "share_file": {
       "label": "把文件发给用户",
       "args": [

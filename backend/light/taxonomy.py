@@ -17,10 +17,26 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ID = r"^[a-z][a-z0-9_]*$"
 
 
+class Scene(BaseModel):
+    """What a piece is made for: a poster's purpose, a cut's type, a menu's style."""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=32, pattern=ID)
+    label: str = Field(min_length=1, max_length=20)
+
+
 class TaxonomyEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=32, pattern=ID)
     label: str = Field(min_length=1, max_length=20)
+    #: The types the entry's opening step offers; an example carries one (``light_examples.scene``).
+    scenes: list[Scene] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _unique_scenes(self) -> "TaxonomyEntry":
+        ids = [scene.id for scene in self.scenes]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"duplicate scene in {self.id}")
+        return self
 
 
 class ShopType(BaseModel):
@@ -62,6 +78,15 @@ class Taxonomy(BaseModel):
 
     def entry_ids(self) -> list[str]:
         return [entry.id for entry in self.entries]
+
+    def scene_ids(self, entry_id: str | None) -> list[str]:
+        entry = next((item for item in self.entries if item.id == entry_id), None)
+        return [scene.id for scene in entry.scenes] if entry else []
+
+    def scene_label(self, entry_id: str | None, scene_id: str | None) -> str:
+        entry = next((item for item in self.entries if item.id == entry_id), None)
+        scene = next((item for item in (entry.scenes if entry else []) if item.id == scene_id), None)
+        return scene.label if scene else (scene_id or "")
 
     def industry(self, industry_id: str | None) -> Industry | None:
         return next((item for item in self.industries if item.id == industry_id), None)

@@ -60,6 +60,11 @@ class Session(Base):
     #: The Light home entry this guided session was started from (light/mode.py);
     #: NULL for ordinary chats. Read by the system prompt and the question cards.
     light_entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: What the owner said this piece is for (light/taxonomy.json scenes), set by ``example_pick``.
+    light_scene: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: The library example the owner picked on the card; ``none`` = they chose
+    #: none of them; NULL = never asked (tool/example_pick.py).
+    light_example_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     visibility: Mapped[str] = mapped_column(String(16), nullable=False, server_default="workspace")
     memory_policy: Mapped[str] = mapped_column(String(32), nullable=False, server_default="standard")
     parent_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("sessions.id"), nullable=True)

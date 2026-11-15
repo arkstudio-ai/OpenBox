@@ -12,6 +12,9 @@ from light.entries import light_entries
 from light.examples import examples_fragment
 from light.mode import ui_mode
 
+#: The step the ``example_pick`` card lights (tool/example_pick.py ``STEP_ID``).
+EXAMPLE_STEP = "example"
+
 LIGHT_MODE_TEXT = (
     "界面模式：Light（功能引导）。这个人是第一次用 AI 工作台的小店老板。规则："
     "每张卡只问一件事，能点选就用 question 的选项，不让对方打字；"
@@ -43,6 +46,9 @@ def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
         f"步骤条：{steps}。每次调用 question 都填 step_id（取其中一个 id），界面据此点亮步骤。",
         "开场卡已经发出，对方的第一句话是对它的回答；开场卡里点选的样子就是这次的风格，不要再问一遍。",
     ]
+    if any(step.id == EXAMPLE_STEP for step in entry.steps):
+        lines.append("步骤条里的 example（挑样例）不用你发 question：类型一确定就调用一次 example_pick，"
+                     "样例卡由它发出并等对方选；选中的那条会在工具结果里给你，这次就照它做。")
     return " ".join(lines)
 
 

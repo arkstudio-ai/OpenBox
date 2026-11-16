@@ -105,3 +105,47 @@ async def test_vision_model_keeps_its_image_references() -> None:
 
     assert out[0]["_images"] == ["data:image/png;base64,AAA"]
     assert "cannot read images" not in out[0]["content"]
+
+
+def _noise_png(size: int) -> bytes:
+    import io
+    import os
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.frombytes("RGB", (size, size), os.urandom(size * size * 3)).save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_small_image_is_inlined_untouched() -> None:
+    from agent import loop
+
+    data = _noise_png(32)
+    assert loop._fit_inline_image(data, "image/png") == (data, "image/png")
+
+
+def test_oversized_image_is_recompressed_at_full_resolution(monkeypatch) -> None:
+    """Over the provider's per-image cap: lower the JPEG quality, keep the pixels."""
+    import io
+
+    from PIL import Image
+
+    from agent import loop
+
+    data = _noise_png(256)
+    monkeypatch.setattr(loop, "_INLINE_IMAGE_MAX_BYTES", len(data) // 3)
+    fitted = loop._fit_inline_image(data, "image/png")
+    assert fitted is not None
+    out, mime = fitted
+    assert mime == "image/jpeg"
+    assert len(out) <= len(data) // 3
+    assert Image.open(io.BytesIO(out)).size == (256, 256)
+
+
+def test_image_that_cannot_fit_is_dropped(monkeypatch) -> None:
+    from agent import loop
+
+    monkeypatch.setattr(loop, "_INLINE_IMAGE_MAX_BYTES", 100)
+    assert loop._fit_inline_image(_noise_png(256), "image/png") is None
+    assert loop._fit_inline_image(b"x" * 200, "image/png") is None

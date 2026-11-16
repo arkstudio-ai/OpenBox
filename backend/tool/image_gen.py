@@ -380,7 +380,13 @@ async def _call_provider(
     mask: InputImage | None,
     ctx: ToolContext | None = None,
     operation_key: str | None = None,
+    image_urls: list[str] | None = None,
 ) -> list[bytes]:
+    """Call the configured Images API once.
+
+    ``image_urls`` is set for Volcengine Ark Seedream, whose edit is the
+    generations endpoint with signed input URLs instead of ``/images/edits``.
+    """
     from openai import AsyncOpenAI
     from agent.trajectory import RequestCapture, context_for_tool, public_value
     from question.runtime import assert_current
@@ -393,18 +399,25 @@ async def _call_provider(
     if target.base_url:
         client_kwargs["base_url"] = target.base_url
 
-    common = {
-        "model": target.model,
-        "prompt": args.prompt,
-        "n": args.n,
-        "size": size,
-        "quality": quality,
-        "output_format": output_format,
-    }
-    if args.output_compression is not None and output_format in {"jpeg", "webp"}:
-        common["output_compression"] = args.output_compression
-    if args.background is not None:
-        common["background"] = args.background
+    volc = image_urls is not None
+    if volc:
+        # Only what Ark documents: it has no n/quality, and "auto"/"opaque" are its defaults.
+        common = {"model": target.model, "prompt": args.prompt, "size": size, "output_format": output_format}
+        if args.background == "transparent":
+            common["background"] = "transparent"
+    else:
+        common = {
+            "model": target.model,
+            "prompt": args.prompt,
+            "n": args.n,
+            "size": size,
+            "quality": quality,
+            "output_format": output_format,
+        }
+        if args.output_compression is not None and output_format in {"jpeg", "webp"}:
+            common["output_compression"] = args.output_compression
+        if args.background is not None:
+            common["background"] = args.background
     if operation_key:
         # Correlation only. The configured gateway is not assumed to honor
         # idempotency for image billing, so unknown responses remain terminal.
@@ -454,7 +467,11 @@ async def _call_provider(
         except Exception as exc:
             _mark_not_sent(exc)
             raise
-        if images:
+        if volc:
+            # Signed URLs stay out of `common`, which is what the trajectory records.
+            extra_body = {"watermark": False, **({"image": image_urls} if image_urls else {})}
+            response = await client.images.generate(**common, extra_body=extra_body)
+        elif images:
             files = [(image.name, image.data, image.mime) for image in images]
             edit_kwargs = dict(common)
             edit_kwargs["image"] = files[0] if len(files) == 1 else files
@@ -1440,6 +1457,9 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     quality = args.quality or settings.default_quality
     output_format = args.output_format or settings.output_format
     rh_model = None
+    is_volc = False
+    from tool import image_volcengine as volcengine
+
     if target.channel == "runninghub":
         from tool import image_runninghub as runninghub
 
@@ -1457,6 +1477,20 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                                     output_format=output_format)
             error = None
         except runninghub.ImageRequestRefused as exc:
+            error = str(exc)
+    elif volcengine.is_model(target.model):
+        is_volc = True
+        refusal = volcengine.unsupported(
+            n=args.n, mask=bool(args.mask_image), background=args.background,
+            input_count=len(args.input_images), output_format=output_format,
+        )
+        if refusal:
+            return ToolResult(title="Image request not supported", output=refusal,
+                              metadata={"error": True, "failure_code": "image_request_unsupported"})
+        try:
+            volcengine.plan_request(size=size)
+            error = None
+        except volcengine.ImageRequestRefused as exc:
             error = str(exc)
     else:
         error = _validate_size(target.model, size)
@@ -1478,6 +1512,9 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         )
     if args.background == "transparent" and output_format == "jpeg":
         return ToolResult(title="Invalid transparent output", output="Use png or webp for transparent output")
+    if is_volc:
+        # Seedream has no quality setting; a fixed value keeps identical requests deduplicated.
+        quality = "auto"
     if ctx.abort.is_set():
         return ToolResult(title="Image generation cancelled", output="Cancelled before contacting the image provider.")
 
@@ -1526,6 +1563,29 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             )
             if planned.note:
                 notes.append(f"Note: {planned.note}.")
+        volc_plan = None
+        if is_volc:
+            oversized = next((image for image in images
+                              if len(image.data) > volcengine.MAX_INPUT_MB * 1024 * 1024), None)
+            if oversized is not None:
+                return ToolResult(
+                    title="Image request not supported",
+                    output=f"{oversized.name} is larger than the {volcengine.MAX_INPUT_MB} MB Seedream accepts",
+                    metadata={"error": True, "failure_code": "image_request_unsupported"},
+                )
+            from tool.image_runninghub import image_dimensions
+
+            volc_plan = volcengine.plan_request(
+                size=size, input_size=image_dimensions(images[0].data) if images else None)
+            size = volc_plan.size
+            if volc_plan.note:
+                notes.append(f"Note: {volc_plan.note}.")
+            # Ark fetches inputs itself: short-lived signed URLs of the caller's
+            # own (ownership-checked) assets, never public copies.
+            input_urls = {
+                oss.presign_get(image.oss_key, expires_sec=volcengine.INPUT_URL_TTL_SECONDS): image.asset_id
+                for image in images
+            }
         fingerprint = _fingerprint(
             op=mode,
             model=target.model,
@@ -1790,6 +1850,7 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                         mask=mask,
                         ctx=ctx,
                         operation_key=operation_key,
+                        **({"image_urls": list(input_urls)} if volc_plan is not None else {}),
                     )
                 if effect_claim is not None:
                     from agent.effect_ledger import (
@@ -2145,7 +2206,9 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             key=billing_key, workspace_id=ctx.workspace_id, user_id=ctx.user_id,
             session_id=ctx.session_id, model_id=target.model, count=min(args.n, len(stored)),
             # RunningHub prices by resolution tier, as its price-preview does.
-            **({"tier": planned.tier} if planned is not None else {}),
+            # Seedream on Ark is priced by output pixels, in two tiers.
+            **({"tier": planned.tier} if planned is not None
+               else {"tier": volc_plan.tier} if volc_plan is not None else {}),
         )
     except Exception:  # billing must never fail a stored image
         log.warning("image_gen settlement failed", exc_info=True)

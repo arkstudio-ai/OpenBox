@@ -155,6 +155,16 @@ background. `WIDTHxHEIGHT` becomes the nearest supported aspect ratio and a
 image's shape. `image_task_pending` means the paid task is still running and
 will appear in the resource centre: never resubmit it.
 
+## Configured Volcengine Seedream models
+
+When the result names a `doubao-seedream-*` model: one image per call (`n=1`;
+call again per variant), no mask, `png` or `jpeg` only, and `quality` has no
+effect. `WIDTHxHEIGHT` is used as exact pixels between 921,600 and 4,624,220
+total; a size outside that range is made at the same shape inside it and the
+result says so (A4 `2048x2896` becomes about `1808x2552`). `auto` makes
+`2048x2048`, or keeps an edited image's shape. `background=transparent` works
+only when editing exactly one input image.
+
 ## Boundaries and failure handling
 
 - Use this skill for raster output. Edit established SVG/vector/code-native

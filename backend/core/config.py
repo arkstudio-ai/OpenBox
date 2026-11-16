@@ -191,7 +191,9 @@ class ImageGenerationConfig(BaseModel):
     Credentials stay in the existing provider block.  This section only
     selects which configured provider/model to use and supplies conservative
     output defaults, so chat and image traffic can share one gateway without
-    duplicating secrets.
+    duplicating secrets.  The model id picks the wire: a RunningHub id uses its
+    task API, ``doubao-seedream-*`` uses Volcengine Ark's generations endpoint
+    for edits too, anything else the OpenAI Images API.
     """
 
     provider: str = "runninghub"  # empty = provider prefix of the default chat model

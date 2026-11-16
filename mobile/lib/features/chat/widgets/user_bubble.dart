@@ -8,6 +8,7 @@ import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../utils/voice_request.dart';
 import 'attachment_gallery.dart';
+import 'voice_message_bubble.dart';
 
 const _attachmentsMarker = '\n\n[attachments]\n';
 
@@ -70,6 +71,24 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
         : legacyFiles.map((p) => p.split('/').last).toList();
 
     final needsClamp = !_expanded && text.length > 360;
+    final voice = recordedVoice(widget.message);
+
+    if (voice != null) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.sizeOf(context).width * .88,
+          ),
+          child: VoiceMessageBubble(
+            key: ValueKey(voice['asset_id']),
+            assetId: voice['asset_id'] as String,
+            durationMs: (voice['duration_ms'] as num).toInt(),
+            transcript: original,
+          ),
+        ),
+      );
+    }
 
     return Align(
       alignment: Alignment.centerRight,

@@ -963,5 +963,27 @@
       "completed": "done",
       "error": "failed"
     }
+  },
+  "voiceMessage": {
+    "hold": "Hold to talk",
+    "releaseSend": "Release to send",
+    "releaseCancel": "Release to cancel",
+    "slideCancel": "Slide up to cancel · Up to 60 seconds",
+    "starting": "Opening microphone…",
+    "uploading": "Uploading…",
+    "transcribing": "Transcribing…",
+    "sending": "Sending…",
+    "retry": "Retry sending",
+    "discard": "Record again",
+    "switchVoice": "Voice input",
+    "keyboard": "Keyboard",
+    "showText": "Show transcript",
+    "hideText": "Hide transcript",
+    "playFailed": "Playback failed. Tap the recording to retry.",
+    "permission": "Allow microphone access in system settings, then hold to talk.",
+    "tooShort": "Recording too short. Please try again.",
+    "micFailed": "Could not record. Check your microphone and try again.",
+    "callActive": "End the voice call before recording a message.",
+    "restoreFailed": "Could not restore this voice draft. Reopen the conversation."
   }
 }

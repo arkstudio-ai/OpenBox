@@ -963,5 +963,27 @@
       "completed": "đã xong",
       "error": "có lỗi"
     }
+  },
+  "voiceMessage": {
+    "hold": "Giữ để nói",
+    "releaseSend": "Thả để gửi",
+    "releaseCancel": "Thả để hủy",
+    "slideCancel": "Vuốt lên để hủy · Tối đa 60 giây",
+    "starting": "Đang mở micrô…",
+    "uploading": "Đang tải lên…",
+    "transcribing": "Đang chuyển thành văn bản…",
+    "sending": "Đang gửi…",
+    "retry": "Gửi lại",
+    "discard": "Ghi âm lại",
+    "switchVoice": "Nhập giọng nói",
+    "keyboard": "Bàn phím",
+    "showText": "Xem văn bản",
+    "hideText": "Ẩn văn bản",
+    "playFailed": "Không phát được. Nhấn bản ghi để thử lại.",
+    "permission": "Cho phép truy cập micrô trong cài đặt hệ thống, rồi giữ để nói.",
+    "tooShort": "Bản ghi quá ngắn. Vui lòng thử lại.",
+    "micFailed": "Không ghi âm được. Kiểm tra micrô và thử lại.",
+    "callActive": "Kết thúc cuộc gọi trước khi ghi âm tin nhắn.",
+    "restoreFailed": "Không khôi phục được bản nháp. Hãy mở lại cuộc trò chuyện."
   }
 }

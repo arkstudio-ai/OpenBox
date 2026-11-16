@@ -46,5 +46,13 @@
   "AUTH_EMAIL_REQUIRED": "Enter your e-mail address.",
   "AUTH_EMAIL_INVALID": "That e-mail address does not look right.",
   "AUTH_EMAIL_EXISTS": "This e-mail address already has an account. Sign in instead.",
-  "PAYMENT_REGION_UNAVAILABLE": "Online payment is not available in your region. Ask an administrator to enable it."
+  "PAYMENT_REGION_UNAVAILABLE": "Online payment is not available in your region. Ask an administrator to enable it.",
+  "VOICE_NO_SPEECH": "No speech detected. Please record again.",
+  "VOICE_TRANSCRIPTION_FAILED": "Transcription failed. Your recording is saved; please retry.",
+  "VOICE_INPUT_UNAVAILABLE": "Voice input is temporarily unavailable.",
+  "VOICE_MESSAGE_DURATION": "Record up to 60 seconds.",
+  "VOICE_UPLOAD_UNAVAILABLE": "Could not read your recording. Please retry.",
+  "VOICE_MESSAGE_NOT_FOUND": "Recording not found. Please record again.",
+  "VOICE_MESSAGE_FORMAT": "Use an M4A or WAV recording up to 2 MB.",
+  "VOICE_TRANSCRIPT_MISMATCH": "Recording and transcript do not match. Please record again."
 }

@@ -220,6 +220,7 @@ class AppConfig {
     this.defaultAgent = 'build',
     this.modelTiers = const ModelTiers(),
     this.voiceEnabled = false,
+    this.voiceInputEnabled = false,
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -242,6 +243,7 @@ class AppConfig {
         ? ModelTiers.fromJson(json['model_tiers'] as Map<String, dynamic>)
         : const ModelTiers(),
     voiceEnabled: asBool(json['voice_enabled']) ?? false,
+    voiceInputEnabled: asBool(json['voice_input_enabled']) ?? false,
   );
 
   final List<ModelInfo> models;
@@ -256,6 +258,7 @@ class AppConfig {
   /// The deployment can take voice calls with the personal assistant
   /// (`voice_enabled`). Absent means an older backend: no call entry.
   final bool voiceEnabled;
+  final bool voiceInputEnabled;
 
   VideoModelInfo? videoById(String id) {
     for (final m in videoModels) {

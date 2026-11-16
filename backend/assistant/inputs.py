@@ -14,7 +14,8 @@ from session.internal_parts import begin_session_write
 
 async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
                       attachments=(), model=None, variant=None, variant_explicit=False,
-                      video_model=None, video_resolution=None, entrypoint="assistant_turn", extra_ref=None):
+                      video_model=None, video_resolution=None, entrypoint="assistant_turn", extra_ref=None,
+                      voice_asset_id=None):
     """``entrypoint`` and ``extra_ref`` only describe where the input came from
     (a voice call says so); the command digest, and so idempotency, ignores them."""
     if not client_id or len(client_id) > 64:
@@ -30,6 +31,17 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
         key = inbox_key("assistant-turn", main_id, client_id)
         existing = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == main_id,
             AgentInboxItem.user_id == user_id, AgentInboxItem.client_id == key))
+        voice_ref = None
+        if voice_asset_id:
+            if attachments:
+                raise AssistantError(400, "VOICE_MESSAGE_ATTACHMENTS", "Send voice separately from attachments")
+            old_voice = (existing.origin_ref or {}).get("voice_message") if existing else None
+            if old_voice and old_voice.get("asset_id") == voice_asset_id and existing.prompt == text:
+                voice_ref = old_voice
+            else:
+                from assistant.voice_messages import bind_locked
+                voice_ref = await bind_locked(db, asset_id=voice_asset_id, text=text,
+                                             user_id=user_id, workspace_id=workspace_id)
         # Resolve defaults only on first acceptance. A changed Session default
         # cannot turn a network retry of the same request into a new command.
         chosen_model = model if model is not None else existing.model if existing else main.model
@@ -41,11 +53,15 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
             "variant": variant, "variant_explicit": variant_explicit, "delivery": "followup"})
         if video_model is not None or video_resolution is not None:
             digest = command_digest({"base": digest, "video_model": video_model, "video_resolution": video_resolution})
+        if voice_asset_id:
+            digest = command_digest({"base": digest, "voice_asset_id": voice_asset_id})
         from assistant.request_display import reply_context_locked
         request_context = ((existing.origin_ref or {}).get("request_context") if existing else
                            await reply_context_locked(db, main))
         origin_ref = {**(extra_ref or {}), "actor_user_id": user_id, "entrypoint": entrypoint,
             "client_message_id": client_id, "request_digest": digest}
+        if voice_ref:
+            origin_ref["voice_message"] = voice_ref
         if request_context:
             origin_ref["request_context"] = request_context
         receipt = await accept_inbox_item_locked(db, main, delivery="followup", prompt=text,

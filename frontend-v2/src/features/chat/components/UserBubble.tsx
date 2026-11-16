@@ -10,6 +10,8 @@ import { voiceRequest } from "../lib/voice-request"
 import { SentByAssistantBadge } from "./meta/MetaBadges"
 import { UserMeta } from "./meta/UserMeta"
 import { SendReceipt } from "./SendReceipt"
+import { recordedVoice } from "../lib/voice-message"
+import { VoiceMessageBubble } from "./VoiceMessageBubble"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
 
@@ -30,9 +32,7 @@ function splitAttachments(full: string): { text: string; files: string[] } {
  *  personal assistant sent on the user's behalf (see isAssistantDelegation). */
 function userMessageText(message: MessageWithParts): { text: string; files: string[] } {
   const full = message.parts
-    .filter(
-      (p): p is TextPart => p.type === "text" && (!p.synthetic || p.origin === "assistant_delegation"),
-    )
+    .filter((p): p is TextPart => p.type === "text" && (!p.synthetic || p.origin === "assistant_delegation"))
     .map((p) => p.text)
     .join("\n")
     .trim()
@@ -47,6 +47,7 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
   const { text: original, files } = userMessageText(message)
   const request = voiceRequest(message)
   const text = request ?? original
+  const voice = recordedVoice(message)
   // OSS-era messages carry proper file parts (with asset ids for previews);
   // the text trailer is only the fallback for messages sent before that.
   const fileParts = message.parts.filter((p): p is FilePart => p.type === "file")
@@ -65,12 +66,13 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
   const showFold = clamped && !expanded
 
   return (
-    <div className="group/msg flex min-w-0 max-w-full flex-col items-end gap-2">
-      {text && (
+    <div className="group/msg flex max-w-full min-w-0 flex-col items-end gap-2">
+      {voice && <VoiceMessageBubble {...voice} transcript={original} />}
+      {text && !voice && (
         <div
           ref={bodyRef}
           className={cn(
-            "bg-n200/60 text-ink min-w-0 max-w-[70%] overflow-hidden rounded-xl p-3 text-lg leading-8 [overflow-wrap:anywhere] transition-[max-height] duration-200 max-sm:max-w-[88%]",
+            "bg-n200/60 text-ink max-w-[70%] min-w-0 overflow-hidden rounded-xl p-3 text-lg leading-8 [overflow-wrap:anywhere] transition-[max-height] duration-200 max-sm:max-w-[88%]",
             showFold && "max-h-32",
           )}
         >
@@ -86,19 +88,29 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           onClick={() => setExpanded((v) => !v)}
           className="text-n600 hover:text-ink inline-flex items-center gap-0.5 text-xs transition-colors"
         >
-          <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} strokeWidth={1.8} />
+          <ChevronDown
+            className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
+            strokeWidth={1.8}
+          />
           {expanded ? t("meta.collapseMessage") : t("meta.expandMessage")}
         </button>
       )}
-      {request && <details className="text-n600 max-w-[70%] text-xs max-sm:max-w-[88%]">
-        <summary className="cursor-pointer text-end">{t("message.voiceTranscript")}</summary>
-        <p className="mt-1 whitespace-pre-wrap text-start leading-relaxed [overflow-wrap:anywhere]">{original}</p>
-      </details>}
+      {request && (
+        <details className="text-n600 max-w-[70%] text-xs max-sm:max-w-[88%]">
+          <summary className="cursor-pointer text-end">{t("message.voiceTranscript")}</summary>
+          <p className="mt-1 text-start leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap">
+            {original}
+          </p>
+        </details>
+      )}
       <AttachmentGallery className="items-end" parts={fileParts.filter(isGalleryMedia)} />
       {fileParts
         .filter((p) => !isGalleryMedia(p))
         .map((part) => (
-          <div key={part.id} className="border-hair flex items-center gap-2 rounded-full border py-1 ps-1.5 pe-3.5">
+          <div
+            key={part.id}
+            className="border-hair flex items-center gap-2 rounded-full border py-1 ps-1.5 pe-3.5"
+          >
             <span className="bg-n200 flex size-5.5 items-center justify-center rounded-full">
               <FileText className="text-n600 size-3" />
             </span>

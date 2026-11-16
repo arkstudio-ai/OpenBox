@@ -9,6 +9,17 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-16 16:37 gw2 → `20261116-voice-447385e4`（backend + trajectory-worker + frontend）
+
+- 内容：`main@447385e4e9a44fc466a8a2147dbc72beabb1e82b` 的个人助理语音消息、可播放语音气泡、可展开转写与移动端紧凑输入布局。镜像从该提交的干净归档构建为 linux/amd64；不包含之后合入的 PR #206 火山图片通道。前端 `tsc` / Vite 构建通过，运行层仍 nginx 1.31.3。构建适配及镜像摘要保存在本机发布目录 `provenance.json`；OSS 临时中转对象已清理。
+- 配置：启用独立的 `voice_input`，ASR 为 `qwen-audio-3.1-asr-flash`，官方 DashScope 地址、45 秒超时；复用线上已有有效密钥。实时通话 `voice.enabled=false` 保持不变。添加已实测可调用的 `openai/gemini-3.7-flash` 选项。`.env` 只改 `OPENBOX_IMAGE_TAG`，`config/backend.env` 字节不变，密钥未更换。
+- 并发发布处理：等待期间另一发布流程已把默认模型、快速档、MCP 筛选和素材描述切到 `openai/MiniMax-M3.1-Flash`，并移除不可用的 Gemini 3.8。原候选配置因 CAS 变化被拒绝，随后基于最新线上配置重新准备语音候选，完整保留这次 MiniMax 变更；Qwen 选项与对应档位仍保留。实际探测 Qwen / MiniMax / Gemini 3.7 返回 200，Gemini 3.8 返回 503 `model_not_found`。
+- 用户要求「直接部署」后跳过空闲等待，备份前 2 个、重启前 1 个运行任务。持有发布锁、两次核对配置 SHA-256 后依次切换 backend → trajectory-worker → frontend；后端与 worker 使用 70 秒优雅停止超时，三项均 healthy。配置、compose 与可读取目录的业务库 dump 保存在 `/opt/openbox/backups/20261116-voice-447385e4/activation-20261116T083519Z/`。没有数据库迁移；业务头仍 `pp6c2d3e4f5a`，轨迹头仍 `t0007_turn_alerts`。
+- 发布后验证：六个服务均 running / healthy，三个应用容器重启次数 0、启动后 traceback 0。公网首页 `app-build` 为本次 tag，Logto 配置和抽查的四个静态资源均 200。切换探针共 204 次，其中 50 次 502，分布于 16:36:07–16:37:21 的后端 / 前端重启窗口；16:37:22 起已恢复。没有据此断言所有在途任务都已恢复。
+- 线上实际调用新后端的 ASR：8 秒测试音频正确转写为「这是语音消息功能测试，请只回复“语音消息已收到”，不要创建任务或修改设置。」；元数据 `voice_input_enabled=true`、默认模型 MiniMax。发布前语音相关的后端、Web、Flutter 定向测试及 iOS 文件上传→转写→回复→播放→历史消息验证已通过。Android 真机麦克风尚未回归。
+- Android **1.2.0 (116)** 正式签名 APK 已用 7z 压缩，于 16:13 发送指定飞书产品交流群，详见 [移动端发版记录](MOBILE_RELEASE_1_2_0_116_20261116.md)。
+- 回滚：在发布锁下，将上述备份的 `.env`、`config/backend.env`、`config/openbox.json`、`docker-compose.override.yml` 写回原路径，依次 `docker compose up -d --no-deps backend` / `trajectory-worker` / `frontend` 并等待健康。后端和 worker 回 `20261116-videoex-495184bf`、前端回 `20261115-examplepick-2571d237`；备份包含并发发布完成后的 MiniMax 配置。无需数据库回滚。发布执行脚本在 `/opt/openbox/releases/20261116-voice-447385e4/activate-now.sh`。
+
 ## 2026-11-16 00:09 gw2 → `20261116-videoex-495184bf`（backend + trajectory-worker）
 
 - 内容：PR #203，引导对话里 `question` / `image_gen` / `footage_analyze` 调用前服务端确认已加载入口技能，否则挡回（最多 3 次，方案文档 §12）；PR #204，做一条视频加「挑样例」一步（类型 = 进对话前选的页签 dish / shop / visit），样例按入口区分图片和视频、放错入口的不再生效，后台保存时校验（方案文档 §13）。

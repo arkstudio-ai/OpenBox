@@ -369,6 +369,16 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class VoiceInputConfig(BaseModel):
+    """Short recorded messages; independent of realtime calls and chat models."""
+
+    enabled: bool = True
+    model: str = "qwen-audio-3.1-asr-flash"
+    base_url: str = "https://dashscope.aliyuncs.com"
+    api_key: str = ""
+    timeout_seconds: int = Field(default=45, ge=5, le=120)
+
+
 class VoiceConfig(BaseModel):
     """Realtime voice calls through a Bailian Omni or Audio model.
 
@@ -939,6 +949,7 @@ class OpenBoxConfig(BaseModel):
     asset_description: AssetDescriptionConfig = Field(default_factory=AssetDescriptionConfig)
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
+    voice_input: VoiceInputConfig = VoiceInputConfig()
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     video_compose: VideoComposeConfig = VideoComposeConfig()
     video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()

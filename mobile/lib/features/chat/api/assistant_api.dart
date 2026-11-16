@@ -188,6 +188,44 @@ class AssistantApi {
   Future<Map<String, dynamic>> send(Map<String, dynamic> body) =>
       _post('/api/assistant/turns', body);
 
+  Future<String> uploadVoice(List<int> bytes, String sessionId) async {
+    final ticket = await _post('/api/assets', {
+      'name': 'voice-${DateTime.now().microsecondsSinceEpoch}.m4a',
+      'mime': 'audio/mp4',
+      'size': bytes.length,
+      'session_id': sessionId,
+    });
+    final upload = Dio(); // Never send the user's API bearer to object storage.
+    try {
+      await upload.put<dynamic>(
+        ticket['putUrl'] as String,
+        data: Stream.fromIterable([bytes]),
+        options: Options(
+          headers: {
+            ...asMap(ticket['headers']),
+            Headers.contentLengthHeader: bytes.length,
+          },
+          sendTimeout: const Duration(seconds: 45),
+          receiveTimeout: const Duration(seconds: 45),
+        ),
+      );
+    } finally {
+      upload.close();
+    }
+    final id = ticket['id'] as String;
+    await _post('/api/assets/$id/complete', {});
+    return id;
+  }
+
+  Future<Map<String, dynamic>> transcribeVoice(
+    String assetId,
+    String sessionId,
+  ) async => (await dio.post<Map<String, dynamic>>(
+    '/api/assistant/voice-messages/transcribe',
+    data: {'asset_id': assetId, 'assistant_session_id': sessionId},
+    options: options.copyWith(receiveTimeout: const Duration(seconds: 90)),
+  )).data!;
+
   Future<AssistantTask> task(String id) async => AssistantTask(
     await _get('/api/assistant/tasks/${Uri.encodeComponent(id)}'),
   );

@@ -81,6 +81,12 @@ class InputBody(Body):
 class TurnBody(InputBody):
     client_id: Identity
     assistant_session_id: Identity | None = None
+    voice_asset_id: Identity | None = None
+
+
+class VoiceMessageBody(Body):
+    asset_id: Identity
+    assistant_session_id: Identity
 
 
 class RequestDisplayBody(Body):
@@ -284,10 +290,20 @@ async def turn(body: TurnBody, current_user: dict = Depends(get_current_user)):
     receipt = await inputs.accept_turn(**scope, client_id=body.client_id, text=body.text,
         attachments=body.attachment_ids, model=body.model, variant=body.variant,
         variant_explicit="variant" in body.model_fields_set,
-        video_model=body.video_model, video_resolution=body.video_resolution)
+        video_model=body.video_model, video_resolution=body.video_resolution,
+        voice_asset_id=body.voice_asset_id)
     if receipt["state"] == "accepted":
         schedule_inbox_wake(scope["main_id"], scope["user_id"])
     return receipt
+
+
+@router.post("/voice-messages/transcribe")
+async def transcribe_voice_message(body: VoiceMessageBody, current_user: dict = Depends(get_current_user)):
+    from assistant.voice_messages import transcribe
+    scope = await _scope(current_user)
+    if body.assistant_session_id != scope["main_id"]:
+        raise AssistantError(409, "ASSISTANT_ENTRY_CHANGED", "Reload before sending")
+    return await transcribe(**scope, asset_id=body.asset_id)
 
 
 @router.get("/history")

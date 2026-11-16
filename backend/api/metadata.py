@@ -57,6 +57,7 @@ async def get_config():
     from agent.compaction import get_model_context_limit
     from agent.vision import supports_vision
     from voice.config import enabled as voice_enabled
+    from assistant.voice_messages import enabled as voice_input_enabled
     from session.image_pref import options as image_options
 
     models = _chat_models(
@@ -82,6 +83,7 @@ async def get_config():
         "skill_store_review": config.skill_store_review,
         # Switched on and holding a key: otherwise the call button is hidden.
         "voice_enabled": voice_enabled(config.voice),
+        "voice_input_enabled": voice_input_enabled(config),
     }
 
 

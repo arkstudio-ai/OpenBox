@@ -52,6 +52,7 @@ class Composer extends ConsumerStatefulWidget {
     this.historyController,
     this.assistant = false,
     this.draft,
+    this.voiceInput,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -68,6 +69,7 @@ class Composer extends ConsumerStatefulWidget {
 
   /// Fills the field and focuses it each time its nonce changes.
   final ComposerDraft? draft;
+  final Widget? voiceInput;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -90,6 +92,7 @@ class _ComposerState extends ConsumerState<Composer> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _sending = false;
+  bool _voiceMode = false;
   String? _dismissedSuggestionsId;
   int _suggestionEpoch = 0;
 
@@ -101,6 +104,7 @@ class _ComposerState extends ConsumerState<Composer> {
       widget.suggestions!.id != _dismissedSuggestionsId &&
       !widget.busy &&
       !_sending &&
+      !_voiceMode &&
       !_uploading &&
       _controller.text.isEmpty &&
       _attachments.isEmpty;
@@ -531,6 +535,29 @@ class _ComposerState extends ConsumerState<Composer> {
         ? null
         : ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
+    final voiceMode = _voiceMode && widget.voiceInput != null;
+    final voiceToggle = widget.voiceInput == null
+        ? null
+        : IconButton(
+            key: const Key('voice-message-mode'),
+            onPressed: _sending || _uploading
+                ? null
+                : () {
+                    _focusNode.unfocus();
+                    setState(() => _voiceMode = !_voiceMode);
+                  },
+            constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+            icon: Icon(
+              voiceMode ? Icons.keyboard_outlined : Icons.mic_none,
+              size: 24,
+              color: t.n700,
+            ),
+            tooltip: i18n.t(
+              voiceMode
+                  ? 'chat:voiceMessage.keyboard'
+                  : 'chat:voiceMessage.switchVoice',
+            ),
+          );
 
     final input = Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -566,130 +593,145 @@ class _ComposerState extends ConsumerState<Composer> {
               onRemove: (resource) =>
                   setState(() => _attachments.remove(resource)),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              autofocus: widget.autofocus,
-              minLines: 1,
-              maxLines: 6,
-              textInputAction: TextInputAction.newline,
-              onChanged: (_) => setState(() {}),
-              style: TextStyle(
-                fontSize: FontSizes.lg,
-                height: 1.5,
-                color: t.ink,
+          if (voiceMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 12, 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  voiceToggle!,
+                  const SizedBox(width: 8),
+                  Expanded(child: widget.voiceInput!),
+                ],
               ),
-              decoration: InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-                border: InputBorder.none,
-                hintText: i18n.t(
-                  // A task's own conversation (the work): say what typing
-                  // here does (VOICE_SEAM_PLAN §12.3).
-                  widget.session?.assistantManaged == true &&
-                          widget.session?.kind != 'assistant' &&
-                          !widget.busy
-                      ? 'chat:composer.placeholderRoom'
-                      : '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
-                            '.${widget.busy ? 'placeholderRunning' : 'placeholder'}',
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                autofocus: widget.autofocus,
+                minLines: 1,
+                maxLines: 6,
+                textInputAction: TextInputAction.newline,
+                onChanged: (_) => setState(() {}),
+                style: TextStyle(
+                  fontSize: FontSizes.lg,
+                  height: 1.5,
+                  color: t.ink,
                 ),
-                hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  border: InputBorder.none,
+                  hintText: i18n.t(
+                    // A task's own conversation (the work): say what typing
+                    // here does (VOICE_SEAM_PLAN §12.3).
+                    widget.session?.assistantManaged == true &&
+                            widget.session?.kind != 'assistant' &&
+                            !widget.busy
+                        ? 'chat:composer.placeholderRoom'
+                        : '${widget.assistant ? 'chat:assistant.composer' : 'chat:composer'}'
+                              '.${widget.busy ? 'placeholderRunning' : 'placeholder'}',
+                  ),
+                  hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 2, 8, 0),
-            child: Row(
-              children: [
-                // The controls scroll rather than squeeze: a long model name
-                // must not shrink its neighbours to a zero-width sliver on a
-                // narrow phone.
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        if (widget.resources != null) ...[
-                          IconButton(
-                            onPressed: _showToolsMenu,
-                            icon: Icon(Icons.add, size: 20, color: t.n700),
-                            tooltip: i18n.t('chat:composer.tools'),
-                            visualDensity: VisualDensity.compact,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 32,
-                              height: 32,
+          if (!voiceMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 8, 0),
+              child: Row(
+                children: [
+                  // The controls scroll rather than squeeze: a long model name
+                  // must not shrink its neighbours to a zero-width sliver on a
+                  // narrow phone.
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ?voiceToggle,
+                          if (widget.resources != null) ...[
+                            IconButton(
+                              onPressed: _showToolsMenu,
+                              icon: Icon(Icons.add, size: 20, color: t.n700),
+                              tooltip: i18n.t('chat:composer.tools'),
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 32,
+                                height: 32,
+                              ),
+                              padding: EdgeInsets.zero,
                             ),
-                            padding: EdgeInsets.zero,
-                          ),
-                          const SizedBox(width: 2),
+                            const SizedBox(width: 2),
+                          ],
+                          if (!widget.assistant)
+                            _pill(
+                              t,
+                              label: modelLabel,
+                              icon: Icons.workspaces_outline,
+                              onTap: () =>
+                                  (chatTiers.isNotEmpty
+                                  ? showChatTierPicker
+                                  : showModelPicker)(
+                                    context,
+                                    ref,
+                                    sessionKey: widget.sessionKey,
+                                    currentModel: widget.session?.model,
+                                    currentVariant: widget.session?.variant,
+                                  ),
+                            ),
+                          // Beside the chat model on purpose, as on web: the
+                          // two are picked independently and someone setting up
+                          // a video turn expects both in one place. Hidden when
+                          // the deployment publishes no video models.
+                          if (videoModels.isNotEmpty && !widget.assistant) ...[
+                            const SizedBox(width: 6),
+                            _pill(
+                              t,
+                              label: videoPillLabel,
+                              icon: Icons.movie_creation_outlined,
+                              onTap: () =>
+                                  (videoTiers.isNotEmpty
+                                  ? showVideoTierPicker
+                                  : showVideoModelPicker)(
+                                    context,
+                                    ref,
+                                    sessionKey: widget.sessionKey,
+                                    currentModel: widget.session?.videoModel,
+                                    currentResolution:
+                                        widget.session?.videoResolution,
+                                  ),
+                            ),
+                          ],
+                          if (widget.session?.tokenUsage != null &&
+                              activeModel != null &&
+                              !widget.assistant) ...[
+                            const SizedBox(width: 8),
+                            ContextRing(
+                              used: widget.session!.tokenUsage!.context,
+                              limit: activeModel.contextLimit ?? 0,
+                              compactionThreshold: activeModel.compaction
+                                  ?.thresholdFor(reasoning.activeId),
+                            ),
+                          ],
                         ],
-                        if (!widget.assistant)
-                          _pill(
-                            t,
-                            label: modelLabel,
-                            icon: Icons.workspaces_outline,
-                            onTap: () =>
-                                (chatTiers.isNotEmpty
-                                ? showChatTierPicker
-                                : showModelPicker)(
-                                  context,
-                                  ref,
-                                  sessionKey: widget.sessionKey,
-                                  currentModel: widget.session?.model,
-                                  currentVariant: widget.session?.variant,
-                                ),
-                          ),
-                        // Beside the chat model on purpose, as on web: the
-                        // two are picked independently and someone setting up
-                        // a video turn expects both in one place. Hidden when
-                        // the deployment publishes no video models.
-                        if (videoModels.isNotEmpty && !widget.assistant) ...[
-                          const SizedBox(width: 6),
-                          _pill(
-                            t,
-                            label: videoPillLabel,
-                            icon: Icons.movie_creation_outlined,
-                            onTap: () =>
-                                (videoTiers.isNotEmpty
-                                ? showVideoTierPicker
-                                : showVideoModelPicker)(
-                                  context,
-                                  ref,
-                                  sessionKey: widget.sessionKey,
-                                  currentModel: widget.session?.videoModel,
-                                  currentResolution:
-                                      widget.session?.videoResolution,
-                                ),
-                          ),
-                        ],
-                        if (widget.session?.tokenUsage != null &&
-                            activeModel != null &&
-                            !widget.assistant) ...[
-                          const SizedBox(width: 8),
-                          ContextRing(
-                            used: widget.session!.tokenUsage!.context,
-                            limit: activeModel.contextLimit ?? 0,
-                            compactionThreshold: activeModel.compaction
-                                ?.thresholdFor(reasoning.activeId),
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _SendButton(
-                  busy: widget.busy,
-                  canSend: _canSend,
-                  onSend: _submit,
-                  onStop: widget.onStop,
-                  stopTask: widget.session?.assistantManaged == true,
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  _SendButton(
+                    busy: widget.busy,
+                    canSend: _canSend,
+                    onSend: _submit,
+                    onStop: widget.onStop,
+                    stopTask: widget.session?.assistantManaged == true,
+                  ),
+                ],
+              ),
             ),
-          ),
           const AiDisclosure(),
         ],
       ),

@@ -967,5 +967,27 @@
   "card": {
     "later": "稍后再说",
     "recommended": "推荐"
+  },
+  "voiceMessage": {
+    "hold": "按住说话",
+    "releaseSend": "松开发送",
+    "releaseCancel": "松开取消",
+    "slideCancel": "上滑取消 · 最长 60 秒",
+    "starting": "正在打开麦克风…",
+    "uploading": "正在上传…",
+    "transcribing": "正在转文字…",
+    "sending": "正在发送…",
+    "retry": "重试发送",
+    "discard": "重新录音",
+    "switchVoice": "语音输入",
+    "keyboard": "键盘输入",
+    "showText": "查看文字",
+    "hideText": "收起文字",
+    "playFailed": "播放失败，点击语音重试",
+    "permission": "请在系统设置中允许麦克风访问，再按住说话。",
+    "tooShort": "说话时间太短，请重新录音。",
+    "micFailed": "录音未成功，请检查麦克风后重试。",
+    "callActive": "请先结束语音通话，再发送语音消息。",
+    "restoreFailed": "语音草稿未能恢复，请重新进入对话。"
   }
 }

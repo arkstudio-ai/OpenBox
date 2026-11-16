@@ -315,7 +315,9 @@ class AssistantController
   void showVoiceInput({required String clientMessageId, required String text}) {
     final main = _mainId;
     if (!_current || main == null || text.trim().isEmpty) return;
-    if (_held.values.any((m) => m.isUser && m.clientMessageId == clientMessageId) ||
+    if (_held.values.any(
+          (m) => m.isUser && m.clientMessageId == clientMessageId,
+        ) ||
         state.messages.any((m) => m.clientMessageId == clientMessageId)) {
       return;
     }
@@ -406,12 +408,22 @@ class AssistantController
     }
   }
 
-  Future<void> send(String text, List<String> attachments) async {
+  Future<void> send(
+    String text,
+    List<String> attachments, {
+    Map<String, dynamic>? voiceMessage,
+    String? clientId,
+  }) async {
     if (!_current || state.sending || state.snapshot?.session == null) {
       throw StateError('Assistant unavailable');
     }
     final main = state.snapshot!.session!;
-    final fingerprint = _digest([main.id, text, attachments]);
+    final fingerprint = _digest([
+      main.id,
+      text,
+      attachments,
+      if (voiceMessage != null) voiceMessage['asset_id'],
+    ]);
     var saved = _stored('send');
     if (saved != null && saved['fingerprint'] != fingerprint) {
       throw ApiError(
@@ -435,7 +447,7 @@ class AssistantController
     ).value;
     final video = ref.read(pickedVideoProvider(main.id));
     saved ??= {
-      'client_id': _identity(),
+      'client_id': clientId ?? _identity(),
       'fingerprint': fingerprint,
       'choices': {
         if (model != null && model.isNotEmpty) 'model': model,
@@ -456,7 +468,15 @@ class AssistantController
         role: 'user',
         clientMessageId: id,
         createdAt: DateTime.now(),
-        parts: [TextPart(id: 'tmp-part-$id', text: text)],
+        parts: [
+          TextPart(
+            id: 'tmp-part-$id',
+            text: text,
+            originRef: voiceMessage == null
+                ? const {}
+                : {'voice_message': voiceMessage},
+          ),
+        ],
       );
       state = state.copyWith(
         messages: [...state.messages.where((m) => m.id != echo.id), echo],
@@ -467,6 +487,7 @@ class AssistantController
         'delivery': 'followup',
         'text': text,
         'attachment_ids': attachments,
+        if (voiceMessage != null) 'voice_asset_id': voiceMessage['asset_id'],
         ...asMap(saved['choices']),
       });
       if (receipt['assistant_session_id'] != main.id ||

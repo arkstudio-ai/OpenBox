@@ -17,6 +17,7 @@ import '../../shared/widgets/toast.dart';
 import 'api/assistant_api.dart';
 import 'state/assistant_controller.dart';
 import 'state/assistant_pending.dart';
+import 'state/config_providers.dart';
 import 'state/stream_store.dart';
 import 'utils/compaction_view.dart';
 import 'utils/suggestions.dart';
@@ -31,6 +32,7 @@ import 'widgets/assistant_welcome.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
+import 'widgets/composer/voice_message_input.dart';
 import 'widgets/markdown_view.dart';
 import 'widgets/user_bubble.dart';
 
@@ -328,6 +330,15 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
             suggestions: suggestions,
             draft: _draft,
             onSend: _send,
+            voiceInput:
+                ref.watch(appConfigProvider).valueOrNull?.voiceInputEnabled ==
+                    true
+                ? VoiceMessageInput(
+                    key: ValueKey('voice-${session.id}'),
+                    scope: widget.scope,
+                    sessionId: session.id,
+                  )
+                : null,
           ),
         ),
       ],

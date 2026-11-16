@@ -46,5 +46,13 @@
   "AUTH_EMAIL_REQUIRED": "Vui lòng nhập địa chỉ e-mail.",
   "AUTH_EMAIL_INVALID": "Địa chỉ e-mail không hợp lệ.",
   "AUTH_EMAIL_EXISTS": "E-mail này đã có tài khoản. Vui lòng đăng nhập.",
-  "PAYMENT_REGION_UNAVAILABLE": "Khu vực của bạn chưa hỗ trợ thanh toán trực tuyến. Hãy liên hệ quản trị viên."
+  "PAYMENT_REGION_UNAVAILABLE": "Khu vực của bạn chưa hỗ trợ thanh toán trực tuyến. Hãy liên hệ quản trị viên.",
+  "VOICE_NO_SPEECH": "Không nghe thấy giọng nói. Vui lòng ghi âm lại.",
+  "VOICE_TRANSCRIPTION_FAILED": "Chuyển văn bản thất bại. Bản ghi đã được lưu, hãy thử lại.",
+  "VOICE_INPUT_UNAVAILABLE": "Tạm thời không thể nhập giọng nói.",
+  "VOICE_MESSAGE_DURATION": "Ghi âm tối đa 60 giây.",
+  "VOICE_UPLOAD_UNAVAILABLE": "Không đọc được bản ghi. Vui lòng thử lại.",
+  "VOICE_MESSAGE_NOT_FOUND": "Không tìm thấy bản ghi. Hãy ghi âm lại.",
+  "VOICE_MESSAGE_FORMAT": "Dùng bản ghi M4A hoặc WAV tối đa 2 MB.",
+  "VOICE_TRANSCRIPT_MISMATCH": "Bản ghi và văn bản không khớp. Hãy ghi âm lại."
 }

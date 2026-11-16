@@ -9,6 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-16 20:46 gw2 → `20261116-dialogue-voice-4fad529c`（backend + trajectory-worker + frontend）
+
+- 源码：已合入并推送 `main@4fad529c1b288151177e7eb2853cd22f6f1ce9e2`。语音消息扩展到普通任务、新建与四个创作对话，自由回答卡片支持转写填字；包含当前生产已用的火山图片通道和大图压缩修复。后端从干净归档全量构建 linux/amd64，Python 锁定依赖经阿里云镜像按哈希校验；Web 从相同归档以锁文件匹配的本地依赖构建，再装入官方 nginx 1.31.3 运行层。
+- 配置：只更新 `.env` 的 `OPENBOX_IMAGE_TAG` 与 compose override 中三个应用镜像。`config/backend.env`、`config/openbox.json`、基础 compose 字节不变；默认 `openai/MiniMax-M3.1-Flash`、ASR `qwen-audio-3.1-asr-flash`、`voice_input_enabled=true`、关闭实时通话以及火山图片配置均保留。本次不需要新增环境变量或数据库迁移；业务头 `pp6c2d3e4f5a`，轨迹头 `t0007_turn_alerts`。
+- 持有发布锁，配置与运行镜像身份检查通过，切换前运行任务数为 0。备份 `/opt/openbox/backups/20261116-dialogue-voice-4fad529c/activation-20261116T124418Z/` 包含配置、compose、容器元数据及已验证目录的业务库 dump。按 backend → trajectory-worker → frontend 顺序使用 `--no-deps` 切换，每项等待 healthy；后端和 worker 保留 70 秒优雅停止窗口。
+- 验证：六个服务 running / healthy，三个应用容器重启次数为 0、发布窗口 traceback 为 0；八个关键源码文件 SHA-256 与发布提交一致。公网首页 build 标识正确，抽查四个静态资源、录音 worklet、Logto 配置均 200；通用转写接口匿名请求为 401。75 次切换探针中有 13 次 502，位于 20:44:55–20:45:23 的重启窗口，随后持续恢复 200。未据此宣称 Android 真机或全部生产会话完成端到端验收。
+- 发布前语音相关 119 项定向测试及 iOS 模拟器流程通过；合并最新 main 后语音与大图内联后端测试 38 项通过。Android **1.2.0(117)** 正式签名 APK 经 7z 压缩并完成校验，于 20:46 发往指定飞书产品交流群，见 [移动端发版记录](MOBILE_RELEASE_1_2_0_117_20261116.md)。OSS 本次三个临时中转对象已清理。
+- 回滚：持有 `/opt/openbox/.deployment.lock`，恢复上述备份的 `.env`、`docker-compose.override.yml`，依次 `docker compose up -d --no-deps --timeout 70 backend` / `trajectory-worker` / `frontend` 并确认健康。后端与 worker 回 `20261116-imgfit-6ee58af0`，前端回 `20261116-voice-447385e4`；无需数据库回滚。执行脚本保留在 `/opt/openbox/releases/20261116-dialogue-voice-4fad529c/activate.sh`。
+
 ## 2026-11-16 16:37 gw2 → `20261116-voice-447385e4`（backend + trajectory-worker + frontend）
 
 - 内容：`main@447385e4e9a44fc466a8a2147dbc72beabb1e82b` 的个人助理语音消息、可播放语音气泡、可展开转写与移动端紧凑输入布局。镜像从该提交的干净归档构建为 linux/amd64；不包含之后合入的 PR #206 火山图片通道。前端 `tsc` / Vite 构建通过，运行层仍 nginx 1.31.3。构建适配及镜像摘要保存在本机发布目录 `provenance.json`；OSS 临时中转对象已清理。

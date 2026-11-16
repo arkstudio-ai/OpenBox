@@ -4320,6 +4320,48 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
     }
 
 
+# Providers cap one inline image. Bailian answers "Exceeded limit on max bytes
+# per data-uri item : 20971520" and the turn dies — and keeps dying, because the
+# image stays in history. Whether that 20 MB counts the base64 text or the
+# decoded bytes is not documented, so stay under it either way: base64 inflates
+# by a third, and 12 MB of bytes is 16 MB of text.
+_INLINE_IMAGE_MAX_BYTES = 12 * 1024 * 1024
+_INLINE_JPEG_QUALITIES = (90, 80, 70, 60, 50, 40)
+
+
+def _fit_inline_image(data: bytes, mime: str) -> tuple[bytes, str] | None:
+    """Return (bytes, mime) small enough to inline, or None when it cannot be done.
+
+    An image already under the limit passes through untouched — screenshots
+    stay lossless PNG. A larger one is re-encoded as JPEG at full resolution,
+    stepping the quality down until it fits; pixels are never resized.
+    """
+    if len(data) <= _INLINE_IMAGE_MAX_BYTES:
+        return data, mime
+    import io
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(data)) as opened:
+            # Re-encoding drops EXIF, so bake the rotation into the pixels first.
+            image = ImageOps.exif_transpose(opened)
+            if image.mode in ("RGBA", "LA", "P"):
+                rgba = image.convert("RGBA")
+                image = Image.new("RGB", rgba.size, (255, 255, 255))
+                image.paste(rgba, mask=rgba.getchannel("A"))
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+            for quality in _INLINE_JPEG_QUALITIES:
+                out = io.BytesIO()
+                image.save(out, format="JPEG", quality=quality, optimize=True)
+                if out.tell() <= _INLINE_IMAGE_MAX_BYTES:
+                    return out.getvalue(), "image/jpeg"
+    except Exception as e:
+        log.warning(f"oversized image could not be re-encoded: {e}")
+    return None
+
+
 @latency_measured_span("request.resolve_images")
 async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                          media_sources: dict[str, str] | None = None,
@@ -4385,8 +4427,14 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                     if resp.status_code != 200:
                         log.warning(f"image {ref['asset_id']} fetch: HTTP {resp.status_code}")
                         return ref["asset_id"], None
-                    encoded = base64.b64encode(resp.content).decode()
-                    return ref["asset_id"], f"data:{ref['mime']};base64,{encoded}"
+                    fitted = await _asyncio.to_thread(_fit_inline_image, resp.content, ref["mime"])
+                    if fitted is None:
+                        log.warning(f"image {ref['asset_id']} dropped: {len(resp.content)} bytes "
+                                    "and could not be compressed under the inline limit")
+                        return ref["asset_id"], None
+                    data, mime = fitted
+                    encoded = base64.b64encode(data).decode()
+                    return ref["asset_id"], f"data:{mime};base64,{encoded}"
                 except Exception as e:
                     log.warning(f"image {ref['asset_id']} fetch failed: {e}")
                     return ref["asset_id"], None

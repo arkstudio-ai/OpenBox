@@ -380,6 +380,7 @@ async def accept_inbox_item(
     origin: InputOrigin = "unknown",
     origin_ref: dict | None = None,
     system: bool = False,
+    voice_asset_id: str | None = None,
 ) -> InboxReceipt:
     """Persist one idempotent input before attempting to own its Session.
 
@@ -398,7 +399,7 @@ async def accept_inbox_item(
             delivery=delivery, prompt=prompt, attachments=attachments, client_id=client_id,
             agent=agent, model=model, video_model=video_model,
             video_resolution=video_resolution, variant=variant, output_format=output_format,
-            origin=origin, origin_ref=origin_ref, system=system,
+            origin=origin, origin_ref=origin_ref, system=system, voice_asset_id=voice_asset_id,
         )
     if result.created:
         _notify((result.id,))
@@ -422,6 +423,7 @@ async def accept_inbox_item_locked(
     origin: InputOrigin = "unknown",
     origin_ref: dict | None = None,
     system: bool = False,
+    voice_asset_id: str | None = None,
 ) -> InboxReceipt:
     """Accept input inside a caller-owned Session transaction and row lock.
 
@@ -448,6 +450,13 @@ async def accept_inbox_item_locked(
         output_format=output_format,
         system=system,
     )
+    if voice_asset_id:
+        if origin != "human" or not client_id or attachments:
+            raise ValueError("Voice requires a human client identity and no attachments")
+        from assistant.voice_messages import bind_locked
+        voice_ref = await bind_locked(db, asset_id=voice_asset_id, text=prompt,
+            user_id=user_id, workspace_id=owner.workspace_id)
+        origin_ref = {**origin_ref, "voice_message": voice_ref}
     digest = _request_digest(
         delivery=delivery,
         prompt=prompt,

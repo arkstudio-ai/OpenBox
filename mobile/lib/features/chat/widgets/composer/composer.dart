@@ -540,7 +540,7 @@ class _ComposerState extends ConsumerState<Composer> {
         ? null
         : IconButton(
             key: const Key('voice-message-mode'),
-            onPressed: _sending || _uploading
+            onPressed: _sending || _uploading || _attachments.isNotEmpty
                 ? null
                 : () {
                     _focusNode.unfocus();

@@ -16,6 +16,7 @@ import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
 import '../../state/question_fold.dart';
+import '../composer/conversation_voice_input.dart';
 import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
 import 'folded_question_row.dart';
@@ -726,6 +727,25 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
             ),
           ],
+          if (question.custom)
+            VoiceAnswerInput(
+              key: ValueKey('voice-answer-${widget.request.id}:$index'),
+              draftKey: 'answer:${widget.request.id}:$index',
+              disabled: draft.submitting || draft.transferring,
+              onText: (text) {
+                final next = [
+                  _custom[index].text.trim(),
+                  text,
+                ].where((s) => s.isNotEmpty).join(' ');
+                if (next.length > 5000) {
+                  throw StateError(i18n.t('chat:voiceMessage.answerTooLong'));
+                }
+                _custom[index].text = next;
+                ref
+                    .read(questionDraftProvider.notifier)
+                    .write(widget.request.id, _count, index, next);
+              },
+            ),
           if (question.allowAttachments)
             QuestionResources(request: widget.request, index: index),
           if (index < _count - 1 &&

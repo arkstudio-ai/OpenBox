@@ -114,3 +114,77 @@ def test_custom_gateway_never_receives_official_fallback(monkeypatch):
     config = OpenBoxConfig(voice_input={'base_url': 'https://relay.invalid'})
     assert voice.api_key(config) == ''
     assert not voice.enabled(config)
+
+
+@pytest.mark.parametrize('managed', [False, True])
+async def test_voice_in_other_dialogues_is_bound_and_idempotent(monkeypatch, managed):
+    from fastapi import FastAPI
+    from api import sessions as routes
+    from assistant.commands import accept_task_command
+    from session import session as sessions
+    owner, other, workspace = await accounts()
+    if managed:
+        main = await ensure_main_session(user_id=owner, workspace_id=workspace)
+        task = await accept_task_command(user_id=owner, workspace_id=workspace, main_id=main.id,
+            idempotency_key='voice-task', project_id=main.project_id, prompt='Original work')
+        session_id = task['execution_session_id']
+    else:
+        session_id = (await sessions.create_session(user_id=owner, workspace_id=workspace)).id
+    meta = {'voice_message': {'text': '不要加辣', 'duration_ms': 3000, 'sha256': 'a'*64, 'model': 'test-asr'}}
+    await recording(owner, workspace, meta=meta)
+    await recording(other, workspace, id='other-recording', meta=meta)
+    async def no_wake(*args, **kwargs):
+        return None
+    monkeypatch.setattr(inbox, 'wake_inbox_session', no_wake)
+    monkeypatch.setattr(routes, 'check_concurrent_agents', no_wake)
+    app = FastAPI()
+    app.include_router(routes.router, prefix='/api/agent')
+    app.dependency_overrides[routes.get_current_user] = lambda: {'user_id': owner, 'workspace_id': workspace}
+    app.dependency_overrides[routes.get_workspace] = lambda: {'id': workspace}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        path = f'/api/agent/session/{session_id}/prompt_async'
+        body = {'text': '不要加辣', 'client_message_id': 'dialogue-voice', 'voice_asset_id': 'voice-asset'}
+        assert (await client.post(path, json={**body, 'voice_asset_id': 'other-recording'})).status_code == 404
+        assert (await client.post(path, json={**body, 'text': '加辣'})).status_code == 409
+        first = await client.post(path, json=body)
+        assert first.status_code == 200, first.text
+        replay = await client.post(path, json=body)
+        assert replay.status_code == 200, replay.text
+        assert first.json()['inboxId'] == replay.json()['inboxId']
+        assert (await client.post(path, json={**body, 'voice_asset_id': None, 'delivery': 'followup'})).status_code == 409
+        assert (await client.post(path, json={**body, 'voice_asset_id': None})).status_code == 409
+    async with get_db_session() as db:
+        row = await db.get(AgentInboxItem, first.json()['inboxId'])
+        assert row.session_id == session_id
+        assert row.origin_ref['voice_message']['asset_id'] == 'voice-asset'
+        assert row.attachments == []
+
+
+async def test_generic_transcription_is_private_and_does_not_create_assistant(monkeypatch):
+    from fastapi import FastAPI
+    from api import assets
+    from assistant.service import get_main_session
+    owner, other, workspace = await accounts()
+    await recording(owner, workspace)
+    async def chunks(*args, **kwargs):
+        yield b'audio'
+    calls = []
+    async def recognize(data, mime):
+        calls.append(data)
+        return {'text': '菜单不要加辣', 'duration_ms': 3000, 'sha256': 'a'*64, 'model': 'test-asr'}
+    monkeypatch.setattr(voice, 'get_oss', lambda: SimpleNamespace(get_object_chunks=chunks))
+    monkeypatch.setattr(voice, 'recognize', recognize)
+    actor = {'user_id': owner, 'workspace_id': workspace}
+    app = FastAPI()
+    app.include_router(assets.router)
+    app.dependency_overrides[assets.get_current_user] = lambda: actor
+    app.dependency_overrides[assets.get_workspace] = lambda: {'id': workspace}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        path = '/api/assets/voice-asset/transcribe'
+        first = await client.post(path)
+        assert first.status_code == 200, first.text
+        assert (await client.post(path)).json() == first.json()
+        assert len(calls) == 1
+        actor['user_id'] = other
+        assert (await client.post(path)).status_code == 404
+    assert await get_main_session(user_id=owner, workspace_id=workspace) is None

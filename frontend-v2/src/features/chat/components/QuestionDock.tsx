@@ -24,10 +24,12 @@ import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
 import type { MentionScope } from "../hooks/useMentionMenu"
 import { QuestionResources } from "./QuestionResources"
+import { RecordedVoiceInput } from "./RecordedVoiceInput"
 
 const Markdown = lazy(() => import("./Markdown"))
 
 interface OneProps {
+  requestId: string
   item: QuestionItem
   index: number
   total: number
@@ -41,7 +43,7 @@ interface OneProps {
   resourceCapacity: number
 }
 
-function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete, sessionId, resourceScope, onTransferBlocked, resourceCapacity }: OneProps) {
+function OneQuestion({ requestId, item, index, total, draft, disabled, onChange, onComplete, sessionId, resourceScope, onTransferBlocked, resourceCapacity }: OneProps) {
   const { t } = useTranslation("chat")
   const picked = draft.use_custom ? [] : draft.selected
   const options = item.options ?? []
@@ -122,6 +124,12 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
           className="border-hair bg-bg text-ink placeholder:text-n500 focus:border-accent w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
         />
       )}
+      {allowCustom && <RecordedVoiceInput draftKey={`answer:${requestId}:${index}`} answer disabled={disabled}
+        onSend={(text) => {
+          const custom = [draft.custom.trim(), text].filter(Boolean).join(" ")
+          if (custom.length > 5000) throw new Error(t("voiceMessage.answerTooLong"))
+          onChange({ ...draft, custom, use_custom: true })
+        }} />}
       {item.allow_attachments && (
         <QuestionResources sessionId={sessionId} selected={draft.attachments ?? []}
           capacity={resourceCapacity}
@@ -200,6 +208,7 @@ export function QuestionDock({ request, resourceScope }: { request: QuestionRequ
       </nav>
       <div>
         <OneQuestion
+          requestId={request.id}
           key={`${request.id}:${page}`}
           item={questions[page]}
           index={page}

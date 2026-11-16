@@ -19,6 +19,7 @@ import 'widgets/cards/permission_card.dart';
 import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
+import 'widgets/composer/conversation_voice_input.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/execution_effect_notice.dart';
 import 'widgets/interruption_divider.dart';
@@ -40,8 +41,10 @@ class ChatInputState {
     required this.hasPendingInput,
     this.onStop,
     this.status,
+    this.voiceInput,
   });
 
+  final Widget? voiceInput;
   final bool busy;
   final Future<void> Function(String text, List<String> attachments) onSend;
   final VoidCallback? onStop;
@@ -386,6 +389,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 status: status,
                 userTurns: rows.whereType<UserRowData>().length,
                 hasPendingInput: permissions.isNotEmpty || questions.isNotEmpty,
+                voiceInput: conversationVoiceInput(
+                  ref,
+                  sessionKey: sessionId,
+                  disabled: busy,
+                ),
                 onSend: (text, attachments) => ref
                     .read(chatSessionProvider(sessionId).notifier)
                     .send(text, attachments: attachments),
@@ -403,6 +411,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: Composer(
               key: ValueKey(sessionId),
               sessionKey: sessionId,
+              voiceInput: conversationVoiceInput(
+                ref,
+                sessionKey: sessionId,
+                disabled: busy,
+              ),
               session: sessionState.session,
               busy: busy,
               resources: resources,

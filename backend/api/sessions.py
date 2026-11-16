@@ -49,6 +49,7 @@ class PromptBody(BaseModel):
     #: Omitted keeps the conversation selection; explicit null clears it and
     #: returns to the selected model's advertised default.
     variant: ReasoningVariant | None = None
+    voice_asset_id: str | None = Field(default=None, min_length=1, max_length=64)
     client_message_id: str | None = Field(default=None, max_length=64)
     #: Omission preserves main's send contract (new sends preempt). Explicit
     #: followup queues, steer joins a live step, and inject never wakes idle work.
@@ -305,7 +306,7 @@ async def _accept_managed_prompt(session, body: PromptBody, user_id: str):
             agent=body.agent, expected_revision=body.expected_task_revision,
             expected_run=body.expected_run.model_dump() if body.expected_run else None,
             video_model=body.video_model, video_resolution=body.video_resolution,
-            has_unsupported_options=body.format is not None)
+            has_unsupported_options=body.format is not None, voice_asset_id=body.voice_asset_id)
     except AssistantError as exc:
         raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
     except InboxIdempotencyConflict as exc:
@@ -343,6 +344,7 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             variant=chosen_variant,
             video_resolution=body.video_resolution,
             output_format=body.format,
+            voice_asset_id=body.voice_asset_id,
             origin="human",
             origin_ref={"actor_user_id": user_id, "entrypoint": "session_prompt"},
         )
@@ -645,6 +647,18 @@ def _announce_session_update(session, updates: dict, user_id: str) -> None:
 
 async def _send_legacy_prompt(session, body: PromptBody, user_id: str, *, asynchronous: bool):
     """Preserve the main API while using generation-fenced kernel writes."""
+    if body.client_message_id:
+        # A voice retry cannot fall through to legacy text preemption merely
+        # by losing its audio field (and erase the original recording binding).
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.agent_inbox import AgentInboxItem
+        async with get_db_session() as db:
+            old = await db.scalar(select(AgentInboxItem).where(
+                AgentInboxItem.session_id == session.id, AgentInboxItem.user_id == user_id,
+                AgentInboxItem.client_id == body.client_message_id))
+            if old is not None and (old.origin_ref or {}).get("voice_message"):
+                raise HTTPException(409, "Retry this message with its original recording")
     active = session.status in _ACTIVE_SESSION_STATUSES
     if not active:
         await check_concurrent_agents(user_id, get_config())
@@ -765,7 +779,7 @@ async def send_message(
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
     receipt = await _accept_managed_prompt(session, body, user_id)
-    if receipt is None and body.delivery is None:
+    if receipt is None and body.delivery is None and body.voice_asset_id is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=False)
     if receipt is None:
         receipt = await _accept_prompt(session, body, user_id)
@@ -813,7 +827,7 @@ async def send_message_async(
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
     receipt = await _accept_managed_prompt(session, body, user_id)
-    if receipt is None and body.delivery is None:
+    if receipt is None and body.delivery is None and body.voice_asset_id is None:
         return await _send_legacy_prompt(session, body, user_id, asynchronous=True)
     if receipt is None and session.status not in _ACTIVE_SESSION_STATUSES:
         # Replacing this Session's own active turn reuses its existing quota

@@ -112,7 +112,7 @@ class LightInputBar extends ConsumerStatefulWidget {
 class _LightInputBarState extends ConsumerState<LightInputBar> {
   final _controller = TextEditingController();
   final _photos = <XFile>[];
-  bool _sending = false;
+  bool _sending = false, _voiceMode = false;
   double? _progress;
   int _uploadingIndex = 0;
 
@@ -262,6 +262,8 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final state = widget.state;
+    final voice = state.voiceInput;
+    final voiceMode = _voiceMode && voice != null;
     return Container(
       key: const Key('light-input-bar'),
       decoration: BoxDecoration(
@@ -351,98 +353,124 @@ class _LightInputBarState extends ConsumerState<LightInputBar> {
                 ],
               ),
             ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              IconButton(
-                key: const Key('light-camera'),
-                tooltip: i18n.t('light:topic.input.camera'),
-                onPressed: _busy || _photos.length >= widget.maxPhotos
-                    ? null
-                    : () => _pick(camera: true),
-                icon: Icon(Icons.photo_camera_outlined, color: t.n700),
-              ),
-              IconButton(
-                key: const Key('light-album'),
-                tooltip: i18n.t('light:topic.input.album'),
-                onPressed: _busy || _photos.length >= widget.maxPhotos
-                    ? null
-                    : () => _pick(camera: false),
-                icon: Icon(Icons.photo_library_outlined, color: t.n700),
-              ),
-              Expanded(
-                child: TextField(
-                  key: const Key('light-input'),
-                  controller: _controller,
-                  enabled: !_sending,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.newline,
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: i18n.t('light:topic.input.hint'),
-                    hintStyle: TextStyle(
-                      fontSize: FontSizes.base,
-                      color: t.n500,
-                    ),
-                    filled: true,
-                    fillColor: t.bg,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.xl),
-                      borderSide: BorderSide(color: t.hair),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.xl),
-                      borderSide: BorderSide(color: t.hair),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.xl),
-                      borderSide: BorderSide(color: t.accent),
-                    ),
-                    disabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.xl),
-                      borderSide: BorderSide(color: t.hair),
+          if (voiceMode)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                IconButton(
+                  key: const Key('light-voice-mode'),
+                  tooltip: i18n.t('chat:voiceMessage.keyboard'),
+                  onPressed: () => setState(() => _voiceMode = false),
+                  icon: const Icon(Icons.keyboard_outlined),
+                ),
+                Expanded(child: voice),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (voice != null)
+                  IconButton(
+                    key: const Key('light-voice-mode'),
+                    tooltip: i18n.t('chat:voiceMessage.switchVoice'),
+                    onPressed: _busy || _photos.isNotEmpty
+                        ? null
+                        : () {
+                            FocusScope.of(context).unfocus();
+                            setState(() => _voiceMode = true);
+                          },
+                    icon: const Icon(Icons.mic_none),
+                  ),
+                IconButton(
+                  key: const Key('light-camera'),
+                  tooltip: i18n.t('light:topic.input.camera'),
+                  onPressed: _busy || _photos.length >= widget.maxPhotos
+                      ? null
+                      : () => _pick(camera: true),
+                  icon: Icon(Icons.photo_camera_outlined, color: t.n700),
+                ),
+                IconButton(
+                  key: const Key('light-album'),
+                  tooltip: i18n.t('light:topic.input.album'),
+                  onPressed: _busy || _photos.length >= widget.maxPhotos
+                      ? null
+                      : () => _pick(camera: false),
+                  icon: Icon(Icons.photo_library_outlined, color: t.n700),
+                ),
+                Expanded(
+                  child: TextField(
+                    key: const Key('light-input'),
+                    controller: _controller,
+                    enabled: !_sending,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: i18n.t('light:topic.input.hint'),
+                      hintStyle: TextStyle(
+                        fontSize: FontSizes.base,
+                        color: t.n500,
+                      ),
+                      filled: true,
+                      fillColor: t.bg,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Radii.xl),
+                        borderSide: BorderSide(color: t.hair),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Radii.xl),
+                        borderSide: BorderSide(color: t.hair),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Radii.xl),
+                        borderSide: BorderSide(color: t.accent),
+                      ),
+                      disabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Radii.xl),
+                        borderSide: BorderSide(color: t.hair),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              if (state.busy && state.onStop != null)
-                IconButton.filledTonal(
-                  key: const Key('light-stop'),
-                  tooltip: i18n.t('light:topic.input.stop'),
-                  onPressed: state.onStop,
-                  icon: const Icon(Icons.stop_rounded),
-                )
-              else
-                IconButton.filled(
-                  key: const Key('light-send'),
-                  tooltip: i18n.t('light:topic.input.send'),
-                  onPressed: _canSend ? _send : null,
-                  style: IconButton.styleFrom(
-                    backgroundColor: t.ink,
-                    foregroundColor: t.bg,
-                    disabledBackgroundColor: t.n300,
-                    disabledForegroundColor: t.n600,
+                const SizedBox(width: 6),
+                if (state.busy && state.onStop != null)
+                  IconButton.filledTonal(
+                    key: const Key('light-stop'),
+                    tooltip: i18n.t('light:topic.input.stop'),
+                    onPressed: state.onStop,
+                    icon: const Icon(Icons.stop_rounded),
+                  )
+                else
+                  IconButton.filled(
+                    key: const Key('light-send'),
+                    tooltip: i18n.t('light:topic.input.send'),
+                    onPressed: _canSend ? _send : null,
+                    style: IconButton.styleFrom(
+                      backgroundColor: t.ink,
+                      foregroundColor: t.bg,
+                      disabledBackgroundColor: t.n300,
+                      disabledForegroundColor: t.n600,
+                    ),
+                    icon: _sending
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: t.bg,
+                            ),
+                          )
+                        : const Icon(Icons.arrow_upward),
                   ),
-                  icon: _sending
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: t.bg,
-                          ),
-                        )
-                      : const Icon(Icons.arrow_upward),
-                ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
     );

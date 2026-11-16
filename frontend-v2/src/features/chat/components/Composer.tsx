@@ -1,3 +1,4 @@
+import type { RecordedVoice } from "../api/recorded-voice"
 import {
   useEffect,
   useRef,
@@ -31,11 +32,13 @@ import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
 import { SuggestionDock } from "./composer/SuggestionDock"
 import { AiDisclosure } from "./AiDisclosure"
+import { RecordedVoiceInput } from "./RecordedVoiceInput"
 import type { Session, SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
 
 export interface ComposerSubmit {
+  voiceMessage?: RecordedVoice
   model?: string
   /** Reasoning strength for the chat model; null returns to its default. */
   variant?: string | null
@@ -104,6 +107,10 @@ const EMPTY_AGENTS: ChatAgent[] = []
 // backend memory or WUYING tunnel bandwidth. Keep this in sync with the
 // server-side asset ceiling in backend/api/assets.py.
 const MAX_UPLOAD = 1024 * 1024 * 1024
+function canSubmitText(text: string, attachmentCount: number, uploading: boolean) {
+  return (text.trim().length > 0 || attachmentCount > 0) && !uploading
+}
+
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */
@@ -245,7 +252,7 @@ export function Composer({
     }
   }, [externalDraft])
 
-  const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
+  const canSend = canSubmitText(text, attachments.items.length, attachments.uploading)
   const showStop = busy && !!onStop
 
   const submitRequest = (request: string, assetIds?: string[]) =>
@@ -375,6 +382,11 @@ export function Composer({
           </div>
 
           <div className="flex flex-wrap items-center gap-1 px-3">
+            <RecordedVoiceInput draftKey={sessionKey ?? "new"} disabled={attachments.uploading || attachments.items.length > 0}
+              onSend={(text, voiceMessage) => onSubmit(text, {
+                model: activeId, variant: reasoning.value, videoModel: video.pending,
+                videoResolution: video.pendingResolution, voiceMessage,
+              })} />
             <ComposerActions
               disabled={!canAttach}
               title={canAttach ? t("attach") : t("attachNeedSandbox")}

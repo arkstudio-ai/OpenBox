@@ -984,6 +984,15 @@
     "tooShort": "说话时间太短，请重新录音。",
     "micFailed": "录音未成功，请检查麦克风后重试。",
     "callActive": "请先结束语音通话，再发送语音消息。",
-    "restoreFailed": "语音草稿未能恢复，请重新进入对话。"
+    "restoreFailed": "语音草稿未能恢复，请重新进入对话。",
+    "releaseFill": "松开转文字",
+    "answer": "语音回答",
+    "answerTooLong": "回答太长，请缩短后重试。",
+    "unsupported": "当前浏览器无法录音，请使用支持麦克风的浏览器。",
+    "retryFill": "重试转写"
+  },
+  "card": {
+    "later": "稍后再说",
+    "recommended": "推荐"
   }
 }

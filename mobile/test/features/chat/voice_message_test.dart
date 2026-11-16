@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bossip_mobile/features/chat/widgets/composer/voice_message_input.dart';
 import 'package:bossip_mobile/features/chat/widgets/user_bubble.dart';
@@ -44,7 +45,11 @@ void main() {
     prefs = await SharedPreferences.getInstance();
   });
 
-  Future<void> pumpInput(WidgetTester tester, FakeRecorder recorder) async {
+  Future<void> pumpInput(
+    WidgetTester tester,
+    FakeRecorder recorder, {
+    Widget? input,
+  }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -58,14 +63,101 @@ void main() {
         ],
         child: MaterialApp(
           theme: testTheme(),
-          home: const Scaffold(
-            body: VoiceMessageInput(scope: scope, sessionId: 'main'),
+          home: Scaffold(
+            body:
+                input ??
+                const VoiceMessageInput(scope: scope, sessionId: 'main'),
           ),
         ),
       ),
     );
     await tester.pump();
   }
+
+  testWidgets(
+    'new dialogue retry keeps its created session and voice identity',
+    (tester) async {
+      const key = 'conversation-voice:owner:workspace:new:project';
+      await prefs.setString(
+        key,
+        jsonEncode({
+          'asset_id': 'recording',
+          'text': '不要加辣',
+          'duration_ms': 3000,
+          'client_id': 'same-voice',
+        }),
+      );
+      var creates = 0;
+      final destinations = <String>[];
+      var fail = true;
+      Widget input() => VoiceMessageInput(
+        scope: scope,
+        sessionId: 'new:project',
+        conversation: true,
+        prepareSession: () async {
+          creates++;
+          return 'created-chat';
+        },
+        onSend: (session, text, clientId, voice) async {
+          destinations.add(session);
+          expect(text, '不要加辣');
+          expect(clientId, 'same-voice');
+          expect(voice['asset_id'], 'recording');
+          if (fail) throw StateError('offline');
+        },
+      );
+      await pumpInput(tester, FakeRecorder(), input: input());
+      await tester.tap(find.byKey(const Key('voice-message-retry')));
+      await tester.pumpAndSettle();
+      expect(creates, 1);
+      expect(
+        (jsonDecode(prefs.getString(key)!)
+            as Map<String, dynamic>)['target_session_id'],
+        'created-chat',
+      );
+      await tester.pumpWidget(const SizedBox());
+      fail = false;
+      await pumpInput(tester, FakeRecorder(), input: input());
+      await tester.tap(find.byKey(const Key('voice-message-retry')));
+      await tester.pumpAndSettle();
+      expect(creates, 1);
+      expect(destinations, ['created-chat', 'created-chat']);
+      expect(prefs.getString(key), isNull);
+    },
+  );
+
+  testWidgets(
+    'voice answer fills the card without dispatching a conversation turn',
+    (tester) async {
+      const key = 'conversation-voice:owner:workspace:answer:question:0';
+      await prefs.setString(
+        key,
+        jsonEncode({
+          'asset_id': 'recording',
+          'text': '不要加辣',
+          'duration_ms': 3000,
+          'client_id': 'answer-voice',
+        }),
+      );
+      String? answer;
+      await pumpInput(
+        tester,
+        FakeRecorder(),
+        input: VoiceMessageInput(
+          scope: scope,
+          sessionId: 'answer:question:0',
+          conversation: true,
+          onTranscript: (text) => answer = text,
+          onSend: (_, _, _, _) async =>
+              fail('A card answer must not send a new turn'),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('voice-message-retry')));
+      await tester.pumpAndSettle();
+      expect(answer, '不要加辣');
+      expect(prefs.getString(key), isNull);
+    },
+  );
 
   testWidgets('leaving voice mode before recording disposes safely', (
     tester,

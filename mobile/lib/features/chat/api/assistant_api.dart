@@ -188,12 +188,12 @@ class AssistantApi {
   Future<Map<String, dynamic>> send(Map<String, dynamic> body) =>
       _post('/api/assistant/turns', body);
 
-  Future<String> uploadVoice(List<int> bytes, String sessionId) async {
+  Future<String> uploadVoice(List<int> bytes, String? sessionId) async {
     final ticket = await _post('/api/assets', {
       'name': 'voice-${DateTime.now().microsecondsSinceEpoch}.m4a',
       'mime': 'audio/mp4',
       'size': bytes.length,
-      'session_id': sessionId,
+      'session_id': ?sessionId,
     });
     final upload = Dio(); // Never send the user's API bearer to object storage.
     try {
@@ -216,6 +216,12 @@ class AssistantApi {
     await _post('/api/assets/$id/complete', {});
     return id;
   }
+
+  Future<Map<String, dynamic>> transcribeRecording(String assetId) async =>
+      (await dio.post<Map<String, dynamic>>(
+        '/api/assets/$assetId/transcribe',
+        options: options.copyWith(receiveTimeout: const Duration(seconds: 90)),
+      )).data!;
 
   Future<Map<String, dynamic>> transcribeVoice(
     String assetId,

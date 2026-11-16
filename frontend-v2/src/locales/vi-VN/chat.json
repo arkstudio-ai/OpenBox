@@ -984,6 +984,15 @@
     "tooShort": "Bản ghi quá ngắn. Vui lòng thử lại.",
     "micFailed": "Không ghi âm được. Kiểm tra micrô và thử lại.",
     "callActive": "Kết thúc cuộc gọi trước khi ghi âm tin nhắn.",
-    "restoreFailed": "Không khôi phục được bản nháp. Hãy mở lại cuộc trò chuyện."
+    "restoreFailed": "Không khôi phục được bản nháp. Hãy mở lại cuộc trò chuyện.",
+    "releaseFill": "Thả để chuyển thành chữ",
+    "answer": "Trả lời bằng giọng nói",
+    "answerTooLong": "Câu trả lời quá dài. Hãy rút ngắn và thử lại.",
+    "unsupported": "Trình duyệt này không hỗ trợ ghi âm.",
+    "retryFill": "Thử chuyển thành chữ lại"
+  },
+  "card": {
+    "later": "Để sau",
+    "recommended": "Đề xuất"
   }
 }

@@ -94,6 +94,7 @@ class ChatApi {
     String sessionId, {
     required String text,
     required String clientMessageId,
+    String? voiceAssetId,
     String? agent,
     String? model,
     Variant? variant,
@@ -106,6 +107,7 @@ class ChatApi {
       data: {
         'text': text,
         'client_message_id': clientMessageId,
+        'voice_asset_id': ?voiceAssetId,
         'agent': ?agent,
         if (model != null && model.isNotEmpty) 'model': model,
         if (variant != null) 'variant': variant.level,

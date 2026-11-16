@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../shared/api/api_error.dart';
 import '../../../../shared/api/providers.dart';
@@ -66,9 +67,26 @@ class VoiceMessageInput extends ConsumerStatefulWidget {
     super.key,
     required this.scope,
     required this.sessionId,
+    this.conversation = false,
+    this.prepareSession,
+    this.onSend,
+    this.onSent,
+    this.onTranscript,
+    this.disabled = false,
   });
   final AssistantScope scope;
   final String sessionId;
+  final bool conversation, disabled;
+  final Future<String> Function()? prepareSession;
+  final Future<void> Function(
+    String sessionId,
+    String text,
+    String clientId,
+    Map<String, dynamic> voice,
+  )?
+  onSend;
+  final ValueChanged<String>? onSent;
+  final ValueChanged<String>? onTranscript;
   @override
   ConsumerState<VoiceMessageInput> createState() => _VoiceMessageInputState();
 }
@@ -76,6 +94,7 @@ class VoiceMessageInput extends ConsumerStatefulWidget {
 class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
     with WidgetsBindingObserver {
   late final MessageRecorder _recorder;
+  late final SharedPreferences _prefs;
   final _clock = Stopwatch();
   Timer? _timer;
   bool _pressing = false,
@@ -87,15 +106,16 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
   String? _path, _error, _phase;
   Map<String, dynamic>? _draft;
   String get _draftKey =>
-      'voice-message:${widget.scope.userId}:${widget.scope.workspaceId}:${widget.sessionId}';
+      '${widget.conversation ? 'conversation-voice' : 'voice-message'}:${widget.scope.userId}:${widget.scope.workspaceId}:${widget.sessionId}';
   AssistantApi get _api => ref.read(assistantApiProvider(widget.scope));
 
   @override
   void initState() {
     super.initState();
     _recorder = ref.read(messageRecorderFactoryProvider)();
+    _prefs = ref.read(prefsProvider);
     WidgetsBinding.instance.addObserver(this);
-    final saved = ref.read(prefsProvider).getString(_draftKey);
+    final saved = _prefs.getString(_draftKey);
     if (saved != null) {
       try {
         _draft = Map<String, dynamic>.from(jsonDecode(saved) as Map);
@@ -107,7 +127,7 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
   }
 
   Future<void> _save() async {
-    final prefs = ref.read(prefsProvider);
+    final prefs = _prefs;
     final ok = _draft == null
         ? await prefs.remove(_draftKey)
         : await prefs.setString(_draftKey, jsonEncode(_draft));
@@ -123,7 +143,14 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
   }
 
   Future<void> _start() async {
-    if (!_ready || _busy || _starting || _recording || _draft != null) return;
+    if (widget.disabled ||
+        !_ready ||
+        _busy ||
+        _starting ||
+        _recording ||
+        _draft != null) {
+      return;
+    }
     if (ref.read(voiceCallControllerProvider).active) {
       setState(() => _error = 'chat:voiceMessage.callActive');
       return;
@@ -212,19 +239,34 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
         setState(() => _phase = 'uploading');
         final bytes = await File(draft['path'] as String).readAsBytes();
         if (!mounted) return;
-        draft['asset_id'] = await _api.uploadVoice(bytes, widget.sessionId);
-        if (!mounted) return;
+        draft['asset_id'] = await _api.uploadVoice(
+          bytes,
+          widget.conversation ? null : widget.sessionId,
+        );
         await _save();
       }
       if (!mounted) return;
       if (draft['text'] == null) {
         setState(() => _phase = 'transcribing');
-        final result = await _api.transcribeVoice(
-          draft['asset_id'] as String,
-          widget.sessionId,
-        );
-        if (!mounted) return;
+        final result = widget.conversation
+            ? await _api.transcribeRecording(draft['asset_id'] as String)
+            : await _api.transcribeVoice(
+                draft['asset_id'] as String,
+                widget.sessionId,
+              );
         draft.addAll(result);
+        await _save();
+      }
+      if (!mounted) return;
+      if (widget.onTranscript != null) {
+        widget.onTranscript!(draft['text'] as String);
+        _draft = null;
+        await _save();
+        return;
+      }
+      if (widget.conversation && draft['target_session_id'] == null) {
+        draft['target_session_id'] =
+            await widget.prepareSession?.call() ?? widget.sessionId;
         await _save();
       }
       if (!mounted) return;
@@ -234,20 +276,33 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
       draft['submitted'] = true;
       await _save();
       if (!mounted) return;
-      await ref
-          .read(assistantControllerProvider(widget.scope).notifier)
-          .send(
-            draft['text'] as String,
-            const [],
-            clientId: draft['client_id'] as String,
-            voiceMessage: {
-              'asset_id': draft['asset_id'],
-              'duration_ms': draft['duration_ms'],
-            },
-          );
-      if (!mounted) return;
+      if (widget.onSend != null) {
+        await widget.onSend!(
+          draft['target_session_id'] as String,
+          draft['text'] as String,
+          draft['client_id'] as String,
+          {'asset_id': draft['asset_id'], 'duration_ms': draft['duration_ms']},
+        );
+      } else {
+        await ref
+            .read(assistantControllerProvider(widget.scope).notifier)
+            .send(
+              draft['text'] as String,
+              const [],
+              clientId: draft['client_id'] as String,
+              voiceMessage: {
+                'asset_id': draft['asset_id'],
+                'duration_ms': draft['duration_ms'],
+              },
+            );
+      }
       _draft = null;
       await _save();
+      if (mounted) {
+        widget.onSent?.call(
+          draft['target_session_id'] as String? ?? widget.sessionId,
+        );
+      }
     } catch (error) {
       if (mounted) {
         setState(() => _error = errorText(ref.read(i18nProvider), error));
@@ -341,15 +396,23 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
                   ),
                 TextButton(
                   key: const Key('voice-message-retry'),
-                  onPressed: _send,
-                  child: Text(i18n.t('chat:voiceMessage.retry')),
+                  onPressed: widget.disabled ? null : _send,
+                  child: Text(
+                    i18n.t(
+                      widget.onTranscript == null
+                          ? 'chat:voiceMessage.retry'
+                          : 'chat:voiceMessage.retryFill',
+                    ),
+                  ),
                 ),
               ],
             ),
         ] else
           GestureDetector(
             key: const Key('voice-message-hold'),
-            onLongPressStart: (_) => unawaited(_start()),
+            onLongPressStart: widget.disabled
+                ? null
+                : (_) => unawaited(_start()),
             onLongPressMoveUpdate: (event) {
               if (_recording || _starting) {
                 setState(() => _cancel = event.offsetFromOrigin.dy < -60);
@@ -376,7 +439,7 @@ class _VoiceMessageInputState extends ConsumerState<VoiceMessageInput>
                 ),
                 child: Text(
                   _recording
-                      ? '${i18n.t(_cancel ? 'chat:voiceMessage.releaseCancel' : 'chat:voiceMessage.releaseSend')} ${_clock.elapsed.inSeconds}″'
+                      ? '${i18n.t(_cancel ? 'chat:voiceMessage.releaseCancel' : (widget.onTranscript != null ? 'chat:voiceMessage.releaseFill' : 'chat:voiceMessage.releaseSend'))} ${_clock.elapsed.inSeconds}″'
                       : i18n.t(
                           _starting
                               ? 'chat:voiceMessage.starting'

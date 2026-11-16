@@ -608,6 +608,16 @@
         "source": "https://www.runninghub.cn/runninghub-api-doc-cn/api-454850620",
         "verification": "Official price-preview, both operations. runninghub.cn refuses this model with 40310 (offline on the CN site)."
       },
+      "doubao-seedream-5-0-pro-260628": {
+        "vendor": "volcengine",
+        "name": "Seedream 5.0 Pro",
+        "currency": "CNY",
+        "per_image": {"1k": "0.30", "2k": "0.60"},
+        "verified_at": "2026-11-16",
+        "operations": ["text-to-image", "image-to-image"],
+        "source": "https://docs.volcengine.com/docs/ark/model-pricing",
+        "verification": "Official list price at 1 CNY = 1 credit, no margin: an output image up to 2.61 megapixels is the 1k price, a larger one the 2k price (tool/image_volcengine.py picks the tier from the requested pixels). Ark also charges 0.02 CNY per input image after the first; that is not passed on. Paid runs 2026-11-16 (docs/VOLCENGINE_IMAGE_CHANNEL.md) returned usage in output tokens (pixels / 256), not CNY."
+      },
       "seedream-v5-pro": {
         "vendor": "runninghub",
         "name": "Seedream v5 Pro",

@@ -134,7 +134,10 @@
   // API with that provider's credential: seedream-v5-pro (Seedream v5 Pro, runs
   // on runninghub.cn), rhart-image-n-pro (Nano Banana Pro),
   // rhart-image-n-g31-flash (Nano Banana 2); the last two require a runninghub.ai provider.
-  // Non-RunningHub models use the configured provider's compatible Images API.
+  // A doubao-seedream-* model id goes straight to Volcengine Ark with that provider's
+  // credential (base_url https://ark.cn-beijing.volces.com/api/v3), for example
+  // doubao-seedream-5-0-pro-260628: see docs/VOLCENGINE_IMAGE_CHANNEL.md.
+  // Other models use the configured provider's compatible Images API.
   // See docs/RUNNINGHUB_IMAGE_CHANNEL.md.
   "image_generation": {
     // Settings exposes Default / RunningHub; the concrete RunningHub model is centrally managed.

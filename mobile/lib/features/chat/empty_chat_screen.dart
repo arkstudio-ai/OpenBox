@@ -19,6 +19,7 @@ import 'state/chat_session_controller.dart';
 import 'state/config_providers.dart';
 import 'utils/reasoning.dart';
 import 'widgets/composer/composer.dart';
+import 'widgets/composer/conversation_voice_input.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/empty_state.dart';
 
@@ -86,6 +87,56 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
     );
   }
 
+  Future<String> _createSession() async {
+    final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
+    final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
+    // The reasoning pick belongs to the model it was made against, and the
+    // conversation stores it at birth (web `useStartChat`). Nothing is
+    // carried onto the new session key: from there the persisted value is
+    // what the picker restores.
+    final config = ref.read(appConfigProvider).valueOrNull;
+    final modelId = activeModelId(
+      picked: model,
+      defaultModel: config?.defaultModel,
+    );
+    final variant = resolveReasoning(
+      model: config?.byId(modelId),
+      pick: ref.read(
+        pickedVariantProvider(reasoningKey(draftSessionKey, modelId)),
+      ),
+    ).value;
+    final session = await ref
+        .read(chatApiProvider)
+        .createSession(
+          projectId: widget.projectId,
+          model: model,
+          agent: agent,
+          variant: variant,
+        );
+    if (!mounted) return session.id;
+    // Carry the draft picks onto the real session.
+    ref.read(pickedModelProvider(session.id).notifier).state = model.isEmpty
+        ? null
+        : model;
+    ref.read(pickedAgentProvider(session.id).notifier).state = agent;
+    // The video pick too: it is made on the empty screen like the others,
+    // and dropping it here silently generated the first shot with the
+    // deployment default — a different model at a different price from the
+    // one the person had selected.
+    ref.read(pickedVideoProvider(session.id).notifier).state = ref.read(
+      pickedVideoProvider(draftSessionKey),
+    );
+    return session.id;
+  }
+
+  void _voiceSent(String sessionId) {
+    ref.read(appEventBusProvider).emit('workspace.refresh');
+    unawaited(
+      ref.read(onboardingProvider.notifier).markSeen(Guides.starterCards),
+    );
+    if (mounted) context.go(Paths.chat(sessionId));
+  }
+
   Future<void> _startChat(
     String text, [
     List<String> attachments = const [],
@@ -93,52 +144,17 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
     if (text.trim().isEmpty && attachments.isEmpty) return;
     String? createdSessionId;
     try {
-      final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
-      final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
-      // The reasoning pick belongs to the model it was made against, and the
-      // conversation stores it at birth (web `useStartChat`). Nothing is
-      // carried onto the new session key: from there the persisted value is
-      // what the picker restores.
-      final config = ref.read(appConfigProvider).valueOrNull;
-      final modelId = activeModelId(
-        picked: model,
-        defaultModel: config?.defaultModel,
-      );
-      final variant = resolveReasoning(
-        model: config?.byId(modelId),
-        pick: ref.read(
-          pickedVariantProvider(reasoningKey(draftSessionKey, modelId)),
-        ),
-      ).value;
-      final session = await ref
-          .read(chatApiProvider)
-          .createSession(
-            projectId: widget.projectId,
-            model: model,
-            agent: agent,
-            variant: variant,
-          );
-      createdSessionId = session.id;
-      // Carry the draft picks onto the real session.
-      ref.read(pickedModelProvider(session.id).notifier).state = model.isEmpty
-          ? null
-          : model;
-      ref.read(pickedAgentProvider(session.id).notifier).state = agent;
-      // The video pick too: it is made on the empty screen like the others,
-      // and dropping it here silently generated the first shot with the
-      // deployment default — a different model at a different price from the
-      // one the person had selected.
-      ref.read(pickedVideoProvider(session.id).notifier).state = ref.read(
-        pickedVideoProvider(draftSessionKey),
-      );
+      final sessionId = await _createSession();
+      if (!mounted) return;
+      createdSessionId = sessionId;
       await ref
-          .read(chatSessionProvider(session.id).notifier)
+          .read(chatSessionProvider(sessionId).notifier)
           .send(text, attachments: attachments);
       ref.read(appEventBusProvider).emit('workspace.refresh');
       unawaited(
         ref.read(onboardingProvider.notifier).markSeen(Guides.starterCards),
       );
-      if (mounted) context.go(Paths.chat(session.id));
+      if (mounted) context.go(Paths.chat(sessionId));
     } catch (e) {
       if (apiErrorOf(e)?.code == 'DESKTOP_NOT_READY') {
         ref.read(appEventBusProvider).emit('workbench.open', {
@@ -180,6 +196,12 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
             name: 'composer',
             child: Composer(
               sessionKey: draftSessionKey,
+              voiceInput: conversationVoiceInput(
+                ref,
+                sessionKey: 'new:${widget.projectId ?? "default"}',
+                prepareSession: _createSession,
+                onSent: _voiceSent,
+              ),
               busy: false,
               resources: widget.resources,
               onSend: _startChat,

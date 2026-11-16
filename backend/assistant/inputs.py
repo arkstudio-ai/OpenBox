@@ -80,7 +80,7 @@ async def accept_turn(*, user_id, workspace_id, main_id, client_id, text,
 async def accept_session_input(session, *, user_id, text, client_id, delivery=None,
                                attachments=(), model=None, variant=None, variant_explicit=False,
                                agent=None, expected_revision=None, has_unsupported_options=False,
-                               video_model=None, video_resolution=None, expected_run=None):
+                               video_model=None, video_resolution=None, expected_run=None, voice_asset_id=None):
     """Compatibility adapter: linked execution input must still advance Task intent.
 
     Old clients do not know Task revisions. Only that compatibility path reads
@@ -110,7 +110,8 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
                 # including settled inputs. Never turn it into a new intent or
                 # upgrade unknown authorship to human.
                 normalized = _validate_input(prompt=text, attachments=attachments, client_id=client_id, output_format=None)
-                matches = (legacy.prompt == text and list(normalized) == list(legacy.attachments or ())
+                matches = (((legacy.origin_ref or {}).get("voice_message") or {}).get("asset_id") == voice_asset_id
+                    and legacy.prompt == text and list(normalized) == list(legacy.attachments or ())
                     and (delivery is None or delivery == legacy.delivery) and not has_unsupported_options
                     and (agent is None or agent == legacy.agent)
                     and (model is None or model == legacy.model)
@@ -154,10 +155,10 @@ async def accept_session_input(session, *, user_id, text, client_id, delivery=No
             expected_revision=revision, prompt=text, attachments=attachments, model=model,
             variant=variant, variant_explicit=variant_explicit, client_message_id=client_id,
             video_model=video_model, video_resolution=video_resolution,
-            delivery=delivery or "followup", expected_run=expected_run)
+            delivery=delivery or "followup", expected_run=expected_run, voice_asset_id=voice_asset_id)
     else:
         receipt = await accept_turn(user_id=user_id, workspace_id=session.workspace_id, main_id=session.id,
             client_id=client_id, text=text, attachments=attachments, model=model,
             variant=variant, variant_explicit=variant_explicit,
-            video_model=video_model, video_resolution=video_resolution)
+            video_model=video_model, video_resolution=video_resolution, voice_asset_id=voice_asset_id)
     return await get_inbox_item(receipt["inbox_id"], user_id=user_id, session_id=session.id)

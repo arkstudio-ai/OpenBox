@@ -1,3 +1,4 @@
+import { assertRecordingScope, getRecordingScope, type RecordedVoice } from "../api/recorded-voice"
 import { useCallback } from "react"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
@@ -14,6 +15,7 @@ import { useSendReceiptStore } from "../stores/send-receipts"
 import { requestEffectAcknowledgeForSession } from "../stores/effect-acknowledge"
 
 export interface SendOpts {
+  voiceMessage?: RecordedVoice
   model?: string
   variant?: string | null
   videoModel?: string
@@ -38,35 +40,42 @@ export function useSendChat(sessionId: string, submit?: SendRequest): (text: str
 
   return useCallback(
     async (text, opts) => {
+      const choices = opts ?? {}
+      const scope = getRecordingScope()
       const trimmed = text.trim()
       if (!trimmed) return
-      const body = { text: trimmed, ...opts }
-      const identity = await pendingSendIdentity(JSON.stringify([useAuthStore.getState().user?.id,
-        useWorkspaceStore.getState().currentId, sessionId]), body)
+      // The recording draft owns its receipt. It must not consume an uncertain
+      // typed message's identity just because their transcripts are identical.
+      const identity = choices.voiceMessage
+        ? { id: choices.voiceMessage.client_id, confirmed: () => undefined }
+        : await pendingSendIdentity(JSON.stringify([useAuthStore.getState().user?.id,
+          useWorkspaceStore.getState().currentId, sessionId]), { text: trimmed, ...opts })
       const clientMessageId = identity.id
       const receipt = (state: "sending" | "accepted" | "uncertain" | null) =>
         useSendReceiptStore.getState().set(sessionId, clientMessageId, state)
       const store = useStreamStore.getState()
       const previousStatus = store.status.get(sessionId) ?? "idle"
       const oldQuestions = usePendingStore.getState().questions.get(sessionId) ?? []
-      store.addMessage(sessionId, optimisticUserMessage(sessionId, trimmed, clientMessageId))
+      store.addMessage(sessionId, optimisticUserMessage(sessionId, trimmed, clientMessageId, choices.voiceMessage))
       store.setStatus(sessionId, "busy")
       const optimisticRevision = useStreamStore.getState().statusRevision.get(sessionId)
       store.clearRunError(sessionId)
       receipt("sending")
       const vars: SendMessageVars = {
         text: trimmed,
-        model: opts?.model,
-        variant: opts?.variant,
-        videoModel: opts?.videoModel,
-        videoResolution: opts?.videoResolution,
-        agent: opts?.agent,
-        attachments: opts?.attachments,
+        model: choices.model,
+        variant: choices.variant,
+        videoModel: choices.videoModel,
+        videoResolution: choices.videoResolution,
+        agent: choices.agent,
+        attachments: choices.attachments,
+        voiceMessage: choices.voiceMessage,
         clientMessageId,
       }
       try {
         // mutateAsync rather than mutate: the composer restores the draft on a
         // rejection, and it can only do that if the failure reaches it.
+        if (choices.voiceMessage) assertRecordingScope(scope)
         const response = await mutateAsync(vars)
         identity.confirmed()
         receipt("accepted")

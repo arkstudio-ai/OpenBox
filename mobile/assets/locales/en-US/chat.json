@@ -964,10 +964,6 @@
       "error": "failed"
     }
   },
-  "card": {
-    "later": "Later",
-    "recommended": "Recommended"
-  },
   "voiceMessage": {
     "hold": "Hold to talk",
     "releaseSend": "Release to send",
@@ -988,6 +984,15 @@
     "tooShort": "Recording too short. Please try again.",
     "micFailed": "Could not record. Check your microphone and try again.",
     "callActive": "End the voice call before recording a message.",
-    "restoreFailed": "Could not restore this voice draft. Reopen the conversation."
+    "restoreFailed": "Could not restore this voice draft. Reopen the conversation.",
+    "releaseFill": "Release to transcribe",
+    "answer": "Voice answer",
+    "answerTooLong": "Your answer is too long. Shorten it and try again.",
+    "unsupported": "Recording is unavailable in this browser.",
+    "retryFill": "Retry transcription"
+  },
+  "card": {
+    "later": "Later",
+    "recommended": "Recommended"
   }
 }

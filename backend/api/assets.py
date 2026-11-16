@@ -164,6 +164,19 @@ async def create_asset(
     }
 
 
+@router.post("/{asset_id}/transcribe")
+async def transcribe_recording(asset_id: str, current_user: dict = Depends(get_current_user),
+                               _workspace: dict = Depends(get_workspace)):
+    """Transcribe the current actor's recording without opening an assistant turn."""
+    from assistant.policy import AssistantError
+    from assistant.voice_messages import transcribe
+    try:
+        return await transcribe(user_id=current_user["user_id"],
+            workspace_id=current_user["workspace_id"], main_id=None, asset_id=asset_id)
+    except AssistantError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+
+
 async def _owned_asset(
     db, asset_id: str, user_id: str, workspace_id: str | None = None, *, for_update=False
 ) -> FileAsset:

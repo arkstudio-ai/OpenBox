@@ -6,6 +6,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../state/question_draft.dart';
+import '../composer/conversation_voice_input.dart';
 import '../markdown_view.dart';
 import 'desktop_takeover_detail.dart';
 import 'question_resources.dart';
@@ -170,6 +171,23 @@ class LightQuestionCard extends ConsumerWidget {
                   ),
                 ),
               ),
+            ),
+          if (question.custom)
+            VoiceAnswerInput(
+              key: ValueKey('voice-answer-${request.id}:$page'),
+              draftKey: 'answer:${request.id}:$page',
+              disabled: busy,
+              onText: (text) {
+                final next = [
+                  custom.text.trim(),
+                  text,
+                ].where((s) => s.isNotEmpty).join(' ');
+                if (next.length > 5000) {
+                  throw StateError(i18n.t('chat:voiceMessage.answerTooLong'));
+                }
+                custom.text = next;
+                onCustom(next);
+              },
             ),
           if (question.allowAttachments)
             QuestionResources(request: request, index: page),

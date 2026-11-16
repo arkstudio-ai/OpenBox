@@ -482,7 +482,7 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
                               continuation: dict | None = None, placement_id: str | None = None,
                               placement: dict | None = None, workflow: str | None = None,
                               setup_id: str | None = None, revision_request: dict | None = None,
-                              allow_similar: bool = False) -> dict:
+                              allow_similar: bool = False, voice_asset_id: str | None = None) -> dict:
     """Create/queue a followup or steer exactly one still-live execution.
 
     Callers wake the receipt's execution Session after commit. Periodic Inbox
@@ -562,6 +562,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         digest = command_digest({"base": digest, "client_message_id": client_message_id})
     if video_model is not None or video_resolution is not None:
         digest = command_digest({"base": digest, "video_model": video_model, "video_resolution": video_resolution})
+    if voice_asset_id:
+        if source is not None or not client_message_id or attachments:
+            raise ValueError("Voice requires direct human input and no attachments")
+        digest = command_digest({"base": digest, "voice_asset_id": voice_asset_id})
     new_session = None
     interruption_targets = []
     async with get_db_session() as db:
@@ -595,6 +599,10 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
         await db.flush()  # The unique command is claimed before any creation.
         source_ref = (await _tool_source_locked(db, main, source, action) if source else
                       {"actor_user_id": user_id, "entrypoint": "assistant_command"})
+        if voice_asset_id:
+            from assistant.voice_messages import bind_locked
+            source_ref["voice_message"] = await bind_locked(db, asset_id=voice_asset_id, text=prompt,
+                user_id=user_id, workspace_id=workspace_id)
         if attachments:
             # Fail before creating a task/session or changing a pending card.
             # The delivery boundary checks again if a term expires after admission.

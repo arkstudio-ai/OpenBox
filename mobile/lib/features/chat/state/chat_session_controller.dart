@@ -546,13 +546,18 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   /// Rethrows on rejection so the composer knows the send never happened and
   /// can keep the draft. Swallowing it here left an empty box that read as
   /// "sent".
-  Future<void> send(String text, {List<String> attachments = const []}) async {
+  Future<void> send(
+    String text, {
+    List<String> attachments = const [],
+    String? clientId,
+    Map<String, dynamic>? voiceMessage,
+  }) async {
     final model = ref.read(pickedModelProvider(_sessionId));
     final agent =
         ref.read(pickedAgentProvider(_sessionId)) ?? state.session?.agent;
     final variant = _reasoningValue(model);
     final video = ref.read(pickedVideoProvider(_sessionId));
-    final cmid = makeClientId();
+    final cmid = clientId ?? makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);
     final oldQuestions = ref
         .read(pendingProvider)
@@ -569,7 +574,15 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
         id: 'tmp-$cmid',
         sessionId: _sessionId,
         role: 'user',
-        parts: [TextPart(id: 'tmp-part-$cmid', text: text)],
+        parts: [
+          TextPart(
+            id: 'tmp-part-$cmid',
+            text: text,
+            originRef: voiceMessage == null
+                ? const {}
+                : {'voice_message': voiceMessage},
+          ),
+        ],
         createdAt: DateTime.now(),
         clientMessageId: cmid,
       ),
@@ -583,6 +596,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
             _sessionId,
             text: text,
             clientMessageId: cmid,
+            voiceAssetId: voiceMessage?['asset_id'] as String?,
             agent: agent,
             model: model,
             variant: variant,
@@ -592,8 +606,10 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
           );
       if (!_disposed) {
         final pending = ref.read(pendingProvider.notifier);
-        for (final id in oldQuestions) {
-          pending.removeQuestion(id);
+        if (voiceMessage == null) {
+          for (final id in oldQuestions) {
+            pending.removeQuestion(id);
+          }
         }
         unawaited(pending.refreshQuestions());
       }

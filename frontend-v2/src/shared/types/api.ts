@@ -410,6 +410,7 @@ export interface AppConfig {
   model_tiers?: ModelTiers
   /** Voice calls with the personal assistant are switched on for this deployment. */
   voice_enabled?: boolean
+  voice_input_enabled?: boolean
 }
 
 export interface AssistantRequestBinding {

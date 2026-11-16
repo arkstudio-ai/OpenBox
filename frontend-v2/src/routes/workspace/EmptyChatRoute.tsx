@@ -37,6 +37,8 @@ export default function EmptyChatRoute() {
     <div className="flex h-full min-h-0 flex-col">
       <EmptyState projectName={projectName} onPick={(text) => void start(text, { projectId, agent })} />
       <Composer
+        key={`new:${projectId ?? "default"}`}
+        sessionKey={`new:${projectId ?? "default"}`}
         busy={false}
         autoFocus
         onSubmit={(text, opts) => start(text, { ...opts, projectId, agent })}

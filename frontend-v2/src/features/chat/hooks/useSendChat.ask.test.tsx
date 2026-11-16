@@ -6,6 +6,8 @@ import { useStreamStore } from "../stores/stream"
 import { useSendChat } from "./useSendChat"
 import { useSendReceiptStore } from "../stores/send-receipts"
 import { optimisticUserMessage } from "../lib/message"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 const send = vi.hoisted(() => vi.fn())
 vi.mock("../api/messages", () => ({ useSendMessage: () => ({ mutateAsync: send }) }))
@@ -21,6 +23,22 @@ beforeEach(() => {
 })
 
 describe("replacement-message ask semantics", () => {
+  it("voice acceptance cannot consume an uncertain typed message with the same text", async () => {
+    useAuthStore.setState({ user: { id: "voice-owner" } as NonNullable<ReturnType<typeof useAuthStore.getState>["user"]> })
+    useWorkspaceStore.setState({ currentId: "voice-workspace" })
+    send.mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValue({ delivery: "followup", state: "accepted" })
+    const { result } = renderHook(() => useSendChat("s1"))
+    await act(async () => { await expect(result.current("same spoken and typed text")).rejects.toThrow() })
+    const typedId = send.mock.calls[0][0].clientMessageId
+    await act(async () => { await result.current("same spoken and typed text", { voiceMessage: {
+      asset_id: "recording", client_id: "voice-receipt", duration_ms: 2000,
+    } }) })
+    expect(send.mock.calls[1][0].clientMessageId).toBe("voice-receipt")
+    await act(async () => { await result.current("same spoken and typed text") })
+    expect(send.mock.calls[2][0].clientMessageId).toBe(typedId)
+  })
+
   it("keeps the old ask when sending fails", async () => {
     send.mockRejectedValue(new Error("offline"))
     const { result } = renderHook(() => useSendChat("s1"))

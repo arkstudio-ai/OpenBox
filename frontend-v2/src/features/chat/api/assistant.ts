@@ -453,6 +453,7 @@ export function useAssistantResultTarget(resultId: string) {
 
 export function sendAssistantTurn(mainId: string, workspaceId: string | null, vars: SendMessageVars) {
   return http.post<AssistantReceipt>("/api/assistant/turns", {
+    voice_asset_id: vars.voiceMessage?.asset_id,
     assistant_session_id: mainId, client_id: vars.clientMessageId, delivery: "followup", text: vars.text,
     model: vars.model, variant: vars.variant, attachment_ids: vars.attachments ?? [],
     video_model: vars.videoModel, video_resolution: vars.videoResolution,

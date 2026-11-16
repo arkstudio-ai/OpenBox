@@ -1,3 +1,4 @@
+import type { RecordedVoice } from "./recorded-voice"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError, http } from "@/shared/api/http"
@@ -109,6 +110,7 @@ export async function loadOlderHistory(sessionId: string): Promise<void> {
 }
 
 export interface SendMessageVars {
+  voiceMessage?: RecordedVoice
   text: string
   model?: string
   /** null explicitly clears the conversation override. */
@@ -135,6 +137,7 @@ export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
     variant: vars.variant,
     attachments: vars.attachments?.length ? vars.attachments : undefined,
     client_message_id: vars.clientMessageId,
+    voice_asset_id: vars.voiceMessage?.asset_id,
   })
 }
 

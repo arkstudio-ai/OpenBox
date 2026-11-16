@@ -20,6 +20,17 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - Android **1.2.0 (116)** 正式签名 APK 已用 7z 压缩，于 16:13 发送指定飞书产品交流群，详见 [移动端发版记录](MOBILE_RELEASE_1_2_0_116_20261116.md)。
 - 回滚：在发布锁下，将上述备份的 `.env`、`config/backend.env`、`config/openbox.json`、`docker-compose.override.yml` 写回原路径，依次 `docker compose up -d --no-deps backend` / `trajectory-worker` / `frontend` 并等待健康。后端和 worker 回 `20261116-videoex-495184bf`、前端回 `20261115-examplepick-2571d237`；备份包含并发发布完成后的 MiniMax 配置。无需数据库回滚。发布执行脚本在 `/opt/openbox/releases/20261116-voice-447385e4/activate-now.sh`。
 
+## 2026-11-16 16:51 gw2 → `20261116-volcimg-voice-674c1374`（backend + trajectory-worker），生图切到火山直连
+
+- 内容：PR #206，`image_gen` 直连火山方舟 Seedream（[VOLCENGINE_IMAGE_CHANNEL.md](VOLCENGINE_IMAGE_CHANNEL.md)）。16:54 把 `image_generation` 从 `runninghub` / `seedream-v5-pro` 改成 `volcengine` / `doubao-seedream-5-0-pro-260628` 并重启 backend 与 worker。设置页的 RunningHub 选项保留可用。
+- **这是补丁镜像，不是全量构建**：`FROM openbox-backend:20261116-voice-447385e4`，只覆盖 `tool/image_gen.py`、`tool/image_volcengine.py`、`.openbox/skills/imagegen/SKILL.md`、`billing/rates.json` 四个文件（哈希与 `main@674c1374` 一致；叠之前核对过底镜像里这几个文件与 git 一致）。与 `main@674c1374` 的后端差异只剩 `core/config.py` 的一段注释和 `openbox.jsonc.example`。下次从 main 全量构建即回到与 git 一致。前端不动，无迁移。
+- 当天 gw2 上还有另一条发布（录音消息版 `20261116-voice-447385e4`，后端 + 前端，16:36 切换成功）和一次默认模型改动（16:30，改为 `MiniMax-M3.1-Flash`），都不是本次做的。本次排在它们之后，叠在其结果上。
+- 配置：`backend.env` 加 `ARK_API_KEY`（与自有 new-api 渠道 106 同一把 key）；`openbox.json` 加 `provider.volcengine`（`https://ark.cn-beijing.volces.com/api/v3`）并改 `image_generation`；挂载计价文件 `releases/model-config-20261029/billing-rates.json` 加 `doubao-seedream-5-0-pro-260628`（0.30 / 0.60），版本串尾加 `-seedream-20261116`。备份：`config/*.pre-volcimg-20261116T083811Z`、`config/openbox.json.pre-volc-switch-20261116T085437Z`、计价文件同目录 `.pre-volcimg-20261116T083811Z`。
+- 切换：空闲门禁连续两轮（各 6 分钟）没过，线上一直有 3–5 个任务在跑；经用户同意跳过门禁（`--no-gate`）。镜像切换和配置切换各重启一次 backend 与 worker，期间在跑的任务会被打断。两次重启后都是 healthy，tracebacks=0，alembic 仍 `pp6c2d3e4f5a`。
+- 线上实测（切配置前，在 backend 容器内用线上代码和线上 key 调 `_call_provider`）：文生图 A4 `2048x2896` 按计划缩为 `1808x2552`，54 秒出图，无水印；图生图用 OSS 签名链接作输入，`1448x2048`，78 秒，标题和价格按要求改对。切配置后核对 `_configured_target()` 默认通道指向火山、RunningHub 通道不变。测试图已从 OSS 删除。
+- **没验证的**：没有走真实对话出图（工具整条链路的落库、扣费、贴图）；单张输入图透明背景、多张输入图合成没测。切换后头几次出图看 `usage_events` 里是否按 `image-gen:doubao-seedream-5-0-pro-260628:1k/2k` 计价。
+- 回滚：把 `image_generation.provider` / `model` 改回 `runninghub` / `seedream-v5-pro`，`docker compose restart backend trajectory-worker`。镜像不用回退（不配火山模型时行为与底镜像相同）；要回退则 `releases/20261116-volcimg-voice-674c1374/activate.sh 20261116-voice-447385e4 20261116-volcimg-voice-674c1374 --no-gate`。
+
 ## 2026-11-16 00:09 gw2 → `20261116-videoex-495184bf`（backend + trajectory-worker）
 
 - 内容：PR #203，引导对话里 `question` / `image_gen` / `footage_analyze` 调用前服务端确认已加载入口技能，否则挡回（最多 3 次，方案文档 §12）；PR #204，做一条视频加「挑样例」一步（类型 = 进对话前选的页签 dish / shop / visit），样例按入口区分图片和视频、放错入口的不再生效，后台保存时校验（方案文档 §13）。

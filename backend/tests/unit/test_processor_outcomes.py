@@ -63,6 +63,8 @@ def stub_side_effects(monkeypatch):
     monkeypatch.setattr(P, "create_compaction", anoop)
     monkeypatch.setattr(P, "_history_for_compaction", anoop)
     monkeypatch.setattr(P.bus, "publish", lambda *a, **k: None)
+    # A stream that breaks off part-way is replayed; do not wait between tries.
+    monkeypatch.setattr(P, "retry_delay", lambda *a, **k: 0.0)
 
 
 def fake_stream(events=None, raises=None, raises_after=None):
@@ -279,19 +281,37 @@ async def test_empty_timeout_retries_only_before_response_progress(monkeypatch, 
         if partial else {"raises": error}))
     assert result.outcome is (StepOutcome.ERROR if partial else StepOutcome.RETRY)
     assert result.retry_reason == (None if partial else "Timeout")
-    assert result.error == "ReadTimeout"
+    # After output began the step replays the response itself; once that is
+    # exhausted the user reads a plain message, not the SDK exception name.
+    assert result.error == (P.STREAM_INTERRUPTED_MESSAGE if partial else "ReadTimeout")
 
 
-async def test_text_delta_then_read_error_is_terminal_not_replayed(monkeypatch):
-    result = await run(
-        monkeypatch,
+async def test_text_delta_then_read_error_is_terminal_after_bounded_replays(monkeypatch):
+    calls = []
+    stream = fake_stream(
         events=[{"type": "text_delta", "text": "already visible"}],
         raises_after=read_error(),
     )
 
+    def counted(**kwargs):
+        calls.append(kwargs)
+        return stream(**kwargs)
+
+    monkeypatch.setattr(P, "stream_llm", counted)
+    result = await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=AgentDef(name="build", description="test"),
+        system=[], llm_messages=[], tools={}, model_id="test/model",
+        ctx=Ctx(), hooks=None, assistant_info=Info(), sandbox=None,
+        abort=NotAborted(), doom_loop_history=[],
+    )
+
+    # The step replays the interrupted response itself, a bounded number of
+    # times, and never hands a partially consumed response to the loop's
+    # retry budget.
+    assert len(calls) == P.MAX_STREAM_REPLAYS + 1
     assert result.outcome is StepOutcome.ERROR
     assert result.retry_reason is None
-    assert "connection reset" in (result.error or "")
+    assert result.error == P.STREAM_INTERRUPTED_MESSAGE
 
 
 async def test_tool_call_start_then_read_error_never_executes_or_retries(monkeypatch):

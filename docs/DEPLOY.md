@@ -9,6 +9,15 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-17 14:04 gw2 → `20261117-streamreplay-43bc4bce`（backend + trajectory-worker），模型回复中途断流自动重放
+
+- 内容：`main@43bc4bcea6bfc0d4595ebcb7b25cb4e7f3680479`（PR #210）。上游返回 200、输出到一半再报瞬时错误时（当天实测：百炼 MiniMax-M3.1-Flash，48 小时 1515 次请求中 9 次，报错 `Internal server error. Please retry your request.`），同一步内撤回半截输出并重放，最多 2 次；用尽后给用户显示中文提示，不再显示 SDK 原始报错。与 11:14 调整的首字超时（`first_progress_timeout_seconds: 90`）是两类问题。
+- 镜像：补丁镜像，`FROM openbox-backend:20261116-dialogue-voice-4fad529c` 只替换 `agent/processor.py`。`4fad529c..43bc4bce` 之间 backend 的运行代码只有这一个文件不同，替换前核对线上该文件与 main 改动前逐字节一致，所以结果等同于从 main 构建。构建目录 `/opt/openbox/releases/20261117-streamreplay-43bc4bce/patch/`。frontend 未动，仍为 `20261117-web-video-676166d0`。
+- 配置：只改 compose override 中 backend 与 trajectory-worker 两处镜像。`.env`、`config/backend.env`、`config/openbox.json`、基础 compose 字节不变；无数据库迁移，业务头仍为 `pp6c2d3e4f5a`。
+- 过程：持有发布锁。第一次空闲门禁等满 10 分钟仍有 1 个运行中的对话，脚本未做任何改动退出；第二次在 14:04:06 遇到空闲时刻后切换，按 trajectory-worker → backend 顺序 `--no-deps --timeout 70`，两项均 healthy。备份 `/opt/openbox/backups/20261117-streamreplay-43bc4bce/activation-20261117T060405Z/` 含配置与 compose；本次无迁移，未做业务库 dump。
+- 验证：两个容器内 `agent/processor.py` 的 SHA-256 与发布提交一致，`MAX_STREAM_REPLAYS=2`，默认模型仍为 `openai/MiniMax-M3.1-Flash`；`/api/environment` 与 Logto 配置 200，切换后 5 分钟后端日志无 ERROR / traceback，桌面隧道 36 路监听正常。单元测试见 PR #210。**未在真实上游断流下验证**：生效时后端日志会出现 `Provider stream interrupted in session … (replay 1/2)`。
+- 回滚：持有 `/opt/openbox/.deployment.lock`，把上述备份的 `docker-compose.override.yml` 写回，依次 `docker compose up -d --no-deps --timeout 70 trajectory-worker` / `backend` 并确认健康；无需数据库回滚。切换脚本保留在 `/opt/openbox/releases/20261117-streamreplay-43bc4bce/activate.sh`。
+
 ## 2026-11-17 09:56 gw2 Web 视频上传修复（仅 frontend）
 
 - 发布源码 `main@676166d0`，镜像 `openbox-frontend-v2:20261117-web-video-676166d0`。修复首页新对话把草稿标识当作会话 ID、普通对话在无运行中云桌面时拒绝 OSS 直传的问题。

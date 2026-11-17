@@ -89,6 +89,22 @@ def test_finished_turns_split_on_failed_steps_and_count_tools():
     assert turns.derive([row for row in closed_turn if row["record_id"] != "turn:turn_x" or row["end_seq"]])["status"] == "completed"
 
 
+def test_follow_up_calls_are_not_the_assistants_reply():
+    """Gaode 2026-11-17: the suggestions call's working notes were shown as what the assistant said."""
+    reply = _record("assistant:r1", "assistant", 7, preview="trajectory-check", message_id="m2")
+    notes = turns.with_data(_record("assistant:r2", "assistant", 8, preview="The user's goal was a connectivity check",
+                                    message_id="m2"), {"data": {"purpose": "suggestions"}})
+    chat = turns.with_data(reply, {"data": {"purpose": "chat"}})
+    for spoken in (reply, chat):
+        derived = turns.derive(_base(status="completed", end_seq=9, finished=9) + [spoken, notes])
+        assert derived["assistant_preview"] == "trajectory-check" and derived["status"] == "completed"
+    # Nor does a failed follow-up call fail a turn whose reply was delivered.
+    broken = turns.with_data(_record("assistant:r2", "assistant", 8, status="failed", reason="overloaded"),
+                             {"data": {"purpose": "suggestions"}})
+    derived = turns.derive(_base(status="completed", end_seq=9, finished=9) + [reply, broken])
+    assert derived["status"] == "completed" and derived["assistant_preview"] == "trajectory-check"
+
+
 def test_running_turns_age_into_unknown_for_readers():
     derived = turns.derive(_base())
     assert derived["status"] == "running" and derived["last_activity_at"] == AT + timedelta(seconds=3)

@@ -1,6 +1,6 @@
 # 高德生产机（gaode.bossipai.com.cn）运维
 
-ECS `i-uf6fm76cksm8z1cd7bqs`（cn-shanghai，`/opt/openbox`，无 trajectory overlay，`TRAJECTORY_WORKER_MODE=off`），云电脑 `ecd-d1pzbahxry54o9f9e`。两者均按月自动续费（ECS 到期 11-21，桌面 10-21 起每月续）。运维通道只有云助手 `aliyun ecs RunCommand`，同一时刻只能跑一条。
+ECS `i-uf6fm76cksm8z1cd7bqs`（cn-shanghai，`/opt/openbox`；2026-11-17 起带 trajectory overlay，见下「轨迹监控」），云电脑 `ecd-d1pzbahxry54o9f9e`。两者均按月自动续费（ECS 到期 11-21，桌面 10-21 起每月续）。运维通道只有云助手 `aliyun ecs RunCommand`，同一时刻只能跑一条。
 
 ## 备份
 
@@ -21,6 +21,15 @@ ECS `i-uf6fm76cksm8z1cd7bqs`（cn-shanghai，`/opt/openbox`，无 trajectory ove
 
 - 正式 Key：`key_01M4W5JBWHTV7YE71K3WYZHMGM`（前缀 `obx_sk_N8N-smVn`，到 2027-10-14，60/min，并发 10），密钥文件 `/opt/openbox/secrets/gaode-api-key-prod-20261014.json`（root 600，字段 `secret`）。测试 Key `key_01M31QPV8Q36CFJHZXJ7V2GT08` 11-20 到期，高德切换后用 `scripts/issue_api_key.py --revoke` 撤销。
 - 用户 gaode / 工作区 `01M31Q8VPZSFYV95BDFM608D33`：正式与测试共用一个工作区（桌面按工作区分配，拆分需再买一台桌面）；对账以 `metadata.task_id` 与切换日期区分。
+
+## 轨迹监控与登录方式（2026-11-17）
+
+- 生产机与测试机都加了 `deploy/gw2/docker-compose.trajectory.yml`（`.env` 的 `COMPOSE_FILE` 中间一项），多一个 `trajectory-worker` 容器（override 里钉与 backend 相同的镜像）和独立库 `openbox_trace`（`deploy/gw2/scripts/create-trace-db.sh` 建，密码 `.env` 的 `OPENBOX_TRACE_DB_PASSWORD`）。`deploy/gw2` 目录由 `git archive <发布提交> deploy/gw2` 解到 `/opt/openbox`。
+- `config/backend.env`：`TRAJECTORY_WORKER_MODE=external`、`TRAJECTORY_RECORDING_ENABLED=true`、`TRAJECTORY_ADMIN_ENABLED=true`，OSS 前缀 `TRAJECTORY_OSS_PREFIX=trajectories-gaode`（测试机 `trajectories-gaode-test`），与 gw2 的 `trajectories/` 分开；这两个前缀没有配生命周期规则。
+- 入口 `/app/admin/trajectories`，管理员 `obx-ops` 登录。启用前的会话没有轨迹。发布顺序 worker → backend → frontend；overlay 会给 postgres 调参，首次启用要重建 postgres。
+- 登录不走 Logto：两台的 `LOGTO_*` 已注释（`#nologto ` 前缀），登录页是账号密码表单。
+- 备份脚本检测到 `openbox_trace` 库时一并备份为 `openbox_trace-<UTC>.dump`。
+- 回滚：`backups/trajectory-activation-<UTC>/` 里的 `.env`、`backend.env`、override 拷回，`docker compose up -d --no-deps postgres backend frontend`，停掉 `trajectory-worker`。
 
 ## 测试环境 gaode-test.bossipai.com.cn（2026-10-14 建）
 

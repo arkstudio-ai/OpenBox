@@ -62,7 +62,10 @@ def tool_id_of(record: dict) -> str:
 
 
 #: Record kinds whose ``data`` a refresh reads: the user's attachments, a tool's id.
-DATA_KINDS = ("user", "tool")
+DATA_KINDS = ("user", "tool", "assistant")
+#: Model calls that speak to the person. Others (``suggestions``, ``memory``, ``wiki``…) run after or beside the
+#: reply; their output is never what the assistant said.
+SPOKEN_PURPOSES = (None, "chat")
 
 
 def with_data(summary: dict, data) -> dict:
@@ -77,6 +80,8 @@ def with_data(summary: dict, data) -> dict:
         tool = inner.get("tool") or inner.get("name")
         if tool:
             row["tool_id"] = str(tool)[:128]
+    if summary.get("kind") == "assistant" and inner.get("purpose"):
+        row["purpose"] = str(inner["purpose"])[:64]
     return row
 
 
@@ -108,7 +113,9 @@ def derive(records: list[dict]) -> dict | None:
     turn = by_kind.get("turn", [None])[-1]
     users = by_kind.get("user", [])
     user = next((row for row in users if row.get("status") == "accepted"), users[0] if users else None)
-    assistants = by_kind.get("assistant", [])
+    # A follow-up call such as ``suggestions`` is recorded as an assistant output too. On 2026-11-17 its
+    # English working notes were shown as the turn's reply; had it failed, the turn would have read as failed.
+    assistants = [row for row in by_kind.get("assistant", []) if row.get("purpose") in SPOKEN_PURPOSES]
     spoken = [row for row in assistants if _text_preview(row)]
     last_assistant = assistants[-1] if assistants else None
 
@@ -219,7 +226,8 @@ async def refresh(db, trajectory, turn_ids, *, applied_seq: int | None = None) -
     head = applied_seq if applied_seq is not None else trajectory.projected_seq
     for offset in range(0, len(ids), CHUNK):
         chunk = ids[offset:offset + CHUNK]
-        # Only user and tool records' data is read (attachments, the tool id); all else comes from the summary.
+        # Only user, tool and assistant records' data is read (attachments, the tool id, the call's purpose); all else
+        # comes from the summary.
         rows = (await db.execute(select(TrajectoryRecord.summary, case((TrajectoryRecord.kind.in_(DATA_KINDS), TrajectoryRecord.data),
                                                                         else_=None)).where(
             TrajectoryRecord.trajectory_id == trajectory.id, TrajectoryRecord.turn_id.in_(chunk)))).all()

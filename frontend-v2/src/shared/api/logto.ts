@@ -31,3 +31,19 @@ export async function getLogtoConfig(): Promise<LogtoConfig | null> {
     return null
   }
 }
+
+/**
+ * Whether this deployment lets visitors sign themselves up. Read from the same
+ * public endpoint whether or not SSO is on; a server that predates the switch,
+ * or one that cannot be reached, counts as open.
+ */
+export async function getRegistrationEnabled(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${env.apiBase}/api/auth/logto/config`)
+    if (!resp.ok) return true
+    const data = (await resp.json()) as { registration_enabled?: boolean }
+    return data.registration_enabled !== false
+  } catch {
+    return true
+  }
+}

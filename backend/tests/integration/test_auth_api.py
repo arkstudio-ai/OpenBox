@@ -91,6 +91,22 @@ async def test_register_duplicate_username(client):
     assert resp.status_code == 409
 
 
+async def test_register_can_be_switched_off(client, monkeypatch):
+    """A single-tenant host closes sign-up: 403 with a code, and the public config says so."""
+    from core.config import get_config
+    monkeypatch.setattr(get_config(), "registration_enabled", False)
+    resp = await client.post("/api/auth/register", json={
+        "username": "closeduser", "password": "StrongPass123",
+    })
+    assert resp.status_code == 403
+    assert resp.headers["X-Error-Code"] == "AUTH_REGISTRATION_DISABLED"
+    config = await client.get("/api/auth/logto/config")
+    assert config.json()["registration_enabled"] is False
+    monkeypatch.setattr(get_config(), "registration_enabled", True)
+    config = await client.get("/api/auth/logto/config")
+    assert config.json()["registration_enabled"] is True
+
+
 async def test_login_success(client):
     # Register
     reg = await client.post("/api/auth/register", json={

@@ -18,6 +18,7 @@ vi.mock("../api/auth", () => ({
   useLogtoConfig: () => ({ data: { enabled: true }, isLoading: false }),
   useLogin: () => ({ mutateAsync: mock.login }),
   useCompleteAuth: () => mock.complete,
+  useRegistrationEnabled: () => true,
 }))
 vi.mock("../lib/logto", () => ({ beginLogtoLogin: mock.start, rememberReturnPath: vi.fn() }))
 vi.mock("@/shared/legal/consent", () => ({ stageLegalConsent: mock.stage }))

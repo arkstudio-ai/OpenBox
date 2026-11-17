@@ -30,7 +30,7 @@ from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeat_of_recent
 from agent.driver import LeaseLostError
 from agent.hooks import ToolHooks
 from agent.llm import provider_tool_binding, stream_llm
-from agent.retry import ContextOverflowError, is_context_overflow, is_retryable
+from agent.retry import ContextOverflowError, is_context_overflow, is_retryable, retry_delay
 from assistant.scheduling import TaskSchedulingHeld
 from agent.tool_scheduler import (
     DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
@@ -90,6 +90,20 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
 # between the first chunk and final/error flush, avoiding a SQL transaction
 # every half-second while a provider is streaming.
 STREAM_CHECKPOINT_INTERVAL = 1.0
+
+# A provider can accept a request, stream part of the answer and then fail
+# with a transient error (measured 2026-11-17 on MiniMax via Bailian: HTTP 200,
+# 2-4k output tokens, then "Internal server error. Please retry your request.").
+# Tools only run after the stream has finished, so such a response has caused
+# no side effects yet: the step withdraws its partial output and asks again,
+# at most this many times, before the failure is allowed to end the run.
+MAX_STREAM_REPLAYS = 2
+#: Provider events that persist provider-side state the moment they arrive.
+#: A response that carried one is never replayed.
+_REPLAY_UNSAFE_EVENTS = frozenset({
+    "native_search_started", "native_search_result", "native_tool_revealed", "finish",
+})
+STREAM_INTERRUPTED_MESSAGE = "模型服务中途断开，自动重试后仍未成功。已完成的内容会保留，请稍后重试。"
 
 
 def _needs_runtime_preparation(tool_info, args, lookup) -> bool:
@@ -553,6 +567,13 @@ async def process_step(
     agent_switch: str | None = None
     step_start_time = time.time()
     provider_event_received = False
+    # Tool cards left over from a withdrawn response, by stream index. A
+    # replayed response reuses them; whatever it does not reuse is closed.
+    stale_tool_indexes: set[int] = set()
+    streaming_tool_cards: dict[int, ToolPartData] = {}
+    # True once the provider stream has ended; failures after that point come
+    # from tool execution, not from the model response.
+    stream_finished = False
     execution_tools = dict(execution_lookup) if execution_lookup is not None else dict(tools)
     executable_ids = (
         frozenset(step_executable_ids)
@@ -611,19 +632,94 @@ async def process_step(
                                   "question_status": "pending"}
             return _ToolCallOutcome(tool_part, direct_result=ToolResult(metadata={"waiting_input": True}),
                                     track_completed=True)
-        llm_stream = stream_llm(
-            agent_def=agent_def,
-            system=system,
-            messages=llm_messages,
-            tools=tools,
-            model_id=model_id,
-            ctx=ctx,
-            hooks=hooks,
-            variant=user_variant,
-            tool_choice=tool_choice,
-            cache_key=prompt_cache_key,
-        )
-        async for event in _iter_until_abort(llm_stream, abort):
+        async def withdraw_partial_response() -> None:
+            """Take back what an interrupted response already showed.
+
+            Parts cannot be deleted, so the text and reasoning parts are
+            emptied in place (a full update, which also resets the client's
+            delta buffer) and their ids are reused by the replayed response.
+            """
+            nonlocal collected_text, collected_reasoning, pending_tool_calls
+            nonlocal finish_reason, total_usage
+            await assert_current()
+            collected_text = ""
+            collected_reasoning = ""
+            pending_tool_calls = []
+            finish_reason = "unknown"
+            total_usage = {"input": 0, "output": 0, "total": 0}
+            if reasoning_part_id:
+                await persist_part(ReasoningPart(id=reasoning_part_id, text="",
+                    session_id=session_id, message_id=assistant_info.id), user_id=user_id)
+            if text_part_id:
+                await persist_part(TextPart(id=text_part_id, text="",
+                    session_id=session_id, message_id=assistant_info.id), user_id=user_id)
+            stale_tool_indexes.update(streaming_tool_parts)
+
+        async def provider_events():
+            """Stream one response, replaying it when it breaks off part-way.
+
+            Only a transient failure of a response that was already under way
+            is handled here. A request that produced nothing keeps using the
+            loop's retry budget, and every other error is passed through.
+            """
+            replays = 0
+            while True:
+                progressed = False
+                replay_safe = True
+                interrupted: Exception | None = None
+                llm_stream = stream_llm(
+                    agent_def=agent_def,
+                    system=system,
+                    messages=llm_messages,
+                    tools=tools,
+                    model_id=model_id,
+                    ctx=ctx,
+                    hooks=hooks,
+                    variant=user_variant,
+                    tool_choice=tool_choice,
+                    cache_key=prompt_cache_key,
+                )
+
+                def replayable(error: Exception) -> bool:
+                    return bool(
+                        progressed
+                        and replay_safe
+                        and replays < MAX_STREAM_REPLAYS
+                        and not stop_requested()
+                        and not is_context_overflow(str(error))
+                        and is_retryable(error)
+                    )
+
+                try:
+                    async for event in llm_stream:
+                        kind = event["type"]
+                        if kind == "error":
+                            if replayable(event["error"]):
+                                interrupted = event["error"]
+                                break
+                        elif kind in _REPLAY_UNSAFE_EVENTS:
+                            replay_safe = False
+                        progressed = progressed or kind != "error"
+                        yield event
+                except Exception as error:
+                    # The same break-off can surface as a raised transport
+                    # error (a read timeout or reset) instead of an envelope.
+                    if not replayable(error):
+                        raise
+                    interrupted = error
+                finally:
+                    await llm_stream.aclose()
+                if interrupted is None:
+                    return
+                replays += 1
+                log.warning(
+                    "Provider stream interrupted in session %s (replay %s/%s): %s",
+                    session_id, replays, MAX_STREAM_REPLAYS, interrupted,
+                )
+                await withdraw_partial_response()
+                await asyncio.sleep(retry_delay(replays, interrupted))
+
+        async for event in _iter_until_abort(provider_events(), abort):
             if event.get("trajectory_context") is not None:
                 ctx.trace_context = event["trajectory_context"]
             # Once any provider event has crossed the stream boundary, this
@@ -840,7 +936,11 @@ async def process_step(
                 # LLM just started emitting a tool call — create a pending
                 # tool part immediately so the frontend can show the card.
                 tc_index = event["index"]
-                tc_part_id = ascending("part")
+                # A replayed response takes over the card its withdrawn
+                # predecessor opened at this index instead of adding another.
+                reused_card = tc_index in stale_tool_indexes
+                stale_tool_indexes.discard(tc_index)
+                tc_part_id = streaming_tool_parts[tc_index] if reused_card else ascending("part")
                 streaming_tool_parts[tc_index] = tc_part_id
                 tool_part = ToolPartData(
                     id=tc_part_id,
@@ -857,7 +957,8 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await persist_part(tool_part, is_new=True, user_id=user_id)
+                streaming_tool_cards[tc_index] = tool_part
+                await persist_part(tool_part, is_new=not reused_card, user_id=user_id)
 
             elif event_type == "tool_call_args_delta":
                 # Stream argument chunks to the frontend for live preview.
@@ -893,6 +994,28 @@ async def process_step(
                     finish_reason = "compact"
                 else:
                     raise error
+
+        # Cards the replayed response did not pick up again would otherwise
+        # stay "pending" forever. Close them the way recovery closes a tool
+        # that never started, so history reads them the same way.
+        for stale_index in sorted(stale_tool_indexes):
+            if stale_index < len(pending_tool_calls):
+                continue
+            streaming_tool_parts.pop(stale_index, None)
+            stale_card = streaming_tool_cards.pop(stale_index, None)
+            if stale_card is None:
+                continue
+            from agent.recovery import TOOL_NOT_STARTED
+            await persist_part(
+                stale_card.model_copy(update={
+                    "status": ToolStatus.ERROR,
+                    "error": "Tool was not started before recovery. It was not executed.",
+                    "metadata": {**(stale_card.metadata or {}), "recovery_code": TOOL_NOT_STARTED},
+                }),
+                user_id=user_id,
+            )
+        stale_tool_indexes.clear()
+        stream_finished = True
 
         if (finish_reason in ("stop", "unknown") and not pending_tool_calls and not collected_text.strip()
                 and not collected_reasoning.strip() and not int((total_usage or {}).get("output") or 0)):
@@ -1514,6 +1637,11 @@ async def process_step(
                 duration=time.time() - step_start_time,
             )
         log.error("LLM error in session %s: %s", session_id, error_message)
+        if (retry_msg and provider_event_received and not stream_finished
+                and not getattr(e, "user_message", None)):
+            # A transient provider failure after output began: the raw SDK
+            # text ("litellm.ServiceUnavailableError: ...") stays in the log.
+            public_message = STREAM_INTERRUPTED_MESSAGE
         assistant_info.error = {"message": public_message, **({"code": error_code} if error_code else {})}
         await persist_message(assistant_info, user_id=user_id)
         return StepResult(

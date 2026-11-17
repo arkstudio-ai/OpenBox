@@ -142,6 +142,9 @@ def _coded_error(status: int, code: str, message: str) -> HTTPException:
 
 @router.post("/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, request: Request, response: Response):
+    from core.config import get_config
+    if not getattr(get_config(), "registration_enabled", True):
+        raise _coded_error(403, "AUTH_REGISTRATION_DISABLED", "Registration is disabled on this site")
     # Validate password
     err = validate_password_strength(body.password)
     if err:
@@ -245,6 +248,8 @@ async def logto_config():
     data = public_config()
     data["redirect_uri"] = config.logto_redirect_uri
     data["post_logout_redirect_uri"] = config.logto_post_logout_redirect_uri
+    # Read by the sign-in page whether or not SSO is on: it hides the sign-up link.
+    data["registration_enabled"] = bool(getattr(config, "registration_enabled", True))
     return data
 
 

@@ -11,7 +11,7 @@ import { useAppearanceStore } from "@/shared/appearance/store"
 import { paths } from "@/shared/router/paths"
 import type { AuthUser, UserPreferences } from "@/shared/types/api"
 import { takeReturnPath, type LogtoResult, type SsoScreen } from "@/features/auth/lib/logto"
-import { getLogtoConfig, type LogtoConfig } from "@/shared/api/logto"
+import { getLogtoConfig, getRegistrationEnabled, type LogtoConfig } from "@/shared/api/logto"
 
 export interface LoginBody {
   username: string
@@ -48,6 +48,17 @@ export function useLogtoConfig() {
     staleTime: Infinity,
     retry: false,
   })
+}
+
+/** False on a deployment whose accounts are created by ops; true while unknown. */
+export function useRegistrationEnabled(): boolean {
+  const { data } = useQuery<boolean>({
+    queryKey: ["registration-enabled"],
+    queryFn: getRegistrationEnabled,
+    staleTime: Infinity,
+    retry: false,
+  })
+  return data !== false
 }
 
 /** Always show the local policy notice before handing control to hosted SSO. */

@@ -178,4 +178,5 @@ hot_trends_tool = define_tool(
     execute=execute,
     sandbox_required=False,
     parallel_safe=False,
+    cancel_on_stop=True,  # read-only: Stop may drop it mid-flight
 )

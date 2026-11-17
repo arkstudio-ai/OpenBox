@@ -118,7 +118,9 @@ def _json_object(text: str) -> dict:
     if start < 0 or end <= start:
         raise AnalysisParseError("model returned no JSON object")
     try:
-        return json.loads(raw[start:end + 1])
+        # strict=False: models put raw newlines/tabs inside strings (a transcribed
+        # two-line caption); that is still the report, not a malformed one.
+        return json.loads(raw[start:end + 1], strict=False)
     except json.JSONDecodeError as exc:
         raise AnalysisParseError(f"model JSON is invalid: {exc.msg}") from exc
 

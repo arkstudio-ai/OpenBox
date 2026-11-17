@@ -108,4 +108,5 @@ view_image_tool = define_tool(
     description=VIEW_IMAGE_DESCRIPTION,
     parameters=ViewImageArgs,
     execute=execute,
+    cancel_on_stop=True,  # read-only: Stop may drop it mid-flight
 )

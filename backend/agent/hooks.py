@@ -649,6 +649,25 @@ class ToolHooks:
             terminal_error=message,
         )
 
+    async def stop_execute(self, prepared: PreparedToolExecution) -> ToolDispatchOutcome:
+        """Close a body that Stop cancelled (``cancel_on_stop`` tools only).
+
+        The same boundary as ``timeout_execute``; the difference is the cause
+        and that such a tool leaves nothing behind whose outcome is unknown.
+        """
+        from agent.tool_stop import STOPPED_MESSAGE
+
+        self._cleanup_prepared(prepared)
+        return ToolDispatchOutcome(
+            ToolResult(
+                title=f"{prepared.tool_id} stopped",
+                output=STOPPED_MESSAGE,
+                metadata={"error": True, "failure_code": "tool_stopped"},
+            ),
+            terminal_event="error",
+            terminal_error=STOPPED_MESSAGE,
+        )
+
     async def finalize_execute(
         self,
         prepared: PreparedToolExecution,

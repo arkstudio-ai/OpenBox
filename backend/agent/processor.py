@@ -1363,6 +1363,37 @@ async def process_step(
                     track_completed=True,
                 )
 
+            async def stopped() -> _ToolCallOutcome:
+                """Turn a body that Stop cancelled into this call's ordered slot."""
+                from agent.tool_stop import STOPPED_MESSAGE
+
+                hook_prepared = state.get("hook_prepared")
+                tool_part = state.get("tool_part")
+                if not isinstance(tool_part, ToolPartData):  # pragma: no cover
+                    tool_part, _is_new = _part_for_call(tc_event, status=ToolStatus.ERROR)
+                if hook_prepared is not None and hasattr(hooks, "stop_execute"):
+                    return _ToolCallOutcome(
+                        tool_part,
+                        hook_prepared=hook_prepared,
+                        hook_outcome=await hooks.stop_execute(hook_prepared),
+                        track_completed=True,
+                    )
+                if hook_prepared is not None and hasattr(hooks, "abandon_execute"):
+                    await hooks.abandon_execute(hook_prepared)
+                return _ToolCallOutcome(
+                    tool_part,
+                    direct_result=ToolResult(
+                        title=f"{tc_event['tool']} stopped",
+                        output=STOPPED_MESSAGE,
+                        metadata={"error": True, "failure_code": "tool_stopped"},
+                    ),
+                    track_completed=True,
+                )
+
+            def cancels_on_stop() -> bool:
+                tool_info = execution_tools.get(str(wire_to_canonical.get(tc_event["tool"])))
+                return getattr(tool_info, "cancel_on_stop", False) is True
+
             async def commit(outcome: _ToolCallOutcome) -> None:
                 nonlocal agent_switch, finish_reason
                 await assert_current()
@@ -1433,6 +1464,8 @@ async def process_step(
                 aborted_before_dispatch=aborted_before_dispatch,
                 timed_out=timed_out,
                 parallel_safe=_parallel_classifier(tc_event),
+                cancel_on_stop=cancels_on_stop,
+                stopped=stopped,
                 body_timeout=lambda: tool_body_timeout(
                     execution_tools.get(str(wire_to_canonical.get(tc_event["tool"]))),
                     tc_event["args"], ctx,

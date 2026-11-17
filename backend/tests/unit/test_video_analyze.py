@@ -367,3 +367,76 @@ async def test_screen_text_too_few_frames_is_a_failure_not_a_pass(text_env):
     result = await execute(VideoAnalyzeArgs(action="screen_text", source="/workspace/shot.mp4"), ctx)
     assert result.metadata["status"] == "failed" and "NOT checked" in result.output
     assert "prompt_text" not in calls
+
+
+def test_screen_text_accepts_raw_newlines_inside_strings():
+    # 2026-11-13: every screen_text job failed "Invalid control character"
+    # because the model copied a two-line caption with a literal newline.
+    raw = '{"has_text": true, "items": [{"text": "第一行\n第二行", "kind": "subtitle", "frames": [2]}], "notes": "a\tb"}'
+    report = parse_screen_text(raw, frame_count=6, interval_sec=1)
+    assert report.has_text is True and report.items[0].text == "第一行\n第二行"
+
+
+async def test_stop_drops_an_in_flight_vision_request():
+    import asyncio
+
+    abort, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def hung():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    waiter = asyncio.create_task(va._until_abort(hung(), abort))
+    await asyncio.sleep(0.01)
+    assert not waiter.done()
+    abort.set()
+    with pytest.raises(va.AnalyzeStopped):
+        await asyncio.wait_for(waiter, 1)
+    assert cancelled.is_set()
+
+    async def quick():
+        return "ok"
+    assert await va._until_abort(quick(), asyncio.Event()) == "ok"
+    assert await va._until_abort(quick(), None) == "ok"
+
+
+async def test_stop_during_the_vision_call_ends_the_screen_check_at_once(env, monkeypatch):
+    """The whole tool, not just the helper: a hung provider plus Stop returns a
+    failed, not-checked result immediately and leaves the job failed."""
+    import asyncio
+    import time
+
+    import litellm
+
+    monkeypatch.undo()  # the env fixture replaced _complete; this test needs the real one
+    oss = FakeOss()
+    monkeypatch.setattr("core.oss.get_oss", lambda: oss)
+
+    async def ensure_cli(*_a, **_k):
+        return None
+    monkeypatch.setattr("sandbox.assets.ensure_cli", ensure_cli)
+    monkeypatch.setattr("sandbox.assets._use_internal_oss", lambda _o: False)
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    started = asyncio.Event()
+
+    async def hung(**_payload):
+        started.set()
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(litellm, "acompletion", hung)
+
+    ctx, _ = await _ctx(FrameCountingSandbox())
+    run = asyncio.create_task(execute(VideoAnalyzeArgs(action="screen_text", source="/workspace/shot.mp4"), ctx))
+    await asyncio.wait_for(started.wait(), 5)
+    began = time.monotonic()
+    ctx.abort.set()
+    result = await asyncio.wait_for(run, 2)
+    assert time.monotonic() - began < 1
+    assert result.metadata["status"] == "failed" and "stopped" in result.output
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, result.metadata["job_id"])
+    assert job.status == "failed" and "stopped" in job.error

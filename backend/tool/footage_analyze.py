@@ -363,4 +363,7 @@ footage_analyze_tool = define_tool(
     execute=execute,
     sandbox_required=False,
     parallel_safe=False,
+    # Readings are cached per clip and charged only after all of them: a stop
+    # mid-read loses nothing and charges nothing.
+    cancel_on_stop=True,
 )

@@ -272,3 +272,59 @@ async def test_recovery_uses_owned_uploaded_bytes_and_the_original_billing_key(
     assert states == ["ready" if valid_digest else "manual_review"]
     assert len(sent) == 1
     assert [c["key"] for c in charged] == (["image:part-upload"] if valid_digest else [])
+
+
+async def test_stop_closes_a_cancel_on_stop_child_of_a_batch_and_drains_its_sibling(fenced_image_env):
+    """Gaode 2026-11-13: Stop during a batch waited for every child. A child that
+    declares cancel_on_stop is closed with one terminal result; the other still drains."""
+    from pydantic import BaseModel
+
+    from tool.tool import ToolResult, define_tool
+
+    class NoArgs(BaseModel):
+        pass
+
+    started = {"read": asyncio.Event(), "write": asyncio.Event()}
+    write_gate = asyncio.Event()
+
+    async def hung_read(_args, _ctx):
+        started["read"].set()
+        await asyncio.Event().wait()
+
+    async def slow_write(_args, _ctx):
+        started["write"].set()
+        await write_gate.wait()
+        return ToolResult(title="written", output="done")
+
+    read = define_tool("hung_read", description="t", parameters=NoArgs, execute=hung_read,
+                       sandbox_required=False, parallel_safe=True, cancel_on_stop=True)
+    write = define_tool("slow_write", description="t", parameters=NoArgs, execute=slow_write,
+                        sandbox_required=False, parallel_safe=True)
+    user, lease, context = await _seed_image_run("batch-stop")
+    ctx = context("part-batch-stop")
+    ctx._tool_execution_lookup = {"hung_read": read, "slow_write": write}
+    ctx.available_tools = frozenset({"batch", "hung_read", "slow_write"})
+    async with get_db_session() as db:
+        db.add(Message(id=ctx.message_id, session_id=ctx.session_id, user_id=user,
+                       role="assistant", created_at=datetime.now(timezone.utc)))
+    hooks = ToolHooks(session_id=ctx.session_id, user_id=user)
+
+    async def allow(*_args, **_kw):
+        return None
+    hooks.authorize_tool = allow
+    try:
+        running = asyncio.create_task(NestedToolRuntime(hooks, ctx).execute_batch(
+            [("hung_read", {}), ("slow_write", {})]))
+        await asyncio.wait_for(asyncio.gather(*(e.wait() for e in started.values())), 5)
+        ctx.abort.set()
+        await asyncio.sleep(0.05)
+        assert not running.done()  # the write is still owed its result
+        write_gate.set()
+        results = await asyncio.wait_for(running, 5)
+        assert results[0].metadata["failure_code"] == "tool_stopped"
+        assert results[1].title == "written" and not results[1].metadata.get("error")
+        async with get_db_session() as db:
+            parts = (await db.execute(select(Part).where(Part.session_id == ctx.session_id))).scalars().all()
+        assert sorted(p.data["status"] for p in parts) == ["completed", "error"]
+    finally:
+        await lease.release(session_status="idle")

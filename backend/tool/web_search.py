@@ -344,4 +344,5 @@ Usage tips:
     execute=execute,
     sandbox_required=False,
     parallel_safe=True,
+    cancel_on_stop=True,  # read-only: Stop may drop it mid-flight
 )

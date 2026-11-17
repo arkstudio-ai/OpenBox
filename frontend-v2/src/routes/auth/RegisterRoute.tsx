@@ -1,4 +1,4 @@
-import { Navigate } from "react-router-dom"
+import { Navigate } from "react-router"
 import { AuthShell, SsoEntry, RegisterForm } from "@/features/auth"
 import { useRegistrationEnabled } from "@/features/auth/api/auth"
 import { paths } from "@/shared/router/paths"

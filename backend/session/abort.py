@@ -143,6 +143,7 @@ async def abort_session_turn(
     was_active: bool = True,
     expected_run_id: str | None = None,
     expected_generation: int | None = None,
+    wait_timeout: float = 15.0,
 ) -> bool:
     """End the run in flight and leave an honest record of it.
 
@@ -223,7 +224,7 @@ async def abort_session_turn(
             session_id,
             run_id=target_run_id,
             generation=target_generation,
-            timeout=15.0,
+            timeout=wait_timeout,
         ):
             log.warning(
                 "Timed out waiting for agent driver generation to stop "

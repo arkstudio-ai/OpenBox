@@ -367,3 +367,37 @@ async def test_screen_text_too_few_frames_is_a_failure_not_a_pass(text_env):
     result = await execute(VideoAnalyzeArgs(action="screen_text", source="/workspace/shot.mp4"), ctx)
     assert result.metadata["status"] == "failed" and "NOT checked" in result.output
     assert "prompt_text" not in calls
+
+
+def test_screen_text_accepts_raw_newlines_inside_strings():
+    # 2026-11-13: every screen_text job failed "Invalid control character"
+    # because the model copied a two-line caption with a literal newline.
+    raw = '{"has_text": true, "items": [{"text": "第一行\n第二行", "kind": "subtitle", "frames": [2]}], "notes": "a\tb"}'
+    report = parse_screen_text(raw, frame_count=6, interval_sec=1)
+    assert report.has_text is True and report.items[0].text == "第一行\n第二行"
+
+
+async def test_stop_drops_an_in_flight_vision_request():
+    import asyncio
+
+    abort, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def hung():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    waiter = asyncio.create_task(va._until_abort(hung(), abort))
+    await asyncio.sleep(0.01)
+    assert not waiter.done()
+    abort.set()
+    with pytest.raises(va.AnalyzeStopped):
+        await asyncio.wait_for(waiter, 1)
+    assert cancelled.is_set()
+
+    async def quick():
+        return "ok"
+    assert await va._until_abort(quick(), asyncio.Event()) == "ok"
+    assert await va._until_abort(quick(), None) == "ok"

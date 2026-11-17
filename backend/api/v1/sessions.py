@@ -196,12 +196,24 @@ async def get_session(
                         estimate=await plan_quote.view(row))
 
 
+#: How long ``abort`` waits for the run to unwind before answering "stopping".
+ABORT_WAIT_SECONDS = 4.0
+
+
 @router.post("/{session_id}/abort")
 async def abort_session(
     session_id: str,
     identity: dict = Depends(require_scope("sessions:write")),
 ):
-    """Stop the turn in flight. ``aborted=false`` means nothing was running."""
+    """Stop the turn in flight. ``aborted=false`` means nothing was running.
+
+    The stop is requested durably before this waits, so the answer never
+    depends on the run having unwound. A step that cannot be interrupted (an
+    external call already sent) may need longer than a caller will wait:
+    then the reply is ``aborted=true, stopping=true`` and the session turns
+    idle on its own. It used to wait 15 s and answer ``aborted=false``, which
+    read as "nothing to stop" while the turn was still running.
+    """
     from agent.driver import get_driver_state
     from agent.inbox import cancel_inbox_items
     from session.abort import abort_session_turn
@@ -209,17 +221,28 @@ async def abort_session(
     row = await load_session_row(session_id, identity, write=True)
     canceled = await cancel_inbox_items(session_id=row.id, user_id=row.user_id, reason="user_stop")
     state = await get_driver_state(row.id)
-    if state is not None and state.phase != "idle" and state.run_id:
+    live = state is not None and state.phase != "idle" and bool(state.run_id)
+    if live:
         marked = await abort_session_turn(
             row.id, row.user_id, reason="user_stop", was_active=True,
             expected_run_id=state.run_id, expected_generation=state.generation,
+            wait_timeout=ABORT_WAIT_SECONDS,
         )
     else:
         marked = await abort_session_turn(
             row.id, row.user_id, reason="user_stop",
             was_active=row.status in ACTIVE_STATUSES,
+            wait_timeout=ABORT_WAIT_SECONDS,
         )
-    return {"ok": True, "aborted": bool(marked or canceled)}
+    stopping = False
+    if live and not marked:
+        after = await get_driver_state(row.id)
+        stopping = (after is not None and after.phase != "idle"
+                    and after.run_id == state.run_id and after.generation == state.generation)
+    body = {"ok": True, "aborted": bool(marked or canceled or stopping)}
+    if stopping:
+        body["stopping"] = True
+    return body
 
 
 

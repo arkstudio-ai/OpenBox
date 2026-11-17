@@ -248,20 +248,42 @@
       const type = q.multiple ? 'checkbox' : 'radio';
       const opts = q.options.map(o => `<label><input type="${type}" name="q-${p.question_id}-${qi}" value="${esc(o.label)}" ${done ? 'disabled' : ''}> ${esc(o.label)}${o.description ? ` <span class="muted">— ${esc(o.description)}</span>` : ''}</label>`).join('');
       const custom = q.custom ? `<input placeholder="或自己输入" data-custom="${p.question_id}-${qi}" ${done ? 'disabled' : ''}>` : '';
-      return `<div class="q"><b>${esc(q.header || '')}</b> ${esc(q.question)}${q.multiple ? ' <span class="muted">(可多选)</span>' : ''}${opts}${custom}</div>`;
+      // v1.5: a question that allows attachments gets an upload control. Files are
+      // uploaded as they are picked and kept by id, so a poll that redraws the card
+      // (a file input cannot be restored) does not lose them.
+      const key = `${p.question_id}-${qi}`;
+      const picked = cardFiles[key] || [];
+      const files = q.allow_attachments ? `<div class="muted">可上传素材：${done ? '' : `<input type="file" multiple onchange="window.__cardFiles('${key}', this)">`} ${picked.map(f => `<code>${esc(f.name)}</code>`).join(' ')}</div>` : '';
+      return `<div class="q"><b>${esc(q.header || '')}</b> ${esc(q.question)}${q.multiple ? ' <span class="muted">(可多选)</span>' : ''}${opts}${custom}${files}</div>`;
     }).join('');
     const actions = done ? '' : `<button class="primary" onclick="window.__answer('${p.question_id}', ${p.questions.length})">提交回答</button><button onclick="window.__reject('${p.question_id}')">拒绝</button>`;
     return `<div class="card" id="card-${p.question_id}"><div class="meta">确认卡 <code>${p.question_id}</code> <span class="badge ${p.status}">${p.status}</span> <span class="muted">超时 ${p.expires_at}</span></div>${qs}${actions}</div>`;
   }
+  const cardFiles = {};
+  window.__cardFiles = async (key, input) => {
+    const list = cardFiles[key] = cardFiles[key] || [];
+    for (const f of input.files) {
+      const form = new FormData(); form.append('file', f, f.name);
+      const { res, body } = await api('POST', '/files', { form });
+      if (res.ok) list.push({ id: body.id, name: f.name });
+    }
+    input.value = '';
+    const note = input.parentElement;
+    note.querySelectorAll('code').forEach(el => el.remove());
+    note.insertAdjacentHTML('beforeend', list.map(f => ` <code>${esc(f.name)}</code>`).join(''));
+  };
   window.__answer = async (qid, n) => {
     const answers = [];
+    const attachments = [];
     for (let i = 0; i < n; i++) {
       const picked = [...document.querySelectorAll(`input[name="q-${qid}-${i}"]:checked`)].map(el => el.value);
       const custom = document.querySelector(`input[data-custom="${qid}-${i}"]`);
       if (custom && custom.value.trim()) picked.push(custom.value.trim());
       answers.push(picked);
+      attachments.push((cardFiles[`${qid}-${i}`] || []).map(f => f.id));
     }
-    const { res } = await api('POST', `/sessions/${state.session.id}/questions/${qid}`, { json: { answers } });
+    const json = attachments.some(ids => ids.length) ? { answers, attachments } : { answers };
+    const { res } = await api('POST', `/sessions/${state.session.id}/questions/${qid}`, { json });
     if (res.ok) { state.answered.add(qid); if (!state.timer) startPoll(); }
   };
   window.__reject = async (qid) => { const { res } = await api('POST', `/sessions/${state.session.id}/questions/${qid}/reject`); if (res.ok && !state.timer) startPoll(); };

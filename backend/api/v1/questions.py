@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.v1.deps import load_session_row, require_scope
 from api.v1.errors import ApiError
@@ -14,9 +14,13 @@ router = APIRouter(prefix="/sessions/{session_id}/questions", tags=["questions"]
 
 class AnswerBody(BaseModel):
     answers: list[list[str]]
+    #: One file-id array per question, in card order, for questions whose
+    #: ``allow_attachments`` is true. Omit it (or send empty arrays) otherwise.
+    attachments: list[list[str]] | None = Field(default=None, max_length=4)
 
 
-async def _resolve(session_id: str, question_id: str, identity: dict, answers: list[list[str]] | None) -> dict:
+async def _resolve(session_id: str, question_id: str, identity: dict, answers: list[list[str]] | None,
+                   attachments: list[list[str]] | None = None) -> dict:
     row = await load_session_row(session_id, identity, write=True)
     request_id = internal_id(question_id, "question")
     try:
@@ -39,7 +43,11 @@ async def _resolve(session_id: str, question_id: str, identity: dict, answers: l
             # The same gate runs inside reply(); checking here first keeps the
             # partner's refusal independent of how the card is then resolved.
             await gate_answer(row.id, getattr(request, "questions", None) or [], answers)
-            await q_mod.reply(request_id, answers, user_id=row.user_id)
+            if attachments is None:
+                await q_mod.reply(request_id, answers, user_id=row.user_id)
+            else:
+                files = [[internal_id(item, "asset") for item in ids] for ids in attachments]
+                await q_mod.reply(request_id, answers, user_id=row.user_id, attachments=files)
     except KeyError:
         raise ApiError(404, "NOT_FOUND", "Question not found")
     except (q_mod.QuestionGone, q_mod.QuestionConflict) as exc:
@@ -71,8 +79,12 @@ async def answer_question(
     body: AnswerBody,
     identity: dict = Depends(require_scope("sessions:write")),
 ):
-    """Submit one label array per question, in card order."""
-    return await _resolve(session_id, question_id, identity, body.answers)
+    """Submit one label array per question, in card order.
+
+    A question that allows attachments may also be answered with files alone:
+    its label array is then empty and its ``attachments`` array is not.
+    """
+    return await _resolve(session_id, question_id, identity, body.answers, body.attachments)
 
 
 @router.post("/{question_id}/reject")

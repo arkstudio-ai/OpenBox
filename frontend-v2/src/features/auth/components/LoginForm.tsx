@@ -5,7 +5,7 @@ import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { paths } from "@/shared/router/paths"
 import { cn } from "@/shared/lib/cn"
-import { useLogin, useCompleteAuth } from "@/features/auth/api/auth"
+import { useLogin, useCompleteAuth, useRegistrationEnabled } from "@/features/auth/api/auth"
 import { useAuthErrorMessage } from "@/features/auth/lib/errors"
 import { TextField, PasswordField } from "@/features/auth/components/AuthFields"
 import { SsoButton } from "@/features/auth/components/SsoButton"
@@ -14,6 +14,7 @@ import { SsoButton } from "@/features/auth/components/SsoButton"
 export function LoginForm() {
   const { t } = useTranslation(["auth", "legal"])
   const login = useLogin()
+  const registrationOpen = useRegistrationEnabled()
   const complete = useCompleteAuth()
   const toMessage = useAuthErrorMessage()
 
@@ -103,9 +104,11 @@ export function LoginForm() {
       {/* Renders nothing unless the server has Logto configured. */}
       <SsoButton accepted={accepted} />
 
-      <Link to={paths.register} className="text-a700 hover:text-ink mt-3.5 text-xs">
-        {t("noAccount")}
-      </Link>
+      {registrationOpen && (
+        <Link to={paths.register} className="text-a700 hover:text-ink mt-3.5 text-xs">
+          {t("noAccount")}
+        </Link>
+      )}
     </form>
   )
 }

@@ -870,6 +870,10 @@ class OpenBoxConfig(BaseModel):
     max_concurrent_agents: int = 5
     monthly_cost_limit: float = 50.0
     rate_limit_login: str = "5/minute"
+    #: Self-service sign-up with a username and password. A single-tenant
+    #: deployment (a partner's dedicated host) turns it off: its accounts are
+    #: created by ops, and ``POST /api/auth/register`` answers 403.
+    registration_enabled: bool = True
     rate_limit_api: str = "60/minute"
 
     # -- Logto OIDC (optional; local username/password still works when unset) --
@@ -1215,6 +1219,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "max_concurrent_agents": "MAX_CONCURRENT_AGENTS",
         "monthly_cost_limit": "MONTHLY_COST_LIMIT",
         "rate_limit_login": "RATE_LIMIT_LOGIN",
+        "registration_enabled": "REGISTRATION_ENABLED",
         "rate_limit_api": "RATE_LIMIT_API",
         "logto_endpoint": "LOGTO_ENDPOINT",
         "logto_app_id": "LOGTO_APP_ID",

@@ -365,8 +365,11 @@ async def test_question_endpoints_map_outcomes(default_config, monkeypatch):
                 session_id="session_other" if request_id == "ELSEWHERE" else internal,
             )
 
-        async def reply(request_id, answers, user_id="default"):
+        async def reply(request_id, answers, user_id="default", **extra):
             seen["reply"] = (request_id, answers, user_id)
+            seen["extra"] = extra
+            if request_id == "FOREIGN":
+                raise ValueError("An attachment is unavailable or does not belong to this workspace")
             if request_id == "GONE":
                 raise q_mod.QuestionGone("expired")
             if request_id == "BAD":
@@ -384,6 +387,20 @@ async def test_question_endpoints_map_outcomes(default_config, monkeypatch):
         ok = await http.post(f"/sessions/{session_id}/questions/qst_Q1", json={"answers": [["可以"]]})
         assert ok.status_code == 200 and ok.json() == {"ok": True}
         assert seen["lookup"] == ("Q1", uid) and seen["reply"] == ("Q1", [["可以"]], uid)
+        assert seen["extra"] == {}
+        # Files ride on the answer, one array per question, as public file ids; a
+        # question may be answered with files alone (its label array stays empty).
+        files = await http.post(f"/sessions/{session_id}/questions/qst_Q3", json={
+            "answers": [[], ["可以"]], "attachments": [["fil_01A", "fil_01B"], []]})
+        assert files.status_code == 200
+        assert seen["reply"] == ("Q3", [[], ["可以"]], uid)
+        assert seen["extra"] == {"attachments": [["asset_01A", "asset_01B"], []]}
+        foreign = await http.post(f"/sessions/{session_id}/questions/qst_FOREIGN", json={
+            "answers": [[]], "attachments": [["fil_01X"]]})
+        assert foreign.status_code == 400 and foreign.json()["error"]["code"] == "INVALID_REQUEST"
+        malformed = await http.post(f"/sessions/{session_id}/questions/qst_Q4", json={
+            "answers": [["可以"]], "attachments": ["fil_01A"]})
+        assert malformed.status_code in (400, 422)
         gone = await http.post(f"/sessions/{session_id}/questions/qst_GONE", json={"answers": [["x"]]})
         assert gone.status_code == 409 and gone.json()["error"]["code"] == "INTERACTION_RESOLVED"
         bad = await http.post(f"/sessions/{session_id}/questions/qst_BAD", json={"answers": [["x"]]})

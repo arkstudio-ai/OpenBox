@@ -50,18 +50,20 @@ export function Menu({ open, onClose, className, children }: MenuProps) {
 
 interface MenuItemProps {
   onClick: () => void
+  disabled?: boolean
   danger?: boolean
   children: ReactNode
 }
 
-export function MenuItem({ onClick, danger, children }: MenuItemProps) {
+export function MenuItem({ onClick, disabled, danger, children }: MenuItemProps) {
   return (
     <button
       type="button"
       role="menuitem"
+      disabled={disabled}
       onClick={onClick}
       className={cn(
-        "rounded-full px-3 py-2 text-start text-md hover:bg-n200",
+        "rounded-full px-3 py-2 text-start text-md enabled:hover:bg-n200 disabled:opacity-40",
         danger ? "text-danger" : "text-ink",
       )}
     >

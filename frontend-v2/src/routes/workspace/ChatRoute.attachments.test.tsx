@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { Session } from "@/shared/types/api"
 import { putToOss } from "@/features/chat/api/assets"
 import ChatRoute, { ChatSessionView } from "./ChatRoute"
+import EmptyChatRoute from "./EmptyChatRoute"
 
 const { send, events } = vi.hoisted(() => ({ send: vi.fn(), events: vi.fn() }))
 vi.mock("react-i18next", async (importOriginal) => ({
@@ -20,6 +21,8 @@ vi.mock("react-i18next", async (importOriginal) => ({
 vi.mock("@/features/chat", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/features/chat")>(),
   ChatFlow: () => null,
+  EmptyState: () => null,
+  useStartChat: () => send,
   useChatEvents: events,
   useSendChat: () => send,
   useAbortSession: () => ({ isPending: false, mutate: vi.fn() }),
@@ -49,6 +52,7 @@ let client: QueryClient
 let calls: Array<{ path: string; init?: RequestInit }>
 let sessionReply: () => Promise<Response>
 let assetStatus: number
+let desktopRunning: boolean
 
 function wrapper({ children }: PropsWithChildren) {
   return <QueryClientProvider client={client}><MemoryRouter initialEntries={[`/chat/${session.id}`]}>{children}</MemoryRouter></QueryClientProvider>
@@ -70,12 +74,13 @@ beforeEach(() => {
   useWorkspaceStore.getState().setCurrent("workspace")
   calls = []
   assetStatus = 200
+  desktopRunning = true
   sessionReply = async () => json(session)
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url, "http://local.test").pathname
     calls.push({ path, init })
     if (path === `/api/agent/session/${session.id}`) return sessionReply()
-    if (path === "/api/containers") return json({ containers: [{ id: "shared", name: "shared", status: "running" }] })
+    if (path === "/api/containers") return json({ containers: [{ id: "shared", name: "shared", status: desktopRunning ? "running" : "stopped" }] })
     if (path === "/api/agent/agent") return json([{ name: "build" }, { name: "plan" }])
     if (path === "/api/agent/config" || path === "/api/auth/me/preferences") return json({})
     if (path === "/api/agent/skill" || path === "/api/agent/command") return json([])
@@ -158,4 +163,18 @@ it("keeps the ordinary shared route's legacy upload when OSS is unavailable", as
   upload(container)
   await waitFor(() => expect(calls.some(({ path }) => path.endsWith("/files/upload"))).toBe(true))
   expect(JSON.parse(String(assetCalls()[0].init?.body))).not.toHaveProperty("session_id")
+})
+
+it("uploads a video from the new-chat route with a stopped desktop and includes it in the first send", async () => {
+  desktopRunning = false
+  const { container } = render(<EmptyChatRoute />, { wrapper })
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+  expect(input.disabled).toBe(false)
+  const video = new File(["mp4 fixture"], "clip.mp4", { type: "video/mp4" })
+  fireEvent.change(input, { target: { files: [video] } })
+  await waitFor(() => expect(calls.some(({ path }) => path.endsWith("/complete"))).toBe(true))
+  expect(JSON.parse(String(assetCalls()[0].init?.body))).toEqual({ name: video.name, mime: video.type, size: video.size })
+  expect(putToOss).toHaveBeenCalledWith(expect.anything(), video, expect.any(Function))
+  fireEvent.click(screen.getByRole("button", { name: "send" }))
+  expect(send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ attachments: ["asset-draft"] }))
 })

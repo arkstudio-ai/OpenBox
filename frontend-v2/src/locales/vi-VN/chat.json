@@ -231,7 +231,7 @@
   "empty": "Hãy mô tả việc cần làm cho agent",
   "processSummaryShort": "{{count}} bước",
   "attachTitle": "Đính kèm (tải lên sandbox)",
-  "attachNeedSandbox": "Cần sandbox đang chạy mới đính kèm được",
+  "attachUnavailable": "Hiện chưa thể tải tệp lên cuộc trò chuyện này",
   "attachUploading": "Đang tải lên…",
   "attachFailed": "Tải lên thất bại",
   "attachTooLarge": "Tệp vượt quá 1 GB",

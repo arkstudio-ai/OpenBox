@@ -65,6 +65,7 @@ export function ComposerActions({ disabled, title, onFiles, onBrowseResources, h
       <input
         ref={fileRef}
         type="file"
+        disabled={disabled}
         multiple
         hidden
         onChange={(e) => {
@@ -87,6 +88,7 @@ export function ComposerActions({ disabled, title, onFiles, onBrowseResources, h
           </MenuItem>
         )}
         <MenuItem
+          disabled={disabled}
           onClick={() => {
             setOpen(false)
             fileRef.current?.click()
@@ -98,7 +100,7 @@ export function ComposerActions({ disabled, title, onFiles, onBrowseResources, h
           </span>
         </MenuItem>
         {canScreenshot() && (
-          <MenuItem onClick={() => void onScreenshot()}>
+          <MenuItem disabled={disabled} onClick={() => void onScreenshot()}>
             <span className="flex items-center gap-2.5">
               <Crop className="size-4 flex-none" />
               {t("composer.screenshot")}
@@ -110,8 +112,6 @@ export function ComposerActions({ disabled, title, onFiles, onBrowseResources, h
         type="button"
         data-testid="composer-tools"
         onClick={() => setOpen((o) => !o)}
-        // Resources live in object storage, so the menu still has something to
-        // offer when no sandbox is running — only the upload items need one.
         disabled={disabled && !hasResources}
         title={title}
         aria-label={t("composer.tools")}

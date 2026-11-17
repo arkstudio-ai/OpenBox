@@ -231,7 +231,7 @@
   "empty": "开始向助手描述你的任务",
   "processSummaryShort": "{{count}} 步",
   "attachTitle": "附件（上传到沙箱）",
-  "attachNeedSandbox": "需要运行中的沙箱才能上传附件",
+  "attachUnavailable": "当前对话暂时无法上传附件",
   "attachUploading": "上传中…",
   "attachFailed": "上传失败",
   "attachTooLarge": "文件超过 1024 兆",

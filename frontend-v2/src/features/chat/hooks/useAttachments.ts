@@ -74,14 +74,18 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
     itemsRef.current = items
   }, [items])
 
-  const uploadScope = useRef({ containerId, sessionId, enabled, allowSandboxFallback })
+  // Desktop availability only affects the legacy fallback, including while a ticket is pending.
+  const fallbackContainer = useRef(containerId)
+  useLayoutEffect(() => { fallbackContainer.current = containerId }, [containerId])
+
+  const uploadScope = useRef({ sessionId, enabled, allowSandboxFallback })
   useLayoutEffect(() => {
-    const scope = { containerId, sessionId, enabled, allowSandboxFallback }
+    const scope = { sessionId, enabled, allowSandboxFallback }
     uploadScope.current = scope
     // A pending response or an old file-picker callback must not revive an
     // upload after the audience changes or the composer is removed.
     return () => { scope.enabled = false }
-  }, [containerId, sessionId, enabled, allowSandboxFallback])
+  }, [sessionId, enabled, allowSandboxFallback])
 
   // Object URLs live until the hook unmounts; cheap and simple.
   const previewsRef = useRef<string[]>([])
@@ -95,7 +99,7 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
   const addFiles = useCallback(
     (input: File[]) => {
       const isCurrent = () => enabled && uploadScope.current.enabled
-        && uploadScope.current.containerId === containerId && uploadScope.current.sessionId === sessionId
+        && uploadScope.current.sessionId === sessionId && uploadScope.current.allowSandboxFallback === allowSandboxFallback
       if (!isCurrent() || input.length === 0) return
       const files = withNames(input)
       for (const file of files) {
@@ -125,10 +129,10 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
             patch({ status: "done", progress: 1, path: info.sandboxPath, assetId: info.id, name: info.name })
           } catch (err) {
             // 503 = OSS transfer not configured → legacy sandbox upload.
-            if (err instanceof ApiError && err.status === 503 && containerId
-              && isCurrent() && uploadScope.current.allowSandboxFallback) {
+            const desktop = fallbackContainer.current
+            if (err instanceof ApiError && err.status === 503 && desktop && isCurrent() && allowSandboxFallback) {
               try {
-                const data = await uploadViaSandbox(containerId, file)
+                const data = await uploadViaSandbox(desktop, file)
                 patch({ status: "done", progress: 1, path: data.path })
                 return
               } catch {
@@ -140,7 +144,7 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
         })()
       }
     },
-    [containerId, sessionId, enabled],
+    [sessionId, enabled, allowSandboxFallback],
   )
 
   /** Pin something that already lives in OSS — a pick from the resource

@@ -9,14 +9,14 @@ export function useComposerAttachments(assistant: boolean, sessionId?: string, s
   const authLoading = useAuthStore((state) => state.isLoading)
   // An existing conversation must resolve its owner and audience before any
   // upload starts. A new ordinary composer has no Session yet.
-  const ready = !authLoading && !!userId && (sessionId
+  // Direct uploads to OSS work before a cloud desktop exists.
+  const canAttach = !authLoading && !!userId && (sessionId
     ? session?.id === sessionId && session.user_id === userId
     : !assistant && !session)
   const privateAudience = assistant || session?.kind === "assistant" || session?.visibility === "private"
     || session?.assistant_managed === true || session?.memory_policy === "assistant_isolated"
-  const running = useRunningContainer(ready && !privateAudience)
+  const running = useRunningContainer(canAttach && !privateAudience)
   const containerId = running?.id ?? null
-  const canAttach = ready && (privateAudience ? !!sessionId : !!running)
   const attachments = useAttachments(containerId, privateAudience ? sessionId : undefined, {
     enabled: canAttach, allowSandboxFallback: !privateAudience,
   })

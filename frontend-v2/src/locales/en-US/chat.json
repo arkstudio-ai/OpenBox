@@ -231,7 +231,7 @@
   "empty": "Describe your task to the agent",
   "processSummaryShort": "{{count}} steps",
   "attachTitle": "Attach (uploads into the sandbox)",
-  "attachNeedSandbox": "Attachments need a running sandbox",
+  "attachUnavailable": "Uploads are currently unavailable in this chat",
   "attachUploading": "Uploading…",
   "attachFailed": "Upload failed",
   "attachTooLarge": "File exceeds 1 GB",

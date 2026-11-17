@@ -72,7 +72,9 @@ interface Props {
   sessionVariant?: string | null
   /** Changes when the user moves to another conversation, which resets the
    *  picker — an unsent choice belongs to the chat it was made in. */
-  sessionKey?: string
+  draftKey?: string
+  /** Persisted ID from the route, including while its metadata is loading. */
+  sessionId?: string
   /** Current persisted owner/audience; required before an existing chat uploads. */
   attachmentSession?: Session
   /** Tokens the next request will carry, for the context ring. Absent on a
@@ -164,7 +166,8 @@ export function Composer({
   sessionVariant,
   sessionVideoModel,
   sessionVideoResolution,
-  sessionKey,
+  draftKey,
+  sessionId,
   attachmentSession,
   contextTokens = 0,
   contextLimit = 0,
@@ -181,7 +184,8 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
 
-  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionKey, attachmentSession)
+  const sessionKey = sessionId ?? draftKey
+  const { attachments, containerId, canAttach } = useComposerAttachments(assistant, sessionId, attachmentSession)
   const shortcut = useSendShortcut()
 
   const choices = useComposerModels({
@@ -252,6 +256,7 @@ export function Composer({
     }
   }, [externalDraft])
 
+  const hasAttachments = attachments.items.length > 0
   const canSend = canSubmitText(text, attachments.items.length, attachments.uploading)
   const showStop = busy && !!onStop
 
@@ -267,7 +272,7 @@ export function Composer({
   const suggestionChips = useComposerSuggestions({
     busy,
     draft: text,
-    hasAttachments: attachments.items.length > 0 || attachments.uploading,
+    hasAttachments,
     suggestions,
     sessionKey,
     onSend: submitRequest,
@@ -382,14 +387,14 @@ export function Composer({
           </div>
 
           <div className="flex flex-wrap items-center gap-1 px-3">
-            <RecordedVoiceInput draftKey={sessionKey ?? "new"} disabled={attachments.uploading || attachments.items.length > 0}
+            <RecordedVoiceInput draftKey={sessionKey ?? "new"} disabled={hasAttachments}
               onSend={(text, voiceMessage) => onSubmit(text, {
                 model: activeId, variant: reasoning.value, videoModel: video.pending,
                 videoResolution: video.pendingResolution, voiceMessage,
               })} />
             <ComposerActions
               disabled={!canAttach}
-              title={canAttach ? t("attach") : t("attachNeedSandbox")}
+              title={canAttach ? t("attach") : t("attachUnavailable")}
               onFiles={pickFiles}
               onBrowseResources={openResources}
               hasResources={!!resourceScope}

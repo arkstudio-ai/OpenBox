@@ -150,10 +150,26 @@ describe("private composer asset audience", () => {
 })
 
 describe("ordinary shared uploads", () => {
+  it("finishes a direct transfer even when desktop availability changes while waiting for the ticket", async () => {
+    client.setQueryData(containerKeys.all(actor.id), { containers: [] })
+    let reply!: (response: Response) => void
+    createReply = () => new Promise<Response>((resolve) => { reply = resolve })
+    const { result } = hook(shared)
+    const video = new File(["mp4 fixture"], "clip.mp4", { type: "video/mp4" })
+    act(() => result.current.attachments.addFiles([video]))
+    await waitFor(() => expect(uploadCalls()).toHaveLength(1))
+    act(() => { client.setQueryData(containerKeys.all(actor.id), { containers: [desktop] }) })
+    await waitFor(() => expect(result.current.containerId).toBe(desktop.id))
+    await act(async () => { reply(json({ id: "asset-1", putUrl: "https://object.invalid/upload", headers: {} })) })
+    await waitFor(() => expect(result.current.attachments.items[0]?.status).toBe("done"))
+    expect(putToOss).toHaveBeenCalledWith(expect.anything(), video, expect.any(Function))
+    expect(uploadCalls()).toHaveLength(1)
+  })
+
   it.each(["existing", "new"])("keeps the %s ordinary composer sandbox fallback", async (kind) => {
     createReply = async () => json({ detail: "OSS unavailable" }, 503)
     const { result } = renderHook(() => useComposerAttachments(false, kind === "existing" ? shared.id : undefined, kind === "existing" ? shared : undefined), { wrapper })
-    await waitFor(() => expect(result.current.canAttach).toBe(true))
+    await waitFor(() => expect(result.current.containerId).toBe(desktop.id))
     act(() => result.current.attachments.addFiles([file()]))
     await waitFor(() => expect(result.current.attachments.items[0]?.status).toBe("done"))
     expect(uploadCalls().map(({ path }) => path)).toEqual(["/api/assets", "/api/containers/shared-desktop/files/upload"])

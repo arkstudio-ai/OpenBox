@@ -1,7 +1,6 @@
 // Drag-and-drop file intake for the composer. dragenter/dragleave fire once
 // per child element, so a nesting counter keeps the dashed state from
-// flickering as the cursor crosses inner nodes. Inert unless `enabled`
-// (no running sandbox = nowhere to upload).
+// flickering as the cursor crosses inner nodes.
 import { useCallback, useRef, useState } from "react"
 import type { DragEvent } from "react"
 

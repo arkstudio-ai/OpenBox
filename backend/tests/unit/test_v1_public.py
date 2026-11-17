@@ -136,8 +136,16 @@ def test_question_part_is_synthesised_from_the_checkpoint():
     assert card["expires_at"] == public.iso_z(expires)
     assert card["questions"] == [{
         "header": "成稿", "question": "讲稿可以吗？", "multiple": False, "custom": True,
+        "allow_attachments": False,
         "options": [{"label": "可以", "description": ""}, {"label": "需要修改", "description": ""}],
     }]
+
+    # A card that takes files says so: a partner UI draws its upload control from this flag alone.
+    checkpoint.questions[0]["allow_attachments"] = True
+    out = public.public_messages([user, step], session_status_value="waiting_input",
+                                 checkpoints={"01QSTULID": checkpoint}, presign=None)
+    assert out[1]["parts"][1]["questions"][0]["allow_attachments"] is True
+    checkpoint.questions[0]["allow_attachments"] = False
 
     checkpoint.status = "expired"
     out = public.public_messages([user, step], session_status_value="idle",

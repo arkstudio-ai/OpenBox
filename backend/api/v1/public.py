@@ -139,6 +139,10 @@ def _public_question(q: dict) -> dict:
         "options": [_public_option(o) for o in (q.get("options") or [])],
         "multiple": bool(q.get("multiple")),
         "custom": bool(q.get("custom", True)),
+        # The card may be answered with uploaded files (``POST /v1/files`` ids
+        # in the answer's ``attachments``). Without this flag a partner UI has
+        # no way to know an upload control belongs on the card.
+        "allow_attachments": bool(q.get("allow_attachments")),
     }
     if q.get("kind"):
         out["kind"] = str(q["kind"])

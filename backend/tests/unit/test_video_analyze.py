@@ -401,3 +401,42 @@ async def test_stop_drops_an_in_flight_vision_request():
         return "ok"
     assert await va._until_abort(quick(), asyncio.Event()) == "ok"
     assert await va._until_abort(quick(), None) == "ok"
+
+
+async def test_stop_during_the_vision_call_ends_the_screen_check_at_once(env, monkeypatch):
+    """The whole tool, not just the helper: a hung provider plus Stop returns a
+    failed, not-checked result immediately and leaves the job failed."""
+    import asyncio
+    import time
+
+    import litellm
+
+    monkeypatch.undo()  # the env fixture replaced _complete; this test needs the real one
+    oss = FakeOss()
+    monkeypatch.setattr("core.oss.get_oss", lambda: oss)
+
+    async def ensure_cli(*_a, **_k):
+        return None
+    monkeypatch.setattr("sandbox.assets.ensure_cli", ensure_cli)
+    monkeypatch.setattr("sandbox.assets._use_internal_oss", lambda _o: False)
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    started = asyncio.Event()
+
+    async def hung(**_payload):
+        started.set()
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(litellm, "acompletion", hung)
+
+    ctx, _ = await _ctx(FrameCountingSandbox())
+    run = asyncio.create_task(execute(VideoAnalyzeArgs(action="screen_text", source="/workspace/shot.mp4"), ctx))
+    await asyncio.wait_for(started.wait(), 5)
+    began = time.monotonic()
+    ctx.abort.set()
+    result = await asyncio.wait_for(run, 2)
+    assert time.monotonic() - began < 1
+    assert result.metadata["status"] == "failed" and "stopped" in result.output
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, result.metadata["job_id"])
+    assert job.status == "failed" and "stopped" in job.error

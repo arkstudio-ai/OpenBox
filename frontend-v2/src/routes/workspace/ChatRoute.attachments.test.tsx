@@ -178,3 +178,13 @@ it("uploads a video from the new-chat route with a stopped desktop and includes 
   fireEvent.click(screen.getByRole("button", { name: "send" }))
   expect(send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ attachments: ["asset-draft"] }))
 })
+
+it("clears new-chat attachments when switching workspaces before sending", async () => {
+  const { container } = render(<EmptyChatRoute />, { wrapper })
+  upload(container)
+  await screen.findByText("draft.txt")
+  await waitFor(() => expect(calls.some(({ path }) => path.endsWith("/complete"))).toBe(true))
+  act(() => useWorkspaceStore.getState().setCurrent("another-workspace"))
+  expect(screen.queryByText("draft.txt")).toBeNull()
+  expect((screen.getByRole("button", { name: "send" }) as HTMLButtonElement).disabled).toBe(true)
+})

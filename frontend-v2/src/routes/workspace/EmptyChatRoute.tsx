@@ -1,5 +1,7 @@
 import { useState } from "react"
 import { useNavigate, useSearchParams } from "react-router"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { paths } from "@/shared/router/paths"
 import { Composer, EmptyState, useChatAgents, useStartChat } from "@/features/chat"
 import type { ChatAgent } from "@/features/chat/api/agents"
@@ -21,6 +23,9 @@ export default function EmptyChatRoute() {
     selected: selectedProject,
     projects: projects.data ?? [],
   })
+  const userId = useAuthStore((s) => s.user?.id)
+  const workspaceId = useWorkspaceStore((s) => s.currentId)
+  const draftKey = `new:${projectId ?? "default"}`
   const navigate = useNavigate()
   const start = useStartChat((sessionId) => navigate(paths.chat(sessionId)))
 
@@ -37,8 +42,8 @@ export default function EmptyChatRoute() {
     <div className="flex h-full min-h-0 flex-col">
       <EmptyState projectName={projectName} onPick={(text) => void start(text, { projectId, agent })} />
       <Composer
-        key={`new:${projectId ?? "default"}`}
-        draftKey={`new:${projectId ?? "default"}`}
+        key={`${userId}:${workspaceId}:${draftKey}`}
+        draftKey={draftKey}
         busy={false}
         autoFocus
         onSubmit={(text, opts) => start(text, { ...opts, projectId, agent })}

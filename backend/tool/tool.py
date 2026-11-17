@@ -201,6 +201,10 @@ class ToolInfo:
     # This does not grant permission to overlap their paid side effects.
     batch_serial_safe: bool = False
     body_timeout: Callable[[dict, ToolContext], float] | None = None
+    # True when Stop may cancel this tool's running body: it only reads, or
+    # its in-flight request is safe to drop (agent/tool_stop.py). The default
+    # drains, which is right for anything that pays or changes state.
+    cancel_on_stop: bool = False
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -228,6 +232,7 @@ def define_tool(
     parallel_safe: bool | None = None,
     batch_serial_safe: bool = False,
     body_timeout: Callable[[dict, ToolContext], float] | None = None,
+    cancel_on_stop: bool = False,
     raw_schema: dict | None = None,
     source: str = "builtin",
     plane: str = "platform",
@@ -317,6 +322,7 @@ def define_tool(
         parallel_safe=parallel_safe,
         batch_serial_safe=batch_serial_safe,
         body_timeout=body_timeout,
+        cancel_on_stop=cancel_on_stop,
         raw_schema=raw_schema,
         source=source,
         plane=plane,

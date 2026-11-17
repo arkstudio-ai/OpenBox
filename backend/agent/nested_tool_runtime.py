@@ -40,6 +40,7 @@ class _NestedCall:
     committed: bool = False
     parallel_safe: bool = False
     timeout_seconds: float = 600.0
+    cancel_on_stop: bool = False
 
 
 def _call_id(ctx: ToolContext, index: int, tool_id: str) -> str:
@@ -166,6 +167,7 @@ class NestedToolRuntime:
         call.parallel_safe = tool.parallel_safe is True
         from tool.tool import tool_body_timeout
         call.timeout_seconds = tool_body_timeout(tool, call.args, self.ctx)
+        call.cancel_on_stop = getattr(tool, "cancel_on_stop", False) is True
 
         call.hook_prepared = await self.hooks.prepare_execute(
             call.tool_id,
@@ -185,7 +187,16 @@ class NestedToolRuntime:
             deadline = asyncio.timeout(call.timeout_seconds)
             try:
                 async with deadline:
-                    call.hook_outcome = await self.hooks.dispatch_execute(call.hook_prepared)
+                    if call.cancel_on_stop and hasattr(self.hooks, "stop_execute"):
+                        from agent.tool_stop import STOPPED, run_until_stopped
+
+                        outcome = await run_until_stopped(
+                            lambda: self.hooks.dispatch_execute(call.hook_prepared), self.ctx.abort)
+                        if outcome is STOPPED:
+                            outcome = await self.hooks.stop_execute(call.hook_prepared)
+                        call.hook_outcome = outcome
+                    else:
+                        call.hook_outcome = await self.hooks.dispatch_execute(call.hook_prepared)
             except TimeoutError:
                 if not deadline.expired():
                     raise

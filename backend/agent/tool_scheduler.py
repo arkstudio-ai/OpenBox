@@ -56,6 +56,20 @@ class ScheduledToolCall:
     # remain exclusive; a callable may reclassify an unstarted call live.
     parallel_safe: object = False
     body_timeout: Callable[[], float] | None = None
+    # Stop cancels this call's running body and ``stopped`` supplies its slot
+    # (agent/tool_stop.py). Only the exact boolean True opts in; without a
+    # ``stopped`` builder the body drains as before.
+    cancel_on_stop: object = False
+    stopped: Callable[[], Awaitable[Any]] | None = None
+
+    def stops_on_abort(self) -> bool:
+        if self.stopped is None:
+            return False
+        try:
+            value = self.cancel_on_stop() if callable(self.cancel_on_stop) else self.cancel_on_stop
+        except Exception:
+            return False
+        return value is True
 
     def is_parallel_safe(self) -> bool:
         try:
@@ -185,7 +199,13 @@ async def _run_group(
         timeout_scope = asyncio.timeout(deadline)
         try:
             async with timeout_scope:
-                slots[index] = await body()
+                if group[index].stops_on_abort():
+                    from agent.tool_stop import STOPPED, run_until_stopped
+
+                    value = await run_until_stopped(body, abort)
+                    slots[index] = await group[index].stopped() if value is STOPPED else value
+                else:
+                    slots[index] = await body()
         except TimeoutError as error:
             # A tool may deliberately raise TimeoutError itself.  Only the
             # scheduler-owned deadline becomes a canonical tool_timeout slot.

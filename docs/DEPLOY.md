@@ -9,6 +9,13 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-17 09:56 gw2 Web 视频上传修复（仅 frontend）
+
+- 发布源码 `main@676166d0`，镜像 `openbox-frontend-v2:20261117-web-video-676166d0`。修复首页新对话把草稿标识当作会话 ID、普通对话在无运行中云桌面时拒绝 OSS 直传的问题。
+- Chrome 修复前在首页选择 MP4 后，附件数和上传请求数都为 0。修复后 47 项定向回归通过。用公网 Web 页面连接本地测试账号的 API 和真实 OSS，一次选取 5 个原始 MP4（共 67,006,999 字节），5 次上传完成，回读 SHA-256 全部匹配，已清理测试副本。
+- 切换前完成候选 Nginx 回环验证和业务库备份，仅更新 Compose 中 frontend 的镜像。切换期间首页及 API 共探测 76 轮，09:56:11 至 09:56:20 的 9 轮返回 502，09:56:22 已恢复。六项服务均健康，公网首页与 8 个静态资源逐字节核对通过。
+- 回滚时持有 `/opt/openbox/.deployment.lock`，将备份 `/opt/openbox/backups/20261117-web-video-676166d0/activation-20261117T015518Z/docker-compose.override.yml` 中的旧 frontend 镜像 `openbox-frontend-v2:20261116-dialogue-voice-4fad529c` 恢复到当前 override，运行 `docker compose up -d --no-deps frontend` 并复查健康与公网版本。
+
 ## 2026-11-16 20:46 gw2 → `20261116-dialogue-voice-4fad529c`（backend + trajectory-worker + frontend）
 
 - 源码：已合入并推送 `main@4fad529c1b288151177e7eb2853cd22f6f1ce9e2`。语音消息扩展到普通任务、新建与四个创作对话，自由回答卡片支持转写填字；包含当前生产已用的火山图片通道和大图压缩修复。后端从干净归档全量构建 linux/amd64，Python 锁定依赖经阿里云镜像按哈希校验；Web 从相同归档以锁文件匹配的本地依赖构建，再装入官方 nginx 1.31.3 运行层。

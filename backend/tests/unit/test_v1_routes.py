@@ -416,6 +416,30 @@ async def test_abort_reports_whether_anything_stopped(default_config, monkeypatc
         assert queued.json() == {"ok": True, "aborted": True}
 
 
+async def test_abort_answers_stopping_when_the_run_outlives_the_wait(default_config, monkeypatch):
+    """2026-11-13: a step that could not be interrupted made abort wait 15 s
+    and answer aborted=false while the turn kept running."""
+    from types import SimpleNamespace
+
+    uid, wid = await seed_scope()
+    async with client(key_identity(uid, wid)) as http:
+        session_id = await _session(http)
+        seen = {}
+
+        async def state(_sid):
+            return SimpleNamespace(phase="running", run_id="run_1", generation=5)
+
+        async def abort_turn(*_a, **kwargs):
+            seen.update(kwargs)
+            return False  # the generation did not end within the wait
+
+        monkeypatch.setattr("agent.driver.get_driver_state", state)
+        monkeypatch.setattr("session.abort.abort_session_turn", abort_turn)
+        reply = await http.post(f"/sessions/{session_id}/abort")
+        assert reply.json() == {"ok": True, "aborted": True, "stopping": True}
+        assert seen["expected_run_id"] == "run_1" and seen["wait_timeout"] <= 5
+
+
 class FakeOss:
     def __init__(self):
         self.objects = {}

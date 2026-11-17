@@ -80,6 +80,42 @@ class AnalyzeRefusal(Exception):
     public_message = True
 
 
+class AnalyzeStopped(AnalyzeRefusal):
+    """The person pressed Stop while the vision request was in flight."""
+
+
+async def _until_abort(request, abort):
+    """Await a model request, but give up the moment the turn is stopped.
+
+    The tool scheduler drains dispatched bodies, so a vision call that hangs
+    until its provider timeout keeps a stopped turn "running" for minutes and
+    the session refuses new messages meanwhile. The request is read-only and
+    locally cancellable: dropping it is what Stop means here.
+    """
+    import asyncio
+
+    task = asyncio.ensure_future(request)
+    if abort is None:
+        return await task
+    if abort.is_set():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise AnalyzeStopped("stopped before the model answered; nothing was analysed")
+    watch = asyncio.create_task(abort.wait())
+    try:
+        await asyncio.wait({task, watch}, return_when=asyncio.FIRST_COMPLETED)
+        if task.done():
+            return task.result()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise AnalyzeStopped("stopped before the model answered; nothing was analysed")
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    finally:
+        watch.cancel()
+
+
 # ── source resolution ────────────────────────────────────────────────────────
 
 async def _resolve_source(source: str, ctx: ToolContext) -> tuple[str, str, str]:
@@ -270,7 +306,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
                        temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
         capture = await RequestCapture.start(ctx, purpose=purpose, model_id=model,
                                              payload=payload, capture_level="adapter_input")
-        response = await litellm.acompletion(**payload)
+        response = await _until_abort(litellm.acompletion(**payload), getattr(ctx, "abort", None))
         await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)

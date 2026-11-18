@@ -192,14 +192,14 @@ async def recent(user_id: str, workspace_id: str, *, limit: int = 8, scan: int =
     from db.models.session import Session
     async with get_db_session() as db:
         rows = (await db.execute(
-            select(Part, Session.title, Session.light_entry, Session.updated_at)
+            select(Part, Session.title, Session.light_entry, Session.updated_at, Session.light_production.is_not(None))
             .join(Session, Session.id == Part.session_id)
             .where(Part.type == "file", Part.user_id == user_id, Session.workspace_id == workspace_id,
                    Session.is_deleted.is_(False), Session.kind == "normal")
             .order_by(Part.created_at.desc()).limit(scan)
         )).all()
     groups: dict[str, dict] = {}
-    for part, title, light_entry, updated_at in rows:
+    for part, title, light_entry, updated_at, has_production in rows:
         data = part.data or {}
         relation = data.get("relation") or {}
         mime = str(data.get("mime_type") or "")
@@ -211,7 +211,7 @@ async def recent(user_id: str, workspace_id: str, *, limit: int = 8, scan: int =
                 continue
             group = groups[part.session_id] = {
                 "session_id": part.session_id, "title": title or "", "entry_id": light_entry,
-                "updated_at": _iso(updated_at), "outputs": [],
+                "updated_at": _iso(updated_at), "outputs": [], "has_production": has_production,
             }
         group["outputs"].append({
             "asset_id": data["asset_id"], "mime": mime, "kind": relation.get("kind") or "file",

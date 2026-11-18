@@ -32,11 +32,15 @@ class LightEntryCard extends StatelessWidget {
     this.reason,
     this.action,
     this.unavailable = false,
+    this.subtitle,
+    this.showPriceHint = true,
   });
 
   final LightEntry entry;
   final LightCardSize size;
   final VoidCallback? onTap;
+  final String? subtitle;
+  final bool showPriceHint;
 
   /// Grey for a reason the server does not know (the voice card when this
   /// deployment has no voice calls); [reason] says which.
@@ -134,12 +138,14 @@ class LightEntryCard extends StatelessWidget {
       ),
       const SizedBox(height: 4),
       Text(
-        _grey && reason != null ? reason! : entry.subtitle,
+        _grey && reason != null ? reason! : subtitle ?? entry.subtitle,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: FontSizes.sm, height: 1.35, color: sub),
       ),
-      if (size == LightCardSize.hero && entry.priceHint.isNotEmpty) ...[
+      if (size == LightCardSize.hero &&
+          showPriceHint &&
+          entry.priceHint.isNotEmpty) ...[
         const SizedBox(height: 8),
         Text(
           entry.priceHint,

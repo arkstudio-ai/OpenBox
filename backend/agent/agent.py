@@ -204,6 +204,7 @@ AGENTS: dict[str, AgentDef] = {
             "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode", "browser_action", "desktop_takeover",
             "image_gen", "image_to_pdf", "example_pick",
+            "light_production_form",
             "video_generate", "video_transcribe", "video_compose", "video_analyze", "footage_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
             "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state", "memory_forget",

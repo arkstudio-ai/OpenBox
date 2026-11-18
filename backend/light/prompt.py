@@ -82,6 +82,9 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     if mode != "light" and not entry_id:
         return ""
     lang = await ui_language_for(user_id)
+    if getattr(session, "light_production", None):
+        from light.production_form import system_fragment
+        return output_language_line(lang) + "\n" + system_fragment(session)
     parts = [LIGHT_MODE_TEXT, output_language_line(lang)]
     fragment = entry_fragment(entry_id, lang)
     if fragment:
@@ -145,14 +148,13 @@ async def entries_directory(user_id: str, workspace_id: str, lang: str | None = 
 ASSISTANT_LIGHT_RULES = (
     "规则：",
     "1. 做视频、做菜单、做海报、剪自己拍的素材这几类活，在文字对话里默认引导老板去首页对应入口，并给出直达链接"
-    "（首页有样片和一步一卡的引导，比在这里聊更省事）；老板明确说「你直接做」「不用去首页」，或者说要新建一个对话、"
+    "（首页可选素材、样片和制作风格）；老板明确说「你直接做」「不用去首页」，或者说要新建一个对话、"
     "新开一个任务去做，就用 tasks.submit 派活，并把 work_type 选成对应的 Light 工作类型"
     "（light_video / menu / poster / footage_edit），帮手会在云端完成，不需要云电脑。"
     "电话里（消息带 assistant:voice-turn 来电上下文）不适用「引导去首页」：派活规则以那段来电上下文里写的为准，"
     "work_type 照样选对应的 Light 工作类型。"
-    "light_video 只做「做一条视频」入口那一种片子：一段画面特写加店名，没有人物出镜、没有口播和台词。"
-    "老板要人对着镜头讲（口播、主播、讲解、出镜介绍）、要台词讲稿、或者要多个镜头剪在一起的片子，"
-    "那不是这个入口能做的：口播用 spoken_video，其他用 other_video，形式没说清用 video，不要选 light_video。"
+    "首页「做一条视频」可选择多镜头的爆款复刻。直接派活时，light_video 只做一段画面特写加店名。"
+    "派活做口播用 spoken_video，多个镜头的其他视频用 other_video，形式没说清用 video。"
     "引导去首页时要说清这件事还没开始做、没有交给帮手，不能说「已交办」「正在处理」。",
     "2. 标着「需要云电脑」的入口，在这个账号没有云电脑时，说明需要先开通云电脑（我的 → 云电脑），"
     "不要派帮手去撞；标着「需要绑定抖音」的先引导去绑定。",

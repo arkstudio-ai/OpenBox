@@ -200,5 +200,155 @@
   },
   "conversations": {
     "untitled": "Trò chuyện chưa đặt tên"
+  },
+  "production": {
+    "kind": {
+      "video": "Tạo video",
+      "footage_edit": "Dựng cảnh quay",
+      "menu": "Tạo thực đơn"
+    },
+    "home": {
+      "video": "Tạo cảnh mới từ tư liệu",
+      "footage_edit": "Dựng video từ cảnh quay thực tế",
+      "menu": "Tạo ảnh thực đơn từ món ăn"
+    },
+    "materials": {
+      "video": "Chọn tư liệu",
+      "footage_edit": "Chọn cảnh quay",
+      "menu": "Thông tin món ăn"
+    },
+    "materialsBody": {
+      "video": "Chọn ảnh hoặc video làm tư liệu tham khảo.",
+      "footage_edit": "Chọn video và ảnh bạn muốn đưa vào bản dựng.",
+      "menu": "Nhập tên món hoặc đọc từ ảnh."
+    },
+    "style": {
+      "video": "Mẫu video nổi bật",
+      "footage_edit": "Phong cách dựng",
+      "menu": "Mẫu thực đơn"
+    },
+    "styleBody": {
+      "video": "Dựa vào bố cục và nhịp mẫu để tạo cảnh mới.",
+      "footage_edit": "Chọn nhịp dựng cho cảnh quay của bạn.",
+      "menu": "Chọn bố cục cho ảnh thực đơn."
+    },
+    "review": {
+      "video": "Nội dung video",
+      "footage_edit": "Phụ đề và lời dẫn",
+      "menu": "Kiểm tra món"
+    },
+    "generate": {
+      "video": "Tạo video",
+      "footage_edit": "Bắt đầu dựng",
+      "menu": "Tạo thực đơn"
+    },
+    "done": {
+      "video": "Video đã xong",
+      "footage_edit": "Bản dựng đã xong",
+      "menu": "Thực đơn đã xong"
+    },
+    "status": {
+      "draft": "Bản nháp",
+      "working": "Đang làm",
+      "review": "Chờ duyệt",
+      "completed": "Đã xong",
+      "failed": "Thất bại",
+      "blocked": "Cần kiểm tra"
+    },
+    "phase": {
+      "copy": "Đang viết nội dung",
+      "recognize": "Đang đọc tên món",
+      "video": "Đang tạo cảnh mới",
+      "edit": "Đang dựng cảnh quay",
+      "compose": "Đang ghép video",
+      "menu": "Đang tạo ảnh thực đơn",
+      "agent": "Trợ lý đang xử lý"
+    },
+    "decision": {
+      "review": "Duyệt đề xuất",
+      "reviewBody": "Xác nhận đề xuất trong cuộc trò chuyện để tiếp tục.",
+      "blocked": "Đang kiểm tra kết quả",
+      "blockedBody": "Một yêu cầu đang chờ xác minh. Mở cuộc trò chuyện để xem tác vụ.",
+      "failed": "Chưa hoàn thành",
+      "failedBody": "Bản nháp và tư liệu đã tạo vẫn nằm trong tác vụ này."
+    },
+    "template": {
+      "twist": {
+        "title": "Cú đảo tình huống",
+        "body": "Mở đầu bằng xung đột, đảo tình huống rồi giới thiệu món. Xem mẫu tôm hùm đất."
+      },
+      "wok": {
+        "title": "Cận cảnh bếp",
+        "body": "Mở bằng một hành động, quay quá trình rồi giới thiệu món hoàn chỉnh."
+      },
+      "documentary": {
+        "title": "Tài liệu ấm áp",
+        "body": "Nhịp tự nhiên, giữ không khí của cảnh quay gốc."
+      },
+      "quick_cut": {
+        "title": "Cắt nhanh",
+        "body": "Cảnh ngắn hơn, cắt theo hành động và nhịp nhạc."
+      },
+      "product": {
+        "title": "Giới thiệu sản phẩm",
+        "body": "Giữ cận cảnh lâu hơn và chuyển cảnh nhẹ."
+      },
+      "warm_red": {
+        "title": "Đỏ ấm",
+        "body": "Đỏ và vàng làm nổi bật món đặc trưng."
+      },
+      "monochrome": {
+        "title": "Đen trắng",
+        "body": "Giản dị, canh thẳng tên món và giá."
+      }
+    },
+    "history": "Lịch sử sản xuất",
+    "noSuggestions": "Giới thiệu cửa hàng để trợ lý gợi ý việc hôm nay.",
+    "emptyHistory": "Chưa có tác vụ trong mục này.",
+    "all": "Tất cả",
+    "more": "Tải thêm",
+    "advanced": "Nâng cao",
+    "returnToProduction": "Về trang tạo",
+    "updatedFromChat": "Đã cập nhật từ trò chuyện",
+    "library": "Thư viện",
+    "camera": "Máy ảnh",
+    "takePhoto": "Chụp ảnh",
+    "takeVideo": "Quay video",
+    "upload": "Tải lên",
+    "photos": "Ảnh",
+    "videos": "Video",
+    "selected": "Đã chọn {{count}} tư liệu",
+    "confirmMaterials": "Dùng {{count}} tư liệu",
+    "emptyLibrary": "Thư viện chưa có tệp loại này.",
+    "remove": "Bỏ chọn",
+    "removeMissing": "Bỏ tư liệu không khả dụng",
+    "fileTooLarge": "Mỗi tệp tối đa 200 MB.",
+    "previewUnavailable": "Không thể xem trước.",
+    "playCase": "Phát mẫu video tôm hùm đất",
+    "playPreview": "Phát",
+    "pausePreview": "Tạm dừng",
+    "shop": "Tên cửa hàng",
+    "fromPhotos": "Thêm từ ảnh",
+    "addDish": "Thêm món",
+    "editDish": "Sửa món",
+    "dishName": "Tên món",
+    "dishPrice": "Giá (tuỳ chọn)",
+    "next": "Tiếp tục",
+    "skip": "Bỏ qua mẫu",
+    "draftCopy": "Viết nội dung",
+    "optimize": "Tối ưu nội dung",
+    "recognize": "Đọc món từ ảnh",
+    "scriptPlaceholder": "Chỉnh nội dung ở đây",
+    "keepOriginal": "Giữ âm thanh gốc",
+    "prepareFailed": "Chưa cập nhật được bản nháp. Hãy sửa hoặc thử lại.",
+    "saveDraft": "Lưu bản nháp",
+    "saveVideo": "Lưu video",
+    "saveMenu": "Lưu ảnh thực đơn",
+    "editResult": "Sửa bản này",
+    "editDraft": "Sửa bản nháp",
+    "another": "Tạo thêm",
+    "apply": "Áp dụng đề xuất",
+    "dismiss": "Giữ bản hiện tại",
+    "retry": "Thử lại"
   }
 }

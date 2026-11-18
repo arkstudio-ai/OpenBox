@@ -77,6 +77,8 @@ class Session(Base):
         nullable=False,
         server_default="{}",
     )
+    # The guided form and the transcript share the same session and write lock.
+    light_production: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     additions: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     deletions: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     files_changed: Mapped[int] = mapped_column(Integer, server_default=text("0"))

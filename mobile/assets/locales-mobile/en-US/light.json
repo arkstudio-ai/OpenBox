@@ -202,5 +202,155 @@
   },
   "conversations": {
     "untitled": "Untitled chat"
+  },
+  "production": {
+    "kind": {
+      "video": "Make a video",
+      "footage_edit": "Edit my footage",
+      "menu": "Make a menu"
+    },
+    "home": {
+      "video": "Generate fresh scenes from your materials",
+      "footage_edit": "Turn your footage into a video",
+      "menu": "Create a menu from your dishes"
+    },
+    "materials": {
+      "video": "Choose materials",
+      "footage_edit": "Choose your footage",
+      "menu": "Dishes"
+    },
+    "materialsBody": {
+      "video": "Choose images or clips for the new scenes to reference.",
+      "footage_edit": "Select the clips and photos you want in your edit.",
+      "menu": "Enter dishes or read them from photos."
+    },
+    "style": {
+      "video": "Remake a hit",
+      "footage_edit": "Editing style",
+      "menu": "Menu template"
+    },
+    "styleBody": {
+      "video": "Use a sample’s structure and pacing to create new scenes.",
+      "footage_edit": "Choose a pace for your footage.",
+      "menu": "Select a layout for your menu image."
+    },
+    "review": {
+      "video": "Video copy",
+      "footage_edit": "Captions and narration",
+      "menu": "Review dishes"
+    },
+    "generate": {
+      "video": "Generate video",
+      "footage_edit": "Start editing",
+      "menu": "Generate menu"
+    },
+    "done": {
+      "video": "Video ready",
+      "footage_edit": "Edit ready",
+      "menu": "Menu ready"
+    },
+    "status": {
+      "draft": "Draft",
+      "working": "In progress",
+      "review": "Needs review",
+      "completed": "Complete",
+      "failed": "Failed",
+      "blocked": "Pending check"
+    },
+    "phase": {
+      "copy": "Writing copy",
+      "recognize": "Reading dishes",
+      "video": "Generating new scenes",
+      "edit": "Editing your footage",
+      "compose": "Putting the video together",
+      "menu": "Generating the menu image",
+      "agent": "Assistant is working"
+    },
+    "decision": {
+      "review": "Review the proposal",
+      "reviewBody": "Confirm the proposal in the conversation to resume production.",
+      "blocked": "Checking the outcome",
+      "blockedBody": "A submission still needs verification. Open the conversation to review this task.",
+      "failed": "Production interrupted",
+      "failedBody": "Your draft and generated materials are still in this task."
+    },
+    "template": {
+      "twist": {
+        "title": "Plot twist",
+        "body": "Open with tension, reverse it, then reveal the product. Watch the crawfish example."
+      },
+      "wok": {
+        "title": "Kitchen close-up",
+        "body": "Open on an action, follow the process, and reveal the finished dish."
+      },
+      "documentary": {
+        "title": "Warm documentary",
+        "body": "Natural pacing and the feel of the original footage."
+      },
+      "quick_cut": {
+        "title": "Fast cuts",
+        "body": "Tighter cuts paced to movement and music."
+      },
+      "product": {
+        "title": "Product showcase",
+        "body": "Longer close-ups and restrained transitions."
+      },
+      "warm_red": {
+        "title": "Warm red",
+        "body": "Red and gold to highlight signature dishes."
+      },
+      "monochrome": {
+        "title": "Black and white",
+        "body": "Clean space and aligned dish names and prices."
+      }
+    },
+    "history": "Production history",
+    "noSuggestions": "Tell the assistant about your shop to get today’s suggestions.",
+    "emptyHistory": "No productions in this view yet.",
+    "all": "All",
+    "more": "Load more",
+    "advanced": "Advanced",
+    "returnToProduction": "Back to production",
+    "updatedFromChat": "Updated from chat",
+    "library": "Library",
+    "camera": "Camera",
+    "takePhoto": "Take photo",
+    "takeVideo": "Record video",
+    "upload": "Upload",
+    "photos": "Photos",
+    "videos": "Videos",
+    "selected": "{{count}} materials selected",
+    "confirmMaterials": "Use {{count}} materials",
+    "emptyLibrary": "No files of this type in your library.",
+    "remove": "Remove",
+    "removeMissing": "Remove unavailable materials",
+    "fileTooLarge": "Each file can be up to 200 MB.",
+    "previewUnavailable": "Preview unavailable.",
+    "playCase": "Play the crawfish remake",
+    "playPreview": "Play",
+    "pausePreview": "Pause",
+    "shop": "Shop name",
+    "fromPhotos": "Add from photos",
+    "addDish": "Add dish",
+    "editDish": "Edit dish",
+    "dishName": "Dish name",
+    "dishPrice": "Price (optional)",
+    "next": "Continue",
+    "skip": "Skip template",
+    "draftCopy": "Write copy",
+    "optimize": "Refine copy",
+    "recognize": "Read dishes from photos",
+    "scriptPlaceholder": "Edit your copy here",
+    "keepOriginal": "Keep original audio",
+    "prepareFailed": "The draft couldn’t update. Edit it here or try again.",
+    "saveDraft": "Save draft",
+    "saveVideo": "Save video",
+    "saveMenu": "Save menu image",
+    "editResult": "Edit this version",
+    "editDraft": "Edit draft",
+    "another": "Make another",
+    "apply": "Apply proposal",
+    "dismiss": "Keep current draft",
+    "retry": "Try production again"
   }
 }

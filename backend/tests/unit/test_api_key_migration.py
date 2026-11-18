@@ -41,7 +41,8 @@ def test_upgrade_adds_table_and_columns_then_downgrade_removes_them():
 
         from db.base import _missing_readiness_schema
         missing = _missing_readiness_schema(connection)
-        assert not any(item.startswith(("api_keys", "sessions.")) for item in missing)
+        assert not any(item.startswith("api_keys") for item in missing)
+        assert {"sessions.quality", "sessions.metadata", "sessions.api_key_id"}.isdisjoint(missing)
 
         with Operations.context(MigrationContext.configure(connection)):
             migration.downgrade()

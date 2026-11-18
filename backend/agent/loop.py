@@ -1570,6 +1570,9 @@ async def run_loop(
                 resolved_step_tools.tools,
                 inherited_authority,
             )
+            from light.production_form import restrict_guided_tools, turn_action, turn_instruction
+            guided_action = turn_action(session, last_user)
+            eligible_tools = restrict_guided_tools(eligible_tools, session, guided_action)
             assistant_view = None
             if session.kind == "assistant":
                 from assistant.runtime import runtime_view
@@ -1747,6 +1750,7 @@ async def run_loop(
                 # Same static authority as initial resolution. Never add a
                 # newly found tool to this response's execution lookup.
                 permitted = restrict_tools(resolved.tools, inherited_authority)
+                permitted = restrict_guided_tools(permitted, session, guided_action)
                 permitted = {name: info for name, info in permitted.items()
                              if info.id not in ASSISTANT_TOOLS | COORDINATION_TOOLS}
                 if isolated_memory:
@@ -1931,6 +1935,8 @@ async def run_loop(
                 log.warning(f"light prompt fragment skipped: {type(exc).__name__}")
             if light_fragment:
                 system.append(light_fragment)
+            if guided_action:
+                system.append(turn_instruction(session, guided_action))
             if revision_repair:
                 system.append(repair_instruction(revision_repair))
             if task_recovery:

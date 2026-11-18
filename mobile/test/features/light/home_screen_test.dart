@@ -263,22 +263,21 @@ void main() {
     expect(find.textContaining('12.5'), findsOneWidget);
     expect(find.byKey(const Key('light-entry-video')), findsOneWidget);
     expect(find.text('做一条视频'), findsOneWidget);
-    expect(find.text('15 秒省钱档约 4 积分'), findsOneWidget);
+    expect(find.text('根据素材生成新画面'), findsOneWidget);
     expect(
       find.byKey(const Key('light-entry-voice_assistant')),
       findsOneWidget,
     );
     expect(find.byKey(const Key('light-entry-poster')), findsOneWidget);
     expect(find.byKey(const Key('light-entry-menu')), findsOneWidget);
-    // The voice card sits where 做菜单 was: second card, first of the half
-    // row (你拍我剪 is coming soon in this fixture, so it is drawn last).
     final order = [
       for (final card in tester.widgetList<LightEntryCard>(
         find.byType(LightEntryCard),
       ))
         card.entry.id,
     ];
-    expect(order.take(4), ['video', 'voice_assistant', 'poster', 'menu']);
+    expect(order.take(3), ['video', 'footage_edit', 'menu']);
+    expect(find.byKey(const Key('light-production-history')), findsOneWidget);
     // Free tier: the desktop entries are grey and say what is missing.
     expect(find.byKey(const Key('light-entry-douyin_publish')), findsOneWidget);
     expect(find.text('需要云电脑'), findsNWidgets(2));
@@ -341,13 +340,17 @@ void main() {
     expect(store.locale, 'zh-CN');
     expect(find.text('给巷口小馆拍条视频'), findsOneWidget);
     expect(find.text('挑个样子'), findsOneWidget);
-    expect(find.text('自己挑一件'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('light-entry-menu'))).dy,
+      lessThan(tester.getTopLeft(find.text('今天可以做')).dy),
+    );
     // Grey on the free tier, and an entry the server no longer lists.
     expect(find.byKey(const Key('light-starter-douyin_publish')), findsNothing);
     expect(find.text('下线的入口'), findsNothing);
     await tester.tap(find.byKey(const Key('light-starter-video')));
     await tester.pumpAndSettle();
     expect(router.state.uri.path, '/light/topic/video');
+    expect(router.state.uri.queryParameters['brief'], '给巷口小馆拍条视频');
   });
 
   testWidgets('an available entry opens its topic page', (tester) async {

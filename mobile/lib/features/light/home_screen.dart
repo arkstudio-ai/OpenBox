@@ -17,6 +17,7 @@ import '../chat/state/config_providers.dart';
 import '../store/models/store.dart';
 import '../store/state/store_provider.dart';
 import '../voice/widgets/voice_call_button.dart';
+import 'production/production_api.dart';
 import 'state/light_providers.dart';
 import 'state/light_start.dart';
 import 'widgets/entry_card.dart';
@@ -54,8 +55,9 @@ class LightHomeScreen extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     LightEntriesView view,
-    LightEntry entry,
-  ) {
+    LightEntry entry, {
+    String? brief,
+  }) {
     if (entry.isVoiceCall) {
       if (_voiceReady(ref)) {
         unawaited(openVoiceCall(context, ref));
@@ -78,7 +80,11 @@ class LightHomeScreen extends ConsumerWidget {
       if (target != null) context.push(target);
       return;
     }
-    context.push(Paths.lightTopic(entry.id));
+    context.push(
+      ProductionKind.fromId(entry.id) == null
+          ? Paths.lightTopic(entry.id)
+          : Paths.lightProductionStart(entry.id, brief: brief),
+    );
   }
 
   @override
@@ -152,10 +158,23 @@ class LightHomeScreen extends ConsumerWidget {
               const <StarterCard>[])
         if (view.byId(card.entryId)?.available ?? false) card,
     ];
-    final primaries = view.entries.where((e) => e.isPrimary).toList();
-    final secondaries = view.entries.where((e) => e.isSecondary).toList();
+    final primaries = [
+      for (final kind in ProductionKind.values) ?view.byId(kind.id),
+    ];
+    final secondaries = view.entries
+        .where(
+          (e) =>
+              ProductionKind.fromId(e.id) == null &&
+              (e.isPrimary || e.isSecondary),
+        )
+        .toList();
     final coming = view.entries
-        .where((e) => !e.isPrimary && !e.isSecondary)
+        .where(
+          (e) =>
+              ProductionKind.fromId(e.id) == null &&
+              !e.isPrimary &&
+              !e.isSecondary,
+        )
         .toList();
 
     bool voiceOff(LightEntry entry) => entry.isVoiceCall && !voiceReady;
@@ -185,6 +204,10 @@ class LightHomeScreen extends ConsumerWidget {
       reason: reason(entry),
       action: action(entry),
       unavailable: voiceOff(entry),
+      subtitle: ProductionKind.fromId(entry.id) == null
+          ? null
+          : i18n.t('light:production.home.${entry.id}'),
+      showPriceHint: ProductionKind.fromId(entry.id) == null,
       onTap: () => _open(context, ref, view, entry),
     );
     Widget label(String key) => Padding(
@@ -200,24 +223,6 @@ class LightHomeScreen extends ConsumerWidget {
     );
 
     return [
-      if (starters.isNotEmpty) ...[
-        label('light:home.section.todo'),
-        for (final starter in starters) ...[
-          LightStarterCardTile(
-            key: Key('light-starter-${starter.entryId}'),
-            card: starter,
-            onTap: () => _open(context, ref, view, view.byId(starter.entryId)!),
-          ),
-          const SizedBox(height: 8),
-        ],
-        const SizedBox(height: 12),
-      ],
-      if (primaries.isNotEmpty)
-        label(
-          starters.isEmpty
-              ? 'light:home.section.todo'
-              : 'light:home.section.make',
-        ),
       if (primaries.isNotEmpty) card(primaries.first, LightCardSize.hero),
       for (var i = 1; i < primaries.length; i += 2) ...[
         const SizedBox(height: 10),
@@ -238,20 +243,72 @@ class LightHomeScreen extends ConsumerWidget {
           ),
         ),
       ],
+      const SizedBox(height: 20),
+      label('light:home.section.todo'),
+      for (final starter in starters) ...[
+        LightStarterCardTile(
+          key: Key('light-starter-${starter.entryId}'),
+          card: starter,
+          onTap: () => _open(
+            context,
+            ref,
+            view,
+            view.byId(starter.entryId)!,
+            brief: starter.title,
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+      if (starters.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(
+            i18n.t('light:production.noSuggestions'),
+            style: TextStyle(color: t.n700),
+          ),
+        ),
+      Material(
+        color: t.bg,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: t.hair),
+        ),
+        child: ListTile(
+          key: const Key('light-production-history'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          leading: Icon(Icons.history, color: t.ink),
+          title: Text(
+            i18n.t('light:production.history'),
+            style: TextStyle(color: t.ink, fontWeight: FontWeight.w700),
+          ),
+          trailing: Icon(Icons.chevron_right, color: t.n700),
+          onTap: () => context.push(Paths.lightProductionHistory),
+        ),
+      ),
       if (secondaries.isNotEmpty) ...[
         const SizedBox(height: 20),
         label('light:home.section.more'),
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final (index, entry) in secondaries.take(3).indexed) ...[
-                if (index > 0) const SizedBox(width: 8),
-                Expanded(child: card(entry, LightCardSize.small)),
-              ],
-            ],
+        for (var i = 0; i < secondaries.length; i += 2)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: card(secondaries[i], LightCardSize.small)),
+                  const SizedBox(width: 8),
+                  if (i + 1 < secondaries.length)
+                    Expanded(
+                      child: card(secondaries[i + 1], LightCardSize.small),
+                    )
+                  else
+                    const Spacer(),
+                ],
+              ),
+            ),
           ),
-        ),
       ],
       for (final entry in coming) ...[
         const SizedBox(height: 10),

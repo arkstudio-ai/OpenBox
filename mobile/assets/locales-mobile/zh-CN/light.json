@@ -200,5 +200,155 @@
   },
   "conversations": {
     "untitled": "未命名对话"
+  },
+  "production": {
+    "kind": {
+      "video": "做一条视频",
+      "footage_edit": "你拍我剪",
+      "menu": "做菜单"
+    },
+    "home": {
+      "video": "根据素材生成新画面",
+      "footage_edit": "把实拍素材剪成片",
+      "menu": "用菜品资料生成菜单图"
+    },
+    "materials": {
+      "video": "选素材",
+      "footage_edit": "选实拍素材",
+      "menu": "菜品资料"
+    },
+    "materialsBody": {
+      "video": "选店内素材，作为生成新画面的参考",
+      "footage_edit": "用你拍的原片剪成一条",
+      "menu": "手动输入菜名，或从图片识别"
+    },
+    "style": {
+      "video": "爆款复刻",
+      "footage_edit": "剪辑风格",
+      "menu": "菜单模板"
+    },
+    "styleBody": {
+      "video": "参考样片的结构和节奏，生成新画面",
+      "footage_edit": "选择原片的剪辑节奏",
+      "menu": "选择模板风格，生成菜单图片"
+    },
+    "review": {
+      "video": "视频文案",
+      "footage_edit": "字幕与旁白",
+      "menu": "核对菜品"
+    },
+    "generate": {
+      "video": "生成视频",
+      "footage_edit": "开始剪辑",
+      "menu": "生成菜单"
+    },
+    "done": {
+      "video": "视频已生成",
+      "footage_edit": "剪辑已完成",
+      "menu": "菜单已生成"
+    },
+    "status": {
+      "draft": "草稿",
+      "working": "制作中",
+      "review": "待确认",
+      "completed": "已完成",
+      "failed": "失败",
+      "blocked": "待核实"
+    },
+    "phase": {
+      "copy": "正在写文案",
+      "recognize": "正在识别菜品",
+      "video": "正在生成新画面",
+      "edit": "正在剪辑实拍素材",
+      "compose": "正在合成视频",
+      "menu": "正在生成菜单图片",
+      "agent": "助理正在处理"
+    },
+    "decision": {
+      "review": "方案待确认",
+      "reviewBody": "请回到对话确认方案，制作会接着进行。",
+      "blocked": "正在核实制作结果",
+      "blockedBody": "有一项提交结果待核实。可打开对话查看当前任务。",
+      "failed": "这次制作未完成",
+      "failedBody": "草稿和已生成的素材仍在这条任务里。"
+    },
+    "template": {
+      "twist": {
+        "title": "反转剧情",
+        "body": "用冲突开场，反转后揭晓商品。小龙虾案例《这单谁买》。"
+      },
+      "wok": {
+        "title": "烟火气特写",
+        "body": "动作开场，接制作过程和出锅特写，突出菜品的现场感。"
+      },
+      "documentary": {
+        "title": "温暖纪实",
+        "body": "自然节奏，记录原片里的现场感。"
+      },
+      "quick_cut": {
+        "title": "快剪动感",
+        "body": "镜头更紧凑，剪辑跟着动作和音乐节拍。"
+      },
+      "product": {
+        "title": "产品大片",
+        "body": "多给成品特写一点时间，转场克制。"
+      },
+      "warm_red": {
+        "title": "烟火红",
+        "body": "红金暖色，突出招牌菜。"
+      },
+      "monochrome": {
+        "title": "简约黑白",
+        "body": "简洁留白，对齐菜名和价格。"
+      }
+    },
+    "history": "制作记录",
+    "noSuggestions": "告诉助理你在经营什么，它会给出今天的建议。",
+    "emptyHistory": "还没有这一类制作记录。",
+    "all": "全部",
+    "more": "加载更多",
+    "advanced": "高级自定义",
+    "returnToProduction": "返回制作",
+    "updatedFromChat": "已从对话更新",
+    "library": "素材库",
+    "camera": "拍摄",
+    "takePhoto": "拍照",
+    "takeVideo": "拍视频",
+    "upload": "上传",
+    "photos": "照片",
+    "videos": "视频",
+    "selected": "已选 {{count}} 个素材",
+    "confirmMaterials": "确认 {{count}} 个素材",
+    "emptyLibrary": "素材库还没有这类文件。",
+    "remove": "移除",
+    "removeMissing": "清除已无法使用的素材",
+    "fileTooLarge": "单个素材最多 200 MB。",
+    "previewUnavailable": "暂时无法预览。",
+    "playCase": "播放小龙虾复刻案例",
+    "playPreview": "播放",
+    "pausePreview": "暂停",
+    "shop": "门店名称",
+    "fromPhotos": "从图片添加",
+    "addDish": "添加菜品",
+    "editDish": "编辑菜品",
+    "dishName": "菜名",
+    "dishPrice": "价格（选填）",
+    "next": "下一步",
+    "skip": "跳过模板",
+    "draftCopy": "生成文案",
+    "optimize": "重新优化",
+    "recognize": "识别图片菜品",
+    "scriptPlaceholder": "在这里编辑文案",
+    "keepOriginal": "保留原声",
+    "prepareFailed": "这次未能更新草稿。可以手动填写，或再试一次。",
+    "saveDraft": "保存草稿",
+    "saveVideo": "保存视频",
+    "saveMenu": "保存菜单图",
+    "editResult": "修改这版",
+    "editDraft": "返回修改",
+    "another": "再做一份",
+    "apply": "应用方案",
+    "dismiss": "保留当前版本",
+    "retry": "重试制作"
   }
 }

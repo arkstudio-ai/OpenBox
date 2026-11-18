@@ -28,11 +28,13 @@ class WorkspaceShell extends ConsumerStatefulWidget {
     required this.child,
     this.title,
     this.actions = const [],
+    this.returnToProduction = false,
   });
 
   final String? sessionId;
   final Widget child;
   final String? title;
+  final bool returnToProduction;
 
   /// Page-specific entries at the end of the top bar (web `Topbar` actions),
   /// such as the personal assistant's "我的任务".
@@ -243,15 +245,23 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             ],
           ),
           actions: [
+            if (widget.returnToProduction && widget.sessionId != null)
+              TextButton(
+                key: const Key('production-return'),
+                onPressed: () => context.canPop()
+                    ? context.pop()
+                    : context.go(Paths.lightProduction(widget.sessionId!)),
+                child: Text(i18n.t('light:production.returnToProduction')),
+              ),
             // Cron reminder pill before the panel toggle (web Topbar).
-            if (widget.sessionId != null)
+            if (widget.sessionId != null && !widget.returnToProduction)
               CronStatusPill(
                 projectId: session?.projectId,
                 onOpen: () => context.push(
                   Paths.workbench(widget.sessionId!, tab: 'cron'),
                 ),
               ),
-            if (widget.sessionId != null)
+            if (widget.sessionId != null && !widget.returnToProduction)
               CoachAnchor(
                 name: 'panel.entry',
                 child: IconButton(

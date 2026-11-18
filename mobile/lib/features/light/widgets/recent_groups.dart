@@ -91,7 +91,9 @@ class _GroupTile extends ConsumerWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(Radii.lg),
         onTap: () => context.push(
-          group.entryId != null
+          group.hasProduction
+              ? Paths.lightProduction(group.sessionId)
+              : group.entryId != null
               ? Paths.lightChat(group.sessionId)
               : Paths.chat(group.sessionId),
         ),

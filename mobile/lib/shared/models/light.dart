@@ -373,6 +373,7 @@ class LightRecentGroup {
     this.entryId,
     this.updatedAt,
     this.outputs = const [],
+    this.hasProduction = false,
   });
 
   static LightRecentGroup? fromJson(dynamic json) {
@@ -385,6 +386,7 @@ class LightRecentGroup {
       title: asString(json['title']) ?? '',
       entryId: entryId == null || entryId.isEmpty ? null : entryId,
       updatedAt: asDate(json['updated_at']),
+      hasProduction: json['has_production'] == true,
       outputs: asList(
         json['outputs'],
       ).map(LightRecentOutput.fromJson).whereType<LightRecentOutput>().toList(),
@@ -398,6 +400,7 @@ class LightRecentGroup {
   /// as a topic chat rather than a plain one.
   final String? entryId;
   final DateTime? updatedAt;
+  final bool hasProduction;
   final List<LightRecentOutput> outputs;
 }
 

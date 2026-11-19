@@ -1049,10 +1049,20 @@
     },
     "usageKind": {
       "chat": "模型对话",
+      "title": "标题生成",
+      "suggestions": "下一步建议",
       "compaction": "整理上下文",
-      "voice_call": "语音通话",
+      "compaction_chunk": "分段压缩",
+      "bash_judge": "命令判断",
+      "cron_summary": "定时任务摘要",
+      "video_compose": "视频合成",
+      "video_generate": "视频生成",
+      "image_gen": "图片生成",
+      "video_transcribe": "视频转文字",
+      "video_analyze": "视频拆解",
       "hot_trends": "热点查询",
-      "video_transcribe": "视频转文字"
+      "voice_call": "语音通话",
+      "asset_description": "素材描述"
     }
   }
 }

@@ -1049,10 +1049,20 @@
     },
     "usageKind": {
       "chat": "Model chat",
+      "title": "Title generation",
+      "suggestions": "Next-step suggestions",
       "compaction": "Context compaction",
-      "voice_call": "Voice call",
+      "compaction_chunk": "Chunk compaction",
+      "bash_judge": "Command check",
+      "cron_summary": "Scheduled summary",
+      "video_compose": "Video composition",
+      "video_generate": "Video generation",
+      "image_gen": "Image generation",
+      "video_transcribe": "Video transcription",
+      "video_analyze": "Video analysis",
       "hot_trends": "Trend lookup",
-      "video_transcribe": "Video transcription"
+      "voice_call": "Voice call",
+      "asset_description": "Asset description"
     }
   }
 }

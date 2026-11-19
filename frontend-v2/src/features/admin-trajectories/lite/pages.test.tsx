@@ -313,6 +313,51 @@ function answer(path: string): Promise<unknown> {
                 },
                 { ...PROMPT, type: "media_prompt", at: null },
                 {
+                  type: "artifact",
+                  record_id: "artifact:in",
+                  at: null,
+                  status: "completed",
+                  title: "门头.jpg",
+                  preview: null,
+                  name: "门头.jpg",
+                  media_type: "image/jpeg",
+                  size_bytes: 2048,
+                  role: "input",
+                  payload_id: "pld_in",
+                  availability: "available",
+                  linkable: true,
+                },
+                {
+                  type: "artifact",
+                  record_id: "artifact:out",
+                  at: null,
+                  status: "completed",
+                  title: "成片.mp4",
+                  preview: null,
+                  name: "成片.mp4",
+                  media_type: "video/mp4",
+                  size_bytes: 4096,
+                  role: "result",
+                  payload_id: "pld_out",
+                  availability: "available",
+                  linkable: true,
+                },
+                {
+                  type: "artifact",
+                  record_id: "artifact:gone",
+                  at: null,
+                  status: "completed",
+                  title: "旧图.png",
+                  preview: null,
+                  name: "旧图.png",
+                  media_type: "image/png",
+                  size_bytes: 10,
+                  role: "result",
+                  payload_id: "pld_gone",
+                  availability: "deleted",
+                  linkable: true,
+                },
+                {
                   type: "question",
                   record_id: "question:q1",
                   at: null,
@@ -333,6 +378,18 @@ function answer(path: string): Promise<unknown> {
           ],
     }
     return Promise.resolve(page)
+  }
+  if (path.includes("/payloads/") && path.includes("/link")) {
+    const id = path.split("/payloads/")[1]!.split("/")[0]!
+    return Promise.resolve({
+      payload_id: id,
+      url: `https://bucket.example/${id}?sig=1`,
+      expires_in: 600,
+      expires_at: "2026-10-12T08:10:00Z",
+      media_type: null,
+      size_bytes: null,
+      name: null,
+    })
   }
   if (path.includes("/turns/turn_1")) return Promise.resolve(DETAIL)
   if (path.includes("/turns/missing"))
@@ -626,6 +683,26 @@ describe("会话回放", () => {
     expect(screen.getByText("用哪个方案？")).toBeTruthy()
     expect(screen.getByText("方案 A")).toBeTruthy()
     expect(screen.getByTestId("replay-reply-failed").textContent).toContain("lite.verdict.failedReply")
+    // Files are part of the conversation: the person's picture on their side, the result as a player,
+    // each through a signed link asked for at the page's position; a deleted one stays by name.
+    const media = await screen.findAllByTestId("replay-media")
+    expect(media.map((node) => [node.tagName, node.getAttribute("src")])).toEqual([
+      ["IMG", "https://bucket.example/pld_in?sig=1"],
+      ["VIDEO", "https://bucket.example/pld_out?sig=1"],
+    ])
+    const groups = screen.getAllByTestId("replay-files")
+    expect(groups.map((node) => node.getAttribute("aria-label"))).toEqual([
+      "lite.replay.media.attached",
+      "lite.replay.media.produced",
+    ])
+    expect(screen.getByTestId("replay-file").textContent).toContain("旧图.png")
+    expect(screen.getByTestId("replay-file").textContent).toContain("lite.replay.media.unavailable")
+    expect(get.mock.calls.map(([path]) => String(path)).filter((path) => path.includes("/link"))).toEqual([
+      "/api/admin/trajectories/sessions/session_1/payloads/pld_in/link?through_seq=40",
+      "/api/admin/trajectories/sessions/session_1/payloads/pld_out/link?through_seq=40",
+    ])
+    // Shown attachments replace the "see the pro view" note.
+    expect(within(screen.getByTestId("replay-user")).queryByText("lite.turn.attachmentsInPro")).toBeNull()
     // The session's totals sit under the title, each turn's credits under the turn.
     expect(screen.getByTestId("replay-session-credits").textContent).toContain('"credits":"6.4"')
     expect(screen.getByText(/lite.replay.failedTurns/).textContent).toContain('"count":1')

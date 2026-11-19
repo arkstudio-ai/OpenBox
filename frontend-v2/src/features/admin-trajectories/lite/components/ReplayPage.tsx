@@ -3,7 +3,7 @@
 // turn sits what it cost in credits, and the turn's work unfolds in place.
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, Coins, ExternalLink, FileText, Paperclip } from "lucide-react"
+import { ChevronDown, Coins, ExternalLink, Paperclip } from "lucide-react"
 import { Link, useSearchParams } from "react-router"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { cn } from "@/shared/lib/cn"
@@ -15,9 +15,11 @@ import { EMPTY_DETAIL_PARAMS, serializeDetailParams } from "../../utils/params"
 import { useLiteLabels, useSessionReplay } from "../api"
 import { formatCredits } from "@/shared/lib/format"
 import { formatDuration } from "../../utils/time"
+import type { Seq } from "../../types/protocol"
 import type { LiteLabels, ReplayEvent, ReplayTurn } from "../types"
 import { BUTTON, Clock, TurnStatus } from "./bits"
 import { ModeToggle } from "./ModeToggle"
+import { ReplayFiles, type ArtifactEvent } from "./ReplayMedia"
 import { TurnDetailPanel } from "./TurnDetail"
 
 const MarkdownRenderer = lazy(() => import("../../components/inspector/MarkdownRenderer"))
@@ -52,7 +54,7 @@ function answerText(answers: unknown): string | null {
   return JSON.stringify(answers)
 }
 
-function Event({ event }: { event: ReplayEvent }) {
+function Event({ event, filesShown = false }: { event: ReplayEvent; filesShown?: boolean }) {
   const { t } = useTranslation("admin-trajectories")
   switch (event.type) {
     case "user":
@@ -62,7 +64,7 @@ function Event({ event }: { event: ReplayEvent }) {
             <p className="text-[15px] leading-7 break-words whitespace-pre-wrap">
               {event.text ?? t("common.dash")}
             </p>
-            {event.attachments && (
+            {event.attachments && !filesShown && (
               <span className="text-n600 text-2xs inline-flex items-center gap-1">
                 <Paperclip size={11} aria-hidden />
                 {t("lite.turn.attachmentsInPro")}
@@ -106,16 +108,40 @@ function Event({ event }: { event: ReplayEvent }) {
         </div>
       )
     }
-    case "artifact":
-      return (
-        <div className="text-n700 inline-flex items-center gap-1.5 text-xs">
-          <FileText size={12} aria-hidden />
-          {t("lite.turn.step.artifact", { name: event.title ?? "" })}
-        </div>
-      )
     default:
       return null
   }
+}
+
+type Block =
+  { kind: "event"; event: ReplayEvent } | { kind: "files"; side: "start" | "end"; events: ArtifactEvent[] }
+
+/**
+ * The turn in reading order, with files that follow one another shown side by side. What the person
+ * attached sits on their side, right under their message; what the assistant produced on the other.
+ */
+function blocks(events: ReplayEvent[]): Block[] {
+  const out: Block[] = []
+  const attached = events.filter(
+    (event): event is ArtifactEvent => event.type === "artifact" && event.role === "input",
+  )
+  let placed = attached.length === 0
+  for (const event of events) {
+    if (event.type === "artifact") {
+      if (event.role === "input") continue
+      const last = out[out.length - 1]
+      if (last && last.kind === "files" && last.side === "start") last.events.push(event)
+      else out.push({ kind: "files", side: "start", events: [event] })
+      continue
+    }
+    if (!placed && event.type !== "user") {
+      out.push({ kind: "files", side: "end", events: attached })
+      placed = true
+    }
+    out.push({ kind: "event", event })
+  }
+  if (!placed) out.push({ kind: "files", side: "end", events: attached })
+  return out
 }
 
 function Turn({
@@ -126,6 +152,7 @@ function Turn({
   highlighted,
   open,
   onToggle,
+  throughSeq,
 }: {
   turn: ReplayTurn
   userId: string
@@ -134,6 +161,7 @@ function Turn({
   highlighted: boolean
   open: boolean
   onToggle: () => void
+  throughSeq: Seq
 }) {
   const { t, i18n } = useTranslation("admin-trajectories")
   const { summary } = turn
@@ -141,6 +169,8 @@ function Turn({
   const events = turn.events.filter((event) => event.type !== "media_prompt")
   const steps = Object.values(summary.tool_counts).reduce((sum, count) => sum + count.total, 0)
   const duration = formatDuration(summary.duration_ms, i18n.language)
+  // The person's attachments are on screen themselves; the "see the pro view" note is for when they are not.
+  const attachedShown = events.some((event) => event.type === "artifact" && event.role === "input")
   const panel = `turn-detail-${summary.turn_id}`
   return (
     <section
@@ -152,9 +182,19 @@ function Turn({
       data-testid="replay-turn"
       data-status={summary.status}
     >
-      {events.map((event) => (
-        <Event key={event.record_id} event={event} />
-      ))}
+      {blocks(events).map((block) =>
+        block.kind === "files" ? (
+          <ReplayFiles
+            key={block.events[0]!.record_id}
+            events={block.events}
+            sessionId={summary.session_id}
+            throughSeq={throughSeq}
+            side={block.side}
+          />
+        ) : (
+          <Event key={block.event.record_id} event={block.event} filesShown={attachedShown} />
+        ),
+      )}
       <div
         className="text-n600 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs"
         data-testid="replay-turn-line"
@@ -316,6 +356,8 @@ export function TrajectoryReplayPage({ userId, sessionId }: { userId: string; se
   const who = session.username || session.email || session.user_id || userId
 
   const credits = session.credits
+  // Links are asked for at the newest position read: every file of the pages shown exists by then.
+  const throughSeq = pages[pages.length - 1]!.through_seq
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6" data-testid="trajectory-lite-replay">
@@ -355,6 +397,7 @@ export function TrajectoryReplayPage({ userId, sessionId }: { userId: string; se
               highlighted={turn.summary.turn_id === target}
               open={opened.has(turn.summary.turn_id)}
               onToggle={() => toggle(turn.summary.turn_id)}
+              throughSeq={throughSeq}
             />
           ))}
         </div>

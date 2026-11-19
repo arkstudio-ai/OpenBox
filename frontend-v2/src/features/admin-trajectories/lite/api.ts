@@ -4,9 +4,10 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { retryUnlessDenied } from "../api/access"
-import { queryString, TRAJECTORY_API } from "../api/endpoints"
+import { queryString, TRAJECTORY_API, trajectoryApi } from "../api/endpoints"
 import { trajectoryKeys } from "../api/keys"
 import { useAccessScope } from "../api/queries"
+import type { Seq } from "../types/protocol"
 import {
   serializeTurnsParams,
   serializeUsersParams,
@@ -220,5 +221,28 @@ export function useSessionReplay(sessionId: string) {
     enabled: scope.allowed && !!sessionId,
     staleTime: Infinity,
     retry: retryUnlessDenied,
+  })
+}
+
+/** How long a signed media link is shown before a remount asks for a new one; the server signs for ten minutes. */
+export const MEDIA_LINK_STALE_MS = 8 * 60 * 1000
+
+/**
+ * A short-lived signed link to a file of the conversation (an image the person attached, a video the
+ * assistant produced), asked for only once the file is on screen. The server audits and re-checks every
+ * link; a refusal (deleted, not linkable, not yet produced) leaves the file shown by name.
+ */
+export function useMediaLink(sessionId: string, payloadId: string | null, throughSeq: Seq, shown: boolean) {
+  const scope = useAccessScope()
+  return useQuery({
+    queryKey: [...liteKeys.replay(scope.viewer, sessionId), "media-link", payloadId ?? ""] as const,
+    queryFn: ({ signal }) => trajectoryApi.payloadLink(sessionId, payloadId ?? "", throughSeq, { signal }),
+    enabled: scope.allowed && shown && !!payloadId,
+    staleTime: MEDIA_LINK_STALE_MS,
+    gcTime: MEDIA_LINK_STALE_MS,
+    // A new link would swap the source under a playing video.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
   })
 }

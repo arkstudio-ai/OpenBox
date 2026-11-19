@@ -521,6 +521,21 @@ def _finish_reply(value) -> str | None:
     return _clip(value)
 
 
+def _artifact_file(inner: dict) -> dict:
+    """What the conversation needs to show a recorded file: its type, size, role (``input``: the person attached
+    it, ``result``: the assistant produced it) and the payload a signed link is asked for. Never a URL."""
+    payload = inner.get("payload") if isinstance(inner.get("payload"), dict) else {}
+    size = inner.get("size_bytes") if isinstance(inner.get("size_bytes"), int) else payload.get("size_bytes")
+    return {"name": inner.get("name") if isinstance(inner.get("name"), str) else None,
+            "media_type": inner.get("media_type") or payload.get("media_type"),
+            "size_bytes": size if isinstance(size, int) and not isinstance(size, bool) else None,
+            "role": inner.get("role") if isinstance(inner.get("role"), str) else None,
+            "payload_id": payload.get("payload_id") if isinstance(payload.get("payload_id"), str) else None,
+            "availability": payload.get("availability") or inner.get("availability"),
+            # Only a file recorded by reference has an object a link can point at (worker ``payload_link``).
+            "linkable": bool(inner.get("source_asset_id"))}
+
+
 def replay_events(rows: list[tuple[dict, object]], main_agent_id: str | None) -> list[dict]:
     """What the person saw in one turn, in order: their message, the main agent's replies, questions, files sent,
     plus every generation prompt (sub-agents' too, marked with ``agent_id``). Values may still hold ``$ref``."""
@@ -543,7 +558,8 @@ def replay_events(rows: list[tuple[dict, object]], main_agent_id: str | None) ->
             events.append({**base, "type": "question", "questions": inner.get("questions") or summary.get("preview"),
                            "answers": inner.get("answers")})
         elif kind == "artifact":
-            events.append({**base, "type": "artifact", "title": summary.get("title"), "preview": summary.get("preview")})
+            events.append({**base, "type": "artifact", "title": summary.get("title"), "preview": summary.get("preview"),
+                           **_artifact_file(inner)})
         elif kind == "tool":
             prompt = media_prompt(summary, data)
             if prompt:

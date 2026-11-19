@@ -102,11 +102,12 @@ async def _scene_from_words(session, entry) -> str | None:
     from db.models.message import Message
     from db.models.part import Part
     from light.entries import light_entries
-    from light.taxonomy import taxonomy
-    listed = taxonomy().entry(entry.id)
+    from light.taxonomy import base
+    # The chips are the scenes the file names, in the file's order; the console's additions have no chip.
+    listed = base().entry(entry.id)
     if listed is None or not listed.chips_are_scenes:
         return None  # this entry's chips are ways to start (拍照片 / 打字), not its scenes
-    scenes = taxonomy().scene_ids(entry.id)
+    scenes = base().scene_ids(entry.id)
     labels: dict[str, str] = {}
     for lang in ("zh-CN", "en-US", "vi-VN"):
         translated = light_entries(lang).entry(entry.id)

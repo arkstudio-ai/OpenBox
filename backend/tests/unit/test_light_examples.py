@@ -27,9 +27,13 @@ async def empty_library():
     """The test database is shared; an example left behind would show up in other Light prompts."""
     yield
     from sqlalchemy import delete
+    from db.models.light_taxonomy import LightTaxonomy
+    from light import taxonomy as taxonomy_mod
     async with get_db_session() as db:
         await db.execute(delete(LightExample))
+        await db.execute(delete(LightTaxonomy))
         await db.commit()
+    taxonomy_mod.forget()
     examples._COUNTED.clear()
 
 
@@ -229,3 +233,96 @@ async def test_console_requires_a_live_admin_and_round_trips_an_example():
         assert (await client.get("/api/admin/examples/nope")).status_code == 404
         assert (await client.post("/api/admin/examples/prefill", json={"session_id": "nope"})).status_code == 404
         assert (await client.get("/api/admin/examples/assets/nope/url")).status_code == 404
+
+
+def _edit(tax: dict) -> dict:
+    """The console's PUT body for the taxonomy it was given."""
+    return {"scenes": {entry["id"]: entry["scenes"] for entry in tax["entries"]}, "industries": tax["industries"]}
+
+
+async def test_the_team_edits_scenes_industries_and_shop_types_in_the_console():
+    from light import taxonomy as taxonomy_mod
+    from light.prompt import entry_fragment
+    admin = await _user(role="admin")
+    async with _client(await _user()) as client:
+        assert (await client.put("/api/admin/examples/taxonomy", json={"industries": []})).status_code == 403
+    async with _client(admin) as client:
+        shipped = (await client.get("/api/admin/examples/taxonomy")).json()
+        assert shipped["builtin"]["industries"] == ["food", "beauty", "retail", "other"]
+        assert shipped["builtin"]["scenes"]["poster"] == ["new_item", "holiday", "opening", "groupbuy"]
+        body = _edit(shipped)
+        body["scenes"] = {"poster": body["scenes"]["poster"] + [{"label": "会员日"}]}  # the other entries keep theirs
+        body["industries"][0]["shop_types"].insert(0, {"label": "茶餐厅", "keywords": ["茶餐厅", " 冰室 ", "茶餐厅"]})
+        body["industries"][0]["shop_types"][1]["label"] = "火锅 / 串串"
+        body["industries"].append({"label": "教培", "shop_types": [{"label": "少儿美术", "keywords": ["画室"]},
+                                                                  {"id": "other", "label": "其他教培"}]})
+        saved = await client.put("/api/admin/examples/taxonomy", json=body)
+        assert saved.status_code == 200, saved.text
+        saved = saved.json()
+        poster = saved["entries"][2]["scenes"]
+        assert [s["label"] for s in poster] == ["新品上市", "节日活动", "开业", "团购", "会员日"] and poster[4]["id"].startswith("c_")
+        assert saved["entries"][0]["scenes"] == shipped["entries"][0]["scenes"]
+        tea, hotpot = saved["industries"][0]["shop_types"][:2]
+        assert tea["id"].startswith("c_") and tea["keywords"] == ["茶餐厅", "冰室"]
+        assert hotpot == {"id": "hotpot", "label": "火锅 / 串串", "keywords": ["火锅", "串串", "冒菜"]}
+        school = saved["industries"][-1]
+        assert school["id"].startswith("c_") and [s["id"] for s in school["shop_types"]][1] == "other"
+        assert saved["version"].startswith(shipped["version"] + "+")
+        # In force for the matcher, the example form and the prompt, and still there after a restart.
+        tax = taxonomy()
+        assert tax.guess_shop_type("food", "港记冰室") == tea["id"] and tax.label("food", "hotpot") == "餐饮 / 火锅 / 串串"
+        assert f"会员日（scene={poster[4]['id']}）" in entry_fragment("poster") and "运营还加了" not in entry_fragment("menu")
+        taxonomy_mod.forget()
+        assert taxonomy().scene_ids("poster") == shipped["builtin"]["scenes"]["poster"]
+        assert (await taxonomy_mod.refresh()).scene_ids("poster")[-1] == poster[4]["id"]
+        clip = await _asset(admin["id"], admin["default_workspace_id"], "p.png", "image/png")
+        made = await client.post("/api/admin/examples", json={
+            "entry_id": "poster", "industry": school["id"], "shop_type": school["shop_types"][0]["id"],
+            "scene": poster[4]["id"], "title": "画室会员日", "outputs": [{"asset_id": clip}]})
+        assert made.status_code == 201 and made.json()["scene_label"] == "会员日"
+        assert made.json()["shop_type_label"] == "教培 / 少儿美术"
+        cells = (await client.get("/api/admin/examples/coverage")).json()["entries"][2]["scenes"]
+        assert cells[-1] == {"scene": poster[4]["id"], "label": "会员日", "count": 1}
+
+        # What an example still carries cannot be removed; what the code depends on never can.
+        again = _edit(saved)
+        again["scenes"]["poster"] = again["scenes"]["poster"][:4]
+        held = await client.put("/api/admin/examples/taxonomy", json=again)
+        assert held.status_code == 409 and held.json()["detail"]["code"] == "TAXONOMY_IN_USE"
+        assert "做海报 / 会员日（1 条）" in held.json()["detail"]["message"]
+        again = _edit(saved)
+        again["industries"] = again["industries"][:-1]
+        assert (await client.put("/api/admin/examples/taxonomy", json=again)).status_code == 409
+        for broken in (
+            {**_edit(saved), "scenes": {"poster": saved["entries"][2]["scenes"][1:]}},
+            {**_edit(saved), "industries": saved["industries"][1:]},
+            {**_edit(saved), "industries": [{**saved["industries"][0], "shop_types": saved["industries"][0]["shop_types"][:-1]}]
+                                           + saved["industries"][1:]},
+            {**_edit(saved), "scenes": {"nothing": [{"label": "x"}]}},
+            {**_edit(saved), "scenes": {"menu": saved["entries"][1]["scenes"] + [{"label": "烟火红"}]}},
+        ):
+            refused = await client.put("/api/admin/examples/taxonomy", json=broken)
+            assert refused.status_code == 422 and refused.json()["detail"]["code"] == "TAXONOMY_INVALID", broken
+        # Unused ones go: the built-in shop type nobody filed under, and the added scene once its example moved.
+        await client.put(f"/api/admin/examples/{made.json()['id']}", json={
+            "entry_id": "poster", "industry": "food", "shop_type": "other", "title": "画室会员日", "outputs": [{"asset_id": clip}]})
+        last = _edit(saved)
+        last["scenes"]["poster"] = last["scenes"]["poster"][:4]
+        last["industries"] = [{**i, "shop_types": [s for s in i["shop_types"] if s["id"] != "bbq"]} for i in last["industries"][:-1]]
+        done = (await client.put("/api/admin/examples/taxonomy", json=last)).json()
+        assert [s["id"] for s in done["entries"][2]["scenes"]] == shipped["builtin"]["scenes"]["poster"]
+        assert "bbq" not in [s["id"] for s in done["industries"][0]["shop_types"]] and len(done["industries"]) == 4
+
+
+def test_a_file_that_grew_after_the_edit_keeps_its_new_scenes_and_industries():
+    from light import taxonomy as taxonomy_mod
+    shipped = taxonomy_mod.base()
+    custom = taxonomy_mod.Custom.model_validate({
+        "scenes": {"poster": [{"id": "c_1", "label": "会员日"}, {"id": "holiday", "label": "过节"}]},
+        "industries": [{"id": "food", "label": "餐饮", "shop_types": [{"id": "c_2", "label": "茶餐厅"}]}]})
+    merged = taxonomy_mod.merge(shipped, custom, "20261119")
+    assert merged.scene_ids("poster") == ["c_1", "holiday", "new_item", "opening", "groupbuy"]
+    assert merged.scene_label("poster", "holiday") == "过节" and merged.scene_ids("menu") == shipped.scene_ids("menu")
+    assert merged.industry_ids() == ["food", "beauty", "retail", "other"]
+    assert merged.shop_type_ids("food") == ["c_2", "other"] and merged.version.endswith("+20261119")
+    assert taxonomy_mod.merge(shipped, None) is shipped

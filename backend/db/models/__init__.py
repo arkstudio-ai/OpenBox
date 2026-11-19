@@ -65,6 +65,7 @@ from db.models.memory_pipeline import MemoryTurnCompletion, MemoryExtractionJob,
 from db.models.voice import VoiceCall, VoiceLine, VoiceTurn
 from db.models.memory_protocol import MemoryChangeClock, MemoryWriteReceipt, MemoryExperience
 from db.models.light_example import LightExample
+from db.models.light_taxonomy import LightTaxonomy
 from db.models.store import Store
 
 __all__ = [
@@ -73,7 +74,7 @@ __all__ = [
     "AssistantTask", "AssistantCommand", "TaskSubmission", "TaskResult", "AssistantReadCursor", "AssistantEventProjection",
     "ExternalEffect", "ExternalEffectEvidence", "ResourceControlLease",
     "MemoryTurnCompletion", "MemoryExtractionJob", "MemoryExtractionCursor",
-    "MemoryPipelineEnrollment", "VoiceCall", "VoiceLine", "VoiceTurn", "LightExample", "Store",
+    "MemoryPipelineEnrollment", "VoiceCall", "VoiceLine", "VoiceTurn", "LightExample", "LightTaxonomy", "Store",
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",

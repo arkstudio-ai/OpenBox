@@ -32,7 +32,8 @@
     "edit": "编辑",
     "enable": "启用",
     "disable": "停用",
-    "preview": "预览"
+    "preview": "预览",
+    "taxonomy": "分类设置"
   },
   "list": {
     "empty": "还没有样例。从轨迹监控的某一轮点「收进样例库」，或手工新建。",
@@ -96,5 +97,37 @@
   },
   "preview": {
     "unavailable": "暂时打不开"
+  },
+  "taxonomy": {
+    "title": "分类设置",
+    "description": "样例按「入口下的类型」和「行业 / 门店类型」归类。这里改了，筛选、收样例的下拉和样例卡的匹配都跟着变。",
+    "scenes": "类型（按入口）",
+    "scenesHint": "内置的类型是 App 开场的选项，可以改名不能删；新加的类型用来给样例归类，AI 会在对得上时用它挑样例。",
+    "industries": "行业与门店类型",
+    "industriesHint": "关键词用来从店名和主打里猜门店类型，用顿号或逗号分开。内置行业对应用户填的行业，可以改名不能删。",
+    "sceneName": "{{entry}}的类型名称",
+    "industryName": "行业名称",
+    "shopName": "{{industry}}的门店类型名称",
+    "keywords": "关键词，如：火锅、串串",
+    "keywordsOf": "{{name}}的关键词",
+    "addScene": "+ 加类型",
+    "addShop": "+ 加门店类型",
+    "addIndustry": "+ 加行业",
+    "removeNamed": "移除 {{name}}",
+    "builtin": "内置项，App 和用户资料在用，只能改名",
+    "builtinTag": "内置",
+    "generic": "每个行业都要留一个「其他」",
+    "genericLabel": "其他",
+    "saved": "分类已保存",
+    "problem": {
+      "empty": "有名称还没填",
+      "duplicate": "同一组里有重名"
+    },
+    "errors": {
+      "TAXONOMY_IN_USE": "还有样例在用，先把这些样例改到别的分类再删：{{message}}",
+      "TAXONOMY_INVALID": "分类不对：{{message}}",
+      "HTTP_422": "名称或关键词超出限制，检查后再保存",
+      "default": "保存失败，请稍后再试"
+    }
   }
 }

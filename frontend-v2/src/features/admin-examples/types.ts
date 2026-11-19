@@ -110,6 +110,14 @@ export interface Taxonomy {
   version: string
   entries: TaxonomyEntry[]
   industries: Industry[]
+  /** Ids the team may rename but not remove: the App and the first-video form point at them. */
+  builtin?: { scenes: Record<string, string[]>; industries: string[]; shop_types: string[] }
+}
+
+/** `PUT /taxonomy`: an id is left out for something just added; the server names it. */
+export interface TaxonomyWrite {
+  scenes: Record<string, { id?: string; label: string }[]>
+  industries: { id?: string; label: string; shop_types: { id?: string; label: string; keywords: string[] }[] }[]
 }
 
 /** `GET /coverage`: active examples per entry and scene; a cell under `target` cannot fill the card's row. */

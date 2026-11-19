@@ -35,6 +35,14 @@ def output_language_line(lang: str | None) -> str:
     return line + ("；越南语可保留英文专有名词。" if lang == "vi-VN" else "。")
 
 
+def _added_scenes(entry_id: str) -> list:
+    """Scenes the content team added in the console; the skill's own list does not know them."""
+    from light.taxonomy import base, taxonomy
+    shipped = set(base().scene_ids(entry_id))
+    entry = taxonomy().entry(entry_id)
+    return [scene for scene in (entry.scenes if entry else []) if scene.id not in shipped]
+
+
 def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
     """The entry named in the interface language, so step labels and the title match what the person sees."""
     entry = light_entries(lang).entry(entry_id or "") if entry_id else None
@@ -51,6 +59,10 @@ def entry_fragment(entry_id: str | None, lang: str | None = None) -> str:
                      "样例卡由它发出并等对方选；选中的那条会在工具结果里给你，这次就照它做。"
                      "工具列表里暂时没有 example_pick 时，先调用 capability_search（names 填 example_pick）取到它，"
                      "下一步再调用，不要因此跳过这一步。")
+        added = _added_scenes(entry.id)
+        if added:
+            lines.append("这个入口的类型除了技能里列的，运营还加了：" + "、".join(f"{s.label}（scene={s.id}）" for s in added)
+                         + "。对方说的用途更像其中一个时，example_pick 的 scene 就填它的 id。")
     return " ".join(lines)
 
 

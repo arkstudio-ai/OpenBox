@@ -119,9 +119,10 @@ async def show(ctx: ToolContext, *, scene: str | None, again: bool = False, via:
     from core.ui_language import ui_language_for
     from db.repository.preference_repo import PgPreferenceRepo
     from light import examples
-    from light.taxonomy import taxonomy
+    from light.taxonomy import refresh, taxonomy
     from tool.video_model_card import unattended
 
+    await refresh()
     session = await _session(ctx)
     entry_id = getattr(session, "light_entry", None)
     if session is None or not entry_id or entry_id not in taxonomy().entry_ids():

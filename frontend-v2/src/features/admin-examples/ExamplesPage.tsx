@@ -12,6 +12,7 @@ import { toast } from "@/shared/ui/Toast"
 import { PAGE_SIZE, useCoverage, useExamples, useSetExampleStatus, useTaxonomy } from "./api"
 import { AssetTile, ExampleSheet, type SheetMode } from "./ExampleSheet"
 import { scenesOf } from "./lib"
+import { TaxonomySheet } from "./TaxonomySheet"
 import type { Coverage, Example } from "./types"
 
 const DEFAULTS = { entry: "", industry: "", shopType: "", scene: "", status: "", q: "", offset: "0" }
@@ -90,6 +91,7 @@ export function ExamplesPage() {
   const setStatus = useSetExampleStatus()
   const [sheet, setSheet] = useState<SheetMode | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  const [editingTaxonomy, setEditingTaxonomy] = useState(false)
 
   const collect = search.get("collect")
   const collectAsset = search.get("asset")
@@ -216,6 +218,9 @@ export function ExamplesPage() {
         </label>
         <div className="ml-auto flex items-center gap-3">
           {list.data && <span className="text-n500 text-2xs">{t("list.total", { count: total })}</span>}
+          <button type="button" className={`${BUTTON} py-1.5`} disabled={!taxonomy.data} onClick={() => setEditingTaxonomy(true)}>
+            {t("action.taxonomy")}
+          </button>
           <button type="button" className="bg-ink text-bg rounded-full px-3.5 py-1.5 text-xs font-medium" onClick={() => setSheet({ kind: "new" })}>
             {t("action.new")}
           </button>
@@ -263,6 +268,7 @@ export function ExamplesPage() {
         </section>
       )}
 
+      <TaxonomySheet open={editingTaxonomy} onClose={() => setEditingTaxonomy(false)} onSaved={() => toast("success", t("taxonomy.saved"))} />
       <ExampleSheet mode={mode} onClose={closeSheet} onSaved={() => toast("success", t("form.saved"))} />
     </div>
   )

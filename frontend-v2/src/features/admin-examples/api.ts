@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { http } from "@/shared/api/http"
-import type { AssetLink, Coverage, Example, ExampleDraft, ExampleList, ExampleWrite, Taxonomy } from "./types"
+import type { AssetLink, Coverage, Example, ExampleDraft, ExampleList, ExampleWrite, Taxonomy, TaxonomyWrite } from "./types"
 
 export const BASE = "/api/admin/examples"
 export const PAGE_SIZE = 50
@@ -112,6 +112,16 @@ export function useSetExampleStatus() {
     retry: false,
     mutationFn: ({ id, status }: { id: string; status: "active" | "disabled" }) =>
       http.post<Example>(`${BASE}/${encodeURIComponent(id)}/status`, { status }),
+    onSuccess: refetch,
+  })
+}
+
+/** Saving the classification changes the labels on every row, so everything is read again. */
+export function useSaveTaxonomy() {
+  const refetch = useRefetchAfterWrite()
+  return useMutation({
+    retry: false,
+    mutationFn: (body: TaxonomyWrite) => http.put<Taxonomy>(`${BASE}/taxonomy`, body),
     onSuccess: refetch,
   })
 }

@@ -9,6 +9,17 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-19 gw2 与高德两台：轨迹简洁模式对话视图、投影卡死修复、样例库分类设置
+
+- 内容（main）：PR #218 样例库分类可由管理员设置（迁移 `pq7d3e4f5a6b`，新表 `light_taxonomy`）、#219 简洁模式对话视图（每轮积分、原地展开详细）、#220 积分构成的用途名称、#221 留存内容读取失败不再取消进行中的下载、#222/#223 对话里显示图片和视频。高德线：分支 `gaode/patch-20261119-trajchat`（= `gaode/patch-20261117-cardfiles` + 会话回放 #146、从旧到新 #156、以及 #219–#223 中与轨迹相关的提交；不含 #218）。
+- gw2 镜像：13:54 `20261119-trajchat-602a5dd4`（backend + trajectory-worker + frontend，业务库 `pp6c2d3e4f5a` → `pq7d3e4f5a6b`）；14:56 trajectory-worker 单独换 `20261119-readfix-5135dce0`；15:07 三个服务 `20261119-trajmedia-9162e600`；frontend `20261119-trajmedia-00d4ca8f` 已装载，由 `releases/20261119-trajmedia-00d4ca8f/fewait.sh` 等到没有进行中的对话后切换（日志同目录 `fewait.log`）。
+- **gw2 后端仍是补丁镜像**：当天 11:48 的 `20261119-qwh-space-512c9d9b` 在 `20261117-streamreplay-43bc4bce` 上替换了 `sandbox/runtime_operation.py`、`tool/bash.py`、`permission/permission.py`、`container/cache_api.py`，这四个文件的线上版本不在 git。本次在其上再叠 main 相对 `43bc4bce` 变化的后端文件（叠之前核对线上对应文件与 git 一致），四个热修文件原样保留。它们合回 main 之前，gw2 后端不能从 main 全量构建。
+- 高德镜像：测试机、生产机先后 `20261119-gaodetraj-4dc7f0f4`（14:01 / 14:03）→ `20261119-gaodemedia-69ec30d3`（15:29 / 15:31），backend、trajectory-worker、frontend 同 tag，无迁移。第二版因本机连不上镜像仓库，是在第一版本地镜像上叠 `trajectory/payload.py`、`trajectory/lite.py` 和本地构建的前端静态文件。
+- 投影卡死（#221）的取证：gw2 的 trajectory-worker 里一个只读事务自 05:59:43Z 起 idle in transaction，60 秒内没有任何会话的 `projected_seq` 推进，积压 153 个会话约 195 万条事件；只读探针按 worker 的方式连续重放待处理会话，第一轮复现，协程停在 `payload._gather_reads` 等待一个被取消后卡在 httpcore `http11._response_closed` 连接锁里的请求。换用修复后的 `payload.py`，同一探针 11 轮无卡死；worker 换镜像后 8 分钟内待处理会话 153 → 122、积压约每分钟减少 2 万条，入库延迟归零。
+- 验证：三台机器容器健康、日志无 Traceback；用带扣费/带文件的真实会话调 `GET /sessions/{sid}/replay`、轮详情和 `/payloads/{id}/link`，会话总积分、每轮积分构成、文件信息正常，签名链接能取回图片、视频、音频（gw2）和图片（高德生产）。没有在浏览器里登录点过页面。
+- 未解决：gw2 有 66 个会话因「Retained trajectory blob is missing」投影失败，缺失原因未查，这些会话的新对话仍不会出现在简洁模式；事件量约 90% 是 `request.delta`（11-16 换 MiniMax 后日事件量从几万升到五十多万）；每轮积分按时间窗归属，长任务的轮与后续轮的时间窗重叠时会重复计入（会话总积分不受影响）。
+- 回滚：gw2 各版本目录 `releases/<tag>/` 下有切换前的 override（`override.before*`），首次切换另有 `backups/20261119-trajchat-602a5dd4/activation-20261119T055232Z/`（含 `business.dump`）；回到 `pp6c2d3e4f5a` 之前的镜像要先 `DROP TABLE light_taxonomy` 并把 `alembic_version` 改回。高德两台各自 `releases/<tag>/before/` 三份文件 + `backups/pre-<tag>.dump`。
+
 ## 2026-11-17 14:04 gw2 → `20261117-streamreplay-43bc4bce`（backend + trajectory-worker），模型回复中途断流自动重放
 
 - 内容：`main@43bc4bcea6bfc0d4595ebcb7b25cb4e7f3680479`（PR #210）。上游返回 200、输出到一半再报瞬时错误时（当天实测：百炼 MiniMax-M3.1-Flash，48 小时 1515 次请求中 9 次，报错 `Internal server error. Please retry your request.`），同一步内撤回半截输出并重放，最多 2 次；用尽后给用户显示中文提示，不再显示 SDK 原始报错。与 11:14 调整的首字超时（`first_progress_timeout_seconds: 90`）是两类问题。

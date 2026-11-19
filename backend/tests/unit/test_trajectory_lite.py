@@ -545,6 +545,21 @@ def test_media_prompt_keeps_only_requests_that_reach_a_generation_model():
     assert lite.media_prompt(_record("user:m1", "user", 1), _tool_data("image_gen", prompt="x")) is None
 
 
+def test_replay_artifacts_carry_what_the_conversation_needs_to_show_the_file():
+    row = {**_record("artifact:asset_1", "artifact", 9, title="成片.mp4"), "agent_id": "agent_main"}
+    data = {"data": {"name": "成片.mp4", "role": "result", "media_type": "video/mp4", "size_bytes": 1234,
+                     "source_asset_id": "asset_1", "availability": "available",
+                     "payload": {"payload_id": "pld_1", "media_type": "video/mp4", "size_bytes": 1234,
+                                 "availability": "available"}}}
+    (event,) = lite.replay_events([(row, data)], "agent_main")
+    assert (event["type"], event["title"], event["name"], event["role"]) == ("artifact", "成片.mp4", "成片.mp4", "result")
+    assert (event["media_type"], event["size_bytes"], event["payload_id"]) == ("video/mp4", 1234, "pld_1")
+    assert event["availability"] == "available" and event["linkable"] is True
+    # An artifact without recorded content still replays, as a name only.
+    (bare,) = lite.replay_events([(row, None)], "agent_main")
+    assert bare["payload_id"] is None and bare["linkable"] is False and bare["media_type"] is None
+
+
 def test_replay_events_follow_what_the_person_saw():
     rows = [
         (_record("user:m1", "user", 1, status="accepted", preview="发视频"), {"data": {"text": "帮我发一条国庆视频"}}),

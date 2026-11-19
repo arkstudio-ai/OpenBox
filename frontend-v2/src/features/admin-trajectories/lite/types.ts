@@ -148,6 +148,20 @@ export interface TurnDetail {
   media_prompts?: MediaPrompt[]
 }
 
+/** A recorded file as the conversation shows it. Absent on servers before the media view. */
+export interface ReplayFile {
+  name: string | null
+  media_type: string | null
+  size_bytes: number | null
+  /** `input`: the person attached it; `result`: the assistant produced it. */
+  role: string | null
+  /** The payload a signed link is asked for; null when no content was recorded. */
+  payload_id: string | null
+  availability: string | null
+  /** Recorded by reference, so the worker can sign a link to the object itself. */
+  linkable: boolean
+}
+
 interface ReplayBase {
   record_id: string
   at: string | null
@@ -158,7 +172,7 @@ export type ReplayEvent =
   | (ReplayBase & { type: "user"; text: string | null; attachments: boolean; source_kind: string | null })
   | (ReplayBase & { type: "reply"; text: string | null; status_reason: string | null })
   | (ReplayBase & { type: "question"; questions: unknown; answers: unknown })
-  | (ReplayBase & { type: "artifact"; title: string | null; preview: string | null })
+  | (ReplayBase & { type: "artifact"; title: string | null; preview: string | null } & Partial<ReplayFile>)
   | (ReplayBase & MediaPrompt & { type: "media_prompt" })
 
 export interface ReplayTurn {

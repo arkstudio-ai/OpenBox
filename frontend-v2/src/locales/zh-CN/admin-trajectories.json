@@ -1046,7 +1046,14 @@
       "fullSteps": "打开这一轮的完整步骤",
       "sessionCredits": "共消耗 {{credits}} 积分",
       "failedTurns_one": "{{count}} 轮失败",
-      "failedTurns_other": "{{count}} 轮失败"
+      "failedTurns_other": "{{count}} 轮失败",
+      "media": {
+        "open": "打开原文件",
+        "unavailable": "文件已不可用",
+        "loading": "正在加载文件…",
+        "attached": "用户上传",
+        "produced": "AI 产出"
+      }
     },
     "usageKind": {
       "chat": "模型对话",

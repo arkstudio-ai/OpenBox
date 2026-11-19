@@ -32,7 +32,8 @@
     "edit": "Edit",
     "enable": "Enable",
     "disable": "Disable",
-    "preview": "Preview"
+    "preview": "Preview",
+    "taxonomy": "Classification"
   },
   "list": {
     "empty": "No examples yet. Open a turn in Trajectories and press “Add to examples”, or create one by hand.",
@@ -96,5 +97,37 @@
   },
   "preview": {
     "unavailable": "Unavailable right now"
+  },
+  "taxonomy": {
+    "title": "Classification",
+    "description": "Examples are filed by scene (per entry) and by industry and shop type. Changes here apply to the filters, the example form and the example card's matching.",
+    "scenes": "Scenes (per entry)",
+    "scenesHint": "Built-in scenes are the App's opening choices: rename them, but they stay. Scenes you add file examples, and the AI uses one when the owner's purpose fits it.",
+    "industries": "Industries and shop types",
+    "industriesHint": "Keywords guess a shop type from the shop's name and headline; separate them with commas. Built-in industries match what owners choose: rename them, but they stay.",
+    "sceneName": "Scene name for {{entry}}",
+    "industryName": "Industry name",
+    "shopName": "Shop type name in {{industry}}",
+    "keywords": "Keywords, e.g. hotpot, skewers",
+    "keywordsOf": "Keywords of {{name}}",
+    "addScene": "+ Add scene",
+    "addShop": "+ Add shop type",
+    "addIndustry": "+ Add industry",
+    "removeNamed": "Remove {{name}}",
+    "builtin": "Built in: the App and owner profiles use it, so it can only be renamed",
+    "builtinTag": "Built in",
+    "generic": "Every industry keeps one generic shop type",
+    "genericLabel": "Other",
+    "saved": "Classification saved",
+    "problem": {
+      "empty": "A name is still empty",
+      "duplicate": "Two in one group share a name"
+    },
+    "errors": {
+      "TAXONOMY_IN_USE": "Examples still use these. Move them to another class first: {{message}}",
+      "TAXONOMY_INVALID": "Not a valid classification: {{message}}",
+      "HTTP_422": "A name or keyword is over a limit. Check it and save again",
+      "default": "Saving failed; try again later"
+    }
   }
 }

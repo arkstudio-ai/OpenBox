@@ -17,6 +17,7 @@ from core.identifier import ascending
 from db.base import get_db_session
 from db.models.light_example import ENTRY_IDS, STATUSES, LightExample
 from light import examples
+from light import taxonomy as taxonomy_mod
 from light.taxonomy import taxonomy
 from notifications.testing import live_admin
 
@@ -56,6 +57,28 @@ class PrefillIn(BaseModel):
     asset_id: str | None = Field(default=None, max_length=64)
 
 
+class SceneIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    #: Omitted for one the team just added; the server names it.
+    id: str | None = Field(default=None, max_length=32)
+    label: str = Field(min_length=1, max_length=20)
+
+
+class ShopTypeIn(SceneIn):
+    keywords: list[str] = Field(default_factory=list, max_length=16)
+
+
+class IndustryIn(SceneIn):
+    shop_types: list[ShopTypeIn] = Field(min_length=1, max_length=taxonomy_mod.MAX_SHOP_TYPES)
+
+
+class TaxonomyIn(BaseModel):
+    """The scenes of the entries being changed, and all the industries with their shop types."""
+    model_config = ConfigDict(extra="forbid")
+    scenes: dict[str, list[SceneIn]] = Field(default_factory=dict)
+    industries: list[IndustryIn] = Field(min_length=1, max_length=taxonomy_mod.MAX_INDUSTRIES)
+
+
 class StatusIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: Literal["active", "disabled"]
@@ -89,6 +112,7 @@ def _check_classification(entry_id: str, industry: str, shop_type: str, scene: s
 
 
 async def _apply(row: LightExample, body: ExampleIn) -> None:
+    await taxonomy_mod.refresh(force=True)  # another worker may have saved the classification
     _check_classification(body.entry_id, body.industry, body.shop_type, body.scene)
     outputs = await examples.resolve_assets([ref.asset_id for ref in body.outputs])
     if body.outputs and not outputs:
@@ -124,9 +148,94 @@ async def _example(db, example_id: str) -> LightExample:
     return row
 
 
+def _taxonomy_view(tax) -> dict:
+    return {**tax.public(), "builtin": taxonomy_mod.builtin()}
+
+
+def _kept(given: str | None, known: set[str]) -> str:
+    """The id of something that was already there; a new id for anything else."""
+    return given if given and given in known else taxonomy_mod.new_id()
+
+
+def _keywords(words: list[str]) -> list[str]:
+    seen: list[str] = []
+    for word in words:
+        word = " ".join(str(word).split())[:20]
+        if word and word not in seen:
+            seen.append(word)
+    return seen
+
+
+async def _in_use(current, edited) -> list[str]:
+    """What the edit removes that examples still carry, as ``label（n 条）``."""
+    async with get_db_session() as db:
+        scenes = {(e, s): int(n) for e, s, n in (await db.execute(
+            select(LightExample.entry_id, LightExample.scene, func.count())
+            .where(LightExample.scene.is_not(None)).group_by(LightExample.entry_id, LightExample.scene))).all()}
+        shops = {(i, s): int(n) for i, s, n in (await db.execute(
+            select(LightExample.industry, LightExample.shop_type, func.count())
+            .group_by(LightExample.industry, LightExample.shop_type))).all()}
+    held: list[str] = []
+    for entry in current.entries:
+        kept = set(edited.scene_ids(entry.id))
+        held += [f"{entry.label} / {scene.label}（{scenes[(entry.id, scene.id)]} 条）" for scene in entry.scenes
+                 if scene.id not in kept and scenes.get((entry.id, scene.id))]
+    for industry in current.industries:
+        kept = set(edited.shop_type_ids(industry.id))
+        held += [f"{industry.label} / {shop.label}（{shops[(industry.id, shop.id)]} 条）" for shop in industry.shop_types
+                 if shop.id not in kept and shops.get((industry.id, shop.id))]
+    return held
+
+
 @router.get("/taxonomy")
 async def get_taxonomy(user=Depends(live_admin)):
-    return taxonomy().public()
+    return _taxonomy_view(await taxonomy_mod.refresh(force=True))
+
+
+@router.put("/taxonomy")
+async def put_taxonomy(body: TaxonomyIn, request: Request, user=Depends(live_admin)):
+    """Save the team's scenes, industries and shop types over the file that ships.
+
+    Refused: removing something the code depends on (a built-in scene or industry, an industry's
+    generic shop type) and removing anything an example still carries — move those examples first."""
+    from pydantic import ValidationError
+    from db.models.light_taxonomy import LightTaxonomy
+    shipped = taxonomy_mod.base()
+    current = await taxonomy_mod.refresh(force=True)
+    try:
+        scenes = {}
+        for entry_id, items in body.scenes.items():
+            known = set(current.scene_ids(entry_id))
+            scenes[entry_id] = [{"id": _kept(item.id, known), "label": item.label} for item in items]
+        industries = []
+        for item in body.industries:
+            industry_id = _kept(item.id, set(current.industry_ids()))
+            known = set(current.shop_type_ids(industry_id)) | {taxonomy_mod.GENERIC}
+            industries.append({"id": industry_id, "label": item.label, "shop_types": [
+                {"id": _kept(shop.id, known), "label": shop.label, "keywords": _keywords(shop.keywords)}
+                for shop in item.shop_types]})
+        # Entries the edit does not name keep the scenes they have now.
+        scenes = {**{e.id: [s.model_dump() for s in e.scenes] for e in current.entries}, **scenes}
+        custom = taxonomy_mod.Custom.model_validate({"scenes": scenes, "industries": industries})
+        taxonomy_mod.check(shipped, custom)
+    except (ValidationError, taxonomy_mod.TaxonomyInvalid) as exc:
+        message = str(exc) if isinstance(exc, taxonomy_mod.TaxonomyInvalid) else "a name or keyword is not valid"
+        raise HTTPException(422, detail={"code": "TAXONOMY_INVALID", "message": message})
+    held = await _in_use(current, taxonomy_mod.merge(shipped, custom))
+    if held:
+        raise HTTPException(409, detail={"code": "TAXONOMY_IN_USE", "message": "；".join(held[:8])})
+    async with get_db_session() as db:
+        row = await db.get(LightTaxonomy, taxonomy_mod.ROW_ID)
+        if row is None:
+            row = LightTaxonomy(id=taxonomy_mod.ROW_ID)
+            db.add(row)
+        row.data, row.updated_by, row.updated_at = custom.model_dump(), user["user_id"], examples._now()
+        await db.commit()
+    saved = await taxonomy_mod.refresh(force=True)
+    await record(user["user_id"], None, "admin.light_taxonomy_update", "light_taxonomy", taxonomy_mod.ROW_ID,
+                 {"version": saved.version, "industries": len(saved.industries),
+                  "scenes": {entry.id: len(entry.scenes) for entry in saved.entries}}, request)
+    return _taxonomy_view(saved)
 
 
 @router.get("")
@@ -164,6 +273,7 @@ async def coverage(user=Depends(live_admin)):
     """Active examples per entry and scene, so the team sees which cell the example card cannot fill.
 
     A cell needs ``target`` examples for the card to show a full row of the owner's own scene."""
+    await taxonomy_mod.refresh()
     async with get_db_session() as db:
         counts = {(entry, scene): int(n) for entry, scene, n in (await db.execute(
             select(LightExample.entry_id, LightExample.scene, func.count())

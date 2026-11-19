@@ -335,6 +335,8 @@ async def examples_fragment(user_id: str | None, session) -> str:
     entry_id = getattr(session, "light_entry", None) if session is not None else None
     if not entry_id or entry_id not in taxonomy().entry_ids():
         return ""
+    from light.taxonomy import refresh
+    await refresh()  # the team's own shop types and scenes (the console's edit), read at most every 30 s
     picked = getattr(session, "light_example_id", None)
     if picked == DECLINED:  # the owner looked at the card and wanted none of them
         return ""
@@ -424,6 +426,8 @@ async def prefill(session_id: str, asset_id: str | None = None) -> dict | None:
     from db.models.part import Part
     from db.models.question import QuestionCheckpoint
     from db.models.session import Session
+    from light.taxonomy import refresh
+    await refresh(force=True)
     async with get_db_session() as db:
         session = await db.get(Session, session_id)
         if session is None:

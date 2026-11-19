@@ -1,6 +1,6 @@
 // Form state and the pure conversions behind the example sheet, kept out of
 // the component file so fast refresh keeps working.
-import type { AssetRef, ExampleWrite, Scene, Taxonomy } from "./types"
+import type { AssetRef, ExampleWrite, Scene, Taxonomy, TaxonomyWrite } from "./types"
 
 export interface FormState {
   entry_id: string
@@ -90,3 +90,56 @@ export function toWrite(state: FormState): ExampleWrite {
   }
 }
 
+
+// --- the classification editor -------------------------------------------------
+
+interface Named {
+  /** Stable while editing; a row just added has no id yet. */
+  key: string
+  id: string | null
+  label: string
+}
+export interface TaxonomyForm {
+  entries: { id: string; label: string; scenes: Named[] }[]
+  industries: (Named & { shop_types: (Named & { keywords: string })[] })[]
+}
+
+export function fromTaxonomy(taxonomy: Taxonomy): TaxonomyForm {
+  return {
+    entries: taxonomy.entries.map((entry) => ({ id: entry.id, label: entry.label, scenes: (entry.scenes ?? []).map((scene) => ({ key: scene.id, id: scene.id, label: scene.label })) })),
+    industries: taxonomy.industries.map((industry) => ({
+      key: industry.id,
+      id: industry.id,
+      label: industry.label,
+      shop_types: industry.shop_types.map((shop) => ({ key: shop.id, id: shop.id, label: shop.label, keywords: shop.keywords.join("、") })),
+    })),
+  }
+}
+
+function clash(items: { label: string }[]): boolean {
+  const labels = items.map((item) => item.label.trim())
+  return new Set(labels).size !== labels.length
+}
+
+/** Why this edit cannot be saved yet, as a key under `taxonomy.problem`; null when it can. */
+export function taxonomyProblem(form: TaxonomyForm): "empty" | "duplicate" | null {
+  const groups = [...form.entries.map((entry) => entry.scenes), form.industries, ...form.industries.map((industry) => industry.shop_types)]
+  if (groups.some((group) => group.some((item) => !item.label.trim()))) return "empty"
+  return groups.some(clash) ? "duplicate" : null
+}
+
+function splitKeywords(text: string): string[] {
+  return Array.from(new Set(text.split(/[,，、\n]/).map((word) => word.trim().slice(0, 20)).filter(Boolean))).slice(0, 16)
+}
+
+const named = (item: Named) => ({ ...(item.id ? { id: item.id } : {}), label: item.label.trim() })
+
+export function toTaxonomyWrite(form: TaxonomyForm): TaxonomyWrite {
+  return {
+    scenes: Object.fromEntries(form.entries.map((entry) => [entry.id, entry.scenes.map(named)])),
+    industries: form.industries.map((industry) => ({
+      ...named(industry),
+      shop_types: industry.shop_types.map((shop) => ({ ...named(shop), keywords: splitKeywords(shop.keywords) })),
+    })),
+  }
+}

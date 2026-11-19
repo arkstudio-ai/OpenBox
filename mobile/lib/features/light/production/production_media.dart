@@ -8,6 +8,12 @@ import '../../../shared/utils/error_text.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 
+const silkRoadVideo = 'assets/light_production/silk-road.mp4';
+const silkRoadPoster = 'assets/light_production/silk-road.jpg';
+const sodaStoryVideo = 'assets/light_production/soda-story.mp4';
+const sodaStoryPoster = 'assets/light_production/soda-story.jpg';
+const wanStoryVideo = 'assets/light_production/wan-story.mp4';
+const wanStoryPoster = 'assets/light_production/wan-story.jpg';
 const crawfishCaseVideo = 'assets/light_production/crawfish-remake.mp4';
 const crawfishCasePoster = 'assets/light_production/crawfish-remake.jpg';
 

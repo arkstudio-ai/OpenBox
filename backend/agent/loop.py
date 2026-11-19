@@ -48,7 +48,7 @@ from agent.tool_runtime import (
     enforce_serialized_payload_limits,
 )
 from agent.exposure_signals import collect_exposure_signals
-from agent.tool_exposure import preferred_editor_id
+from agent.tool_exposure import continuation_ids, preferred_editor_id
 from agent.prompt_visibility import build_tool_visibility_fragment
 from agent.retry import with_retry, ContextOverflowError, is_context_overflow, is_retryable, retry_delay
 from bus import bus
@@ -1185,6 +1185,7 @@ async def run_loop(
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
         fresh_reveals: frozenset[str] = frozenset()
+        continued_tools: frozenset[str] = frozenset()
         finish_reason_prev = ""  # Previous step's finish reason
         context_stall = ContextStallDetector()
         for seen in await recent_step_input_tokens(session_id, context_stall.window):
@@ -1663,7 +1664,7 @@ async def run_loop(
                         type(exc).__name__,
                     )
             runtime = preliminary_runtime
-            if exposure_mode in {"portable", "native_auto"} and revealed_ids:
+            if exposure_mode in {"portable", "native_auto"} and (revealed_ids or continued_tools):
                 with latency_span("context.replan_catalogue"):
                     runtime = assemble_tool_runtime(
                         preliminary_runtime.eligible_catalog,
@@ -1671,7 +1672,7 @@ async def run_loop(
                         agent_name=agent_name,
                         signals=exposure_signals,
                         revealed_ids=revealed_ids,
-                        requested_ids=fresh_reveals & revealed_ids,
+                        requested_ids=(fresh_reveals & revealed_ids) | continued_tools,
                         editor_id=editor_id,
                         synthetic_tools=synthetic_tools,
                         exposure_config=config.tool_exposure,
@@ -2993,6 +2994,18 @@ async def run_loop(
             # it arrived through a synthetic tool call. It must pass through
             # the same StepFinish gateway as ordinary stop/tool-call results.
             finish_reason = "stop" if structured_complete else result.finish_reason
+            from light.production_form import finished_guided_action
+            guided_receipt = finished_guided_action(guided_action, result.completed_tool_parts)
+            guided_complete = guided_receipt is not None and not abort.is_set()
+            if guided_complete:
+                if guided_receipt.status == "error":
+                    finish_reason, failed = "error", True
+                    assistant_info.error = {
+                        "code": "GUIDED_PRODUCTION_PAUSED",
+                        "message": guided_receipt.error or guided_receipt.output or "制作已暂停",
+                    }
+                else:
+                    finish_reason = "stop"
             coordinated = False
             if (assistant_view is not None and assistant_view["mode"] == "coordination"
                     and finish_reason in {"tool_calls", "tool-calls"} and not abort.is_set()):
@@ -3034,6 +3047,9 @@ async def run_loop(
             total_usage = result.usage
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
+            continued_tools = continuation_ids(
+                result.completed_tool_parts, (tool.id for tool in tools.values()), continued_tools,
+            )
             fresh_reveals = (fresh_reveals | frozenset(ctx._capability_revealed_ids)) - frozenset(
                 part.tool for part in result.completed_tool_parts if getattr(part, "tool", None)
             )
@@ -3116,7 +3132,7 @@ async def run_loop(
             # Decide a bounded follow-through before closing the deadline
             # watcher. A corrective step is still part of the same turn.
             continue_reply = False
-            if (finish_reason == "stop" and not structured_complete and not abort.is_set()
+            if (finish_reason == "stop" and not structured_complete and not guided_complete and not abort.is_set()
                     and follow_through_nudge is None and collected_text.strip()
                     and step < agent_def.max_steps
                     and (main_budget is None or step + 1 < main_budget.limits["model_requests"])):
@@ -3206,7 +3222,7 @@ async def run_loop(
                     continue
                 break
             if finish_reason == "stop":
-                completed = (bool(collected_text.strip()) or coordinated) and not abort.is_set()
+                completed = (bool(collected_text.strip()) or coordinated or guided_complete) and not abort.is_set()
                 suggestion_target = (assistant_info.id, model_id)
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(

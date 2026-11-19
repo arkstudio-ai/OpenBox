@@ -216,8 +216,7 @@ class VideoGenerateArgs(BaseModel):
 class VideoTranscribeArgs(BaseModel):
     action: Literal["submit", "status", "wait", "cancel", "retry"]
     job_id: str | None = Field(default=None, max_length=96)
-    #: An owned, ready audio asset to transcribe. Extract it from a video in
-    #: the sandbox (ffmpeg -vn) and register it with share_file(attach=false).
+    #: An owned, ready audio asset or video with an audio track.
     asset_id: str | None = Field(default=None, max_length=512)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
@@ -898,6 +897,17 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
 async def _attach_completed(job, ctx: ToolContext, *, claimed_as: str | None = None) -> bool:
     """``claimed_as``: the placeholder a direct delivery put in ``attached_message_id`` before it wrote its
     messages (video/job_recovery.py), so two sweeps never post the same video twice."""
+    from light import remake_case, wan_story
+    if remake_case.owns_job(job) and job.kind == "segment":
+        return False
+    if remake_case.owns_job(job) and any(f":{version}:" in job.idempotency_key for version in wan_story.VERSIONS) and ctx.message_id:
+        from db.base import get_db_session
+        from db.models.session import Session
+        async with get_db_session() as db:
+            session = await db.get(Session, job.session_id)
+            run = ((session.light_production or {}).get("run") or {}) if session else {}
+        if not wan_story.is_complete_cut(run, job):
+            return False
     if not job.output_asset_id or not ctx.message_id or job.attached_message_id:
         return bool(job.attached_message_id)
     from db.base import get_db_session
@@ -1217,6 +1227,13 @@ async def _dashscope_transcribe(
         "model": target.model,
         "provider": "dashscope",
     }
+    words = [{"text": str(w["text"]), "from_sec": w["begin_time"] / 1000, "to_sec": w["end_time"] / 1000}
+             for t in transcripts if isinstance(t, dict) for sentence in (t.get("sentences") or [])
+             if isinstance(sentence, dict) for w in (sentence.get("words") or []) if isinstance(w, dict)
+             and w.get("text") and isinstance(w.get("begin_time"), (int, float))
+             and isinstance(w.get("end_time"), (int, float)) and w["end_time"] > w["begin_time"] >= 0]
+    if words:
+        result["words"] = words
     if sentences:
         # Sentence timings (footage_analyze cuts on them); absent when the
         # engine reports none, so the plain result keeps its shape.
@@ -1439,11 +1456,12 @@ async def _finalize_segment(
         )
     except Exception as exc:  # billing must never strand a finished, paid video
         log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
+    from light.remake_case import owns_job as is_grouped_remake
     await _update_job(
         job.id,
         status="completed",
         result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
-                     "completion_delivery_pending": True,
+                     "completion_delivery_pending": not is_grouped_remake(job),
                      "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
@@ -2037,6 +2055,13 @@ async def _check_submit_budget(ctx: ToolContext) -> None:
             f"daily video generation limit reached ({used}/{limit} in the last 24h); "
             "tell the user rather than retrying"
         )
+
+
+async def remaining_daily_submits(ctx: ToolContext) -> int | None:
+    from core.config import get_config
+
+    limit = get_config().video_generation.daily_job_limit
+    return max(0, limit - await _daily_submit_count(ctx)) if limit > 0 else None
 
 
 async def _daily_submit_count(ctx: ToolContext) -> int:
@@ -3398,6 +3423,9 @@ def _transcription_lines(job) -> list[str]:
         lines.append(f"transcript={transcript.get('text') or ''}")
         if transcript.get("duration_ms"):
             lines.append(f"duration_ms={transcript['duration_ms']}")
+        for field in ("sentences", "words"):
+            if transcript.get(field):
+                lines.append(field + "=" + json.dumps(transcript[field], ensure_ascii=False))
     if result.get("credits") is not None:
         from billing.media import billing_status_lines
 
@@ -3412,12 +3440,7 @@ def _transcription_lines(job) -> list[str]:
 
 
 async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
-    """Speech-to-text over an owned audio asset.
-
-    A backend-only call: the audio already exists as an asset, so there is no
-    queue, no sandbox and no extraction step. Whoever wants the words out of a
-    video extracts them with ffmpeg first and registers that file.
-    """
+    """Transcribe an owned audio/video asset directly, without sandbox extraction."""
     try:
         target = _configured_transcription_target()
         from core.config import get_config
@@ -3606,11 +3629,8 @@ Different jobs may run together; never parallelize mutations of one job. \
 After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
-Transcribe speech from any audio asset you own: pass asset_id and an \
-idempotency_key. To check what a generated video actually says, extract its \
-audio in the sandbox (ffmpeg -vn), register it with share_file(attach=false), \
-then transcribe that asset. Returns the spoken words; comparing them against \
-an intended line is the caller's job."""
+Transcribe owned audio/video directly using asset_id and idempotency_key. \
+Returns speech and measured sentence/word times (seconds) for cuts and captions."""
 
 video_generate_tool = define_tool(
     "video_generate",

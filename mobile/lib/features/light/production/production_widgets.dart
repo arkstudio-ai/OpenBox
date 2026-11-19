@@ -41,12 +41,14 @@ class ProductionCopyField extends StatelessWidget {
     required this.enabled,
     required this.hint,
     required this.onChanged,
+    this.minLines = 5,
   });
 
   final TextEditingController controller;
   final bool enabled;
   final String hint;
   final ValueChanged<String> onChanged;
+  final int minLines;
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +62,7 @@ class ProductionCopyField extends StatelessWidget {
       controller: controller,
       enabled: enabled,
       maxLength: 2400,
-      minLines: 5,
+      minLines: minLines,
       maxLines: 6,
       onChanged: onChanged,
       decoration: InputDecoration(
@@ -267,8 +269,16 @@ class _TemplatePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final recipe = template == 'twist';
+    final recipe = const [
+      'soda_story',
+      'twist',
+      'wan_story',
+      'silk_road',
+    ].contains(template);
     final asset = switch (template) {
+      'soda_story' => sodaStoryPoster,
+      'silk_road' => silkRoadPoster,
+      'wan_story' => wanStoryPoster,
       'twist' => crawfishCasePoster,
       'wok' => 'assets/first_video/signature.jpg',
       _ => null,
@@ -298,17 +308,24 @@ class _TemplatePreview extends StatelessWidget {
             if (recipe)
               Center(
                 child: IconButton.filled(
-                  key: const Key('production-case-preview'),
+                  key: Key(switch (template) {
+                    'soda_story' => 'production-soda-preview',
+                    'silk_road' => 'production-silk-road-preview',
+                    'wan_story' => 'production-wan-preview',
+                    _ => 'production-case-preview',
+                  }),
                   tooltip: caseLabel,
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: const Color(0xff3e3929),
                   ),
-                  onPressed: () => showProductionVideo(
-                    context,
-                    crawfishCaseVideo,
-                    bundled: true,
-                  ),
+                  onPressed: () =>
+                      showProductionVideo(context, switch (template) {
+                        'soda_story' => sodaStoryVideo,
+                        'silk_road' => silkRoadVideo,
+                        'wan_story' => wanStoryVideo,
+                        _ => crawfishCaseVideo,
+                      }, bundled: true),
                   icon: const Icon(Icons.play_arrow),
                 ),
               ),

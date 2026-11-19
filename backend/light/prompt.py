@@ -84,7 +84,9 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     lang = await ui_language_for(user_id)
     if getattr(session, "light_production", None):
         from light.production_form import system_fragment
-        return output_language_line(lang) + "\n" + system_fragment(session)
+        from light.production_outputs import current_result_context
+        result_context = await current_result_context(session)
+        return "\n".join(filter(None, [output_language_line(lang), system_fragment(session), result_context]))
     parts = [LIGHT_MODE_TEXT, output_language_line(lang)]
     fragment = entry_fragment(entry_id, lang)
     if fragment:

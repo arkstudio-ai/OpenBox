@@ -430,6 +430,22 @@ def preferred_editor_id(model_id: str, eligible_ids: Iterable[str]) -> str | Non
     return next((tool_id for tool_id in order if tool_id in eligible), None)
 
 
+def continuation_ids(parts, materialized_ids: Iterable[str], previous: frozenset[str] = frozenset()) -> frozenset[str]:
+    """Keep the most recently used capabilities available for their next operation.
+
+    Completing the first image of a storyboard does not finish image creation.
+    Bookkeeping must not evict that capability. This is only a routing hint:
+    the next step still intersects permissions and enforces the hard budget.
+    """
+    visible = set(materialized_ids)
+    bookkeeping = BUILD_RESIDENT_IDS | {"todo_write", "todo_read", "plan_enter", "plan_exit"}
+    used = frozenset(
+        part.tool for part in parts
+        if getattr(part, "tool", None) in visible and part.tool not in bookkeeping
+    )
+    return used or previous
+
+
 def portable_plan(
     catalog: EligibleCatalog,
     *,
@@ -443,6 +459,11 @@ def portable_plan(
     eligible = set(catalog.entries)
     direct: set[str] = set(AGENT_RESIDENT_IDS.get(agent_name, frozenset())) & eligible
     reasons: dict[str, str] = {tool_id: "resident" for tool_id in direct}
+
+    # The mobile button has already selected this workflow and fenced out every other tool.
+    if eligible == {"light_wan_story"}:
+        direct.add("light_wan_story")
+        reasons["light_wan_story"] = "resident"
 
     # These are logical discovery slots, not workflow capabilities.  Their
     # presence in the eligible catalogue already proves that the AgentDef and

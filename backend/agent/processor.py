@@ -62,6 +62,7 @@ MAX_CALL_ID = 64
 _CALL_ID_ILLEGAL = re.compile(r"[^A-Za-z0-9_-]")
 
 PERSISTED_TOOL_METADATA_KEYS = frozenset({
+    "guided_action_finished",
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "task_handoff_id",

@@ -255,12 +255,24 @@
       "failed": "Thất bại",
       "blocked": "Cần kiểm tra"
     },
+    "silkShotCounts": "Đã tạo {{filmed}}/{{total}} đoạn",
+    "shotCounts": "Đã quay {{filmed}}/{{total}} cảnh · Đã duyệt {{reviewed}}/{{total}} cảnh",
+    "retaking": "Đang quay lại {{count}} cảnh",
     "phase": {
       "copy": "Đang viết nội dung",
       "recognize": "Đang đọc tên món",
       "video": "Đang tạo cảnh mới",
       "edit": "Đang dựng cảnh quay",
       "compose": "Đang ghép video",
+      "silk_shots": "Đang tạo cảnh theo phim mẫu",
+      "silk_edit": "Đang chọn điểm cắt theo nhịp phim mẫu",
+      "silk_delivery": "Đang kiểm tra video hoàn chỉnh",
+      "wan_shots": "Đang quay nối cảnh và lời thoại",
+      "wan_edit": "Đang xem cảnh quay và chọn điểm cắt",
+      "wan_quality": "Đang kiểm tra mạch truyện và sản phẩm",
+      "wan_delivery": "Đang kiểm tra hình ảnh và lời thoại của video hoàn chỉnh",
+      "remake_frames": "Đang điều chỉnh phân cảnh và món ăn",
+      "remake_shots": "Đang tạo bảy cảnh có lời thoại",
       "menu": "Đang tạo ảnh thực đơn",
       "agent": "Trợ lý đang xử lý"
     },
@@ -273,9 +285,21 @@
       "failedBody": "Bản nháp và tư liệu đã tạo vẫn nằm trong tác vụ này."
     },
     "template": {
+      "silk_road": {
+        "title": "Hương vị Con đường Tơ lụa",
+        "body": "Phim màn ảnh rộng 62 giây. Dựng lại nhịp phim qua lều, chợ, sa mạc và bến cảng với món đặc trưng của quán."
+      },
+      "soda_story": {
+        "title": "Mẫu quảng cáo soda",
+        "body": "Tham khảo nhịp dựng, ánh sáng tương phản và cách giới thiệu sản phẩm. Tạo video mới cho quán và món của bạn."
+      },
+      "wan_story": {
+        "title": "Bữa này, ăn tôm",
+        "body": "Tham khảo nhịp phim mẫu. Agent viết câu chuyện từ sản phẩm và ý tưởng của bạn, rồi xem cảnh quay để chọn cách dựng hoặc quay lại."
+      },
       "twist": {
-        "title": "Cú đảo tình huống",
-        "body": "Mở đầu bằng xung đột, đảo tình huống rồi giới thiệu món. Xem mẫu tôm hùm đất."
+        "title": "Ai trả tiền?",
+        "body": "Câu chuyện đảo tình huống 30 giây với bảy cảnh. Điều chỉnh món ăn và lời thoại theo tư liệu của bạn."
       },
       "wok": {
         "title": "Cận cảnh bếp",
@@ -315,6 +339,11 @@
     "takePhoto": "Chụp ảnh",
     "takeVideo": "Quay video",
     "upload": "Tải lên",
+    "materialSource": {
+      "upload": "Chọn ảnh món ăn hoặc video quán từ album",
+      "library": "Dùng tư liệu đã tải lên",
+      "camera": "Chụp ảnh hoặc quay tại quán"
+    },
     "photos": "Ảnh",
     "videos": "Video",
     "selected": "Đã chọn {{count}} tư liệu",
@@ -339,6 +368,12 @@
     "optimize": "Tối ưu nội dung",
     "recognize": "Đọc món từ ảnh",
     "scriptPlaceholder": "Chỉnh nội dung ở đây",
+    "referenceTitle": "Nội dung tham khảo (tùy chọn)",
+    "wanReferenceHelp": "Nhập điểm nổi bật, một câu thoại hoặc ý tưởng. Trợ lý sẽ điều chỉnh kịch bản theo tư liệu và chọn điểm cắt.",
+    "referenceHelp": "Giữ câu chuyện bảy cảnh, dùng tư liệu và nội dung của bạn để điều chỉnh món ăn và lời thoại.",
+    "referencePlaceholder": "Nhập tên món, điểm nổi bật hoặc một câu thoại",
+    "remakeScript": "Xem phân cảnh và lời thoại đã điều chỉnh",
+    "videoLimit": "Bản này cần tạo {{needed}} đoạn video. Bạn còn {{remaining}} lượt trong 24 giờ. Bản nháp đã được lưu.",
     "keepOriginal": "Giữ âm thanh gốc",
     "prepareFailed": "Chưa cập nhật được bản nháp. Hãy sửa hoặc thử lại.",
     "saveDraft": "Lưu bản nháp",

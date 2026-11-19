@@ -365,6 +365,15 @@ def test_overlays_sit_on_their_own_tracks_in_canvas_fractions():
         Overlay(asset=f"{B}/pip.mp4", from_sec=0, to_sec=1, x=0.8, width=0.3)
 
 
+def test_poster_lettering_is_an_image_for_its_full_timeline_span():
+    plan = Timeline(shots=[Shot(asset=f"{B}/dish.mp4", duration_sec=30)],
+                    overlays=[Overlay(asset=f"{B}/brush.png", kind="image", from_sec=27, to_sec=30,
+                                      x=0, y=0, width=1, height=1)])
+    clip = compile_ims(plan, output_url=OUT).timeline["VideoTracks"][1]["VideoTrackClips"][0]
+    assert (clip["Type"], clip["Duration"], clip["TimelineIn"], clip["TimelineOut"]) == ("Image", 3, 27, 30)
+    assert "Out" not in clip and "Effects" not in clip
+
+
 def test_a_voiceover_is_an_ai_tts_clip_and_the_bed_ducks_under_it():
     t = Timeline(
         shots=[Shot(asset=f"{B}/a.mp4", duration_sec=12)],

@@ -19,7 +19,8 @@ from tool.image_gen import (
 from tool.tool import ToolContext
 
 
-def test_gpt_image_2_accepts_flexible_sizes_within_the_documented_bounds():
+@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-2.6"])
+def test_gpt_image_accepts_flexible_sizes_within_the_supported_bounds(model):
     for size in (
         "auto",
         "1024x1024",
@@ -28,13 +29,14 @@ def test_gpt_image_2_accepts_flexible_sizes_within_the_documented_bounds():
         "2048x2048",
         "3840x2160",
         "2160x3840",
+        "1008x1792",
     ):
-        assert _validate_size("gpt-image-2", size) is None
+        assert _validate_size(model, size) is None
 
-    assert "multiples of 16" in _validate_size("gpt-image-2", "1000x1000")
-    assert "maximum edge" in _validate_size("gpt-image-2", "4096x1024")
-    assert "aspect ratio" in _validate_size("gpt-image-2", "3072x768")
-    assert "total pixels" in _validate_size("gpt-image-2", "640x640")
+    assert "multiples of 16" in _validate_size(model, "1000x1000")
+    assert "maximum edge" in _validate_size(model, "4096x1024")
+    assert "aspect ratio" in _validate_size(model, "3072x768")
+    assert "total pixels" in _validate_size(model, "640x640")
 
 
 def test_edit_mask_requires_an_input_and_transparency_rejects_jpeg():
@@ -42,6 +44,14 @@ def test_edit_mask_requires_an_input_and_transparency_rejects_jpeg():
         ImageGenArgs(prompt="change it", mask_image="asset_mask")
     with pytest.raises(ValidationError, match="requires png or webp"):
         ImageGenArgs(prompt="cutout", background="transparent", output_format="jpeg")
+
+
+def test_image_references_accept_exact_asset_id_wrapper_without_dropping_options():
+    args = ImageGenArgs(prompt="same people", input_images=[{"asset_id": "asset_anchor"}, "asset_product"])
+    assert args.input_images == ["asset_anchor", "asset_product"]
+    for item in ({"asset_id": "asset_anchor", "role": "last_frame"}, {"asset_id": 123}, {"url": "https://elsewhere/image.png"}):
+        with pytest.raises(ValidationError):
+            ImageGenArgs(prompt="same people", input_images=[item])
 
 
 def test_output_names_are_safe_unique_variants():
@@ -155,6 +165,7 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
     import db.base
     import session.session
     import tool.image_gen as image_mod
+    from project.workspace import asset_sandbox_path
 
     rows = []
     parts = []
@@ -201,6 +212,7 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
     )
 
     assert result.name == "hero.png"
+    assert result.path == asset_sandbox_path("user_1", "project_1", result.name, asset_id=result.asset_id)
     assert result.materialized is False
     assert len(rows) == 1
     assert rows[0].source == "agent"

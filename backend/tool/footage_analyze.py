@@ -96,9 +96,10 @@ def _frame_times(duration: float) -> list[float]:
     return [round(step * (i + 0.5), 2) for i in range(count)]
 
 
-def snapshot_url(oss, key: str, at_sec: float, *, width: int = FRAME_WIDTH) -> str:
+def snapshot_url(oss, key: str, at_sec: float, *, width: int = FRAME_WIDTH, exact: bool = False) -> str:
     """A signed GET that returns one JPEG frame of the video at ``at_sec`` (OSS video/snapshot)."""
-    process = f"video/snapshot,t_{int(at_sec * 1000)},f_jpg,w_{width},m_fast,ar_auto"
+    mode = "" if exact else ",m_fast"
+    process = f"video/snapshot,t_{int(at_sec * 1000)},f_jpg,w_{width}{mode},ar_auto"
     return oss._presign("GET", key, SNAPSHOT_LINK_SECONDS, subresource={"x-oss-process": process})
 
 

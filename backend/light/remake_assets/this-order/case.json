@@ -1,0 +1,29 @@
+{
+  "title": "这单谁买",
+  "version": "this-order-continuity-v2",
+  "source_sha256": "94713a8582a67f73f50db7b3a89a7850b155fd233d63fadd40313989495bde18",
+  "shots": [
+    {"shot":1,"from_sec":0,"to_sec":4,"duration":4,"beat":"同事把账单推给新人","speaker":"同事","spoken_line":"小伍，新人买单啊。","caption_window":[0.3,2.6],
+     "product_visible":false,"first_frame":"左侧灰衣同事直视右侧小伍，小伍低头看被推来的账单。桌上是空垫和茶杯。",
+     "motion":"灰衣同事开口时用手指把账单推到小伍跟前。小伍保持低头看纸，略微迟疑。后面墨绿衣主管注意到动静。"},
+    {"shot":2,"from_sec":4,"to_sec":8,"duration":4,"beat":"主管看着劝买单的人解围","speaker":"女主管","spoken_line":"谁定的规矩，让新人买单？","caption_window":[0.25,3.5],
+     "product_visible":false,"first_frame":"侧面近景中主管与灰衣同事四目相对。她看着对方露出的眼睛。",
+     "motion":"主管的鼻尖和双眼始终朝着灰衣男子的眼睛，镇定地把话说完。灰衣男子被问住，略微垂眼。摄影机守住这条视线轴，不摇向观众。"},
+    {"shot":3,"from_sec":8,"to_sec":13,"duration":5,"beat":"主管请客，唯一一锅菜落桌","speaker":"女主管","spoken_line":"这顿我请。刚出锅，趁热吃。","caption_window":[0.25,4.55],
+     "product_visible":true,"first_frame":"桌上一块完整的空隔热垫，左上角白茶杯。菜和盛菜容器都在画外。",
+     "last_frame":"同一个固定俯拍机位。唯一一份{product}在隔热垫正中，墨绿袖口的双手刚刚松开这份菜。",
+     "motion":"锁定45度俯拍。开场保持空垫半秒，墨绿袖口的双手从右上画框外把唯一一份{product}平稳端进画面，降低、落在空垫中心，然后松手；容器自入画到落桌始终是同一个。在画外听到上一镜女主管的声音。"},
+    {"shot":4,"from_sec":13,"to_sec":17,"duration":4,"beat":"小伍在餐桌边尝第一口","speaker":"小伍","spoken_line":"那我尝尝。","caption_window":[0.2,1.4],
+     "product_visible":true,"first_frame":"相同餐馆，小伍低头看筷子上的一小口可食部分，食物尚未入口。",
+     "motion":"小伍看着筷子先说完一句，再把一小口{product}送入口中，筷子抽出，闭口咀嚼露出笑意。保持视线朝向食物。"},
+    {"shot":5,"from_sec":17,"to_sec":21,"duration":4,"beat":"次日小伍追问昨晚的账单","speaker":"小伍","spoken_line":"经理，昨晚那顿多少钱？","caption_window":[0.2,3.6],
+     "product_visible":false,"first_frame":"晨光办公室，左侧小伍朝右看着女主管，主管的后脑或肩自然入前景。",
+     "motion":"小伍拿着手机看向对面的主管，试探地发问，随后等她回答。始终看对方，桌上是办公室用品。"},
+    {"shot":6,"from_sec":21,"to_sec":27,"duration":6,"beat":"主管宣布转正，回扣两双筷子","speaker":"女主管","spoken_line":"你转正了！下回，带两双筷子。","caption_window":[0.3,4.8],
+     "product_visible":false,"first_frame":"办公室反打，主管看着小伍的脸，左前景是小伍蓝色衣肩。",
+     "motion":"主管先正式地公布消息，等半拍，温和地笑起来并补上最后一句。她一直看对面小伍的眼睛，小伍听完放松肩膀。"},
+    {"shot":7,"from_sec":27,"to_sec":30,"duration":3,"beat":"两双筷子与菜品，店名落版","speaker":"","spoken_line":"","caption_window":[0,0],
+     "product_visible":true,"first_frame":"下半画面仅一份{product}，桌上两双筷子。上方四成是低亮度纯净背景。",
+     "motion":"餐馆产品广告静物长镜头，固定镜位；唯一一份{product}上方有一缕热气自然飘动，光打在食材上，筷子和容器都静止。上方暗色留白保持干净，只有微弱环境声。"}
+  ]
+}

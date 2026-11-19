@@ -170,6 +170,7 @@ class Overlay(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset: str = Field(min_length=1, max_length=2048)
+    kind: Literal["video", "image"] = "video"
     from_sec: float = Field(ge=0)
     to_sec: float = Field(gt=0)
     #: Trim inside the source.
@@ -290,7 +291,7 @@ class Timeline(BaseModel):
     texts: list[TextClip] = Field(default_factory=list)
     audio: list[AudioClip] = Field(default_factory=list, max_length=6)
     #: Pictures over the main picture (picture-in-picture, a logo).
-    overlays: list[Overlay] = Field(default_factory=list, max_length=6)
+    overlays: list[Overlay] = Field(default_factory=list, max_length=10)
     #: A colour filter preset over the whole cut.
     filter: str | None = Field(default=None, max_length=32)
 

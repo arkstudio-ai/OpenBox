@@ -53,7 +53,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(onboardingProvider.notifier).ensureLoaded();
-      if (widget.sessionId != null) unawaited(_panelEntryGuide());
+      if (widget.sessionId != null && !widget.returnToProduction) {
+        unawaited(_panelEntryGuide());
+      }
       // Cross-feature: chat "审阅 →" emits workbench.open (web D.6).
       _workbenchSub = ref.read(appEventBusProvider).on('workbench.open').listen(
         (event) {

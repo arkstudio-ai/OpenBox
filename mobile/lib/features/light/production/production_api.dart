@@ -22,7 +22,7 @@ enum ProductionKind {
   String label(I18nState i18n) => i18n.t('light:production.kind.$id');
 
   List<String> get templates => switch (this) {
-    video => ['twist', 'wok'],
+    video => ['soda_story', 'silk_road', 'wan_story', 'wok'],
     footage => ['documentary', 'quick_cut', 'product'],
     menu => ['warm_red', 'monochrome'],
   };
@@ -73,6 +73,32 @@ class ProductionDish {
   Map<String, String> toJson() => {'name': name, 'price': price};
 }
 
+class ProductionShotProgress {
+  const ProductionShotProgress(
+    this.total,
+    this.filmed,
+    this.reviewed,
+    this.retaking,
+    this.phase,
+  );
+
+  final int total, filmed, reviewed, retaking;
+  final String? phase;
+
+  static ProductionShotProgress? parse(Object? value) {
+    final data = asMap(value);
+    final total = asInt(data['total']) ?? 0;
+    if (total <= 0) return null;
+    return ProductionShotProgress(
+      total,
+      (asInt(data['filmed']) ?? 0).clamp(0, total),
+      (asInt(data['reviewed']) ?? 0).clamp(0, total),
+      (asInt(data['retaking']) ?? 0).clamp(0, total),
+      asString(data['phase']),
+    );
+  }
+}
+
 class LightProduction {
   LightProduction.fromJson(Map<String, dynamic> json)
     : sessionId = asString(json['session_id']) ?? '',
@@ -85,9 +111,12 @@ class LightProduction {
       page = asString(json['page']) ?? 'materials',
       status = asString(json['status']) ?? 'draft',
       phase = asString(json['phase']),
+      shotProgress = ProductionShotProgress.parse(json['shot_progress']),
       shop = asString(json['shop']) ?? '',
       brief = asString(json['brief']) ?? '',
       script = asString(json['script']) ?? '',
+      referenceCopy = asString(json['reference_copy']) ?? '',
+      remakePrepared = json['remake_prepared'] == true,
       template = asString(json['template']) ?? '',
       notes = asString(json['notes']) ?? '',
       agentRevision = asInt(json['agent_revision']) ?? 0,
@@ -114,9 +143,12 @@ class LightProduction {
   final String page;
   final String status;
   final String? phase;
+  final ProductionShotProgress? shotProgress;
   final String shop;
   final String brief;
   final String script;
+  final String referenceCopy;
+  final bool remakePrepared;
   final String template;
   final String notes;
   final int agentRevision;
@@ -128,6 +160,11 @@ class LightProduction {
   final Map<String, dynamic>? proposal;
 
   bool get working => status == 'working';
+  bool get manualPreparation =>
+      const ['soda_story', 'silk_road'].contains(template);
+  bool get wanRemake => manualPreparation || template == 'wan_story';
+  bool get remake =>
+      kind == ProductionKind.video && (wanRemake || template == 'twist');
 }
 
 class LightProductionApi {

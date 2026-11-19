@@ -243,13 +243,16 @@ def _overlay_clip(index: int, overlay, canvas: Canvas, total: float | None, regi
         "X": _frac(overlay.x), "Y": _frac(overlay.y), "Width": _frac(overlay.width), "Height": _frac(overlay.height),
         "AdaptMode": _ADAPT[overlay.fit],
         "TimelineIn": _sec(span[0]), "TimelineOut": _sec(span[1]),
-        "Out": _sec(overlay.in_sec + (span[1] - span[0])),
     }
-    if overlay.in_sec:
-        clip["In"] = _sec(overlay.in_sec)
+    if overlay.kind == "image":
+        clip.update(Type="Image", Duration=_sec(span[1] - span[0]))
+    else:
+        clip["Out"] = _sec(overlay.in_sec + span[1] - span[0])
+        if overlay.in_sec:
+            clip["In"] = _sec(overlay.in_sec)
     if overlay.opacity != 1.0:
         clip["Opacity"] = round(overlay.opacity, 3)
-    if overlay.volume != 1.0:
+    if overlay.kind == "video" and overlay.volume != 1.0:
         clip["Effects"] = [{"Type": "Volume", "Gain": round(overlay.volume, 3)}]
     return clip
 

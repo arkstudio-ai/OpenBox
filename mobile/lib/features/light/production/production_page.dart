@@ -10,7 +10,6 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/download/asset_download.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
-import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/light_api.dart';
 import '../widgets/light_input_bar.dart';
@@ -77,8 +76,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     if (!_pending.containsKey('shop') && _shop.text.trim() != task.shop) {
       _shop.text = task.shop;
     }
-    if (!_pending.containsKey('script') && _script.text.trim() != task.script) {
-      _script.text = task.script;
+    final field = task.remake ? 'reference_copy' : 'script';
+    final copy = task.remake ? task.referenceCopy : task.script;
+    if (!_pending.containsKey(field) && _script.text.trim() != copy) {
+      _script.text = copy;
     }
   }
 
@@ -113,7 +114,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   }
 
   void _notify(Object error) =>
-      ref.read(toastProvider.notifier).error(errorText(_i18n, error));
+      ref.read(toastProvider.notifier).error(productionErrorText(_i18n, error));
 
   void _stage(String key, Object? value) {
     if (!mounted) return;
@@ -200,14 +201,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           await _api.edit(task, {'page': 'review', if (skip) 'template': ''}),
         );
         if (!mounted) return;
+        final review = _task!;
         final menuNeedsReading =
-            task.kind == ProductionKind.menu && task.materials.isNotEmpty;
-        if (menuNeedsReading ||
-            (task.kind != ProductionKind.menu && task.script.isEmpty)) {
+            review.kind == ProductionKind.menu && review.materials.isNotEmpty;
+        final needsCopy = review.remake
+            ? !review.remakePrepared
+            : review.kind != ProductionKind.menu && review.script.isEmpty;
+        if (menuNeedsReading || (needsCopy && !review.manualPreparation)) {
           await _send('prepare');
         }
       default:
-        await _send('render');
+        await _send(
+          task.manualPreparation && !task.remakePrepared ? 'prepare' : 'render',
+        );
     }
   });
 
@@ -240,10 +246,12 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     try {
       if (!await _flush() || !mounted) return;
       final revision = _task!.agentRevision;
+      final outputId = _task!.output?.id;
       await context.push(Paths.lightProductionAgent(widget.sessionId));
       if (!mounted) return;
       await _refresh(alert: true);
-      if (mounted && _task!.agentRevision > revision) {
+      if (mounted &&
+          (_task!.agentRevision > revision || _task!.output?.id != outputId)) {
         setState(() => _advancedUpdated = true);
       }
     } finally {
@@ -474,7 +482,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       if (_error != null) ...[
         const SizedBox(height: 10),
         Text(
-          errorText(_i18n, _error!),
+          productionErrorText(_i18n, _error!),
           style: TextStyle(color: context.tokens.dangerInk),
         ),
         TextButton(
@@ -517,23 +525,26 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         Text(_text('fromPhotos')),
       ],
       const SizedBox(height: 14),
-      Row(
-        children: [
-          _source('library', Icons.photo_library_outlined, _library),
-          const SizedBox(width: 8),
-          _source(
-            task.kind == ProductionKind.menu ? 'takePhoto' : 'camera',
-            Icons.photo_camera_outlined,
-            () => _pick(camera: true),
-          ),
-          const SizedBox(width: 8),
-          _source(
-            'upload',
-            Icons.file_upload_outlined,
-            () => _pick(camera: false),
-          ),
-        ],
-      ),
+      if (task.kind == ProductionKind.video && task.materials.isEmpty)
+        _videoMaterialSources()
+      else
+        Row(
+          children: [
+            _source('library', Icons.photo_library_outlined, _library),
+            const SizedBox(width: 8),
+            _source(
+              task.kind == ProductionKind.menu ? 'takePhoto' : 'camera',
+              Icons.photo_camera_outlined,
+              () => _pick(camera: true),
+            ),
+            const SizedBox(width: 8),
+            _source(
+              'upload',
+              Icons.file_upload_outlined,
+              () => _pick(camera: false),
+            ),
+          ],
+        ),
       const SizedBox(height: 16),
       if (_uploadProgress case final fraction?) ...[
         LinearProgressIndicator(value: fraction),
@@ -573,6 +584,105 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       ],
     ],
   );
+
+  Widget _videoMaterialSources() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _materialSourceCard(
+        'upload',
+        Icons.add_photo_alternate_outlined,
+        () => _pick(camera: false),
+        featured: true,
+      ),
+      const SizedBox(height: 10),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _materialSourceCard(
+              'library',
+              Icons.photo_library_outlined,
+              _library,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _materialSourceCard(
+              'camera',
+              Icons.photo_camera_outlined,
+              () => _pick(camera: true),
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+
+  Widget _materialSourceCard(
+    String method,
+    IconData icon,
+    VoidCallback tap, {
+    bool featured = false,
+  }) {
+    final t = context.tokens;
+    final label = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _text(method),
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: t.ink,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _text('materialSource.$method'),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: t.n800, height: 1.35),
+        ),
+      ],
+    );
+    return OutlinedButton(
+      key: Key('production-source-$method'),
+      onPressed: _busy ? null : tap,
+      style: OutlinedButton.styleFrom(
+        alignment: Alignment.centerLeft,
+        backgroundColor: featured ? t.surface : t.card,
+        minimumSize: Size(0, featured ? 102 : 112),
+        padding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      child: featured
+          ? Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: t.card,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Icon(icon, size: 24, color: t.a700),
+                  ),
+                ),
+                const SizedBox(width: 13),
+                Expanded(child: label),
+                const SizedBox(width: 6),
+                Icon(Icons.add, size: 21, color: t.ink),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 21, color: t.a700),
+                const SizedBox(height: 9),
+                label,
+              ],
+            ),
+    );
+  }
 
   Widget _source(String key, IconData icon, VoidCallback tap) => Expanded(
     child: OutlinedButton(
@@ -627,6 +737,13 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             onChange: (dishes) =>
                 _stage('dishes', dishes.map((dish) => dish.toJson()).toList()),
           )
+        else if (task.remake)
+          ProductionRemakeCopy(
+            wanStory: task.wanRemake,
+            controller: _script,
+            enabled: !_busy,
+            onChanged: (value) => _stage('reference_copy', value),
+          )
         else
           ProductionCopyField(
             controller: _script,
@@ -658,7 +775,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                 _text(
                   menu
                       ? 'recognize'
-                      : _script.text.trim().isEmpty
+                      : !task.remakePrepared && _script.text.trim().isEmpty
                       ? 'draftCopy'
                       : 'optimize',
                 ),
@@ -668,6 +785,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           if (task.phase == 'prepare_failed')
             Text(_text('prepareFailed'), textAlign: TextAlign.center),
         ],
+        if (task.remakePrepared && !_pending.containsKey('reference_copy'))
+          ProductionRemakeScript(task.script),
         if (task.notes.isNotEmpty)
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -750,7 +869,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         ),
         'style' => primary('next', _next),
         _ => primary(
-          'generate.${task.kind.id}',
+          task.manualPreparation && !task.remakePrepared
+              ? 'draftCopy'
+              : 'generate.${task.kind.id}',
           _canRender(task) ? _next : null,
         ),
       },
@@ -758,7 +879,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   }
 
   bool _canRender(LightProduction task) => switch (task.kind) {
-    ProductionKind.video => _script.text.trim().isNotEmpty,
+    ProductionKind.video => task.remake || _script.text.trim().isNotEmpty,
     ProductionKind.footage => task.materials.isNotEmpty,
     ProductionKind.menu => _dishes.isNotEmpty,
   };

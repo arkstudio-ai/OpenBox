@@ -255,10 +255,22 @@
       "failed": "失败",
       "blocked": "待核实"
     },
+    "silkShotCounts": "已生成 {{filmed}}/{{total}} 段",
+    "shotCounts": "已拍摄 {{filmed}}/{{total}} 镜 · 初审通过 {{reviewed}}/{{total}} 镜",
+    "retaking": "正在补拍 {{count}} 个镜头",
     "phase": {
       "copy": "正在写文案",
       "recognize": "正在识别菜品",
       "video": "正在生成新画面",
+      "silk_shots": "正在生成参考镜头",
+      "silk_edit": "正在按参考节奏选剪点",
+      "silk_delivery": "正在核对完整成片",
+      "wan_shots": "正在接拍画面与同期对白",
+      "wan_edit": "正在审片并选择剪点",
+      "wan_quality": "正在核对整片剧情和商品",
+      "wan_delivery": "正在核对成片画面和对白",
+      "remake_frames": "正在适配分镜与商品",
+      "remake_shots": "正在生成七段画面与同期对白",
       "edit": "正在剪辑实拍素材",
       "compose": "正在合成视频",
       "menu": "正在生成菜单图片",
@@ -273,9 +285,21 @@
       "failedBody": "草稿和已生成的素材仍在这条任务里。"
     },
     "template": {
+      "silk_road": {
+        "title": "《丝路留香》",
+        "body": "62 秒超宽银幕。沿帐篷、集市、沙漠和码头的节奏，用你的招牌菜重新拍摄。"
+      },
+      "soda_story": {
+        "title": "苏打水广告样片",
+        "body": "参考样片的镜头节奏、灯光反差和产品亮相。用你的店铺、商品和文案重新拍摄。"
+      },
+      "wan_story": {
+        "title": "《这局，吃虾》",
+        "body": "参考样片的广告节奏。Agent 根据你的商品和文案编剧，看片后决定剪法和拍法。"
+      },
       "twist": {
-        "title": "反转剧情",
-        "body": "用冲突开场，反转后揭晓商品。小龙虾案例《这单谁买》。"
+        "title": "《这单谁买》",
+        "body": "30 秒七段反转剧情。用你的素材和文案适配商品与对白。"
       },
       "wok": {
         "title": "烟火气特写",
@@ -315,6 +339,11 @@
     "takePhoto": "拍照",
     "takeVideo": "拍视频",
     "upload": "上传",
+    "materialSource": {
+      "upload": "从相册选择菜品照片或店内视频",
+      "library": "挑选已上传的素材",
+      "camera": "现场拍照或录像"
+    },
     "photos": "照片",
     "videos": "视频",
     "selected": "已选 {{count}} 个素材",
@@ -339,6 +368,12 @@
     "optimize": "重新优化",
     "recognize": "识别图片菜品",
     "scriptPlaceholder": "在这里编辑文案",
+    "referenceTitle": "参考文案（选填）",
+    "wanReferenceHelp": "文案可以是卖点、一句对白或一个想法。助理会结合素材改编剧情、安排接镜和剪点。",
+    "referenceHelp": "样片的七段剧情会保留，模型会结合你的素材和文案改编商品与台词。",
+    "referencePlaceholder": "写下菜名、卖点，或希望出现的一句台词",
+    "remakeScript": "查看改编后的分镜与对白",
+    "videoLimit": "这版需要生成 {{needed}} 段视频，24 小时内还可生成 {{remaining}} 段。草稿已保留。",
     "keepOriginal": "保留原声",
     "prepareFailed": "这次未能更新草稿。可以手动填写，或再试一次。",
     "saveDraft": "保存草稿",

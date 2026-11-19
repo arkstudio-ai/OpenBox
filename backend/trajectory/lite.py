@@ -76,23 +76,31 @@ def resolve_tool(tool_id: str, document: dict | None = None) -> dict:
 
 # -- Credits (business backend) --
 
-async def attach_credits(windows: list[tuple[str, dict]], items: list[dict], *, field: str = "credits") -> None:
+async def attach_credits(windows: list[tuple[str, dict]], items: list[dict], *, field: str = "credits",
+                         breakdown_field: str | None = None) -> None:
     """Fill ``items[i][field]`` from the backend's charged credits for ``windows[i]``; a failure leaves nulls.
 
     ``windows`` pairs each item's key with its usage window (session or user scope plus from/to).
+    ``breakdown_field`` also asks what the credits were charged for (``[{kind, credits, count}]``, null when
+    nothing was charged or the backend predates the breakdown).
     """
     if not windows:
         return
     from trajectory.auth import get_backend
+    payload = [{"key": key, **window} for key, window in windows]
     try:
-        answer = await get_backend().turn_usage([{"key": key, **window} for key, window in windows])
+        backend = get_backend()
+        answer = await (backend.turn_usage(payload, breakdown=True) if breakdown_field else backend.turn_usage(payload))
         credits = answer.get("credits", {}) if isinstance(answer, dict) else {}
+        parts = answer.get("breakdown", {}) if isinstance(answer, dict) else {}
     except Exception as exc:
         log.debug("Trajectory credits unavailable error_type=%s", type(exc).__name__)
         return
     for (key, _), item in zip(windows, items):
         value = credits.get(key)
         item[field] = str(value) if value is not None else None
+        if breakdown_field:
+            item[breakdown_field] = parts.get(key) if isinstance(parts, dict) and parts.get(key) else None
 
 
 # -- Users --
@@ -388,7 +396,9 @@ async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) 
         enriched.pop("data", None)  # step rows stay summaries; the detail endpoint carries content
         steps.append({**enriched, **classify(enriched, document, row.main_agent_id)})
     summary = turns.payload(row, session_title=session.title if session else None, at=at)
-    await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)})], [summary])
+    summary["credit_breakdown"] = None
+    await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)})], [summary],
+                         breakdown_field="credit_breakdown")
     prompts = [prompt for prompt in (media_prompt(summary_row, data) for summary_row, data in rows) if prompt]
     prompts = await _expand(db, trajectory, prompts)
     return {"summary": summary, "steps": steps, "through_seq": str(trajectory.projected_seq),
@@ -565,7 +575,10 @@ async def session_replay(db, trajectory, *, cursor=None, limit=10, at: datetime 
     page = (await db.scalars(query.order_by(Turn.started_at, Turn.turn_id).limit(limit + 1))).all()
     has_more = len(page) > limit
     page = page[:limit]
-    total = await db.scalar(select(func.count()).select_from(Turn).where(Turn.trajectory_id == trajectory.id))
+    total, first_started = (await db.execute(select(func.count(), func.min(Turn.started_at)).where(
+        Turn.trajectory_id == trajectory.id))).one()
+    failed = await db.scalar(select(func.count()).select_from(Turn).where(
+        Turn.trajectory_id == trajectory.id, _status_clause(["failed"], at)))
     session = await db.get(TrajectoryMetaSession, trajectory.session_id)
     user = await db.get(TrajectoryMetaUser, trajectory.user_id) if trajectory.user_id else None
     grouped: dict[str, list] = {}
@@ -579,13 +592,23 @@ async def session_replay(db, trajectory, *, cursor=None, limit=10, at: datetime 
     events = await _expand(db, trajectory, events)
     items = [{"summary": turns.payload(row, session_title=session.title if session else None, at=at),
               "events": _finish_events(turn_events)} for row, turn_events in zip(page, events)]
-    await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)}) for row in page],
-                         [item["summary"] for item in items])
+    # The whole session's credits ride in the same lookup: every charge from its first turn until now.
+    whole = {"credits": None}
+    windows = [(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)}) for row in page]
+    targets = [item["summary"] for item in items]
+    started = turns.instant(first_started)
+    if started is not None:
+        windows.append((f"session:{trajectory.session_id}", {
+            "session_id": trajectory.session_id, "from_at": (started - timedelta(seconds=5)).isoformat(),
+            "to_at": (at + timedelta(seconds=turns.USAGE_SLACK_SECONDS)).isoformat()}))
+        targets.append(whole)
+    await attach_credits(windows, targets)
     next_cursor = None
     if has_more and page:
         next_cursor = cursor_encode([filters, turns.instant(page[-1].started_at).isoformat(), page[-1].turn_id])
     return {"session": {"session_id": trajectory.session_id, "title": session.title if session else None,
                         "user_id": trajectory.user_id, "workspace_id": trajectory.workspace_id,
-                        "username": user.username if user else None, "email": user.email if user else None},
+                        "username": user.username if user else None, "email": user.email if user else None,
+                        "credits": whole["credits"], "failed_turns": int(failed or 0)},
             "total_turns": int(total or 0), "items": items, "next_cursor": next_cursor, "has_more": has_more,
             "through_seq": str(trajectory.projected_seq)}

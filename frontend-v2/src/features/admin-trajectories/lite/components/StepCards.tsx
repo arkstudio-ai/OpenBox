@@ -21,8 +21,8 @@ import { labelKey, RECORD_STATUS_LABELS, RECORD_STATUS_TONES } from "../../const
 import type { TimeMode } from "../../stores/view"
 import type { RecordBlock, Seq, TrajectoryRecord } from "../../types/protocol"
 import { formatDuration, formatInstant } from "../../utils/time"
-import { groupLabel, resolveTool } from "../labels"
-import { isFailed, isOpen, toolId, type FlowItem } from "../steps"
+import { groupLabel } from "../labels"
+import { isFailed, isOpen, stepSubtitle, stepTitle, type FlowItem } from "../steps"
 import type { LiteLabels, LiteStep } from "../types"
 
 const MarkdownRenderer = lazy(() => import("../../components/inspector/MarkdownRenderer"))
@@ -46,7 +46,7 @@ function hasAttachment(value: unknown, depth = 0): boolean {
   return Object.values(record).some((child) => hasAttachment(child, depth + 1))
 }
 
-function RecordStatus({ step }: { step: LiteStep }) {
+export function RecordStatus({ step }: { step: LiteStep }) {
   const { t } = useTranslation("admin-trajectories")
   if (!step.status) return null
   return (
@@ -275,36 +275,8 @@ export function StepCard({
   const [open, setOpen] = useState(defaultOpen)
   const failed = isFailed(step)
   const live = isOpen(step)
-  const title = (() => {
-    switch (step.step_type) {
-      case "user_input":
-        return t("lite.turn.step.userInput")
-      case "assistant":
-        return t("lite.turn.step.assistant")
-      case "tool":
-        return step.label || resolveTool(toolId(step), env.labels).label
-      case "question":
-        return t("lite.turn.step.question")
-      case "permission":
-        return t("lite.turn.step.permission")
-      case "takeover":
-        return t("lite.turn.step.takeover")
-      case "job":
-        return t("lite.turn.step.job", { name: step.title })
-      case "artifact":
-        return t("lite.turn.step.artifact", { name: step.title })
-      default:
-        return step.title
-    }
-  })()
-  // A tool's one-line summary is its result title ("Found 27 files"); the arguments wait inside the card.
-  const subtitle =
-    step.step_type === "tool"
-      ? [step.title !== toolId(step) ? step.title : null, step.result_preview].filter(Boolean).join(" · ") ||
-        step.preview
-      : step.step_type === "assistant"
-        ? null
-        : step.preview
+  const title = stepTitle(step, env.labels, t)
+  const subtitle = stepSubtitle(step)
   return (
     <article
       data-testid="lite-step"

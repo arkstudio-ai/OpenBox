@@ -1023,18 +1023,37 @@
       }
     },
     "replay": {
-      "open": "回放整段会话",
-      "title": "会话回放",
-      "loading": "正在加载会话回放…",
+      "open": "查看整段对话",
+      "title": "对话",
+      "loading": "正在加载对话…",
       "meta_one": "{{user}} · 共 {{count}} 轮",
       "meta_other": "{{user}} · 共 {{count}} 轮",
       "loaded_one": "已加载 {{count}} 轮",
       "loaded_other": "已加载 {{count}} 轮",
-      "turnDetail": "这一轮详情 ›",
       "empty": "这个会话没有记录到对话",
       "more_one": "继续加载（还有 {{count}} 轮）",
       "more_other": "继续加载（还有 {{count}} 轮）",
-      "end": "— 会话到此结束 —"
+      "end": "— 对话到此结束 —",
+      "turnCredits": "本轮 {{credits}} 积分",
+      "turnUncharged": "本轮未计费",
+      "took": "用时 {{duration}}",
+      "showDetail": "查看详细",
+      "hideDetail": "收起详细",
+      "detailTitle": "这一轮做了什么",
+      "breakdown": "积分构成",
+      "breakdownItem": "{{label}} {{credits}}",
+      "breakdownItemTimes": "{{label}} ×{{count}} {{credits}}",
+      "fullSteps": "打开这一轮的完整步骤",
+      "sessionCredits": "共消耗 {{credits}} 积分",
+      "failedTurns_one": "{{count}} 轮失败",
+      "failedTurns_other": "{{count}} 轮失败"
+    },
+    "usageKind": {
+      "chat": "模型对话",
+      "compaction": "整理上下文",
+      "voice_call": "语音通话",
+      "hot_trends": "热点查询",
+      "video_transcribe": "视频转文字"
     }
   }
 }

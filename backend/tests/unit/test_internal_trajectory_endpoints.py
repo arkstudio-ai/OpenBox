@@ -151,13 +151,13 @@ USAGE = "/api/internal/trajectory/usage"
 ALERTS = "/api/internal/trajectory/alerts"
 
 
-async def _charge(db, *, session_id, user_id, credits, created_at, status="charged"):
+async def _charge(db, *, session_id, user_id, credits, created_at, status="charged", kind="chat"):
     from decimal import Decimal
     from db.models.billing import UsageEvent
     from core.identifier import ascending
     db.add(UsageEvent(id=ascending("usage"), idempotency_key=f"t:{ascending('k')}", workspace_id=f"ws_{user_id}",
                       user_id=user_id, session_id=session_id, message_id=None, session_title="s", model_id="m",
-                      kind="chat", tokens={}, total_tokens=0, credits=Decimal(credits), status=status,
+                      kind=kind, tokens={}, total_tokens=0, credits=Decimal(credits), status=status,
                       pricing={"version": "t"}, created_at=created_at))
 
 
@@ -165,7 +165,8 @@ async def test_usage_callback_sums_charged_credits_inside_each_window(backend, b
     base = datetime(2026, 10, 12, 8, 0, tzinfo=timezone.utc)
     async with business_db() as db:
         await _charge(db, session_id="session_a_1", user_id="a", credits="1.5", created_at=base + timedelta(seconds=10))
-        await _charge(db, session_id="session_a_1", user_id="a", credits="0.25", created_at=base + timedelta(seconds=50))
+        await _charge(db, session_id="session_a_1", user_id="a", credits="0.25", created_at=base + timedelta(seconds=50),
+                      kind="video_generate")
         await _charge(db, session_id="session_a_1", user_id="a", credits="9", created_at=base + timedelta(minutes=10))
         await _charge(db, session_id="session_a_1", user_id="a", credits="7", created_at=base + timedelta(seconds=20), status="shadow")
         await _charge(db, session_id="session_b_1", user_id="b", credits="2", created_at=base + timedelta(seconds=30))
@@ -179,6 +180,11 @@ async def test_usage_callback_sums_charged_credits_inside_each_window(backend, b
     response = await backend.post(USAGE, json={"windows": windows}, headers=AUTH)
     assert response.status_code == 200, response.text
     assert response.json() == {"credits": {"turn_1": "1.75", "turn_later": "9", "turn_empty": None, "user_a": "10.75"}}
+    split = (await backend.post(USAGE, json={"windows": windows[:3], "breakdown": True}, headers=AUTH)).json()
+    assert split["credits"] == {"turn_1": "1.75", "turn_later": "9", "turn_empty": None}
+    assert split["breakdown"] == {
+        "turn_1": [{"kind": "chat", "credits": "1.5", "count": 1}, {"kind": "video_generate", "credits": "0.25", "count": 1}],
+        "turn_later": [{"kind": "chat", "credits": "9", "count": 1}]}
     assert (await backend.post(USAGE, json={"windows": []}, headers=AUTH)).json() == {"credits": {}}
     for bad in ({"key": "x", "from_at": base.isoformat(), "to_at": base.isoformat()},
                 {"key": "x", "session_id": "s", "user_id": "u", "from_at": base.isoformat(), "to_at": base.isoformat()},

@@ -217,12 +217,12 @@ function TurnsTable({
   const { t } = useTranslation("admin-trajectories")
   const labels = useLiteLabels()
   const navigate = useNavigate()
+  // A row opens the conversation at that turn, unfolded; the turn page is one link further in.
   const hrefFor = (row: TurnSummary) =>
-    paths.adminTrajectoryTurn(
+    paths.adminTrajectoryReplay(
       userId,
       row.session_id,
-      row.turn_id,
-      backQuery ? new URLSearchParams({ back: backQuery }).toString() : undefined,
+      new URLSearchParams({ ...(backQuery ? { back: backQuery } : {}), turn: row.turn_id }).toString(),
     )
   const proHref = (sessionId: string) =>
     paths.adminTrajectorySession(sessionId, serializeDetailParams(EMPTY_DETAIL_PARAMS))

@@ -85,6 +85,15 @@ export interface TurnSummary {
   through_seq: Seq
   /** Credits the user was charged for this turn (decimal string); null when none or unknown. */
   credits?: string | null
+  /** What those credits were charged for, largest first. Turn detail only; absent on older servers. */
+  credit_breakdown?: CreditPart[] | null
+}
+
+/** One usage kind's share of a turn's credits (`usage_events.kind`: chat, video_generate, …). */
+export interface CreditPart {
+  kind: string
+  credits: string
+  count: number
 }
 
 export type StepType =
@@ -165,6 +174,10 @@ export interface SessionReplay {
     workspace_id: string | null
     username: string | null
     email: string | null
+    /** Credits charged over the whole session; null when none or unknown. Absent on older servers. */
+    credits?: string | null
+    /** Turns of the session that failed. Absent on older servers. */
+    failed_turns?: number
   }
   total_turns: number
   items: ReplayTurn[]

@@ -272,6 +272,8 @@ class TrajectoryUsageWindow(BaseModel):
 
 class TrajectoryUsageQuery(BaseModel):
     windows: list[TrajectoryUsageWindow] = Field(max_length=200)
+    # Also answer what each window's credits were charged for, by usage kind.
+    breakdown: bool = False
 
     @model_validator(mode="after")
     def unique_keys(self) -> "TrajectoryUsageQuery":
@@ -291,12 +293,15 @@ async def trajectory_turn_usage(query: TrajectoryUsageQuery) -> dict:
     window is everything of theirs in a period. Media charges carry no message
     id, so time is the only join the trace side can offer. Windows without a
     single charged row answer null, not 0: the lite view then says "未计费".
+    With ``breakdown`` the answer also carries, per window that was charged,
+    the same total split by ``usage_events.kind`` (largest first).
     """
     from decimal import Decimal
     from db.models.billing import UsageEvent
     result: dict[str, str | None] = {window.key: None for window in query.windows}
+    parts: dict[str, dict[str, list]] = {}
     if not query.windows:
-        return {"credits": result}
+        return {"credits": result, "breakdown": {}} if query.breakdown else {"credits": result}
     by_session = [w for w in query.windows if w.session_id]
     by_user = [w for w in query.windows if w.user_id]
     async with get_db_session() as db:
@@ -306,18 +311,26 @@ async def trajectory_turn_usage(query: TrajectoryUsageQuery) -> dict:
             scopes = {w.session_id or w.user_id for w in windows}
             start = min(_utc(w.from_at) for w in windows)
             end = max(_utc(w.to_at) for w in windows)
-            rows = (await db.execute(select(column, UsageEvent.created_at, UsageEvent.credits).where(
+            rows = (await db.execute(select(column, UsageEvent.created_at, UsageEvent.credits, UsageEvent.kind).where(
                 column.in_(scopes), UsageEvent.status == "charged", UsageEvent.credits.is_not(None),
                 UsageEvent.created_at >= start, UsageEvent.created_at <= end))).all()
             totals: dict[str, Decimal] = {}
-            for scope, created_at, credits in rows:
+            for scope, created_at, credits, kind in rows:
                 moment = _utc(created_at)
                 for w in windows:
                     if (w.session_id or w.user_id) == scope and _utc(w.from_at) <= moment <= _utc(w.to_at):
                         totals[w.key] = totals.get(w.key, Decimal(0)) + Decimal(credits)
+                        part = parts.setdefault(w.key, {}).setdefault(kind, [Decimal(0), 0])
+                        part[0] += Decimal(credits)
+                        part[1] += 1
             for key, total in totals.items():
                 result[key] = format(total.normalize(), "f")
-    return {"credits": result}
+    if not query.breakdown:
+        return {"credits": result}
+    return {"credits": result, "breakdown": {
+        key: [{"kind": kind, "credits": format(total.normalize(), "f"), "count": count}
+              for kind, (total, count) in sorted(kinds.items(), key=lambda item: (-item[1][0], item[0]))]
+        for key, kinds in parts.items()}}
 
 
 @router.post("/trajectory/usage", dependencies=[Depends(internal_token)])

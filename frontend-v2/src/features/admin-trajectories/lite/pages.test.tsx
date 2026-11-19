@@ -174,7 +174,12 @@ const PROMPT: MediaPrompt = {
 }
 
 const DETAIL: TurnDetail = {
-  summary: turn({}),
+  summary: turn({
+    credit_breakdown: [
+      { kind: "video_generate", credits: "3", count: 2 },
+      { kind: "chat", credits: "0.2", count: 1 },
+    ],
+  }),
   through_seq: "40",
   labels_version: 1,
   media_prompts: [PROMPT],
@@ -253,6 +258,8 @@ function answer(path: string): Promise<unknown> {
         workspace_id: "ws",
         username: "张店长",
         email: null,
+        credits: "6.4",
+        failed_turns: 1,
       },
       total_turns: 2,
       through_seq: "40",
@@ -456,7 +463,10 @@ describe("某用户的对话轮", () => {
     })
     expect(within(row).getByText("lite.turns.attachments")).toBeTruthy()
     const turnLink = within(row).getByRole("link")
-    expect(turnLink.getAttribute("href")).toBe("/app/admin/trajectories/users/user_a/turns/session_1/turn_1")
+    // A row opens the conversation at that turn.
+    expect(turnLink.getAttribute("href")).toBe(
+      "/app/admin/trajectories/users/user_a/sessions/session_1?turn=turn_1",
+    )
     fireEvent.click(screen.getByRole("button", { name: "lite.turns.abnormalOnly" }))
     await waitFor(() =>
       expect(screen.getByTestId("location").textContent).toContain(
@@ -584,13 +594,39 @@ describe("会话回放", () => {
     expect(screen.getAllByTestId("replay-turn")).toHaveLength(1)
     expect(screen.getByTestId("replay-user").textContent).toContain("把刚才那条火锅视频发到抖音")
     expect((await screen.findAllByText("好的")).length).toBeGreaterThan(0)
-    expect(screen.getByTestId("lite-media-prompt-text").textContent).toBe(FULL_PROMPT)
     expect(screen.getByText("用哪个方案？")).toBeTruthy()
     expect(screen.getByText("方案 A")).toBeTruthy()
     expect(screen.getByTestId("replay-reply-failed").textContent).toContain("lite.verdict.failedReply")
-    expect(screen.getByTestId("replay-turn-line").getAttribute("href")).toBe(
+    // The session's totals sit under the title, each turn's credits under the turn.
+    expect(screen.getByTestId("replay-session-credits").textContent).toContain('"credits":"6.4"')
+    expect(screen.getByText(/lite.replay.failedTurns/).textContent).toContain('"count":1')
+    expect(screen.getByTestId("replay-turn-credits").textContent).toContain(
+      'lite.replay.turnCredits {"credits":"3.2"}',
+    )
+    // The turn's work stays folded (and unread) until asked for; prompts belong to that detail.
+    expect(screen.queryByTestId("lite-media-prompt-text")).toBeNull()
+    expect(get.mock.calls.some(([path]) => String(path).includes("/turns/turn_1"))).toBe(false)
+    const toggle = screen.getByTestId("replay-turn-toggle")
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    fireEvent.click(toggle)
+    const detail = await screen.findByTestId("replay-detail")
+    expect(toggle.getAttribute("aria-expanded")).toBe("true")
+    expect(screen.getByTestId("lite-media-prompt-text").textContent).toBe(FULL_PROMPT)
+    const rows = within(detail)
+      .getAllByTestId("replay-step")
+      .map((row) => row.textContent ?? "")
+    // The person's own message is not repeated as a step; the two file reads fold into one line.
+    expect(rows.some((row) => row.includes("lite.turn.step.userInput"))).toBe(false)
+    expect(rows.some((row) => row.includes("lite.turn.groupTitle"))).toBe(true)
+    expect(rows.find((row) => row.includes("发布到抖音（云电脑）"))).toContain("login_expired")
+    const breakdown = screen.getByTestId("replay-credit-breakdown").textContent ?? ""
+    expect(breakdown).toContain('lite.replay.breakdownItemTimes {"label":"生成视频","count":2,"credits":"3"}')
+    expect(breakdown).toContain("lite.replay.breakdownItem")
+    expect(screen.getByTestId("replay-full-steps").getAttribute("href")).toBe(
       "/app/admin/trajectories/users/user_a/turns/session_1/turn_1?back=status%3Dfailed",
     )
+    fireEvent.click(toggle)
+    expect(screen.queryByTestId("replay-detail")).toBeNull()
     expect(screen.getByRole("link", { name: "lite.turn.backToUser" }).getAttribute("href")).toBe(
       "/app/admin/trajectories/users/user_a?status=failed",
     )
@@ -611,5 +647,8 @@ describe("会话回放", () => {
     await waitFor(() => expect(screen.getAllByTestId("replay-turn")).toHaveLength(2))
     await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
     expect((scroll.mock.contexts[0] as HTMLElement).id).toBe("turn-turn_2")
+    // The turn the reader came for is unfolded; the others are not.
+    const toggles = screen.getAllByTestId("replay-turn-toggle")
+    expect(toggles.map((button) => button.getAttribute("aria-expanded"))).toEqual(["false", "true"])
   })
 })

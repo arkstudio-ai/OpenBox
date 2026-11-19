@@ -87,9 +87,11 @@ async def test_concurrent_blob_fetches_share_one_budget(blobs):
     reset_blob_cache()
 
 
-async def test_oversized_read_drains_sibling_object_requests_before_returning(monkeypatch):
+async def test_oversized_read_waits_for_sibling_object_requests_without_cancelling_them(monkeypatch):
+    # A cancelled object request can wait forever inside the HTTP client, so a failed group lets the requests
+    # in flight finish (tests/unit/test_trajectory_read_group.py) and returns only then.
     import trajectory.payload as payload
-    entered, cancelled = asyncio.Event(), asyncio.Event()
+    entered, release, finished, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     async def fetch(_store, key, *_args):
         if key == "too_large":
@@ -97,15 +99,21 @@ async def test_oversized_read_drains_sibling_object_requests_before_returning(mo
             raise ReadTooLarge("too large")
         entered.set()
         try:
-            await asyncio.Event().wait()
-        finally:
+            await release.wait()
+            finished.set()
+        except asyncio.CancelledError:
             cancelled.set()
+            raise
 
     monkeypatch.setattr(payload, "fetch_blob", fetch)
     rows = [SimpleNamespace(storage_key=key, encoding="identity", sha256=None) for key in ("too_large", "slow")]
+    read = asyncio.create_task(Resolver(None, "trj_test", through_seq=1)._json(rows, "invalid JSON"))
+    await asyncio.sleep(0.05)
+    assert not read.done() and not cancelled.is_set()
+    release.set()
     with pytest.raises(ReadTooLarge):
-        await Resolver(None, "trj_test", through_seq=1)._json(rows, "invalid JSON")
-    assert cancelled.is_set()
+        await asyncio.wait_for(read, 2)
+    assert finished.is_set() and not cancelled.is_set()
 
 
 async def test_archived_segments_consume_budget_on_cache_hits_without_duplicate_blob_cache(blobs):

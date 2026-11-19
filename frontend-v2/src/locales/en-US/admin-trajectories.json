@@ -1023,18 +1023,37 @@
       }
     },
     "replay": {
-      "open": "Replay session",
-      "title": "Session replay",
-      "loading": "Loading the session replay…",
+      "open": "View conversation",
+      "title": "Conversation",
+      "loading": "Loading the conversation…",
       "meta_one": "{{user}} · {{count}} turn",
       "meta_other": "{{user}} · {{count}} turns",
       "loaded_one": "{{count}} loaded",
       "loaded_other": "{{count}} loaded",
-      "turnDetail": "Turn details ›",
       "empty": "No conversation was recorded in this session",
       "more_one": "Load more ({{count}} left)",
       "more_other": "Load more ({{count}} left)",
-      "end": "— End of session —"
+      "end": "— End of conversation —",
+      "turnCredits": "{{credits}} credits this turn",
+      "turnUncharged": "No charge this turn",
+      "took": "Took {{duration}}",
+      "showDetail": "Show details",
+      "hideDetail": "Hide details",
+      "detailTitle": "What happened in this turn",
+      "breakdown": "Credits by use",
+      "breakdownItem": "{{label}} {{credits}}",
+      "breakdownItemTimes": "{{label}} ×{{count}} {{credits}}",
+      "fullSteps": "Open the full steps of this turn",
+      "sessionCredits": "{{credits}} credits in total",
+      "failedTurns_one": "{{count}} failed turn",
+      "failedTurns_other": "{{count}} failed turns"
+    },
+    "usageKind": {
+      "chat": "Model chat",
+      "compaction": "Context compaction",
+      "voice_call": "Voice call",
+      "hot_trends": "Trend lookup",
+      "video_transcribe": "Video transcription"
     }
   }
 }

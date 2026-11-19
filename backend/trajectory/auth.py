@@ -132,8 +132,9 @@ class HttpBackend:
         response.raise_for_status()
         return response.json()
 
-    async def turn_usage(self, windows: list[dict]) -> dict:
-        response = await self._client.post(USAGE_PATH, headers=self._headers, json={"windows": windows})
+    async def turn_usage(self, windows: list[dict], *, breakdown: bool = False) -> dict:
+        body = {"windows": windows, "breakdown": True} if breakdown else {"windows": windows}
+        response = await self._client.post(USAGE_PATH, headers=self._headers, json=body)
         response.raise_for_status()
         return response.json()
 
@@ -166,9 +167,9 @@ class LocalBackend:
             raise AuditRejected("Invalid trajectory audit entries") from exc
         await write_trajectory_audit(batch.entries)
 
-    async def turn_usage(self, windows: list[dict]) -> dict:
+    async def turn_usage(self, windows: list[dict], *, breakdown: bool = False) -> dict:
         from api.internal import TrajectoryUsageQuery, trajectory_turn_usage
-        return await trajectory_turn_usage(TrajectoryUsageQuery.model_validate({"windows": windows}))
+        return await trajectory_turn_usage(TrajectoryUsageQuery.model_validate({"windows": windows, "breakdown": breakdown}))
 
     async def turn_alerts(self, turns: list[dict]) -> dict:
         from api.internal import TrajectoryAlertBatch, trajectory_turn_alerts

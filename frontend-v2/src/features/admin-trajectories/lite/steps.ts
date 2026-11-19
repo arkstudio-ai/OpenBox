@@ -1,5 +1,6 @@
 // The step flow of a turn (lite plan §4.3), built from the server's classified
 // record summaries. Pure: tested without rendering.
+import type { TFunction } from "i18next"
 import { resolveTool } from "./labels"
 import type { LiteLabels, LiteStep } from "./types"
 
@@ -127,4 +128,40 @@ export function isOpen(step: LiteStep): boolean {
     step.status === "waiting" ||
     step.status === "pending"
   )
+}
+
+/** What a step was, in the operator's words: the tool's dictionary label, or the kind of event. */
+export function stepTitle(step: LiteStep, labels: LiteLabels, t: TFunction): string {
+  switch (step.step_type) {
+    case "user_input":
+      return t("lite.turn.step.userInput")
+    case "assistant":
+      return t("lite.turn.step.assistant")
+    case "tool":
+      return step.label || resolveTool(toolId(step), labels).label
+    case "question":
+      return t("lite.turn.step.question")
+    case "permission":
+      return t("lite.turn.step.permission")
+    case "takeover":
+      return t("lite.turn.step.takeover")
+    case "job":
+      return t("lite.turn.step.job", { name: step.title })
+    case "artifact":
+      return t("lite.turn.step.artifact", { name: step.title })
+    case "agent":
+      return t("lite.turn.step.agent", { name: step.title })
+    default:
+      return step.title
+  }
+}
+
+/** A tool's one-line summary is its result title ("Found 27 files"); the arguments wait inside the card. */
+export function stepSubtitle(step: LiteStep): string | null {
+  if (step.step_type === "tool")
+    return (
+      [step.title !== toolId(step) ? step.title : null, step.result_preview].filter(Boolean).join(" · ") ||
+      step.preview
+    )
+  return step.step_type === "assistant" ? null : step.preview
 }

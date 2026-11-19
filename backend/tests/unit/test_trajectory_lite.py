@@ -406,9 +406,13 @@ class FakeBackend:
         self.alert_calls: list[list[dict]] = []
         self.alert_error = alert_error
 
-    async def turn_usage(self, windows):
+    async def turn_usage(self, windows, *, breakdown=False):
         self.usage_calls.append(windows)
-        return {"credits": {w["key"]: self.credits.get(w["key"]) for w in windows}}
+        answer = {"credits": {w["key"]: self.credits.get(w["key"]) for w in windows}}
+        if breakdown:
+            answer["breakdown"] = {w["key"]: [{"kind": "chat", "credits": self.credits[w["key"]], "count": 1}]
+                                   for w in windows if self.credits.get(w["key"]) is not None}
+        return answer
 
     async def turn_alerts(self, turns_):
         self.alert_calls.append(turns_)
@@ -439,7 +443,8 @@ async def test_turn_lists_and_detail_carry_credits_from_the_backend(trace_db, bl
         listed = await lite.list_user_turns(db, user_id, at=NOW)
         users = await lite.list_users(db, at=NOW)
     assert detail["summary"]["credits"] == "2.5"
-    assert listed["items"][0]["credits"] == "2.5"
+    assert detail["summary"]["credit_breakdown"] == [{"kind": "chat", "credits": "2.5", "count": 1}]
+    assert listed["items"][0]["credits"] == "2.5" and "credit_breakdown" not in listed["items"][0]
     assert users["items"][0]["credits"] == "7"
     window = fake_backend.usage_calls[0][0]
     assert window["key"] == "turn_a" and window["session_id"] == session_id
@@ -573,6 +578,19 @@ async def _add_video_record(trajectory_id, turn_id="turn_a", seq=20):
                                                               resolution="720p")}))
 
 
+async def test_replay_carries_the_session_totals(trace_db, blobs, fake_backend):
+    trajectory_id, session_id, _ = await _project_fixture(blobs)
+    fake_backend.credits = {"turn_a": "2.5", f"session:{session_id}": "9"}
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, trajectory_id)
+        replay = await lite.session_replay(db, trajectory, at=NOW)
+    assert replay["items"][0]["summary"]["credits"] == "2.5"
+    assert replay["session"]["credits"] == "9" and replay["session"]["failed_turns"] == 0
+    whole = fake_backend.usage_calls[0][-1]
+    assert whole["key"] == f"session:{session_id}" and whole["session_id"] == session_id
+    assert whole["from_at"] <= fake_backend.usage_calls[0][0]["from_at"] and whole["to_at"] > NOW.isoformat()
+
+
 async def test_turn_detail_and_replay_carry_the_full_prompt(trace_db, blobs):
     trajectory_id, session_id, _ = await _project_fixture(blobs)
     await _add_video_record(trajectory_id)
@@ -580,6 +598,7 @@ async def test_turn_detail_and_replay_carry_the_full_prompt(trace_db, blobs):
         trajectory = await db.get(SessionTrajectory, trajectory_id)
         detail = await lite.get_turn(db, trajectory, "turn_a", at=NOW)
         replay = await lite.session_replay(db, trajectory, at=NOW)
+    assert detail["summary"]["credit_breakdown"] is None and replay["session"]["credits"] is None
     assert [(item["record_id"], item["prompt"], item["settings"]) for item in detail["media_prompts"]] == [
         ("tool:video_x", "完整提示词", {"resolution": "720p"})]
     assert replay["session"]["title"] == "日志排查" and replay["session"]["session_id"] == session_id

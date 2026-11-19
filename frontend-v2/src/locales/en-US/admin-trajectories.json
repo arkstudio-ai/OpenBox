@@ -1045,7 +1045,14 @@
       "fullSteps": "Open the full steps of this turn",
       "sessionCredits": "{{credits}} credits in total",
       "failedTurns_one": "{{count}} failed turn",
-      "failedTurns_other": "{{count}} failed turns"
+      "failedTurns_other": "{{count}} failed turns",
+      "media": {
+        "open": "Open the file",
+        "unavailable": "File no longer available",
+        "loading": "Loading the file…",
+        "attached": "Attached by the user",
+        "produced": "Produced by the AI"
+      }
     },
     "usageKind": {
       "chat": "Model chat",

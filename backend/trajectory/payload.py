@@ -21,6 +21,7 @@ and hashed into an anonymous temporary file, which the caller streams once the
 read is authorized again.
 """
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -149,6 +150,7 @@ async def fetch_blob(store, key: str, encoding: str, sha256: str | None, *, cach
     budget = current_read_budget()
     if budget is not None:
         async with _fetch_limit():
+            _check_aborted()
             spooled = await _spool(_blob_chunks(store, key), encoding=encoding, sha256=sha256,
                                   mismatch="Trajectory content digest mismatch", memory_bytes=budget.remaining,
                                   consume=budget.consume)
@@ -162,6 +164,7 @@ async def fetch_blob(store, key: str, encoding: str, sha256: str | None, *, cach
         finally:
             spooled.close()
     async with _fetch_limit():
+        _check_aborted()
         try:
             stored = await (store if store is not None else get_blob_store()).get(key)
         except FileNotFoundError as exc:
@@ -551,6 +554,7 @@ async def spool_blob(row: TrajectoryPayload, *, blob_store=None) -> Spooled:
     if cached is not None:
         return Spooled(row.sha256, len(cached), content=cached)
     async with _fetch_limit():
+        _check_aborted()
         spooled = await _spool(_blob_chunks(blob_store, row.storage_key), encoding=row.encoding, sha256=row.sha256,
                                mismatch="Trajectory content digest mismatch", memory_bytes=CACHED_DOWNLOAD_BYTES)
     if spooled.content is not None:
@@ -589,15 +593,63 @@ def _payload_ids(value, found: set) -> None:
             _payload_ids(child, found)
 
 
+class _ReadAborted(Exception):
+    """A sibling read failed before this one started its object request."""
+
+
+#: Seconds a failed group waits for its requests already in flight; they are bounded by the store's own timeouts.
+DRAIN_SECONDS = 150.0
+#: The abort flag of the read group a task belongs to (``_gather_reads``); a one-item list so siblings share it.
+_group_abort: "contextvars.ContextVar[list[bool] | None]" = contextvars.ContextVar("trajectory_read_group_abort",
+                                                                                 default=None)
+
+
+def _check_aborted() -> None:
+    """Called with a fetch slot in hand, before the object request: a failed group starts no further requests."""
+    state = _group_abort.get()
+    if state is not None and state[0]:
+        raise _ReadAborted()
+
+
+def _retrieve(task: asyncio.Task) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
 async def _gather_reads(*awaitables):
-    """A failed/oversized read cancels and drains its sibling object requests."""
-    tasks = [asyncio.create_task(item) for item in awaitables]
+    """Results in order. A failed/oversized read stops the siblings that have not started their object request.
+
+    Requests already in flight are left to finish and are never cancelled: a cancelled httpx request can
+    wait forever inside httpcore's shielded close (its connection lock), and ``gather`` then never returns.
+    On gw2 that stopped the projector for every session on 2026-11-19, with one missing blob as the trigger.
+    The same holds when the caller is cancelled: ``asyncio.wait`` leaves the reads alone, the flag ends the
+    queued ones, and the ones in flight end by themselves within the store's timeouts.
+    """
+    if not awaitables:
+        return []
+    state = [False]
+    token = _group_abort.set(state)
     try:
-        return await asyncio.gather(*tasks)
+        tasks = [asyncio.create_task(item) for item in awaitables]  # each task copies the context holding state
+    finally:
+        _group_abort.reset(token)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        failed = next((task.exception() for task in tasks if task.done() and not task.cancelled()
+                       and task.exception() is not None), None)
+        if failed is None:
+            return [task.result() for task in tasks]
+        raise failed
     except BaseException:
+        state[0] = True
         for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            task.add_done_callback(_retrieve)
+        pending = [task for task in tasks if not task.done()]
+        if pending:
+            try:
+                await asyncio.wait(pending, timeout=DRAIN_SECONDS)
+            except asyncio.CancelledError:
+                pass  # cancelled again while draining: the reads still end by themselves
         raise
 
 
@@ -877,6 +929,7 @@ async def upload_json_blobs(store, blobs: list[dict], *, metrics=None) -> None:
     """Idempotent puts (content-addressed keys, if_absent), bounded like fetches."""
     async def put(blob):
         async with _fetch_limit():
+            _check_aborted()
             try:
                 await store.put(blob["storage_key"], blob["stored"], if_absent=True,
                                 content_type="application/zstd" if blob["encoding"] == "zstd" else JSON_MEDIA_TYPE)

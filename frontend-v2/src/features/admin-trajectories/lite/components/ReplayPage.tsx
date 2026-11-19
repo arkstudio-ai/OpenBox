@@ -113,6 +113,10 @@ function Event({ event, filesShown = false }: { event: ReplayEvent; filesShown?:
   }
 }
 
+/** Roles of files the person brought in: sent with a message, uploaded, or carried over from before. */
+const PERSON_ROLES = new Set(["input", "attachment", "baseline_input"])
+const fromPerson = (event: ReplayEvent) => event.type === "artifact" && PERSON_ROLES.has(event.role ?? "")
+
 type Block =
   { kind: "event"; event: ReplayEvent } | { kind: "files"; side: "start" | "end"; events: ArtifactEvent[] }
 
@@ -122,13 +126,11 @@ type Block =
  */
 function blocks(events: ReplayEvent[]): Block[] {
   const out: Block[] = []
-  const attached = events.filter(
-    (event): event is ArtifactEvent => event.type === "artifact" && event.role === "input",
-  )
+  const attached = events.filter((event): event is ArtifactEvent => fromPerson(event))
   let placed = attached.length === 0
   for (const event of events) {
     if (event.type === "artifact") {
-      if (event.role === "input") continue
+      if (fromPerson(event)) continue
       const last = out[out.length - 1]
       if (last && last.kind === "files" && last.side === "start") last.events.push(event)
       else out.push({ kind: "files", side: "start", events: [event] })
@@ -170,7 +172,7 @@ function Turn({
   const steps = Object.values(summary.tool_counts).reduce((sum, count) => sum + count.total, 0)
   const duration = formatDuration(summary.duration_ms, i18n.language)
   // The person's attachments are on screen themselves; the "see the pro view" note is for when they are not.
-  const attachedShown = events.some((event) => event.type === "artifact" && event.role === "input")
+  const attachedShown = events.some(fromPerson)
   const panel = `turn-detail-${summary.turn_id}`
   return (
     <section

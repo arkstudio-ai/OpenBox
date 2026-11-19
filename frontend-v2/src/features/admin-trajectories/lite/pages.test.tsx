@@ -322,7 +322,7 @@ function answer(path: string): Promise<unknown> {
                   name: "门头.jpg",
                   media_type: "image/jpeg",
                   size_bytes: 2048,
-                  role: "input",
+                  role: "attachment",
                   payload_id: "pld_in",
                   availability: "available",
                   linkable: true,

@@ -49,6 +49,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
     this.taskId,
     this.resultId,
     this.intro,
+    this.initialDraft,
     this.embedded = false,
   });
   final AssistantScope scope;
@@ -59,6 +60,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
   /// `all`: opened from Settings' "重新认识一下" to go through the first
   /// meeting again.
   final String? intro;
+  final ComposerDraft? initialDraft;
 
   /// Hosted as the Light 模式 「对话」 tab rather than inside the workspace
   /// shell: the screen has no chrome of its own there, and what it navigates
@@ -93,10 +95,20 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
   String? _anchor;
 
   /// What a welcome card put into the composer.
-  ComposerDraft? _draft;
+  late ComposerDraft? _draft = widget.initialDraft;
 
   AssistantController get controller =>
       ref.read(assistantControllerProvider(widget.scope).notifier);
+
+  @override
+  void didUpdateWidget(AssistantScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialDraft != null &&
+        oldWidget.initialDraft != widget.initialDraft) {
+      _draft = widget.initialDraft;
+    }
+  }
+
   @override
   void dispose() {
     _scroll.dispose();
@@ -304,7 +316,7 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen> {
           ),
         const AssistantTourAutoOpen(),
         AssistantIntroEntry(
-          autoOpen: widget.embedded,
+          autoOpen: widget.embedded && widget.initialDraft == null,
           // Settled after an answer: the person's own words alone are not
           // yet a quiet moment.
           quiet:

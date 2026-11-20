@@ -27,7 +27,7 @@ from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 from video import ims_client
 from video.ims_compiler import CompiledJob, TimelineCompileError, compile_ims
-from video.timeline import Shot, Timeline
+from video.timeline import Overlay, Shot, Timeline
 
 log = create_logger("tool.video_compose")
 
@@ -109,17 +109,22 @@ def _owned_oss_url(ref: str, ctx: ToolContext, oss) -> str | None:
 async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Timeline:
     from tool.video_production import _find_owned_asset
 
-    shots: list[Shot] = []
-    for index, shot in enumerate(timeline.shots):
-        url = _owned_oss_url(shot.asset, ctx, oss)
+    async def visual(clip, field):
+        fields = {}
+        url = _owned_oss_url(clip.asset, ctx, oss)
         if url is None:
-            row = await _find_owned_asset(shot.asset, ctx)
+            row = await _find_owned_asset(clip.asset, ctx)
             if not row:
-                raise ComposeRefusal(f"shots[{index}].asset {shot.asset!r} is not a ready asset owned by you")
+                raise ComposeRefusal(f"{field}.asset {clip.asset!r} is not a ready asset owned by you")
             if row.mime not in _VIDEO_MIMES and not row.mime.startswith("image/"):
-                raise ComposeRefusal(f"shots[{index}].asset is {row.mime}; shots must be video or image")
+                raise ComposeRefusal(f"{field}.asset is {row.mime}; visual clips must be video or image")
             url = f"https://{oss.host}/{row.oss_key}"
-        shots.append(shot.model_copy(update={"asset": url}))
+            if isinstance(clip, Overlay):
+                fields["kind"] = "image" if row.mime.startswith("image/") else "video"
+        return clip.model_copy(update={**fields, "asset": url})
+
+    shots = [await visual(shot, f"shots[{i}]") for i, shot in enumerate(timeline.shots)]
+    overlays = [await visual(overlay, f"overlays[{i}]") for i, overlay in enumerate(timeline.overlays)]
     if any(item.voiceover is not None for item in timeline.audio):
         await _refuse_voiceover_over_spoken_shots(shots, timeline.audio, ctx, oss)
     audio = []
@@ -144,7 +149,7 @@ async def _resolve_shot_assets(timeline: Timeline, ctx: ToolContext, oss) -> Tim
                 raise ComposeRefusal(f"audio[{index}].asset is {row.mime}; audio must be an audio or video file")
             url = f"https://{oss.host}/{row.oss_key}"
         audio.append(item.model_copy(update={"asset": url}))
-    return timeline.model_copy(update={"shots": shots, "audio": audio})
+    return timeline.model_copy(update={"shots": shots, "audio": audio, "overlays": overlays})
 
 
 async def _spoken_lines_by_key(keys: list[str], ctx: ToolContext) -> dict[str, str]:

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/download/asset_download.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/message_part.dart';
-import '../../../shared/utils/format.dart';
+import '../../../shared/widgets/media_viewer.dart';
 import '../api/assets_api.dart';
 import '../utils/content_origin.dart';
 import 'ai_disclosure.dart';
@@ -142,15 +141,10 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
   }
 
   void _openViewer(BuildContext context, FilePart part) {
-    Navigator.of(context, rootNavigator: true).push(
-      PageRouteBuilder<void>(
-        opaque: false,
-        barrierDismissible: true,
-        pageBuilder: (_, _, _) =>
-            _MediaViewer(part: part, artifactKind: widget.artifactKind),
-        transitionsBuilder: (_, animation, _, child) =>
-            FadeTransition(opacity: animation, child: child),
-      ),
+    final artifactKind = widget.artifactKind;
+    showMediaViewer(
+      context,
+      (_) => _AttachmentViewer(part: part, artifactKind: artifactKind),
     );
   }
 }
@@ -300,297 +294,46 @@ class _VideoTile extends ConsumerWidget {
   }
 }
 
-/// Full-screen viewer (web Lightbox): dark scrim, mono filename + size +
-/// download + close header; pinch-zoom for images, playback for videos.
-class _MediaViewer extends ConsumerStatefulWidget {
-  const _MediaViewer({required this.part, this.artifactKind});
+class _AttachmentViewer extends ConsumerWidget {
+  const _AttachmentViewer({required this.part, this.artifactKind});
 
   final FilePart part;
   final String? artifactKind;
 
   @override
-  ConsumerState<_MediaViewer> createState() => _MediaViewerState();
-}
-
-class _MediaViewerState extends ConsumerState<_MediaViewer> {
-  /// Fraction received while a download runs, null when idle. Shown as a bar
-  /// under the header so a 20 MB video on mobile data visibly makes progress.
-  double? _progress;
-
-  FilePart get part => widget.part;
-
-  Future<void> _save(AssetSaveTarget target) async {
-    if (_progress != null) return;
-    setState(() => _progress = 0);
-    try {
-      await saveAssetToDevice(
-        ref.read,
-        assetId: part.assetId!,
-        name: _baseName(part.path),
-        mimeType: part.mimeType,
-        target: target,
-        onProgress: (double fraction) {
-          if (mounted) setState(() => _progress = fraction);
-        },
-      );
-    } finally {
-      if (mounted) setState(() => _progress = null);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
-    final isVideo = (part.mimeType ?? '').startsWith('video/');
     final asset = ref.watch(assetUrlProvider(part.assetId!));
-    final name = _baseName(part.path);
-    final artifactKind = widget.artifactKind;
-    final busy = _progress != null;
+    final failed = MediaPreviewError(i18n.t('chat:gallery.failed'));
+    Widget decorate(Widget child) =>
+        AiMediaOverlay(part: part, artifactKind: artifactKind, child: child);
 
-    return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: 0.88),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: FontSizes.sm,
-                        fontFamily: 'Menlo',
-                        fontFamilyFallback: ['monospace'],
-                      ),
-                    ),
-                  ),
-                  if (isGeneratedMedia(part, artifactKind: artifactKind))
-                    const Padding(
-                      padding: EdgeInsetsDirectional.only(end: 8),
-                      child: AiGeneratedLabel(onMedia: true),
-                    ),
-                  if (part.size != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(
-                        formatBytes(part.size!),
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontSize: FontSizes.xs2,
-                        ),
-                      ),
-                    ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.photo_library_outlined,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    tooltip: i18n.t('chat:download.saveToAlbum'),
-                    onPressed: busy ? null : () => _save(AssetSaveTarget.album),
-                  ),
-                  IconButton(
-                    icon: busy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white70,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.file_download_outlined,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                    tooltip: i18n.t('chat:gallery.download'),
-                    onPressed: busy ? null : () => _save(AssetSaveTarget.files),
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.close,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    tooltip: i18n.t('chat:gallery.close'),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            if (busy)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    LinearProgressIndicator(
-                      value: _progress == 0 ? null : _progress,
-                      minHeight: 3,
-                      backgroundColor: Colors.white24,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      i18n.t(
-                        'chat:download.downloading',
-                        vars: {
-                          'percent': ((_progress ?? 0) * 100)
-                              .round()
-                              .toString(),
-                        },
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: FontSizes.xs2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: GestureDetector(
-                onTap: isVideo ? null : () => Navigator.of(context).pop(),
-                child: asset.when(
-                  loading: () => const Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white70,
-                    ),
-                  ),
-                  error: (_, _) => Center(
-                    child: Text(
-                      i18n.t('chat:gallery.failed'),
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: FontSizes.sm,
-                      ),
-                    ),
-                  ),
-                  data: (info) => isVideo
-                      ? _VideoBox(
-                          url: info.url,
-                          part: part,
-                          artifactKind: artifactKind,
-                        )
-                      : InteractiveViewer(
-                          maxScale: 5,
-                          child: Center(
-                            child: Image.network(
-                              info.url,
-                              fit: BoxFit.contain,
-                              frameBuilder: (_, child, frame, loaded) =>
-                                  frame != null || loaded
-                                  ? AiMediaOverlay(
-                                      part: part,
-                                      artifactKind: artifactKind,
-                                      child: child,
-                                    )
-                                  : child,
-                              errorBuilder: (_, _, _) => Text(
-                                i18n.t('chat:gallery.failed'),
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: FontSizes.sm,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VideoBox extends StatefulWidget {
-  const _VideoBox({required this.url, required this.part, this.artifactKind});
-
-  final String url;
-  final FilePart part;
-  final String? artifactKind;
-
-  @override
-  State<_VideoBox> createState() => _VideoBoxState();
-}
-
-class _VideoBoxState extends State<_VideoBox> {
-  late final VideoPlayerController _controller;
-  bool _ready = false;
-  bool _failed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize()
-          .then((_) {
-            if (mounted) {
-              setState(() => _ready = true);
-              _controller.play();
-            }
-          })
-          .catchError((Object _) {
-            if (mounted) setState(() => _failed = true);
-          });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_failed) {
-      return const Center(
-        child: Icon(
-          Icons.videocam_off_outlined,
-          color: Colors.white54,
-          size: 40,
-        ),
-      );
-    }
-    if (!_ready) {
-      return const Center(
-        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
-      );
-    }
-    return GestureDetector(
-      onTap: () => setState(() {
-        _controller.value.isPlaying ? _controller.pause() : _controller.play();
-      }),
-      child: Column(
-        children: [
-          Expanded(
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: AiMediaOverlay(
-                  part: widget.part,
-                  artifactKind: widget.artifactKind,
-                  child: VideoPlayer(_controller),
-                ),
-              ),
-            ),
-          ),
-          VideoProgressIndicator(
-            _controller,
-            allowScrubbing: true,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-          ),
-        ],
+    return MediaViewer(
+      title: _baseName(part.path),
+      assetId: part.assetId,
+      size: part.size,
+      mimeType: part.mimeType,
+      disclosure: isGeneratedMedia(part, artifactKind: artifactKind)
+          ? const AiGeneratedLabel(onMedia: true)
+          : null,
+      child: asset.when(
+        loading: MediaPreviewLoading.new,
+        error: (_, _) => failed,
+        data: (info) {
+          if (info.url.isEmpty) return failed;
+          return (part.mimeType ?? '').startsWith('video/')
+              ? MediaPreviewVideo(
+                  key: ValueKey(info.url),
+                  source: info.url,
+                  failedText: i18n.t('first_video:result.playFailed'),
+                  decorate: decorate,
+                )
+              : MediaPreviewImage(
+                  url: info.url,
+                  failedText: failed.message,
+                  decorate: decorate,
+                );
+        },
       ),
     );
   }

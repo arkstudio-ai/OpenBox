@@ -31,6 +31,7 @@ from video.analysis import (
     PROMPT,
     SCREEN_TEXT_PROMPT,
     AnalysisParseError,
+    ScreenTextReport,
     VideoAnalysis,
     parse_analysis,
     parse_screen_text,
@@ -236,6 +237,22 @@ async def _stage(ctx: ToolContext, oss, *, workdir: str, job_id: str, frame_file
 
 # ── model + ASR ──────────────────────────────────────────────────────────────
 
+def _vision_contract(purpose: str) -> dict[str, Any]:
+    screen_text = purpose == "video_screen_text"
+    return {
+        "name": "report_screen_text" if screen_text else "report_video_analysis",
+        "description": "Report only findings supported by the supplied video frames and transcript.",
+        "parameters": (ScreenTextReport if screen_text else VideoAnalysis).model_json_schema(),
+    }
+
+
+def _vision_output(response: Any, name: str) -> str:
+    from video.vision_contract import output
+    try:
+        return output(response, name)
+    except ValueError as exc:
+        raise AnalysisParseError(str(exc)) from exc
+
 async def _transcribe(audio_url: str) -> dict[str, Any]:
     from tool.video_production import _configured_transcription_target, _provider_transcribe
 
@@ -266,8 +283,13 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     capture = None
     try:
         from agent.trajectory import RequestCapture, litellm_chunk_blocks
+        from video.vision_contract import request_options
+        contract = _vision_contract(purpose)
+        content[0]["text"] += f"\n调用 {contract['name']} 提交结果；如果不能调用函数，只返回同一结构的 JSON。"
         payload = dict(model=model, messages=[{"role": "user", "content": content}],
-                       temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
+                       temperature=0.2, max_tokens=6200, timeout=timeout,
+                       tools=[{"type": "function", "function": contract}],
+                       **request_options(model, contract["name"], _get_provider_kwargs(model)))
         capture = await RequestCapture.start(ctx, purpose=purpose, model_id=model,
                                              payload=payload, capture_level="adapter_input")
         response = await litellm.acompletion(**payload)
@@ -275,7 +297,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
             await capture.capture_usage(usage)
-        text = response.choices[0].message.content or ""
+        text = _vision_output(response, contract["name"])
         await capture.finish("completed", reason="stop")
     except BaseException as exc:
         import asyncio

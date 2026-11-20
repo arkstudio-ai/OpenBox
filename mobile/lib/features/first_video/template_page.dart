@@ -146,6 +146,7 @@ class _TemplateCard extends StatelessWidget {
                         context,
                         option.sampleUrl!,
                         failedText: playFailed,
+                        title: option.label,
                       ),
               ),
               const SizedBox(width: 14),

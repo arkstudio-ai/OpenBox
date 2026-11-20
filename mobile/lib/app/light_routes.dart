@@ -7,6 +7,7 @@ import '../features/chat/assistant_screen.dart';
 import '../features/chat/state/assistant_overview.dart';
 import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
+import '../features/chat/widgets/composer/composer.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/inbox/api/inbox_api.dart';
 import '../features/inbox/inbox_screen.dart';
@@ -14,6 +15,9 @@ import '../features/light/assistant_tab.dart';
 import '../features/light/autopilot_page.dart';
 import '../features/light/home_screen.dart';
 import '../features/light/me_screen.dart';
+import '../features/light/production/production_api.dart';
+import '../features/light/production/production_history.dart';
+import '../features/light/production/production_page.dart';
 import '../features/light/topic_chat_screen.dart';
 import '../features/light/topic_gallery_page.dart';
 import '../features/light/widgets/light_shell.dart';
@@ -48,6 +52,9 @@ StatefulShellRoute lightShellRoute({required ResourceSlotOf resources}) =>
                 taskId: state.uri.queryParameters['task'],
                 resultId: state.uri.queryParameters['result'],
                 intro: state.uri.queryParameters['intro'],
+                draft: state.extra is ComposerDraft
+                    ? state.extra as ComposerDraft
+                    : null,
                 resources: resources,
               ),
             ),
@@ -85,8 +92,28 @@ List<GoRoute> lightRoutes({required ResourceSlotOf resources}) => [
   ),
   GoRoute(
     path: '/light/topic/:entryId',
-    builder: (context, state) =>
-        LightTopicGalleryPage(entryId: state.pathParameters['entryId'] ?? ''),
+    builder: (context, state) {
+      final entryId = state.pathParameters['entryId'] ?? '';
+      final kind = ProductionKind.fromId(entryId);
+      if (kind == null) return LightTopicGalleryPage(entryId: entryId);
+      return ProductionStartPage(
+        kind: kind,
+        brief: state.uri.queryParameters['brief'],
+      );
+    },
+  ),
+  GoRoute(
+    path: Paths.lightProductionHistory,
+    builder: (context, state) => const ProductionHistoryPage(),
+  ),
+  GoRoute(
+    path: '${Paths.lightProductionHistory}/:sessionId',
+    builder: (context, state) => ProductionPage(
+      sessionId: state.pathParameters['sessionId']!,
+      initial: state.extra is LightProduction
+          ? state.extra as LightProduction
+          : null,
+    ),
   ),
   GoRoute(
     path: '/light/s/:sessionId',
@@ -130,12 +157,14 @@ class _LightAssistantTab extends ConsumerWidget {
     this.taskId,
     this.resultId,
     this.intro,
+    this.draft,
   });
 
   final ResourceSlotOf resources;
   final String? taskId;
   final String? resultId;
   final String? intro;
+  final ComposerDraft? draft;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -157,6 +186,7 @@ class _LightAssistantTab extends ConsumerWidget {
               taskId: taskId,
               resultId: resultId,
               intro: intro,
+              initialDraft: draft,
               embedded: true,
               resources: resources(ref),
             ),

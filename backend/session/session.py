@@ -82,6 +82,7 @@ class Session(BaseModel):
     # Never serialize private reveal/fallback state through REST, SSE, forks,
     # logs, or the frontend session payload.
     tool_exposure_state: dict = Field(default_factory=dict, exclude=True)
+    light_production: dict | None = Field(default=None, exclude=True)
 
 
 def _orm_to_session(row: SessionORM) -> Session:
@@ -114,6 +115,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         visibility=getattr(row, "visibility", None) or "workspace",
         memory_policy=getattr(row, "memory_policy", None) or "standard",
         tool_exposure_state=getattr(row, "tool_exposure_state", None) or {},
+        light_production=getattr(row, "light_production", None),
     )
 
 
@@ -147,6 +149,8 @@ async def create_session(
     strict_project: bool = False,
     visibility: str = "workspace",
     memory_policy: str = "standard",
+    light_entry: str | None = None,
+    light_production: dict | None = None,
 ) -> Session:
     """Create a new session."""
     if strict_project:
@@ -217,9 +221,12 @@ async def create_session(
             parent_id=parent_id,
             token_usage={},
             tool_exposure_state={},
+            light_entry=light_entry,
             created_at=now,
             updated_at=now,
         )
+        if light_production is not None:
+            row.light_production = light_production
         db.add(row)
 
         if visibility == "private" and memory_policy == "assistant_isolated":
@@ -244,6 +251,8 @@ async def create_session(
         kind=kind,
         visibility=visibility,
         memory_policy=memory_policy,
+        light_entry=light_entry,
+        light_production=light_production,
     )
 
     bus.publish(SESSION_STATUS, {

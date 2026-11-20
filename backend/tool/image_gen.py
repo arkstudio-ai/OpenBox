@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -34,6 +34,7 @@ _MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 _GPT_IMAGE_2_QUALITIES = {"low", "medium", "high", "auto"}
 _OUTPUT_FORMATS = {"png", "jpeg", "webp"}
 _OLDER_GPT_IMAGE_SIZES = {"auto", "1024x1024", "1536x1024", "1024x1536"}
+_FLEXIBLE_GPT_IMAGE_MODELS = {"gpt-image-2", "gpt-image-2.6"}
 _IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
 
 
@@ -84,6 +85,17 @@ class ImageGenArgs(BaseModel):
         description="Optional display filename for the OSS resource. A unique object key is always used.",
     )
 
+    @field_validator("input_images", mode="before")
+    @classmethod
+    def _asset_references(cls, value):
+        # Video inputs use {asset_id, role}; models sometimes carry the ID-only
+        # wrapper into the adjacent image tool. Unwrap only that exact shape.
+        # All IDs still pass the existing ownership/readiness resolver.
+        if isinstance(value, list):
+            return [item["asset_id"] if isinstance(item, dict) and set(item) == {"asset_id"}
+                    else item for item in value]
+        return value
+
     @model_validator(mode="after")
     def _dependent_options(self):
         if self.mask_image and not self.input_images:
@@ -133,6 +145,8 @@ def _configured_target(channel: str = "default") -> tuple[ProviderTarget, object
     if channel == "runninghub":
         settings = settings.model_copy(update={"provider": settings.runninghub_provider,
                                                "model": settings.runninghub_model})
+    elif channel == "gpt-image-2":
+        settings = settings.model_copy(update={"provider": "openai", "model": "gpt-image-2"})
     elif channel != "default":
         raise ValueError("Unknown image generation channel")
     provider_name = settings.provider.strip() or config.model.split("/", 1)[0]
@@ -168,20 +182,20 @@ def _validate_size(model: str, size: str) -> str | None:
     match = re.fullmatch(r"(\d+)x(\d+)", size)
     if not match:
         return "size must be 'auto' or WIDTHxHEIGHT (for example 2048x1152)"
-    if model.lower() != "gpt-image-2":
+    if model.lower() not in _FLEXIBLE_GPT_IMAGE_MODELS:
         if size not in _OLDER_GPT_IMAGE_SIZES:
             return f"{model} supports only {', '.join(sorted(_OLDER_GPT_IMAGE_SIZES))}"
         return None
     width, height = (int(match.group(1)), int(match.group(2)))
     if width % 16 or height % 16:
-        return "gpt-image-2 width and height must both be multiples of 16"
+        return f"{model} width and height must both be multiples of 16"
     if max(width, height) > 3840:
-        return "gpt-image-2 maximum edge is 3840px"
+        return f"{model} maximum edge is 3840px"
     if max(width, height) > 3 * min(width, height):
-        return "gpt-image-2 aspect ratio cannot exceed 3:1"
+        return f"{model} aspect ratio cannot exceed 3:1"
     pixels = width * height
     if not 655_360 <= pixels <= 8_294_400:
-        return "gpt-image-2 total pixels must be between 655,360 and 8,294,400"
+        return f"{model} total pixels must be between 655,360 and 8,294,400"
     return None
 
 
@@ -193,7 +207,7 @@ def _align_size(model: str, size: str) -> tuple[str, str | None]:
     changed so the caller can say so. Other limits are left to _validate_size.
     """
     match = re.fullmatch(r"(\d+)x(\d+)", size)
-    if model.lower() != "gpt-image-2" or not match:
+    if model.lower() not in _FLEXIBLE_GPT_IMAGE_MODELS or not match:
         return size, None
     width, height = int(match.group(1)), int(match.group(2))
     if width < 16 or height < 16 or (width % 16 == 0 and height % 16 == 0):
@@ -1438,7 +1452,7 @@ def _rejected_result(mode: str, failure: _ProviderFailure, *, operation_key: str
     )
 
 
-async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
+async def _execute(args: ImageGenArgs, ctx: ToolContext, channel: str | None = None) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
     ctx._trajectory_image_request_id = None
@@ -1446,8 +1460,8 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
     try:
         from session.image_pref import selected
-        channel = await selected(ctx.user_id)
-        target, settings = _configured_target("runninghub") if channel == "runninghub" else _configured_target()
+        channel = channel or await selected(ctx.user_id)
+        target, settings = _configured_target() if channel == "default" else _configured_target(channel)
     except Exception as exc:
         return ToolResult(title="image_gen is not configured", output=_public_error(exc))
 
@@ -1722,6 +1736,14 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             elif all(row.status == "rejected" for row in reservations):
                 # A replay of a call the provider provably refused: nothing
                 # was accepted or charged, so this is not an unknown outcome.
+                rejection_kind = None
+                if effect_prepared is not None:
+                    from db.base import get_db_session
+                    from db.models.external_effect import ExternalEffect
+                    async with get_db_session() as db:
+                        effect = await db.get(ExternalEffect, effect_prepared.snapshot.effect_id)
+                        if effect:
+                            rejection_kind = (effect.last_error or {}).get("kind")
                 return ToolResult(
                     title=f"Image {mode} was already rejected",
                     output=(
@@ -1732,6 +1754,7 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     metadata={
                         "error": True,
                         "failure_code": "image_provider_rejected",
+                        "rejection_kind": rejection_kind,
                         "operation_key": operation_key,
                         "asset_ids": [row.id for row in reservations],
                         "provider_accepted": False,
@@ -2298,7 +2321,7 @@ async def _notify_image_failure(ctx: ToolContext) -> None:
         log.warning("image failure notification could not be persisted", exc_info=True)
 
 
-async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
+async def execute(args: ImageGenArgs, ctx: ToolContext, *, channel: str | None = None) -> ToolResult:
     # A guided Light page shows its example card before anything is drawn (light/example_gate.py).
     from light import example_gate
     held = await example_gate.before(ctx, tool="image_gen")
@@ -2306,7 +2329,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         return held
     ctx._image_notification_key = None
     try:
-        result = await _execute(args, ctx)
+        result = await _execute(args, ctx) if channel is None else await _execute(args, ctx, channel)
     except asyncio.CancelledError:
         await _notify_image_failure(ctx)
         raise

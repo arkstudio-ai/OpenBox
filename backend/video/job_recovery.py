@@ -343,6 +343,11 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
     user_id = getattr(job, "user_id", None)
     if not session_id or not user_id:
         return False
+    from light.remake_case import owns_job
+    from light.shot_editor import is_edit_job
+    if owns_job(job) or is_edit_job(job):
+        # The production page owns these receipts and waits for explicit assembly.
+        return False
     try:
         from agent.inbox import accept_inbox_item, wake_inbox_session
 

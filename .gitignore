@@ -78,3 +78,6 @@ backend/.openbox/trajectory.db*
 # Local Codex configuration (machine-bound; do not commit)
 .codex/config.toml
 .codex/config.toml.backup.*
+
+# 本地视频复刻素材与制作档案
+/temp/

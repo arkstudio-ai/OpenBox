@@ -1,0 +1,118 @@
+"""Reproducible storyboard for the approved 30-second OpenBox example."""
+from __future__ import annotations
+
+import hashlib
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+from light import silk_road, wan_story
+from tool.video_runninghub import MODEL
+
+TEMPLATE = "twist"
+ASSETS = Path(__file__).with_name("remake_assets") / "this-order"
+
+RESOLUTION = "768p"
+PREVIOUS_VERSION = "this-order-20261118-v1"
+
+
+@lru_cache(maxsize=1)
+def manifest() -> dict:
+    return json.loads((ASSETS / "case.json").read_text(encoding="utf-8"))
+
+
+class Adaptation(BaseModel):
+    """Only the story's product and copy slots are supplied by the Agent."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    product: Annotated[str, StringConstraints(min_length=1, max_length=36)] = "麻辣小龙虾"
+    appearance: Annotated[str, StringConstraints(max_length=260)] = ""
+    reveal_copy: Annotated[str, StringConstraints(max_length=20)] = ""
+    taste_copy: Annotated[str, StringConstraints(max_length=15)] = ""
+    end_copy: Annotated[str, StringConstraints(max_length=12)] = ""
+
+
+def applies(entry: str | None, form: dict) -> bool:
+    return entry == "video" and form.get("template") in (TEMPLATE, *wan_story.TEMPLATES)
+
+
+def version_for(form: dict) -> str:
+    return wan_story.VERSION if form.get("template") in wan_story.TEMPLATES else manifest()["version"]
+
+
+def tool_for(form: dict) -> str:
+    return "light_wan_story" if form.get("template") in wan_story.TEMPLATES else "light_remake"
+
+
+def owns_job(job) -> bool:
+    key = getattr(job, "idempotency_key", None) or ""
+    return key.startswith("light:") and any(f":{version}:" in key for version in (manifest()["version"], PREVIOUS_VERSION, *wan_story.VERSIONS))
+
+
+def reference_copy(form: dict) -> str:
+    if "reference_copy" in form:
+        return form["reference_copy"] or ""
+    # Existing typed drafts can be used as reference. The old generated
+    # four-shot screenplay must not come back as the user's instructions.
+    text = str(form.get("script") or "")
+    return "" if any(marker in text for marker in ("镜头1", "spoken_line", "【方案】")) else text
+
+
+def input_fingerprint(form: dict) -> str:
+    snapshot = {key: form[key] for key in ("shop", "brief", "asset_ids")}
+    snapshot.update(reference_copy=reference_copy(form), template_version=version_for(form))
+    if form.get("template") in {wan_story.SODA_TEMPLATE, silk_road.TEMPLATE}:
+        snapshot["template"] = form["template"]
+    if form.get("template") == silk_road.TEMPLATE:
+        snapshot.update(product_name=form.get("product_name", ""), frame_plan=1)
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def storyboard(adaptation: Adaptation) -> list[dict]:
+    reveal = adaptation.reveal_copy.strip("。！？!?… ")
+    taste = adaptation.taste_copy.strip("。！？!?… ")
+    lines = {3: f"这顿我请。{reveal}。" if reveal else "这顿我请。趁热吃。",
+             4: f"{taste}。" if taste else "那我尝尝。"}
+    shots = []
+    for shot in manifest()["shots"]:
+        item = {**shot, "spoken_line": lines.get(shot["shot"], shot["spoken_line"])}
+        for field in ("first_frame", "last_frame", "motion"):
+            if field in item:
+                item[field] = item[field].replace("{product}", adaptation.product)
+        shots.append(item)
+    return shots
+
+
+def display_script(adaptation: Adaptation) -> str:
+    lines = [f'《{manifest()["title"]}》 · 30 秒 · 7 段', f"商品：{adaptation.product}", ""]
+    for shot in storyboard(adaptation):
+        lines.append(f'{shot["from_sec"]}–{shot["to_sec"]} 秒 · {shot["beat"]}')
+        if shot["speaker"]:
+            lines.append(f'{shot["speaker"]}：「{shot["spoken_line"]}」')
+        else:
+            lines.append(f'片尾主文案：「{adaptation.end_copy or adaptation.product}」')
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def planning_instruction(form: dict, action: str) -> str:
+    if form.get("template") in wan_story.TEMPLATES:
+        return wan_story.planning_instruction(form, action)
+    data = {"shop": form["shop"], "selected_materials": form["asset_ids"], "brief": form["brief"],
+            "user_reference_copy": reference_copy(form)}
+    action_line = (
+        "只保存七段分镜供用户查看，不生成媒体。" if action == "prepare" else
+        "用户已确认制作。以保存的七段分镜生成；如果素材或参考文案刚变更，基于最新输入填写适配字段。"
+    )
+    return (
+        "选定样片《这单谁买》，调用 light_remake（需要时用 capability_search 查找）。"
+        "同事推账单 → 主管当面解围 → 空桌上只端进一份商品 → 当场试吃 → 次日追问账单 → 转正与两双筷子 → 菜品和店名。"
+        "七段依次为4、4、5、4、4、6、3秒。人物与谁交谈、何时揭晓商品、结尾店名由服务端落实。"
+        "根据选中素材识别真实商品与外观。用户输入是创作参考，将能从素材支持的内容自然适配到第3段上菜的reveal_copy、"
+        "第4段品尝的taste_copy或片尾的end_copy。对白应短，能在镜头内说完。片尾用3至8个字写菜品或吃法，店名单独排版。"
+        "不杜撰折扣、价格、功效或店名。"
+        f"{action_line} 如果工具报告制作暂停，告知用户返回制作页重试。用户输入：{json.dumps(data, ensure_ascii=False)}"
+    )

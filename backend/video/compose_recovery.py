@@ -62,13 +62,49 @@ async def sweep() -> int:
                 await wake_for(refreshed)
         except Exception as exc:
             log.debug(f"compose recovery for {job.id} failed: {type(exc).__name__}")
+    # A crash after IMS settled but before the grouped tool attached its output
+    # leaves a completed job outside the in-progress scan. Only recover an approved full cut.
+    from light.wan_story import VERSION
+    async with get_db_session() as db:
+        finished = (await db.scalars(select(VideoJob).where(
+            VideoJob.kind == KIND, VideoJob.status == "completed", VideoJob.attached_message_id.is_(None),
+            VideoJob.idempotency_key.like(f"light:%:{VERSION}:final:%"),
+            VideoJob.completed_at < now - timedelta(seconds=STALE_AFTER_SECONDS),
+            VideoJob.completed_at >= now - timedelta(days=LOOKBACK_DAYS),
+        ).order_by(VideoJob.completed_at.desc()).limit(MAX_JOBS_PER_SWEEP))).all()
+    for job in finished:
+        if await _deliver_story(job):
+            advanced += 1
     return advanced
+
+
+async def _deliver_story(job) -> bool:
+    from db.base import get_db_session
+    from db.models.session import Session
+    from light.wan_story import is_complete_cut
+    async with get_db_session() as db:
+        session = await db.get(Session, job.session_id)
+        if session is None or session.user_id != job.user_id or session.is_deleted:
+            return False
+        run = (session.light_production or {}).get("run") or {}
+    if not is_complete_cut(run, job) or await _session_busy(job.session_id):
+        return False
+    return await deliver(job, prompt="（完整剧情已合成）", text="两段剧情和片尾已剪好，可以播放和保存。",
+                         entrypoint="light_production_delivery")
 
 
 async def wake_for(job) -> bool:
     """Hand a composition that settled after its turn back to its conversation."""
     if job.attached_message_id or str(job.idempotency_key or "").startswith(SELF_DELIVERED_PREFIXES):
         return False
+    from light import remake_case, shot_editor, wan_story
+    if job.idempotency_key.startswith(shot_editor.KEY_PREFIX):
+        return job.status == "completed" and await deliver(
+            job, prompt="（新版本已合成）", text="新版成片已合成，可以在制作页和历史版本查看。",
+            entrypoint="light_shot_delivery",
+        )
+    if remake_case.owns_job(job):
+        return await _deliver_story(job) if any(f":{version}:" in job.idempotency_key for version in wan_story.VERSIONS) else False
     from video.job_recovery import COMPOSE_FAILED_PROMPT, COMPOSE_RESUME_PROMPT, resume_conversation
     if job.status == "completed":
         return await resume_conversation(job, COMPOSE_RESUME_PROMPT)
@@ -144,7 +180,8 @@ DELIVERED_TEXT = "剪好了，可以保存或者发到抖音；想换个开头�
 DELIVERED_PROMPT = "（你拍我剪的成片已合成，贴进对话）"
 
 
-async def deliver(job) -> bool:
+async def deliver(job, *, prompt: str = DELIVERED_PROMPT, text: str = DELIVERED_TEXT,
+                  entrypoint: str = "footage_delivery") -> bool:
     """Attach a finished cut to its conversation under a fixed line; False when it cannot.
 
     The delivery is its own exchange: a synthetic user line (hidden by the
@@ -166,9 +203,9 @@ async def deliver(job) -> bool:
     if session is None:
         return False
     user_message = await session_mod.create_user_message(
-        session_id=job.session_id, text=DELIVERED_PROMPT, agent=session.agent, model=None,
+        session_id=job.session_id, text=prompt, agent=session.agent, model=None,
         synthetic=True, user_id=job.user_id, origin="human",
-        origin_ref={"actor_user_id": job.user_id, "entrypoint": "footage_delivery", "job_id": job.id},
+        origin_ref={"actor_user_id": job.user_id, "entrypoint": entrypoint, "job_id": job.id},
     )
     assistant = await session_mod.create_assistant_message(job.session_id, user_message.id, model_id=None,
                                                            agent=session.agent, user_id=job.user_id)
@@ -176,7 +213,7 @@ async def deliver(job) -> bool:
                       project_id=session.project_id or "", message_id=assistant.id)
     attached = await vp._attach_completed(job, ctx)
     await chat.say(job.session_id, assistant.id, job.user_id,
-                   DELIVERED_TEXT if attached else "成片已经在上面了。")
+                   text if attached else "成片已经在上面了。")
     await chat.finish(job.session_id, assistant.id, job.user_id)
     log.info(f"Delivered composition {job.id} to {job.session_id} without an agent turn")
     return True

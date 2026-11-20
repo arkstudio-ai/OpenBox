@@ -38,6 +38,8 @@ _REFUSED_LIMIT = 2048
 def _guided_entry(session):
     """The Light entry of a guided conversation (any entry with a skill), or None."""
     from light.entries import light_entries
+    if getattr(session, "light_production", None):
+        return None  # This form already owns the template choice and confirmation.
     entry = light_entries().entry(getattr(session, "light_entry", None) or "")
     return entry if entry is not None and entry.skill else None
 

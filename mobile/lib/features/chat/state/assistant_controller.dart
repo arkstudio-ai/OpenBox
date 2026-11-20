@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -75,8 +74,6 @@ class AssistantState {
 
 String _digest(Object value) =>
     sha256.convert(utf8.encode(jsonEncode(value))).toString();
-String _identity() =>
-    'mobile-${List.generate(24, (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
 bool _definitive(Object error) {
   final status = apiErrorOf(error)?.status ?? 0;
   return status >= 400 && status < 500 && status != 408 && status != 429;
@@ -447,7 +444,7 @@ class AssistantController
     ).value;
     final video = ref.read(pickedVideoProvider(main.id));
     saved ??= {
-      'client_id': clientId ?? _identity(),
+      'client_id': clientId ?? newAssistantCommandId(),
       'fingerprint': fingerprint,
       'choices': {
         if (model != null && model.isNotEmpty) 'model': model,
@@ -617,7 +614,8 @@ class AssistantController
           message: 'Resolve the pending command first',
         );
       }
-      final body = old ?? {...proposed, 'idempotency_key': _identity()};
+      final body =
+          old ?? {...proposed, 'idempotency_key': newAssistantCommandId()};
       await _save(suffix, body);
       final receipt = await submit(body);
       if (receipt['command_id'] is! String) {

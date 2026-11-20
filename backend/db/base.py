@@ -153,6 +153,7 @@ def _upgrade_desktop_assistant_columns(connection) -> None:
         "sessions": {
             "visibility": "VARCHAR(16) NOT NULL DEFAULT 'workspace'",
             "memory_policy": "VARCHAR(32) NOT NULL DEFAULT 'standard'",
+            "light_production": "TEXT",
         },
         "agent_inbox_items": {
             "origin": "VARCHAR(32) NOT NULL DEFAULT 'unknown'",
@@ -669,7 +670,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "payment_orders": frozenset({"id", "workspace_id", "user_id", "request_key", "provider_payment_id", "credits", "status", "kind", "product", "cancelled_at", "cancellation_reason"}),
     "billing_subscriptions": frozenset({"id", "order_id", "workspace_id", "plan_id", "cycle", "plan", "starts_at", "ends_at", "cancelled_at"}),
     "payment_order_requests": frozenset({"workspace_id", "request_key", "order_id"}),
-    "sessions": frozenset({"tool_exposure_state", "quality", "metadata", "api_key_id"}),
+    "sessions": frozenset({"tool_exposure_state", "quality", "metadata", "api_key_id", "light_production"}),
     "api_keys": frozenset({
         "id", "user_id", "workspace_id", "name", "key_prefix", "key_hash", "scopes",
         "policy", "rate_limit", "last_used_at", "expires_at", "revoked_at",
@@ -972,7 +973,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "delivered_at",
         }
     ),
-    "sessions": frozenset({"tool_exposure_state", "variant", "quality", "metadata", "api_key_id"}),
+    "sessions": frozenset({"tool_exposure_state", "variant", "quality", "metadata", "api_key_id", "light_production"}),
     "parts": frozenset(
         {
             "stream_seq",

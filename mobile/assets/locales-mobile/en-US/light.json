@@ -6,6 +6,29 @@
     "me": "Me"
   },
   "home": {
+    "production": "Create",
+    "dayGreeting": {
+      "morning": "Good morning",
+      "afternoon": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "assistant": {
+      "title": "Personal assistant",
+      "slogan": "I can help with your shop’s daily work",
+      "open": "Ask the assistant",
+      "suggestions": "Try asking",
+      "schedules": "Scheduled tasks",
+      "scheduleHint": "Check reviews and set publishing reminders",
+      "recent": "Recently completed",
+      "reviews": {
+        "label": "Draft review replies",
+        "prompt": "Please review my shop’s recent reviews. Draft replies for the reviews that need them so I can approve them."
+      },
+      "copy": {
+        "label": "Write a promotion",
+        "prompt": "Help me draft a promotion for my shop. Ask me about the offer and dates first."
+      }
+    },
     "greeting": "{{name}}",
     "defaultShop": "My shop",
     "taglines": [
@@ -128,7 +151,7 @@
     "signOut": "Sign out",
     "signOutTitle": "Sign out?",
     "cancel": "Cancel",
-    "autopilot": "Running for you"
+    "autopilot": "Scheduled tasks"
   },
   "uiMode": {
     "title": "Interface",
@@ -149,6 +172,9 @@
     "publishLocked": "Posting needs a cloud desktop; it comes with a plan"
   },
   "autopilot": {
+    "groupEnabled": "Enabled",
+    "create": "New scheduled task",
+    "noJobs": "No scheduled tasks yet",
     "switch": "Keep doing this for me",
     "switchOn": "On · {{when}}",
     "sheetTitle": "Keep doing this for me",
@@ -170,9 +196,9 @@
     "capLine": "at most {{value}} credits",
     "confirm": "Start",
     "started": "Done: {{when}}, a new one is made",
-    "paused": "Paused; resume or cancel it under Running for you",
+    "paused": "Paused. You can resume or cancel in Scheduled tasks.",
     "resumed": "Resumed",
-    "title": "Running for you",
+    "title": "Scheduled tasks",
     "lede": "Made on schedule and posted back to its conversation, with a notification. A run over the limit is skipped.",
     "empty": "Nothing running yet.\nAfter a video or an image is done, turn on “Keep doing this for me” on its card.",
     "task": {
@@ -202,5 +228,288 @@
   },
   "conversations": {
     "untitled": "Untitled chat"
+  },
+  "activity": {
+    "today": "Today {{time}}",
+    "yesterday": "Yesterday {{time}}"
+  },
+  "production": {
+    "moreTemplatesComing": "More templates are on the way",
+    "retiredTemplate": "This template has been retired. Choose another template.",
+    "videoTier": {
+      "title": "Generation tier",
+      "fast": "Fast",
+      "medium": "Standard",
+      "high": "Quality",
+      "unavailable": "Some tiers are currently unavailable",
+      "manualUnavailable": "This tier is unavailable. Choose another tier.",
+      "prepareFrames": "Update the storyboard before generating the video.",
+      "choose": "Select"
+    },
+    "kind": {
+      "video": "Make a video",
+      "footage_edit": "Edit my footage",
+      "menu": "Make a menu"
+    },
+    "home": {
+      "video": "Generate fresh scenes from your materials",
+      "footage_edit": "Turn your footage into a video",
+      "menu": "Create a menu from your dishes"
+    },
+    "materials": {
+      "video": "Choose materials",
+      "footage_edit": "Choose your footage",
+      "menu": "Dishes"
+    },
+    "materialsBody": {
+      "video": "Choose images or clips for the new scenes to reference.",
+      "footage_edit": "Select the clips and photos you want in your edit.",
+      "menu": "Enter dishes or read them from photos."
+    },
+    "style": {
+      "video": "Remake a hit",
+      "footage_edit": "Editing style",
+      "menu": "Menu template"
+    },
+    "styleBody": {
+      "video": "Use a sample’s structure and pacing to create new scenes.",
+      "footage_edit": "Choose a pace for your footage.",
+      "menu": "Select a layout for your menu image."
+    },
+    "review": {
+      "video": "Video copy",
+      "footage_edit": "Captions and narration",
+      "menu": "Review dishes"
+    },
+    "generate": {
+      "video": "Generate video",
+      "footage_edit": "Start editing",
+      "menu": "Generate menu"
+    },
+    "done": {
+      "video": "Video ready",
+      "footage_edit": "Edit ready",
+      "menu": "Menu ready"
+    },
+    "status": {
+      "draft": "Draft",
+      "working": "In progress",
+      "review": "Needs review",
+      "completed": "Complete",
+      "failed": "Failed",
+      "blocked": "Pending check"
+    },
+    "silkShotCounts": "{{filmed}}/{{total}} sequences ready",
+    "shotCounts": "Filmed {{filmed}}/{{total}} · Reviewed {{reviewed}}/{{total}}",
+    "retaking": "Reshoots in progress ({{count}})",
+    "phase": {
+      "copy": "Writing copy",
+      "recognize": "Reading dishes",
+      "video": "Generating new scenes",
+      "edit": "Editing your footage",
+      "compose": "Putting the video together",
+      "silk_shots": "Generating reference-based scenes",
+      "silk_edit": "Selecting cuts to match the sample",
+      "silk_delivery": "Checking the finished video",
+      "wan_shots": "Filming the action and dialogue",
+      "wan_edit": "Reviewing footage and choosing cuts",
+      "wan_quality": "Checking story and product continuity",
+      "wan_delivery": "Checking the final video and dialogue",
+      "remake_frames": "Adapting the storyboard and product",
+      "remake_shots": "Generating seven scenes with dialogue",
+      "menu": "Generating the menu image",
+      "agent": "Assistant is working"
+    },
+    "decision": {
+      "review": "Review the proposal",
+      "reviewBody": "Confirm the proposal in the conversation to resume production.",
+      "blocked": "Checking the outcome",
+      "blockedBody": "A submission still needs verification. Open the conversation to review this task.",
+      "failed": "Production interrupted",
+      "failedBody": "Your draft and generated materials are still in this task."
+    },
+    "template": {
+      "silk_road": {
+        "title": "Flavors of the Silk Road",
+        "body": "A 62-second widescreen film. Keep the sample’s camera moves and transitions while adapting the cast, locations and story to your materials."
+      },
+      "soda_story": {
+        "title": "Soda commercial sample",
+        "body": "Use the sample’s pacing, lighting contrast, and product reveal. Recreate the ad for your shop, product, and copy."
+      },
+      "wan_story": {
+        "title": "This Table, Crawfish",
+        "body": "Use the sample’s pacing. The Agent writes a story from your product and copy, then chooses edits and reshoots from the footage."
+      },
+      "twist": {
+        "title": "Who’s Paying?",
+        "body": "A 30-second, seven-scene plot twist. Adapt the product and dialogue to your materials and copy."
+      },
+      "wok": {
+        "title": "Kitchen close-up",
+        "body": "Open on an action, follow the process, and reveal the finished dish."
+      },
+      "documentary": {
+        "title": "Warm documentary",
+        "body": "Natural pacing and the feel of the original footage."
+      },
+      "quick_cut": {
+        "title": "Fast cuts",
+        "body": "Tighter cuts paced to movement and music."
+      },
+      "product": {
+        "title": "Product showcase",
+        "body": "Longer close-ups and restrained transitions."
+      },
+      "warm_red": {
+        "title": "Warm red",
+        "body": "Red and gold to highlight signature dishes."
+      },
+      "monochrome": {
+        "title": "Black and white",
+        "body": "Clean space and aligned dish names and prices."
+      },
+      "signature_plate": {
+        "title": "Signature dish",
+        "body": "Feature your signature dish with one large photo."
+      },
+      "price_columns": {
+        "title": "Two-column prices",
+        "body": "Pair dish names with prices in a clear two-column layout."
+      },
+      "bilingual_table": {
+        "title": "Chinese–English table card",
+        "body": "Show Chinese and English names together for easy ordering."
+      }
+    },
+    "history": "Production history",
+    "noSuggestions": "Tell the assistant about your shop to get today’s suggestions.",
+    "emptyHistory": "No productions in this view yet.",
+    "all": "All",
+    "more": "Load more",
+    "advanced": "Advanced",
+    "returnToProduction": "Back to production",
+    "updatedFromChat": "Updated from chat",
+    "library": "Library",
+    "camera": "Camera",
+    "takePhoto": "Take photo",
+    "takeVideo": "Record video",
+    "upload": "Upload",
+    "materialSource": {
+      "upload": "Choose food photos or shop videos from your album",
+      "library": "Use files you already uploaded",
+      "camera": "Take a photo or record a clip"
+    },
+    "photos": "Photos",
+    "videos": "Videos",
+    "selected": "{{count}} materials selected",
+    "confirmMaterials": "Use {{count}} materials",
+    "emptyLibrary": "No files of this type in your library.",
+    "remove": "Remove",
+    "removeMissing": "Remove unavailable materials",
+    "fileTooLarge": "Each file can be up to 200 MB.",
+    "previewUnavailable": "Preview unavailable.",
+    "playCase": "Play the crawfish remake",
+    "previewMenu": "Preview menu sample",
+    "playPreview": "Play",
+    "pausePreview": "Pause",
+    "shop": "Shop name",
+    "fromPhotos": "Add from photos",
+    "addDish": "Add dish",
+    "editDish": "Edit dish",
+    "dishName": "Dish name",
+    "dishPrice": "Price (optional)",
+    "next": "Continue",
+    "skip": "Skip template",
+    "draftCopy": "Write copy",
+    "optimize": "Refine copy",
+    "recognize": "Read dishes from photos",
+    "scriptPlaceholder": "Edit your copy here",
+    "referenceTitle": "Reference copy (optional)",
+    "wanReferenceHelp": "Share a selling point, a line, or an idea. The assistant adapts the story to your materials and chooses where to cut.",
+    "referenceHelp": "The seven-scene story stays. The model uses your materials and copy to adapt the product and dialogue.",
+    "referencePlaceholder": "Add a dish, selling point, or a line you’d like to hear",
+    "productName": "Dish name",
+    "productNameHint": "Enter the exact name to display in the film",
+    "beatMusic": "Sync music to the edit",
+    "remakeScript": "View the adapted storyboard and dialogue",
+    "videoLimit": "This version needs {{needed}} video generations. You have {{remaining}} left in the 24-hour window. Your draft is saved.",
+    "keepOriginal": "Keep original audio",
+    "creativeEffects": "AI creative effects",
+    "creativeEffectsHint": "Generate posters or animated transitions. This may take more time and credits.",
+    "prepareFailed": "The draft couldn’t update. Edit it here or try again.",
+    "saveDraft": "Save draft",
+    "saveVideo": "Save video",
+    "saveMenu": "Save menu image",
+    "editResult": "Edit this version",
+    "editDraft": "Edit draft",
+    "another": "Make another",
+    "apply": "Apply proposal",
+    "dismiss": "Keep current draft",
+    "retry": "Try production again",
+    "shots": {
+      "editFramePrompt": "Edit prompt and generate image",
+      "firstPrompt": "First frame prompt",
+      "lastPrompt": "Last frame prompt",
+      "framePromptHint": "Describe the people, clothing, setting and framing",
+      "currentFrameReference": "Use the current frame as a reference",
+      "materialFrameReference": "Turn off to use the project materials instead",
+      "generateFrame": "Generate image",
+      "frameGenerating": "Generating",
+      "frameFailed": "Image generation failed. You can edit the prompt and try again.",
+      "clipPrompt": "Clip video prompt",
+      "hideTitle": "Hide this clip’s title",
+      "restoreTitle": "Restore this clip’s title",
+      "titlePending": "Title changes ready to assemble",
+      "number": "Clip {{number}}",
+      "current": "Current cut",
+      "currentNumber": "Current cut · v{{number}}",
+      "history": "Version history",
+      "generating": "Generating clips",
+      "reviewing": "Reviewing clips",
+      "composing": "Assembling video",
+      "composingAgain": "Reassembling video",
+      "pending": "New clips ready to assemble: {{count}}",
+      "recompose": "Reassemble",
+      "waiting": "Waiting",
+      "generatingStatus": "Generating",
+      "ready": "Ready",
+      "failed": "Failed",
+      "newVersion": "Ready to assemble",
+      "play": "Play clip",
+      "edit": "Edit clip",
+      "detail": "Clip details",
+      "prompt": "Prompt",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "first": "First frame",
+      "last": "Last frame",
+      "referenceFirst": "Reference start",
+      "referenceLast": "Reference end",
+      "firstWaiting": "First frame pending",
+      "lastWaiting": "Last frame pending",
+      "unavailable": "Preview unavailable",
+      "replaced": "Replaced",
+      "replace": "Replace",
+      "library": "Media library",
+      "album": "Photo library",
+      "supportedImages": "Select a JPEG, PNG, or WebP image.",
+      "shotHistory": "Clip history",
+      "playPrevious": "Play previous version",
+      "frames": "First and last frames",
+      "firstChanged": "First frame replaced. Regenerate this clip.",
+      "lastChanged": "Last frame replaced. Regenerate this clip.",
+      "bothChanged": "Both frames replaced. Regenerate this clip.",
+      "submitting": "Submitting…",
+      "retake": "Regenerate this clip",
+      "confirmTitle": "Reassemble the video?",
+      "confirmCopy": "Use the updated clips and reuse the rest. The previous cut will be available in version history.",
+      "later": "Later",
+      "films": "Full cuts",
+      "shotVersions": "Clip versions",
+      "filmNumber": "Cut v{{number}}",
+      "shotNumber": "Clip v{{number}}",
+      "composeFailed": "Reassembly failed. You can try again."
+    }
   }
 }

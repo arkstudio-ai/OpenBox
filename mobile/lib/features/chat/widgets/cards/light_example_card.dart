@@ -6,6 +6,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../../../shared/models/light.dart';
+import '../../../../shared/widgets/media_viewer.dart';
 import '../../../../shared/widgets/sample_player.dart';
 import '../../../light/api/light_api.dart';
 import '../../cards/server_card.dart';
@@ -83,12 +84,16 @@ class _LightExampleCardState extends ConsumerState<LightExampleCard> {
         context,
         url,
         failedText: i18n.t('light:gallery.playFailed'),
+        title: preview.title,
       );
     } else {
-      showExampleImage(
+      final failedText = i18n.t('light:example.viewFailed');
+      showMediaViewer(
         context,
-        url,
-        failedText: i18n.t('light:example.viewFailed'),
+        (_) => MediaViewer(
+          title: preview.title,
+          child: MediaPreviewImage(url: url, failedText: failedText),
+        ),
       );
     }
   }
@@ -377,89 +382,6 @@ class _ExampleColumn extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Shows an example picture full screen over the page, zoomable; the close
-/// button (or back) returns. The look follows [showSamplePlayer], which
-/// plays the clips.
-Future<void> showExampleImage(
-  BuildContext context,
-  String url, {
-  required String failedText,
-}) {
-  return Navigator.of(context, rootNavigator: true).push(
-    PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: context.tokens.term.withValues(alpha: 0.94),
-      barrierDismissible: true,
-      pageBuilder: (_, _, _) =>
-          _ExampleImagePage(url: url, failedText: failedText),
-      transitionsBuilder: (_, animation, _, child) =>
-          FadeTransition(opacity: animation, child: child),
-    ),
-  );
-}
-
-class _ExampleImagePage extends StatelessWidget {
-  const _ExampleImagePage({required this.url, required this.failedText});
-
-  final String url;
-  final String failedText;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 52, 8, 16),
-                child: InteractiveViewer(
-                  key: const Key('light-example-viewer'),
-                  maxScale: 5,
-                  child: Center(
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (_, child, progress) => progress == null
-                          ? child
-                          : Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: t.mediaLabel,
-                              ),
-                            ),
-                      errorBuilder: (_, _, _) => Center(
-                        child: Text(
-                          failedText,
-                          style: TextStyle(
-                            color: t.mediaLabel,
-                            fontSize: FontSizes.sm,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 4,
-              right: 8,
-              child: IconButton(
-                key: const Key('light-example-viewer-close'),
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: Icon(Icons.close, color: t.mediaLabel, size: 28),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

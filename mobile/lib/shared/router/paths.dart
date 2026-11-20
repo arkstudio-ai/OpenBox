@@ -85,6 +85,16 @@ abstract final class Paths {
       '/light/topic/${Uri.encodeComponent(entryId)}';
   static String lightChat(String sessionId) => '/light/s/$sessionId';
 
+  static const String lightProductionHistory = '/light/productions';
+  static String lightProduction(String sessionId) =>
+      '$lightProductionHistory/${Uri.encodeComponent(sessionId)}';
+  static String lightProductionStart(String entryId, {String? brief}) => Uri(
+    path: lightTopic(entryId),
+    queryParameters: brief == null ? null : {'brief': brief},
+  ).toString();
+  static String lightProductionAgent(String sessionId) =>
+      '${chat(sessionId)}?from=production';
+
   /// 省心托管: 托管中的事.
   static const String lightAutopilot = '/light/autopilot';
   static bool isLightPath(String path) =>

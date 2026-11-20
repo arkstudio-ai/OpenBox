@@ -146,6 +146,33 @@ def test_ranked_video_tool_still_cannot_cross_hard_budget():
     assert result.visible_chars <= result.budgets.visible_hard_chars
 
 
+def test_storyboard_image_tool_survives_use_and_todo_bookkeeping(monkeypatch):
+    from agent.agent import AGENTS
+    from agent.tool_exposure import ExposureSignals, build_eligible_catalog, continuation_ids, portable_plan
+    from tool import registry
+
+    monkeypatch.setattr(registry, "_tools", {})
+    registry.register_builtin_tools(load_custom=False)
+    tools = {name: tool for name, tool in registry.get_tools_for_agent(AGENTS["build"].tools).items()
+             if not name.startswith("memory_") and name != "current_task_state"}
+    catalog = build_eligible_catalog(tools)
+    signals = ExposureSignals(user_task_text="复刻原片，先生成身份锚图，再生成8张分镜首帧和视频",
+                              has_open_todos=True, has_active_video_production=True)
+    continued = continuation_ids([SimpleNamespace(tool="image_gen")], tools)
+    continued = continuation_ids([SimpleNamespace(tool="todo_write")], tools, continued)
+    plan = portable_plan(catalog, agent_name="build", editor_id="edit", signals=signals,
+                         revealed_ids={"image_gen", "autopilot_run"}, requested_ids=continued)
+    result = apply_exposure_budget(catalog, plan)
+    assert "image_gen" in result.plan.direct_ids
+    assert result.plan.reasons["image_gen"] == "requested"
+    assert result.visible_chars <= result.budgets.visible_hard_chars
+
+    # A rejected, unmaterialized name cannot promote itself into the next step.
+    assert not continuation_ids([SimpleNamespace(tool="not_allowed")], tools)
+    restricted = build_eligible_catalog({k: v for k, v in tools.items() if k != "image_gen"})
+    assert "image_gen" not in portable_plan(restricted, agent_name="build", requested_ids=continued).direct_ids
+
+
 def test_priority_is_resident_then_product_then_intent_then_reveal_then_other():
     catalog = _catalog({"core": 10, "recovery": 8, "intent": 10, "revealed": 4, "other": 2})
     # Worst-first input catches implementations that slice direct_ids by position.

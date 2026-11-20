@@ -229,6 +229,7 @@ async def list_assets(
     sort: str = Query("created", description="'created' | 'name' | 'size'"),
     limit: int = Query(60, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    owned_only: bool = False,
     current_user: dict = Depends(get_current_user),
     _workspace: dict = Depends(get_workspace),
 ):
@@ -237,7 +238,7 @@ async def list_assets(
     user_id = current_user["user_id"]
 
     from assets.service import resource_query
-    stmt = resource_query(user_id, current_user["workspace_id"])
+    stmt = resource_query(user_id, current_user["workspace_id"], owned_only=owned_only)
     if project == "none":
         stmt = stmt.where(FileAsset.project_id.is_(None))
     elif project != "all":

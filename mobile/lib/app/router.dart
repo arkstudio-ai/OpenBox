@@ -219,6 +219,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           final sessionId = state.pathParameters['sessionId']!;
           return WorkspaceShell(
             sessionId: sessionId,
+            returnToProduction:
+                state.uri.queryParameters['from'] == 'production',
             child: _ChatRoute(sessionId: sessionId),
           );
         },

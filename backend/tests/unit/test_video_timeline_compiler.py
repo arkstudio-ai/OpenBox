@@ -50,6 +50,19 @@ def test_trim_becomes_in_out_in_source_seconds():
     assert clip["In"] == 1.25 and clip["Out"] == 3.75
 
 
+def test_still_in_main_track_has_image_type_and_display_duration():
+    timeline = Timeline(shots=[
+        Shot(asset=f"{B}/title.PNG", duration_sec=2.5, volume=0),
+        Shot(asset=f"{B}/shot1.mp4", in_sec=1.25, duration_sec=2.5),
+    ])
+    job = compile_ims(timeline, output_url=OUT)
+    still, video = job.timeline["VideoTracks"][0]["VideoTrackClips"]
+    assert still["Type"] == "Image" and still["Duration"] == 2.5
+    assert {"In", "Out", "Effects"}.isdisjoint(still)
+    assert video["In"] == 1.25 and video["Out"] == 3.75
+    assert job.duration_sec == 5
+
+
 # ── rule 3: transitions ──────────────────────────────────────────────────────
 
 def test_transition_hangs_off_the_outgoing_clip_and_shortens_total():
@@ -363,6 +376,15 @@ def test_overlays_sit_on_their_own_tracks_in_canvas_fractions():
     }]
     with pytest.raises(ValidationError):
         Overlay(asset=f"{B}/pip.mp4", from_sec=0, to_sec=1, x=0.8, width=0.3)
+
+
+def test_poster_lettering_is_an_image_for_its_full_timeline_span():
+    plan = Timeline(shots=[Shot(asset=f"{B}/dish.mp4", duration_sec=30)],
+                    overlays=[Overlay(asset=f"{B}/brush.png", kind="image", from_sec=27, to_sec=30,
+                                      x=0, y=0, width=1, height=1)])
+    clip = compile_ims(plan, output_url=OUT).timeline["VideoTracks"][1]["VideoTrackClips"][0]
+    assert (clip["Type"], clip["Duration"], clip["TimelineIn"], clip["TimelineOut"]) == ("Image", 3, 27, 30)
+    assert "Out" not in clip and "Effects" not in clip
 
 
 def test_a_voiceover_is_an_ai_tts_clip_and_the_bed_ducks_under_it():

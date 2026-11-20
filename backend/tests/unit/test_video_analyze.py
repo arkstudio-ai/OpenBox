@@ -17,6 +17,37 @@ GOOD_JSON = '{"form":"口播","topic":"留白","audience":"装修人群","hook":
             '"recreate_elements":{"presenter":"女","scene":"书房","pace":"稳","caption_style":"底部白字","music":"无"},"risk_notes":""}'
 
 
+def test_structured_vision_reads_function_arguments_when_content_is_empty():
+    """MiniMax may put the report in a tool call and leave content empty."""
+    function = SimpleNamespace(name="report_video_analysis", arguments=GOOD_JSON)
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        finish_reason="tool_calls",
+        message=SimpleNamespace(content=None, tool_calls=[SimpleNamespace(function=function)]),
+    )])
+    text = va._vision_output(response, "report_video_analysis")
+    assert parse_analysis(text).topic == "留白"
+    assert "structure" in va._vision_contract("video_analyze")["parameters"]["properties"]
+    assert "has_text" in va._vision_contract("video_screen_text")["parameters"]["properties"]
+
+
+def test_structured_vision_rejects_truncated_report_even_if_json_parses():
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        finish_reason="length", message=SimpleNamespace(content=GOOD_JSON, tool_calls=[]),
+    )])
+    with pytest.raises(AnalysisParseError, match="truncated"):
+        va._vision_output(response, "report_video_analysis")
+
+
+def test_structured_vision_does_not_accept_unrelated_function_as_analysis():
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[
+            SimpleNamespace(function=SimpleNamespace(name="unrelated", arguments=GOOD_JSON)),
+        ]),
+    )])
+    with pytest.raises(AnalysisParseError):
+        parse_analysis(va._vision_output(response, "report_video_analysis"))
+
+
 class FakeSandbox:
     base_url = "http://sandbox.test"
 

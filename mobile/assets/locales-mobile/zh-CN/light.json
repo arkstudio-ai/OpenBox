@@ -6,6 +6,29 @@
     "me": "我的"
   },
   "home": {
+    "production": "内容制作",
+    "dayGreeting": {
+      "morning": "上午好",
+      "afternoon": "下午好",
+      "evening": "晚上好"
+    },
+    "assistant": {
+      "title": "个人助理",
+      "slogan": "店里的日常，交给我",
+      "open": "跟助理说",
+      "suggestions": "你可以这样说",
+      "schedules": "定时任务",
+      "scheduleHint": "到点检查评价、提醒发布",
+      "recent": "最近帮你办的",
+      "reviews": {
+        "label": "帮我回评价",
+        "prompt": "请帮我检查门店最近的评价，挑出需要回复的，先写好回复草稿给我确认。"
+      },
+      "copy": {
+        "label": "写活动文案",
+        "prompt": "请帮我写一条门店活动文案，先问我活动内容和日期。"
+      }
+    },
     "greeting": "{{name}}",
     "defaultShop": "我的店",
     "taglines": [
@@ -126,7 +149,7 @@
     "signOut": "退出登录",
     "signOutTitle": "确定退出登录？",
     "cancel": "取消",
-    "autopilot": "托管中的事"
+    "autopilot": "定时任务"
   },
   "uiMode": {
     "title": "界面模式",
@@ -147,6 +170,9 @@
     "publishLocked": "发布需要云电脑，开通套餐后就能一键发到抖音"
   },
   "autopilot": {
+    "groupEnabled": "已启用",
+    "create": "新建定时任务",
+    "noJobs": "还没有定时任务",
     "switch": "以后省心托管这个",
     "switchOn": "已托管 · {{when}}",
     "sheetTitle": "以后省心托管这个",
@@ -168,9 +194,9 @@
     "capLine": "每次最多 {{value}} 积分",
     "confirm": "开始托管",
     "started": "托管上了：{{when}} 自动做一条",
-    "paused": "已暂停，可以在「托管中的事」里继续或取消",
+    "paused": "已暂停，可以在「定时任务」里继续或取消",
     "resumed": "继续托管了",
-    "title": "托管中的事",
+    "title": "定时任务",
     "lede": "到点自动做，做好的东西发回原来的对话，并通知你。超过每次上限就不做。",
     "empty": "还没有托管的事。\n做完一条视频或一张图后，打开结果卡上的「以后省心托管这个」。",
     "task": {
@@ -200,5 +226,288 @@
   },
   "conversations": {
     "untitled": "未命名对话"
+  },
+  "activity": {
+    "today": "今天 {{time}}",
+    "yesterday": "昨天 {{time}}"
+  },
+  "production": {
+    "moreTemplatesComing": "更多模板正在添加中",
+    "retiredTemplate": "这个模板已下架，请选择其他模板。",
+    "videoTier": {
+      "title": "生成档位",
+      "fast": "快速",
+      "medium": "普通",
+      "high": "质量",
+      "unavailable": "部分档位暂不可用",
+      "manualUnavailable": "该档位暂不可用，请选择其他档位。",
+      "prepareFrames": "请先重新生成分镜文案，再制作视频。",
+      "choose": "请选择"
+    },
+    "kind": {
+      "video": "做一条视频",
+      "footage_edit": "你拍我剪",
+      "menu": "做菜单"
+    },
+    "home": {
+      "video": "用门店素材生成新画面",
+      "footage_edit": "用实拍素材剪辑",
+      "menu": "生成菜单图片"
+    },
+    "materials": {
+      "video": "选素材",
+      "footage_edit": "选实拍素材",
+      "menu": "菜品资料"
+    },
+    "materialsBody": {
+      "video": "选店内素材，作为生成新画面的参考",
+      "footage_edit": "用你拍的原片剪成一条",
+      "menu": "手动输入菜名，或从图片识别"
+    },
+    "style": {
+      "video": "爆款复刻",
+      "footage_edit": "剪辑风格",
+      "menu": "菜单模板"
+    },
+    "styleBody": {
+      "video": "参考样片的结构和节奏，生成新画面",
+      "footage_edit": "选择原片的剪辑节奏",
+      "menu": "选择模板风格，生成菜单图片"
+    },
+    "review": {
+      "video": "视频文案",
+      "footage_edit": "字幕与旁白",
+      "menu": "核对菜品"
+    },
+    "generate": {
+      "video": "生成视频",
+      "footage_edit": "开始剪辑",
+      "menu": "生成菜单"
+    },
+    "done": {
+      "video": "视频已生成",
+      "footage_edit": "剪辑已完成",
+      "menu": "菜单已生成"
+    },
+    "status": {
+      "draft": "草稿",
+      "working": "制作中",
+      "review": "待确认",
+      "completed": "已完成",
+      "failed": "失败",
+      "blocked": "待核实"
+    },
+    "silkShotCounts": "已生成 {{filmed}}/{{total}} 段",
+    "shotCounts": "已拍摄 {{filmed}}/{{total}} 镜 · 初审通过 {{reviewed}}/{{total}} 镜",
+    "retaking": "正在补拍 {{count}} 个镜头",
+    "phase": {
+      "copy": "正在写文案",
+      "recognize": "正在识别菜品",
+      "video": "正在生成新画面",
+      "silk_shots": "正在生成参考镜头",
+      "silk_edit": "正在按参考节奏选剪点",
+      "silk_delivery": "正在核对完整成片",
+      "wan_shots": "正在接拍画面与同期对白",
+      "wan_edit": "正在审片并选择剪点",
+      "wan_quality": "正在核对整片剧情和商品",
+      "wan_delivery": "正在核对成片画面和对白",
+      "remake_frames": "正在适配分镜与商品",
+      "remake_shots": "正在生成七段画面与同期对白",
+      "edit": "正在剪辑实拍素材",
+      "compose": "正在合成视频",
+      "menu": "正在生成菜单图片",
+      "agent": "助理正在处理"
+    },
+    "decision": {
+      "review": "方案待确认",
+      "reviewBody": "请回到对话确认方案，制作会接着进行。",
+      "blocked": "正在核实制作结果",
+      "blockedBody": "有一项提交结果待核实。可打开对话查看当前任务。",
+      "failed": "这次制作未完成",
+      "failedBody": "草稿和已生成的素材仍在这条任务里。"
+    },
+    "template": {
+      "silk_road": {
+        "title": "《丝路留香》",
+        "body": "62 秒超宽银幕。按样片的运镜和转场节奏，用你的素材重编人物、场景与剧情。"
+      },
+      "soda_story": {
+        "title": "苏打水广告样片",
+        "body": "参考样片的镜头节奏、灯光反差和产品亮相。用你的店铺、商品和文案重新拍摄。"
+      },
+      "wan_story": {
+        "title": "《这局，吃虾》",
+        "body": "参考样片的广告节奏。Agent 根据你的商品和文案编剧，看片后决定剪法和拍法。"
+      },
+      "twist": {
+        "title": "《这单谁买》",
+        "body": "30 秒七段反转剧情。用你的素材和文案适配商品与对白。"
+      },
+      "wok": {
+        "title": "烟火气特写",
+        "body": "动作开场，接制作过程和出锅特写，突出菜品的现场感。"
+      },
+      "documentary": {
+        "title": "温暖纪实",
+        "body": "自然节奏，记录原片里的现场感。"
+      },
+      "quick_cut": {
+        "title": "快剪动感",
+        "body": "镜头更紧凑，剪辑跟着动作和音乐节拍。"
+      },
+      "product": {
+        "title": "产品大片",
+        "body": "多给成品特写一点时间，转场克制。"
+      },
+      "warm_red": {
+        "title": "烟火红",
+        "body": "红金暖色，突出招牌菜。"
+      },
+      "monochrome": {
+        "title": "简约黑白",
+        "body": "简洁留白，对齐菜名和价格。"
+      },
+      "signature_plate": {
+        "title": "招牌菜单页",
+        "body": "用一张实拍大图突出店里的招牌菜。"
+      },
+      "price_columns": {
+        "title": "双栏价目",
+        "body": "分栏排列，菜名和价格一眼对得上。"
+      },
+      "bilingual_table": {
+        "title": "中英双语台卡",
+        "body": "中文在上、英文在下，适合桌面点餐。"
+      }
+    },
+    "history": "制作记录",
+    "noSuggestions": "告诉助理你在经营什么，它会给出今天的建议。",
+    "emptyHistory": "还没有这一类制作记录。",
+    "all": "全部",
+    "more": "加载更多",
+    "advanced": "高级自定义",
+    "returnToProduction": "返回制作",
+    "updatedFromChat": "已从对话更新",
+    "library": "素材库",
+    "camera": "拍摄",
+    "takePhoto": "拍照",
+    "takeVideo": "拍视频",
+    "upload": "上传",
+    "materialSource": {
+      "upload": "从相册选择菜品照片或店内视频",
+      "library": "挑选已上传的素材",
+      "camera": "现场拍照或录像"
+    },
+    "photos": "照片",
+    "videos": "视频",
+    "selected": "已选 {{count}} 个素材",
+    "confirmMaterials": "确认 {{count}} 个素材",
+    "emptyLibrary": "素材库还没有这类文件。",
+    "remove": "移除",
+    "removeMissing": "清除已无法使用的素材",
+    "fileTooLarge": "单个素材最多 200 MB。",
+    "previewUnavailable": "暂时无法预览。",
+    "playCase": "播放小龙虾复刻案例",
+    "previewMenu": "查看菜单样例",
+    "playPreview": "播放",
+    "pausePreview": "暂停",
+    "shop": "门店名称",
+    "fromPhotos": "从图片添加",
+    "addDish": "添加菜品",
+    "editDish": "编辑菜品",
+    "dishName": "菜名",
+    "dishPrice": "价格（选填）",
+    "next": "下一步",
+    "skip": "跳过模板",
+    "draftCopy": "生成文案",
+    "optimize": "重新优化",
+    "recognize": "识别图片菜品",
+    "scriptPlaceholder": "在这里编辑文案",
+    "referenceTitle": "参考文案（选填）",
+    "wanReferenceHelp": "文案可以是卖点、一句对白或一个想法。助理会结合素材改编剧情、安排接镜和剪点。",
+    "referenceHelp": "样片的七段剧情会保留，模型会结合你的素材和文案改编商品与台词。",
+    "referencePlaceholder": "写下菜名、卖点，或希望出现的一句台词",
+    "productName": "菜品名称",
+    "productNameHint": "输入成片中显示的准确菜名",
+    "beatMusic": "按节拍配乐",
+    "remakeScript": "查看改编后的分镜与对白",
+    "videoLimit": "这版需要生成 {{needed}} 段视频，24 小时内还可生成 {{remaining}} 段。草稿已保留。",
+    "keepOriginal": "保留原声",
+    "creativeEffects": "AI 创意效果",
+    "creativeEffectsHint": "生成海报或动态转场，可能增加制作时间和用量",
+    "prepareFailed": "这次未能更新草稿。可以手动填写，或再试一次。",
+    "saveDraft": "保存草稿",
+    "saveVideo": "保存视频",
+    "saveMenu": "保存菜单图",
+    "editResult": "修改这版",
+    "editDraft": "返回修改",
+    "another": "再做一份",
+    "apply": "应用方案",
+    "dismiss": "保留当前版本",
+    "retry": "重试制作",
+    "shots": {
+      "editFramePrompt": "编辑提示词生成图片",
+      "firstPrompt": "首帧提示词",
+      "lastPrompt": "尾帧提示词",
+      "framePromptHint": "描述画面里的人物、服装、场景和构图",
+      "currentFrameReference": "参考当前帧构图",
+      "materialFrameReference": "取消勾选后，使用项目素材作为参考",
+      "generateFrame": "生成图片",
+      "frameGenerating": "生成中",
+      "frameFailed": "图片生成失败，可重新编辑提示词",
+      "clipPrompt": "片段视频提示词",
+      "hideTitle": "隐藏本段题字",
+      "restoreTitle": "恢复本段题字",
+      "titlePending": "题字修改待合成",
+      "number": "第 {{number}} 段",
+      "current": "当前成片",
+      "currentNumber": "当前成片 · v{{number}}",
+      "history": "历史版本",
+      "generating": "正在生成片段",
+      "reviewing": "正在检查片段",
+      "composing": "正在合成视频",
+      "composingAgain": "正在重新合成",
+      "pending": "{{count}} 个新版片段待合成",
+      "recompose": "重新合成",
+      "waiting": "等待生成",
+      "generatingStatus": "生成中",
+      "ready": "已生成",
+      "failed": "生成失败",
+      "newVersion": "新版待合成",
+      "play": "播放片段",
+      "edit": "编辑片段",
+      "detail": "片段详情",
+      "prompt": "提示词",
+      "expand": "展开",
+      "collapse": "收起",
+      "first": "首帧",
+      "last": "尾帧",
+      "referenceFirst": "参考首帧",
+      "referenceLast": "参考尾帧",
+      "firstWaiting": "首帧生成中",
+      "lastWaiting": "尾帧生成中",
+      "unavailable": "暂无预览",
+      "replaced": "已更换",
+      "replace": "更换",
+      "library": "素材库",
+      "album": "手机相册",
+      "supportedImages": "请选择 JPEG、PNG 或 WebP 图片。",
+      "shotHistory": "片段历史",
+      "playPrevious": "播放上一版",
+      "frames": "首尾帧",
+      "firstChanged": "首帧已更换，需重新生成此片段",
+      "lastChanged": "尾帧已更换，需重新生成此片段",
+      "bothChanged": "首尾帧已更换，需重新生成此片段",
+      "submitting": "正在提交…",
+      "retake": "重新生成这段",
+      "confirmTitle": "重新合成视频？",
+      "confirmCopy": "使用新版片段合成整条视频，其他片段直接复用。上一版成片会保存在历史版本里。",
+      "later": "稍后再说",
+      "films": "成片版本",
+      "shotVersions": "片段版本",
+      "filmNumber": "成片 v{{number}}",
+      "shotNumber": "片段 v{{number}}",
+      "composeFailed": "重新合成失败，可以再试一次。"
+    }
   }
 }

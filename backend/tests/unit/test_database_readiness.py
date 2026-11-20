@@ -76,7 +76,7 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
         model.__table__.create(connection)
     connection.exec_driver_sql(
         "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT, variant VARCHAR, "
-        "quality VARCHAR, metadata TEXT, api_key_id VARCHAR)"
+        "quality VARCHAR, metadata TEXT, api_key_id VARCHAR, light_production TEXT)"
     )
     from db.models.api_key import ApiKey
     ApiKey.__table__.create(connection)
@@ -121,6 +121,7 @@ def test_readiness_reports_the_private_exposure_schema_as_required():
         missing = _missing_readiness_schema(connection)
 
     assert "sessions.tool_exposure_state" in missing
+    assert "sessions.light_production" in missing
     assert "parts.canonical_tool_id" in missing
     assert "internal_parts" in missing
     assert "cloud_desktops" in missing

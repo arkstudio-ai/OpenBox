@@ -134,6 +134,41 @@ async def test_saved_draft_and_idempotent_queue_share_the_agent_session(monkeypa
         assert items[0].prompt == f"请生成视频文案。\n\n{reference}"
 
 
+async def test_product_chat_tier_is_pinned_on_the_same_assistant_session(monkeypatch):
+    from core.config import OpenBoxConfig
+
+    owner = await _user()
+    config = OpenBoxConfig(model_tiers={"product_chat": True})
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    monkeypatch.setattr(production, "schedule_inbox_wake", lambda *_: None)
+
+    async def facts(_):
+        return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
+
+    monkeypatch.setattr(mode, "_workspace_facts", facts)
+    async with _client(owner) as client:
+        entry = (await client.post("/api/light/productions", json={"entry_id": "menu"})).json()
+        assert entry["chat_tier"] == "standard"
+        assert "available_video_tiers" not in entry
+        session_id = entry["session_id"]
+        path = f"/api/light/productions/{session_id}"
+        saved = await client.patch(path, json={
+            "revision": entry["revision"], "chat_tier": "creative", "page": "review",
+            "dishes": [{"name": "麻辣小龙虾"}],
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["chat_tier"] == "creative"
+        queued = await client.post(f"{path}/actions", json={
+            "revision": saved.json()["revision"], "action": "render", "request_id": uuid4().hex,
+        })
+        assert queued.status_code == 200, queued.text
+        session = await get_session(session_id, user_id=owner["id"])
+        assert (session.model, session.variant) == ("openai/gemini-4-neon-xhigh", "xhigh")
+        async with get_db_session() as db:
+            item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session_id))
+            assert (item.model, item.variant) == (session.model, session.variant)
+
+
 def test_remake_preserves_eyelines_serving_endpoints_and_store_card():
     from tool import video_runninghub
     from video.timeline import Timeline

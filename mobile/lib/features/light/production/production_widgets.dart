@@ -259,11 +259,13 @@ class ProductionTierPicker extends ConsumerWidget {
     required this.selected,
     required this.available,
     required this.onChoose,
+    this.forInsert = false,
   });
 
   final ProductionVideoTier? selected;
   final Set<ProductionVideoTier> available;
   final ValueChanged<ProductionVideoTier>? onChoose;
+  final bool forInsert;
 
   Future<void> _open(BuildContext context, I18nState i18n) async {
     final title = i18n.t('light:production.videoTier.title');
@@ -330,38 +332,62 @@ class ProductionTierPicker extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
+    return ProductionSettingRow(
+      key: const Key('production-tier-picker'),
+      icon: Icons.movie_creation_outlined,
+      label: i18n.t('light:production.videoTier.title'),
+      detail: forInsert ? i18n.t('light:production.videoTier.forInsert') : null,
+      value:
+          selected?.label(i18n) ?? i18n.t('light:production.videoTier.choose'),
+      onTap: onChoose == null ? null : () => _open(context, i18n),
+    );
+  }
+}
+
+class ProductionSettingRow extends StatelessWidget {
+  const ProductionSettingRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.detail,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label, value;
+  final String? detail;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
     final t = context.tokens;
-    final selectedLabel =
-        selected?.label(i18n) ?? i18n.t('light:production.videoTier.choose');
-    return Material(
-      color: t.card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: t.hair),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        key: const Key('production-tier-picker'),
-        contentPadding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
-        minTileHeight: 48,
-        title: Text(
-          i18n.t('light:production.videoTier.title'),
-          style: TextStyle(
-            color: t.ink,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
+    return ListTile(
+      contentPadding: const EdgeInsets.fromLTRB(16, 2, 12, 2),
+      minTileHeight: 50,
+      minLeadingWidth: 22,
+      horizontalTitleGap: 12,
+      leading: Icon(icon, color: t.ink, size: 21),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: t.ink,
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
         ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(selectedLabel, style: TextStyle(color: t.n700, fontSize: 14)),
-            const SizedBox(width: 4),
-            Icon(Icons.chevron_right_rounded, color: t.n700, size: 20),
-          ],
-        ),
-        onTap: onChoose == null ? null : () => _open(context, i18n),
       ),
+      subtitle: detail == null
+          ? null
+          : Text(detail!, style: TextStyle(color: t.n700, fontSize: 12)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(value, style: TextStyle(color: t.ink, fontSize: 15)),
+          const SizedBox(width: 4),
+          Icon(Icons.chevron_right_rounded, color: t.n700, size: 20),
+        ],
+      ),
+      onTap: onTap,
     );
   }
 }
@@ -531,37 +557,42 @@ class ProductionDishes extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final (index, dish) in dishes.indexed) ...[
-          Material(
-            color: t.card,
-            borderRadius: BorderRadius.circular(14),
-            child: ListTile(
+    return Material(
+      color: t.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: t.hair),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (index, dish) in dishes.indexed) ...[
+            ListTile(
               onTap: () => _edit(context, index),
               title: Text(dish.name),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (dish.price.isNotEmpty) ...[
-                    Text(dish.price),
-                    const SizedBox(width: 12),
-                  ],
-                  Icon(Icons.edit_outlined, size: 18, color: t.n800),
-                ],
+              trailing: Text(
+                dish.price.isEmpty
+                    ? i18n.t('light:production.dishPrice')
+                    : dish.price,
+                style: TextStyle(color: dish.price.isEmpty ? t.n700 : t.ink),
               ),
             ),
+            Divider(height: 1, color: t.hair),
+          ],
+          TextButton.icon(
+            key: const Key('production-dish-add'),
+            style: TextButton.styleFrom(
+              foregroundColor: t.ink,
+              minimumSize: const Size(0, 48),
+              shape: const StadiumBorder(),
+            ),
+            onPressed: dishes.length >= 30 ? null : () => _edit(context, null),
+            icon: const Icon(Icons.add, size: 20),
+            label: Text(i18n.t('light:production.addDish')),
           ),
-          const SizedBox(height: 6),
         ],
-        OutlinedButton.icon(
-          key: const Key('production-dish-add'),
-          onPressed: dishes.length >= 30 ? null : () => _edit(context, null),
-          icon: const Icon(Icons.add_circle_outline),
-          label: Text(i18n.t('light:production.addDish')),
-        ),
-      ],
+      ),
     );
   }
 }

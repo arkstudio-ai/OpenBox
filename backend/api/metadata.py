@@ -151,6 +151,10 @@ def _model_tiers(config) -> dict:
     prompt route would then refuse.
     """
     from agent.llm import validate_reasoning_variant
+    from billing.media import quote_generation
+    from billing.pricing import catalogue, quote
+
+    rates = catalogue()
 
     chat = []
     for row in config.model_tiers.chat:
@@ -161,12 +165,11 @@ def _model_tiers(config) -> dict:
             except ValueError as exc:
                 log.warning("model_tiers.chat[%s]: %s; using the model default", row.tier, exc)
                 variant = None
-        chat.append({"tier": row.tier, "model": row.model, "variant": variant})
-
-    from billing.media import quote_generation
-    from billing.pricing import catalogue
-
-    rates = catalogue()
+        item = {"tier": row.tier, "model": row.model, "variant": variant}
+        if config.model_tiers.product_chat:
+            item["prices"] = quote(row.model, {"input": 0, "output": 0}, rates=rates).snapshot.get(
+                "credits_per_million", {})
+        chat.append(item)
     offered = {m["id"]: m for m in _video_models(config)}
     video = []
     for row in config.model_tiers.video:
@@ -199,7 +202,7 @@ def _model_tiers(config) -> dict:
             "currency": currency,
         })
 
-    return {"chat": chat, "video": video}
+    return {"chat": chat, "video": video, **({"product_chat": True} if config.model_tiers.product_chat else {})}
 
 
 def _video_models(config) -> list[dict]:

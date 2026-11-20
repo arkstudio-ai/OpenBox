@@ -549,10 +549,22 @@ class VideoComposeConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+ChatTier = Literal["high", "medium", "low", "standard", "creative", "deep", "fast"]
+
+# These routes use the deployment's OpenAI-compatible gateway. Gemini's
+# effort-suffixed routes carry their thinking level in the model ID.
+PRODUCT_CHAT_TIERS = (
+    ("standard", "openai/gpt-6.2-sol", "xhigh", 128_000, 1_050_000),
+    ("creative", "openai/gemini-4-neon-xhigh", "xhigh", 65_536, 1_048_576),
+    ("deep", "openai/gemini-4-carbon-high", "high", 32_768, 1_048_576),
+    ("fast", "openai/gemini-3.8-flash-tiered", None, 65_536, 1_048_576),
+)
+
+
 class ChatTierConfig(BaseModel):
     """One composer tier for the chat model: a preset, not a routing id.
 
-    The picker shows three tiers instead of the model catalogue because a
+    The picker shows tiers instead of the model catalogue because a
     catalogue asks the person to know what each model is; a tier asks only
     how much they want to spend on this conversation. What a tier resolves to
     is deployment policy, kept here so swapping the model behind "deep" is a
@@ -560,7 +572,7 @@ class ChatTierConfig(BaseModel):
     id, so sessions, billing and the meta badges keep naming the real model.
     """
 
-    tier: Literal["high", "medium", "low"]
+    tier: ChatTier
     #: Must be one of the declared ``models`` (or the default ``model``).
     model: str
     #: Reasoning strength sent with the tier. None keeps the model's own
@@ -600,6 +612,7 @@ class ModelTiersConfig(BaseModel):
 
     chat: list[ChatTierConfig] = []
     video: list[VideoTierConfig] = []
+    product_chat: bool = False
 
     @model_validator(mode="after")
     def _unique_tiers(self):
@@ -981,8 +994,22 @@ class OpenBoxConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_model_tiers(self):
+        if self.model_tiers.product_chat:
+            tiers = []
+            models = list(self.models)
+            known = {model.id for model in models}
+            for tier, model, variant, output_limit, context_limit in PRODUCT_CHAT_TIERS:
+                tiers.append(ChatTierConfig(tier=tier, model=model, variant=variant))
+                if model not in known:
+                    models.append(ModelConfig(id=model, vision=True, max_tokens=output_limit,
+                                              context_limit=context_limit))
+            self.models = models
+            self.model_tiers.chat = tiers
+            self.model = tiers[0].model
         chat_ids = {m.id for m in self.models} or {self.model}
         for row in self.model_tiers.chat:
+            if not self.model_tiers.product_chat and row.tier not in {"high", "medium", "low"}:
+                raise ValueError(f"model_tiers.chat[{row.tier}] requires the product chat presets")
             if row.model not in chat_ids:
                 raise ValueError(
                     f"model_tiers.chat[{row.tier}] names {row.model!r}, "
@@ -1279,12 +1306,16 @@ def _apply_env_overrides(data: dict) -> dict:
     model_env = os.environ.get("OPENBOX_MODEL")
     if model_env:
         data["model"] = model_env
+    product_chat = os.environ.get("OPENBOX_PRODUCT_CHAT_TIERS")
+    if product_chat is not None:
+        data.setdefault("model_tiers", {})["product_chat"] = product_chat.lower() == "true"
 
     # Provider: OPENBOX_API_KEY / OPENBOX_BASE_URL apply to the active model's provider
     api_key = os.environ.get("OPENBOX_API_KEY")
     base_url = os.environ.get("OPENBOX_BASE_URL")
     if api_key or base_url:
-        model_id = data.get("model", "anthropic/claude-sonnet-4-20250514")
+        model_id = (PRODUCT_CHAT_TIERS[0][1] if data.get("model_tiers", {}).get("product_chat")
+                    else data.get("model", "anthropic/claude-sonnet-4-20250514"))
         provider_name = model_id.split("/")[0] if "/" in model_id else model_id
         providers = data.setdefault("provider", {})
         provider_cfg = providers.setdefault(provider_name, {})

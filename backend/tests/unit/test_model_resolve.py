@@ -55,3 +55,15 @@ def test_removed_gpt_preference_cannot_reenter_via_voice_or_old_messages():
         selection = resolve_step_model(**values, config=config)
         assert selection.model_id == config.model
         assert selection.replaced_from == "openai/gpt-5.6-luna"
+
+
+def test_product_choice_applies_to_primary_agents_only():
+    from agent.model_resolve import resolve_step_model
+    from core.config import OpenBoxConfig
+
+    config = OpenBoxConfig(model_tiers={"product_chat": True})
+    custom = "openai/gpt-6.2-sol"
+    chosen = "openai/gemini-4-neon-xhigh"
+    args = dict(agent_model=custom, message_model=chosen, session_model=custom, config=config)
+    assert resolve_step_model(**args, primary=True).model_id == chosen
+    assert resolve_step_model(**args).model_id == custom

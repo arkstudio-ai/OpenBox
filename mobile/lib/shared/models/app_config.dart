@@ -107,12 +107,20 @@ class VideoModelInfo {
 /// One chat tier (web `ChatTierRow`): the deployment resolves it to a model
 /// and a reasoning strength, and the picker shows only the tier.
 class ChatTierRow {
-  const ChatTierRow({required this.tier, required this.model, this.variant});
+  const ChatTierRow({
+    required this.tier,
+    required this.model,
+    this.variant,
+    this.inputPrice,
+    this.outputPrice,
+  });
 
   factory ChatTierRow.fromJson(Map<String, dynamic> json) => ChatTierRow(
     tier: asString(json['tier']) ?? '',
     model: asString(json['model']) ?? '',
     variant: asString(json['variant']),
+    inputPrice: asString(asMap(json['prices'])['input']),
+    outputPrice: asString(asMap(json['prices'])['output']),
   );
 
   /// `high` | `medium` | `low`.
@@ -121,6 +129,8 @@ class ChatTierRow {
 
   /// Strength sent with the tier; null keeps the model default.
   final String? variant;
+  final String? inputPrice;
+  final String? outputPrice;
 }
 
 /// One video tier (web `VideoTierRow`): a model, what to call it, and the
@@ -173,9 +183,14 @@ class VideoTierRow {
 /// Tier presets (web `ModelTiers`). Empty lists mean the deployment shows
 /// the full pickers.
 class ModelTiers {
-  const ModelTiers({this.chat = const [], this.video = const []});
+  const ModelTiers({
+    this.chat = const [],
+    this.video = const [],
+    this.productChat = false,
+  });
 
   factory ModelTiers.fromJson(Map<String, dynamic> json) => ModelTiers(
+    productChat: json['product_chat'] == true,
     chat: asList(json['chat'])
         .whereType<Map<String, dynamic>>()
         .map(ChatTierRow.fromJson)
@@ -190,6 +205,7 @@ class ModelTiers {
 
   final List<ChatTierRow> chat;
   final List<VideoTierRow> video;
+  final bool productChat;
 }
 
 class ImageProviderOption {

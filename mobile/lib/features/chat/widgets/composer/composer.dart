@@ -460,11 +460,17 @@ class _ComposerState extends ConsumerState<Composer> {
     final config = ref.watch(appConfigProvider).valueOrNull;
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
 
-    final modelId = activeModelId(
-      picked: pickedModel,
-      sessionModel: widget.session?.model,
-      defaultModel: config?.defaultModel,
-    );
+    final modelId =
+        productChatChoice(
+          config,
+          picked: pickedModel,
+          sessionModel: widget.session?.model,
+        )?.model ??
+        activeModelId(
+          picked: pickedModel,
+          sessionModel: widget.session?.model,
+          defaultModel: config?.defaultModel,
+        );
     final activeModel = config?.byId(modelId);
 
     // The pill shows the pair, because the pair is what gets generated.
@@ -508,6 +514,8 @@ class _ComposerState extends ConsumerState<Composer> {
     final chatTier = config == null ? null : activeChatTier(config, modelId);
     final modelLabel = chatTiers.isNotEmpty && chatTier != null
         ? tierLabel(i18n, 'chat', chatTier)
+        : config?.modelTiers.productChat == true
+        ? i18n.t('chat:tier.chat.pick')
         : [
             activeModel?.name ?? (modelId.isEmpty ? '…' : modelId),
             if (chatTiers.isEmpty && reasoning.variants.isNotEmpty)

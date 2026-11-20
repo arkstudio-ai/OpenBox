@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next"
-import { Clapperboard } from "lucide-react"
+import { Clapperboard, SlidersHorizontal } from "lucide-react"
 import { useAuthStore } from "@/shared/api/auth-store"
 import type { useComposerModels } from "../../hooks/useComposerModels"
 import { modelLabel } from "../../lib/model"
@@ -11,6 +11,7 @@ import { VideoModelMenuRows, VideoModelPicker } from "./VideoModelPicker"
 
 interface Props {
   choices: ReturnType<typeof useComposerModels>
+  chatOnly?: boolean
 }
 
 /** The composer's model controls: chat model, its strength, video model.
@@ -21,7 +22,7 @@ interface Props {
  *  already carries its strength, and a second knob beside it would make
  *  tier preset ambiguous. Without tiers, the plain pickers stay as they were.
  */
-export function ModelControls({ choices }: Props) {
+export function ModelControls({ choices, chatOnly = false }: Props) {
   const { t } = useTranslation("chat")
   const { models, videoModels, chat, video, reasoning, tiers } = choices
   const isAdmin = useAuthStore((s) => s.user?.role) === "admin"
@@ -29,7 +30,10 @@ export function ModelControls({ choices }: Props) {
   const chatTierOptions = tiers.chat.map((row) => ({
     tier: row.tier,
     label: t(`tier.chat.${row.tier}`),
-    hint: modelLabel(row.model, models),
+    hint: tiers.productChat ? "" : modelLabel(row.model, models),
+    description: tiers.productChat && row.prices?.input && row.prices.output
+      ? t("tier.chat.prices", { input: row.prices.input, output: row.prices.output })
+      : undefined,
   }))
   const videoName = (id: string | undefined) => videoModels.find((m) => m.id === id)?.name ?? id ?? ""
   const videoTierOptions = tiers.video.map((row) => ({
@@ -51,14 +55,18 @@ export function ModelControls({ choices }: Props) {
     chatTierOptions.length > 0 ? (
       <TierPicker
         className="ms-auto"
-        icon={<ModelLogo id={chat.activeId ?? ""} className="text-ink size-4 flex-none" />}
+        icon={tiers.productChat
+          ? <SlidersHorizontal className="text-ink size-4 flex-none" />
+          : <ModelLogo id={chat.activeId ?? ""} className="text-ink size-4 flex-none" />}
         title={t("tier.chat.pick")}
         options={chatTierOptions}
         activeTier={tiers.activeChat}
-        fallbackLabel={chat.activeId ? modelLabel(chat.activeId, models) : ""}
+        fallbackLabel={tiers.productChat
+          ? t("tier.chat.standard")
+          : chat.activeId ? modelLabel(chat.activeId, models) : ""}
         onPick={tiers.pickChat}
         catalogue={
-          isAdmin
+          isAdmin && !tiers.productChat
             ? (close) => (
                 <ModelMenuRows
                   models={models}
@@ -114,7 +122,7 @@ export function ModelControls({ choices }: Props) {
   return (
     <>
       {chatControl}
-      {(chatTierOptions.length === 0 || isAdmin) && (
+      {!tiers.productChat && (chatTierOptions.length === 0 || isAdmin) && (
         <ReasoningPicker
           variants={reasoning.variants}
           activeId={reasoning.activeId}
@@ -125,7 +133,7 @@ export function ModelControls({ choices }: Props) {
       {/* Beside the chat model on purpose — the two are picked independently,
           and a person setting up a video turn expects to choose both in one
           place. */}
-      {videoControl}
+      {!chatOnly && videoControl}
     </>
   )
 }

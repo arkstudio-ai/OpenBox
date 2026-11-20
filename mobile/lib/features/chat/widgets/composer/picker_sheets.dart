@@ -505,11 +505,13 @@ Widget _tierHeading(BossipTokens t, String text) => Padding(
 
 Widget _tierRow(
   BossipTokens t, {
+  Key? key,
   required String label,
   required String hint,
   required bool selected,
   required VoidCallback onTap,
 }) => ListTile(
+  key: key,
   dense: true,
   title: Text(
     label,
@@ -521,13 +523,56 @@ Widget _tierRow(
   ),
   // What the tier resolves to, in small print: a price signal with
   // nothing behind it is not one.
-  subtitle: Text(
-    hint,
-    style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
-  ),
+  subtitle: hint.isEmpty
+      ? null
+      : Text(
+          hint,
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+        ),
   trailing: selected ? Icon(Icons.check, size: 18, color: t.a700) : null,
   onTap: onTap,
 );
+
+Future<ChatTierRow?> chooseProductChatTier(
+  BuildContext context,
+  I18nState i18n,
+  List<ChatTierRow> rows,
+  String? selected,
+) {
+  final tokens = context.tokens;
+  return showModalBottomSheet<ChatTierRow>(
+    context: context,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (sheet) => SafeArea(
+      top: false,
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.only(bottom: 8),
+        children: [
+          _tierHeading(tokens, i18n.t('chat:tier.chat.pick')),
+          for (final row in rows)
+            _tierRow(
+              tokens,
+              key: Key('chat-tier-${row.tier}'),
+              label: tierLabel(i18n, 'chat', row.tier),
+              hint: row.inputPrice != null && row.outputPrice != null
+                  ? i18n.t(
+                      'chat:tier.chat.prices',
+                      vars: {
+                        'input': row.inputPrice!,
+                        'output': row.outputPrice!,
+                      },
+                    )
+                  : '',
+              selected: row.tier == selected,
+              onTap: () => Navigator.pop(sheet, row),
+            ),
+        ],
+      ),
+    ),
+  );
+}
 
 /// The catalogue behind the tiers is an admin's view. Everyone else reads
 /// the three tiers and nothing about routing.
@@ -568,7 +613,13 @@ Future<void> showChatTierPicker(
     sessionModel: currentModel,
     defaultModel: config.defaultModel,
   );
-  final active = activeChatTier(config, activeId);
+  final active =
+      productChatChoice(
+        config,
+        picked: ref.read(pickedModelProvider(sessionKey)),
+        sessionModel: currentModel,
+      )?.tier ??
+      activeChatTier(config, activeId);
 
   void choose(ChatTierRow row) {
     final target = config.byId(row.model);
@@ -585,6 +636,17 @@ Future<void> showChatTierPicker(
       );
     }
     ref.read(pickedModelProvider(sessionKey).notifier).state = row.model;
+  }
+
+  if (config.modelTiers.productChat) {
+    final row = await chooseProductChatTier(
+      context,
+      i18n,
+      config.modelTiers.chat,
+      active,
+    );
+    if (context.mounted && row != null) choose(row);
+    return;
   }
 
   await showModalBottomSheet<void>(

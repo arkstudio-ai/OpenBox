@@ -28,7 +28,7 @@ export function ModelBadge({ sessionId }: { sessionId: string }) {
   if (!model || !tier) return null
   return (
     <span aria-label={t("meta.model")} className={cn(BADGE, "max-w-48")}>
-      <ModelLogo id={model} className="size-3 shrink-0" />
+      {!config?.model_tiers?.product_chat && <ModelLogo id={model} className="size-3 shrink-0" />}
       <span className="truncate">{t(`tier.chat.${tier}`)}</span>
     </span>
   )

@@ -205,6 +205,11 @@
   },
   "tier": {
     "chat": {
+      "standard": "Standard",
+      "creative": "Creative",
+      "deep": "Deep",
+      "fast": "Fast",
+      "prices": "Per million tokens · {{input}} in / {{output}} out credits",
       "pick": "Switch model tier",
       "high": "Deep",
       "medium": "Pro",

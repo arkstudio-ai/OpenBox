@@ -11,6 +11,9 @@ import '../../../shared/download/asset_download.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/toast.dart';
+import '../../chat/state/chat_session_controller.dart';
+import '../../chat/state/config_providers.dart';
+import '../../chat/widgets/composer/picker_sheets.dart';
 import '../api/light_api.dart';
 import '../widgets/light_input_bar.dart';
 import 'production_api.dart';
@@ -220,6 +223,16 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       try {
         final saved = await _api.edit(_task!, changes);
         if (!mounted) return false;
+        if (changes.containsKey('chat_tier')) {
+          ref.invalidate(pickedModelProvider(widget.sessionId));
+        }
+        if (changes.containsKey('video_tier')) {
+          ref.invalidate(pickedVideoProvider(widget.sessionId));
+        }
+        if (changes.containsKey('chat_tier') ||
+            changes.containsKey('video_tier')) {
+          ref.invalidate(chatSessionProvider(widget.sessionId));
+        }
         for (final change in changes.entries) {
           if (_pending[change.key] == change.value) _pending.remove(change.key);
         }
@@ -620,26 +633,38 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               _stage('dishes', dishes.map((dish) => dish.toJson()).toList()),
         ),
         const SizedBox(height: 20),
-        Text(_text('fromPhotos')),
+        Text(
+          _text('fromPhotos'),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
       ],
       const SizedBox(height: 14),
-      if (task.kind == ProductionKind.video && task.materials.isEmpty)
-        _videoMaterialSources()
+      if (task.kind != ProductionKind.menu && task.materials.isEmpty)
+        _videoMaterialSources(task.kind)
       else
         Row(
           children: [
-            _source('library', Icons.photo_library_outlined, _library),
+            _source(
+              'upload',
+              Icons.add_photo_alternate_outlined,
+              () => _pick(camera: false),
+              stacked: task.kind == ProductionKind.menu,
+            ),
+            const SizedBox(width: 8),
+            _source(
+              'library',
+              Icons.photo_library_outlined,
+              _library,
+              stacked: task.kind == ProductionKind.menu,
+            ),
             const SizedBox(width: 8),
             _source(
               task.kind == ProductionKind.menu ? 'takePhoto' : 'camera',
               Icons.photo_camera_outlined,
               () => _pick(camera: true),
-            ),
-            const SizedBox(width: 8),
-            _source(
-              'upload',
-              Icons.file_upload_outlined,
-              () => _pick(camera: false),
+              stacked: task.kind == ProductionKind.menu,
             ),
           ],
         ),
@@ -680,17 +705,100 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         const SizedBox(height: 12),
         Text(_text('selected', vars: {'count': task.materials.length})),
       ],
+      _productionSettings(task),
     ],
   );
 
-  Widget _videoMaterialSources() => Column(
+  Widget _productionSettings(LightProduction task) {
+    final t = context.tokens;
+    final config = ref.watch(appConfigProvider).valueOrNull;
+    final chat = config?.modelTiers.productChat == true && task.chatTier != null
+        ? config!.modelTiers.chat
+        : null;
+    final current = _pending['chat_tier'] as String? ?? task.chatTier;
+    final selected =
+        ProductionVideoTier.fromId(_pending['video_tier']) ??
+        task.videoTier ??
+        task.availableVideoTiers.firstOrNull;
+    final hasVideo =
+        task.availableVideoTiers.isNotEmpty &&
+        (task.kind == ProductionKind.footage ||
+            task.supportsVideoTiers(task.template));
+    if (chat == null && !hasVideo) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Text(
+          _text('settings'),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: t.ink,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Material(
+          color: t.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: t.hair),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              if (chat != null)
+                ProductionSettingRow(
+                  key: const Key('production-chat-tier-picker'),
+                  icon: Icons.text_fields_rounded,
+                  label: _text('chatTier'),
+                  value: tierLabel(_i18n, 'chat', current),
+                  onTap: _busy
+                      ? null
+                      : () async {
+                          final choice = await chooseProductChatTier(
+                            context,
+                            _i18n,
+                            chat,
+                            current,
+                          );
+                          if (mounted &&
+                              choice != null &&
+                              choice.tier != current) {
+                            _stage('chat_tier', choice.tier);
+                          }
+                        },
+                ),
+              if (chat != null && hasVideo)
+                Divider(height: 1, indent: 16, endIndent: 16, color: t.hair),
+              if (hasVideo)
+                ProductionTierPicker(
+                  selected: selected,
+                  available: task.availableVideoTiers,
+                  forInsert: task.kind == ProductionKind.footage,
+                  onChoose: _busy
+                      ? null
+                      : (tier) => _stage('video_tier', tier.name),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _videoMaterialSources(ProductionKind kind) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _materialSourceCard(
         'upload',
-        Icons.add_photo_alternate_outlined,
+        kind == ProductionKind.footage
+            ? Icons.video_library_outlined
+            : Icons.add_photo_alternate_outlined,
         () => _pick(camera: false),
         featured: true,
+        detail: kind == ProductionKind.footage
+            ? _text('materialSource.footageUpload')
+            : null,
       ),
       const SizedBox(height: 10),
       Row(
@@ -721,6 +829,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     IconData icon,
     VoidCallback tap, {
     bool featured = false,
+    String? detail,
   }) {
     final t = context.tokens;
     final label = Column(
@@ -735,7 +844,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         ),
         const SizedBox(height: 4),
         Text(
-          _text('materialSource.$method'),
+          detail ?? _text('materialSource.$method'),
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: t.n800, height: 1.35),
@@ -782,25 +891,39 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     );
   }
 
-  Widget _source(String key, IconData icon, VoidCallback tap) => Expanded(
+  Widget _source(
+    String key,
+    IconData icon,
+    VoidCallback tap, {
+    bool stacked = false,
+  }) => Expanded(
     child: OutlinedButton(
       key: Key('production-source-$key'),
       onPressed: _busy ? null : tap,
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         backgroundColor: context.tokens.card,
-        minimumSize: const Size(44, 48),
+        minimumSize: Size(44, stacked ? 72 : 48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
       ),
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 5,
-        children: [
-          Icon(icon, size: 17),
-          Text(_text(key), textAlign: TextAlign.center),
-        ],
-      ),
+      child: stacked
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 23),
+                const SizedBox(height: 5),
+                Text(_text(key), textAlign: TextAlign.center),
+              ],
+            )
+          : Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 5,
+              children: [
+                Icon(icon, size: 17),
+                Text(_text(key), textAlign: TextAlign.center),
+              ],
+            ),
     ),
   );
 
@@ -1001,20 +1124,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         'style' when task.kind == ProductionKind.video => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (task.supportsVideoTiers(
-              _pending['template'] as String? ?? task.template,
-            )) ...[
-              ProductionTierPicker(
-                selected:
-                    ProductionVideoTier.fromId(_pending['video_tier']) ??
-                    task.videoTier,
-                available: task.availableVideoTiers,
-                onChoose: _busy
-                    ? null
-                    : (tier) => _stage('video_tier', tier.name),
-              ),
-              const SizedBox(height: 12),
-            ],
             primary(
               'next',
               (_pending['template'] as String? ?? task.template).isEmpty

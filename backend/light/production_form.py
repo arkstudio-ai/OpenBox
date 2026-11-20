@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from light import remake_case, silk_road, wan_story
+from core.config import ChatTier
 from light.video_tiers import VideoTier
 
 EntryId = Literal["video", "footage_edit", "menu"]
@@ -99,6 +100,7 @@ class EditForm(FormFields):
     revision: int = Field(ge=1)
     page: Page | None = None
     video_tier: VideoTier | None = None
+    chat_tier: ChatTier | None = None
 
 
 class StartForm(BaseModel):
@@ -312,7 +314,7 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
                 tools += ", video_generate"
                 task += (
                     "When animation improves a cut, animate one graphic with video_generate. "
-                    "The selected route is RunningHub MiniMax H3 Turbo: omit model/resolution, set duration=5, "
+                    "Use the selected video tier: omit model/resolution, set duration=5, "
                     "ratio=adaptive, generate_audio=true, and choose the actual prepared image or original "
                     "capture as first_frame (or use an actual matching last_frame when helpful). Keep deliberate "
                     "lettering still if animating it would warp the text. Connect pictures by action, scale or "

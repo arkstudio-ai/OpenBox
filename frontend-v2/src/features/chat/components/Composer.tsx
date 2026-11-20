@@ -400,11 +400,11 @@ export function Composer({
               hasResources={!!resourceScope}
             />
 
-            {/* The personal assistant keeps the box plain: no mode, model or
-                context controls, only attach and send. */}
-            {!assistant && <>
+            {!assistant && (
               <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
-              <ModelControls choices={choices} />
+            )}
+            {(!assistant || choices.tiers.productChat) && <ModelControls choices={choices} chatOnly={assistant} />}
+            {!assistant && <>
               {/* Beside the picker on purpose: the window it measures belongs to
                   the model named next to it, and both change together. */}
               <ContextRing

@@ -63,6 +63,18 @@ String activeModelId({
   return defaultModel ?? '';
 }
 
+ChatTierRow? productChatChoice(
+  AppConfig? config, {
+  String? picked,
+  String? sessionModel,
+}) {
+  if (config == null || !config.modelTiers.productChat) return null;
+  final choices = config.modelTiers.chat;
+  return choices.where((row) => row.model == picked).firstOrNull ??
+      choices.where((row) => row.model == sessionModel).firstOrNull ??
+      choices.where((row) => row.model == config.defaultModel).firstOrNull;
+}
+
 /// Pick storage key: a conversation *and* a model, so switching either one
 /// starts from that pair's own state.
 String reasoningKey(String sessionKey, String modelId) =>

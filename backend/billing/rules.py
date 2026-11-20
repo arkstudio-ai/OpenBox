@@ -243,7 +243,8 @@ def _apply_sale(data: dict, item: ItemKey, sale: dict, rule_id: str) -> None:
         # Price the alias itself: the row must stop following its target.
         data.get("aliases", {}).pop(item.model, None)
         base = models.get(item.model) or {"vendor": "admin"}
-        entry = {k: v for k, v in base.items() if k not in LLM_FIELDS and k not in ("valid_until", "conversion")}
+        entry = {k: v for k, v in base.items() if k not in LLM_FIELDS
+                 and k not in ("valid_until", "conversion", "scheduled_rate")}
         entry.update({name: sale[name] for name in LLM_FIELDS if name in sale})
         entry.update({"currency": "CNY", "conversion": "official_cny",
                       "source": base.get("source") or f"admin:{rule_id}", "rule_id": rule_id})

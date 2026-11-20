@@ -347,7 +347,7 @@ class RetentionService:
         (``ObjectGuard``) and export keys are never written twice, but an archive retry rewrites the same segment
         key without that guard, so segments are left to their trajectory's prefix deletion. Objects directly in
         the namespace, other reserved ("_") directories, other sections and keys ``enqueue_gc`` refuses are left
-        alone too.
+        alone too, and so is every blob under a trajectory id this database has no row for.
         """
         candidates = []
         for key in keys:
@@ -371,6 +371,14 @@ class RetentionService:
                     exports.append(key)
                 else:
                     blobs.setdefault(owner, {})[name] = key
+            if blobs:
+                # A directory of a trajectory this database has never recorded belongs to someone else: another
+                # deployment writing to the same bucket and namespace. Its objects are not this worker's to judge.
+                # (gw3 and gw2 shared ``trajectories/`` until 2026-11-20 and swept each other's blobs away.)
+                known = set((await db.scalars(select(SessionTrajectory.id).where(
+                    SessionTrajectory.id.in_(list(blobs))))).all())
+                for owner in [owner for owner in blobs if owner not in known]:
+                    used.update(blobs.pop(owner).values())
             if blobs:
                 rows = await db.execute(
                     select(TrajectoryPayload.trajectory_id, TrajectoryPayload.sha256, TrajectoryPayload.storage_key)

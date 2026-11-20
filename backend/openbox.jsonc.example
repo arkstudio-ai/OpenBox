@@ -101,6 +101,10 @@
   // A model that is not declared above fails config validation at startup.
   // Leave both lists empty to keep the full pickers.
   "model_tiers": {
+    // Enable these four product tiers only with an OpenAI-compatible gateway
+    // that serves GPT-6.2 Sol, Gemini 4 Neon/Carbon, and Gemini 3.8 Flash.
+    // OPENBOX_PRODUCT_CHAT_TIERS=true also enables them for this deployment.
+    "product_chat": false,
     "chat": [
       // "variant" is the reasoning strength sent with the tier; omit it to use
       // the model's own default. Qwen 3.8 accepts none/low/medium/xhigh.

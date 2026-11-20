@@ -2,7 +2,7 @@
 import json
 import time
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -35,6 +35,33 @@ def test_official_prices_and_exact_single_token():
     assert quote("openai/claude-opus-5", normalize_usage({"input": 1_000_000})).credits == Decimal("33.8935")
     assert quote("openai/deepseek-chat", {"input": 1, "output": 0}).credits is None
     assert quote("openai/made-up-model", {"input": 1, "output": 0}).credits is None
+
+
+@pytest.mark.parametrize(("model", "before", "after", "effective"), [
+    ("gemini-4-carbon-high", "0.3", "0.6", "2026-12-01"),
+    ("gemini-3.8-flash-tiered", "0.1125", "0.225", "2027-01-01"),
+])
+def test_product_tier_switches_to_official_standard_price(model, before, after, effective):
+    # Promotions use the product's Asia/Shanghai calendar and an in-flight
+    # usage meter keeps the rate from when the request started.
+    starts = datetime.fromisoformat(f"{effective}T00:00:00+08:00")
+    usage = normalize_usage({"input": 100_000, "output": 10_000})
+    assert quote(model, usage, at=starts - timedelta(seconds=1)).credits == Decimal(before)
+    assert quote(model, usage, at=starts).credits == Decimal(after)
+
+
+def test_product_rates_are_present_with_an_older_mounted_file(tmp_path, monkeypatch):
+    from billing.pricing import base_catalogue
+
+    old = {
+        "version": "older", "verified_at": "2026-10-01", "credits_per_cny": "1",
+        "models": {"gemini-3.8-flash": {"input": "10.2"}},
+    }
+    mounted = tmp_path / "rates.json"
+    mounted.write_text(json.dumps(old))
+    monkeypatch.setenv("BILLING_RATES_FILE", str(mounted))
+    assert base_catalogue()["models"]["gemini-3.8-flash"] == old["models"]["gemini-3.8-flash"]
+    assert quote("openai/gpt-6.2-sol", {"input": 1_000_000, "output": 0}).credits == Decimal("4")
 
 
 def test_cache_normalization_inclusive_vs_anthropic_native():

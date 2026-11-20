@@ -745,6 +745,17 @@ def reasoning_profile(model_id: str) -> ReasoningProfile:
     family = _model_family(model_id)
     provider = _detect_provider(model_id)
 
+    if model == "gpt-6.2-sol":
+        return ReasoningProfile(("low", "medium", "high", "xhigh"), "xhigh")
+
+    if provider == "openai":
+        if model == "gemini-4-neon-xhigh":
+            return ReasoningProfile(("xhigh",), "xhigh")
+        if model == "gemini-4-carbon-high":
+            return ReasoningProfile(("high",), "high")
+        if model == "gemini-3.8-flash-tiered":
+            return _NO_REASONING
+
     if family == "deepseek":
         # DeepSeek's direct adapter owns these ids. `off` is intentionally not
         # rewritten to OpenAI's `none`; it disables thinking instead of being
@@ -842,6 +853,12 @@ def _reasoning_kwargs(model_id: str, variant: str) -> dict:
     provider = _detect_provider(model_id)
     family = _model_family(model_id)
     model = _bare_model_id(model_id)
+
+    if model == "gpt-6.2-sol":
+        return {"reasoning_effort": variant}
+
+    if provider == "openai" and model in {"gemini-4-neon-xhigh", "gemini-4-carbon-high"}:
+        return {}
 
     if family == "deepseek":
         if variant == "off":

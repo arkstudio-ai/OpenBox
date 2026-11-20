@@ -205,6 +205,11 @@
   },
   "tier": {
     "chat": {
+      "standard": "Tiêu chuẩn",
+      "creative": "Sáng tạo",
+      "deep": "Chuyên sâu",
+      "fast": "Nhanh",
+      "prices": "Mỗi triệu token · {{input}} vào / {{output}} ra điểm",
       "pick": "Đổi mức mô hình",
       "high": "Sâu",
       "medium": "Chuyên nghiệp",

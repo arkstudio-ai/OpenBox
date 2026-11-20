@@ -85,16 +85,24 @@ def resolve_step_model(
     session_model: str | None,
     config,
     context: str = "",
+    primary: bool = False,
 ) -> StepModelSelection:
     """Choose and validate the model for a single agent step.
 
-    An agent definition is a temporary override.  Without one, the immutable
+    An agent definition is a temporary override, unless a primary conversation
+    has selected one of the deployment's product tiers. Without one, the immutable
     user message anchors the turn; older/synthetic messages that predate that
     field fall back to the session preference.  Validation is applied after
     that precedence decision so an unavailable override cannot reach a
     provider unchecked.
     """
-    if agent_model:
+    tiers = getattr(config, "model_tiers", None)
+    selected = message_model or session_model
+    product_choice = (
+        primary and tiers is not None and tiers.product_chat
+        and any(row.model == selected for row in tiers.chat)
+    )
+    if agent_model and not product_choice:
         requested, source = agent_model, "agent"
     elif message_model:
         requested, source = message_model, "message"

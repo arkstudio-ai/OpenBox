@@ -205,6 +205,11 @@
   },
   "tier": {
     "chat": {
+      "standard": "标准",
+      "creative": "创造",
+      "deep": "深度",
+      "fast": "快速",
+      "prices": "每百万 token · 输入 {{input}} / 输出 {{output}} 积分",
       "pick": "切换模型档位",
       "high": "深度",
       "medium": "专业",

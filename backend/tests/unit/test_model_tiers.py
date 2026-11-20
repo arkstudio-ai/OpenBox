@@ -81,6 +81,28 @@ def test_empty_is_the_default_and_means_no_tiers():
     assert _config().model_tiers == ModelTiersConfig()
 
 
+def test_product_chat_presets_publish_fixed_effort_and_credit_prices():
+    from agent.llm import _get_variant_kwargs
+    from api.metadata import _model_tiers
+    from billing import pricing
+
+    rates = pricing.base_catalogue()
+    config = _config(model_tiers={"product_chat": True, "video": GOOD_TIERS["video"]})
+    served = _model_tiers(config)
+    assert config.model == "openai/gpt-6.2-sol"
+    assert served["product_chat"] and len(served["video"]) == len(GOOD_TIERS["video"])
+    assert [(r["tier"], r["model"], r["variant"]) for r in served["chat"]] == [
+        ("standard", "openai/gpt-6.2-sol", "xhigh"),
+        ("creative", "openai/gemini-4-neon-xhigh", "xhigh"),
+        ("deep", "openai/gemini-4-carbon-high", "high"),
+        ("fast", "openai/gemini-3.8-flash-tiered", None),
+    ]
+    assert served["chat"][0]["prices"]["output"] == "10"
+    assert _get_variant_kwargs(config.model, None) == {"reasoning_effort": "xhigh"}
+    assert all(_get_variant_kwargs(r["model"], r["variant"]) == {} for r in served["chat"][1:])
+    assert rates["models"]["gemini-4-neon-xhigh"]["input"] == "3"
+
+
 def test_chat_tier_must_name_a_declared_model():
     """A typo here would be a picker entry the prompt route refuses."""
     with pytest.raises(ValidationError, match="not a declared model"):

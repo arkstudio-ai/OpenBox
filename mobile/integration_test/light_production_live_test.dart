@@ -852,10 +852,10 @@ void main() {
             await tester.enterText(key('production-shop'), '巷口小龙虾');
             await library(photo);
             await capture('wan-materials');
-            await tap('production-primary');
-            await tap('production-template-soda_story');
             await tap('production-tier-picker');
             await tap('production-model-medium');
+            await tap('production-primary');
+            await tap('production-template-soda_story');
             await tap('production-soda-preview');
             await until(
               () => find.byType(VideoPlayer).evaluate().isNotEmpty,

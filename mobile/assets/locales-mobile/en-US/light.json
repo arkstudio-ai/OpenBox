@@ -236,8 +236,11 @@
   "production": {
     "moreTemplatesComing": "More templates are on the way",
     "retiredTemplate": "This template has been retired. Choose another template.",
+    "settings": "Production settings",
+    "chatTier": "Text model",
     "videoTier": {
-      "title": "Generation tier",
+      "forInsert": "For AI inserts",
+      "title": "Video tier",
       "fast": "Fast",
       "medium": "Standard",
       "high": "Quality",
@@ -396,6 +399,7 @@
     "takeVideo": "Record video",
     "upload": "Upload",
     "materialSource": {
+      "footageUpload": "Choose real clips or photos from your library",
       "upload": "Choose food photos or shop videos from your album",
       "library": "Use files you already uploaded",
       "camera": "Take a photo or record a clip"
@@ -414,7 +418,7 @@
     "playPreview": "Play",
     "pausePreview": "Pause",
     "shop": "Shop name",
-    "fromPhotos": "Add from photos",
+    "fromPhotos": "Read dishes from photos",
     "addDish": "Add dish",
     "editDish": "Edit dish",
     "dishName": "Dish name",

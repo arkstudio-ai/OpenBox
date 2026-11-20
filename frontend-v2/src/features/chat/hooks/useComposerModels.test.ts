@@ -87,6 +87,31 @@ beforeEach(() => {
 })
 
 describe("useComposerModels tiers", () => {
+  it("carries the fixed product effort on an assistant's old and new selections", () => {
+    const tiers = [
+      { tier: "standard", model: "openai/gpt-6.2-sol", variant: "xhigh" },
+      { tier: "creative", model: "openai/gemini-4-neon-xhigh", variant: "xhigh" },
+      { tier: "deep", model: "openai/gemini-4-carbon-high", variant: "high" },
+      { tier: "fast", model: "openai/gemini-3.8-flash-tiered", variant: null },
+    ] as const
+    const config: AppConfig = {
+      ...CONFIG,
+      default_model: tiers[0].model,
+      models: tiers.map(({ model, variant }) => ({ id: model, name: model, variants: variant ? [variant] : [] })),
+      model_tiers: { product_chat: true, chat: [...tiers], video: [] },
+    }
+    const { result } = renderHook(() => useComposerModels({
+      config, sessionKey: "assistant", sessionModel: "openai/qwen3.8-max", sessionVariant: "low",
+    }))
+    expect(result.current.tiers.activeChat).toBe("standard")
+    expect(result.current.reasoning.value).toBe("xhigh")
+    for (const { tier, model, variant } of tiers) {
+      act(() => result.current.tiers.pickChat(tier))
+      expect(result.current.chat.activeId).toBe(model)
+      expect(result.current.reasoning.value).toBe(variant)
+    }
+  })
+
   it("uses the deployment default for an assistant session whose model is still empty", () => {
     const { result } = renderHook(() => useComposerModels({ config: CONFIG, sessionKey: "assistant", sessionModel: "" }))
     expect(result.current.chat.activeId).toBe(CONFIG.default_model)

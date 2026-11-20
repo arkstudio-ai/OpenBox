@@ -366,14 +366,16 @@ export interface VideoModelInfo {
 
 /** A composer tier: the only price signal a person has to read. */
 export type ModelTier = "high" | "medium" | "low"
+export type ChatTier = ModelTier | "standard" | "creative" | "deep" | "fast"
 export type VideoTier = "ultra" | ModelTier | "fast"
 
 /** One chat tier resolved by the deployment to a model and a strength. */
 export interface ChatTierRow {
-  tier: ModelTier
+  tier: ChatTier
   model: string
   /** Reasoning strength sent with the tier; null keeps the model default. */
   variant: string | null
+  prices?: { input?: string; output?: string; cache_read?: string }
 }
 
 /** One video tier: a model, what to call it, and the resolutions the person
@@ -398,6 +400,7 @@ export interface VideoTierRow {
 export interface ModelTiers {
   chat: ChatTierRow[]
   video: VideoTierRow[]
+  product_chat?: boolean
 }
 
 export interface AppConfig {

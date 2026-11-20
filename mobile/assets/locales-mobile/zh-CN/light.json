@@ -234,8 +234,11 @@
   "production": {
     "moreTemplatesComing": "更多模板正在添加中",
     "retiredTemplate": "这个模板已下架，请选择其他模板。",
+    "settings": "制作设置",
+    "chatTier": "文本模型",
     "videoTier": {
-      "title": "生成档位",
+      "forInsert": "用于 AI 补镜",
+      "title": "视频档位",
       "fast": "快速",
       "medium": "普通",
       "high": "质量",
@@ -394,6 +397,7 @@
     "takeVideo": "拍视频",
     "upload": "上传",
     "materialSource": {
+      "footageUpload": "从相册选择实拍视频或照片",
       "upload": "从相册选择菜品照片或店内视频",
       "library": "挑选已上传的素材",
       "camera": "现场拍照或录像"
@@ -412,7 +416,7 @@
     "playPreview": "播放",
     "pausePreview": "暂停",
     "shop": "门店名称",
-    "fromPhotos": "从图片添加",
+    "fromPhotos": "从图片识别",
     "addDish": "添加菜品",
     "editDish": "编辑菜品",
     "dishName": "菜名",

@@ -234,8 +234,11 @@
   "production": {
     "moreTemplatesComing": "Đang bổ sung thêm mẫu",
     "retiredTemplate": "Mẫu này đã ngừng cung cấp. Hãy chọn mẫu khác.",
+    "settings": "Cài đặt sản xuất",
+    "chatTier": "Mô hình văn bản",
     "videoTier": {
-      "title": "Chế độ tạo video",
+      "forInsert": "Dùng cho cảnh chèn AI",
+      "title": "Mức video",
       "fast": "Nhanh",
       "medium": "Tiêu chuẩn",
       "high": "Chất lượng",
@@ -394,6 +397,7 @@
     "takeVideo": "Quay video",
     "upload": "Tải lên",
     "materialSource": {
+      "footageUpload": "Chọn video hoặc ảnh thực tế từ thư viện",
       "upload": "Chọn ảnh món ăn hoặc video quán từ album",
       "library": "Dùng tư liệu đã tải lên",
       "camera": "Chụp ảnh hoặc quay tại quán"
@@ -412,7 +416,7 @@
     "playPreview": "Phát",
     "pausePreview": "Tạm dừng",
     "shop": "Tên cửa hàng",
-    "fromPhotos": "Thêm từ ảnh",
+    "fromPhotos": "Nhận diện món từ ảnh",
     "addDish": "Thêm món",
     "editDish": "Sửa món",
     "dishName": "Tên món",

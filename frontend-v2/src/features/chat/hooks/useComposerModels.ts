@@ -12,9 +12,9 @@
 // still carry the model.
 import type {
   AppConfig,
+  ChatTier,
   ChatTierRow,
   ModelInfo,
-  ModelTier,
   VideoTier,
   VideoModelInfo,
   VideoTierRow,
@@ -50,9 +50,12 @@ export function useComposerModels({
   const videoModels = config?.video_models ?? EMPTY_VIDEO_MODELS
   const chatTiers = config?.model_tiers?.chat ?? EMPTY_CHAT_TIERS
   const videoTiers = config?.model_tiers?.video ?? EMPTY_VIDEO_TIERS
+  const productChat = config?.model_tiers?.product_chat === true
+  const allowedSessionModel = !productChat || chatTiers.some((row) => row.model === sessionModel)
+    ? sessionModel : undefined
 
   const chat = useModelChoice({
-    sessionModel,
+    sessionModel: allowedSessionModel,
     sessionKey,
     fallback: config?.default_model ?? models[0]?.id,
   })
@@ -68,7 +71,7 @@ export function useComposerModels({
   })
   const reasoning = useReasoningChoice({
     model: models.find((model) => model.id === chat.activeId),
-    sessionModel,
+    sessionModel: allowedSessionModel,
     sessionVariant,
     sessionKey,
   })
@@ -77,14 +80,14 @@ export function useComposerModels({
   // chat (an admin retuning the strength is still on that tier); for video
   // the model must match and the resolution must be one the tier offers,
   // since a tier is a model plus the resolutions it lets you pick.
-  const activeChatTier = chatTiers.find((row) => row.model === chat.activeId)?.tier
+  const activeChatRow = chatTiers.find((row) => row.model === chat.activeId)
   const activeVideoTier = videoTiers.find(
     (row) =>
       row.model === video.activeId &&
       (row.resolutions.length === 0 || row.resolutions.includes(video.activeResolution ?? "")),
   )?.tier
 
-  const pickChatTier = (tier: ModelTier) => {
+  const pickChatTier = (tier: ChatTier) => {
     const row = chatTiers.find((candidate) => candidate.tier === tier)
     if (!row) return
     chat.pick(row.model)
@@ -108,12 +111,13 @@ export function useComposerModels({
     videoModels,
     chat,
     video,
-    reasoning,
+    reasoning: productChat && activeChatRow ? { ...reasoning, value: activeChatRow.variant } : reasoning,
     tiers: {
       chat: chatTiers,
       video: videoTiers,
-      activeChat: activeChatTier,
+      activeChat: activeChatRow?.tier,
       activeVideo: activeVideoTier,
+      productChat,
       pickChat: pickChatTier,
       pickVideo: pickVideoTier,
     },

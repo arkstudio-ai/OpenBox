@@ -552,10 +552,18 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     String? clientId,
     Map<String, dynamic>? voiceMessage,
   }) async {
-    final model = ref.read(pickedModelProvider(_sessionId));
+    final picked = ref.read(pickedModelProvider(_sessionId));
+    final tier = productChatChoice(
+      ref.read(appConfigProvider).valueOrNull,
+      picked: picked,
+      sessionModel: state.session?.model,
+    );
+    final model = tier?.model ?? picked;
     final agent =
         ref.read(pickedAgentProvider(_sessionId)) ?? state.session?.agent;
-    final variant = _reasoningValue(model);
+    final variant = tier == null
+        ? _reasoningValue(model)
+        : Variant(tier.variant);
     final video = ref.read(pickedVideoProvider(_sessionId));
     final cmid = clientId ?? makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);

@@ -1467,6 +1467,7 @@ async def run_loop(
                 session_model=session_model_id,
                 config=config,
                 context=f"session {session_id} step {step + 1} agent {agent_name}",
+                primary=not session.parent_id and agent_def.mode != "subagent",
             )
             model_id = step_model.model_id
             if step_model.replaced_from:

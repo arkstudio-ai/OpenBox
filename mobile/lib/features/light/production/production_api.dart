@@ -149,6 +149,7 @@ class LightProduction {
       beatMusic = json['beat_music'] != false,
       remakePrepared = json['remake_prepared'] == true,
       template = asString(json['template']) ?? '',
+      chatTier = asString(json['chat_tier']),
       videoTier = ProductionVideoTier.fromId(json['video_tier']),
       availableVideoTiers = {
         for (final id in asList(json['available_video_tiers']))
@@ -192,6 +193,7 @@ class LightProduction {
   final bool remakePrepared;
   final String template;
   final ProductionVideoTier? videoTier;
+  final String? chatTier;
   final Set<ProductionVideoTier> availableVideoTiers;
   final String notes;
   final int agentRevision;

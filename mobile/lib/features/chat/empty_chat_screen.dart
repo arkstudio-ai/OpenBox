@@ -88,23 +88,27 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
   }
 
   Future<String> _createSession() async {
-    final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
+    final picked = ref.read(pickedModelProvider(draftSessionKey));
     final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
     // The reasoning pick belongs to the model it was made against, and the
     // conversation stores it at birth (web `useStartChat`). Nothing is
     // carried onto the new session key: from there the persisted value is
     // what the picker restores.
     final config = ref.read(appConfigProvider).valueOrNull;
+    final tier = productChatChoice(config, picked: picked);
+    final model = tier?.model ?? picked ?? '';
     final modelId = activeModelId(
       picked: model,
       defaultModel: config?.defaultModel,
     );
-    final variant = resolveReasoning(
-      model: config?.byId(modelId),
-      pick: ref.read(
-        pickedVariantProvider(reasoningKey(draftSessionKey, modelId)),
-      ),
-    ).value;
+    final variant = tier == null
+        ? resolveReasoning(
+            model: config?.byId(modelId),
+            pick: ref.read(
+              pickedVariantProvider(reasoningKey(draftSessionKey, modelId)),
+            ),
+          ).value
+        : Variant(tier.variant);
     final session = await ref
         .read(chatApiProvider)
         .createSession(

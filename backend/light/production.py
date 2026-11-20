@@ -60,6 +60,13 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
+def _chat_tier(config, *, tier=None, model=None):
+    if not config.model_tiers.product_chat:
+        return None
+    return next((row for row in config.model_tiers.chat
+                 if row.tier == tier or row.model == model), None)
+
+
 async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
     from agent.agent import default_agent_name
     from agent.model_resolve import resolve
@@ -81,13 +88,15 @@ async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: s
     shop = await get_store(workspace_id, user_id)
     name = (shop or {}).get("name") or ""
     model, _ = resolve("", config, context="light production")
+    chat_tier = _chat_tier(config, model=model)
     form = forms.initial_form(body.entry_id, name[:80], body.brief)
-    if body.entry_id == "video":
+    if body.entry_id in {"video", "footage_edit"}:
         tiers = video_tiers.available_tiers(config)
         if tiers:
             form["video_tier"] = tiers[0]
     session = await create_session(
-        model=model, agent=default_agent_name(), title=body.brief or entry.title, user_id=user_id,
+        model=model, variant=chat_tier.variant if chat_tier else None,
+        agent=default_agent_name(), title=body.brief or entry.title, user_id=user_id,
         workspace_id=workspace_id, light_entry=body.entry_id,
         light_production=form,
     )
@@ -99,6 +108,11 @@ def _media_matches(entry: str, mime: str) -> bool:
 
 
 async def _validate_fields(db, row: Session, changes: dict) -> None:
+    if "chat_tier" in changes:
+        from core.config import get_config
+
+        if _chat_tier(get_config(), tier=changes["chat_tier"]) is None:
+            raise LightError("LIGHT_CHAT_TIER_UNAVAILABLE", "The selected text model is unavailable.", 409)
     if "template" in changes:
         template = changes["template"]
         if template not in forms.TEMPLATES[row.light_entry]:
@@ -108,7 +122,8 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
             raise LightError("LIGHT_PRODUCTION_TEMPLATE_RETIRED", "This template is no longer offered.", 409)
     if "video_tier" in changes:
         template = changes.get("template", _form(row)["template"])
-        if row.light_entry != "video" or template not in forms.VIDEO_TIER_TEMPLATES:
+        if (row.light_entry != "footage_edit"
+                and (row.light_entry != "video" or template not in forms.VIDEO_TIER_TEMPLATES)):
             raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
     if "dishes" in changes and row.light_entry != "menu":
         raise LightError("LIGHT_PRODUCTION_DISHES", "Only menus have dish rows")
@@ -124,6 +139,13 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
 def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
     form = dict(row.light_production)
     actual = {key: value for key, value in changes.items() if form.get(key) != value}
+    if "chat_tier" in changes:
+        from core.config import get_config
+
+        tier = _chat_tier(get_config(), tier=changes["chat_tier"])
+        if tier and (row.model, row.variant) != (tier.model, tier.variant):
+            row.model, row.variant = tier.model, tier.variant
+            actual["chat_tier"] = tier.tier
     if not actual:
         return
     form.update(actual)
@@ -295,7 +317,11 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
     except OssNotConfigured:
         oss = None
     media = {asset_id: _asset_view(asset, oss) for asset_id, asset in assets.items()}
-    tiers = video_tiers.available_tiers() if include_shots and any(row.light_entry == "video" for row in rows) else []
+    from core.config import get_config
+
+    config = get_config()
+    tiers = video_tiers.available_tiers(config) if include_shots and any(
+        row.light_entry in {"video", "footage_edit"} for row in rows) else []
     result = []
     for row in rows:
         form = _form(row)
@@ -303,15 +329,17 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         jobs = relevant_jobs[row.id]
         guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
         editor = await shot_editor.project(db, row, jobs, [key for key in output_ids[row.id] if key in media], oss) if include_shots else None
+        chat_tier = _chat_tier(config, model=row.model) or _chat_tier(config, model=config.model)
         result.append({
             **{key: value for key, value in form.items() if key not in {
                 "run", "edited_at", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
-                "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits",
+                "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits", "chat_tier",
             }},
             **_work_view(row, receipts.get((form.get("run") or {}).get("id")), guide_jobs, output,
                          row.id in questions),
             **({"shot_editor": editor} if editor else {}),
-            **({"available_video_tiers": tiers} if include_shots and row.light_entry == "video" else {}),
+            **({"available_video_tiers": tiers} if include_shots and row.light_entry in {"video", "footage_edit"} else {}),
+            **({"chat_tier": chat_tier.tier} if include_shots and chat_tier else {}),
             "session_id": row.id, "entry_id": row.light_entry, "title": row.title, "legacy": not row.light_production,
             "updated_at": _utc(row.updated_at).isoformat(), "output": output,
             "materials": [media[key] for key in form["asset_ids"] if key in media],
@@ -672,15 +700,22 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     await _validate_fields(db, row, proposal["changes"])
                     _apply(row, proposal["changes"], from_agent=True)
             else:
+                from core.config import get_config
+
+                config = get_config()
+                if config.model_tiers.product_chat and not _chat_tier(config, model=row.model):
+                    tier = _chat_tier(config, model=config.model)
+                    row.model, row.variant = tier.model, tier.variant
                 creative_motion = False
                 if body.action == "render":
                     _select_remake_model(row, form)
+                    video_tier = form.get("video_tier") or "fast"
                     creative_motion = (
                         row.light_entry == "footage_edit" and form.get("creative_effects") is True
-                        and "fast" in video_tiers.available_tiers()
+                        and video_tier in video_tiers.available_tiers(config)
                     )
                     if creative_motion:
-                        row.video_model, row.video_resolution = video_tiers.ROUTES["fast"]
+                        row.video_model, row.video_resolution = video_tiers.resolve_tier(video_tier)
                 prefix = f"light:{row.id}:{form['revision']}"
                 exact_remake = remake_case.applies(row.light_entry, form)
                 version = remake_case.version_for(form) if exact_remake else None

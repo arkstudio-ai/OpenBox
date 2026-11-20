@@ -73,6 +73,8 @@ class CronJob {
     required this.running,
     this.projectDirectory,
     this.managedByAssistant = false,
+    this.revision = 1,
+    this.isLightAutopilot = false,
   });
 
   factory CronJob.fromJson(Map<String, dynamic> json) => CronJob(
@@ -93,6 +95,8 @@ class CronJob {
     running: asBool(json['running']) ?? false,
     projectDirectory: asString(json['project_directory']),
     managedByAssistant: json['management'] == 'assistant',
+    revision: asInt(json['revision']) ?? 1,
+    isLightAutopilot: asMap(json['template'])['kind'] == 'light_autopilot',
   );
 
   final String id;
@@ -114,6 +118,8 @@ class CronJob {
   final bool running;
   final String? projectDirectory;
   final bool managedByAssistant;
+  final int revision;
+  final bool isLightAutopilot;
 
   /// Consecutive failures tripped the breaker (web `StateDot`).
   bool get autoDisabled => (lastError ?? '').startsWith('[auto-disabled');

@@ -244,6 +244,7 @@ async def get_tasks(*, user_id, workspace_id, main_id, task_ids, db=None) -> lis
             driver = drivers.get(execution.id)
             value = {"task": task_view(task), "latest_result": result,
                      "execution_session": {"id": execution.id, "status": execution.status,
+                                           "light_entry": execution.light_entry,
                                            "current_settings": execution_settings(execution)},
                      "run_binding": {"run_id": driver.run_id, "generation": driver.generation,
                                      "phase": driver.phase} if driver else None,

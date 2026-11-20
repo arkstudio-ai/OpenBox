@@ -66,6 +66,8 @@ def input_fingerprint(form: dict) -> str:
     snapshot.update(reference_copy=reference_copy(form), template_version=version_for(form))
     if form.get("template") in {wan_story.SODA_TEMPLATE, silk_road.TEMPLATE}:
         snapshot["template"] = form["template"]
+    if form.get("template") == silk_road.TEMPLATE:
+        snapshot.update(product_name=form.get("product_name", ""), frame_plan=1)
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

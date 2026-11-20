@@ -350,6 +350,7 @@ async def _parallel(items, operation, *, concurrency: int, stop_on_error: bool =
 
 async def render(ctx: ToolContext, form: dict, run: dict, adaptation: case.Adaptation) -> str:
     from light.production import remake_stage
+    from light.shot_editor import publish_request
 
     prefix = run["job_prefix"]
     shots = case.storyboard(adaptation)
@@ -357,7 +358,11 @@ async def render(ctx: ToolContext, form: dict, run: dict, adaptation: case.Adapt
     refs = await _material_refs(ctx, form["asset_ids"])
     async def frames_for(shot):
         first = await _frame(ctx, prefix, shot, adaptation, refs)
+        preview = {name: value for name, value in shot.items() if name != "last_frame"}
+        await publish_request(ctx, prefix, shot_request(prefix, preview, first, adaptation.product))
         last = await _frame(ctx, prefix, shot, adaptation, refs, "last_frame") if "last_frame" in shot else None
+        if last:
+            await publish_request(ctx, prefix, shot_request(prefix, shot, first, adaptation.product, last))
         return first, last
 
     frames = await _parallel(shots, frames_for, concurrency=2)

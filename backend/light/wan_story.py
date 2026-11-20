@@ -97,6 +97,7 @@ def planning_instruction(form: dict, action: str) -> str:
         from light.soda_story import DIRECTING as directing
     elif form.get("template") == silk_road.TEMPLATE:
         directing = silk_road.DIRECTING
+        data["确认菜名"] = form.get("product_name", "")
     return directing + (
         "直接调用 light_wan_story，action=prepare，把完整分镜放在 plan。只保存文案供用户编辑，成功后结束。"
         if action == "prepare" else

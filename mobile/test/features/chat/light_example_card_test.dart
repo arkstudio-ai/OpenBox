@@ -332,11 +332,10 @@ void main() {
     await _mount(tester, _card());
     await tester.tap(find.byKey(const Key('light-example-tile-lex_a')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('light-example-viewer')), findsOneWidget);
     expect(find.byType(InteractiveViewer), findsOneWidget);
-    await tester.tap(find.byKey(const Key('light-example-viewer-close')));
+    await tester.tap(find.byKey(const Key('media-viewer-close')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('light-example-viewer')), findsNothing);
+    expect(find.byType(InteractiveViewer), findsNothing);
     expect(find.byKey(const Key('light-example-card')), findsOneWidget);
   });
 

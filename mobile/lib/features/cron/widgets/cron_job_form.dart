@@ -17,10 +17,8 @@ Future<void> showCronJobForm(BuildContext context, {CronJob? job}) {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+    builder: (sheet) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
       child: _CronJobFormBody(job: job),
     ),
   );
@@ -53,9 +51,16 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
     super.initState();
     _expr.text = _form.expr;
     _every.text = '${_form.every}';
-    FlutterTimezone.getLocalTimezone().then((tz) {
+    _loadTimezone();
+  }
+
+  Future<void> _loadTimezone() async {
+    try {
+      final tz = await FlutterTimezone.getLocalTimezone();
       if (mounted) setState(() => _tz = tz.identifier);
-    });
+    } catch (_) {
+      // Keep the form's UTC fallback if the system has no timezone.
+    }
   }
 
   @override

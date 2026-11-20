@@ -237,6 +237,7 @@ def _audio_range(cut, at, left, right, source_start, volume):
 
 async def render(ctx, form, run, plan):
     from light.production import remake_stage, save_wan_edit
+    from light.shot_editor import publish_request
 
     prefix = run["job_prefix"]
     segment_ctx = replace(ctx, message_id="", sandbox=None, _on_output=None)
@@ -260,6 +261,7 @@ async def render(ctx, form, run, plan):
             + "。素材照片只参考商品特征。尊重剧情中尚未上菜或揭盖的状态；桌面只有一套道具。",
             material,
         )
+        await publish_request(ctx, prefix, shot_request(prefix, 1, plan, first, None, plan.opening_frame))
         target = await _still(
             ctx,
             prefix,
@@ -289,6 +291,7 @@ async def render(ctx, form, run, plan):
         for take in (1, 2):
             await remake_stage(ctx, prefix, "wan_shots")
             req = shot_request(prefix, index, plan, first, target, direction, take)
+            await publish_request(ctx, prefix, req)
             asset = await _job(segment_ctx, req, kind="segment", label=f"剧情镜头 {index}", run=run)
             await remake_stage(ctx, prefix, "wan_edit")
             cut = await wan_edit.review(

@@ -38,7 +38,7 @@ DIRECTING = (
     "从哪个方向看、道具在哪、菜品是否已经入镜。action用一个主要动作，填可拍的起点和终点。"
     "商品亮相如需上菜，起始画面保持桌面中央为空、一只托盘悬在上方，落桌后再穿插商品特写。"
     "对白用短句，一镜一人，不把题字写进拍摄画面。片尾kind=product，菜名headline与店名后期排版。"
-    "无需分析样片或读取原版文件。首帧同批产出，MiniMax H3 Turbo 每镜一遍，按实际台词挑剪点，IMS合成。"
+    "无需分析样片或读取原版文件。首帧同批产出，使用表单选定的视频模型每镜一遍，按实际台词挑剪点，IMS合成。"
 )
 
 
@@ -218,10 +218,12 @@ async def render(ctx, form, run, plan):
         await remake_stage(ctx, prefix, "wan_shots")
 
         async def make(i, shot):
+            from light.shot_editor import publish_request
             await _check(task)
             request = shot_request(prefix, i, shot, frames[i - 1],
                                    model=run.get("video_model") or MODEL,
                                    resolution=run.get("video_resolution") or "768p")
+            await publish_request(ctx, prefix, request)
             asset = await _job(task, request, kind="segment", label=f"剧情镜头 {i}", run=run)
             meta = await ensure_meta(asset, user_id=task.user_id)
             if needs_visual_review:

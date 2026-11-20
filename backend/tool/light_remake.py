@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from light import production, remake_case, silk_road, wan_story
 from light.mode import LightError
@@ -56,6 +56,13 @@ class SilkRoadPrepareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plan: silk_road.Plan
+
+    @model_validator(mode="after")
+    def require_endpoints(self):
+        world = self.plan.world
+        if not world or any(not (take.first_frame and take.last_frame) for take in world.takes):
+            raise ValueError("填写 world，并为每段提供独立的 first_frame 和 last_frame 静帧描述。")
+        return self
 
 
 async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolResult:

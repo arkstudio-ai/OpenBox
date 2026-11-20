@@ -50,6 +50,19 @@ def test_trim_becomes_in_out_in_source_seconds():
     assert clip["In"] == 1.25 and clip["Out"] == 3.75
 
 
+def test_still_in_main_track_has_image_type_and_display_duration():
+    timeline = Timeline(shots=[
+        Shot(asset=f"{B}/title.PNG", duration_sec=2.5, volume=0),
+        Shot(asset=f"{B}/shot1.mp4", in_sec=1.25, duration_sec=2.5),
+    ])
+    job = compile_ims(timeline, output_url=OUT)
+    still, video = job.timeline["VideoTracks"][0]["VideoTrackClips"]
+    assert still["Type"] == "Image" and still["Duration"] == 2.5
+    assert {"In", "Out", "Effects"}.isdisjoint(still)
+    assert video["In"] == 1.25 and video["Out"] == 3.75
+    assert job.duration_sec == 5
+
+
 # ── rule 3: transitions ──────────────────────────────────────────────────────
 
 def test_transition_hangs_off_the_outgoing_clip_and_shortens_total():

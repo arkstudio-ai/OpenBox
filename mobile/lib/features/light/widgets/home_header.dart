@@ -12,7 +12,7 @@ import '../../billing/state/billing_providers.dart';
 import '../../store/state/store_provider.dart';
 
 /// Top of the Light home (docs `LIGHT_MODE_PLAN.md` §4.2): the shop (or the
-/// person) by name, one line for today, and the credit balance — which
+/// person) by name, a greeting, and the credit balance — which
 /// opens the plans and usage page.
 class LightHomeHeader extends ConsumerWidget {
   const LightHomeHeader({super.key});
@@ -25,10 +25,12 @@ class LightHomeHeader extends ConsumerWidget {
     final shop = ref.watch(storeProvider).valueOrNull?.name;
     final credits = ref.watch(billingBalanceProvider);
     final name = shop ?? user?.username ?? '';
-    final taglines = i18n.tList('light:home.taglines');
-    final tagline = taglines.isEmpty
-        ? ''
-        : '${taglines[DateTime.now().weekday % taglines.length]}';
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'morning'
+        : hour < 18
+        ? 'afternoon'
+        : 'evening';
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -36,6 +38,11 @@ class LightHomeHeader extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(
+                i18n.t('light:home.dayGreeting.$greeting'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+              ),
+              const SizedBox(height: 4),
               Text(
                 name.isEmpty
                     ? i18n.t('light:home.defaultShop')
@@ -49,19 +56,6 @@ class LightHomeHeader extends ConsumerWidget {
                   color: t.ink,
                 ),
               ),
-              if (tagline.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  tagline,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: FontSizes.sm,
-                    height: 1.4,
-                    color: t.n600,
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -112,4 +106,23 @@ class LightHomeHeader extends ConsumerWidget {
       ],
     );
   }
+}
+
+class LightHomeHeading extends StatelessWidget {
+  const LightHomeHeading(this.label, {super.key});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    header: true,
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: FontSizes.xl2,
+        fontWeight: FontWeight.w800,
+        color: context.tokens.ink,
+      ),
+    ),
+  );
 }

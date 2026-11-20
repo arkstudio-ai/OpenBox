@@ -11,6 +11,15 @@ import 'production_widgets.dart';
 
 String productionErrorText(I18nState i18n, Object error) {
   final api = apiErrorOf(error);
+  if (api?.code == 'LIGHT_VIDEO_TIER_UNAVAILABLE') {
+    return i18n.t('light:production.videoTier.manualUnavailable');
+  }
+  if (api?.code == 'LIGHT_VIDEO_FRAME_PLAN') {
+    return i18n.t('light:production.videoTier.prepareFrames');
+  }
+  if (api?.code == 'LIGHT_PRODUCTION_TEMPLATE_RETIRED') {
+    return i18n.t('light:production.retiredTemplate');
+  }
   if (api?.code == 'LIGHT_REMAKE_VIDEO_LIMIT') {
     return i18n.t(
       'light:production.videoLimit',
@@ -252,7 +261,7 @@ class ProductionResult extends ConsumerWidget {
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 key: const Key('production-result-preview'),
-                onTap: () => openProductionMedia(context, ref, media),
+                onTap: () => openProductionMedia(context, media),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [

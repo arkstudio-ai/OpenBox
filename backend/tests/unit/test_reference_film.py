@@ -49,7 +49,7 @@ def test_short_shot_plan_is_variable_and_cannot_be_only_an_end_card():
 
 
 async def test_shots_overlap_keep_scene_references_and_resume_out_of_order(monkeypatch):
-    from light import production, reference_direction
+    from light import production, reference_direction, shot_editor
 
     data = plan_data(5)
     for shot, scene in zip(data["shots"], ["餐厅", "餐厅", "办公室", "办公室", "摄影棚"]):
@@ -110,12 +110,15 @@ async def test_shots_overlap_keep_scene_references_and_resume_out_of_order(monke
     monkeypatch.setattr(reference_direction, "resolve", direct)
     monkeypatch.setattr(production, "remake_stage", stage)
     monkeypatch.setattr(production, "save_reference_cut", checkpoint)
+    prepared = AsyncMock()
+    monkeypatch.setattr(shot_editor, "publish_request", prepared)
     _, cuts = await asyncio.wait_for(film._reviewed_takes(
         None, {"reference_copy": "用户的文案"}, run, plan, ["商品"], "演员"), timeout=3)
 
     assert inputs["frame-v2-2"] == ["演员", "frame-v2-1", "商品"]
     assert inputs["frame-v2-4"] == ["演员", "frame-v2-3", "商品"]
     assert inputs["frame-v2-3"] == ["演员", "商品"]
+    assert any(call.args[2].input_assets[0].asset_id == "frame-v2-3" for call in prepared.await_args_list)
     assert inputs["frame-cast-v3-5-repair-first-1-edit"] == ["frame-v2-5", "商品"]
     assert inputs["frame-cast-v3-5-repair-first-2-reframe"] == ["商品"]
     assert next(r for r in jobs if r.shot == 1).input_assets[0].asset_id.endswith("repair-first-1-edit")
@@ -175,7 +178,7 @@ async def test_first_defect_executes_directors_choice_and_replays_without_replan
 
 
 async def test_shoot_failure_drains_submitted_jobs_and_stops_new_submissions(monkeypatch):
-    from light import production, reference_direction
+    from light import production, reference_direction, shot_editor
 
     plan = ShotPlan.model_validate(plan_data(8))
     four_started, failed = asyncio.Event(), asyncio.Event()
@@ -199,6 +202,7 @@ async def test_shoot_failure_drains_submitted_jobs_and_stops_new_submissions(mon
     monkeypatch.setattr(film, "_job", film_job)
     monkeypatch.setattr(film, "review", AsyncMock())
     monkeypatch.setattr(production, "remake_stage", AsyncMock())
+    monkeypatch.setattr(shot_editor, "publish_request", AsyncMock())
     with pytest.raises(film.RemakeStopped, match="拍摄中断"):
         await asyncio.wait_for(film._reviewed_takes(
             None, {}, {"job_prefix": "test"}, plan, ["product"], "cast"), timeout=3)

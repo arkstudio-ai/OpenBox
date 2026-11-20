@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/models/cron.dart';
 import '../../../shared/ws/ws_client.dart';
+import '../../workspace/state/active_workspace_store.dart';
 
 /// Cron transport + providers (web `features/cron/api/cron.ts` +
 /// `useCronLiveEvents`): jobs poll at 30s, status at 60s, and every
@@ -117,6 +119,7 @@ void _wireCronInvalidation(Ref ref, {Duration? poll}) {
 
 /// A running job flips status server-side without a client action → 30s poll.
 final cronJobsProvider = FutureProvider<List<CronJob>>((ref) {
+  _watchWorkspace(ref);
   _wireCronInvalidation(ref, poll: const Duration(seconds: 30));
   return ref.watch(cronApiProvider).listJobs();
 });
@@ -134,6 +137,14 @@ final cronRunsProvider = FutureProvider.family<List<CronRun>, String>((
   return ref.watch(cronApiProvider).listRuns(jobId);
 });
 
-final cronProjectsProvider = FutureProvider<List<(String, String)>>(
-  (ref) => ref.watch(cronApiProvider).listProjects(),
-);
+final cronProjectsProvider = FutureProvider<List<(String, String)>>((ref) {
+  _watchWorkspace(ref);
+  return ref.watch(cronApiProvider).listProjects();
+});
+
+void _watchWorkspace(Ref ref) {
+  ref.watch(authProvider.select((state) => state.userId));
+  ref.watch(
+    activeWorkspaceProvider.select((state) => state.valueOrNull?.currentId),
+  );
+}

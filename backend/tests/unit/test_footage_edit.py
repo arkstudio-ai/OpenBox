@@ -155,6 +155,48 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
     assert refused.metadata.get("error") is True
 
 
+async def test_exact_footage_frames_are_owned_image_assets(monkeypatch):
+    import httpx
+
+    from tool.footage_analyze import FootageAnalyzeArgs, execute
+    from tool.tool import ToolContext
+
+    user, session, [clip] = await _owner_with_clips([5], audio=[False])
+    _, _, [foreign] = await _owner_with_clips([5], audio=[False])
+    captured = []
+
+    class Oss:
+        def _presign(self, method, key, expires, subresource):
+            assert subresource["x-oss-process"] == "video/snapshot,t_1250,f_jpg,w_720,ar_auto"
+            return "https://assets.example/keyframe.jpg"
+
+        async def put_object(self, key, data, *, content_type, forbid_overwrite):
+            assert content_type == "image/jpeg" and forbid_overwrite
+            captured.append((key, data))
+
+    def snapshot(request):
+        return httpx.Response(200, content=b"test-jpeg", headers={"content-type": "image/jpeg"})
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr("core.oss.get_oss", lambda: Oss())
+    monkeypatch.setattr("light.remake.get_oss", lambda: Oss())
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client(transport=httpx.MockTransport(snapshot), **kw))
+    ctx = ToolContext(session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"])
+    result = await execute(FootageAnalyzeArgs(frames=[
+        {"asset_id": clip, "at_sec": 1.25}, {"asset_id": clip, "at_sec": 1.25},
+        {"asset_id": clip, "at_sec": 5}, {"asset_id": foreign, "at_sec": 1},
+    ]), ctx)
+    ready, outside, denied = result.metadata["frames"]
+    assert ready["source_id"] == clip and ready["at_sec"] == 1.25
+    assert "error" in outside and "error" in denied
+    async with get_db_session() as db:
+        asset = await db.get(FileAsset, ready["asset_id"])
+        assert asset.status == "ready" and asset.mime == "image/jpeg"
+        assert (asset.user_id, asset.workspace_id, asset.session_id) == (ctx.user_id, ctx.workspace_id, ctx.session_id)
+        assert captured == [(asset.oss_key, b"test-jpeg")]
+        assert (await db.scalars(select(UsageEvent).where(UsageEvent.session_id == ctx.session_id))).all() == []
+
+
 async def test_a_footage_cut_settles_on_the_ladder():
     from types import SimpleNamespace
 

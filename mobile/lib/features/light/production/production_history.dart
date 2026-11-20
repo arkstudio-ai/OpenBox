@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/appearance/tokens.dart';
+import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/utils/error_text.dart';
+import '../utils/activity_date.dart';
 import 'production_api.dart';
 import 'production_media.dart';
 import 'production_stages.dart';
@@ -73,6 +75,8 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
   Object? _error;
   bool _loading = false;
   bool _hasMore = false;
+  int _nextOffset = 0;
+  int _request = 0;
 
   @override
   void initState() {
@@ -81,7 +85,9 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
   }
 
   Future<void> _load({bool append = false}) async {
-    if (_loading) return;
+    if (append && (_loading || !_hasMore)) return;
+    final request = ++_request;
+    final offset = append ? _nextOffset : 0;
     setState(() {
       _loading = true;
       _error = null;
@@ -89,19 +95,29 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
     try {
       final page = await ref
           .read(lightProductionApiProvider)
-          .history(offset: append ? _items.length : 0);
-      if (!mounted) return;
+          .history(offset: offset, kind: _filter);
+      if (!mounted || request != _request) return;
       setState(() {
         if (!append) _items.clear();
         final known = _items.map((item) => item.sessionId).toSet();
         _items.addAll(page.items.where((item) => known.add(item.sessionId)));
+        _nextOffset = offset + page.items.length;
         _hasMore = page.hasMore;
       });
     } catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted && request == _request) setState(() => _error = error);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _request) setState(() => _loading = false);
     }
+  }
+
+  void _select(int index) {
+    final kind = index == 0 ? null : ProductionKind.values[index - 1];
+    if (kind == _filter) return;
+    _filter = kind;
+    _items.clear();
+    _hasMore = false;
+    unawaited(_load());
   }
 
   Future<void> _open(LightProduction task) async {
@@ -117,13 +133,18 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
   Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
-    final filtered = _items
-        .where((item) => _filter == null || _filter == item.kind)
-        .toList();
     return Scaffold(
       backgroundColor: t.bg,
       appBar: AppBar(
-        title: Text(i18n.t('light:production.history')),
+        titleSpacing: 0,
+        title: Text(
+          i18n.t('light:production.history'),
+          style: TextStyle(
+            color: t.ink,
+            fontSize: FontSizes.xl2,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
         centerTitle: false,
       ),
       body: SafeArea(
@@ -135,15 +156,27 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
               child: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
-                onTap: (index) => setState(
-                  () => _filter = index == 0
-                      ? null
-                      : ProductionKind.values[index - 1],
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                labelColor: t.ink,
+                unselectedLabelColor: t.n700,
+                labelStyle: const TextStyle(
+                  fontSize: FontSizes.base,
+                  fontWeight: FontWeight.w700,
                 ),
+                unselectedLabelStyle: const TextStyle(fontSize: FontSizes.base),
+                indicatorColor: t.a700,
+                dividerColor: t.hair,
+                onTap: _select,
                 tabs: [
-                  Tab(text: i18n.t('light:production.all')),
+                  Tab(
+                    key: const Key('production-filter-all'),
+                    text: i18n.t('light:production.all'),
+                  ),
                   for (final kind in ProductionKind.values)
-                    Tab(text: kind.label(i18n)),
+                    Tab(
+                      key: Key('production-filter-${kind.id}'),
+                      text: kind.label(i18n),
+                    ),
                 ],
               ),
             ),
@@ -151,10 +184,11 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
               child: RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
+                  key: ValueKey(_filter),
                   padding: const EdgeInsets.all(16),
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
-                    for (final task in filtered) ...[
+                    for (final task in _items) ...[
                       _HistoryTile(task: task, onTap: () => _open(task)),
                       const SizedBox(height: 10),
                     ],
@@ -173,7 +207,7 @@ class _ProductionHistoryPageState extends ConsumerState<ProductionHistoryPage> {
                           ),
                         ],
                       )
-                    else if (filtered.isEmpty)
+                    else if (_items.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 30),
                         child: Text(
@@ -209,21 +243,19 @@ class _HistoryTile extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final media = task.output ?? task.materials.firstOrNull;
-    final title = task.legacy && task.title.isNotEmpty
-        ? task.title
-        : task.brief.isNotEmpty
-        ? task.brief
-        : [
-            task.shop,
-            task.kind.label(i18n),
-          ].where((s) => s.isNotEmpty).join(' · ');
+    final title = [
+      if (task.legacy) task.title,
+      task.productName,
+      task.brief,
+      [task.shop, task.kind.label(i18n)].where((s) => s.isNotEmpty).join(' · '),
+    ].firstWhere((value) => value.trim().isNotEmpty);
     final statusColor = switch (task.status) {
       'failed' || 'blocked' => t.dangerInk,
       'completed' || 'working' => t.s800,
       _ => t.a700,
     };
     return Material(
-      color: t.card,
+      color: t.bg,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: t.hair),
@@ -237,8 +269,8 @@ class _HistoryTile extends ConsumerWidget {
           child: Row(
             children: [
               SizedBox(
-                width: 62,
-                height: 62,
+                width: 74,
+                height: 60,
                 child: media != null
                     ? ProductionThumbnail(media: media)
                     : DecoratedBox(
@@ -263,24 +295,35 @@ class _HistoryTile extends ConsumerWidget {
                       title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: FontSizes.lg,
+                        color: t.ink,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      task.kind.label(i18n),
-                      style: TextStyle(fontSize: 13, color: t.n800),
+                      [
+                        task.kind.label(i18n),
+                        if (task.updatedAt case final date?)
+                          lightActivityDate(date, i18n),
+                      ].join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
                     ),
+                    if (task.status != 'completed' && !task.legacy)
+                      Text(
+                        i18n.t('light:production.status.${task.status}'),
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: FontSizes.xs,
+                        ),
+                      ),
                   ],
                 ),
               ),
               const SizedBox(width: 6),
-              Text(
-                i18n.t('light:production.status.${task.status}'),
-                style: TextStyle(
-                  color: statusColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
               Icon(Icons.chevron_right, color: t.n700, size: 19),
             ],
           ),

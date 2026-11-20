@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +11,15 @@ import '../../../shared/models/session.dart';
 import 'chat_api.dart';
 
 typedef AssistantScope = ({String userId, String workspaceId});
+
+String newAssistantCommandId() {
+  final random = Random.secure();
+  final bytes = List.generate(
+    24,
+    (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  );
+  return 'mobile-${bytes.join()}';
+}
 
 /// Why a thumbs-down was given, in the order they are offered (web
 /// `REACTION_REASONS`). The assistant learns how to talk from the ones that
@@ -45,6 +56,8 @@ class AssistantTask {
   /// The execution conversation's live status (busy, waiting_input, idle…).
   String? get sessionStatus =>
       asString(asMap(data['execution_session'])['status']);
+  String? get lightEntry =>
+      asString(asMap(data['execution_session'])['light_entry']);
 
   /// The business tier of the task's video choice ("快速档"), when it has one.
   String? get videoTierLabel => asString(
@@ -129,6 +142,18 @@ class AssistantApi {
 
   Future<Map<String, dynamic>> resultTarget(String id) =>
       _get('/api/assistant/results/${Uri.encodeComponent(id)}/target');
+
+  Future<void> setScheduleEnabled(String id, int revision, bool enabled) async {
+    await dio.patch<dynamic>(
+      '/api/assistant/schedules/${Uri.encodeComponent(id)}',
+      data: {
+        'idempotency_key': newAssistantCommandId(),
+        'expected_revision': revision,
+        'patch': {'enabled': enabled},
+      },
+      options: options,
+    );
+  }
 
   Future<void> ensure() async {
     await _post('/api/assistant/ensure', {});

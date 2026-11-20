@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from light import remake_case, silk_road, wan_story
+from light.video_tiers import VideoTier
 
 EntryId = Literal["video", "footage_edit", "menu"]
 Page = Literal["materials", "style", "review"]
@@ -30,7 +31,7 @@ TEMPLATES = {
     "video": {
         "": "自由生成。根据素材和文案制作一段约 10 秒的竖屏视频。",
         "wok": "烟火气特写。开场直接用最有吸引力的动作，接制作过程、成品揭晓，共三个约 5 秒的新镜头。",
-        silk_road.TEMPLATE: "《丝路留香》，约 62 秒超宽银幕。按帐篷、集市、驼队、码头的节奏为所选菜品重拍。",
+        silk_road.TEMPLATE: "《丝路留香》，约 62 秒超宽银幕。参考原片的镜头和转场，用当前素材适配人物、场景和剧情。",
         wan_story.SODA_TEMPLATE: "苏打水广告样片。参考低机位开场、正反打、冷暖转场和产品题字，重新编剧和拍摄。",
         wan_story.TEMPLATE: "参考样片《这局，吃虾》的广告节奏，根据所选商品与用户创意重新编剧、拍摄和剪辑。",
         remake_case.TEMPLATE: "《这单谁买》，30 秒七段。按验证过的样片分镜，适配真实商品与参考文案。",
@@ -43,8 +44,27 @@ TEMPLATES = {
     "menu": {
         "warm_red": "烟火红。深红、奶油纸色与金色，突出真实招牌菜，醒目易读。",
         "monochrome": "简约黑白。黑色易读字、白底、留白和整齐的价格列。",
+        "signature_plate": (
+            "招牌菜单页。用实拍菜品做最大主图，保留菜品、分量与摆盘。店名小字、招牌菜大字，"
+            "可用奶油纸色配深红宋体风格。多道菜时，根据用户指定的主推菜安排主次，其余菜品按原顺序列出。"
+            "没有可靠菜品照片时用醒目文字和留白承担主视觉。"
+        ),
+        "price_columns": (
+            "双栏价目。温白纸面与高对比深色字，用少量暖色分组。菜名左对齐，每行对应的价格右对齐。"
+            "有明确分类时保留分类。否则沿确认顺序分栏。菜目少或名称长时允许单列，优先留出易读的字号。"
+            "以文字为主，避免大图挤占菜价。"
+        ),
+        "bilingual_table": (
+            "中英双语台卡。竖幅暖白与深绿，中文菜名在上、英文在下，价格只出现一次并与该菜同组。"
+            "沿用用户提供的英文。缺英文时准确翻译菜名，无法确认食材或做法时可保留专名音译，避免补造信息。"
+            "可用真实菜品局部照片作视觉锚点，版式随菜目数量调整。"
+        ),
     },
 }
+
+
+RETIRED_VIDEO_TEMPLATES = {wan_story.TEMPLATE, "wok"}
+VIDEO_TIER_TEMPLATES = {"", silk_road.TEMPLATE, wan_story.SODA_TEMPLATE}
 
 
 class Dish(BaseModel):
@@ -60,8 +80,11 @@ class FormFields(BaseModel):
     template: str | None = Field(default=None, max_length=32)
     script: str | None = Field(default=None, max_length=2400)
     reference_copy: str | None = Field(default=None, max_length=2400)
+    product_name: str | None = Field(default=None, max_length=36)
+    beat_music: bool | None = None
     dishes: list[Dish] | None = Field(default=None, max_length=30)
     keep_original: bool | None = None
+    creative_effects: bool | None = None
     notes: str | None = Field(default=None, max_length=1200)
 
     @field_validator("asset_ids")
@@ -75,6 +98,7 @@ class FormFields(BaseModel):
 class EditForm(FormFields):
     revision: int = Field(ge=1)
     page: Page | None = None
+    video_tier: VideoTier | None = None
 
 
 class StartForm(BaseModel):
@@ -95,6 +119,7 @@ def initial_form(entry: EntryId, shop: str, brief: str) -> dict:
         "revision": 1, "page": "materials", "shop": shop, "brief": brief,
         "asset_ids": [], "template": next(iter(TEMPLATES[entry])),
         "script": "", "reference_copy": "", "dishes": [], "keep_original": True, "notes": "",
+        **({"creative_effects": False} if entry == "footage_edit" else {}),
     }
 
 
@@ -102,8 +127,14 @@ def prompt_data(form: dict) -> str:
     data = {key: form[key] for key in (
         "revision", "shop", "brief", "asset_ids", "template", "script", "dishes", "keep_original", "notes",
     )}
+    if form.get("video_tier") and form["template"] in VIDEO_TIER_TEMPLATES:
+        data["video_tier"] = form["video_tier"]
     if form.get("template") in (remake_case.TEMPLATE, *wan_story.TEMPLATES):
         data["reference_copy"] = remake_case.reference_copy(form)
+    if form.get("template") == silk_road.TEMPLATE:
+        data.update(product_name=form.get("product_name", ""), beat_music=form.get("beat_music", True))
+    if "creative_effects" in form:
+        data["creative_effects"] = form["creative_effects"]
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -150,6 +181,10 @@ def restrict_guided_tools(tools, session, action):
             "footage_edit": {"footage_analyze", "video_compose", "video_transcribe"},
             "menu": {"image_gen"},
         }[session.light_entry]
+        if session.light_entry == "footage_edit" and session.light_production.get("creative_effects"):
+            allowed.add("image_gen")
+            if (session.light_production.get("run") or {}).get("creative_motion"):
+                allowed.add("video_generate")
     else:
         return {name: tool for name, tool in tools.items() if tool.id not in {"light_remake", "light_wan_story"}}
     return {name: tool for name, tool in tools.items() if tool.id in allowed}
@@ -158,7 +193,8 @@ def restrict_guided_tools(tools, session, action):
 def system_fragment(session) -> str:
     form = session.light_production
     entry = session.light_entry
-    values = ", ".join(repr(key) for key in TEMPLATES[entry])
+    values = ", ".join(repr(key) for key in TEMPLATES[entry]
+                       if entry != "video" or key not in RETIRED_VIDEO_TEMPLATES or key == form["template"])
     return (
         f"This is a guided mobile production ({entry}) in the same persistent Agent conversation. "
         "The app already collected the owner's choices. Do not start the legacy guided question or example-pick flow. "
@@ -227,21 +263,81 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "footage_analyze and describe it in the video prompt. Use only confirmed words for titles/dialogue. "
             "Deliver the final attachment. For a single shot call video_generate action=attach after it completes."
         )
+        if form.get("video_tier") == "fast":
+            task += (
+                " Fast tier uses MiniMax H3 Turbo: request 5–15 seconds and generate_audio=true."
+                " With reference pictures, prepare an intentional opening frame using the materials, then use"
+                " first_frame (and optionally last_frame) with ratio=adaptive. Inspect reference videos as needed."
+            )
     elif entry == "footage_edit":
         tools = "footage_analyze, video_compose"
         task = (
-            "Analyze the selected video clips with footage_analyze (do not pass still images to it). "
-            "Use only the selected original video and photo assets for the visuals. Cut from usable footage and "
-            "keep its identity, sequence of real events, and proportions. Use selected photos as stills. "
-            "Honor keep_original (false means mute all source clips). Add the approved copy as timed captions. "
-            "Apply the chosen pacing and edit with the IMS video_compose tool. Attach its finished vertical MP4."
+            "If videos are selected, read them in one footage_analyze call. Reuse its cached clip descriptions, "
+            "action timings and ASR sentences. Use video_transcribe only for a needed spoken clip whose "
+            "analysis has no transcript. Use selected originals for all documentary imagery, with photos as stills. "
+            "Decide a story from the supplied footage before choosing effects. Open with a strong real moment, "
+            "use wider shots for context and close-ups to reveal details, and end on an image that pays off "
+            "the opening. Decide shot order and length around action and pacing. Keep events and proportions "
+            "true to the source. Preserve whole spoken phrases, trimming dead air and duplicate takes. "
+            "When keep_original is true, a clean original line can continue as audio over a relevant real "
+            "cutaway; when doing that, avoid doubling the same audio under the picture. With keep_original "
+            "false, mute all original audio, including any separately placed cutaway audio. "
+            "Time short speech captions from ASR on the edited timeline, correcting only verified terms. "
+            "Use supplied copy as editorial guidance. Reserve IMS captions for timed speech and leave the "
+            "IMS timeline 'texts' empty. Promotional headlines, shop names, and other graphic lettering "
+            "belong in designed images. Feature real product details "
+            "by selecting close-up source ranges or applying a subtle zoom_in on a suitable non-speaking shot. "
+            "Use one or two purposeful action cuts or verified short IMS fades/wipes, avoiding overlap across "
+            "speech. Do not invent names, prices, claims or voiceover. "
+            "Choose one IMS library track that suits the style when available, unless the owner wants no "
+            "music or the selected footage has music that would clash. Use library_id from the analysis "
+            "catalogue, low volume, fades, and duck_under_captions for retained speech. "
+        )
+        if form.get("creative_effects"):
+            tools += ", image_gen"
+            task += (
+                "The owner enabled generated creative effects. Choose the kind, count, placement and pace of "
+                "graphics and motion after reading these materials. For a title moment, pick a suitable video "
+                "and time, call footage_analyze with frames=[{asset_id, at_sec}], and pass the returned exact "
+                "frame to image_gen with input_images. A selected real photo can go directly to image_gen. "
+                "Ask image_gen to preserve the real composition and subject while designing legible lettering "
+                "in its negative space, using only verified text verbatim. Verify the spelling and look on the "
+                "returned image, and place the finished artwork on or beside the corresponding shot. "
+                "Other justified uses include an illustrated accent on real footage or a short graphical bridge. "
+                "Choose where they serve the story and match the adjoining images. Generate independent designs "
+                "in parallel when useful. There is no required opening, closing card, shot count, or effect. "
+                "If an effect or title does not fit or the artwork has wrong text, favor the original shot. "
+            )
+            if (form.get("run") or {}).get("creative_motion"):
+                tools += ", video_generate"
+                task += (
+                    "When animation improves a cut, animate one graphic with video_generate. "
+                    "The selected route is RunningHub MiniMax H3 Turbo: omit model/resolution, set duration=5, "
+                    "ratio=adaptive, generate_audio=true, and choose the actual prepared image or original "
+                    "capture as first_frame (or use an actual matching last_frame when helpful). Keep deliberate "
+                    "lettering still if animating it would warp the text. Connect pictures by action, scale or "
+                    "color. Keep generated audio muted and select only the interval that helps the edit. "
+                    "Resume any existing job instead of reshooting by default. Fall back to still artwork or "
+                    "original footage if a generated effect is unavailable or does not fit. "
+                )
+        task += (
+            "Submit the finished vertical timeline to IMS video_compose with action=submit, which also "
+            "validates it. Go straight to submit once the timeline is ready; only make another tool call "
+            "to correct a concrete validation error. On delivery=automatic, end the turn so the watcher "
+            "can attach the completed MP4. "
+            "Otherwise check or resume that same job."
         )
     else:
         tools = "image_gen"
         task = (
-            "Use image_gen once to create a readable menu image, using the chosen template and selected photos "
-            "as visual references. Reproduce the confirmed dish names and prices character for character, "
-            "allow blank prices, and never add an unlisted dish or price. Deliver the image attachment."
+            "Use image_gen to create one readable, flat menu image suitable for the chosen use. Treat the "
+            "template recipe as layout guidance. Pass relevant selected food photo asset IDs as input_images "
+            "and preserve the recognizable dishes and portions. A source menu photo provides information; "
+            "use the confirmed form values when they differ. Put the shop name and each confirmed dish-price "
+            "pair verbatim in the image prompt. Keep a missing price blank. Use no inferred prices, offers, "
+            "phone numbers or dishes. Unless the user requested output parameters, describe the face of "
+            "the menu in the prompt and use the image tool's configured size and quality. Inspect the result "
+            "against the confirmed list, especially price pairing and Chinese characters, before delivering."
         )
     return (
         "I confirmed the current form and pressed Generate in the app. Start production now. "

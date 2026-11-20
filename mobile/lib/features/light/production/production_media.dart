@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/utils/error_text.dart';
+import '../../../shared/widgets/media_viewer.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 
@@ -46,7 +46,7 @@ class ProductionSelectionGrid extends ConsumerWidget {
           fit: StackFit.expand,
           children: [
             InkWell(
-              onTap: () => openProductionMedia(context, ref, media),
+              onTap: () => openProductionMedia(context, media),
               child: ProductionThumbnail(media: media),
             ),
             Positioned(
@@ -128,156 +128,56 @@ Future<void> showProductionVideo(
   BuildContext context,
   String path, {
   bool bundled = false,
-}) => showDialog<void>(
-  context: context,
-  builder: (_) => _VideoDialog(path: path, bundled: bundled),
-);
-
-class _VideoDialog extends ConsumerStatefulWidget {
-  const _VideoDialog({required this.path, required this.bundled});
-
-  final String path;
-  final bool bundled;
-
-  @override
-  ConsumerState<_VideoDialog> createState() => _VideoDialogState();
-}
-
-class _VideoDialogState extends ConsumerState<_VideoDialog> {
-  late final VideoPlayerController _controller = widget.bundled
-      ? VideoPlayerController.asset(widget.path)
-      : VideoPlayerController.networkUrl(Uri.parse(widget.path));
-  late final Future<void> _load;
-
-  @override
-  void initState() {
-    super.initState();
-    _load = _start();
-  }
-
-  Future<void> _start() async {
-    await _controller.initialize();
-    if (mounted) await _controller.play();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final i18n = ref.watch(i18nProvider);
-    return Dialog(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: CloseButton(onPressed: () => Navigator.pop(context)),
-          ),
-          FutureBuilder<void>(
-            future: _load,
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(i18n.t('first_video:result.playFailed')),
-                );
-              }
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const SizedBox(
-                  height: 180,
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-              return Flexible(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: _controller.value.aspectRatio,
-                          child: VideoPlayer(_controller),
-                        ),
-                      ),
-                    ),
-                    VideoProgressIndicator(
-                      _controller,
-                      allowScrubbing: true,
-                      padding: const EdgeInsets.all(8),
-                    ),
-                    ValueListenableBuilder<VideoPlayerValue>(
-                      valueListenable: _controller,
-                      builder: (context, value, _) => IconButton(
-                        tooltip: i18n.t(
-                          value.isPlaying
-                              ? 'light:production.pausePreview'
-                              : 'light:production.playPreview',
-                        ),
-                        onPressed: () async {
-                          if (value.isPlaying) {
-                            await _controller.pause();
-                          } else {
-                            if (value.isCompleted) {
-                              await _controller.seekTo(Duration.zero);
-                            }
-                            if (mounted) await _controller.play();
-                          }
-                        },
-                        icon: Icon(
-                          value.isPlaying ? Icons.pause : Icons.play_arrow,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Future<void> openProductionMedia(
-  BuildContext context,
-  WidgetRef ref,
-  ProductionMedia media,
-) async {
-  final url = await ref.read(lightAssetUrlProvider(media.id).future);
-  if (!context.mounted) return;
-  if (url == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ref.read(i18nProvider).t('light:production.previewUnavailable'),
-        ),
-      ),
-    );
-    return;
-  }
-  if (media.video) {
-    await showProductionVideo(context, url);
-    return;
-  }
-  await showDialog<void>(
-    context: context,
-    builder: (context) => Dialog(
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          InteractiveViewer(child: Image.network(url, fit: BoxFit.contain)),
-          const Positioned(right: 0, top: 0, child: CloseButton()),
-        ],
+  String? title,
+}) => showMediaViewer(
+  context,
+  (_) => Consumer(
+    builder: (context, ref, _) => MediaViewer(
+      title: title,
+      child: MediaPreviewVideo(
+        source: path,
+        bundled: bundled,
+        failedText: ref.watch(i18nProvider).t('first_video:result.playFailed'),
       ),
     ),
-  );
-}
+  ),
+);
+
+Future<void> openProductionMedia(BuildContext context, ProductionMedia media) =>
+    showMediaViewer(
+      context,
+      (_) => Consumer(
+        builder: (context, ref, _) {
+          final i18n = ref.watch(i18nProvider);
+          final url = ref.watch(lightAssetUrlProvider(media.id));
+          final failed = MediaPreviewError(
+            i18n.t('light:production.previewUnavailable'),
+          );
+          return MediaViewer(
+            title: media.name,
+            assetId: media.id,
+            mimeType: media.mime,
+            child: url.when(
+              loading: MediaPreviewLoading.new,
+              error: (_, _) => failed,
+              data: (source) {
+                if (source == null || source.isEmpty) return failed;
+                return media.video
+                    ? MediaPreviewVideo(
+                        key: ValueKey(source),
+                        source: source,
+                        failedText: i18n.t('first_video:result.playFailed'),
+                      )
+                    : MediaPreviewImage(
+                        url: source,
+                        failedText: failed.message,
+                      );
+              },
+            ),
+          );
+        },
+      ),
+    );
 
 class ProductionLibrary extends ConsumerStatefulWidget {
   const ProductionLibrary({

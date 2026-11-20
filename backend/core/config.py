@@ -289,6 +289,17 @@ class VideoModelConfig(BaseModel):
             return {**value, "wire_shape": "size"}
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _seedance_frame_roles(cls, value):
+        # Seedance 2.0's contents API accepts explicit first/last frames.
+        # Older registries omitted the flag. Keep explicit deployment overrides.
+        if isinstance(value, dict) and value.get("id") == "doubao-seedance-2-0-260128":
+            channel = value.get("channel", "ark")
+            if channel == "ark" or (channel == "sd2" and value.get("wire_shape") == "metadata"):
+                return {"supports_first_last_frame": True, **value}
+        return value
+
     @model_validator(mode="after")
     def _check_duration_range(self):
         if self.duration_range is not None:

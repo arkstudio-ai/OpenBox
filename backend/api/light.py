@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from light import mode as light_mode
-from light import production, production_form
+from light import production, production_form, shot_editor, shot_frame_edits
 
 router = APIRouter(prefix="/api/light", tags=["light"], dependencies=[Depends(get_workspace)])
 
@@ -109,9 +109,13 @@ async def create_production(body: production_form.StartForm, current_user: dict 
 
 
 @router.get("/productions")
-async def production_history(limit: int = Query(24, ge=1, le=50), offset: int = Query(0, ge=0),
-                             current_user: dict = Depends(get_current_user)):
-    return await production.history(*_scope(current_user), limit, offset)
+async def production_history(
+    limit: int = Query(24, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    entry_id: Literal["video", "footage_edit", "menu"] | None = None,
+    current_user: dict = Depends(get_current_user),
+):
+    return await production.history(*_scope(current_user), limit, offset, entry_id=entry_id)
 
 
 @router.get("/productions/{session_id}")
@@ -136,6 +140,24 @@ async def production_action(session_id: str, body: production_form.FormAction,
                             current_user: dict = Depends(get_current_user)):
     try:
         return await production.action(*_scope(current_user), session_id, body, current_user.get("ui_language"))
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/productions/{session_id}/shot-actions")
+async def production_shot_action(session_id: str, body: shot_editor.ShotAction,
+                                 current_user: dict = Depends(get_current_user)):
+    try:
+        return await shot_editor.action(*_scope(current_user), session_id, body)
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/productions/{session_id}/shot-frames", status_code=202)
+async def production_shot_frame(session_id: str, body: shot_frame_edits.FrameRequest,
+                                current_user: dict = Depends(get_current_user)):
+    try:
+        return await shot_frame_edits.submit(*_scope(current_user), session_id, body)
     except light_mode.LightError as exc:
         _raise(exc)
 

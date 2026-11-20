@@ -97,7 +97,12 @@ async def wake_for(job) -> bool:
     """Hand a composition that settled after its turn back to its conversation."""
     if job.attached_message_id or str(job.idempotency_key or "").startswith(SELF_DELIVERED_PREFIXES):
         return False
-    from light import remake_case, wan_story
+    from light import remake_case, shot_editor, wan_story
+    if job.idempotency_key.startswith(shot_editor.KEY_PREFIX):
+        return job.status == "completed" and await deliver(
+            job, prompt="（新版本已合成）", text="新版成片已合成，可以在制作页和历史版本查看。",
+            entrypoint="light_shot_delivery",
+        )
     if remake_case.owns_job(job):
         return await _deliver_story(job) if any(f":{version}:" in job.idempotency_key for version in wan_story.VERSIONS) else False
     from video.job_recovery import COMPOSE_FAILED_PROMPT, COMPOSE_RESUME_PROMPT, resume_conversation

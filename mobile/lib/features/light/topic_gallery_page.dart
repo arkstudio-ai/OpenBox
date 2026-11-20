@@ -288,6 +288,7 @@ class _SampleCard extends StatelessWidget {
                         context,
                         sample.mediaUrl!,
                         failedText: failedText,
+                        title: sample.label,
                       )
                     : null,
               ),

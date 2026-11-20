@@ -1,30 +1,26 @@
 import 'package:bossip_mobile/features/billing/state/billing_providers.dart';
-import 'package:bossip_mobile/features/chat/state/config_providers.dart';
+import 'package:bossip_mobile/features/chat/api/assistant_api.dart';
+import 'package:bossip_mobile/features/chat/state/assistant_overview.dart';
+import 'package:bossip_mobile/features/chat/widgets/composer/composer.dart';
 import 'package:bossip_mobile/features/light/api/light_api.dart';
 import 'package:bossip_mobile/features/light/home_screen.dart';
 import 'package:bossip_mobile/features/light/widgets/entry_card.dart';
 import 'package:bossip_mobile/features/store/api/store_api.dart';
 import 'package:bossip_mobile/features/store/models/store.dart';
-import 'package:bossip_mobile/features/voice/state/voice_call_controller.dart';
-import 'package:bossip_mobile/features/voice/state/voice_call_state.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
-import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
 import 'package:bossip_mobile/shared/models/billing.dart';
 import 'package:bossip_mobile/shared/models/light.dart';
-import 'package:bossip_mobile/shared/models/session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '../voice/voice_fakes.dart';
 
 class _Auth extends AuthController {
   @override
@@ -44,28 +40,14 @@ class _FakeStoreApi extends StoreApi {
   _FakeStoreApi() : super(Dio());
 
   Store? store = const Store(id: 'sto1', name: '巷口小馆');
-  List<StarterCard> cards = const [];
-  String? locale;
-
   @override
   Future<Store?> current() async => store;
-
-  @override
-  Future<List<StarterCard>> starterCards(
-    String id, {
-    required String locale,
-  }) async {
-    this.locale = locale;
-    return cards;
-  }
 }
 
 class _FakeLightApi extends LightApi {
   _FakeLightApi() : super(Dio());
 
   LightEntriesView view = LightEntriesView.fromJson(_entriesJson());
-  List<LightRecentGroup> groups = const [];
-  bool recentDown = false;
   int entriesCalls = 0;
 
   @override
@@ -73,24 +55,12 @@ class _FakeLightApi extends LightApi {
     entriesCalls++;
     return view;
   }
-
-  @override
-  Future<List<LightRecentGroup>> recent({int limit = 8}) async {
-    if (recentDown) throw DioException(requestOptions: RequestOptions());
-    return groups;
-  }
-
-  @override
-  Future<String?> assetUrl(String assetId) async => null;
-
-  @override
-  Future<List<Session>> sessions() async => const [];
-
-  @override
-  Future<List<Map<String, dynamic>>> assistantSessions() async => const [];
 }
 
-Map<String, dynamic> _entriesJson({String plan = 'free'}) => {
+Map<String, dynamic> _entriesJson({
+  String plan = 'free',
+  String videoAvailability = 'ok',
+}) => {
   'version': '2026-10-31',
   'ui_mode': 'light',
   'plan_id': plan,
@@ -103,7 +73,7 @@ Map<String, dynamic> _entriesJson({String plan = 'free'}) => {
       'kind': 'primary',
       'price_hint': '15 秒省钱档约 4 积分',
       'requires': <String, dynamic>{},
-      'availability': 'ok',
+      'availability': videoAvailability,
     },
     {
       'id': 'voice_assistant',
@@ -140,9 +110,9 @@ Map<String, dynamic> _entriesJson({String plan = 'free'}) => {
       'id': 'footage_edit',
       'title': '你拍我剪',
       'subtitle': '自己拍的素材也能出片',
-      'kind': 'coming_soon',
+      'kind': 'primary',
       'requires': <String, dynamic>{},
-      'availability': 'coming_soon',
+      'availability': 'ok',
     },
     {
       'id': 'menu',
@@ -161,7 +131,7 @@ Future<(_FakeLightApi, GoRouter)> _mount(
   List<Override> overrides = const [],
   _FakeStoreApi? store,
 }) async {
-  // Tall enough for the whole lazy list, band and recent section included.
+  // Mount all rows so their visibility and ordering can be inspected.
   tester.view.physicalSize = const Size(1170, 4800);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.resetPhysicalSize);
@@ -176,6 +146,8 @@ Future<(_FakeLightApi, GoRouter)> _mount(
       GoRoute(path: '/home', builder: (_, _) => const LightHomeScreen()),
       for (final path in [
         '/light/topic/:entryId',
+        '/light/productions',
+        '/app/s/:id',
         '/app/billing',
         '/app/desktop',
         '/light/autopilot',
@@ -199,9 +171,6 @@ Future<(_FakeLightApi, GoRouter)> _mount(
         authProvider.overrideWith(_Auth.new),
         activeWorkspaceProvider.overrideWith(_Workspace.new),
         lightApiProvider.overrideWithValue(light),
-        appConfigProvider.overrideWith(
-          (ref) async => const AppConfig(models: [], voiceEnabled: true),
-        ),
         storeApiProvider.overrideWithValue(store ?? _FakeStoreApi()),
         billingBalanceProvider.overrideWith(
           (ref) async => const CreditBalance(
@@ -255,172 +224,135 @@ void main() {
     expect(find.text('做一条视频'), findsNothing);
   });
 
-  testWidgets('the home draws the heading, every entry and the empty recent', (
-    tester,
-  ) async {
-    await _mount(tester);
+  testWidgets('production and assistant have distinct entries', (tester) async {
+    final (_, router) = await _mount(tester);
     expect(find.text('巷口小馆'), findsOneWidget);
     expect(find.textContaining('12.5'), findsOneWidget);
-    expect(find.byKey(const Key('light-entry-video')), findsOneWidget);
-    expect(find.text('做一条视频'), findsOneWidget);
-    expect(find.text('根据素材生成新画面'), findsOneWidget);
-    expect(
-      find.byKey(const Key('light-entry-voice_assistant')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('light-entry-poster')), findsOneWidget);
-    expect(find.byKey(const Key('light-entry-menu')), findsOneWidget);
-    final order = [
-      for (final card in tester.widgetList<LightEntryCard>(
-        find.byType(LightEntryCard),
-      ))
-        card.entry.id,
-    ];
-    expect(order.take(3), ['video', 'footage_edit', 'menu']);
-    expect(find.byKey(const Key('light-production-history')), findsOneWidget);
-    // Free tier: the desktop entries are grey and say what is missing.
-    expect(find.byKey(const Key('light-entry-douyin_publish')), findsOneWidget);
-    expect(find.text('需要云电脑'), findsNWidgets(2));
-    expect(find.byKey(const Key('light-entry-footage_edit')), findsOneWidget);
-    expect(find.text('即将上线'), findsOneWidget);
-    expect(find.text('所有事都能省心托管'), findsOneWidget);
-    expect(find.byKey(const Key('light-recent-empty')), findsOneWidget);
-    expect(find.byKey(const Key('light-ask')), findsOneWidget);
-  });
+    expect(find.text('内容制作'), findsOneWidget);
+    expect(find.text('个人助理'), findsOneWidget);
+    expect(find.text('店里的日常，交给我'), findsOneWidget);
 
-  testWidgets('the voice card dials in place once the assistant is bound', (
-    tester,
-  ) async {
-    final rig = VoiceRig();
-    final stub = StubVoiceController(const VoiceCallState(), rig.clock);
-    final (_, router) = await _mount(
-      tester,
-      overrides: [
-        ...rig.overrides,
-        voiceCallControllerProvider.overrideWith(() => stub),
-      ],
+    final cards = tester.widgetList<LightEntryCard>(
+      find.byType(LightEntryCard),
     );
-    expect(find.text('语音暂未开通'), findsNothing);
-    await tester.tap(find.byKey(const Key('light-entry-voice_assistant')));
+    expect(cards.map((card) => card.entry.id), [
+      'video',
+      'footage_edit',
+      'menu',
+    ]);
+    expect(find.byKey(const Key('light-entry-poster')), findsNothing);
+    expect(find.text('所有事都能省心托管'), findsNothing);
+    expect(find.byKey(const Key('light-assistant-recent')), findsNothing);
+    await tester.tap(find.byKey(const Key('light-production-history')));
     await tester.pumpAndSettle();
-    expect(stub.starts, 1);
-    expect(router.state.uri.path, '/home');
+    expect(router.state.uri.path, '/light/productions');
   });
 
-  testWidgets('without voice the card is grey and leads to the assistant tab', (
+  testWidgets('the production cards open their existing workflows', (
     tester,
   ) async {
-    // No assistant scope bound (the default here): nothing to dial yet.
     final (_, router) = await _mount(tester);
-    expect(find.text('语音暂未开通'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('light-entry-voice_assistant')));
+    for (final entry in ['video', 'footage_edit', 'menu']) {
+      await tester.tap(find.byKey(Key('light-entry-$entry')));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/light/topic/$entry');
+      router.pop();
+      await tester.pumpAndSettle();
+    }
+  });
+
+  for (final (plan, path) in [
+    ('free', '/app/billing'),
+    ('pro', '/app/desktop'),
+  ]) {
+    testWidgets('a gated production card on $plan opens its access action', (
+      tester,
+    ) async {
+      final api = _FakeLightApi()
+        ..view = LightEntriesView.fromJson(
+          _entriesJson(plan: plan, videoAvailability: 'needs_desktop'),
+        );
+      final (_, router) = await _mount(tester, api: api);
+      await tester.tap(find.byKey(const Key('light-entry-video')));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, path);
+    });
+  }
+
+  testWidgets('schedule opens and assistant shortcuts pass an editable draft', (
+    tester,
+  ) async {
+    final (_, router) = await _mount(tester);
+    await tester.tap(find.byKey(const Key('light-home-schedules')));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/light/autopilot');
+    router.pop();
+    await tester.pumpAndSettle();
+
+    for (final (id, text) in [('reviews', '回复草稿'), ('copy', '活动文案')]) {
+      await tester.tap(find.byKey(Key('light-assistant-prompt-$id')));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/assistant');
+      expect((router.state.extra! as ComposerDraft).text, contains(text));
+      router.go('/home');
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.byKey(const Key('light-ask')));
     await tester.pumpAndSettle();
     expect(router.state.uri.path, '/assistant');
+    expect(router.state.extra, isNull);
   });
+
+  testWidgets(
+    'recent assistant work uses successful results and excludes productions',
+    (tester) async {
+      const scope = (userId: 'u1', workspaceId: 'w1');
+      Map<String, dynamic> task(
+        String id,
+        String title,
+        String outcome, {
+        String? entry,
+      }) => {
+        'task': {
+          'id': id,
+          'title': title,
+          'execution_session_id': 'session-$id',
+        },
+        'latest_result': {
+          'outcome': outcome,
+          'created_at': '2026-11-20T01:00:00Z',
+        },
+        'execution_session': {'light_entry': ?entry},
+      };
+      final (_, router) = await _mount(
+        tester,
+        overrides: [
+          assistantScopeProvider.overrideWithValue(scope),
+          assistantOverviewProvider(scope).overrideWith(
+            (ref) async => AssistantSnapshot({
+              'tasks': [
+                task('done', '写好 3 条评价回复', 'succeeded'),
+                task('production', '麻辣小龙虾成片', 'succeeded', entry: 'video'),
+                task('failed', '活动文案失败', 'error'),
+              ],
+            }),
+          ),
+        ],
+      );
+      expect(find.text('最近帮你办的'), findsOneWidget);
+      expect(find.text('写好 3 条评价回复'), findsOneWidget);
+      expect(find.text('麻辣小龙虾成片'), findsNothing);
+      expect(find.text('活动文案失败'), findsNothing);
+      await tester.tap(find.byKey(const Key('light-assistant-recent-done')));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/app/s/session-done');
+    },
+  );
 
   testWidgets('without a store the heading falls back to the person', (
     tester,
   ) async {
     await _mount(tester, store: _FakeStoreApi()..store = null);
-    expect(find.textContaining('alice'), findsOneWidget);
-    expect(find.text('今天可以做'), findsOneWidget);
-    expect(find.text('自己挑一件'), findsNothing);
-  });
-
-  testWidgets('今天可以做 lists what this workspace can do and opens it', (
-    tester,
-  ) async {
-    final store = _FakeStoreApi()
-      ..cards = const [
-        StarterCard(entryId: 'video', title: '给巷口小馆拍条视频', hint: '挑个样子'),
-        StarterCard(entryId: 'douyin_publish', title: '发到抖音'),
-        StarterCard(entryId: 'gone', title: '下线的入口'),
-      ];
-    final (_, router) = await _mount(tester, store: store);
-    expect(store.locale, 'zh-CN');
-    expect(find.text('给巷口小馆拍条视频'), findsOneWidget);
-    expect(find.text('挑个样子'), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byKey(const Key('light-entry-menu'))).dy,
-      lessThan(tester.getTopLeft(find.text('今天可以做')).dy),
-    );
-    // Grey on the free tier, and an entry the server no longer lists.
-    expect(find.byKey(const Key('light-starter-douyin_publish')), findsNothing);
-    expect(find.text('下线的入口'), findsNothing);
-    await tester.tap(find.byKey(const Key('light-starter-video')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/light/topic/video');
-    expect(router.state.uri.queryParameters['brief'], '给巷口小馆拍条视频');
-  });
-
-  testWidgets('an available entry opens its topic page', (tester) async {
-    final (_, router) = await _mount(tester);
-    await tester.tap(find.byKey(const Key('light-entry-video')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/light/topic/video');
-  });
-
-  testWidgets('a grey entry on the free tier goes to the plans', (
-    tester,
-  ) async {
-    final (_, router) = await _mount(tester);
-    await tester.tap(find.byKey(const Key('light-entry-douyin_publish')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/app/billing');
-  });
-
-  testWidgets('a grey entry on a paid plan goes to the desktop', (
-    tester,
-  ) async {
-    final api = _FakeLightApi()
-      ..view = LightEntriesView.fromJson(_entriesJson(plan: 'pro'));
-    final (_, router) = await _mount(tester, api: api);
-    await tester.tap(find.byKey(const Key('light-entry-douyin_publish')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/app/desktop');
-  });
-
-  testWidgets('coming soon stays put; the band and the ask bar navigate', (
-    tester,
-  ) async {
-    final (_, router) = await _mount(tester);
-    await tester.tap(find.byKey(const Key('light-entry-footage_edit')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/home');
-    await tester.tap(find.text('所有事都能省心托管'));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/light/autopilot');
-    router.go('/home');
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('light-ask')));
-    await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/assistant');
-  });
-
-  testWidgets('recent groups list their results and open the chat', (
-    tester,
-  ) async {
-    final api = _FakeLightApi()
-      ..groups = [
-        const LightRecentGroup(
-          sessionId: 'sess-1',
-          title: '周末探店',
-          entryId: 'video',
-          outputs: [
-            LightRecentOutput(assetId: 'a1', mime: 'video/mp4', kind: 'final'),
-            LightRecentOutput(assetId: 'a2', mime: 'image/png', kind: 'result'),
-          ],
-        ),
-      ];
-    final (_, _) = await _mount(tester, api: api);
-    expect(find.text('周末探店'), findsOneWidget);
-    expect(find.textContaining('2 个产出'), findsOneWidget);
-    expect(find.byKey(const Key('light-recent-empty')), findsNothing);
-  });
-
-  testWidgets('a failed recent read offers a retry', (tester) async {
-    final api = _FakeLightApi()..recentDown = true;
-    await _mount(tester, api: api);
-    expect(find.byKey(const Key('light-recent-failed')), findsOneWidget);
+    expect(find.text('alice'), findsOneWidget);
   });
 }

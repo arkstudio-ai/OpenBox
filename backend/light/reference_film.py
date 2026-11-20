@@ -670,6 +670,8 @@ async def _reviewed_takes(ctx, form, run, plan, materials, anchor):
         )
         async with slot(images):
             first = await _still(ctx, prefix, f"frame-v2-{index}", prompt, list(dict.fromkeys(refs))[:4])
+        from light.shot_editor import publish_request
+        await publish_request(ctx, prefix, shot_request(prefix, index, shot, first))
         references[index] = (first, prompt, refs)
         return first
 
@@ -704,6 +706,8 @@ async def _reviewed_takes(ctx, form, run, plan, materials, anchor):
             references[index] = (first, prompt, refs)
             directions.pop(index, None)
         request = shot_request(prefix, index, plan.shots[index - 1], first, direction=direction)
+        from light.shot_editor import publish_request
+        await publish_request(ctx, prefix, request)
         check_running()
         return await _job(
             ctx, request, kind="segment", label=f"剧情镜头 {index}", run=run

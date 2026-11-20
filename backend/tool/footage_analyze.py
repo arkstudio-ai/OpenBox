@@ -29,7 +29,7 @@ import math
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -71,11 +71,24 @@ camera 写这一段镜头本身怎么动（画面里的人动不算）；faces �
 texts 只抄能完全认清的字（店名、价格、菜名、活动），认不清、被遮住的一个字都不要写，没有就给空数组。"""
 
 
+class FootageFrame(BaseModel):
+    asset_id: str = Field(min_length=1, max_length=64)
+    at_sec: float = Field(ge=0, le=MAX_CLIP_SECONDS, allow_inf_nan=False)
+
+
 class FootageAnalyzeArgs(BaseModel):
     #: The owner's uploaded clips, in the order they were shot or sent.
-    asset_ids: list[str] = Field(min_length=1, max_length=MAX_CLIPS)
+    asset_ids: list[str] | None = Field(default=None, min_length=1, max_length=MAX_CLIPS)
     #: Transcribe clips that have sound (default true).
     transcribe: bool = True
+    #: Instead of analyzing a batch, save exact source frames as image assets.
+    frames: list[FootageFrame] | None = Field(default=None, min_length=1, max_length=MAX_CLIPS)
+
+    @model_validator(mode="after")
+    def _operation(self):
+        if (self.asset_ids is None) == (self.frames is None):
+            raise ValueError("provide either asset_ids for analysis or frames for exact capture")
+        return self
 
 
 class FootageRefusal(Exception):
@@ -96,11 +109,12 @@ def _frame_times(duration: float) -> list[float]:
     return [round(step * (i + 0.5), 2) for i in range(count)]
 
 
-def snapshot_url(oss, key: str, at_sec: float, *, width: int = FRAME_WIDTH, exact: bool = False) -> str:
+def snapshot_url(oss, key: str, at_sec: float, *, width: int = FRAME_WIDTH, exact: bool = False,
+                 expires_sec: int = SNAPSHOT_LINK_SECONDS) -> str:
     """A signed GET that returns one JPEG frame of the video at ``at_sec`` (OSS video/snapshot)."""
     mode = "" if exact else ",m_fast"
     process = f"video/snapshot,t_{int(at_sec * 1000)},f_jpg,w_{width}{mode},ar_auto"
-    return oss._presign("GET", key, SNAPSHOT_LINK_SECONDS, subresource={"x-oss-process": process})
+    return oss._presign("GET", key, expires_sec, subresource={"x-oss-process": process})
 
 
 async def _vision(frames: list[tuple[float, str]], *, duration: float, orientation: str, speech: str) -> dict:
@@ -285,6 +299,8 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
 
 
 async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
+    if args.frames is not None:
+        return await _capture_frames(args.frames, ctx)
     # A guided Light page shows its example card before the clips are read and charged (light/example_gate.py).
     from light import example_gate
     held = await example_gate.before(ctx, tool="footage_analyze")
@@ -293,7 +309,7 @@ async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     from billing.footage import quote_analysis, settle_analysis
     from core.oss import OssNotConfigured, get_oss
 
-    ids = list(dict.fromkeys(args.asset_ids))
+    ids = list(dict.fromkeys(args.asset_ids or ()))
     try:
         oss = get_oss()
     except OssNotConfigured:
@@ -345,6 +361,76 @@ async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                                 "refused": refused})
 
 
+async def _capture_frames(frames: list[FootageFrame], ctx: ToolContext) -> ToolResult:
+    """Make camera frames available to the image and video tools without a desktop transfer."""
+    import httpx
+
+    from assets.service import owned_ready_query
+    from core.oss import OssNotConfigured, get_oss
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from light.remake import _reference_asset
+    from models.message import FilePart, FileRelation
+    from session.session import save_part
+    from video.media_probe import ensure_meta
+
+    try:
+        oss = get_oss()
+    except OssNotConfigured:
+        return ToolResult(title="Frame capture unavailable", output="The asset bucket is not configured.")
+    ids = {frame.asset_id for frame in frames}
+    async with get_db_session() as db:
+        sources = {row.id: row for row in (await db.scalars(
+            owned_ready_query(ctx.user_id, ctx.workspace_id).where(FileAsset.id.in_(ids))
+        )).all()}
+
+    unique_frames = dict.fromkeys((frame.asset_id, round(frame.at_sec * 1000)) for frame in frames)
+
+    async def capture(client, source_id, milliseconds):
+        source = sources.get(source_id)
+        at = milliseconds / 1000
+        info = {"source_id": source_id, "at_sec": at}
+        if source is None or not source.mime.startswith("video/"):
+            return {**info, "error": "Choose a ready video asset in this workspace."}
+        meta = await ensure_meta(source_id, user_id=ctx.user_id)
+        duration = (meta or {}).get("duration_sec")
+        if not duration or at >= duration:
+            return {**info, "error": "Choose a timestamp inside the source video."}
+        width = min((meta or {}).get("width") or 720, 1080)
+        try:
+            response = await client.get(snapshot_url(oss, source.oss_key, at, width=width, exact=True))
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return {**info, "error": "The source frame could not be decoded."}
+        data = response.content
+        if not response.headers.get("content-type", "").startswith("image/jpeg") or not 0 < len(data) <= 4_000_000:
+            return {**info, "error": "The source did not return a usable JPEG frame."}
+        name = f"footage-frame-{source_id}-{milliseconds}"
+        asset_id = await _reference_asset(ctx, name, data)
+        if ctx.message_id:
+            await save_part(
+                FilePart(session_id=ctx.session_id, message_id=ctx.message_id,
+                         path=f"{name}.jpg", mime_type="image/jpeg", asset_id=asset_id,
+                         oss_key=f"assets/{ctx.user_id}/{asset_id}/{name}.jpg", size=len(data),
+                         transient=True, relation=FileRelation(kind="inspection_image", role="evidence",
+                                                               label=f"{at:g}s · {source.name}")),
+                is_new=True, user_id=ctx.user_id, run_fence=ctx.run_fence,
+            )
+        return {**info, "asset_id": asset_id}
+
+    await ctx.assert_run_current()
+    async with httpx.AsyncClient(timeout=12) as client:
+        result = await asyncio.gather(*(capture(client, source_id, milliseconds)
+                                        for source_id, milliseconds in unique_frames))
+    ready = sum("asset_id" in item for item in result)
+    return ToolResult(
+        title=f"实拍关键帧 · {ready} 张",
+        output="frames_json=" + json.dumps(result, ensure_ascii=False) +
+               "\nUse the returned image asset_id in image_gen input_images or video_generate frame inputs.",
+        metadata={"frames": result, "error": not ready},
+    )
+
+
 FOOTAGE_ANALYZE_DESCRIPTION = """\
 Read the owner's uploaded phone clips (你拍我剪) without a cloud desktop: for \
 each clip its length, orientation (横拍 clips are centre-cropped to the 9:16 \
@@ -355,7 +441,7 @@ menus) and who is in the picture. Pass every clip \
 in one call (asset_ids, up to 10, at most 5 minutes in total). It charges the \
 素材分析 fee once for the batch — 1 credit per started minute of footage — and \
 the result says how much (analysis_credits=), which the plan card must show. \
-Calling again with the same clips in this conversation is not charged again."""
+Calling again with the same clips in this conversation is not charged again. +For an exact usable still, pass frames=[{asset_id, at_sec}] instead of asset_ids. +Captures return owned JPEG asset IDs from the original footage, ready for editing or animation."""
 
 footage_analyze_tool = define_tool(
     "footage_analyze",

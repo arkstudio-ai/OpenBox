@@ -15,6 +15,8 @@ import '../api/light_api.dart';
 import '../widgets/light_input_bar.dart';
 import 'production_api.dart';
 import 'production_media.dart';
+import 'production_shot_models.dart';
+import 'production_shots.dart';
 import 'production_stages.dart';
 import 'production_widgets.dart';
 
@@ -31,6 +33,7 @@ class ProductionPage extends ConsumerStatefulWidget {
 class _ProductionPageState extends ConsumerState<ProductionPage> {
   final _shop = TextEditingController();
   final _script = TextEditingController();
+  final _productName = TextEditingController();
   final _pending = <String, Object?>{};
   LightProduction? _task;
   Future<bool>? _saving;
@@ -40,6 +43,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   bool _refreshing = false;
   bool _advancedUpdated = false;
   bool _inAgent = false;
+  bool _confirmingAssembly = false;
   double? _uploadProgress;
   Object? _error;
   int _snapshot = 0;
@@ -64,7 +68,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     }
     unawaited(_refresh());
     _poll = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (_task?.working == true && !_inAgent && !_busy && _saving == null) {
+      if ((_task?.working == true || _task?.shotWorkspace?.active == true) &&
+          !_inAgent &&
+          !_busy &&
+          _saving == null) {
         unawaited(_refresh());
       }
     });
@@ -76,6 +83,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     if (!_pending.containsKey('shop') && _shop.text.trim() != task.shop) {
       _shop.text = task.shop;
     }
+    if (!_pending.containsKey('product_name') &&
+        _productName.text.trim() != task.productName) {
+      _productName.text = task.productName;
+    }
     final field = task.remake ? 'reference_copy' : 'script';
     final copy = task.remake ? task.referenceCopy : task.script;
     if (!_pending.containsKey(field) && _script.text.trim() != copy) {
@@ -85,11 +96,83 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
 
   void _receive(LightProduction task) {
     if (mounted) {
+      final offerAssembly =
+          _task?.shotWorkspace?.active == true &&
+          _task?.shotWorkspace?.composing != true &&
+          task.shotWorkspace?.canCompose == true;
       setState(() {
         _snapshot++;
         _readTask(task);
         _error = null;
       });
+      if (offerAssembly) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+            unawaited(_confirmAssembly());
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _shotDetail(ProductionShot shot) async {
+    final task = _task!;
+    final version = shot.version;
+    if (version == null) return;
+    final updated = await Navigator.push<LightProduction>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductionShotPage(
+          task: task,
+          shot: shot,
+          version: version,
+          editable:
+              shot.editable &&
+              task.shotWorkspace?.active == false &&
+              !task.working,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (updated == null) {
+      await _refresh();
+      return;
+    }
+    _receive(updated);
+    if (updated.shotWorkspace?.canCompose == true) await _confirmAssembly();
+  }
+
+  void _versionHistory() {
+    final task = _task!;
+    unawaited(
+      Navigator.push<void>(
+        context,
+        MaterialPageRoute(builder: (_) => ProductionVersionsPage(task: task)),
+      ),
+    );
+  }
+
+  Future<void> _confirmAssembly() async {
+    final snapshot = _task!;
+    final work = snapshot.shotWorkspace;
+    if (_confirmingAssembly || _busy || work?.canCompose != true) return;
+    _confirmingAssembly = true;
+    try {
+      final accepted = await confirmProductionAssembly(context, _i18n, work!);
+      if (!mounted || accepted != true) return;
+      await _perform(() async {
+        final versions = work.pending.map((shot) => shot.version!.id).toList();
+        _receive(
+          await _api.shotAction(
+            snapshot,
+            'compose',
+            productionRequestId(),
+            versions: versions,
+          ),
+        );
+      });
+    } finally {
+      _confirmingAssembly = false;
     }
   }
 
@@ -196,6 +279,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     switch (task.page) {
       case 'materials':
         await _goTo('style');
+      case 'style' when task.kind == ProductionKind.footage:
+        await _send('render');
       case 'style':
         _receive(
           await _api.edit(task, {'page': 'review', if (skip) 'template': ''}),
@@ -422,6 +507,14 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   children: [
                     Expanded(
                       child: switch (task.status) {
+                        'working' || 'completed'
+                            when task.shotWorkspace != null =>
+                          ProductionShotList(
+                            task: task,
+                            onEdit: task.working ? null : _shotDetail,
+                            onHistory: _versionHistory,
+                            onCompose: _confirmAssembly,
+                          ),
                         'working' => ProductionProgress(task: task),
                         'completed' when task.output != null =>
                           ProductionResult(task: task),
@@ -474,6 +567,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                 if (!_busy) _stage('template', value);
               },
             ),
+            if (task.kind == ProductionKind.footage) ...[
+              const SizedBox(height: 12),
+              _originalAudio(task),
+              _creativeEffects(task),
+            ],
           ],
         ),
         'review' => _review(task),
@@ -706,6 +804,22 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     ),
   );
 
+  Widget _originalAudio(LightProduction task) => SwitchListTile.adaptive(
+    contentPadding: EdgeInsets.zero,
+    title: Text(_text('keepOriginal')),
+    value: _pending['keep_original'] as bool? ?? task.keepOriginal,
+    onChanged: _busy ? null : (value) => _stage('keep_original', value),
+  );
+
+  Widget _creativeEffects(LightProduction task) => SwitchListTile.adaptive(
+    key: const Key('production-creative-effects'),
+    contentPadding: EdgeInsets.zero,
+    title: Text(_text('creativeEffects')),
+    subtitle: Text(_text('creativeEffectsHint')),
+    value: _pending['creative_effects'] as bool? ?? task.creativeEffects,
+    onChanged: _busy ? null : (value) => _stage('creative_effects', value),
+  );
+
   Widget _review(LightProduction task) {
     final menu = task.kind == ProductionKind.menu;
     final summary = [
@@ -714,6 +828,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         _text('selected', vars: {'count': task.materials.length}),
       if (task.template.isNotEmpty)
         productionTemplateLabel(_i18n, task.template),
+      if (task.supportsVideoTiers(task.template) && task.videoTier != null)
+        "${_text('videoTier.title')} ${task.videoTier!.label(_i18n)}",
     ].where((value) => value.isNotEmpty).join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -730,6 +846,29 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         if (task.materials.isNotEmpty) ...[
           ProductionMediaStrip(media: task.materials),
           const SizedBox(height: 16),
+        ],
+        if (task.template == 'silk_road') ...[
+          TextField(
+            key: const Key('production-product-name'),
+            controller: _productName,
+            enabled: !_busy,
+            maxLength: 36,
+            onChanged: (value) => _stage('product_name', value),
+            decoration: InputDecoration(
+              labelText: _text('productName'),
+              hintText: task.suggestedProduct.isEmpty
+                  ? _text('productNameHint')
+                  : task.suggestedProduct,
+              counterText: '',
+            ),
+          ),
+          SwitchListTile.adaptive(
+            key: const Key('production-beat-music'),
+            contentPadding: EdgeInsets.zero,
+            title: Text(_text('beatMusic')),
+            value: _pending['beat_music'] as bool? ?? task.beatMusic,
+            onChanged: _busy ? null : (value) => _stage('beat_music', value),
+          ),
         ],
         if (menu)
           ProductionDishes(
@@ -751,13 +890,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             hint: _text('scriptPlaceholder'),
             onChanged: (value) => _stage('script', value),
           ),
-        if (task.kind == ProductionKind.footage)
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: Text(_text('keepOriginal')),
-            value: _pending['keep_original'] as bool? ?? task.keepOriginal,
-            onChanged: _busy ? null : (value) => _stage('keep_original', value),
-          ),
+        if (task.kind == ProductionKind.footage) ...[
+          _originalAudio(task),
+          _creativeEffects(task),
+        ],
         if (!menu || task.materials.isNotEmpty) ...[
           const SizedBox(height: 12),
           Align(
@@ -811,8 +947,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       label: _text(label),
       onPressed: ready ? action : null,
     );
-    Widget secondary(String label, VoidCallback action) =>
-        TextButton(onPressed: ready ? action : null, child: Text(_text(label)));
+    Widget secondary(String label, VoidCallback action) => TextButton(
+      onPressed: ready && task.shotWorkspace?.active != true ? action : null,
+      child: Text(_text(label)),
+    );
     return switch (task.status) {
       'completed' => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -824,7 +962,12 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              secondary('editResult', () => _perform(() => _send('edit'))),
+              secondary(
+                'editResult',
+                task.kind == ProductionKind.footage
+                    ? _advanced
+                    : () => _perform(() => _send('edit')),
+              ),
               secondary(
                 'another',
                 () => context.pushReplacement(
@@ -858,6 +1001,20 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         'style' when task.kind == ProductionKind.video => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (task.supportsVideoTiers(
+              _pending['template'] as String? ?? task.template,
+            )) ...[
+              ProductionTierPicker(
+                selected:
+                    ProductionVideoTier.fromId(_pending['video_tier']) ??
+                    task.videoTier,
+                available: task.availableVideoTiers,
+                onChoose: _busy
+                    ? null
+                    : (tier) => _stage('video_tier', tier.name),
+              ),
+              const SizedBox(height: 12),
+            ],
             primary(
               'next',
               (_pending['template'] as String? ?? task.template).isEmpty
@@ -866,6 +1023,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             ),
             secondary('skip', () => _next(skip: true)),
           ],
+        ),
+        'style' when task.kind == ProductionKind.footage => primary(
+          'generate.footage_edit',
+          _canRender(task) ? _next : null,
         ),
         'style' => primary('next', _next),
         _ => primary(
@@ -899,6 +1060,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     _poll?.cancel();
     _shop.dispose();
     _script.dispose();
+    _productName.dispose();
     super.dispose();
   }
 }

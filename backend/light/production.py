@@ -16,7 +16,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import remake_case, silk_road, wan_story
+from light import remake_case, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -81,10 +81,15 @@ async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: s
     shop = await get_store(workspace_id, user_id)
     name = (shop or {}).get("name") or ""
     model, _ = resolve("", config, context="light production")
+    form = forms.initial_form(body.entry_id, name[:80], body.brief)
+    if body.entry_id == "video":
+        tiers = video_tiers.available_tiers(config)
+        if tiers:
+            form["video_tier"] = tiers[0]
     session = await create_session(
         model=model, agent=default_agent_name(), title=body.brief or entry.title, user_id=user_id,
         workspace_id=workspace_id, light_entry=body.entry_id,
-        light_production=forms.initial_form(body.entry_id, name[:80], body.brief),
+        light_production=form,
     )
     return await get(user_id, workspace_id, session.id)
 
@@ -94,10 +99,21 @@ def _media_matches(entry: str, mime: str) -> bool:
 
 
 async def _validate_fields(db, row: Session, changes: dict) -> None:
-    if "template" in changes and changes["template"] not in forms.TEMPLATES[row.light_entry]:
-        raise LightError("LIGHT_PRODUCTION_TEMPLATE", "Invalid template for this production")
+    if "template" in changes:
+        template = changes["template"]
+        if template not in forms.TEMPLATES[row.light_entry]:
+            raise LightError("LIGHT_PRODUCTION_TEMPLATE", "Invalid template for this production")
+        if (row.light_entry == "video" and template in forms.RETIRED_VIDEO_TEMPLATES
+                and template != _form(row)["template"]):
+            raise LightError("LIGHT_PRODUCTION_TEMPLATE_RETIRED", "This template is no longer offered.", 409)
+    if "video_tier" in changes:
+        template = changes.get("template", _form(row)["template"])
+        if row.light_entry != "video" or template not in forms.VIDEO_TIER_TEMPLATES:
+            raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
     if "dishes" in changes and row.light_entry != "menu":
         raise LightError("LIGHT_PRODUCTION_DISHES", "Only menus have dish rows")
+    if "creative_effects" in changes and row.light_entry != "footage_edit":
+        raise LightError("LIGHT_PRODUCTION_STATE", "Creative inserts are only available for footage edits")
     if "asset_ids" in changes:
         assets = (await db.scalars(owned_ready_query(row.user_id, row.workspace_id)
                                    .where(FileAsset.id.in_(changes["asset_ids"])))).all()
@@ -111,6 +127,11 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
     if not actual:
         return
     form.update(actual)
+    if "video_tier" in actual:
+        row.video_model, row.video_resolution = video_tiers.resolve_tier(form["video_tier"])
+        if (form["template"] == silk_road.TEMPLATE
+                and not (form.get("remake_adaptation") or {}).get("world")):
+            form["remake_prepared_for"] = None
     form["revision"] += 1
     if any(key != "page" for key in actual):
         form["edited_at"] = _now().isoformat()
@@ -202,7 +223,9 @@ def _asset_view(asset, oss) -> dict:
         elif asset.mime.startswith("video/"):
             from tool.footage_analyze import snapshot_url
             thumbnail = snapshot_url(oss, asset.oss_key, 0.0, width=480)
-    return {"id": asset.id, "name": asset.name, "mime": asset.mime, "thumbnail": thumbnail}
+    meta = getattr(asset, "meta", None) or {}
+    return {"id": asset.id, "name": asset.name, "mime": asset.mime, "thumbnail": thumbnail,
+            **({"width": meta["width"], "height": meta["height"]} if meta.get("width") and meta.get("height") else {})}
 
 
 def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messages=frozenset()) -> list[str]:
@@ -224,10 +247,14 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
                    if row.light_entry != "menu" and job.kind in _COMPOSITIONS and job.status == "completed" and job.output_asset_id
                    and (wan_story.is_complete_cut(run, job) if run.get("remake_version") in wan_story.VERSIONS else
                         (not run.get("remake_version") or job.idempotency_key.startswith(run["job_prefix"] + ":final"))))
+    if row.light_entry == "video" and any(shot_editor.is_edit_job(job) for job in jobs):
+        seen = [asset_id for _, asset_id in sorted(results, reverse=True)]
+        results.extend((_utc(job.completed_at or job.updated_at), job.output_asset_id)
+                       for job in shot_editor.output_keys(form, jobs, seen))
     return list(dict.fromkeys(asset_id for _, asset_id in sorted(results, reverse=True)))
 
 
-async def _views(db, rows: list[Session]) -> list[dict]:
+async def _views(db, rows: list[Session], *, include_shots: bool = False) -> list[dict]:
     if not rows:
         return []
     from core.oss import OssNotConfigured, get_oss
@@ -268,20 +295,32 @@ async def _views(db, rows: list[Session]) -> list[dict]:
     except OssNotConfigured:
         oss = None
     media = {asset_id: _asset_view(asset, oss) for asset_id, asset in assets.items()}
+    tiers = video_tiers.available_tiers() if include_shots and any(row.light_entry == "video" for row in rows) else []
     result = []
     for row in rows:
         form = _form(row)
         output = next((media[key] for key in output_ids[row.id] if key in media), None)
+        jobs = relevant_jobs[row.id]
+        guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
+        editor = await shot_editor.project(db, row, jobs, [key for key in output_ids[row.id] if key in media], oss) if include_shots else None
         result.append({
-            **{key: value for key, value in form.items() if key not in {"run", "edited_at", "remake_adaptation", "remake_prepared_for"}},
-            **_work_view(row, receipts.get((form.get("run") or {}).get("id")), relevant_jobs[row.id], output,
+            **{key: value for key, value in form.items() if key not in {
+                "run", "edited_at", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
+                "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits",
+            }},
+            **_work_view(row, receipts.get((form.get("run") or {}).get("id")), guide_jobs, output,
                          row.id in questions),
+            **({"shot_editor": editor} if editor else {}),
+            **({"available_video_tiers": tiers} if include_shots and row.light_entry == "video" else {}),
             "session_id": row.id, "entry_id": row.light_entry, "title": row.title, "legacy": not row.light_production,
             "updated_at": _utc(row.updated_at).isoformat(), "output": output,
             "materials": [media[key] for key in form["asset_ids"] if key in media],
             **({"reference_copy": remake_case.reference_copy(form),
                 "remake_prepared": form.get("remake_prepared_for") == remake_case.input_fingerprint(form)}
                if remake_case.applies(row.light_entry, form) else {}),
+            **({"suggested_product": (form.get("remake_adaptation") or {}).get("product", "")}
+               if form.get("template") == silk_road.TEMPLATE
+               and form.get("remake_prepared_for") == remake_case.input_fingerprint(form) else {}),
         })
     return result
 
@@ -291,13 +330,16 @@ async def get(user_id: str, workspace_id: str, session_id: str) -> dict:
         row = await db.scalar(_owned(user_id, workspace_id).where(Session.id == session_id))
         if row is None:
             raise _not_found()
-        return (await _views(db, [row]))[0]
+        return (await _views(db, [row], include_shots=True))[0]
 
 
-async def history(user_id: str, workspace_id: str, limit: int, offset: int) -> dict:
+async def history(user_id: str, workspace_id: str, limit: int, offset: int, *, entry_id: str | None = None) -> dict:
+    query = _owned(user_id, workspace_id, include_legacy=True)
+    if entry_id is not None:
+        query = query.where(Session.light_entry == entry_id)
+    query = query.order_by(Session.updated_at.desc(), Session.id).offset(offset).limit(limit + 1)
     async with get_db_session() as db:
-        rows = list((await db.scalars(_owned(user_id, workspace_id, include_legacy=True)
-                     .order_by(Session.updated_at.desc(), Session.id).offset(offset).limit(limit + 1))).all())
+        rows = list((await db.scalars(query)).all())
         return {"items": await _views(db, rows[:limit]), "has_more": len(rows) > limit}
 
 
@@ -386,7 +428,10 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
             raise LightError("LIGHT_REMAKE_PLAN", "当前表单需要新的分镜，请根据本次素材与文案填入 plan。", 409)
         if run["action"] == "prepare":
             if isinstance(adaptation, silk_road.Plan):
-                adaptation = adaptation.for_shop(form["shop"])
+                if name := form.get("product_name"):
+                    adaptation = adaptation.model_copy(update={"product": name})
+                else:
+                    adaptation = adaptation.for_shop(form["shop"])
             changes = {"script": recipe.display_script(adaptation), "reference_copy": remake_case.reference_copy(form),
                        "remake_adaptation": adaptation.model_dump(), "remake_prepared_for": fingerprint}
             _apply(row, changes, from_agent=True)
@@ -396,7 +441,7 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         elif run["action"] == "render":
             snapshot = adaptation.model_dump()
             run = {**run, "remake_adaptation": snapshot}
-            if form.get("template") == wan_story.SODA_TEMPLATE:
+            if form.get("template") == wan_story.SODA_TEMPLATE and not run.get("video_model"):
                 run.update(video_model=row.video_model, video_resolution=row.video_resolution)
             row.light_production = {**form, "run": run, "remake_adaptation": snapshot,
                                     "remake_prepared_for": fingerprint, "script": recipe.display_script(adaptation),
@@ -543,12 +588,18 @@ async def save_reference_quality(ctx, prefix: str, quality: dict) -> dict:
 def _validate_action(row: Session, view: dict, action: str) -> None:
     if view["status"] in _BUSY or (view["status"] == "review" and action not in {"apply", "dismiss"}):
         raise LightError("LIGHT_PRODUCTION_STATE", "The production is already active or awaiting a decision", 409)
+    if (view.get("shot_editor") or {}).get("active"):
+        raise LightError("LIGHT_PRODUCTION_STATE", "Finish the current fragment action before continuing", 409)
     if (action in {"prepare", "render"} and view.get("template") == silk_road.TEMPLATE
             and not view["materials"]):
         raise LightError("LIGHT_PRODUCTION_ASSET", "先选择一张菜品照片或一段能看清菜品的实拍。")
     if action == "render":
         if view["status"] == "completed":
             raise LightError("LIGHT_PRODUCTION_STATE", "Edit the result before generating a new version", 409)
+        form = _form(row)
+        if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
+                and not (form.get("remake_adaptation") or {}).get("world")):
+            raise LightError("LIGHT_VIDEO_FRAME_PLAN", "Prepare the current storyboard before filming.", 409)
         if row.light_entry == "menu" and not any(dish["name"] for dish in view["dishes"]):
             raise LightError("LIGHT_PRODUCTION_DISHES", "Confirm at least one dish before generating")
         if row.light_entry == "footage_edit" and not view["materials"]:
@@ -558,6 +609,9 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
 
 
 def _select_remake_model(row: Session, form: dict) -> None:
+    if row.light_entry == "video" and form["template"] in forms.VIDEO_TIER_TEMPLATES and form.get("video_tier"):
+        row.video_model, row.video_resolution = video_tiers.resolve_tier(form["video_tier"])
+        return
     exact_remake = remake_case.applies(row.light_entry, form)
     if row.light_entry != "video" or not form["template"] or (row.video_model and not exact_remake):
         return
@@ -603,10 +657,11 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
             queued = True
         else:
             _check_revision(form, body.revision)
-            view = (await _views(db, [row]))[0]
+            view = (await _views(db, [row], include_shots=body.action == "edit"))[0]
             _validate_action(row, view, body.action)
             if body.action == "edit":
-                row.light_production = {**form, "revision": form["revision"] + 1, "page": "review", "run": None,
+                page = "style" if row.light_entry == "footage_edit" else "review"
+                row.light_production = {**form, "revision": form["revision"] + 1, "page": page, "run": None,
                                         "edited_at": _now().isoformat()}
             elif body.action in {"apply", "dismiss"}:
                 proposal = form.get("proposal")
@@ -617,8 +672,15 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     await _validate_fields(db, row, proposal["changes"])
                     _apply(row, proposal["changes"], from_agent=True)
             else:
+                creative_motion = False
                 if body.action == "render":
                     _select_remake_model(row, form)
+                    creative_motion = (
+                        row.light_entry == "footage_edit" and form.get("creative_effects") is True
+                        and "fast" in video_tiers.available_tiers()
+                    )
+                    if creative_motion:
+                        row.video_model, row.video_resolution = video_tiers.ROUTES["fast"]
                 prefix = f"light:{row.id}:{form['revision']}"
                 exact_remake = remake_case.applies(row.light_entry, form)
                 version = remake_case.version_for(form) if exact_remake else None
@@ -659,13 +721,25 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     raise LightError("LIGHT_PRODUCTION_ASSET", "A selected material is no longer available") from exc
                 row.light_production = {**form, "run": {"id": receipt.id, "action": body.action,
                                         "client_id": body.request_id, "revision": form["revision"], "job_prefix": prefix,
-                                        "existing": existing}}
+                                        "existing": existing,
+                                        **({"creative_motion": True} if creative_motion else {}),
+                                        **({"video_model": row.video_model, "video_resolution": row.video_resolution}
+                                           if body.action == "render" and row.light_entry == "video" else {})}}
                 if exact_remake:
                     prior = form.get("run") or {}
                     preserved = prior.get("remake_adaptation") if prior.get("job_prefix") == prefix else None
+                    if form.get("template") == silk_road.TEMPLATE and body.action == "render":
+                        resuming = prior.get("action") == "render" and prior.get("job_prefix") == prefix
+                        controls = prior.get("silk_controls") if resuming else {
+                            "beat_music": form.get("beat_music", True),
+                            "align_handoff": True,
+                        }
+                    else:
+                        controls = None
                     row.light_production = {**row.light_production, "run": {
                         **row.light_production["run"], "remake_version": version, "remake_adaptation": preserved,
-                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review") if k in prior}
+                        **({"silk_controls": controls} if controls is not None else {}),
+                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs") if k in prior}
                            if version == wan_story.VERSION and prior.get("job_prefix") == prefix else {}),
                     }}
                 queued = True

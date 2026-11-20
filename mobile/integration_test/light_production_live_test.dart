@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bossip_mobile/app/app.dart';
@@ -16,6 +17,7 @@ import 'package:bossip_mobile/shared/config/env.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/ui_mode.dart';
 import 'package:bossip_mobile/shared/router/paths.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,6 +35,11 @@ class _FixturePicker extends ImagePickerPlatform {
 
   @override
   Future<List<XFile>> getMedia({required MediaOptions options}) async => files;
+
+  @override
+  Future<List<XFile>> getMultiImageWithOptions({
+    MultiImagePickerOptions options = const MultiImagePickerOptions(),
+  }) async => files;
 }
 
 void main() {
@@ -40,6 +47,8 @@ void main() {
   const enabled = bool.fromEnvironment('LIGHT_QA');
   const generate = bool.fromEnvironment('LIGHT_QA_GENERATE');
   const silkRoad = bool.fromEnvironment('LIGHT_QA_SILK_ROAD');
+  const verifyShotEditor = bool.fromEnvironment('LIGHT_QA_SILK_SHOT_EDITOR');
+  const evidencePath = String.fromEnvironment('LIGHT_QA_EVIDENCE_DIR');
   const username = String.fromEnvironment('LIGHT_QA_USERNAME');
   const password = String.fromEnvironment('LIGHT_QA_PASSWORD');
   const photo = String.fromEnvironment('LIGHT_QA_PHOTO');
@@ -62,7 +71,9 @@ void main() {
       );
       final support = await getApplicationSupportDirectory();
       final evidence = await Directory(
-        '${support.path}/light-production-qa',
+        evidencePath.isEmpty
+            ? '${support.path}/light-production-qa'
+            : evidencePath,
       ).create(recursive: true);
       debugPrint('LIGHT_QA_EVIDENCE ${evidence.path}');
       final marker = DateTime.now().millisecondsSinceEpoch;
@@ -211,18 +222,99 @@ void main() {
       }
 
       if (silkRoad) {
-        const copy =
-            '用塞外朵莱娜的丝路香馕烤羊腿和真实摆盘，拍帐中初尝、集市误买干馕、沙里试吃、码头相赠、船上回味。'
-            '片名《丝路留香》，片尾「一路回味」。干馕袋全程只装浅色硬馕。保留原片的暖光、冷青码头和运镜，无需为轻微穿帮补拍。';
+        const modern = bool.fromEnvironment('LIGHT_QA_SILK_MODERN');
+        const product = String.fromEnvironment('LIGHT_QA_SILK_PRODUCT');
+        const shop = String.fromEnvironment(
+          'LIGHT_QA_SILK_SHOP',
+          defaultValue: '塞外朵莱娜',
+        );
+        const customCopy = String.fromEnvironment('LIGHT_QA_SILK_BRIEF');
+        const revisedShot = int.fromEnvironment('LIGHT_QA_SILK_RETAKE_INDEX');
+        const revisedPrompt = String.fromEnvironment(
+          'LIGHT_QA_SILK_RETAKE_PROMPT',
+        );
+        const story = modern
+            ? '拍现代中国商圈餐饮广告《给夜班带一份》。第1张是塞外朵莱娜真实丝路香馕烤羊腿照片，第2张实拍是店内石材弧墙和花艺，第3张是演员定妆，按图保留米灰夹克男摄影师阿哲和铁锈棕西装女搭档岚姐。第4张是现代街景与共享单车参考，仅给步行、骑车和试馕路段。'
+                  '两人收工吃羊腿，阿哲赶着给夜班同事打包，把玻璃柜台旁一袋浅色干馕试吃品当成正餐，店员穿现代围裙和短袖，骑共享单车到接驳站才发现。'
+                  '街边用人物向下摇摄给浅黄小狗隔空闻袋再偏头的反应，小狗不吃；岚姐折回取真正的羊腿，赶到冷青玻璃站台揭包并递给阿哲。'
+                  '银白接驳车内一口试吃，接站台挥手和车辆离开。原片只作为构图、运动与切点参考。片尾「给夜班带一份」。'
+            : '用塞外朵莱娜的丝路香馕烤羊腿和真实摆盘，拍帐中初尝、集市误买干馕、沙里试吃、码头相赠、船上回味。'
+                  '片名《丝路留香》，片尾「一路回味」。干馕袋全程只装浅色硬馕。保留原片的暖光、冷青码头和运镜，无需为轻微穿帮补拍。';
+        final copy = customCopy.isNotEmpty
+            ? customCopy
+            : verifyShotEditor
+            ? '$story 配乐按节拍，使用《Playful Pizzicato》。狗偏头留白，重点在揭开羊腿，离站自然淡出。第6段短标题用「揭开羊腿」。'
+            : story;
         final clock = Stopwatch()..start();
         void mark(String stage) => debugPrint(
           'SILK_TIMING $stage ${clock.elapsedMilliseconds} ${DateTime.now().toUtc().toIso8601String()}',
         );
+        final observed = <String, String>{};
+        final frameEvents = <Map<String, Object?>>[];
+        var readyClips = 0;
+        var totalClips = 0;
+        var resolvedFrames = 0;
+        final dio = container.read(apiDioProvider);
+        Interceptor? observer;
+        void watchProduction(String id) {
+          if (!verifyShotEditor && product.isEmpty) return;
+          observer = InterceptorsWrapper(
+            onResponse: (response, handler) {
+              if (response.requestOptions.path.endsWith('/productions/$id') &&
+                  response.data is Map<String, dynamic>) {
+                final data = response.data as Map<String, dynamic>;
+                final task = LightProduction.fromJson(data);
+                final shots = task.shotWorkspace?.shots ?? [];
+                totalClips = shots.length;
+                readyClips = shots.where((shot) => shot.version != null).length;
+                resolvedFrames = shots
+                    .where(
+                      (shot) =>
+                          (shot.version?.first ?? shot.first)?.source ==
+                              'input' &&
+                          (shot.version?.last ?? shot.last)?.source == 'input',
+                    )
+                    .length;
+                for (final shot in shots) {
+                  final first =
+                      shot.version?.first?.source ?? shot.first?.source;
+                  final last = shot.version?.last?.source ?? shot.last?.source;
+                  final version = shot.version?.number ?? 0;
+                  final summary = '${shot.status}/$first/$last/v$version';
+                  final key = shot.index.toString();
+                  if (observed[key] != summary) {
+                    observed[key] = summary;
+                    final event = <String, Object?>{
+                      't_ms': clock.elapsedMilliseconds,
+                      'session': id,
+                      'phase': task.phase,
+                      'status': task.status,
+                      'shot': shot.index,
+                      'title': shot.title,
+                      'shot_status': shot.status,
+                      'first': first,
+                      'last': last,
+                      'version': version,
+                      'ready': readyClips,
+                      'total': totalClips,
+                    };
+                    frameEvents.add(event);
+                    debugPrint('SILK_LIVE_FRAME ${jsonEncode(event)}');
+                  }
+                }
+              }
+              handler.next(response);
+            },
+          );
+          dio.interceptors.add(observer!);
+        }
+
         const finished = String.fromEnvironment('LIGHT_QA_SILK_RESULT');
         late final String id;
         if (finished.isNotEmpty) {
           await openFromHistory(finished);
           id = current();
+          watchProduction(id);
         } else {
           await home();
           mark('start');
@@ -230,24 +322,48 @@ void main() {
           await until(() => shown('production-shop'), 'silk-shop');
           id = current();
           debugPrint('SILK_APP_SESSION $id');
-          await tester.enterText(key('production-shop'), '塞外朵莱娜');
+          await tester.enterText(key('production-shop'), shop);
           if (photo.isNotEmpty) {
             await library(photo);
           } else {
             const fixture = String.fromEnvironment('LIGHT_QA_SILK_PHOTO_PATH');
-            final path = '${support.path}/silk-road-lamb.jpg';
-            if (fixture.isNotEmpty && await File(fixture).exists()) {
-              await File(fixture).copy(path);
+            final paths = <(String, String)>[
+              (
+                fixture,
+                product.isEmpty
+                    ? 'silk-road-lamb.jpg'
+                    : 'silk-road-product.jpg',
+              ),
+              if (modern) ...[
+                (
+                  const String.fromEnvironment('LIGHT_QA_SILK_ROOM_PATH'),
+                  'silk-road-room.jpg',
+                ),
+                (
+                  const String.fromEnvironment('LIGHT_QA_SILK_CAST_PATH'),
+                  'silk-road-cast.jpg',
+                ),
+                (
+                  const String.fromEnvironment('LIGHT_QA_SILK_STREET_PATH'),
+                  'silk-road-street.jpg',
+                ),
+              ],
+            ];
+            final files = <XFile>[];
+            for (final (input, name) in paths) {
+              final path = '${support.path}/$name';
+              if (input.isNotEmpty && await File(input).exists()) {
+                await File(input).copy(path);
+              }
+              expect(await File(path).exists(), isTrue);
+              files.add(XFile(path, mimeType: 'image/jpeg'));
             }
-            expect(await File(path).exists(), isTrue);
             final picker = ImagePickerPlatform.instance;
-            ImagePickerPlatform.instance = _FixturePicker([
-              XFile(path, mimeType: 'image/jpeg'),
-            ]);
+            ImagePickerPlatform.instance = _FixturePicker(files);
             try {
               await tap('production-source-upload');
               await until(
-                () => find.text('已选 1 个素材').evaluate().isNotEmpty,
+                () => find.text('已选 ${paths.length} 个素材').evaluate().isNotEmpty,
                 'silk-material',
                 seconds: 90,
               );
@@ -261,6 +377,14 @@ void main() {
           await tap('production-template-silk_road');
           await capture('silk-template');
           await tap('production-primary');
+          if (product.isNotEmpty) {
+            expect(
+              tester.widget<SwitchListTile>(key('production-beat-music')).value,
+              isTrue,
+            );
+            await tester.enterText(key('production-product-name'), product);
+          }
+          await tester.ensureVisible(key('production-script'));
           await tester.enterText(key('production-script'), copy);
           FocusManager.instance.primaryFocus?.unfocus();
           await tester.pump(const Duration(milliseconds: 550));
@@ -275,13 +399,43 @@ void main() {
           final plan = await api.get(id);
           expect(plan.remakePrepared, isTrue);
           expect(plan.referenceCopy, copy);
-          expect(plan.script, contains('丝路香馕烤羊腿'));
-          expect(plan.materials, hasLength(1));
+          expect(plan.script, contains(product.isEmpty ? '丝路香馕烤羊腿' : product));
+          expect(plan.materials, hasLength(modern ? 4 : 1));
+          if (modern) {
+            expect(plan.script, contains('站台'));
+          }
           await capture('silk-plan');
+          watchProduction(id);
+          await File('${evidence.path}/session-id.txt').writeAsString(id);
           await tap('production-primary');
           mark('render');
           await until(() => shown('production-progress'), 'silk-progress');
           await capture('silk-progress');
+          if (verifyShotEditor || product.isNotEmpty) {
+            await until(
+              () =>
+                  resolvedFrames > 0 ||
+                  shown('production-result-preview') ||
+                  find.text('重试制作').evaluate().isNotEmpty,
+              'first-actual-shot-frames',
+              seconds: 1800,
+            );
+            await capture('silk-progress-first-actual-frames');
+            if (readyClips < totalClips) {
+              await until(
+                () =>
+                    readyClips >= 4 ||
+                    shown('production-result-preview') ||
+                    find.text('重试制作').evaluate().isNotEmpty,
+                'partially-completed-shots',
+                seconds: 1200,
+              );
+              await capture('silk-progress-partial');
+            }
+            await File(
+              '${evidence.path}/frame-events.json',
+            ).writeAsString(jsonEncode(frameEvents));
+          }
           await until(
             () =>
                 shown('production-result-preview') ||
@@ -292,9 +446,29 @@ void main() {
           expect(shown('production-result-preview'), isTrue);
           mark('result-visible');
         }
-        final result = await api.get(id);
+        var result = await api.get(id);
+        if (verifyShotEditor || product.isNotEmpty) {
+          final deadline = DateTime.now().add(const Duration(seconds: 60));
+          while (result.working && DateTime.now().isBefore(deadline)) {
+            await tester.pump(const Duration(milliseconds: 450));
+            await Future<void>.delayed(const Duration(seconds: 1));
+            result = await api.get(id);
+          }
+        }
         expect(result.status, 'completed');
         expect(result.output?.video, isTrue);
+        if (product.isNotEmpty) {
+          expect(result.productName, product);
+          expect(result.shotWorkspace!.shots, hasLength(9));
+          for (final shot in result.shotWorkspace!.shots) {
+            expect(shot.version!.first?.source, 'input');
+            expect(shot.version!.last?.source, 'input');
+            expect(
+              shot.version!.framePrompts.keys,
+              containsAll(['first_frame', 'last_frame']),
+            );
+          }
+        }
         await capture('silk-result');
         await tap('production-result-preview');
         await until(
@@ -318,6 +492,196 @@ void main() {
         await capture('silk-playing');
         await tester.tap(find.byType(CloseButton).last);
         await tester.pump(const Duration(milliseconds: 350));
+        if (revisedShot > 0) {
+          final original = result.shotWorkspace!.current!;
+          final editKey = 'production-edit-shot-$revisedShot';
+          final scroll = find
+              .descendant(
+                of: key('production-shot-list'),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          await tester.scrollUntilVisible(
+            key(editKey),
+            450,
+            scrollable: scroll,
+            maxScrolls: 18,
+          );
+          await tap(editKey);
+          final field = key('production-shot-prompt-field');
+          await tester.ensureVisible(field);
+          await tester.enterText(field, revisedPrompt);
+          FocusManager.instance.primaryFocus?.unfocus();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tap('production-retake-shot');
+          mark('single-retake-submitted');
+          await until(
+            () => shown('production-confirm-compose'),
+            'single-retake-ready',
+            seconds: 650,
+          );
+          final pending = await api.get(id);
+          expect(pending.output!.id, original.media.id);
+          expect(pending.shotWorkspace!.pending.map((shot) => shot.index), [
+            revisedShot,
+          ]);
+          await capture('silk-one-shot-confirmation');
+          const hold = String.fromEnvironment('LIGHT_QA_SILK_RETAKE_REVIEW');
+          if (hold.isNotEmpty) {
+            await until(
+              () => File(hold).existsSync(),
+              'review-single-retake',
+              seconds: 300,
+            );
+          }
+          await tap('production-confirm-compose');
+          mark('single-retake-compose');
+          tester.state<ScrollableState>(scroll).position.jumpTo(0);
+          await until(
+            () => find.text('当前成片 · v2').evaluate().isNotEmpty,
+            'revised-film',
+            seconds: 300,
+          );
+          final revised = (await api.get(id)).shotWorkspace!.current!;
+          expect(
+            revised.segments.keys.where(
+              (i) => revised.segments[i] != original.segments[i],
+            ),
+            [revisedShot],
+          );
+          mark('revised-film-ready');
+          await capture('silk-one-shot-result');
+          return;
+        }
+        if (verifyShotEditor) {
+          final initial = await api.get(id);
+          final workspace = initial.shotWorkspace!;
+          expect(workspace.shots.length, 9);
+          expect(
+            workspace.shots.every(
+              (shot) =>
+                  shot.version?.first?.source ==
+                      (shot.version!.framePrompts.isEmpty
+                          ? 'video'
+                          : 'input') &&
+                  shot.version?.last?.source ==
+                      (shot.version!.framePrompts.isEmpty ? 'video' : 'input'),
+            ),
+            isTrue,
+          );
+          final revealShot = workspace.shots.singleWhere(
+            (shot) => shot.index == 6,
+          );
+          expect(revealShot.editable && revealShot.frameEditable, isTrue);
+          expect(revealShot.title, contains('羊腿'));
+          final editKey = 'production-edit-shot-${revealShot.index}';
+          Finder scroll() => find
+              .descendant(
+                of: key('production-shot-list'),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          await tester.scrollUntilVisible(
+            key(editKey),
+            520,
+            scrollable: scroll(),
+            maxScrolls: 18,
+          );
+          await tap(editKey);
+          await tap('production-shot-prompt-toggle');
+          expect(key('production-shot-prompt-field'), findsNothing);
+          await tap('production-shot-prompt-toggle');
+          expect(key('production-shot-prompt-field'), findsOneWidget);
+          const replacement = String.fromEnvironment('LIGHT_QA_SILK_TAIL_PATH');
+          expect(await File(replacement).exists(), isTrue);
+          final picker = ImagePickerPlatform.instance;
+          ImagePickerPlatform.instance = _FixturePicker([
+            XFile(replacement, mimeType: 'image/jpeg'),
+          ]);
+          try {
+            await tap('production-replace-tail');
+            await tester.tap(find.text('手机相册').hitTestable());
+            await until(
+              () => find.text('尾帧已更换，需重新生成此片段').evaluate().isNotEmpty,
+              'replacement-tail-visible',
+            );
+          } finally {
+            ImagePickerPlatform.instance = picker;
+          }
+          await capture('silk-replacement-tail');
+          mark('retake-requested');
+          await tap('production-retake-shot');
+          await until(
+            () => shown('production-confirm-compose'),
+            'new-reveal-ready',
+            seconds: 750,
+          );
+          mark('retake-ready');
+          expect((await api.get(id)).output?.id, initial.output?.id);
+          await capture('silk-compose-confirmation');
+          mark('recompose-requested');
+          await tap('production-confirm-compose');
+          await until(
+            () => shown('production-shot-list'),
+            'shot-result-visible',
+          );
+          tester.state<ScrollableState>(scroll()).position.jumpTo(0);
+          await until(
+            () => find.text('当前成片 · v2').evaluate().isNotEmpty,
+            'recompose-ready',
+            seconds: 240,
+          );
+          mark('recompose-ready');
+          final edited = await api.get(id);
+          expect(edited.output?.id, isNot(initial.output?.id));
+          expect(edited.shotWorkspace?.films.length, 2);
+          for (final shot in edited.shotWorkspace!.shots) {
+            expect(
+              shot.versions.length,
+              shot.index == revealShot.index ? 2 : 1,
+            );
+          }
+          await tap('production-version-history');
+          await capture('silk-version-history');
+          expect(find.text('成片 v1'), findsOneWidget);
+          await tester.tap(find.text('成片 v1').hitTestable());
+          await until(
+            () =>
+                find.byType(VideoPlayer).evaluate().isNotEmpty &&
+                tester
+                        .widget<VideoPlayer>(find.byType(VideoPlayer).last)
+                        .controller
+                        .value
+                        .position >
+                    const Duration(seconds: 2),
+            'old-film-playing',
+            seconds: 60,
+          );
+          mark('old-film-playing');
+          expect(
+            tester
+                .widget<VideoPlayer>(find.byType(VideoPlayer).last)
+                .controller
+                .value
+                .duration
+                .inMilliseconds,
+            closeTo(62125, 250),
+          );
+          await capture('silk-old-film-playing');
+          await File(
+            '${evidence.path}/frame-events.json',
+          ).writeAsString(jsonEncode(frameEvents));
+          await File('${evidence.path}/films.json').writeAsString(
+            jsonEncode({
+              'session': id,
+              'v1': initial.output?.id,
+              'v2': edited.output?.id,
+            }),
+          );
+          if (observer != null) dio.interceptors.remove(observer!);
+          debugPrint('SILK_SHOT_EDITOR_DONE $id');
+          return;
+        }
         await tap('production-advanced');
         await until(
           () => find.byType(ChatScreen).evaluate().isNotEmpty,
@@ -489,21 +853,18 @@ void main() {
             await library(photo);
             await capture('wan-materials');
             await tap('production-primary');
-            await tap('production-template-wan_story');
-            await tap('production-wan-preview');
+            await tap('production-template-soda_story');
+            await tap('production-tier-picker');
+            await tap('production-model-medium');
+            await tap('production-soda-preview');
             await until(
               () => find.byType(VideoPlayer).evaluate().isNotEmpty,
               'wan-preview',
             );
-            await tester.tap(find.byType(CloseButton).last);
-            await tester.pump(const Duration(milliseconds: 400));
+            await tap('media-viewer-close');
             await capture('wan-template');
             await tap('production-primary');
-            await until(
-              () => shown('production-remake-script'),
-              'wan-first-plan',
-              seconds: 380,
-            );
+            await until(() => shown('production-script'), 'wan-copy-ready');
           }
           await tester.enterText(key('production-script'), words);
           FocusManager.instance.primaryFocus?.unfocus();
@@ -853,13 +1214,7 @@ void main() {
       );
       await capture('13-footage-style');
       await tap('production-template-documentary');
-      await tap('production-primary');
-      await until(
-        () => shown('production-script'),
-        'footage-copy',
-        seconds: 140,
-      );
-      await capture('14-footage-review');
+      expect(shown('production-script'), isFalse);
       if (generate) {
         await tap('production-primary');
         await until(() => shown('production-progress'), 'ims-progress');
@@ -917,7 +1272,12 @@ void main() {
     skip: !enabled,
     timeout: Timeout(
       Duration(
-        minutes: const bool.fromEnvironment('LIGHT_QA_WAN_STORY') ? 68 : 16,
+        minutes:
+            const bool.fromEnvironment('LIGHT_QA_WAN_STORY') ||
+                verifyShotEditor ||
+                silkRoad
+            ? 68
+            : 16,
       ),
     ),
   );

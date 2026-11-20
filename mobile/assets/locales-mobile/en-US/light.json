@@ -6,6 +6,29 @@
     "me": "Me"
   },
   "home": {
+    "production": "Create",
+    "dayGreeting": {
+      "morning": "Good morning",
+      "afternoon": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "assistant": {
+      "title": "Personal assistant",
+      "slogan": "I can help with your shop’s daily work",
+      "open": "Ask the assistant",
+      "suggestions": "Try asking",
+      "schedules": "Scheduled tasks",
+      "scheduleHint": "Check reviews and set publishing reminders",
+      "recent": "Recently completed",
+      "reviews": {
+        "label": "Draft review replies",
+        "prompt": "Please review my shop’s recent reviews. Draft replies for the reviews that need them so I can approve them."
+      },
+      "copy": {
+        "label": "Write a promotion",
+        "prompt": "Help me draft a promotion for my shop. Ask me about the offer and dates first."
+      }
+    },
     "greeting": "{{name}}",
     "defaultShop": "My shop",
     "taglines": [
@@ -128,7 +151,7 @@
     "signOut": "Sign out",
     "signOutTitle": "Sign out?",
     "cancel": "Cancel",
-    "autopilot": "Running for you"
+    "autopilot": "Scheduled tasks"
   },
   "uiMode": {
     "title": "Interface",
@@ -149,6 +172,9 @@
     "publishLocked": "Posting needs a cloud desktop; it comes with a plan"
   },
   "autopilot": {
+    "groupEnabled": "Enabled",
+    "create": "New scheduled task",
+    "noJobs": "No scheduled tasks yet",
     "switch": "Keep doing this for me",
     "switchOn": "On · {{when}}",
     "sheetTitle": "Keep doing this for me",
@@ -170,9 +196,9 @@
     "capLine": "at most {{value}} credits",
     "confirm": "Start",
     "started": "Done: {{when}}, a new one is made",
-    "paused": "Paused; resume or cancel it under Running for you",
+    "paused": "Paused. You can resume or cancel in Scheduled tasks.",
     "resumed": "Resumed",
-    "title": "Running for you",
+    "title": "Scheduled tasks",
     "lede": "Made on schedule and posted back to its conversation, with a notification. A run over the limit is skipped.",
     "empty": "Nothing running yet.\nAfter a video or an image is done, turn on “Keep doing this for me” on its card.",
     "task": {
@@ -203,7 +229,23 @@
   "conversations": {
     "untitled": "Untitled chat"
   },
+  "activity": {
+    "today": "Today {{time}}",
+    "yesterday": "Yesterday {{time}}"
+  },
   "production": {
+    "moreTemplatesComing": "More templates are on the way",
+    "retiredTemplate": "This template has been retired. Choose another template.",
+    "videoTier": {
+      "title": "Generation tier",
+      "fast": "Fast",
+      "medium": "Standard",
+      "high": "Quality",
+      "unavailable": "Some tiers are currently unavailable",
+      "manualUnavailable": "This tier is unavailable. Choose another tier.",
+      "prepareFrames": "Update the storyboard before generating the video.",
+      "choose": "Select"
+    },
     "kind": {
       "video": "Make a video",
       "footage_edit": "Edit my footage",
@@ -289,7 +331,7 @@
     "template": {
       "silk_road": {
         "title": "Flavors of the Silk Road",
-        "body": "A 62-second widescreen story. Reimagine the tent, bazaar, desert and harbor scenes with your signature dish."
+        "body": "A 62-second widescreen film. Keep the sample’s camera moves and transitions while adapting the cast, locations and story to your materials."
       },
       "soda_story": {
         "title": "Soda commercial sample",
@@ -326,6 +368,18 @@
       "monochrome": {
         "title": "Black and white",
         "body": "Clean space and aligned dish names and prices."
+      },
+      "signature_plate": {
+        "title": "Signature dish",
+        "body": "Feature your signature dish with one large photo."
+      },
+      "price_columns": {
+        "title": "Two-column prices",
+        "body": "Pair dish names with prices in a clear two-column layout."
+      },
+      "bilingual_table": {
+        "title": "Chinese–English table card",
+        "body": "Show Chinese and English names together for easy ordering."
       }
     },
     "history": "Production history",
@@ -356,6 +410,7 @@
     "fileTooLarge": "Each file can be up to 200 MB.",
     "previewUnavailable": "Preview unavailable.",
     "playCase": "Play the crawfish remake",
+    "previewMenu": "Preview menu sample",
     "playPreview": "Play",
     "pausePreview": "Pause",
     "shop": "Shop name",
@@ -374,9 +429,14 @@
     "wanReferenceHelp": "Share a selling point, a line, or an idea. The assistant adapts the story to your materials and chooses where to cut.",
     "referenceHelp": "The seven-scene story stays. The model uses your materials and copy to adapt the product and dialogue.",
     "referencePlaceholder": "Add a dish, selling point, or a line you’d like to hear",
+    "productName": "Dish name",
+    "productNameHint": "Enter the exact name to display in the film",
+    "beatMusic": "Sync music to the edit",
     "remakeScript": "View the adapted storyboard and dialogue",
     "videoLimit": "This version needs {{needed}} video generations. You have {{remaining}} left in the 24-hour window. Your draft is saved.",
     "keepOriginal": "Keep original audio",
+    "creativeEffects": "AI creative effects",
+    "creativeEffectsHint": "Generate posters or animated transitions. This may take more time and credits.",
     "prepareFailed": "The draft couldn’t update. Edit it here or try again.",
     "saveDraft": "Save draft",
     "saveVideo": "Save video",
@@ -386,6 +446,70 @@
     "another": "Make another",
     "apply": "Apply proposal",
     "dismiss": "Keep current draft",
-    "retry": "Try production again"
+    "retry": "Try production again",
+    "shots": {
+      "editFramePrompt": "Edit prompt and generate image",
+      "firstPrompt": "First frame prompt",
+      "lastPrompt": "Last frame prompt",
+      "framePromptHint": "Describe the people, clothing, setting and framing",
+      "currentFrameReference": "Use the current frame as a reference",
+      "materialFrameReference": "Turn off to use the project materials instead",
+      "generateFrame": "Generate image",
+      "frameGenerating": "Generating",
+      "frameFailed": "Image generation failed. You can edit the prompt and try again.",
+      "clipPrompt": "Clip video prompt",
+      "hideTitle": "Hide this clip’s title",
+      "restoreTitle": "Restore this clip’s title",
+      "titlePending": "Title changes ready to assemble",
+      "number": "Clip {{number}}",
+      "current": "Current cut",
+      "currentNumber": "Current cut · v{{number}}",
+      "history": "Version history",
+      "generating": "Generating clips",
+      "reviewing": "Reviewing clips",
+      "composing": "Assembling video",
+      "composingAgain": "Reassembling video",
+      "pending": "New clips ready to assemble: {{count}}",
+      "recompose": "Reassemble",
+      "waiting": "Waiting",
+      "generatingStatus": "Generating",
+      "ready": "Ready",
+      "failed": "Failed",
+      "newVersion": "Ready to assemble",
+      "play": "Play clip",
+      "edit": "Edit clip",
+      "detail": "Clip details",
+      "prompt": "Prompt",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "first": "First frame",
+      "last": "Last frame",
+      "referenceFirst": "Reference start",
+      "referenceLast": "Reference end",
+      "firstWaiting": "First frame pending",
+      "lastWaiting": "Last frame pending",
+      "unavailable": "Preview unavailable",
+      "replaced": "Replaced",
+      "replace": "Replace",
+      "library": "Media library",
+      "album": "Photo library",
+      "supportedImages": "Select a JPEG, PNG, or WebP image.",
+      "shotHistory": "Clip history",
+      "playPrevious": "Play previous version",
+      "frames": "First and last frames",
+      "firstChanged": "First frame replaced. Regenerate this clip.",
+      "lastChanged": "Last frame replaced. Regenerate this clip.",
+      "bothChanged": "Both frames replaced. Regenerate this clip.",
+      "submitting": "Submitting…",
+      "retake": "Regenerate this clip",
+      "confirmTitle": "Reassemble the video?",
+      "confirmCopy": "Use the updated clips and reuse the rest. The previous cut will be available in version history.",
+      "later": "Later",
+      "films": "Full cuts",
+      "shotVersions": "Clip versions",
+      "filmNumber": "Cut v{{number}}",
+      "shotNumber": "Clip v{{number}}",
+      "composeFailed": "Reassembly failed. You can try again."
+    }
   }
 }

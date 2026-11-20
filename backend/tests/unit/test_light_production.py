@@ -14,7 +14,7 @@ from auth.workspace import get_workspace
 from db.base import _upgrade_desktop_assistant_columns, get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.repository.user_repo import PgUserRepo
-from light import mode, production, production_form as forms
+from light import mode, production, production_form as forms, video_tiers
 from light import remake, remake_case
 from session.session import get_session
 
@@ -32,6 +32,62 @@ def _client(user):
     }
     app.dependency_overrides[get_workspace] = lambda: {"id": user["default_workspace_id"], "role": "owner"}
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def test_production_history_filters_before_paginating(monkeypatch):
+    owner = await _user()
+
+    async def facts(_):
+        return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
+
+    monkeypatch.setattr(mode, "_workspace_facts", facts)
+    async with _client(owner) as client:
+        for entry_id, brief in [("menu", "晚市菜单"), ("video", "菜馆宣传"), ("video", "招牌菜")]:
+            created = await client.post("/api/light/productions", json={
+                "entry_id": entry_id, "brief": brief,
+            })
+            assert created.status_code == 201, created.text
+        path = "/api/light/productions"
+        first = (await client.get(path, params={"entry_id": "video", "limit": 1})).json()
+        assert [item["brief"] for item in first["items"]] == ["招牌菜"] and first["has_more"]
+        second = (await client.get(path, params={"entry_id": "video", "limit": 1, "offset": 1})).json()
+        assert [item["brief"] for item in second["items"]] == ["菜馆宣传"] and not second["has_more"]
+        menu = (await client.get(path, params={"entry_id": "menu", "limit": 1})).json()
+        assert [item["brief"] for item in menu["items"]] == ["晚市菜单"] and not menu["has_more"]
+
+
+async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(monkeypatch):
+    owner = await _user()
+
+    async def facts(_):
+        return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
+
+    monkeypatch.setattr(mode, "_workspace_facts", facts)
+    monkeypatch.setattr(production, "schedule_inbox_wake", lambda *_: None)
+    monkeypatch.setattr(video_tiers, "available_tiers", lambda *_: list(video_tiers.ROUTES))
+    monkeypatch.setattr(video_tiers, "resolve_tier", video_tiers.ROUTES.__getitem__)
+    async with _client(owner) as client:
+        for tier, (model, resolution) in video_tiers.ROUTES.items():
+            entry = (await client.post("/api/light/productions", json={"entry_id": "video"})).json()
+            assert entry["available_video_tiers"] == ["fast", "medium", "high"]
+            assert entry["video_tier"] == "fast"
+            path = f"/api/light/productions/{entry['session_id']}"
+            for retired in ("wan_story", "wok"):
+                rejected = await client.patch(path, json={"revision": entry["revision"], "template": retired})
+                assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_TEMPLATE_RETIRED"
+            saved = (await client.patch(path, json={
+                "revision": entry["revision"], "page": "review", "video_tier": tier, "script": "热菜上桌",
+            })).json()
+            assert saved["video_tier"] == tier
+            queued = await client.post(f"{path}/actions", json={
+                "revision": saved["revision"], "action": "render", "request_id": uuid4().hex,
+            })
+            assert queued.status_code == 200, queued.text
+            session = await get_session(entry["session_id"], user_id=owner["id"])
+            assert (session.video_model, session.video_resolution) == (model, resolution)
+            async with get_db_session() as db:
+                item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session.id))
+                assert (item.video_model, item.video_resolution) == (model, resolution)
 
 
 async def test_saved_draft_and_idempotent_queue_share_the_agent_session(monkeypatch):
@@ -149,11 +205,18 @@ def test_video_progress_uses_the_composition_receipt_instead_of_one_shot():
 
 
 def test_writing_copy_exposes_only_preparation_tools():
-    names = ("light_production_form", "footage_analyze", "video_generate", "image_gen", "desktop_publish")
+    names = ("light_production_form", "footage_analyze", "video_generate", "image_gen",
+             "video_compose", "desktop_publish")
     tools = {name: SimpleNamespace(id=name) for name in names}
     session = SimpleNamespace(light_entry="footage_edit", light_production={"revision": 1})
     assert set(forms.restrict_guided_tools(tools, session, "prepare")) == {"light_production_form", "footage_analyze"}
-    assert set(forms.restrict_guided_tools(tools, session, "render")) == {"footage_analyze"}
+    editing = {"footage_analyze", "video_compose"}
+    assert set(forms.restrict_guided_tools(tools, session, "render")) == editing
+    session.light_production["creative_effects"] = True
+    assert set(forms.restrict_guided_tools(tools, session, "render")) == editing | {"image_gen"}
+    session.light_production["run"] = {"creative_motion": True}
+    assert set(forms.restrict_guided_tools(tools, session, "render")) == editing | {"image_gen", "video_generate"}
+    assert set(forms.restrict_guided_tools(tools, session, "prepare")) == {"light_production_form", "footage_analyze"}
 
 
 def test_older_desktop_database_preserves_its_sessions():

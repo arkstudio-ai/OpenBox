@@ -7,6 +7,7 @@ import '../features/chat/assistant_screen.dart';
 import '../features/chat/state/assistant_overview.dart';
 import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
+import '../features/chat/widgets/composer/composer.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/inbox/api/inbox_api.dart';
 import '../features/inbox/inbox_screen.dart';
@@ -51,6 +52,9 @@ StatefulShellRoute lightShellRoute({required ResourceSlotOf resources}) =>
                 taskId: state.uri.queryParameters['task'],
                 resultId: state.uri.queryParameters['result'],
                 intro: state.uri.queryParameters['intro'],
+                draft: state.extra is ComposerDraft
+                    ? state.extra as ComposerDraft
+                    : null,
                 resources: resources,
               ),
             ),
@@ -153,12 +157,14 @@ class _LightAssistantTab extends ConsumerWidget {
     this.taskId,
     this.resultId,
     this.intro,
+    this.draft,
   });
 
   final ResourceSlotOf resources;
   final String? taskId;
   final String? resultId;
   final String? intro;
+  final ComposerDraft? draft;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -180,6 +186,7 @@ class _LightAssistantTab extends ConsumerWidget {
               taskId: taskId,
               resultId: resultId,
               intro: intro,
+              initialDraft: draft,
               embedded: true,
               resources: resources(ref),
             ),

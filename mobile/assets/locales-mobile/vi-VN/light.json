@@ -6,6 +6,29 @@
     "me": "Tôi"
   },
   "home": {
+    "production": "Tạo nội dung",
+    "dayGreeting": {
+      "morning": "Chào buổi sáng",
+      "afternoon": "Chào buổi chiều",
+      "evening": "Chào buổi tối"
+    },
+    "assistant": {
+      "title": "Trợ lý cá nhân",
+      "slogan": "Để tôi giúp bạn lo việc hằng ngày của quán",
+      "open": "Hỏi trợ lý",
+      "suggestions": "Bạn có thể nói",
+      "schedules": "Tác vụ định kỳ",
+      "scheduleHint": "Kiểm tra đánh giá và nhắc đăng bài",
+      "recent": "Việc vừa hoàn thành",
+      "reviews": {
+        "label": "Soạn phản hồi đánh giá",
+        "prompt": "Hãy xem các đánh giá mới của quán và soạn phản hồi để tôi duyệt."
+      },
+      "copy": {
+        "label": "Viết nội dung ưu đãi",
+        "prompt": "Giúp tôi viết nội dung ưu đãi cho quán. Hãy hỏi tôi về ưu đãi và ngày tổ chức trước."
+      }
+    },
     "greeting": "{{name}}",
     "defaultShop": "Quán của tôi",
     "taglines": [
@@ -126,7 +149,7 @@
     "signOut": "Đăng xuất",
     "signOutTitle": "Đăng xuất?",
     "cancel": "Hủy",
-    "autopilot": "Việc đang tự động làm"
+    "autopilot": "Tác vụ định kỳ"
   },
   "uiMode": {
     "title": "Giao diện",
@@ -147,6 +170,9 @@
     "publishLocked": "Đăng bài cần máy tính đám mây; mở gói là có"
   },
   "autopilot": {
+    "groupEnabled": "Đã bật",
+    "create": "Tạo tác vụ định kỳ",
+    "noJobs": "Chưa có tác vụ định kỳ",
     "switch": "Từ nay tự động làm việc này",
     "switchOn": "Đang bật · {{when}}",
     "sheetTitle": "Từ nay tự động làm việc này",
@@ -168,9 +194,9 @@
     "capLine": "tối đa {{value}} điểm",
     "confirm": "Bắt đầu",
     "started": "Đã bật: {{when}} tự làm một cái mới",
-    "paused": "Đã tạm dừng; vào «Việc đang tự động làm» để tiếp tục hoặc hủy",
+    "paused": "Đã tạm dừng. Bạn có thể tiếp tục hoặc hủy trong Tác vụ định kỳ.",
     "resumed": "Đã tiếp tục",
-    "title": "Việc đang tự động làm",
+    "title": "Tác vụ định kỳ",
     "lede": "Đến giờ tự làm, làm xong gửi về cuộc trò chuyện cũ và báo cho bạn. Vượt mức tối đa thì bỏ qua lần đó.",
     "empty": "Chưa có việc nào đang tự động làm.\nLàm xong một video hay một ảnh, bật «Từ nay tự động làm việc này» trên thẻ kết quả.",
     "task": {
@@ -201,7 +227,23 @@
   "conversations": {
     "untitled": "Trò chuyện chưa đặt tên"
   },
+  "activity": {
+    "today": "Hôm nay {{time}}",
+    "yesterday": "Hôm qua {{time}}"
+  },
   "production": {
+    "moreTemplatesComing": "Đang bổ sung thêm mẫu",
+    "retiredTemplate": "Mẫu này đã ngừng cung cấp. Hãy chọn mẫu khác.",
+    "videoTier": {
+      "title": "Chế độ tạo video",
+      "fast": "Nhanh",
+      "medium": "Tiêu chuẩn",
+      "high": "Chất lượng",
+      "unavailable": "Một số gói đang tạm thời không khả dụng",
+      "manualUnavailable": "Chế độ này đang tạm thời không khả dụng. Hãy chọn chế độ khác.",
+      "prepareFrames": "Hãy cập nhật kịch bản phân cảnh trước khi tạo video.",
+      "choose": "Chọn"
+    },
     "kind": {
       "video": "Tạo video",
       "footage_edit": "Dựng cảnh quay",
@@ -287,7 +329,7 @@
     "template": {
       "silk_road": {
         "title": "Hương vị Con đường Tơ lụa",
-        "body": "Phim màn ảnh rộng 62 giây. Dựng lại nhịp phim qua lều, chợ, sa mạc và bến cảng với món đặc trưng của quán."
+        "body": "Phim màn ảnh rộng 62 giây. Giữ chuyển động máy và nhịp chuyển cảnh, đổi nhân vật, bối cảnh và câu chuyện theo tư liệu của bạn."
       },
       "soda_story": {
         "title": "Mẫu quảng cáo soda",
@@ -324,6 +366,18 @@
       "monochrome": {
         "title": "Đen trắng",
         "body": "Giản dị, canh thẳng tên món và giá."
+      },
+      "signature_plate": {
+        "title": "Món đặc trưng",
+        "body": "Làm nổi bật món đặc trưng bằng một ảnh lớn."
+      },
+      "price_columns": {
+        "title": "Bảng giá hai cột",
+        "body": "Ghép tên món và giá trong bố cục hai cột dễ đọc."
+      },
+      "bilingual_table": {
+        "title": "Thẻ món Hoa–Anh",
+        "body": "Đặt tên tiếng Hoa và tiếng Anh cùng nhau để dễ gọi món."
       }
     },
     "history": "Lịch sử sản xuất",
@@ -354,6 +408,7 @@
     "fileTooLarge": "Mỗi tệp tối đa 200 MB.",
     "previewUnavailable": "Không thể xem trước.",
     "playCase": "Phát mẫu video tôm hùm đất",
+    "previewMenu": "Xem mẫu thực đơn",
     "playPreview": "Phát",
     "pausePreview": "Tạm dừng",
     "shop": "Tên cửa hàng",
@@ -372,9 +427,14 @@
     "wanReferenceHelp": "Nhập điểm nổi bật, một câu thoại hoặc ý tưởng. Trợ lý sẽ điều chỉnh kịch bản theo tư liệu và chọn điểm cắt.",
     "referenceHelp": "Giữ câu chuyện bảy cảnh, dùng tư liệu và nội dung của bạn để điều chỉnh món ăn và lời thoại.",
     "referencePlaceholder": "Nhập tên món, điểm nổi bật hoặc một câu thoại",
+    "productName": "Tên món",
+    "productNameHint": "Nhập đúng tên món để hiện trong video",
+    "beatMusic": "Ghép nhạc theo nhịp",
     "remakeScript": "Xem phân cảnh và lời thoại đã điều chỉnh",
     "videoLimit": "Bản này cần tạo {{needed}} đoạn video. Bạn còn {{remaining}} lượt trong 24 giờ. Bản nháp đã được lưu.",
     "keepOriginal": "Giữ âm thanh gốc",
+    "creativeEffects": "Hiệu ứng sáng tạo AI",
+    "creativeEffectsHint": "Tạo áp phích hoặc đoạn chuyển cảnh động. Có thể cần thêm thời gian và điểm.",
     "prepareFailed": "Chưa cập nhật được bản nháp. Hãy sửa hoặc thử lại.",
     "saveDraft": "Lưu bản nháp",
     "saveVideo": "Lưu video",
@@ -384,6 +444,70 @@
     "another": "Tạo thêm",
     "apply": "Áp dụng đề xuất",
     "dismiss": "Giữ bản hiện tại",
-    "retry": "Thử lại"
+    "retry": "Thử lại",
+    "shots": {
+      "editFramePrompt": "Sửa lời nhắc và tạo ảnh",
+      "firstPrompt": "Lời nhắc khung đầu",
+      "lastPrompt": "Lời nhắc khung cuối",
+      "framePromptHint": "Mô tả nhân vật, trang phục, bối cảnh và bố cục",
+      "currentFrameReference": "Dùng khung hình hiện tại làm tham chiếu",
+      "materialFrameReference": "Bỏ chọn để dùng tư liệu của dự án",
+      "generateFrame": "Tạo ảnh",
+      "frameGenerating": "Đang tạo",
+      "frameFailed": "Tạo ảnh thất bại. Bạn có thể sửa lời nhắc và thử lại.",
+      "clipPrompt": "Lời nhắc tạo đoạn video",
+      "hideTitle": "Ẩn tiêu đề đoạn này",
+      "restoreTitle": "Khôi phục tiêu đề đoạn này",
+      "titlePending": "Thay đổi tiêu đề đang chờ ghép",
+      "number": "Đoạn {{number}}",
+      "current": "Bản hiện tại",
+      "currentNumber": "Bản hiện tại · v{{number}}",
+      "history": "Lịch sử phiên bản",
+      "generating": "Đang tạo các đoạn",
+      "reviewing": "Đang kiểm tra các đoạn",
+      "composing": "Đang ghép video",
+      "composingAgain": "Đang ghép lại video",
+      "pending": "Có {{count}} đoạn mới để ghép",
+      "recompose": "Ghép lại",
+      "waiting": "Đang chờ",
+      "generatingStatus": "Đang tạo",
+      "ready": "Đã tạo",
+      "failed": "Tạo thất bại",
+      "newVersion": "Chờ ghép bản mới",
+      "play": "Phát đoạn",
+      "edit": "Sửa đoạn",
+      "detail": "Chi tiết đoạn",
+      "prompt": "Câu lệnh",
+      "expand": "Mở rộng",
+      "collapse": "Thu gọn",
+      "first": "Khung đầu",
+      "last": "Khung cuối",
+      "referenceFirst": "Ảnh đầu tham chiếu",
+      "referenceLast": "Ảnh cuối tham chiếu",
+      "firstWaiting": "Đang tạo khung đầu",
+      "lastWaiting": "Đang tạo khung cuối",
+      "unavailable": "Chưa có ảnh xem trước",
+      "replaced": "Đã thay",
+      "replace": "Thay",
+      "library": "Thư viện tư liệu",
+      "album": "Ảnh trên thiết bị",
+      "supportedImages": "Chọn ảnh JPEG, PNG hoặc WebP.",
+      "shotHistory": "Lịch sử đoạn",
+      "playPrevious": "Phát phiên bản trước",
+      "frames": "Khung đầu và cuối",
+      "firstChanged": "Đã thay khung đầu. Cần tạo lại đoạn này.",
+      "lastChanged": "Đã thay khung cuối. Cần tạo lại đoạn này.",
+      "bothChanged": "Đã thay cả hai khung. Cần tạo lại đoạn này.",
+      "submitting": "Đang gửi…",
+      "retake": "Tạo lại đoạn này",
+      "confirmTitle": "Ghép lại video?",
+      "confirmCopy": "Dùng các đoạn mới và giữ các đoạn còn lại. Bản trước được lưu trong lịch sử phiên bản.",
+      "later": "Để sau",
+      "films": "Các bản hoàn chỉnh",
+      "shotVersions": "Phiên bản từng đoạn",
+      "filmNumber": "Bản v{{number}}",
+      "shotNumber": "Đoạn v{{number}}",
+      "composeFailed": "Ghép lại thất bại. Bạn có thể thử lại."
+    }
   }
 }

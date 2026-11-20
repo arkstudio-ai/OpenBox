@@ -45,6 +45,7 @@ _ALIGN = {"center": "TopCenter", "left": "TopLeft", "right": "TopRight"}
 #: Empirical line box for CJK text at a given FontSize.
 _LINE_HEIGHT = 1.35
 _OSS_HOST = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}\.oss-[a-z0-9-]+(-internal)?\.aliyuncs\.com$")
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
 
 
 class TimelineCompileError(ValueError):
@@ -115,12 +116,15 @@ def compile_ims(
             "TimelineIn": _sec(span[0]), "TimelineOut": _sec(span[1]),
             "Effects": [{"Type": "VFX", "SubType": "h_blur"}, {"Type": "Volume", "Gain": 0}],
         }
-        if shot.in_sec:
-            clip["In"] = _sec(shot.in_sec)
-        if shot.duration_sec is not None:
-            clip["Out"] = _sec(shot.in_sec + shot.duration_sec)
-        if shot.speed != 1.0:
-            clip["Speed"] = round(shot.speed, 3)
+        if video_clips[index].get("Type") == "Image":
+            clip["Type"] = "Image"
+        else:
+            if shot.in_sec:
+                clip["In"] = _sec(shot.in_sec)
+            if shot.duration_sec is not None:
+                clip["Out"] = _sec(shot.in_sec + shot.duration_sec)
+            if shot.speed != 1.0:
+                clip["Speed"] = round(shot.speed, 3)
         backdrop_clips.append(clip)
 
     overlay_tracks: list[dict[str, Any]] = []
@@ -207,15 +211,23 @@ def _video_clip(index: int, shot: Shot, canvas: Canvas, region: str | None,
         "X": 0, "Y": 0, "Width": canvas.width, "Height": canvas.height,
         "AdaptMode": _ADAPT[shot.fit],
     }
-    if shot.volume != 1.0:
-        # The clip's own sound. 0 mutes it (a silent B-roll under a voice-over).
-        clip.setdefault("Effects", []).append({"Type": "Volume", "Gain": round(shot.volume, 3)})
-    if shot.in_sec:
-        clip["In"] = _sec(shot.in_sec)
-    if shot.duration_sec is not None:
-        clip["Out"] = _sec(shot.in_sec + shot.duration_sec)
-    if shot.speed != 1.0:
-        clip["Speed"] = round(shot.speed, 3)
+    if urlsplit(clip["MediaURL"]).path.lower().endswith(_IMAGE_EXTENSIONS):
+        # IMS defaults clips to Video. Stills need their own type and display length.
+        clip["Type"] = "Image"
+        if shot.timeline_sec is None:
+            problems.append(f"shots[{index}]: an image needs duration_sec")
+        else:
+            clip["Duration"] = _sec(shot.timeline_sec)
+    else:
+        if shot.volume != 1.0:
+            # The clip's own sound. 0 mutes it (a silent B-roll under a voice-over).
+            clip.setdefault("Effects", []).append({"Type": "Volume", "Gain": round(shot.volume, 3)})
+        if shot.in_sec:
+            clip["In"] = _sec(shot.in_sec)
+        if shot.duration_sec is not None:
+            clip["Out"] = _sec(shot.in_sec + shot.duration_sec)
+        if shot.speed != 1.0:
+            clip["Speed"] = round(shot.speed, 3)
     if shot.move is not None:
         if shot.move.preset is not None and shot.move.preset not in cat.VERIFIED_MOVES:
             warnings.append(f"shots[{index}].move: preset {shot.move.preset!r} is documented but not yet verified in a real job")

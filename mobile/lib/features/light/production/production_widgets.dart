@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/light.dart';
+import '../../../shared/widgets/media_viewer.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 import 'production_media.dart';
@@ -184,64 +185,53 @@ class ProductionTemplates extends ConsumerWidget {
                   onTap: () => onChoose(template),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Column(
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            if (task.kind != ProductionKind.footage) ...[
-                              _TemplatePreview(
-                                template: template,
-                                preview:
-                                    samples[switch (template) {
-                                          'warm_red' => 'menu_red',
-                                          'monochrome' => 'menu_mono',
-                                          'wok' => 'dish_closeup',
-                                          _ => '',
-                                        }]
-                                        ?.thumbUrl,
-                                caseLabel: i18n.t('light:production.playCase'),
-                              ),
-                              const SizedBox(width: 14),
-                            ],
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    productionTemplateLabel(i18n, template),
-                                    style: TextStyle(
-                                      color: t.ink,
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    i18n.t(
-                                      'light:production.template.$template.body',
-                                    ),
-                                    style: TextStyle(
-                                      color: t.n800,
-                                      fontSize: 14,
-                                      height: 1.45,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (template == selected) ...[
-                              const SizedBox(width: 8),
-                              Icon(Icons.check_circle, size: 22, color: t.a700),
-                            ],
-                          ],
-                        ),
-                        if (task.kind == ProductionKind.footage &&
-                            task.materials.isNotEmpty) ...[
-                          const SizedBox(height: 12),
-                          ProductionMediaStrip(
-                            media: task.materials,
-                            height: 77,
+                        if (task.kind != ProductionKind.footage) ...[
+                          _TemplatePreview(
+                            template: template,
+                            title: productionTemplateLabel(i18n, template),
+                            preview:
+                                samples[switch (template) {
+                                      'warm_red' => 'menu_red',
+                                      'monochrome' => 'menu_mono',
+                                      _ => '',
+                                    }]
+                                    ?.thumbUrl,
+                            caseLabel: i18n.t('light:production.playCase'),
+                            imageLabel: i18n.t('light:production.previewMenu'),
                           ),
+                          const SizedBox(width: 14),
+                        ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                productionTemplateLabel(i18n, template),
+                                style: TextStyle(
+                                  color: t.ink,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                i18n.t(
+                                  'light:production.template.$template.body',
+                                ),
+                                style: TextStyle(
+                                  color: t.n800,
+                                  fontSize: 14,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (template == selected) ...[
+                          const SizedBox(width: 8),
+                          Icon(Icons.check_circle, size: 22, color: t.a700),
                         ],
                       ],
                     ),
@@ -250,7 +240,128 @@ class ProductionTemplates extends ConsumerWidget {
               ),
             ),
           ),
+        if (task.kind == ProductionKind.video)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 8),
+            child: Text(
+              i18n.t('light:production.moreTemplatesComing'),
+              style: TextStyle(color: t.n700, fontSize: 13),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+class ProductionTierPicker extends ConsumerWidget {
+  const ProductionTierPicker({
+    super.key,
+    required this.selected,
+    required this.available,
+    required this.onChoose,
+  });
+
+  final ProductionVideoTier? selected;
+  final Set<ProductionVideoTier> available;
+  final ValueChanged<ProductionVideoTier>? onChoose;
+
+  Future<void> _open(BuildContext context, I18nState i18n) async {
+    final title = i18n.t('light:production.videoTier.title');
+    final theme = context.tokens;
+    final tier = await showModalBottomSheet<ProductionVideoTier>(
+      context: context,
+      backgroundColor: theme.bg,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                  color: theme.ink,
+                ),
+              ),
+            ),
+            for (final item in ProductionVideoTier.values) ...[
+              if (item != ProductionVideoTier.values.first)
+                Divider(height: 1, color: theme.hair),
+              ListTile(
+                key: Key('production-model-${item.name}'),
+                enabled: available.contains(item),
+                selected: item == selected,
+                selectedColor: theme.ink,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                minTileHeight: 52,
+                title: Text(item.label(i18n)),
+                trailing: item == selected
+                    ? Icon(Icons.check_rounded, color: theme.a700, size: 21)
+                    : null,
+                onTap: available.contains(item)
+                    ? () => Navigator.pop(sheet, item)
+                    : null,
+              ),
+            ],
+            if (available.length < ProductionVideoTier.values.length)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+                child: Text(
+                  i18n.t('light:production.videoTier.unavailable'),
+                  style: TextStyle(color: theme.n700, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (context.mounted && tier != null && tier != selected) {
+      onChoose?.call(tier);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final i18n = ref.watch(i18nProvider);
+    final t = context.tokens;
+    final selectedLabel =
+        selected?.label(i18n) ?? i18n.t('light:production.videoTier.choose');
+    return Material(
+      color: t.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: t.hair),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        key: const Key('production-tier-picker'),
+        contentPadding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
+        minTileHeight: 48,
+        title: Text(
+          i18n.t('light:production.videoTier.title'),
+          style: TextStyle(
+            color: t.ink,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(selectedLabel, style: TextStyle(color: t.n700, fontSize: 14)),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right_rounded, color: t.n700, size: 20),
+          ],
+        ),
+        onTap: onChoose == null ? null : () => _open(context, i18n),
+      ),
     );
   }
 }
@@ -258,29 +369,31 @@ class ProductionTemplates extends ConsumerWidget {
 class _TemplatePreview extends StatelessWidget {
   const _TemplatePreview({
     required this.template,
+    required this.title,
     required this.preview,
     required this.caseLabel,
+    required this.imageLabel,
   });
 
   final String template;
+  final String title;
   final String? preview;
   final String caseLabel;
+  final String imageLabel;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final recipe = const [
-      'soda_story',
-      'twist',
-      'wan_story',
-      'silk_road',
-    ].contains(template);
+    final recipe = const ['soda_story', 'silk_road'].contains(template);
+    final menuSample = switch (template) {
+      'signature_plate' => 'assets/light_production/menu-signature-plate.jpg',
+      'price_columns' => 'assets/light_production/menu-price-columns.jpg',
+      'bilingual_table' => 'assets/light_production/menu-bilingual-table.jpg',
+      _ => null,
+    };
     final asset = switch (template) {
       'soda_story' => sodaStoryPoster,
       'silk_road' => silkRoadPoster,
-      'wan_story' => wanStoryPoster,
-      'twist' => crawfishCasePoster,
-      'wok' => 'assets/first_video/signature.jpg',
       _ => null,
     };
     final fallback = ColoredBox(
@@ -295,7 +408,27 @@ class _TemplatePreview extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (asset != null)
+            if (menuSample != null)
+              InkWell(
+                key: Key('production-preview-$template'),
+                onTap: () => showMediaViewer(
+                  context,
+                  (_) => MediaViewer(
+                    title: title,
+                    child: InteractiveViewer(
+                      maxScale: 4,
+                      child: Center(
+                        child: Image.asset(menuSample, fit: BoxFit.contain),
+                      ),
+                    ),
+                  ),
+                ),
+                child: Tooltip(
+                  message: imageLabel,
+                  child: Image.asset(menuSample, fit: BoxFit.contain),
+                ),
+              )
+            else if (asset != null)
               Image.asset(asset, fit: BoxFit.cover)
             else if (preview case final url?)
               Image.network(
@@ -311,7 +444,6 @@ class _TemplatePreview extends StatelessWidget {
                   key: Key(switch (template) {
                     'soda_story' => 'production-soda-preview',
                     'silk_road' => 'production-silk-road-preview',
-                    'wan_story' => 'production-wan-preview',
                     _ => 'production-case-preview',
                   }),
                   tooltip: caseLabel,
@@ -319,13 +451,16 @@ class _TemplatePreview extends StatelessWidget {
                     backgroundColor: Colors.white,
                     foregroundColor: const Color(0xff3e3929),
                   ),
-                  onPressed: () =>
-                      showProductionVideo(context, switch (template) {
-                        'soda_story' => sodaStoryVideo,
-                        'silk_road' => silkRoadVideo,
-                        'wan_story' => wanStoryVideo,
-                        _ => crawfishCaseVideo,
-                      }, bundled: true),
+                  onPressed: () => showProductionVideo(
+                    context,
+                    switch (template) {
+                      'soda_story' => sodaStoryVideo,
+                      'silk_road' => silkRoadVideo,
+                      _ => crawfishCaseVideo,
+                    },
+                    bundled: true,
+                    title: title,
+                  ),
                   icon: const Icon(Icons.play_arrow),
                 ),
               ),

@@ -9,6 +9,7 @@ import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
+import 'package:bossip_mobile/shared/widgets/media_viewer.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -150,6 +151,13 @@ void main() {
           'en-US': {
             'chat': {
               'artifacts': {'source': 'From:'},
+              'aigc': {'label': 'AI-generated'},
+              'download': {'saveToAlbum': 'Save to Album'},
+              'gallery': {
+                'close': 'Close preview',
+                'download': 'Save to Files',
+                'failed': 'Preview unavailable',
+              },
             },
           },
         });
@@ -204,6 +212,20 @@ void main() {
           router.pop();
           await tester.pumpAndSettle();
         }
+        final imageGallery = find.byWidget(
+          galleries.firstWhere((g) => g.parts.single.assetId == 'asset-image'),
+        );
+        await tester.ensureVisible(imageGallery);
+        await tester.tap(imageGallery);
+        await tester.pumpAndSettle();
+        expect(find.byType(MediaViewer), findsOneWidget);
+        expect(find.byType(InteractiveViewer), findsOneWidget);
+        expect(find.text('AI-generated'), findsOneWidget);
+        expect(find.byTooltip('Save to Album'), findsOneWidget);
+        expect(find.byTooltip('Save to Files'), findsOneWidget);
+        await tester.tap(find.byTooltip('Close preview'));
+        await tester.pumpAndSettle();
+        expect(find.byType(MediaViewer), findsNothing);
         expect(tester.takeException(), isNull);
       },
     );

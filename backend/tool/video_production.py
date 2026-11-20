@@ -1457,11 +1457,13 @@ async def _finalize_segment(
     except Exception as exc:  # billing must never strand a finished, paid video
         log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     from light.remake_case import owns_job as is_grouped_remake
+    from light.shot_editor import KEY_PREFIX as SHOT_EDIT_PREFIX
     await _update_job(
         job.id,
         status="completed",
         result_data={**result_data, "transfer": {**attempt, "stopped": False, "next_retry_at": None},
-                     "completion_delivery_pending": not is_grouped_remake(job),
+                     "completion_delivery_pending": not (is_grouped_remake(job) or
+                                                          job.idempotency_key.startswith(SHOT_EDIT_PREFIX)),
                      "usage": usage, "provider_status": data.get("status"), "bytes": size,
                      "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,

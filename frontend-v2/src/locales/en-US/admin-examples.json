@@ -25,7 +25,8 @@
     "useCount": "Uses",
     "pickCount": "Picks",
     "updatedAt": "Updated",
-    "actions": "Actions"
+    "actions": "Actions",
+    "card": "Card"
   },
   "action": {
     "new": "New by hand",
@@ -128,6 +129,31 @@
       "TAXONOMY_INVALID": "Not a valid classification: {{message}}",
       "HTTP_422": "A name or keyword is over a limit. Check it and save again",
       "default": "Saving failed; try again later"
+    }
+  },
+  "card": {
+    "title": "Reference card",
+    "read": "Read again",
+    "afterSave": "After saving, the finished piece is read once (the picture itself, or frames and speech of the clip) with the recipe and written up as a reference card, in a minute or two. Open the example again to see and edit it.",
+    "full": "Text",
+    "fullHint": "Structure, rhythm, style and copy patterns only; no shop name, dish or price. A text edited by hand is never overwritten.",
+    "frames": "{{count}} frames",
+    "heard": "with speech",
+    "silent": "no speech",
+    "state": {
+      "none": "Not read yet; starts after saving",
+      "reading": "Reading the piece, a minute or two…",
+      "ready": "Read",
+      "failed": "Reading failed; try Read again",
+      "edited": "Edited by hand; never overwritten",
+      "editing": "Edited; saved with the form"
+    },
+    "short": {
+      "none": "—",
+      "reading": "Reading",
+      "ready": "Read",
+      "failed": "Failed",
+      "edited": "Manual"
     }
   }
 }

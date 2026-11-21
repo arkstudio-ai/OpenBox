@@ -13,6 +13,8 @@ export interface FormState {
   rating: number
   notes: string
   recipe: string
+  /** null until the team edits the reference card; then the text is theirs. */
+  card: string | null
   inputs: AssetRef[]
   outputs: AssetRef[]
   inputIds: string
@@ -24,6 +26,7 @@ export interface FormState {
 /** The same limits the server's ExampleIn enforces; a session can bring back more than these. */
 export const MAX_ASSETS = 12
 export const MAX_RECIPE = 20000
+export const MAX_CARD = 2400
 
 export const EMPTY: FormState = {
   entry_id: "video",
@@ -36,6 +39,7 @@ export const EMPTY: FormState = {
   rating: 4,
   notes: "",
   recipe: "",
+  card: null,
   inputs: [],
   outputs: [],
   inputIds: "",
@@ -84,6 +88,7 @@ export function toWrite(state: FormState): ExampleWrite {
     title: state.title.trim(),
     notes: state.notes.trim(),
     recipe: state.recipe.trim(),
+    ...(state.card === null ? {} : { card: state.card.trim() }),
     inputs: assetIds(state.inputs, state.inputIds),
     outputs: assetIds(state.outputs, state.outputIds),
     source: state.source,

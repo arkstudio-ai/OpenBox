@@ -155,6 +155,7 @@ export function ExamplesPage() {
         header: t("column.status"),
         render: (row) => <StatusPill tone={row.status === "active" ? "ok" : "muted"}>{t(`status.${row.status}`)}</StatusPill>,
       },
+      { key: "card", header: t("column.card"), render: (row) => t(`card.short.${row.card_state?.state ?? (row.card ? "ready" : "none")}`) },
       { key: "use_count", header: t("column.useCount"), className: "tabular-nums", render: (row) => String(row.use_count) },
       { key: "pick_count", header: t("column.pickCount"), className: "tabular-nums", render: (row) => String(row.pick_count ?? 0) },
       { key: "updated", header: t("column.updatedAt"), render: (row) => (row.updated_at ? formatSince(row.updated_at) : "") },

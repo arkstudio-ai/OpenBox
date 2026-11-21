@@ -90,7 +90,7 @@ async def start(body: StartBody, current_user: dict = Depends(get_current_user))
 
 @router.get("/examples/{example_id}/preview")
 async def example_preview(example_id: str, current_user: dict = Depends(get_current_user)):
-    """Fresh links for one example on the pick card (the card's own links last half a day)."""
+    """Fresh links for one example on the pick card (the card's own links last a week)."""
     from light import examples
     row = await examples.get_active(example_id)
     shown = examples.preview(row) if row is not None else None

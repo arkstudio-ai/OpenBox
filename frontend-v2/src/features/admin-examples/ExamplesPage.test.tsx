@@ -57,6 +57,8 @@ function example(overrides: Partial<Example>): Example {
     title: "面馆探店样例",
     notes: "先门头再上面",
     recipe: "画面：牛肉面特写",
+    card: "",
+    card_state: {},
     inputs: [],
     outputs: [{ asset_id: "asset_final", oss_key: "assets/u/asset_final/final.mp4", name: "final.mp4", mime: "video/mp4" }],
     source: { session_id: "session_1", shop_name: "巷口面馆" },
@@ -258,5 +260,33 @@ describe("ExamplesPage", () => {
       outputs: [{ asset_id: "asset_final" }],
       source: { session_id: "session_1", shop_name: "巷口面馆" },
     })
+    // Untouched, the reference card is not sent: the server keeps what was read.
+    expect(body).not.toHaveProperty("card")
+  })
+
+  it("shows the reference card, has it read again, and sends it only once the team edits it", async () => {
+    const read = example({ card: "整体：十五秒竖屏快切", card_state: { state: "ready", model: "gpt-6.2-sol", kind: "video", frames: 10, heard: true } })
+    vi.mocked(http.get).mockImplementation(async (path: string) => {
+      if (path.endsWith("/taxonomy")) return TAXONOMY
+      if (path.includes("/assets/")) return { url: "https://signed/final.mp4", mime: "video/mp4", name: "final.mp4", expires_in: 3600 }
+      if (path.endsWith("/lex_1")) return read
+      return list([read])
+    })
+    vi.mocked(http.post).mockResolvedValue({ example_id: "lex_1", state: "reading" })
+    vi.mocked(http.put).mockResolvedValue(read)
+    mount()
+    expect(await screen.findByText("已读")).toBeTruthy()
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }))
+    const dialog = await screen.findByRole("dialog")
+    expect((within(dialog).getByLabelText("内容") as HTMLTextAreaElement).value).toBe("整体：十五秒竖屏快切")
+    expect(within(dialog).getByTestId("example-card-state").textContent).toBe("已读取 · gpt-6.2-sol · 10 帧 · 含语音")
+    fireEvent.click(within(dialog).getByRole("button", { name: "重新读取" }))
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/admin/examples/lex_1/card", {}))
+    await waitFor(() => expect((within(dialog).getByLabelText("内容") as HTMLTextAreaElement).disabled).toBe(false))
+    fireEvent.change(within(dialog).getByLabelText("内容"), { target: { value: "整体：十五秒竖屏快切，大字钩子 " } })
+    expect(within(dialog).getByTestId("example-card-state").textContent).toBe("已修改，保存后生效")
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }))
+    await waitFor(() => expect(http.put).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(http.put).mock.calls[0]![1]).toMatchObject({ card: "整体：十五秒竖屏快切，大字钩子" })
   })
 })

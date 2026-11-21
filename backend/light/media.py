@@ -14,8 +14,9 @@ log = create_logger(__name__)
 OSS_PREFIX = "oss:"
 #: Validation pattern for a media field in the JSON files.
 MEDIA_PATTERN = r"^(https://|oss:)\S+$"
-#: The App refetches the entries and templates on every visit; half a day covers a long session.
-LINK_SECONDS = 12 * 3600
+#: The App refetches the entries and templates on every visit; a week also covers a page or a
+#: conversation left open for days (half a day until 2026-11-21).
+LINK_SECONDS = 7 * 24 * 3600
 
 
 def sign_media(value: str | None) -> str | None:

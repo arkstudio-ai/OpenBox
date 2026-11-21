@@ -45,7 +45,9 @@ MAX_CLIP_SECONDS = 3 * 60
 #: 480 px, not 360: a sign or a price tag has to be readable in the frame for the
 #: reading to copy its characters (2026-11-05); the frames are still small images.
 FRAME_WIDTH = 480
-SNAPSHOT_LINK_SECONDS = 3600
+#: Three days (an hour until 2026-11-21): the frame links end up in the trajectory of the turn, and the
+#: people debugging it open them long after the reading itself is done.
+SNAPSHOT_LINK_SECONDS = 3 * 24 * 3600
 #: A picture reading normally answers in 10–25 s, but now and then one call hangs for
 #: minutes (2026-11-02: 3 min 7 s on one clip of five, with no error). So it is asked a
 #: second time after HEDGE_SECONDS and the first good answer wins; an attempt is given

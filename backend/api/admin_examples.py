@@ -23,7 +23,8 @@ from notifications.testing import live_admin
 
 router = APIRouter(prefix="/api/admin/examples", tags=["admin-examples"])
 
-LINK_SECONDS = 3600
+#: Three days (an hour until 2026-11-21) so a link the team copied while reviewing still opens the next day.
+LINK_SECONDS = 3 * 24 * 3600
 
 
 class AssetRef(BaseModel):

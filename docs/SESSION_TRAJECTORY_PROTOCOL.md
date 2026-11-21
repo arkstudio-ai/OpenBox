@@ -116,7 +116,7 @@ quarantine/                无法解析的文件及其 .reason
   不含字节，可见性与状态规则同下载。
 - `GET /sessions/{sid}/payloads/{payload_id}/link[?through_seq=H&download=1&name=…]`（2026-10-13 增补）：资产型 payload（`storage_kind=asset`，
   即用户自己的产物对象）的短时效签名直链 `{payload_id,url,expires_in,expires_at,media_type,size_bytes,name}`，有效期
-  `TRAJECTORY_ASSET_LINK_SECONDS`（默认 600 秒，60–3600）；可见性 / 删除 / 位置规则同下载，留存副本（blob）回 409
+  `TRAJECTORY_ASSET_LINK_SECONDS`（默认 259200 秒即 3 天，60–604800；2026-11-21 前默认 600、上限 3600）；可见性 / 删除 / 位置规则同下载，留存副本（blob）回 409
   `trajectory_payload_not_linkable`。签发前审计 `admin.trajectory.payload_link` 并复核观看者与行，不读字节。用途：超过 worker 读取上限的大视频
   由超管浏览器直接从桶拉取。
 - 会话 header 的 `capabilities.refs = true`。`/events`、`/checkpoint` 仍返回完全展开的数据。

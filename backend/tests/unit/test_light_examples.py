@@ -128,7 +128,7 @@ async def test_fragment_renders_examples_for_this_shop_and_counts_once_per_sessi
     section = fragment.split("参考样例", 1)[1]
     assert "「面馆探店样例」（餐饮 / 面馆 / 粉店，评分 5/5）：先门头再上面，收尾给价格" in section
     assert "当时的方案卡/提示词：画面：牛肉面特写 时长：15 秒竖屏" in section
-    assert "final.mp4（https://signed/assets/u/a1/final.mp4）" in section
+    assert "final.mp4" not in section and "https://signed" not in section  # the agent cannot open another shop's file
     assert "规则：1) 只学样例的结构" in section and "2) 一律换成这家店的真实信息" in section and "3) 老板说要不一样" in section
     assert fragment.index("店名「巷口面馆」") < fragment.index("参考样例")
 

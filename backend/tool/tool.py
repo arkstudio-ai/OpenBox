@@ -28,6 +28,7 @@ class ToolContext:
     origin_session_id: str = ""  # Original session for cron jobs (cron tool uses this)
     user_id: str = ""
     workspace_id: str = ""
+    timezone: str | None = None
     project_id: str = ""
     sandbox: Any = None  # SandboxClient
     sandbox_error: dict | None = None  # Expected unavailability, not a failed LLM turn

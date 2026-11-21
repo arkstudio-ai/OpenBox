@@ -43,18 +43,27 @@ class AppearanceSection extends ConsumerWidget {
                 Expanded(
                   child: _card(
                     t,
-                    selected: i18n.language == lang,
+                    selected: !i18n.followsSystem && i18n.language == lang,
                     onTap: () => controller.setLanguage(lang),
                     child: _langLabel(
                       t,
                       i18n,
                       _langLabelKeys[lang] ?? 'settings:appearance.langEn',
-                      i18n.language == lang,
+                      !i18n.followsSystem && i18n.language == lang,
                     ),
                   ),
                 ),
               ],
             ],
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: i18n.followsSystem
+                ? null
+                : () => controller.setLanguage(null),
+            child: Text(i18n.t('light:followSystemLanguage')),
           ),
         ),
         const SizedBox(height: 24),

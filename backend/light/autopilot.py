@@ -53,6 +53,22 @@ DONE_TEXT = "今天这条做好了（{when} 自动做的）。不想要了，在
 SKIP_CAP_TEXT = "今天这条没做：预计 {quote} 积分，超过了你设的每次上限 {cap} 积分。可以在「托管中的事」里调高上限。"
 SKIP_BALANCE_TEXT = "今天这条没做：积分不够了。充值或等每周额度到账后会接着做。"
 FAILED_TEXT = "今天这条没做成，明天到点会再试一次。"
+_RUN_COPY = {
+    "en-US": {
+        "input": "Scheduled task · {time}",
+        DONE_TEXT: "Your scheduled item is ready. You can pause or cancel the task in your settings.",
+        SKIP_CAP_TEXT: "Skipped this run. The estimate is {quote} credits and your limit is {cap} credits per run.",
+        SKIP_BALANCE_TEXT: "Skipped this run because there were not enough credits.",
+        FAILED_TEXT: "This run failed. The task will try again at its next scheduled time.",
+    },
+    "vi-VN": {
+        "input": "Tác vụ đã lên lịch · {time}",
+        DONE_TEXT: "Nội dung theo lịch đã sẵn sàng. Bạn có thể tạm dừng hoặc hủy tác vụ trong phần cài đặt.",
+        SKIP_CAP_TEXT: "Đã bỏ qua lần chạy này. Ước tính {quote} điểm, vượt giới hạn {cap} điểm mỗi lần chạy.",
+        SKIP_BALANCE_TEXT: "Đã bỏ qua lần chạy này vì không đủ điểm.",
+        FAILED_TEXT: "Lần chạy này không thành công. Tác vụ sẽ thử lại vào thời điểm đã lên lịch tiếp theo.",
+    },
+}
 
 
 class Recipe(BaseModel):
@@ -189,9 +205,17 @@ async def recipe_for_asset(user_id: str, session_id: str, asset_id: str) -> tupl
     raise LightError("LIGHT_AUTOPILOT_SOURCE", "cannot tell how this result was made")
 
 
+def _without_run_language(prompt: str) -> str:
+    from core.ui_language import LANGS
+    from light.prompt import output_language_line
+
+    source, separator, ending = prompt.rpartition("\n")
+    return source if separator and any(ending == output_language_line(lang) for lang in LANGS) else prompt
+
+
 def _clip_recipe(job) -> Recipe:
     request = job.request_data or {}
-    prompt = re.sub(r"这一次[^。]*。$", "", str(job.prompt or "")).strip()
+    prompt = re.sub(r"这一次[^。]*。$", "", _without_run_language(str(job.prompt or ""))).strip()
     inputs = request.get("input_asset_ids") or []
     duration = request.get("duration")
     return Recipe(prompt=prompt[:4000], duration=int(duration) if isinstance(duration, int) and duration > 0 else 15,
@@ -215,7 +239,8 @@ async def _image_prompt(session_id: str, asset_id: str) -> tuple[str | None, str
         ids = meta.get("asset_ids") or ([meta["asset_id"]] if meta.get("asset_id") else [])
         if asset_id in ids:
             args = state.get("input") or {}
-            return args.get("prompt"), args.get("size")
+            prompt = args.get("prompt")
+            return _without_run_language(prompt) if isinstance(prompt, str) else prompt, args.get("size")
     return None, None
 
 
@@ -266,11 +291,14 @@ async def create(*, user_id: str, workspace_id: str, session_id: str, asset_id: 
 
     from cron.service import cron_service
     from cron.types import CronDeliveryConfig, CronJobCreate, CronScheduleCron
+    from core.device_locale import for_user, mobile_request_locale
+
+    zone = (await for_user(user_id, mobile_request_locale.get())).timezone or TIMEZONE
     name = f"省心托管 · {TASK_LABELS[task]}"
     created = await cron_service.add(user_id, CronJobCreate(
         project_id=session.project_id, session_id=session_id, name=name,
         description=f"{template.when.label()} · 每次最多 {_plain(template.credits_cap_per_run)} 积分",
-        schedule=CronScheduleCron(expr=template.when.cron_expr(), tz=TIMEZONE),
+        schedule=CronScheduleCron(expr=template.when.cron_expr(), tz=zone),
         task_prompt=_task_prompt(template), delivery=CronDeliveryConfig(notifications_enabled=True),
         max_retries=1, template=template.public(),
     ), workspace_id=workspace_id)
@@ -349,7 +377,8 @@ async def update(user_id: str, workspace_id: str, job_id: str, *, repeat: str | 
     from cron.service import cron_service
     from cron.types import CronJobUpdate, CronScheduleCron
     await cron_service.update(job_id, user_id, CronJobUpdate(
-        schedule=CronScheduleCron(expr=when.cron_expr(), tz=TIMEZONE), template=template.public(),
+        schedule=CronScheduleCron(expr=when.cron_expr(), tz=(job.get("schedule") or {}).get("tz") or TIMEZONE),
+        template=template.public(),
         description=f"{when.label()} · 每次最多 {_plain(template.credits_cap_per_run)} 积分",
     ), workspace_id=workspace_id)
     return view(await _job(user_id, workspace_id, job_id))
@@ -368,14 +397,16 @@ async def run(job: dict) -> dict:
     """One scheduled run without a desktop; returns the executor's result dict."""
     from cron.executor import _create_run_entry, _update_run_entry
     from core.identifier import ascending
+    from core.ui_language import ui_language_for
+    lang = await ui_language_for(job["user_id"])
     started = datetime.now(timezone.utc)
     run_id = ascending("cron_run")
     await _create_run_entry(run_id, job, started)
     try:
-        text, status, error = await _make(job, run_id)
+        text, status, error = await _make(job, run_id, lang)
     except Exception as exc:
         log.warning("light autopilot run failed job=%s error=%s: %s", job.get("id"), type(exc).__name__, exc)
-        text, status, error = FAILED_TEXT, "error", f"{type(exc).__name__}"
+        text, status, error = _RUN_COPY.get(lang, {}).get(FAILED_TEXT, FAILED_TEXT), "error", type(exc).__name__
     ended = datetime.now(timezone.utc)
     duration_ms = int((ended - started).total_seconds() * 1000)
     await _update_run_entry(run_id, job["id"], None, status=status, summary_text=text,
@@ -386,7 +417,7 @@ async def run(job: dict) -> dict:
     return result
 
 
-async def _make(job: dict, run_id: str) -> tuple[str, str, str | None]:
+async def _make(job: dict, run_id: str, lang: str) -> tuple[str, str, str | None]:
     template = LightAutopilotTemplate.model_validate(job["template"])
     session_id = template.session_id
     user_id = job["user_id"]
@@ -400,16 +431,22 @@ async def _make(job: dict, run_id: str) -> tuple[str, str, str | None]:
 
     quote = await _quote(template, session)
     from light import chat
-    user_text = f"【省心托管】{template.when.label()}，{TASK_LABELS[template.task]}"
+    from light.prompt import output_language_line
+    copy = _RUN_COPY.get(lang, {})
+    user_text = (copy["input"].format(time=template.when.time) if copy
+                 else f"【省心托管】{template.when.label()}，{TASK_LABELS[template.task]}")
     if quote is not None and quote > template.credits_cap_per_run:
+        text = copy.get(SKIP_CAP_TEXT, SKIP_CAP_TEXT).format(
+            quote=_plain(quote), cap=_plain(template.credits_cap_per_run))
         await chat.exchange(session_id, user_id, user_text=user_text,
-                            assistant_text=SKIP_CAP_TEXT.format(quote=_plain(quote), cap=_plain(template.credits_cap_per_run)),
+                            assistant_text=text,
                             agent=session.agent, model=None, entrypoint="light_autopilot")
-        return SKIP_CAP_TEXT.format(quote=_plain(quote), cap=_plain(template.credits_cap_per_run)), "skipped", "OVER_CAP"
+        return text, "skipped", "OVER_CAP"
     if not await _has_balance(workspace_id):
-        await chat.exchange(session_id, user_id, user_text=user_text, assistant_text=SKIP_BALANCE_TEXT,
+        text = copy.get(SKIP_BALANCE_TEXT, SKIP_BALANCE_TEXT)
+        await chat.exchange(session_id, user_id, user_text=user_text, assistant_text=text,
                             agent=session.agent, model=None, entrypoint="light_autopilot")
-        return SKIP_BALANCE_TEXT, "skipped", "INSUFFICIENT_CREDITS"
+        return text, "skipped", "INSUFFICIENT_CREDITS"
 
     from session import session as session_mod
     user_message = await session_mod.create_user_message(
@@ -423,24 +460,27 @@ async def _make(job: dict, run_id: str) -> tuple[str, str, str | None]:
                       project_id=session.project_id or "", message_id=assistant.id)
     # One clip (plus its name overlay) or one image: the quote above already
     # kept the run inside the cap, so the conversation's own cap is untouched.
-    made = await (_make_video(ctx, template, run_id) if template.task == "video"
-                  else _make_image(ctx, template, run_id))
-    text = DONE_TEXT.format(when=template.when.label()) if made else FAILED_TEXT
+    language_instruction = output_language_line(lang)
+    made = await (_make_video(ctx, template, run_id, language_instruction) if template.task == "video"
+                  else _make_image(ctx, template, language_instruction))
+    text = (copy.get(DONE_TEXT, DONE_TEXT).format(when=template.when.label()) if made
+            else copy.get(FAILED_TEXT, FAILED_TEXT))
     await chat.say(session_id, assistant.id, user_id, text)
     await chat.finish(session_id, assistant.id, user_id)
     return text, ("ok" if made else "error"), (None if made else "NOT_MADE")
 
 
-async def _make_video(ctx, template: LightAutopilotTemplate, run_id: str) -> bool:
+async def _make_video(ctx, template: LightAutopilotTemplate, run_id: str, language_instruction: str) -> bool:
     from light import pipeline
     recipe = template.recipe
     variation = VARIATIONS[_run_number(run_id) % len(VARIATIONS)]
+    prompt = f"{recipe.prompt}{variation}\n{language_instruction}"
     key = f"{KEY_PREFIX}{run_id}"
-    outcome = await pipeline.generate(ctx, key=key, prompt=f"{recipe.prompt}{variation}",
+    outcome = await pipeline.generate(ctx, key=key, prompt=prompt,
                                       reference=recipe.reference_asset_id, duration=recipe.duration,
                                       ratio=recipe.ratio)
     if outcome.status == "failed" and recipe.reference_asset_id:
-        outcome = await pipeline.generate(ctx, key=key + ":text", prompt=f"{recipe.prompt}{variation}",
+        outcome = await pipeline.generate(ctx, key=key + ":text", prompt=prompt,
                                           reference=None, duration=recipe.duration, ratio=recipe.ratio)
     if outcome.status != "completed" or not outcome.asset_id:
         log.info("light autopilot: clip not made run=%s status=%s", run_id, outcome.status)
@@ -452,10 +492,10 @@ async def _make_video(ctx, template: LightAutopilotTemplate, run_id: str) -> boo
     return True
 
 
-async def _make_image(ctx, template: LightAutopilotTemplate, run_id: str) -> bool:
+async def _make_image(ctx, template: LightAutopilotTemplate, language_instruction: str) -> bool:
     from tool.image_gen import ImageGenArgs, execute
     recipe = template.recipe
-    result = await execute(ImageGenArgs(prompt=recipe.prompt, size=recipe.size or None, n=1), ctx)
+    result = await execute(ImageGenArgs(prompt=f"{recipe.prompt}\n{language_instruction}", size=recipe.size or None, n=1), ctx)
     meta = result.metadata or {}
     return bool(meta.get("asset_ids") or meta.get("asset_id")) and not meta.get("error")
 

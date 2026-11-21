@@ -1,8 +1,12 @@
 import 'dart:ui' show Locale;
 
+import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/appearance/appearance_store.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/utils/format.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +19,47 @@ void main() {
     expect(I18nController.languageForDevice(const Locale('en', 'GB')), 'en-US');
     expect(I18nController.languageForDevice(const Locale('fr')), 'en-US');
   });
+
+  test(
+    'phone language wins over legacy account locale and follows changes',
+    () async {
+      SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
+      final prefs = await SharedPreferences.getInstance();
+      await I18nController.migrateLanguagePreference(prefs);
+      var locale = const Locale('vi', 'VN');
+      final container = ProviderContainer(
+        overrides: [
+          prefsProvider.overrideWithValue(prefs),
+          i18nProvider.overrideWith(
+            () => I18nController(
+              I18nBundle({}),
+              prefs,
+              systemLocale: () => locale,
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(i18nProvider.notifier);
+      container.read(appearanceProvider.notifier).hydrateFromServer({
+        'extra': {'ui_language': 'zh-CN', 'locale': 'zh-CN'},
+      });
+      expect(container.read(i18nProvider).language, 'vi-VN');
+      expect(container.read(i18nProvider).followsSystem, isTrue);
+      locale = const Locale('en', 'GB');
+      controller.refreshSystemLanguage();
+      expect(container.read(i18nProvider).language, 'en-US');
+      controller.setLanguage('en-US'); // A tap also pins the current language.
+      await I18nController.migrateLanguagePreference(prefs);
+      expect(prefs.getString('bossip:lang'), 'en-US');
+      locale = const Locale('vi', 'VN');
+      controller.refreshSystemLanguage();
+      expect(container.read(i18nProvider).language, 'en-US');
+      controller.setLanguage(null);
+      expect(container.read(i18nProvider).language, 'vi-VN');
+      expect(container.read(i18nProvider).followsSystem, isTrue);
+    },
+  );
 
   test('Vietnamese falls back to English; Chinese and English do not', () {
     final bundle = I18nBundle({

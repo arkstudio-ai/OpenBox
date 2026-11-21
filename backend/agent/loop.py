@@ -66,6 +66,7 @@ from session.session import (
 )
 from snapshot import snapshot
 from tool.tool import ToolContext, ToolResult
+from core.device_locale import DeviceLocale, for_turn as device_locale_for_turn
 from core.identifier import ascending
 from core.log import create_logger
 
@@ -1126,6 +1127,7 @@ async def run_loop(
         from core.config import get_config
         config = get_config()
         memory_turn_contexts = {}
+        device_locales: dict[str, DeviceLocale] = {}
 
         def _memory_flags():
             from memory.session_policy import memory_isolated
@@ -1687,6 +1689,9 @@ async def run_loop(
 
             # Sessions run in their project's directory, so a follow-up
             # conversation lands on the files the last one left behind.
+            if last_user.id not in device_locales:
+                device_locales[last_user.id] = await device_locale_for_turn(user_id, last_user)
+            device_locale = device_locales[last_user.id]
             ctx = ToolContext(
                 session_id=session_id,
                 run_id=run_id,
@@ -1694,6 +1699,7 @@ async def run_loop(
                                if step in step_traces else None),
                 run_generation=lease.generation,
                 user_id=user_id,
+                timezone=device_locale.timezone,
                 workspace_id=session.workspace_id,
                 project_id=session.project_id or "",
                 agent_id=agent_name,
@@ -1928,15 +1934,19 @@ async def run_loop(
                 memory_isolated=isolated_memory,
                 session_kind=session.kind,
                 memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
+                device_locale=device_locale,
             )
             try:
                 from light.prompt import light_mode_fragment
-                light_fragment = await light_mode_fragment(user_id, session)
+                light_fragment = await light_mode_fragment(user_id, session, lang=device_locale.language)
             except Exception as exc:  # the guided chrome is optional; the chat must still run
                 light_fragment = ""
                 log.warning(f"light prompt fragment skipped: {type(exc).__name__}")
             if light_fragment:
                 system.append(light_fragment)
+            elif device_locale.language and agent_def.name != "assistant":
+                from light.prompt import output_language_line
+                system.append(output_language_line(device_locale.language))
             if guided_action:
                 system.append(turn_instruction(session, guided_action))
             if revision_repair:
@@ -3640,6 +3650,7 @@ async def _build_system_prompt(
     memory_isolated: bool = False,
     session_kind: str | None = None,
     memory_packet: bool = False,
+    device_locale: DeviceLocale | None = None,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -3648,7 +3659,11 @@ async def _build_system_prompt(
     uses model-specific prompt routing ported from opencode.
     """
     import sys
-    from datetime import date
+    locale = device_locale or DeviceLocale()
+    local_now = locale.now()
+    calendar = f"Today's date: {local_now.date().isoformat()}"
+    if locale.timezone:
+        calendar += f"\nUser's time zone: {locale.timezone}. Local time: {local_now.isoformat(timespec='minutes')}."
 
     if agent_def.name == "assistant":
         from assistant.profile import user_section
@@ -3659,12 +3674,13 @@ async def _build_system_prompt(
         # assistant should send them to before arranging work (light/prompt.py::assistant_section).
         try:
             from light.prompt import assistant_section
-            light_section = await assistant_section(user_id, workspace_id)
+            light_section = await assistant_section(user_id, workspace_id, lang=locale.language)
         except Exception as exc:  # the directory is a convenience; the assistant must still answer
-            light_section = ""
+            from light.prompt import output_language_line
+            light_section = output_language_line(locale.language) if locale.language else ""
             log.warning(f"assistant light section skipped: {type(exc).__name__}")
         return [ASSISTANT_PROMPT, *([section] if section else []), *([light_section] if light_section else []),
-                f"Today's date: {date.today().isoformat()}"]
+                calendar]
 
     parts = []
 
@@ -3725,7 +3741,7 @@ async def _build_system_prompt(
         f"  Pre-installed: python3, pip, git, curl, wget, jq, build-essential\n"
         f"  Network: internet access available\n"
         f"  Working directory: {workdir}\n"
-        f"  Today's date: {date.today().isoformat()}\n"
+        f"  {calendar}\n"
         f"</env>"
     )
     parts.append(env_info)

@@ -590,6 +590,10 @@ async def update_preferences(body: PreferencesUpdate, current_user: dict = Depen
         if not is_language(lang):
             raise HTTPException(status_code=400, detail="ui_language must be zh-CN, en-US or vi-VN")
         fields["extra"] = {**(fields.get("extra") or {}), LANG_KEY: lang}
+    from core.device_locale import TIMEZONE_KEY, valid_timezone
+    zone = (fields.get("extra") or {}).get(TIMEZONE_KEY)
+    if zone is not None and valid_timezone(zone) is None:
+        raise HTTPException(status_code=400, detail="Unknown IANA time zone")
     result = await _pref_repo.upsert(current_user["user_id"], **fields)
     return result
 

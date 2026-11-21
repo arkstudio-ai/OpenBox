@@ -201,15 +201,16 @@ def _utc(when: datetime) -> datetime:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
-def _to_item(row: FileAsset, oss) -> dict:
-    return {
+def _to_item(row: FileAsset, oss, *, video_thumbnails: bool = False) -> dict:
+    kind = kind_of(row.mime, row.name)
+    item = {
         "id": row.id,
         "name": row.name,
         "description": row.description or "",
         "descriptionState": row.description_state,
         "mime": row.mime,
         "size": row.size,
-        "kind": kind_of(row.mime, row.name),
+        "kind": kind,
         "source": row.source,
         "projectId": row.project_id,
         "sessionId": row.session_id,
@@ -218,6 +219,11 @@ def _to_item(row: FileAsset, oss) -> dict:
         "sandboxPath": f"/workspace/uploads/{row.name}",
         "url": oss.presign_get(row.oss_key),
     }
+    if video_thumbnails and kind == "video":
+        from tool.footage_analyze import snapshot_url
+
+        item["thumbnail"] = snapshot_url(oss, row.oss_key, 0.0, width=480)
+    return item
 
 
 @router.get("")
@@ -230,6 +236,7 @@ async def list_assets(
     limit: int = Query(60, ge=1, le=500),
     offset: int = Query(0, ge=0),
     owned_only: bool = False,
+    video_thumbnails: bool = False,
     current_user: dict = Depends(get_current_user),
     _workspace: dict = Depends(get_workspace),
 ):
@@ -265,7 +272,7 @@ async def list_assets(
 
     page = rows[offset : offset + limit]
     return {
-        "items": [_to_item(r, oss) for r in page],
+        "items": [_to_item(r, oss, video_thumbnails=video_thumbnails) for r in page],
         "total": len(rows),
         "hasMore": offset + limit < len(rows),
     }

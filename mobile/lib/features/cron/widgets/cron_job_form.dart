@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
+import '../../../shared/i18n/device_timezone.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/cron.dart';
 import '../api/cron_api.dart';
@@ -42,7 +42,6 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
       ? scheduleToForm(widget.job!.schedule)
       : const ScheduleForm();
   String _projectId = '';
-  String _tz = 'UTC';
   bool _saving = false;
   bool _failed = false;
 
@@ -51,17 +50,12 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
     super.initState();
     _expr.text = _form.expr;
     _every.text = '${_form.every}';
-    _loadTimezone();
   }
 
-  Future<void> _loadTimezone() async {
-    try {
-      final tz = await FlutterTimezone.getLocalTimezone();
-      if (mounted) setState(() => _tz = tz.identifier);
-    } catch (_) {
-      // Keep the form's UTC fallback if the system has no timezone.
-    }
-  }
+  String _timezone(String? device) => switch (widget.job?.schedule) {
+    CronScheduleCron(:final tz) => tz ?? 'UTC',
+    _ => device ?? 'UTC',
+  };
 
   @override
   void dispose() {
@@ -75,7 +69,10 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
   void _patch(ScheduleForm next) => setState(() => _form = next);
 
   Future<void> _submit() async {
-    final schedule = buildSchedule(_form, _tz);
+    final schedule = buildSchedule(
+      _form,
+      _timezone(ref.read(deviceTimezoneProvider).valueOrNull),
+    );
     final projects = ref.read(cronProjectsProvider).valueOrNull ?? const [];
     final targetProject = widget.job != null
         ? (widget.job!.projectId ?? '')
@@ -134,7 +131,8 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
         : (_projectId.isNotEmpty
               ? _projectId
               : (projects.isNotEmpty ? projects.first.$1 : ''));
-    final schedule = buildSchedule(_form, _tz);
+    final tz = _timezone(ref.watch(deviceTimezoneProvider).valueOrNull);
+    final schedule = buildSchedule(_form, tz);
     final valid =
         _name.text.trim().isNotEmpty &&
         _task.text.trim().isNotEmpty &&
@@ -282,7 +280,7 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                           Expanded(child: _selector(t, _form.time, _pickTime)),
                           const SizedBox(width: 8),
                           Text(
-                            i18n.t('cron:form.timezone', vars: {'tz': _tz}),
+                            i18n.t('cron:form.timezone', vars: {'tz': tz}),
                             style: TextStyle(
                               fontSize: FontSizes.xs2,
                               color: t.n500,
@@ -361,7 +359,7 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            i18n.t('cron:form.exprHint', vars: {'tz': _tz}),
+                            i18n.t('cron:form.exprHint', vars: {'tz': tz}),
                             style: TextStyle(
                               fontSize: FontSizes.xs2,
                               color: t.n500,

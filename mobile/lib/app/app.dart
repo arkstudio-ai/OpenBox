@@ -8,8 +8,10 @@ import '../features/voice/widgets/voice_call_host.dart';
 import '../shared/appearance/appearance_store.dart';
 import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
+import '../shared/i18n/device_timezone.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/widgets/toast.dart';
+import 'device_preferences.dart';
 import 'notification_host.dart';
 import 'router.dart';
 import 'workspace_bootstrap.dart';
@@ -17,11 +19,43 @@ import 'workspace_bootstrap.dart';
 /// Root widget: wires appearance (theme × mode × font-scale) and i18n into
 /// MaterialApp.router, floats the toast host above every screen, and puts
 /// the voice call bar on top of them all while a call is collapsed.
-class BossipApp extends ConsumerWidget {
+class BossipApp extends ConsumerStatefulWidget {
   const BossipApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<BossipApp> createState() => _BossipAppState();
+}
+
+class _BossipAppState extends ConsumerState<BossipApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    ref.read(i18nProvider.notifier).refreshSystemLanguage();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(i18nProvider.notifier).refreshSystemLanguage();
+      ref.invalidate(deviceTimezoneProvider);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.watch(devicePreferencesProvider);
     final appearance = ref.watch(appearanceProvider);
     final i18n = ref.watch(i18nProvider);
     final router = ref.watch(routerProvider);

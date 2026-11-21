@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Literal
 
+from core.device_locale import ORIGIN_KEY, mobile_request_locale
+
 InputOrigin = Literal["human", "assistant_delegation", "task_result", "system_recovery", "unknown"]
 ORIGINS = {"human", "assistant_delegation", "task_result", "system_recovery", "unknown"}
 NON_HUMAN_ORIGINS = ORIGINS - {"human", "unknown"}
@@ -23,6 +25,8 @@ def checked_origin(origin: InputOrigin, reference: dict | None, *, user_id: str)
         if alias is not None and (not isinstance(alias, str) or not 1 <= len(alias) <= 64
                                   or alias.startswith(("sjr:", "tabort:"))):
             raise ValueError("invalid human client message identity")
+        if device := mobile_request_locale.get():
+            reference.setdefault(ORIGIN_KEY, device.origin())
     if origin == "task_result" and (
         reference.get("execution_mode") != "report_only"
         or not reference.get("result_id")

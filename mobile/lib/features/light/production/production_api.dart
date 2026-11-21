@@ -53,6 +53,7 @@ class ProductionMedia {
     required this.mime,
     this.thumbnail,
     this.aspectRatio,
+    this.kind,
   });
 
   final String id;
@@ -60,8 +61,9 @@ class ProductionMedia {
   final String mime;
   final String? thumbnail;
   final double? aspectRatio;
+  final String? kind;
 
-  bool get video => mime.startsWith('video/');
+  bool get video => kind == 'video' || mime.startsWith('video/');
 
   factory ProductionMedia.fromJson(Map<String, dynamic> json) {
     final width = asInt(json['width']) ?? 0;
@@ -79,7 +81,8 @@ class ProductionMedia {
     id: resource.id,
     name: resource.name,
     mime: resource.mime,
-    thumbnail: resource.kind == 'image' ? resource.url : null,
+    kind: resource.kind,
+    thumbnail: resource.kind == 'image' ? resource.url : resource.thumbnail,
   );
 }
 
@@ -335,7 +338,12 @@ class LightProductionApi {
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/api/assets',
-      queryParameters: {'kind': kind, 'offset': offset, 'owned_only': true},
+      queryParameters: {
+        'kind': kind,
+        'offset': offset,
+        'owned_only': true,
+        if (kind == 'video') 'video_thumbnails': true,
+      },
     );
     return ResourcePage.fromJson(response.data ?? const {});
   }

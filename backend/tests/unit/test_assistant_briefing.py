@@ -6,7 +6,6 @@ that stands as its own block in the conversation.
 """
 from datetime import datetime, timezone
 import json
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -110,7 +109,8 @@ async def test_a_briefing_turn_only_reads_and_says_so(monkeypatch):
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        from agent.tool_resolution import ResolvedStepTools
+        return ResolvedStepTools({tool.id: tool for tool in assistant_tools}, "available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)

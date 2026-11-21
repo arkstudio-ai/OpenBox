@@ -132,9 +132,21 @@ class UILanguageMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        from core.device_locale import DeviceLocale, mobile_request_locale, valid_timezone
+
+        device = None
         if scope.get("type") in ("http", "websocket"):
-            raw = next((value for key, value in scope.get("headers") or () if key == HEADER.encode()), None)
+            headers = dict(scope.get("headers") or ())
+            raw = headers.get(HEADER.encode())
             lang = normalize(raw.decode("latin-1", "replace")) if raw is not None else None
             if lang:
                 scope.setdefault("state", {})[STATE_ATTR] = lang
-        await self.app(scope, receive, send)
+            if headers.get(b"x-client-type", b"").lower() == b"mobile":
+                zone = valid_timezone(headers.get(b"x-time-zone", b"").decode("latin-1"))
+                if lang or zone:
+                    device = DeviceLocale(lang, zone)
+        token = mobile_request_locale.set(device)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            mobile_request_locale.reset(token)

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from api.light import router
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
+from core.ui_language import UILanguageMiddleware, set_ui_language
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
 from db.models.message import Message
@@ -27,6 +28,7 @@ async def _user():
 
 def _client(user):
     app = FastAPI()
+    app.add_middleware(UILanguageMiddleware)
     app.include_router(router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": user["id"], "workspace_id": user["default_workspace_id"]}
     app.dependency_overrides[get_workspace] = lambda: {"id": user["default_workspace_id"], "role": "owner"}
@@ -114,7 +116,9 @@ async def test_api_creates_lists_pauses_and_cancels_a_free_plan_autopilot(monkey
     session = await _light_session(user)
     _, final = await _clip_with_overlay(user, session)
     async with _client(user) as client:
-        resp = await client.post("/api/light/autopilot", json={"session_id": session.id, "asset_id": final})
+        resp = await client.post("/api/light/autopilot", json={"session_id": session.id, "asset_id": final}, headers={
+            "X-Client-Type": "mobile", "Accept-Language": "vi-VN", "X-Time-Zone": "Asia/Ho_Chi_Minh",
+        })
         assert resp.status_code == 200, resp.text
         made = resp.json()
         assert made["created"] and made["task"] == "video" and made["mode"] == "make_only"
@@ -137,6 +141,9 @@ async def test_api_creates_lists_pauses_and_cancels_a_free_plan_autopilot(monkey
         changed = (await client.patch(f"/api/light/autopilot/{made['id']}",
                                       json={"time": "08:00", "credits_cap": "20"})).json()
         assert (changed["time"], changed["credits_cap_per_run"]) == ("08:00", "20")
+        from cron.service import cron_service
+        jobs = await cron_service.list_jobs(user["id"], workspace_id=user["default_workspace_id"])
+        assert next(job for job in jobs if job["id"] == made["id"])["schedule"]["tz"] == "Asia/Ho_Chi_Minh"
         assert (await client.delete(f"/api/light/autopilot/{made['id']}")).json() == {"ok": True}
         assert (await client.get("/api/light/autopilot")).json()["items"] == []
         assert (await client.delete(f"/api/light/autopilot/{made['id']}")).status_code == 404
@@ -181,9 +188,15 @@ async def test_a_make_only_run_posts_a_new_clip_into_the_conversation(monkeypatc
                                                            Message.role == "assistant"))).all()
     assert any(m.id == message_id for m in finished)
 
+    await set_ui_language(user["id"], "vi-VN")
+    vietnamese = await autopilot.run({**job, "workspace_id": user["default_workspace_id"]})
+    assert vietnamese["status"] == "ok" and "đã sẵn sàng" in vietnamese["summary_text"]
+    assert "Tiếng Việt" in calls["generate"][3]
+
     # Over the cap: nothing is generated and the conversation says why.
     calls.clear()
     tight = {**job, "workspace_id": user["default_workspace_id"],
              "template": {**job["template"], "credits_cap_per_run": "1"}}
     skipped = await autopilot.run(tight)
     assert skipped["status"] == "skipped" and skipped["error"] == "OVER_CAP" and "generate" not in calls
+    assert "vượt giới hạn" in skipped["summary_text"]

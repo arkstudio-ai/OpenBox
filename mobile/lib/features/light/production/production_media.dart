@@ -5,6 +5,7 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/media_viewer.dart';
+import '../../chat/api/assets_api.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 
@@ -31,6 +32,40 @@ class ProductionSelectionGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    Widget tile(ProductionMedia media) => Stack(
+      key: ValueKey(media.id),
+      fit: StackFit.expand,
+      children: [
+        InkWell(
+          onTap: () => openProductionMedia(context, media),
+          child: ProductionThumbnail(media: media),
+        ),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: IconButton.filled(
+            tooltip: i18n.t('light:production.remove'),
+            onPressed: onRemove == null ? null : () => onRemove!(media),
+            style: IconButton.styleFrom(
+              backgroundColor: t.bg,
+              foregroundColor: t.ink,
+            ),
+            icon: const Icon(Icons.close, size: 17),
+          ),
+        ),
+      ],
+    );
+
+    if (materials.length == 1) {
+      return Align(
+        alignment: Alignment.topCenter,
+        heightFactor: 1,
+        child: FractionallySizedBox(
+          widthFactor: .5,
+          child: AspectRatio(aspectRatio: 1, child: tile(materials.single)),
+        ),
+      );
+    }
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -40,36 +75,12 @@ class ProductionSelectionGrid extends ConsumerWidget {
         crossAxisSpacing: 10,
       ),
       itemCount: materials.length,
-      itemBuilder: (context, index) {
-        final media = materials[index];
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            InkWell(
-              onTap: () => openProductionMedia(context, media),
-              child: ProductionThumbnail(media: media),
-            ),
-            Positioned(
-              top: 4,
-              right: 4,
-              child: IconButton.filled(
-                tooltip: i18n.t('light:production.remove'),
-                onPressed: onRemove == null ? null : () => onRemove!(media),
-                style: IconButton.styleFrom(
-                  backgroundColor: t.bg,
-                  foregroundColor: t.ink,
-                ),
-                icon: const Icon(Icons.close, size: 17),
-              ),
-            ),
-          ],
-        );
-      },
+      itemBuilder: (context, index) => tile(materials[index]),
     );
   }
 }
 
-class ProductionThumbnail extends StatelessWidget {
+class ProductionThumbnail extends StatefulWidget {
   const ProductionThumbnail({
     super.key,
     required this.media,
@@ -82,7 +93,60 @@ class ProductionThumbnail extends StatelessWidget {
   final bool showVideoBadge;
 
   @override
+  State<ProductionThumbnail> createState() => _ProductionThumbnailState();
+}
+
+class _ProductionThumbnailState extends State<ProductionThumbnail> {
+  String? _source;
+  String? _failedSource;
+
+  String? get _incoming => switch (widget.media.thumbnail) {
+    final url? when url.isNotEmpty => url,
+    _ => null,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _source = _incoming;
+  }
+
+  @override
+  void didUpdateWidget(ProductionThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final previous = _source;
+    final incoming = _incoming;
+    if (oldWidget.media.id != widget.media.id ||
+        oldWidget.media.video != widget.media.video) {
+      _source = incoming;
+      _failedSource = null;
+    } else if (incoming != null &&
+        (previous == null ||
+            previous == _failedSource ||
+            _thumbnailIdentity(previous) != _thumbnailIdentity(incoming))) {
+      _source = incoming;
+    }
+  }
+
+  // The production poll and draft save re-sign the same OSS object. Keep
+  // the active ImageProvider until the object changes or the request fails.
+  Uri? _thumbnailIdentity(String source) {
+    final uri = Uri.tryParse(source);
+    if (uri == null || !uri.queryParameters.containsKey('OSSAccessKeyId')) {
+      return uri;
+    }
+    return uri.replace(
+      queryParameters: Map.of(uri.queryParameters)
+        ..remove('OSSAccessKeyId')
+        ..remove('Expires')
+        ..remove('Signature'),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final media = widget.media;
+    final source = _source;
     final t = context.tokens;
     final placeholder = ColoredBox(
       color: t.surface,
@@ -93,29 +157,53 @@ class ProductionThumbnail extends StatelessWidget {
         ),
       ),
     );
+    final fallback = media.video && media.id.isNotEmpty
+        ? Consumer(
+            builder: (context, ref, _) {
+              final frame = ref
+                  .watch(videoThumbnailProvider(media.id))
+                  .valueOrNull;
+              return frame == null
+                  ? placeholder
+                  : Image.memory(frame, fit: widget.fit, gaplessPlayback: true);
+            },
+          )
+        : placeholder;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (media.thumbnail case final url? when url.isNotEmpty)
+          if (source != null)
             Image.network(
-              url,
-              fit: fit,
-              errorBuilder: (_, _, _) => placeholder,
-              frameBuilder: (_, child, frame, _) =>
-                  frame == null ? placeholder : child,
+              source,
+              key: ValueKey(media.id),
+              fit: widget.fit,
+              gaplessPlayback: true,
+              frameBuilder: (_, child, frame, _) => frame != null
+                  ? child
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _failedSource == null ? placeholder : fallback,
+                        child,
+                      ],
+                    ),
+              errorBuilder: (_, _, _) {
+                _failedSource = source;
+                return fallback;
+              },
             )
           else
-            placeholder,
-          if (showVideoBadge && media.video && media.thumbnail != null)
+            fallback,
+          if (widget.showVideoBadge && media.video)
             const Positioned(
-              left: 8,
-              bottom: 8,
-              child: Icon(
-                Icons.play_circle_fill,
-                color: Colors.white,
-                size: 21,
+              left: 5,
+              top: 5,
+              child: CircleAvatar(
+                radius: 11,
+                backgroundColor: Colors.black54,
+                child: Icon(Icons.play_arrow, color: Colors.white, size: 17),
               ),
             ),
         ],
@@ -306,21 +394,41 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
                               children: [
                                 ProductionThumbnail(media: media),
                                 Positioned(
-                                  left: 5,
-                                  right: 5,
-                                  bottom: 5,
-                                  child: Text(
-                                    media.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: media.thumbnail == null
-                                          ? t.ink
-                                          : Colors.white,
-                                      backgroundColor: media.thumbnail == null
-                                          ? null
-                                          : Colors.black54,
-                                      fontSize: 11,
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: ClipRRect(
+                                    borderRadius: const BorderRadius.vertical(
+                                      bottom: Radius.circular(12),
+                                    ),
+                                    child: DecoratedBox(
+                                      decoration: const BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.bottomCenter,
+                                          end: Alignment.topCenter,
+                                          colors: [
+                                            Colors.black87,
+                                            Colors.transparent,
+                                          ],
+                                        ),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          5,
+                                          12,
+                                          5,
+                                          5,
+                                        ),
+                                        child: Text(
+                                          media.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),

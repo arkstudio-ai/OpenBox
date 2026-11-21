@@ -31,8 +31,12 @@ LANGUAGE_NAMES = {"zh-CN": "中文", "en-US": "英文（English）", "vi-VN": "�
 def output_language_line(lang: str | None) -> str:
     """One line per fragment (docs/LIGHT_MODE_I18N_PLAN.md §2.4): replies, card titles and options, on-screen text."""
     name = LANGUAGE_NAMES.get(lang or DEFAULT_LANG, LANGUAGE_NAMES[DEFAULT_LANG])
-    line = f"对用户的所有输出（回复、question/review 卡的标题与选项、成片里的文字）用{name}"
-    return line + ("；越南语可保留英文专有名词。" if lang == "vi-VN" else "。")
+    line = (
+        f"默认对用户的所有输出（回复、卡片、文案、菜单、成片标题、字幕及新生成的对白和旁白）用{name}。"
+        "技能说明和示例的语言不会改变输出语言。保留原声、店名和用户要求逐字使用的文字；"
+        "用户明确要求另一种或多种输出语言时，按其要求或所选多语模板制作。"
+    )
+    return line + ("越南语可保留英文专有名词。" if lang == "vi-VN" else "")
 
 
 def _added_scenes(entry_id: str) -> list:
@@ -85,7 +89,7 @@ async def shop_fragment(user_id: str | None, workspace_id: str | None = None) ->
     return "这家店：" + "，".join(bit for bit in bits if bit) + "（老板告诉我们的；没说换主题时，视频默认拍这个主打）。"
 
 
-async def light_mode_fragment(user_id: str | None, session) -> str:
+async def light_mode_fragment(user_id: str | None, session, *, lang: str | None = None) -> str:
     """Empty for ordinary chats; the Light rules (and the entry's steps) for guided ones."""
     if session is None or getattr(session, "kind", "normal") != "normal":
         return ""
@@ -93,7 +97,7 @@ async def light_mode_fragment(user_id: str | None, session) -> str:
     mode = await ui_mode(user_id) if user_id else "pro"
     if mode != "light" and not entry_id:
         return ""
-    lang = await ui_language_for(user_id)
+    lang = lang or await ui_language_for(user_id)
     if getattr(session, "light_production", None):
         from light.production_form import system_fragment
         from light.production_outputs import current_result_context
@@ -179,7 +183,7 @@ ASSISTANT_LIGHT_RULES = (
 )
 
 
-async def assistant_section(user_id: str | None, workspace_id: str | None) -> str:
+async def assistant_section(user_id: str | None, workspace_id: str | None, *, lang: str | None = None) -> str:
     """What the personal assistant is told about the interface mode, in every mode.
 
     Pro: one line naming the mode (plus the output-language line when the user chose an interface language in
@@ -189,9 +193,9 @@ async def assistant_section(user_id: str | None, workspace_id: str | None) -> st
     if mode != "light":
         # Only a language the user chose: the web and old Apps store none, and there the assistant keeps
         # following the user's own words (assistant/runtime.py "How you talk").
-        chosen = await stored_ui_language(user_id)
+        chosen = lang or await stored_ui_language(user_id)
         return "界面模式：专业。" + (" " + output_language_line(chosen) if chosen else "")
-    lang = await ui_language_for(user_id)
+    lang = lang or await ui_language_for(user_id)
     lines = ["界面模式：Light（功能引导）。这个人是第一次用 AI 工作台的小店老板，App 首页是下面这些入口。",
              output_language_line(lang),
              "首页目录（标题｜用途｜当前账号状态｜直达链接）："]

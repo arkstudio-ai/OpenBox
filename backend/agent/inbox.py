@@ -228,6 +228,10 @@ def _request_digest(
     origin: InputOrigin = "unknown",
     origin_ref: dict | None = None,
 ) -> str:
+    # Language and timezone describe the device at first acceptance. A retry
+    # after switching settings must return the original receipt.
+    from core.device_locale import ORIGIN_KEY
+    origin_ref = {key: value for key, value in (origin_ref or {}).items() if key != ORIGIN_KEY}
     return hashlib.sha256(
         _canonical_json(
             {

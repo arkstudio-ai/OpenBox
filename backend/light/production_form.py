@@ -284,7 +284,8 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "When keep_original is true, a clean original line can continue as audio over a relevant real "
             "cutaway; when doing that, avoid doubling the same audio under the picture. With keep_original "
             "false, mute all original audio, including any separately placed cutaway audio. "
-            "Time short speech captions from ASR on the edited timeline, correcting only verified terms. "
+            "Time short speech captions from ASR on the edited timeline. Translate captions into the requested "
+            "output language when needed, preserving meaning, names and timing without changing the original audio. "
             "Use supplied copy as editorial guidance. Reserve IMS captions for timed speech and leave the "
             "IMS timeline 'texts' empty. Promotional headlines, shop names, and other graphic lettering "
             "belong in designed images. Feature real product details "
@@ -339,7 +340,7 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "pair verbatim in the image prompt. Keep a missing price blank. Use no inferred prices, offers, "
             "phone numbers or dishes. Unless the user requested output parameters, describe the face of "
             "the menu in the prompt and use the image tool's configured size and quality. Inspect the result "
-            "against the confirmed list, especially price pairing and Chinese characters, before delivering."
+            "against the confirmed list, especially price pairing, spelling and diacritics, before delivering."
         )
     return (
         "I confirmed the current form and pressed Generate in the app. Start production now. "

@@ -33,6 +33,7 @@ class Resource {
     required this.source,
     required this.sandboxPath,
     required this.url,
+    this.thumbnail,
     this.projectId,
     this.sessionId,
     this.status = 'ready',
@@ -55,6 +56,7 @@ class Resource {
 
   /// Presigned GET. Expires — never persist it.
   final String url;
+  final String? thumbnail;
 
   final String? projectId;
   final String? sessionId;
@@ -72,6 +74,7 @@ class Resource {
     source: asString(json['source']) ?? 'user',
     sandboxPath: asString(json['sandboxPath']) ?? '',
     url: asString(json['url']) ?? '',
+    thumbnail: asString(json['thumbnail']),
     projectId: asString(json['projectId']),
     sessionId: asString(json['sessionId']),
     status: asString(json['status']) ?? 'ready',

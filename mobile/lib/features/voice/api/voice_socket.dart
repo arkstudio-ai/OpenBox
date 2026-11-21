@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../../shared/api/workspace_scope.dart';
@@ -19,15 +20,19 @@ import 'voice_events.dart';
 /// Not the app's [AgentWsClient]: that one reconnects forever; a call is one
 /// socket that ends with the call.
 class VoiceConnector {
-  VoiceConnector(this._dio, {WsChannelFactory? openChannel})
-    : _openChannel = openChannel ?? WebSocketChannel.connect;
+  VoiceConnector(this._dio, {this.openChannel});
 
   final Dio _dio;
-  final WsChannelFactory _openChannel;
+  final WsChannelFactory? openChannel;
+
+  Future<String> fetchTicket(AssistantScope scope) async =>
+      (await _fetchTicket(scope)).ticket;
 
   /// The ticket is issued for the call's own user and workspace, never
   /// whatever the app has switched to in the meantime.
-  Future<String> fetchTicket(AssistantScope scope) async {
+  Future<({String ticket, Map<String, dynamic> localeHeaders})> _fetchTicket(
+    AssistantScope scope,
+  ) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/api/auth/ticket',
       data: {'audience': 'voice'},
@@ -43,7 +48,14 @@ class VoiceConnector {
     if (ticket == null || ticket.isEmpty) {
       throw StateError('The server issued no voice ticket.');
     }
-    return ticket;
+    final headers = response.requestOptions.headers;
+    return (
+      ticket: ticket,
+      localeHeaders: {
+        for (final name in ['X-Client-Type', 'Accept-Language', 'X-Time-Zone'])
+          name: ?headers[name],
+      },
+    );
   }
 
   static Uri socketUri(String ticket) => Uri.parse(
@@ -53,8 +65,16 @@ class VoiceConnector {
   /// Resolves once the WebSocket handshake is done. The server may still
   /// close straight away with one of the §5.5 codes.
   Future<VoiceSocket> open(AssistantScope scope) async {
-    final ticket = await fetchTicket(scope);
-    final channel = _openChannel(socketUri(ticket));
+    final WebSocketChannel channel;
+    if (openChannel case final open?) {
+      channel = open(socketUri(await fetchTicket(scope)));
+    } else {
+      final setup = await _fetchTicket(scope);
+      channel = IOWebSocketChannel.connect(
+        socketUri(setup.ticket),
+        headers: setup.localeHeaders,
+      );
+    }
     await channel.ready;
     return VoiceSocket(channel);
   }

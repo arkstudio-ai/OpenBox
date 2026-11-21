@@ -27,6 +27,7 @@ const langFallbacks = <String, List<String>>{
 bool _bundleOptional(String lang) => langFallbacks[lang]?.isNotEmpty ?? false;
 
 const _langStorageKey = 'bossip:lang';
+const _languageSourceKey = 'bossip:device-language';
 
 /// Mobile-only namespaces live under assets/locales-mobile/ and are NOT
 /// mirrored from the web bundle (scripts/check_locales.sh ignores them).
@@ -121,10 +122,15 @@ class I18nBundle {
 }
 
 class I18nState {
-  const I18nState({required this.language, required this.bundle});
+  const I18nState({
+    required this.language,
+    required this.bundle,
+    this.followsSystem = true,
+  });
 
   final String language;
   final I18nBundle bundle;
+  final bool followsSystem;
 
   Locale get locale {
     final parts = language.split('-');
@@ -169,19 +175,31 @@ class I18nState {
 }
 
 class I18nController extends Notifier<I18nState> {
-  I18nController(this._bundle, this._prefs);
+  I18nController(this._bundle, this._prefs, {Locale Function()? systemLocale})
+    : _systemLocale =
+          systemLocale ?? (() => PlatformDispatcher.instance.locale);
 
   final I18nBundle _bundle;
   final SharedPreferences _prefs;
+  final Locale Function() _systemLocale;
 
   @override
-  I18nState build() =>
-      I18nState(language: _detectInitialLanguage(), bundle: _bundle);
-
-  String _detectInitialLanguage() {
+  I18nState build() {
     final stored = _prefs.getString(_langStorageKey);
-    if (stored != null && supportedLangs.contains(stored)) return stored;
-    return languageForDevice(PlatformDispatcher.instance.locale);
+    final override = supportedLangs.contains(stored) ? stored : null;
+    return I18nState(
+      language: override ?? languageForDevice(_systemLocale()),
+      bundle: _bundle,
+      followsSystem: override == null,
+    );
+  }
+
+  // Older versions wrote both account hydration and manual choices to the
+  // same key. Start on the device setting once, then save only manual picks.
+  static Future<void> migrateLanguagePreference(SharedPreferences prefs) async {
+    if (prefs.containsKey(_languageSourceKey)) return;
+    await prefs.remove(_langStorageKey);
+    await prefs.setBool(_languageSourceKey, true);
   }
 
   /// The language a device locale opens in: Chinese and Vietnamese by their
@@ -193,10 +211,26 @@ class I18nController extends Notifier<I18nState> {
         _ => 'en-US',
       };
 
-  void setLanguage(String lang) {
-    if (!supportedLangs.contains(lang) || lang == state.language) return;
-    state = I18nState(language: lang, bundle: _bundle);
-    _prefs.setString(_langStorageKey, lang);
+  void setLanguage(String? lang) {
+    if (lang != null && !supportedLangs.contains(lang)) return;
+    state = I18nState(
+      language: lang ?? languageForDevice(_systemLocale()),
+      bundle: _bundle,
+      followsSystem: lang == null,
+    );
+    if (lang == null) {
+      _prefs.remove(_langStorageKey);
+    } else {
+      _prefs.setString(_langStorageKey, lang);
+    }
+  }
+
+  void refreshSystemLanguage() {
+    if (!state.followsSystem) return;
+    final lang = languageForDevice(_systemLocale());
+    if (lang != state.language) {
+      state = I18nState(language: lang, bundle: _bundle);
+    }
   }
 }
 

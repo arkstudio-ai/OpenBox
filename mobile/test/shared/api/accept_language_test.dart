@@ -32,27 +32,42 @@ ResponseBody _ok() => ResponseBody.fromString(
 void main() {
   // docs/LIGHT_MODE_I18N_PLAN.md §2.1: the server renders Light copy in the
   // language the App is in, read from this header on every request.
-  test('every API request carries the interface language', () async {
+  test('API requests carry the active device language and time zone', () async {
     var lang = 'zh-CN';
+    var zone = 'Asia/Shanghai';
     final dio = buildApiDio(
       auth: AuthSession()..accessToken = 'token',
       cookieJar: CookieJar(),
       workspace: WorkspaceScope(),
       language: () => lang,
+      timezone: () async => zone,
     );
-    final seen = <String?>[];
+    final seen = <(String?, String?)>[];
     dio.httpClientAdapter = _Adapter((options) async {
-      seen.add(options.headers['Accept-Language'] as String?);
+      seen.add((
+        options.headers['Accept-Language'] as String?,
+        options.headers['X-Time-Zone'] as String?,
+      ));
       return _ok();
     });
     await dio.get<dynamic>('/api/light/entries');
     lang = 'vi-VN'; // the person switched language: the next request says so
+    zone = 'Asia/Ho_Chi_Minh';
     await dio.get<dynamic>('/api/light/entries');
     await dio.get<dynamic>(
       '/api/light/entries',
-      options: Options(headers: {'Accept-Language': 'en-US'}),
+      options: Options(
+        headers: {
+          'Accept-Language': 'en-US',
+          'X-Time-Zone': 'America/Los_Angeles',
+        },
+      ),
     );
-    expect(seen, ['zh-CN', 'vi-VN', 'en-US']);
+    expect(seen, [
+      ('zh-CN', 'Asia/Shanghai'),
+      ('vi-VN', 'Asia/Ho_Chi_Minh'),
+      ('en-US', 'America/Los_Angeles'),
+    ]);
     dio.close();
   });
 

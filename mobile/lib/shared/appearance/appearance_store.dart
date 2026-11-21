@@ -12,7 +12,7 @@ const _storageKey = 'bossip:appearance';
 
 /// Mirrors frontend-v2 `shared/appearance/store.ts`: theme/mode/fontSize with
 /// localStorage(SharedPreferences) persistence and best-effort server sync to
-/// `PUT /api/auth/me/preferences` `{theme, extra: {mode, fontSize, locale}}`.
+/// `PUT /api/auth/me/preferences` `{theme, extra: {mode, fontSize}}`.
 class AppearanceState {
   const AppearanceState({
     this.theme = BossipThemeName.default_,
@@ -59,32 +59,25 @@ class AppearanceController extends Notifier<AppearanceState> {
   void setFontSize(UiFontSize fontSize) =>
       _apply(state.copyWith(fontSize: fontSize));
 
-  void setLanguage(String lang) {
-    ref.read(i18nProvider.notifier).setLanguage(lang);
-    _syncServer();
-  }
+  void setLanguage(String? lang) =>
+      ref.read(i18nProvider.notifier).setLanguage(lang);
 
   /// Applies server prefs after sign-in (web `hydrateFromServer`).
   void hydrateFromServer(Map<String, dynamic> prefs) {
     final extra = asMap(prefs['extra']);
     var next = state;
     final theme = asString(prefs['theme']);
-    if (theme != null)
+    if (theme != null) {
       next = next.copyWith(theme: BossipThemeNameWire.parse(theme));
+    }
     final mode = asString(extra['mode']);
     if (mode != null) next = next.copyWith(mode: ColorModeX.parse(mode));
     final fontSize = asString(extra['fontSize']);
     if (fontSize != null) {
       next = next.copyWith(fontSize: UiFontSizeX.parse(fontSize));
     }
-    // The App's own key first; the web's locale for accounts from before it.
-    final locale = asString(extra['ui_language']) ?? asString(extra['locale']);
-    if (locale != null) ref.read(i18nProvider.notifier).setLanguage(locale);
     state = next;
     _persistLocal();
-    // An account that never stored ui_language gets this device's choice, so
-    // pushes and voice calls use the language the person is looking at.
-    if (asString(extra['ui_language']) == null) _syncServer();
   }
 
   void _apply(AppearanceState next) {
@@ -114,11 +107,9 @@ class AppearanceController extends Notifier<AppearanceState> {
             '/api/auth/me/preferences',
             data: {
               'theme': state.theme.wire,
-              'ui_language': ref.read(i18nProvider).language,
               'extra': {
                 'mode': state.mode.wire,
                 'fontSize': state.fontSize.wire,
-                'locale': ref.read(i18nProvider).language,
               },
             },
           );

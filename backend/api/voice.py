@@ -129,7 +129,12 @@ async def choose_voice(body: VoiceChoice, current_user: dict = Depends(get_curre
 
 async def _call(websocket, access, config, workspace_id, main_id, room):
     """One call. ``room``: the credits it may spend (enforce billing), None for no cap."""
-    user_id, lang = access.user_id, await phrases.user_language(access.user_id)
+    from core.device_locale import for_user, mobile_request_locale
+
+    user_id = access.user_id
+    locale = await for_user(user_id, mobile_request_locale.get())
+    lang = phrases.CALL_LANG.get(locale.language) or "zh"
+    local_now = locale.now if locale.timezone else prompt.local_now
     # Freeze both for the entire call, including session rotation. Settings
     # changed mid-call take effect on the next call.
     choice = await voices.user_selection(user_id, config)
@@ -143,8 +148,8 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
     try:
         await provider.open()  # overlaps the context reads
         facts = await context
-        instructions = prompt.front_instructions(facts, lang, prompt.local_now())
-        opening_instructions = prompt.front_instructions(facts, lang, prompt.local_now(), opening=True)
+        instructions = prompt.front_instructions(facts, lang, local_now())
+        opening_instructions = prompt.front_instructions(facts, lang, local_now(), opening=True)
         await provider.configure(opening_instructions)
     except BaseException as exc:  # including a cancelled handshake: nothing may stay open or "active"
         context.cancel()
@@ -241,7 +246,7 @@ async def _call(websocket, access, config, workspace_id, main_id, room):
             # The plans offered when the call began stay offered; asking how to address them goes on until answered.
             fresh = await prompt.user_facts(user_id, workspace_id, asking=facts.ask_address)
             facts = dataclasses.replace(facts, **{**fresh, "followups": facts.followups})
-            await bridge.rebase(prompt.front_instructions(facts, lang, prompt.local_now()),
+            await bridge.rebase(prompt.front_instructions(facts, lang, local_now()),
                                 tell_reports=facts.reports, detail=facts.detail)
         except Exception as exc:  # the call goes on with the profile it started with
             log.warning("voice call=%s profile not refreshed error=%s", call_id, type(exc).__name__)

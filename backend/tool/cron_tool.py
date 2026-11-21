@@ -18,7 +18,7 @@ class CronToolArgs(BaseModel):
     # For add:
     name: str = Field(default="", description="Name for the cron job")
     schedule: str = Field(default="", description="Cron expression (e.g. '0 9 * * *') or interval like 'every 30m'")
-    timezone: str = Field(default="Asia/Shanghai", description="IANA timezone the cron expression is written in (default Asia/Shanghai; the person's local time)")
+    timezone: str | None = Field(default=None, description="IANA timezone of the cron expression. Omit for the person's local time.")
     task: str = Field(default="", description="The task prompt to execute on schedule")
     template: dict | None = Field(default=None, description="marketing-autopilot budget authorisation (see autopilot/template.py); omit for ordinary tasks")
     # For remove/enable/disable:
@@ -81,7 +81,14 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
             return ToolResult(title="Not allowed", output=str(e))
 
         # Parse schedule
-        schedule = _parse_schedule(args.schedule, args.timezone)
+        from core.device_locale import for_user, valid_timezone
+
+        zone = args.timezone
+        if zone is None:
+            zone = ctx.timezone or (await for_user(ctx.user_id)).timezone or "Asia/Shanghai"
+        elif valid_timezone(zone) is None:
+            return ToolResult(title="Invalid time zone", output="Use an IANA time zone such as Asia/Ho_Chi_Minh.")
+        schedule = _parse_schedule(args.schedule, zone)
         if not schedule:
             return ToolResult(
                 title="Invalid schedule",

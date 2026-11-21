@@ -21,6 +21,7 @@ Dio buildApiDio({
   required WorkspaceScope workspace,
   String? installationId,
   String Function()? language,
+  Future<String?> Function()? timezone,
 }) {
   final dio = Dio(
     BaseOptions(
@@ -34,7 +35,10 @@ Dio buildApiDio({
   dio.interceptors.add(CookieManager(cookieJar));
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
+        final zone = options.headers.containsKey('X-Time-Zone')
+            ? null
+            : await timezone?.call();
         // A queued platform action can outlive an account/workspace switch.
         // Check at dispatch too, before attaching the new account's token.
         if (options.extra[_kRevision] != auth.revision ||
@@ -66,6 +70,7 @@ Dio buildApiDio({
         if (lang != null && !options.headers.containsKey('Accept-Language')) {
           options.headers['Accept-Language'] = lang;
         }
+        if (zone != null) options.headers['X-Time-Zone'] = zone;
         options.extra[_kRequestUser] = auth.userId;
         options.extra[_kRequestWorkspace] =
             options.headers['X-Workspace-Id'] as String?;

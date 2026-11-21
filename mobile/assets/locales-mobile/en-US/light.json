@@ -1,4 +1,5 @@
 {
+  "followSystemLanguage": "Follow device language",
   "tabs": {
     "home": "Home",
     "assistant": "Assistant",

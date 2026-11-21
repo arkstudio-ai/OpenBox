@@ -76,7 +76,8 @@ async def configure(ctx, *, enabled: bool, time: str | None = None, time_zone: s
             AssistantBriefing.workspace_id == ctx.workspace_id).with_for_update())
         if row is None:
             row = AssistantBriefing(id=ascending("briefing"), user_id=ctx.user_id, workspace_id=ctx.workspace_id,
-                enabled=enabled, local_time=time or DEFAULT_TIME, time_zone=time_zone or DEFAULT_ZONE,
+                enabled=enabled, local_time=time or DEFAULT_TIME,
+                time_zone=time_zone or getattr(ctx, "timezone", None) or DEFAULT_ZONE,
                 revision=1, created_at=now, updated_at=now)
             # Turning it on after today's time does not send a briefing right away.
             local = now.astimezone(ZoneInfo(row.time_zone))

@@ -54,7 +54,7 @@ def _light_guidance(skill: str, job: str) -> str:
             "one short line what you are waiting for and stop.")
 
 
-async def workflow_guidance(workflow: str, user_id: str | None) -> str:
+async def workflow_guidance(workflow: str, user_id: str | None, *, lang: str | None = None) -> str:
     """What the room is told before the brief; a Light job also hears which language the owner's App is in.
 
     The room is not the guided session, so ``light.prompt.light_mode_fragment`` never reaches it; the same
@@ -63,7 +63,7 @@ async def workflow_guidance(workflow: str, user_id: str | None) -> str:
     if workflow in LIGHT_WORKFLOWS.values():
         from core.ui_language import ui_language_for
         from light.prompt import output_language_line
-        guidance = guidance + " " + output_language_line(await ui_language_for(user_id))
+        guidance = guidance + " " + output_language_line(lang or await ui_language_for(user_id))
     return guidance
 
 
@@ -402,6 +402,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
     if not 1 <= len(source.source_message_ids) <= 20:
         raise AssistantError(400, "ASSISTANT_SOURCE_REQUIRED", "Reference the original human input")
     references, unavailable = [], []
+    from core.device_locale import DeviceLocale, ORIGIN_KEY
+    source_locales = []
     for message_id in dict.fromkeys(source.source_message_ids):
         inbox = await db.scalar(select(AgentInboxItem).where(
             AgentInboxItem.session_id == main.id, AgentInboxItem.user_id == main.user_id,
@@ -419,6 +421,8 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
         if inbox is None or not human_parts:
             unavailable.append(message_id)
             continue
+        if locale := DeviceLocale.from_origin(inbox.origin_ref or {}):
+            source_locales.append((inbox.created_at, locale))
         for p in human_parts:
             from assistant.results import part_hash
             references.append({"session_id": main.id, "message_id": message_id, "part_id": p.id,
@@ -437,8 +441,11 @@ async def _tool_source_locked(db, main: Session, source: ToolSource, action: str
             details={"unavailable_source_message_ids": unavailable,
                      "verified_source_message_ids": list(dict.fromkeys(r["message_id"] for r in references)),
                      "command_applied": False})
-    return {"part_id": source.part_id, "run_id": source.run_id,
-            "generation": source.generation, "source_refs": references}
+    ref = {"part_id": source.part_id, "run_id": source.run_id,
+           "generation": source.generation, "source_refs": references}
+    if source_locales:
+        ref[ORIGIN_KEY] = max(source_locales, key=lambda item: item[0])[1].origin()
+    return ref
 
 
 async def create_task_locked(db, main, *, project_id, title, now, model=None, variant=None,
@@ -746,7 +753,9 @@ async def accept_task_command(*, user_id: str, workspace_id: str, main_id: str,
             prompt = merged_revisions(earlier_prompts, prompt)
         if workflow:
             origin_ref["workflow"] = workflow
-            prompt = await workflow_guidance(workflow, user_id) + "\n\n" + prompt
+            from core.device_locale import DeviceLocale, mobile_request_locale
+            locale = DeviceLocale.from_origin(origin_ref) or mobile_request_locale.get()
+            prompt = await workflow_guidance(workflow, user_id, lang=locale.language if locale else None) + "\n\n" + prompt
         accepted = await accept_inbox_item_locked(db, execution, delivery=delivery,
             prompt=prompt, attachments=attachments, client_id=inbox_key("assistant-input", command.id),
             agent=execution.agent, model=model or execution.model,

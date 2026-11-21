@@ -7,9 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app/app.dart';
 import 'app/assistant_scope.dart';
+import 'features/voice/widgets/voice_call_sheet.dart';
 import 'shared/api/auth_store.dart';
 import 'shared/api/providers.dart';
-import 'features/voice/widgets/voice_call_sheet.dart';
 import 'shared/i18n/i18n.dart';
 import 'shared/widgets/task_card_extra.dart';
 
@@ -24,6 +24,7 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   final prefs = await SharedPreferences.getInstance();
+  await I18nController.migrateLanguagePreference(prefs);
   final supportDir = await getApplicationSupportDirectory();
   final cookieJar = PersistCookieJar(
     storage: FileStorage('${supportDir.path}/cookies'),

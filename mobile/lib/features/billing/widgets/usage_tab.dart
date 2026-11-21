@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
+import '../../../shared/i18n/device_timezone.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/billing.dart';
 import '../../../shared/router/paths.dart';
@@ -24,23 +24,6 @@ class _BillingUsageTabState extends ConsumerState<BillingUsageTab> {
   int _page = 1;
   DateTime? _from;
   DateTime? _to;
-  String _timezone = 'Asia/Shanghai';
-
-  @override
-  void initState() {
-    super.initState();
-    FlutterTimezone.getLocalTimezone().then((zone) {
-      if (mounted) setState(() => _timezone = zone.identifier);
-    });
-  }
-
-  BillingUsageQuery get _query => BillingUsageQuery(
-    page: _page,
-    dateFrom: _from,
-    dateTo: _to,
-    timezone: _timezone,
-  );
-
   Future<void> _pickDate({required bool from}) async {
     final initial = (from ? _from : _to) ?? DateTime.now();
     final selected = await showDatePicker(
@@ -66,7 +49,12 @@ class _BillingUsageTabState extends ConsumerState<BillingUsageTab> {
   Widget build(BuildContext context) {
     final tokens = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final query = _query;
+    final query = BillingUsageQuery(
+      page: _page,
+      dateFrom: _from,
+      dateTo: _to,
+      timezone: ref.watch(deviceTimezoneProvider).valueOrNull ?? 'UTC',
+    );
     final balance = ref.watch(billingBalanceProvider);
     final summary = ref.watch(billingSummaryProvider(query));
     final usage = ref.watch(billingUsageProvider(query));

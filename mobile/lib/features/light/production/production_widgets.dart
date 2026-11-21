@@ -513,15 +513,24 @@ class ProductionMediaStrip extends StatelessWidget {
     if (visible.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: height,
-      child: Row(
-        children: [
-          for (final (index, item) in visible.indexed) ...[
-            if (index > 0) const SizedBox(width: 8),
-            Expanded(child: ProductionThumbnail(media: item)),
-          ],
-          if (visible.length == 1) const Spacer(),
-        ],
-      ),
+      child: visible.length == 1
+          ? Center(
+              child: FractionallySizedBox(
+                widthFactor: .5,
+                heightFactor: 1,
+                child: ProductionThumbnail(media: visible.single),
+              ),
+            )
+          : Row(
+              spacing: 8,
+              children: [
+                for (final item in visible)
+                  Expanded(
+                    key: ValueKey(item.id),
+                    child: ProductionThumbnail(media: item),
+                  ),
+              ],
+            ),
     );
   }
 }

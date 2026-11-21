@@ -9,6 +9,14 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-20 gw3：轨迹存储改用独立目录 `trajectories-gw3/`（止损，未发镜像）
+
+- 事故：gw3（10-19 克隆自 gw2）与 gw2 共用 `bossip` 桶和默认的 `trajectories/` 目录。两边的 trajectory-worker 都会清理「超过 7 天、自己库里没有登记」的内容块（orphan sweep），于是互相删除对方的文件：gw3 的 worker 运行 99 小时删了 4429 个对象。归档段（segments）不在清理范围，没有丢。桶未开版本控制，删掉的内容无法恢复。
+- 损失（11-20 只读盘点）：gw2 617 个有内容块的会话里 423 个最早的内容块已不存在，完好的 194 个全部是 7 天内新建的；gw3 自己的 10 个会话内容块全部不存在。gw2 上表现为这些会话投影报 `CorruptContent: Retained trajectory blob is missing`，新对话不再进入简洁模式（11-19 的投影卡死也是由它触发）。
+- 处置：gw3 `config/backend.env` 追加 `TRAJECTORY_OSS_PREFIX=trajectories-gw3`（备份 `config/backend.env.pre-trajprefix-*`），只重建 trajectory-worker；容器内 `key_prefix()` 为 `trajectories-gw3/`，health 四项正常，GC 队列为空。gw3 backend 未重启，下次重启时读到同一配置。已登记的旧内容仍按行里的完整 key 读取。
+- 规则：**共用一个桶的每套部署必须设置各自的 `TRAJECTORY_OSS_PREFIX`**（高德两台为 `trajectories-gaode` / `trajectories-gaode-test`，gw2 为默认的 `trajectories`）。克隆机器时这是必改项。
+- 未做：gw2 上已丢内容的登记行仍是 `available`，对应会话的投影仍失败；修复办法（把对象已不存在的行标为不可读，只读演练 68 个失败会话全部可继续投影）尚未执行。
+
 ## 2026-11-19 gw2 与高德两台：轨迹简洁模式对话视图、投影卡死修复、样例库分类设置
 
 - 内容（main）：PR #218 样例库分类可由管理员设置（迁移 `pq7d3e4f5a6b`，新表 `light_taxonomy`）、#219 简洁模式对话视图（每轮积分、原地展开详细）、#220 积分构成的用途名称、#221 留存内容读取失败不再取消进行中的下载、#222/#223 对话里显示图片和视频。高德线：分支 `gaode/patch-20261119-trajchat`（= `gaode/patch-20261117-cardfiles` + 会话回放 #146、从旧到新 #156、以及 #219–#223 中与轨迹相关的提交；不含 #218）。

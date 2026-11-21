@@ -514,23 +514,27 @@ async def test_the_orphan_sweep_queues_only_old_objects_nothing_references(trace
         await enqueue_gc(db, GC_KEY, keys["queued"], "asset_deleted")
     retention = service(blob_store)
 
-    # The uncommitted segment and the stray object are left to trj_a's prefix deletion.
-    assert await retention.sweep_orphans() == 3
-    orphans = sorted(keys[name] for name in ("deleted_blob", "other_trajectory_blob", "deleted_export"))
+    # The uncommitted segment and the stray object are left to trj_a's prefix deletion. trj_b has no row in this
+    # database: its blob may belong to another deployment that shares the bucket and namespace, so it is kept.
+    assert await retention.sweep_orphans() == 2
+    orphans = sorted(keys[name] for name in ("deleted_blob", "deleted_export"))
     assert await gc_entries() == [("key", keys["queued"], "asset_deleted")] + [
         ("key", key, "orphan_object") for key in orphans]
-    assert retention.report.counters["gc_orphans_queued"] == 3
+    assert retention.report.counters["gc_orphans_queued"] == 2
     assert await worker_state("gc.orphan_cursor") == {"after": None}  # a short page: the next sweep starts over
-    assert await retention.sweep_orphans() == 0 and len(await gc_entries()) == 4
+    assert await retention.sweep_orphans() == 0 and len(await gc_entries()) == 3
 
-    assert await retention.process_gc_queue() == 4
-    assert sorted(blob_store.objects) == sorted([keys["used_blob"], keys["committed"], keys["uncommitted"],
+    assert await retention.process_gc_queue() == 3
+    assert sorted(blob_store.objects) == sorted([keys["used_blob"], keys["other_trajectory_blob"], keys["committed"],
+                                                 keys["uncommitted"],
                                                  keys["stray"], keys["live_export"],
                                                  keys["namespace_file"], keys["reserved"], young,
                                                  "assets/user_a/photo.png"])
 
 
 async def test_the_orphan_sweep_resumes_from_its_cursor_and_starts_over_after_a_short_page(trace_db, blob_store):
+    await add_trajectory("trj_c")
+    await add_trajectory("trj_0")
     keys = sorted(blob_key("trj_c", sha(str(index))) for index in range(5))
     for key in keys:
         await put_aged(blob_store, key, days=30)

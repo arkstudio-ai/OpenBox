@@ -226,8 +226,10 @@ def oss_asset_reader(*, internal: bool | None = None) -> OssAssetReader:
 
 _asset_presigner = None
 
-#: How long an asset link stays valid; the viewer opens it at once, so minutes, not hours.
-DEFAULT_LINK_SECONDS = 600
+#: How long an asset link stays valid. Three days, not ten minutes (2026-11-21): the people debugging
+#: a turn pass these links to each other and come back to them the next day.
+DEFAULT_LINK_SECONDS = 3 * 24 * 3600
+MAX_LINK_SECONDS = 7 * 24 * 3600
 
 
 def set_asset_presigner(presigner) -> None:
@@ -237,13 +239,13 @@ def set_asset_presigner(presigner) -> None:
 
 
 def link_seconds() -> int:
-    """TRAJECTORY_ASSET_LINK_SECONDS, clamped to 60–3600 (default 600)."""
+    """TRAJECTORY_ASSET_LINK_SECONDS, clamped to one minute–seven days (default three days)."""
     raw = (os.getenv("TRAJECTORY_ASSET_LINK_SECONDS") or "").strip()
     try:
         value = int(raw) if raw else DEFAULT_LINK_SECONDS
     except ValueError:
         value = DEFAULT_LINK_SECONDS
-    return max(60, min(3600, value))
+    return max(60, min(MAX_LINK_SECONDS, value))
 
 
 def presign_asset_url(oss_key: str, *, expires_sec: int, download_name: str | None = None) -> str:

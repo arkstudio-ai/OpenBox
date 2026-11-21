@@ -288,8 +288,8 @@ async def test_payload_link_signs_the_asset_object_after_audit_and_revalidation(
 def test_link_seconds_is_clamped(monkeypatch):
     from trajectory import payload as payloads
     monkeypatch.delenv("TRAJECTORY_ASSET_LINK_SECONDS", raising=False)
-    assert payloads.link_seconds() == 600
-    for raw, expected in (("30", 60), ("7200", 3600), ("abc", 600), ("1200", 1200)):
+    assert payloads.link_seconds() == 259200
+    for raw, expected in (("30", 60), ("7200", 7200), ("9999999", 604800), ("abc", 259200), ("1200", 1200)):
         monkeypatch.setenv("TRAJECTORY_ASSET_LINK_SECONDS", raw)
         assert payloads.link_seconds() == expected
 

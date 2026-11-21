@@ -47,7 +47,9 @@ SKIPPED = "skipped"
 #: Where the last pick per entry and scene is remembered (``user_preferences.extra``).
 PICKS_KEY = "light_example_picks"
 #: Preview links on the card; the App asks again (``/api/light/examples/{id}/preview``) when one expired.
-PREVIEW_SECONDS = 12 * 3600
+#: A week, not half a day: the card stays in the conversation and owners come back to it days later, and
+#: the App renews only once per card and only when the still fails (2026-11-21).
+PREVIEW_SECONDS = 7 * 24 * 3600
 PREVIEW_WIDTH = 720
 
 
@@ -86,12 +88,18 @@ def public(row) -> dict:
         "scene_label": taxonomy().scene_label(row.entry_id, row.scene) if row.scene else "",
         "tags": list(row.tags or []), "rating": row.rating, "status": row.status,
         "title": row.title, "notes": row.notes or "", "recipe": row.recipe or "", "look": row.look or "",
+        "card": row.card or "", "card_state": _card_state(row),
         "inputs": list(row.inputs or []), "outputs": list(row.outputs or []), "source": dict(row.source or {}),
         "created_by": row.created_by, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at),
         "use_count": row.use_count or 0, "pick_count": row.pick_count or 0,
         "industry_label": taxonomy().label(row.industry),
         "shop_type_label": taxonomy().label(row.industry, row.shop_type),
     }
+
+
+def _card_state(row) -> dict:
+    from light.example_card import shown_state
+    return shown_state(row.card_meta)
 
 
 # --- the shop ---------------------------------------------------------------

@@ -43,6 +43,12 @@ class LightExample(Base):
     #: How the finished picture looks, in words and with none of its content
     #: (light/example_look.py); "" until it was read. What a picked example hands the agent.
     look: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
+    #: What to learn from this example, written once by a model that looked at the finished piece
+    #: (the picture, or frames and speech of the clip) and the recipe; none of the shop's own
+    #: content (light/example_card.py).
+    card: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
+    #: {state: reading|ready|failed|edited, at, model, frames, heard, error} — how the card came to be.
+    card_meta: Mapped[dict | None] = mapped_column(JSONType, nullable=True, default=dict)
     #: The review card and/or generation prompt as they were in the session.
     recipe: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
     #: [{asset_id, oss_key, name, mime}] of the photos or footage the owner supplied.

@@ -1070,7 +1070,8 @@
       "video_analyze": "视频拆解",
       "hot_trends": "热点查询",
       "voice_call": "语音通话",
-      "asset_description": "素材描述"
+      "asset_description": "素材描述",
+      "example_card": "样例参考卡"
     }
   }
 }

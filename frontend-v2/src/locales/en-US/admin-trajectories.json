@@ -1070,7 +1070,8 @@
       "video_analyze": "Video analysis",
       "hot_trends": "Trend lookup",
       "voice_call": "Voice call",
-      "asset_description": "Asset description"
+      "asset_description": "Asset description",
+      "example_card": "Example reference card"
     }
   }
 }

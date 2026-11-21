@@ -20,6 +20,17 @@ export interface ExampleSource {
   headline?: string | null
 }
 
+/** How the reference card came to be; no `state` while nothing has been read yet. */
+export interface CardState {
+  state?: "reading" | "ready" | "failed" | "edited"
+  at?: string
+  model?: string
+  kind?: "image" | "video"
+  frames?: number
+  heard?: boolean
+  error?: string
+}
+
 export interface Example {
   id: string
   entry_id: string
@@ -35,6 +46,9 @@ export interface Example {
   title: string
   notes: string
   recipe: string
+  /** What to learn from the piece, written by a model that looked at it. */
+  card: string
+  card_state: CardState
   inputs: AssetRef[]
   outputs: AssetRef[]
   source: ExampleSource
@@ -81,6 +95,8 @@ export interface ExampleWrite {
   title: string
   notes: string
   recipe: string
+  /** Sent only when the team changed the text by hand; the server then never reads over it. */
+  card?: string
   inputs: { asset_id: string }[]
   outputs: { asset_id: string }[]
   source: ExampleSource

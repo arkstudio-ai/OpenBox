@@ -84,6 +84,27 @@ export function useAssetLink(assetId: string | null | undefined) {
   })
 }
 
+/** One example, read again every few seconds while its reference card is being written. */
+export function useExample(id: string | null) {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: [...exampleKeys.all(userId), "one", id ?? "none"] as const,
+    queryFn: ({ signal }) => http.get<Example>(`${BASE}/${encodeURIComponent(id ?? "")}`, { signal }),
+    enabled: !!id,
+    staleTime: 0,
+    refetchInterval: (query) => (query.state.data?.card_state?.state === "reading" ? 4000 : false),
+  })
+}
+
+export function useReadCard() {
+  const refetch = useRefetchAfterWrite()
+  return useMutation({
+    retry: false,
+    mutationFn: (id: string) => http.post<{ example_id: string; state: string }>(`${BASE}/${encodeURIComponent(id)}/card`, {}),
+    onSuccess: refetch,
+  })
+}
+
 export const prefillExample = (sessionId: string, assetId?: string | null) =>
   http.post<ExampleDraft>(`${BASE}/prefill`, { session_id: sessionId, asset_id: assetId || null })
 

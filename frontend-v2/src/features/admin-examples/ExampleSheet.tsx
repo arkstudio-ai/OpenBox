@@ -8,8 +8,8 @@ import { Sheet } from "@/shared/ui/Sheet"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useQuery } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
-import { exampleKeys, prefillExample, useAssetLink, useSaveExample, useTaxonomy } from "./api"
-import { EMPTY, MAX_ASSETS, MAX_RECIPE, scenesOf, toWrite, type FormState } from "./lib"
+import { exampleKeys, prefillExample, useAssetLink, useExample, useReadCard, useSaveExample, useTaxonomy } from "./api"
+import { EMPTY, MAX_ASSETS, MAX_CARD, MAX_RECIPE, scenesOf, toWrite, type FormState } from "./lib"
 import { ENTRY_IDS, type AssetRef, type Example, type ExampleDraft, type ExampleWrite, type Scene, type Taxonomy } from "./types"
 
 export type SheetMode =
@@ -140,6 +140,47 @@ function SceneField({ id, scenes, value, onChange }: { id: string; scenes: Scene
         ))}
       </select>
     </Field>
+  )
+}
+
+/**
+ * The reference card of a saved example: what a model wrote after looking at the piece, its state, and a way
+ * to have it written again. Until the team types in it the texts follow the server; after that they are theirs.
+ */
+function CardSection({ example, card, onEdit, onReset }: { example: Example; card: string | null; onEdit: (card: string) => void; onReset: () => void }) {
+  const { t } = useTranslation("admin-examples")
+  const id = useId()
+  const fetched = useExample(example.id).data
+  const live = fetched?.id === example.id ? fetched : example
+  const read = useReadCard()
+  const state = read.isPending ? "reading" : (live.card_state?.state ?? "none")
+  const shownCard = card ?? live.card
+  const detail = [live.card_state?.model, live.card_state?.frames ? t("card.frames", { count: live.card_state.frames }) : null, live.card_state?.kind === "video" ? (live.card_state.heard ? t("card.heard") : t("card.silent")) : null].filter(Boolean).join(" · ")
+  return (
+    <section className="border-hair flex flex-col gap-2 rounded-lg border p-3" aria-label={t("card.title")} data-testid="example-card">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-n700 text-xs font-medium">{t("card.title")}</h3>
+        <button
+          type="button"
+          disabled={state === "reading"}
+          onClick={() => {
+            onReset()
+            read.mutate(example.id)
+          }}
+          className="text-n600 hover:text-ink text-xs underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          {t("card.read")}
+        </button>
+      </div>
+      <p className={`text-xs ${state === "failed" || read.isError ? "text-dangerink" : "text-n500"}`} data-testid="example-card-state">
+        {state === "reading" && <Spinner className="mr-1 inline size-3" />}
+        {read.isError ? t("card.state.failed") : t(`card.state.${card !== null ? "editing" : state}`)}
+        {state === "ready" && card === null && detail ? ` · ${detail}` : ""}
+      </p>
+      <Field id={`${id}-card`} label={t("card.full")} hint={t("card.fullHint")}>
+        <textarea id={`${id}-card`} className={AREA} rows={12} maxLength={MAX_CARD} value={shownCard} disabled={state === "reading"} onChange={(e) => onEdit(e.target.value)} />
+      </Field>
+    </section>
   )
 }
 
@@ -292,6 +333,11 @@ function SheetForm({
         <Field id={`${id}-recipe`} label={t("form.recipe")}>
           <textarea id={`${id}-recipe`} className={`${AREA} font-mono text-xs`} rows={8} maxLength={MAX_RECIPE} value={state.recipe} onChange={(e) => patch({ recipe: e.target.value })} />
         </Field>
+        {mode.kind === "edit" ? (
+          <CardSection example={mode.example} card={state.card} onEdit={(card) => patch({ card })} onReset={() => patch({ card: null })} />
+        ) : (
+          <p className="text-n500 text-xs">{t("card.afterSave")}</p>
+        )}
         <section className="flex flex-col gap-2" aria-label={t("form.outputs")}>
           <h3 className="text-n700 text-xs font-medium">{t("form.outputs")}</h3>
           {outputsOver && <p className="text-dangerink text-xs">{outputsOver}</p>}

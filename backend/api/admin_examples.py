@@ -46,6 +46,9 @@ class ExampleIn(BaseModel):
     recipe: str = Field(default="", max_length=20_000)
     #: The look in words; omit to keep what was read from the picture (light/example_look.py).
     look: str | None = Field(default=None, max_length=1200)
+    #: The reference card; omit to keep what was read (light/example_card.py). A text that differs
+    #: from the stored one counts as the team's own and is never read over.
+    card: str | None = Field(default=None, max_length=2400)
     inputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     outputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     source: dict = Field(default_factory=dict)
@@ -95,6 +98,28 @@ def _read_look_later(example_id: str, user: dict) -> None:
     task.add_done_callback(_READING.discard)
 
 
+def _read_card_later(example_id: str, user: dict, *, force: bool = False) -> None:
+    from light import example_card
+    task = asyncio.create_task(example_card.read_for_console(
+        example_id, user["user_id"], user.get("workspace_id"), force=force))
+    _READING.add(task)
+    task.add_done_callback(_READING.discard)
+
+
+def _apply_card(row: LightExample, body: ExampleIn, piece_changed: bool) -> None:
+    """The team's own text stays; a card the model wrote goes when the piece or the recipe it read changed."""
+    from light import example_card
+    card = (row.card or "") if body.card is None else body.card
+    if card != (row.card or ""):
+        row.card = card
+        # Emptied by hand means "read it again".
+        row.card_meta = {"state": "edited", "at": example_card._now()} if card else {}
+    elif piece_changed and (row.card_meta or {}).get("state") != "edited":
+        row.card, row.card_meta = "", {}
+    else:
+        row.card = card
+
+
 def _bad(message: str):
     return HTTPException(422, detail={"code": "EXAMPLE_INVALID", "message": message})
 
@@ -128,6 +153,7 @@ async def _apply(row: LightExample, body: ExampleIn) -> None:
     row.scene = body.scene or None
     row.tags = examples._tags(body.tags)
     row.rating, row.status, row.title = body.rating, body.status, body.title
+    recipe_before = row.recipe or ""
     row.notes, row.recipe = body.notes, body.recipe
     row.inputs = await examples.resolve_assets([ref.asset_id for ref in body.inputs])
     shown_before = (examples._shown_output(row) or {}).get("oss_key") if row.outputs else None
@@ -136,6 +162,8 @@ async def _apply(row: LightExample, body: ExampleIn) -> None:
         row.look = body.look
     elif (examples._shown_output(row) or {}).get("oss_key") != shown_before:
         row.look = ""  # another picture leads now; it is read again when the card next shows it
+    _apply_card(row, body, (examples._shown_output(row) or {}).get("oss_key") != shown_before
+                or body.recipe != recipe_before)
     row.source = {k: v for k, v in body.source.items()
                   if k in ("session_id", "job_id", "user_id", "workspace_id", "shop_name", "headline") and v is not None}
     row.updated_at = examples._now()
@@ -310,6 +338,7 @@ async def create_example(body: ExampleIn, request: Request, user=Depends(live_ad
     await record(user["user_id"], None, "admin.light_example_create", "light_example", row.id,
                  {"entry_id": row.entry_id, "industry": row.industry, "shop_type": row.shop_type}, request)
     _read_look_later(row.id, user)
+    _read_card_later(row.id, user)
     return view
 
 
@@ -328,7 +357,21 @@ async def update_example(example_id: str, body: ExampleIn, request: Request, use
         view = examples.public(row)
     await record(user["user_id"], None, "admin.light_example_update", "light_example", example_id, None, request)
     _read_look_later(example_id, user)
+    _read_card_later(example_id, user)
     return view
+
+
+@router.post("/{example_id}/card", status_code=202)
+async def read_card(example_id: str, request: Request, user=Depends(live_admin)):
+    """Write the reference card again from the piece and the recipe; the console polls the example for it."""
+    from light import example_card
+    async with get_db_session() as db:
+        row = await _example(db, example_id)
+        if example_card.kind(row) is None:
+            raise _bad("this example has no picture or clip to read")
+    await record(user["user_id"], None, "admin.light_example_card_read", "light_example", example_id, None, request)
+    _read_card_later(example_id, user, force=True)
+    return {"example_id": example_id, "state": "reading"}
 
 
 @router.post("/{example_id}/status")

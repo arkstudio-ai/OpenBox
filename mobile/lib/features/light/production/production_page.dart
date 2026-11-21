@@ -17,6 +17,7 @@ import '../../chat/widgets/composer/picker_sheets.dart';
 import '../api/light_api.dart';
 import '../widgets/light_input_bar.dart';
 import 'production_api.dart';
+import 'production_examples.dart';
 import 'production_media.dart';
 import 'production_shot_models.dart';
 import 'production_shots.dart';
@@ -36,6 +37,7 @@ class ProductionPage extends ConsumerStatefulWidget {
 class _ProductionPageState extends ConsumerState<ProductionPage> {
   final _shop = TextEditingController();
   final _script = TextEditingController();
+  final _posterTitle = TextEditingController();
   final _productName = TextEditingController();
   final _pending = <String, Object?>{};
   LightProduction? _task;
@@ -54,7 +56,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
 
   LightProductionApi get _api => ref.read(lightProductionApiProvider);
   I18nState get _i18n => ref.read(i18nProvider);
-  bool get _imagesOnly => _task?.kind == ProductionKind.menu;
+  bool get _imagesOnly => _task?.kind.imagesOnly ?? false;
   List<ProductionDish> get _dishes =>
       _pending['dishes'] is List<Map<String, String>>
       ? (_pending['dishes']! as List<Map<String, String>>)
@@ -89,6 +91,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     if (!_pending.containsKey('product_name') &&
         _productName.text.trim() != task.productName) {
       _productName.text = task.productName;
+    }
+    if (!_pending.containsKey('poster_title') &&
+        _posterTitle.text.trim() != task.posterTitle) {
+      _posterTitle.text = task.posterTitle;
     }
     final field = task.remake ? 'reference_copy' : 'script';
     final copy = task.remake ? task.referenceCopy : task.script;
@@ -296,7 +302,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         await _send('render');
       case 'style':
         _receive(
-          await _api.edit(task, {'page': 'review', if (skip) 'template': ''}),
+          await _api.edit(task, {
+            'page': 'review',
+            if (skip) ...{'template': '', 'reference_example_id': ''},
+          }),
         );
         if (!mounted) return;
         final review = _task!;
@@ -304,7 +313,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             review.kind == ProductionKind.menu && review.materials.isNotEmpty;
         final needsCopy = review.remake
             ? !review.remakePrepared
-            : review.kind != ProductionKind.menu && review.script.isEmpty;
+            : !review.kind.imagesOnly && review.script.isEmpty;
         if (menuNeedsReading || (needsCopy && !review.manualPreparation)) {
           await _send('prepare');
         }
@@ -573,13 +582,35 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               description: _text('styleBody.${task.kind.id}'),
             ),
             const SizedBox(height: 24),
-            ProductionTemplates(
+            ProductionExamples(
               task: task,
-              selected: _pending['template'] as String? ?? task.template,
-              onChoose: (value) {
-                if (!_busy) _stage('template', value);
-              },
+              enabled: !_busy,
+              onChoose: (id) => _perform(() async {
+                _receive(await _api.edit(_task!, {'reference_example_id': id}));
+              }),
             ),
+            if (!task.kind.imagesOnly)
+              ProductionTemplates(
+                task: task,
+                selected: task.referenceExampleId == null
+                    ? _pending['template'] as String? ?? task.template
+                    : null,
+                onChoose: (value) async {
+                  if (_busy) return;
+                  if (task.referenceExampleId == null) {
+                    _stage('template', value);
+                    return;
+                  }
+                  await _perform(() async {
+                    _receive(
+                      await _api.edit(_task!, {
+                        'template': value,
+                        'reference_example_id': '',
+                      }),
+                    );
+                  });
+                },
+              ),
             if (task.kind == ProductionKind.footage) ...[
               const SizedBox(height: 12),
               _originalAudio(task),
@@ -611,20 +642,22 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         _text('materials.${task.kind.id}'),
         description: _text('materialsBody.${task.kind.id}'),
       ),
-      if (task.brief.isNotEmpty) ...[
+      if (task.brief.isNotEmpty && task.kind != ProductionKind.poster) ...[
         const SizedBox(height: 12),
         Text(task.brief),
       ],
       const SizedBox(height: 18),
-      TextField(
-        key: const Key('production-shop'),
-        controller: _shop,
-        maxLength: 80,
-        enabled: !_busy,
-        textInputAction: TextInputAction.done,
-        onChanged: (value) => _stage('shop', value),
-        decoration: InputDecoration(labelText: _text('shop'), counterText: ''),
-      ),
+      if (task.kind == ProductionKind.poster) ...[
+        _posterFields(),
+        const SizedBox(height: 20),
+        Text(
+          _text('poster.referenceMaterials'),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ] else
+        _shopField(),
       if (task.kind == ProductionKind.menu) ...[
         const SizedBox(height: 14),
         ProductionDishes(
@@ -641,7 +674,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         ),
       ],
       const SizedBox(height: 14),
-      if (task.kind != ProductionKind.menu && task.materials.isEmpty)
+      if (!task.kind.imagesOnly && task.materials.isEmpty)
         _videoMaterialSources(task.kind)
       else
         Row(
@@ -650,21 +683,21 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               'upload',
               Icons.add_photo_alternate_outlined,
               () => _pick(camera: false),
-              stacked: task.kind == ProductionKind.menu,
+              stacked: task.kind.imagesOnly,
             ),
             const SizedBox(width: 8),
             _source(
               'library',
               Icons.photo_library_outlined,
               _library,
-              stacked: task.kind == ProductionKind.menu,
+              stacked: task.kind.imagesOnly,
             ),
             const SizedBox(width: 8),
             _source(
-              task.kind == ProductionKind.menu ? 'takePhoto' : 'camera',
+              task.kind.imagesOnly ? 'takePhoto' : 'camera',
               Icons.photo_camera_outlined,
               () => _pick(camera: true),
-              stacked: task.kind == ProductionKind.menu,
+              stacked: task.kind.imagesOnly,
             ),
           ],
         ),
@@ -707,6 +740,57 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       ],
       _productionSettings(task),
     ],
+  );
+
+  Widget _shopField({bool signature = false}) => TextField(
+    key: const Key('production-shop'),
+    controller: _shop,
+    maxLength: 80,
+    enabled: !_busy,
+    textInputAction: TextInputAction.done,
+    onChanged: (value) => _stage('shop', value),
+    decoration: InputDecoration(
+      labelText: _text(signature ? 'poster.signature' : 'shop'),
+      counterText: '',
+    ),
+  );
+
+  Widget _posterFields({bool review = false}) => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+      child: Column(
+        children: [
+          if (!review) _shopField(),
+          TextField(
+            key: const Key('production-poster-title'),
+            controller: _posterTitle,
+            maxLength: 120,
+            enabled: !_busy,
+            textInputAction: TextInputAction.next,
+            onChanged: (value) => _stage('poster_title', value),
+            decoration: InputDecoration(
+              labelText: _text(review ? 'poster.headline' : 'poster.subject'),
+              counterText: '',
+            ),
+          ),
+          TextField(
+            key: const Key('production-poster-copy'),
+            controller: _script,
+            maxLength: 2400,
+            minLines: 2,
+            maxLines: 5,
+            enabled: !_busy,
+            onChanged: (value) => _stage('script', value),
+            decoration: InputDecoration(
+              labelText: _text('poster.copy'),
+              counterText: '',
+            ),
+          ),
+          if (review) _shopField(signature: true),
+        ],
+      ),
+    ),
   );
 
   Widget _productionSettings(LightProduction task) {
@@ -944,13 +1028,29 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   );
 
   Widget _review(LightProduction task) {
+    if (task.kind == ProductionKind.poster) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ProductionHeading(_text('review.poster')),
+          const SizedBox(height: 12),
+          if (task.referenceExampleId != null) ...[
+            ProductionExampleSummary(
+              task: task,
+              onChange: _busy ? null : () => _perform(() => _goTo('style')),
+            ),
+            const SizedBox(height: 12),
+          ],
+          _posterFields(review: true),
+        ],
+      );
+    }
     final menu = task.kind == ProductionKind.menu;
     final summary = [
       task.shop,
       if (task.materials.isNotEmpty)
         _text('selected', vars: {'count': task.materials.length}),
-      if (task.template.isNotEmpty)
-        productionTemplateLabel(_i18n, task.template),
+      productionStyleLabel(_i18n, task),
       if (task.supportsVideoTiers(task.template) && task.videoTier != null)
         "${_text('videoTier.title')} ${task.videoTier!.label(_i18n)}",
     ].where((value) => value.isNotEmpty).join(' · ');
@@ -1078,10 +1178,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       'completed' => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          primary(
-            task.output?.video == true ? 'saveVideo' : 'saveMenu',
-            _saveOutput,
-          ),
+          primary(switch (task.kind) {
+            ProductionKind.poster => 'savePoster',
+            _ => task.output?.video == true ? 'saveVideo' : 'saveMenu',
+          }, _saveOutput),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -1126,7 +1226,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           children: [
             primary(
               'next',
-              (_pending['template'] as String? ?? task.template).isEmpty
+              task.referenceExampleId == null &&
+                      (_pending['template'] as String? ?? task.template).isEmpty
                   ? null
                   : _next,
             ),
@@ -1137,7 +1238,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           'generate.footage_edit',
           _canRender(task) ? _next : null,
         ),
-        'style' => primary('next', _next),
+        'style' => primary(
+          'next',
+          task.referenceExampleId == null ? null : _next,
+        ),
         _ => primary(
           task.manualPreparation && !task.remakePrepared
               ? 'draftCopy'
@@ -1152,10 +1256,12 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     ProductionKind.video => task.remake || _script.text.trim().isNotEmpty,
     ProductionKind.footage => task.materials.isNotEmpty,
     ProductionKind.menu => _dishes.isNotEmpty,
+    ProductionKind.poster => _posterTitle.text.trim().isNotEmpty,
   };
 
   bool _canMoveFromMaterials(LightProduction task) => switch (task.kind) {
     ProductionKind.menu => _dishes.isNotEmpty || task.materials.isNotEmpty,
+    ProductionKind.poster => _posterTitle.text.trim().isNotEmpty,
     ProductionKind.footage => task.materials.isNotEmpty,
     ProductionKind.video =>
       task.materials.isNotEmpty ||
@@ -1169,6 +1275,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     _poll?.cancel();
     _shop.dispose();
     _script.dispose();
+    _posterTitle.dispose();
     _productName.dispose();
     super.dispose();
   }

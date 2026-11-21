@@ -3,14 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
-import '../../../shared/models/light.dart';
-import '../../../shared/widgets/media_viewer.dart';
-import '../state/light_providers.dart';
 import 'production_api.dart';
 import 'production_media.dart';
 
 String productionTemplateLabel(I18nState i18n, String template) =>
     i18n.t('light:production.template.$template.title');
+
+String productionStyleLabel(I18nState i18n, LightProduction task) {
+  if (task.referenceExampleId != null) {
+    return task.referenceTitleFor(i18n.language);
+  }
+  return task.template.isEmpty
+      ? ''
+      : productionTemplateLabel(i18n, task.template);
+}
 
 class ProductionTag extends StatelessWidget {
   const ProductionTag({super.key, required this.text});
@@ -150,18 +156,13 @@ class ProductionTemplates extends ConsumerWidget {
   });
 
   final LightProduction task;
-  final String selected;
+  final String? selected;
   final ValueChanged<String> onChoose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
-    final entry = ref.watch(lightEntryProvider(task.kind.id));
-    final samples = <String, LightSample>{
-      for (final subtype in entry?.subtypes ?? const <LightSubtype>[])
-        for (final s in subtype.samples) s.id: s,
-    };
     return Column(
       children: [
         for (final template in task.kind.templates)
@@ -191,15 +192,7 @@ class ProductionTemplates extends ConsumerWidget {
                           _TemplatePreview(
                             template: template,
                             title: productionTemplateLabel(i18n, template),
-                            preview:
-                                samples[switch (template) {
-                                      'warm_red' => 'menu_red',
-                                      'monochrome' => 'menu_mono',
-                                      _ => '',
-                                    }]
-                                    ?.thumbUrl,
                             caseLabel: i18n.t('light:production.playCase'),
-                            imageLabel: i18n.t('light:production.previewMenu'),
                           ),
                           const SizedBox(width: 14),
                         ],
@@ -396,27 +389,17 @@ class _TemplatePreview extends StatelessWidget {
   const _TemplatePreview({
     required this.template,
     required this.title,
-    required this.preview,
     required this.caseLabel,
-    required this.imageLabel,
   });
 
   final String template;
   final String title;
-  final String? preview;
   final String caseLabel;
-  final String imageLabel;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final recipe = const ['soda_story', 'silk_road'].contains(template);
-    final menuSample = switch (template) {
-      'signature_plate' => 'assets/light_production/menu-signature-plate.jpg',
-      'price_columns' => 'assets/light_production/menu-price-columns.jpg',
-      'bilingual_table' => 'assets/light_production/menu-bilingual-table.jpg',
-      _ => null,
-    };
     final asset = switch (template) {
       'soda_story' => sodaStoryPoster,
       'silk_road' => silkRoadPoster,
@@ -434,34 +417,8 @@ class _TemplatePreview extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (menuSample != null)
-              InkWell(
-                key: Key('production-preview-$template'),
-                onTap: () => showMediaViewer(
-                  context,
-                  (_) => MediaViewer(
-                    title: title,
-                    child: InteractiveViewer(
-                      maxScale: 4,
-                      child: Center(
-                        child: Image.asset(menuSample, fit: BoxFit.contain),
-                      ),
-                    ),
-                  ),
-                ),
-                child: Tooltip(
-                  message: imageLabel,
-                  child: Image.asset(menuSample, fit: BoxFit.contain),
-                ),
-              )
-            else if (asset != null)
+            if (asset != null)
               Image.asset(asset, fit: BoxFit.cover)
-            else if (preview case final url?)
-              Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => fallback,
-              )
             else
               fallback,
             if (recipe)

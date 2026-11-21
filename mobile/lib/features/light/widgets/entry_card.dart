@@ -8,7 +8,7 @@ IconData lightEntryIcon(String id) => switch (id) {
   'video' => Icons.movie_outlined,
   'voice_assistant' => Icons.phone_outlined,
   'menu' => Icons.article_outlined,
-  'poster' => Icons.image_outlined,
+  'poster' => Icons.add_photo_alternate_outlined,
   'douyin_publish' => Icons.send_outlined,
   'review' => Icons.insights_outlined,
   'shopkeeper' => Icons.storefront_outlined,
@@ -23,14 +23,14 @@ class LightEntryCard extends StatelessWidget {
     required this.entry,
     required this.subtitle,
     required this.onTap,
-    this.hero = false,
+    this.featured = false,
     this.reason,
   });
 
   final LightEntry entry;
   final String subtitle;
   final VoidCallback onTap;
-  final bool hero;
+  final bool featured;
   final String? reason;
 
   @override
@@ -39,11 +39,7 @@ class LightEntryCard extends StatelessWidget {
     final unavailable = !entry.available;
     final foreground = unavailable ? t.n700 : t.ink;
     final radius = BorderRadius.circular(Radii.xl);
-    final icon = Icon(
-      lightEntryIcon(entry.id),
-      color: foreground,
-      size: hero ? 33 : 26,
-    );
+    final icon = Icon(lightEntryIcon(entry.id), color: foreground, size: 26);
     final label = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -51,7 +47,7 @@ class LightEntryCard extends StatelessWidget {
         Text(
           entry.title,
           style: TextStyle(
-            fontSize: hero ? FontSizes.xl2 : FontSizes.lg,
+            fontSize: FontSizes.lg,
             fontWeight: FontWeight.w800,
             height: 1.2,
             color: foreground,
@@ -65,7 +61,7 @@ class LightEntryCard extends StatelessWidget {
       ],
     );
     return Material(
-      color: hero || unavailable ? t.hairSoft : t.card,
+      color: featured || unavailable ? t.hairSoft : t.card,
       shape: RoundedRectangleBorder(
         borderRadius: radius,
         side: BorderSide(color: t.hair),
@@ -74,24 +70,14 @@ class LightEntryCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: hero ? 86 : 100),
+          constraints: const BoxConstraints(minHeight: 100),
           child: Padding(
             padding: const EdgeInsets.all(14),
-            child: hero
-                ? Row(
-                    children: [
-                      icon,
-                      const SizedBox(width: 16),
-                      Expanded(child: label),
-                      if (unavailable)
-                        Icon(Icons.lock_outline, size: 16, color: t.n700),
-                    ],
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [icon, const SizedBox(height: 7), label],
-                  ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [icon, const SizedBox(height: 7), label],
+            ),
           ),
         ),
       ),

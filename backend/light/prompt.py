@@ -89,7 +89,7 @@ async def shop_fragment(user_id: str | None, workspace_id: str | None = None) ->
     return "这家店：" + "，".join(bit for bit in bits if bit) + "（老板告诉我们的；没说换主题时，视频默认拍这个主打）。"
 
 
-async def light_mode_fragment(user_id: str | None, session, *, lang: str | None = None) -> str:
+async def light_mode_fragment(user_id: str | None, session, *, lang: str | None = None, look_context=None) -> str:
     """Empty for ordinary chats; the Light rules (and the entry's steps) for guided ones."""
     if session is None or getattr(session, "kind", "normal") != "normal":
         return ""
@@ -99,10 +99,12 @@ async def light_mode_fragment(user_id: str | None, session, *, lang: str | None 
         return ""
     lang = lang or await ui_language_for(user_id)
     if getattr(session, "light_production", None):
+        from light.examples import production_fragment
         from light.production_form import system_fragment
         from light.production_outputs import current_result_context
         result_context = await current_result_context(session)
-        return "\n".join(filter(None, [output_language_line(lang), system_fragment(session), result_context]))
+        reference = await production_fragment(session, look_context=look_context)
+        return "\n".join(filter(None, [output_language_line(lang), system_fragment(session), reference, result_context]))
     parts = [LIGHT_MODE_TEXT, output_language_line(lang)]
     fragment = entry_fragment(entry_id, lang)
     if fragment:

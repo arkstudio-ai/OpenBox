@@ -124,7 +124,11 @@ async def test_the_console_keeps_the_teams_text_and_rereads_when_the_recipe_chan
     body = {"entry_id": "poster", "industry": "food", "shop_type": "noodle", "title": "海报样例", "recipe": "Style: 红金",
             "outputs": [{"asset_id": picture}]}
     async with _client(admin) as client:
-        created = (await client.post("/api/admin/examples", json=body)).json()
+        translations = {"en-US": "Poster example", "vi-VN": "Mẫu áp phích"}
+        created = (await client.post("/api/admin/examples", json={
+            **body, "title_translations": translations,
+        })).json()
+        assert created["source"]["title_translations"] == translations
         assert created["card"] == "" and created["card_state"] == {} and started == [(created["id"], False)]
         url = f"/api/admin/examples/{created['id']}"
         token = await example_card.begin(created["id"])
@@ -132,6 +136,7 @@ async def test_the_console_keeps_the_teams_text_and_rereads_when_the_recipe_chan
         # Another field saved: the card the model wrote stays; the recipe changed: it goes and is read again.
         kept = (await client.put(url, json={**body, "rating": 5})).json()
         assert kept["card"] == CARD and kept["card_state"]["state"] == "ready"
+        assert kept["source"]["title_translations"] == translations
         assert (await client.put(url, json={**body, "recipe": "Style: 蓝白"})).json()["card"] == ""
         # The team's own text survives a recipe change, and only emptying it asks for a new reading.
         mine = (await client.put(url, json={**body, "card": "我写的参考卡"})).json()

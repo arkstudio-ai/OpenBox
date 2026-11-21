@@ -20,6 +20,12 @@ String productionErrorText(I18nState i18n, Object error) {
   if (api?.code == 'LIGHT_PRODUCTION_TEMPLATE_RETIRED') {
     return i18n.t('light:production.retiredTemplate');
   }
+  if (api?.code == 'LIGHT_PRODUCTION_POSTER') {
+    return i18n.t('light:production.poster.titleRequired');
+  }
+  if (api?.code == 'LIGHT_PRODUCTION_EXAMPLE_UNAVAILABLE') {
+    return i18n.t('light:production.examples.unavailable');
+  }
   if (api?.code == 'LIGHT_REMAKE_VIDEO_LIMIT') {
     return i18n.t(
       'light:production.videoLimit',
@@ -139,6 +145,7 @@ class ProductionProgress extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
     final progress = task.shotProgress;
+    final style = productionStyleLabel(i18n, task);
     final phase = progress?.phase ?? task.phase ?? 'agent';
     final shots = phase == 'wan_shots' || phase == 'wan_edit' ? progress : null;
     final silkRoad = task.template == 'silk_road';
@@ -164,6 +171,7 @@ class ProductionProgress extends ConsumerWidget {
                   ProductionKind.video => Icons.videocam_outlined,
                   ProductionKind.footage => Icons.movie_outlined,
                   ProductionKind.menu => Icons.restaurant_menu,
+                  ProductionKind.poster => Icons.image_outlined,
                 },
                 size: 42,
                 color: t.a700,
@@ -205,12 +213,9 @@ class ProductionProgress extends ConsumerWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(color: t.n800),
               ),
-            ] else if (task.template.isNotEmpty) ...[
+            ] else if (style.isNotEmpty) ...[
               const SizedBox(height: 17),
-              Text(
-                productionTemplateLabel(i18n, task.template),
-                style: TextStyle(color: t.n800),
-              ),
+              Text(style, style: TextStyle(color: t.n800)),
             ],
             if (progress != null && progress.retaking > 0) ...[
               const SizedBox(height: 8),
@@ -239,17 +244,16 @@ class ProductionResult extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     final media = task.output!;
+    final style = productionStyleLabel(i18n, task);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         ProductionHeading(i18n.t('light:production.done.${task.kind.id}')),
-        if (task.template.isNotEmpty) ...[
+        if (style.isNotEmpty) ...[
           const SizedBox(height: 10),
           Align(
             alignment: Alignment.centerLeft,
-            child: ProductionTag(
-              text: productionTemplateLabel(i18n, task.template),
-            ),
+            child: ProductionTag(text: style),
           ),
         ],
         const SizedBox(height: 18),

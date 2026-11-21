@@ -13,9 +13,11 @@ from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from db.base import _upgrade_desktop_assistant_columns, get_db_session
 from db.models.agent_inbox import AgentInboxItem
+from db.models.light_example import LightExample
 from db.repository.user_repo import PgUserRepo
-from light import mode, production, production_form as forms, video_tiers
+from light import examples, mode, production, production_form as forms, video_tiers
 from light import remake, remake_case
+from light.prompt import light_mode_fragment
 from session.session import get_session
 
 
@@ -54,6 +56,138 @@ async def test_production_history_filters_before_paginating(monkeypatch):
         assert [item["brief"] for item in second["items"]] == ["菜馆宣传"] and not second["has_more"]
         menu = (await client.get(path, params={"entry_id": "menu", "limit": 1})).json()
         assert [item["brief"] for item in menu["items"]] == ["晚市菜单"] and not menu["has_more"]
+
+
+async def test_production_uses_only_the_selected_active_example(monkeypatch):
+    owner = await _user()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    menu_id, disabled_id, other_id = (uuid4().hex for _ in range(3))
+    async with get_db_session() as db:
+        for example_id, entry, status in (
+            (menu_id, "menu", "active"), (disabled_id, "menu", "disabled"),
+            (other_id, "video", "active"),
+        ):
+            db.add(LightExample(
+                id=example_id, entry_id=entry, industry="food", status=status,
+                title=f"样例 {example_id}", created_at=now, updated_at=now,
+                scene="menu_mono" if entry == "menu" else None,
+                tags=["早茶", "餐厅"],
+                look="版式：双栏，菜名和价格右侧对齐。",
+                outputs=[{"oss_key": f"samples/{example_id}",
+                          "mime": "image/jpeg" if entry == "menu" else "video/mp4"}],
+            ))
+    monkeypatch.setattr(examples, "preview", lambda row: {"example_id": row.id})
+    async with _client(owner) as client:
+        items = (await client.get("/api/light/examples", params={"entry_id": "menu"})).json()["items"]
+        assert items == [{
+            "example_id": menu_id, "scene": "menu_mono", "scene_label": "简约黑白",
+            "tags": ["早茶", "餐厅"],
+        }]
+        created = (await client.post("/api/light/productions", json={"entry_id": "menu"})).json()
+        session_id = created["session_id"]
+        path = f"/api/light/productions/{session_id}"
+        for invalid in (disabled_id, other_id):
+            rejected = await client.patch(path, json={"revision": 1, "reference_example_id": invalid})
+            assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_EXAMPLE_UNAVAILABLE"
+        saved = (await client.patch(path, json={"revision": 1, "reference_example_id": menu_id})).json()
+        assert saved["reference_example_title"] == f"样例 {menu_id}"
+        assert saved["reference_example_id"] == menu_id
+        assert saved["template"] == ""
+        session = await get_session(session_id, user_id=owner["id"])
+        fragment = await light_mode_fragment(owner["id"], session, lang="vi-VN")
+        assert "版式：双栏" in fragment and menu_id in fragment
+        assert "Show each confirmed dish and its price only once" in fragment
+        assert disabled_id not in fragment and other_id not in fragment
+        reset = (await client.patch(path, json={
+            "revision": saved["revision"], "template": "warm_red", "reference_example_id": "",
+        })).json()
+        assert "reference_example_id" not in reset
+        assert reset["template"] == "warm_red"
+        session = await get_session(session_id, user_id=owner["id"])
+        assert menu_id not in await light_mode_fragment(owner["id"], session, lang="vi-VN")
+
+        video = (await client.post("/api/light/productions", json={"entry_id": "video"})).json()
+        video_path = f"/api/light/productions/{video['session_id']}"
+        built_in = (await client.patch(video_path, json={
+            "revision": video["revision"], "template": "soda_story",
+        })).json()
+        library = (await client.patch(video_path, json={
+            "revision": built_in["revision"], "reference_example_id": other_id,
+        })).json()
+        assert library["template"] == "" and library["reference_example_id"] == other_id
+
+        async with get_db_session() as db:
+            chosen = await db.get(LightExample, menu_id)
+            assert (chosen.pick_count, chosen.use_count) == (1, 1)
+
+
+async def test_poster_draft_uses_library_sample_and_queues_image_render_in_same_session(monkeypatch):
+    owner = await _user()
+    monkeypatch.setattr(production, "schedule_inbox_wake", lambda *_: None)
+    active, disabled, menu = (uuid4().hex for _ in range(3))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with get_db_session() as db:
+        for example_id, kind, status in (
+            (active, "poster", "active"), (disabled, "poster", "disabled"), (menu, "menu", "active"),
+        ):
+            db.add(LightExample(
+                id=example_id, entry_id=kind, industry="food", status=status,
+                title="鲜辣上新", created_at=now, updated_at=now,
+                scene="new_item" if kind == "poster" else "menu_mono",
+                look="Film red, cream lettering, food photography below.",
+                source={"title_translations": {"en-US": "Fresh and spicy", "vi-VN": "Món cay mới"}},
+                outputs=[{"oss_key": f"samples/{example_id}", "mime": "image/png"}],
+            ))
+    monkeypatch.setattr(examples, "preview", lambda row: {
+        "example_id": row.id, "title_translations": examples.title_translations(row),
+    })
+    async with _client(owner) as client:
+        items = (await client.get("/api/light/examples", params={"entry_id": "poster"})).json()["items"]
+        assert [item["example_id"] for item in items] == [active]
+        assert items[0]["scene_label"] == "新品上市"
+        assert items[0]["title_translations"]["vi-VN"] == "Món cay mới"
+
+        response = await client.post("/api/light/productions", json={"entry_id": "poster"})
+        assert response.status_code == 201, response.text
+        created = response.json()
+        session_id = created["session_id"]
+        path = f"/api/light/productions/{session_id}"
+        empty = await client.post(f"{path}/actions", json={
+            "revision": created["revision"], "action": "render", "request_id": uuid4().hex,
+        })
+        assert empty.json()["detail"]["code"] == "LIGHT_PRODUCTION_POSTER"
+        for reference_id in (disabled, menu):
+            invalid = await client.patch(path, json={
+                "revision": created["revision"], "reference_example_id": reference_id,
+            })
+            assert invalid.json()["detail"]["code"] == "LIGHT_PRODUCTION_EXAMPLE_UNAVAILABLE"
+
+        response = await client.patch(path, json={
+            "revision": created["revision"], "page": "review", "reference_example_id": active,
+            "shop": "兴旺菜馆", "poster_title": "麻辣小龙虾上新", "script": "新鲜现做，欢迎到店",
+        })
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["reference_example_title_translations"]["en-US"] == "Fresh and spicy"
+        queued = await client.post(f"{path}/actions", json={
+            "revision": saved["revision"], "action": "render", "request_id": uuid4().hex,
+        })
+        assert queued.status_code == 200, queued.text
+        assert queued.json()["phase"] == "poster"
+        history = (await client.get("/api/light/productions", params={"entry_id": "poster"})).json()
+        assert [(item["session_id"], item["poster_title"]) for item in history["items"]] == [
+            (session_id, "麻辣小龙虾上新"),
+        ]
+
+    session = await get_session(session_id, user_id=owner["id"])
+    instructions = await light_mode_fragment(owner["id"], session, lang="vi-VN")
+    assert "Film red, cream lettering" in instructions
+    assert "麻辣小龙虾上新" in instructions and "新鲜现做，欢迎到店" in instructions
+    assert production._media_matches("poster", "image/webp")
+    assert not production._media_matches("poster", "video/mp4")
+    async with get_db_session() as db:
+        item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session_id))
+        assert item.prompt == "开始生成海报。"
 
 
 async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(monkeypatch):

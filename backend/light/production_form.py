@@ -1,4 +1,4 @@
-"""The saved inputs and Agent instructions for the three guided productions."""
+"""The saved inputs and Agent instructions for guided productions."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,8 @@ from light import remake_case, silk_road, wan_story
 from core.config import ChatTier
 from light.video_tiers import VideoTier
 
-EntryId = Literal["video", "footage_edit", "menu"]
+EntryId = Literal["video", "footage_edit", "menu", "poster"]
+IMAGE_ENTRIES = {"menu", "poster"}
 Page = Literal["materials", "style", "review"]
 Action = Literal["prepare", "render", "edit", "apply", "dismiss"]
 
@@ -60,7 +61,9 @@ TEMPLATES = {
             "沿用用户提供的英文。缺英文时准确翻译菜名，无法确认食材或做法时可保留专名音译，避免补造信息。"
             "可用真实菜品局部照片作视觉锚点，版式随菜目数量调整。"
         ),
+        "": "参考用户选中的样例的版式和风格，用当前门店确认的菜品、价格和素材制作菜单。",
     },
+    "poster": {"": "用所选海报样例的视觉风格和版式，结合当前门店、已确认文案和素材制作一张宣传海报。"},
 }
 
 
@@ -79,6 +82,7 @@ class FormFields(BaseModel):
     shop: ShopName | None = None
     asset_ids: list[AssetId] | None = Field(default=None, max_length=10)
     template: str | None = Field(default=None, max_length=32)
+    poster_title: str | None = Field(default=None, max_length=120)
     script: str | None = Field(default=None, max_length=2400)
     reference_copy: str | None = Field(default=None, max_length=2400)
     product_name: str | None = Field(default=None, max_length=36)
@@ -101,6 +105,7 @@ class EditForm(FormFields):
     page: Page | None = None
     video_tier: VideoTier | None = None
     chat_tier: ChatTier | None = None
+    reference_example_id: str | None = Field(default=None, max_length=64)
 
 
 class StartForm(BaseModel):
@@ -122,6 +127,7 @@ def initial_form(entry: EntryId, shop: str, brief: str) -> dict:
         "asset_ids": [], "template": next(iter(TEMPLATES[entry])),
         "script": "", "reference_copy": "", "dishes": [], "keep_original": True, "notes": "",
         **({"creative_effects": False} if entry == "footage_edit" else {}),
+        **({"poster_title": brief[:120]} if entry == "poster" else {}),
     }
 
 
@@ -129,6 +135,8 @@ def prompt_data(form: dict) -> str:
     data = {key: form[key] for key in (
         "revision", "shop", "brief", "asset_ids", "template", "script", "dishes", "keep_original", "notes",
     )}
+    if "poster_title" in form:
+        data["poster_title"] = form["poster_title"]
     if form.get("video_tier") and form["template"] in VIDEO_TIER_TEMPLATES:
         data["video_tier"] = form["video_tier"]
     if form.get("template") in (remake_case.TEMPLATE, *wan_story.TEMPLATES):
@@ -141,11 +149,11 @@ def prompt_data(form: dict) -> str:
 
 
 _INPUT_LABELS = {
-    "zh-CN": ("请生成视频文案。", "请按我修改的内容重新优化文案。", "请识别图片里的菜品。", "开始生成视频。", "开始剪辑实拍。", "开始生成菜单。"),
+    "zh-CN": ("请生成视频文案。", "请按我修改的内容重新优化文案。", "请识别图片里的菜品。", "开始生成视频。", "开始剪辑实拍。", "开始生成菜单。", "开始生成海报。"),
     "en-US": ("Write the video copy.", "Refine my edited copy.", "Read the dishes from my photos.",
-              "Generate the video.", "Edit my footage.", "Generate the menu."),
+              "Generate the video.", "Edit my footage.", "Generate the menu.", "Generate the poster."),
     "vi-VN": ("Viết nội dung video.", "Tối ưu phần nội dung tôi đã sửa.", "Đọc tên món từ ảnh của tôi.",
-              "Tạo video.", "Dựng cảnh quay của tôi.", "Tạo thực đơn."),
+              "Tạo video.", "Dựng cảnh quay của tôi.", "Tạo thực đơn.", "Tạo áp phích."),
 }
 
 
@@ -182,6 +190,7 @@ def restrict_guided_tools(tools, session, action):
             "video": {"video_generate", "video_compose", "image_gen", "footage_analyze"},
             "footage_edit": {"footage_analyze", "video_compose", "video_transcribe"},
             "menu": {"image_gen"},
+            "poster": {"image_gen"},
         }[session.light_entry]
         if session.light_entry == "footage_edit" and session.light_production.get("creative_effects"):
             allowed.add("image_gen")
@@ -330,6 +339,18 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "can attach the completed MP4. "
             "Otherwise check or resume that same job."
         )
+    elif entry == "poster":
+        tools = "image_gen"
+        task = (
+            "Use image_gen to create one finished portrait promotional poster. Use the selected example's layout, "
+            "typographic hierarchy and visual treatment as guidance. Use the form's poster_title as the exact headline, "
+            "script as the promotional copy and shop as the signature. Keep those words and names accurate, including "
+            "diacritics. Leave unspecified information out. Never invent a price, offer, date, address or phone number. "
+            "Pass relevant selected photo asset IDs as input_images and preserve the recognizable product and setting. "
+            "If there are no photos, choose a fitting visual treatment based on the brief. Integrate typography with "
+            "the composition, use contrast and leave room around text. Use the image tool's configured output settings "
+            "unless the owner asked for a specific format. Check the image for spelling and legibility, then deliver it."
+        )
     else:
         tools = "image_gen"
         task = (
@@ -345,7 +366,8 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
     return (
         "I confirmed the current form and pressed Generate in the app. Start production now. "
         f"{task} Reveal {tools} with capability_search if necessary. You already have confirmation. "
-        "Do not ask another Question or use examples/settings from old turns. Use the current form below. "
+        "Do not ask another Question or use examples/settings from old turns. Use the current form below "
+        "and the library example, if the owner selected one for this task. "
         f"Use stable idempotency keys under '{job_prefix}' with ':shot1', ':shot2' etc. and ':final' for composition. "
         "Reuse completed shots. If a job already exists, check or resume that exact job id. Only retry a confirmed "
         "terminal failure with a revision key. Never replace a submission whose outcome is unknown. "

@@ -2,12 +2,15 @@ import 'dart:io';
 
 import 'package:bossip_mobile/app/app.dart';
 import 'package:bossip_mobile/app/router.dart';
+import 'package:bossip_mobile/features/auth/state/auth_flow.dart';
+import 'package:bossip_mobile/features/light/api/light_api.dart';
 import 'package:bossip_mobile/features/light/production/production_api.dart';
 import 'package:bossip_mobile/features/light/production/production_page.dart';
 import 'package:bossip_mobile/main.dart' as app;
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/config/env.dart';
+import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/router/paths.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +37,10 @@ void main() {
   const output = String.fromEnvironment('MENU_QA_OUT');
   const resume = String.fromEnvironment('MENU_QA_RESUME');
   const photos = String.fromEnvironment('MENU_QA_PHOTOS');
+  const password = String.fromEnvironment('MENU_QA_PASSWORD');
+  const exampleName = String.fromEnvironment('MENU_QA_EXAMPLE');
+  const previewOnly = bool.fromEnvironment('MENU_QA_PREVIEW_ONLY');
+  const completed = String.fromEnvironment('MENU_QA_COMPLETED');
 
   testWidgets(
     'The App previews menu templates and renders confirmed dish information',
@@ -83,10 +90,22 @@ void main() {
         listen: false,
       );
       await until(() => !container.read(authProvider).isLoading, 'signed-in');
+      if (password.isNotEmpty &&
+          container.read(authProvider).user?.username != 'devtest') {
+        await container.read(authFlowProvider).login('devtest', password);
+      }
       expect(container.read(authProvider).user?.username, 'devtest');
+      final language = container.read(i18nProvider.notifier);
+      language.setLanguage('zh-CN');
+      final examples = await container
+          .read(lightApiProvider)
+          .productionExamples('menu');
+      expect(examples, isNotEmpty);
+      final sample = exampleName.isEmpty
+          ? examples.first
+          : examples.singleWhere((row) => row.title == exampleName);
       final withPhotos = photos.isNotEmpty;
       final shop = withPhotos ? '塞外朵莱娜' : '乡味小馆';
-      final selectedTemplate = withPhotos ? 'bilingual_table' : 'price_columns';
       final dishes = withPhotos
           ? const [('丝路香馕烤羊腿', '')]
           : const [
@@ -123,7 +142,7 @@ void main() {
           final original = ImagePickerPlatform.instance;
           final files = [
             for (final label in ['羊腿', '香馕'])
-              XFile('$photos/${label}实拍关键帧.png'),
+              XFile('$photos/$label实拍关键帧.png'),
           ];
           expect(files.every((file) => File(file.path).existsSync()), isTrue);
           ImagePickerPlatform.instance = _MenuPhotoPicker(files);
@@ -138,17 +157,71 @@ void main() {
         }
         await tap('production-primary');
 
-        for (final template
-            in withPhotos
-                ? [selectedTemplate]
-                : ['signature_plate', 'bilingual_table', selectedTemplate]) {
-          await tap('production-preview-$template');
-          await until(() => shown('media-viewer-close'), '${template}_open');
-          await capture(template);
-          await tap('media-viewer-close');
-          await tap('production-template-$template');
+        final scene = sample.scene ?? 'unclassified';
+        final category = 'production-menu-category-$scene';
+        await until(() => key(category).evaluate().isNotEmpty, 'categories');
+        final coverCategories = {
+          for (final row in examples.where((row) => row.posterUrl != null))
+            row.scene ?? 'unclassified',
+        };
+        await until(
+          () => coverCategories.every(
+            (scene) => find
+                .descendant(
+                  of: key('production-menu-category-$scene'),
+                  matching: find.byType(RawImage),
+                )
+                .evaluate()
+                .isNotEmpty,
+          ),
+          'category-covers-loaded',
+        );
+        expect(key('production-example-library'), findsNothing);
+        expect(key('production-template-signature_plate'), findsNothing);
+        expect(find.text('0 个样例'), findsNothing);
+        await capture('categories-zh');
+        if (examples.any(
+          (row) => row.scene == 'menu_mono' && row.sceneLabel == '简约黑白',
+        )) {
+          language.setLanguage('en-US');
+          await until(
+            () => find.text('Minimal black and white').evaluate().isNotEmpty,
+            'categories-en',
+          );
+          await capture('categories-en');
+          language.setLanguage('vi-VN');
+          await until(
+            () => find.text('Đen trắng tối giản').evaluate().isNotEmpty,
+            'categories-vi',
+          );
+          await capture('categories-vi');
+          language.setLanguage('zh-CN');
+          await tester.pump(const Duration(milliseconds: 200));
         }
-        await capture('templates');
+        await tap(category);
+        final item = key('production-example-${sample.exampleId}');
+        await until(() => item.evaluate().isNotEmpty, 'classified-example');
+        for (final other
+            in examples.where((row) => row.scene != sample.scene).take(1)) {
+          expect(key('production-example-${other.exampleId}'), findsNothing);
+        }
+        if (sample.tags.isNotEmpty) {
+          expect(find.text(sample.tags.join(' · ')), findsOneWidget);
+        }
+        await capture('examples');
+        await tester.ensureVisible(item.first);
+        await tester.tap(
+          find.descendant(of: item, matching: find.byType(Tooltip)),
+        );
+        await until(() => shown('media-viewer-close'), 'preview-example');
+        await capture('sample-preview');
+        await tap('media-viewer-close');
+        await tap('production-example-${sample.exampleId}');
+        await until(
+          () => find.text('已选 ${sample.title}').evaluate().isNotEmpty,
+          'chosen-example',
+        );
+
         await tap('production-primary');
         await until(
           () =>
@@ -161,10 +234,23 @@ void main() {
       }
       final api = container.read(lightProductionApiProvider);
       final draft = await api.get(session);
-      expect(draft.template, selectedTemplate);
+      expect(draft.template, isEmpty);
+      expect(draft.referenceExampleId, sample.exampleId);
       expect(draft.shop, shop);
       if (withPhotos) expect(draft.materials.length, 2);
       expect(draft.dishes.map((dish) => (dish.name, dish.price)), dishes);
+
+      if (previewOnly) {
+        if (completed.isNotEmpty) {
+          final existing = await api.get(completed);
+          expect(existing.status, 'completed');
+          container.read(routerProvider).go(Paths.lightProduction(completed));
+          await until(() => shown('production-result-preview'), 'saved-menu');
+          expect(find.text(existing.referenceExampleTitle), findsOneWidget);
+          await capture('completed');
+        }
+        return;
+      }
 
       watch.reset();
       await tap('production-primary');

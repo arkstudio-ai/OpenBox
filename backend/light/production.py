@@ -4,19 +4,20 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from agent.inbox import accept_inbox_item_locked, schedule_inbox_wake
 from assets.service import owned_ready_query
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
+from db.models.light_example import LightExample
 from db.models.part import Part
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import remake_case, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, remake_case, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -104,7 +105,12 @@ async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: s
 
 
 def _media_matches(entry: str, mime: str) -> bool:
-    return mime.startswith("image/") if entry == "menu" else mime.startswith(("image/", "video/"))
+    return mime.startswith("image/") if entry in forms.IMAGE_ENTRIES else mime.startswith(("image/", "video/"))
+
+
+async def _require_reference(db, entry_id: str, example_id: str) -> None:
+    if not examples.is_production_reference(await db.get(LightExample, example_id), entry_id):
+        raise LightError("LIGHT_PRODUCTION_EXAMPLE_UNAVAILABLE", "This reference example is unavailable.", 409)
 
 
 async def _validate_fields(db, row: Session, changes: dict) -> None:
@@ -125,6 +131,8 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
         if (row.light_entry != "footage_edit"
                 and (row.light_entry != "video" or template not in forms.VIDEO_TIER_TEMPLATES)):
             raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
+    if "poster_title" in changes and row.light_entry != "poster":
+        raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
     if "dishes" in changes and row.light_entry != "menu":
         raise LightError("LIGHT_PRODUCTION_DISHES", "Only menus have dish rows")
     if "creative_effects" in changes and row.light_entry != "footage_edit":
@@ -138,7 +146,14 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
 
 def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
     form = dict(row.light_production)
-    actual = {key: value for key, value in changes.items() if form.get(key) != value}
+    actual = {key: value for key, value in changes.items()
+              if key != "reference_example_id" and form.get(key) != value}
+    reference_id = row.light_example_id
+    if "reference_example_id" in changes:
+        reference_id = changes["reference_example_id"] or None
+    elif "template" in actual:
+        reference_id = None
+    reference_changed = reference_id != row.light_example_id
     if "chat_tier" in changes:
         from core.config import get_config
 
@@ -146,8 +161,9 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
         if tier and (row.model, row.variant) != (tier.model, tier.variant):
             row.model, row.variant = tier.model, tier.variant
             actual["chat_tier"] = tier.tier
-    if not actual:
+    if not actual and not reference_changed:
         return
+    row.light_example_id = reference_id
     form.update(actual)
     if "video_tier" in actual:
         row.video_model, row.video_resolution = video_tiers.resolve_tier(form["video_tier"])
@@ -155,7 +171,7 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
                 and not (form.get("remake_adaptation") or {}).get("world")):
             form["remake_prepared_for"] = None
     form["revision"] += 1
-    if any(key != "page" for key in actual):
+    if reference_changed or any(key != "page" for key in actual):
         form["edited_at"] = _now().isoformat()
     if from_agent:
         form["agent_revision"] = form["revision"]
@@ -217,7 +233,7 @@ def _work_view(row: Session, receipt, jobs: list, output, question: bool) -> dic
         elif any(job.kind in _COMPOSITIONS for job in jobs):
             phase = "compose" if row.light_entry == "video" else "edit"
         elif action == "render" or active:
-            phase = {"video": "video", "footage_edit": "edit", "menu": "menu"}[row.light_entry]
+            phase = {"video": "video", "footage_edit": "edit", "menu": "menu", "poster": "poster"}[row.light_entry]
         else:
             phase = "agent"
         progress = _shot_progress(run, jobs, phase)
@@ -252,7 +268,7 @@ def _asset_view(asset, oss) -> dict:
 
 def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messages=frozenset()) -> list[str]:
     form = _form(row)
-    expected = "image/" if row.light_entry == "menu" else "video/"
+    expected = "image/" if row.light_entry in forms.IMAGE_ENTRIES else "video/"
     edited_at = form.get("edited_at")
     since = datetime.fromisoformat(edited_at) if edited_at else _utc(row.created_at)
     run = form.get("run") or {}
@@ -266,7 +282,7 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
         and part.data.get("asset_id") and (part.data.get("relation") or {}).get("role") in {"final", "result"}
     ]
     results.extend((_utc(job.completed_at or job.updated_at), job.output_asset_id) for job in jobs
-                   if row.light_entry != "menu" and job.kind in _COMPOSITIONS and job.status == "completed" and job.output_asset_id
+                   if row.light_entry not in forms.IMAGE_ENTRIES and job.kind in _COMPOSITIONS and job.status == "completed" and job.output_asset_id
                    and (wan_story.is_complete_cut(run, job) if run.get("remake_version") in wan_story.VERSIONS else
                         (not run.get("remake_version") or job.idempotency_key.startswith(run["job_prefix"] + ":final"))))
     if row.light_entry == "video" and any(shot_editor.is_edit_job(job) for job in jobs):
@@ -330,6 +346,14 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
         editor = await shot_editor.project(db, row, jobs, [key for key in output_ids[row.id] if key in media], oss) if include_shots else None
         chat_tier = _chat_tier(config, model=row.model) or _chat_tier(config, model=config.model)
+        reference_fields = {}
+        if include_shots and row.light_production and row.light_example_id:
+            reference = await db.get(LightExample, row.light_example_id)
+            reference_fields = {
+                "reference_example_id": row.light_example_id,
+                "reference_example_title": reference.title if reference else "",
+                "reference_example_title_translations": examples.title_translations(reference),
+            }
         result.append({
             **{key: value for key, value in form.items() if key not in {
                 "run", "edited_at", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
@@ -343,6 +367,7 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
             "session_id": row.id, "entry_id": row.light_entry, "title": row.title, "legacy": not row.light_production,
             "updated_at": _utc(row.updated_at).isoformat(), "output": output,
             "materials": [media[key] for key in form["asset_ids"] if key in media],
+            **reference_fields,
             **({"reference_copy": remake_case.reference_copy(form),
                 "remake_prepared": form.get("remake_prepared_for") == remake_case.input_fingerprint(form)}
                if remake_case.applies(row.light_entry, form) else {}),
@@ -380,6 +405,12 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
             raise LightError("LIGHT_PRODUCTION_STATE", "Finish the current production action before editing", 409)
         changes = body.model_dump(exclude_none=True, exclude={"revision"})
         form = row.light_production
+        reference_id = changes.get("reference_example_id")
+        previous_reference = row.light_example_id
+        if reference_id:
+            await _require_reference(db, row.light_entry, reference_id)
+            if row.light_entry == "video" or row.light_entry in forms.IMAGE_ENTRIES:
+                changes["template"] = ""
         stays_remake = remake_case.applies(row.light_entry, {**form, **changes})
         if stays_remake and "script" in changes:
             # Older Apps wrote the editable value as script.
@@ -390,6 +421,9 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
             changes["remake_prepared_for"] = None
         await _validate_fields(db, row, changes)
         _apply(row, changes)
+        if reference_id and reference_id != previous_reference:
+            await db.execute(update(LightExample).where(LightExample.id == reference_id)
+                             .values(pick_count=LightExample.pick_count + 1))
     return await get(user_id, workspace_id, session_id)
 
 
@@ -628,6 +662,8 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
         if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
                 and not (form.get("remake_adaptation") or {}).get("world")):
             raise LightError("LIGHT_VIDEO_FRAME_PLAN", "Prepare the current storyboard before filming.", 409)
+        if row.light_entry == "poster" and not _form(row).get("poster_title", "").strip():
+            raise LightError("LIGHT_PRODUCTION_POSTER", "Confirm the headline before generating the poster")
         if row.light_entry == "menu" and not any(dish["name"] for dish in view["dishes"]):
             raise LightError("LIGHT_PRODUCTION_DISHES", "Confirm at least one dish before generating")
         if row.light_entry == "footage_edit" and not view["materials"]:
@@ -702,6 +738,8 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
             else:
                 from core.config import get_config
 
+                if row.light_example_id:
+                    await _require_reference(db, row.light_entry, row.light_example_id)
                 config = get_config()
                 if config.model_tiers.product_chat and not _chat_tier(config, model=row.model):
                     tier = _chat_tier(config, model=config.model)

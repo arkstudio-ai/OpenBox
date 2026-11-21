@@ -12,7 +12,7 @@
       { "id": "menu_chalk", "label": "手写粉笔" },
       { "id": "menu_dark", "label": "深色高级" }
     ] },
-    { "id": "poster", "label": "做海报", "chips_are_scenes": true, "scenes": [
+    { "id": "poster", "label": "做海报", "media": "image", "chips_are_scenes": true, "scenes": [
       { "id": "new_item", "label": "新品上市" },
       { "id": "holiday", "label": "节日活动" },
       { "id": "opening", "label": "开业" },

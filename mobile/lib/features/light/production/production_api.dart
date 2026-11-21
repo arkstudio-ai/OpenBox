@@ -6,13 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/json.dart';
+import '../../../shared/models/light.dart';
 import '../../../shared/models/resource.dart';
 import 'production_shot_models.dart';
 
 enum ProductionKind {
   video('video'),
   footage('footage_edit'),
-  menu('menu');
+  menu('menu'),
+  poster('poster');
 
   const ProductionKind(this.id);
   final String id;
@@ -22,16 +24,12 @@ enum ProductionKind {
 
   String label(I18nState i18n) => i18n.t('light:production.kind.$id');
 
+  bool get imagesOnly => this == menu || this == poster;
+
   List<String> get templates => switch (this) {
     video => ['soda_story', 'silk_road'],
     footage => ['documentary', 'quick_cut', 'product'],
-    menu => [
-      'warm_red',
-      'monochrome',
-      'signature_plate',
-      'price_columns',
-      'bilingual_table',
-    ],
+    menu || poster => const [],
   };
 }
 
@@ -146,12 +144,18 @@ class LightProduction {
       shop = asString(json['shop']) ?? '',
       brief = asString(json['brief']) ?? '',
       script = asString(json['script']) ?? '',
+      posterTitle = asString(json['poster_title']) ?? '',
       referenceCopy = asString(json['reference_copy']) ?? '',
       productName = asString(json['product_name']) ?? '',
       suggestedProduct = asString(json['suggested_product']) ?? '',
       beatMusic = json['beat_music'] != false,
       remakePrepared = json['remake_prepared'] == true,
       template = asString(json['template']) ?? '',
+      referenceExampleId = asString(json['reference_example_id']),
+      referenceExampleTitle = asString(json['reference_example_title']) ?? '',
+      referenceExampleTitleTranslations = lightTitleTranslations(
+        json['reference_example_title_translations'],
+      ),
       chatTier = asString(json['chat_tier']),
       videoTier = ProductionVideoTier.fromId(json['video_tier']),
       availableVideoTiers = {
@@ -190,11 +194,18 @@ class LightProduction {
   final String shop;
   final String brief;
   final String script;
+  final String posterTitle;
   final String referenceCopy;
   final String productName, suggestedProduct;
   final bool beatMusic;
   final bool remakePrepared;
   final String template;
+  final String? referenceExampleId;
+  final String referenceExampleTitle;
+  final Map<String, String> referenceExampleTitleTranslations;
+
+  String referenceTitleFor(String language) =>
+      referenceExampleTitleTranslations[language] ?? referenceExampleTitle;
   final ProductionVideoTier? videoTier;
   final String? chatTier;
   final Set<ProductionVideoTier> availableVideoTiers;

@@ -1938,7 +1938,10 @@ async def run_loop(
             )
             try:
                 from light.prompt import light_mode_fragment
-                light_fragment = await light_mode_fragment(user_id, session, lang=device_locale.language)
+                light_fragment = await light_mode_fragment(
+                    user_id, session, lang=device_locale.language,
+                    look_context=ctx if step == 1 and guided_action == "render" else None,
+                )
             except Exception as exc:  # the guided chrome is optional; the chat must still run
                 light_fragment = ""
                 log.warning(f"light prompt fragment skipped: {type(exc).__name__}")

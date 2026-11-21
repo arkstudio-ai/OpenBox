@@ -9,6 +9,16 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 该手册说明目标盘点、执行服务补丁、视频技能同步、验收和回滚；须先完成旧桌面兼容更新，
 再发布依赖新回执的 Web 后端。手册不是生产已发布记录。
 
+## 2026-11-21 17:07 gw2 → `20261121-examplecard-439606d2`（backend + trajectory-worker + frontend），样例参考卡与链接有效期
+
+- 内容：`main@439606d2`（PR #226、#227）。样例在后台保存后由默认对话模型看成品（图片；视频抽帧加转写）写参考卡，存 `light_examples.card` / `card_meta`，后台样例库可看、可改、可重新读取；**提示词里对样例的引用方式没有变，参考卡目前只写不用**。样例卡预览与 Light 入口样图的签名链接 12 小时 → 7 天；后台看成品、读素材抽帧、轨迹监控「打开原文件」→ 3 天。
+- **gw2 后端仍是补丁镜像，且底版不在 git**：切换前线上 backend 是当天 15:01 别人发布的 `20261121-turbo-frame-adapt-c1185d18`，提交 `c1185d18` 在远端任何分支都找不到。本次没有从 main 全量构建，而是 `FROM` 该镜像叠 9 个文件（`api/admin_examples.py`、`api/light.py`、`db/models/light_example.py`、`light/examples.py`、`light/media.py`、`light/example_card.py`、`tool/footage_analyze.py`、`trajectory/payload.py`、迁移 `ps9f5a6b7c8d_light_example_card.py`）；叠之前核对线上这 7 个已有文件与 main 改动前（`7fbdc87f`）逐字节一致。**对方若再从自己的底版发后端，这 9 个文件会被冲掉**（库里两列保留，后台「重新读取」会 404）。
+- 镜像：backend `openbox-backend:20261121-examplecard-439606d2`；trajectory-worker `openbox-backend:20261121-examplecard-439606d2-worker`（`FROM 20261121-mobile-locale-7fbdc87f` 叠同样 9 个文件）；frontend `openbox-frontend-v2:20261121-examplecard-439606d2`，本机从 main 干净构建（相对线上 `20261120-models-e1191b78` 只多本次的后台页面改动）。后端构建目录 `/opt/openbox/releases/20261121-examplecard-439606d2/rel/`。
+- 迁移：业务库 `pr8e4f5a6b7c` → `ps9f5a6b7c8d`（`light_examples` 加 `card`、`card_meta` 两列），后端启动时自动执行。配置文件未动；机器上没有设 `TRAJECTORY_ASSET_LINK_SECONDS`，轨迹链接取新默认值 3 天。
+- 过程：持有发布锁；空闲门禁第一次即通过（运行中的对话 0、通话 0、3 分钟内用户消息 0）；`pg_dump` 594M 存 `/opt/openbox/backups/20261121-examplecard-439606d2/`；按 backend → trajectory-worker → frontend 切换，三项均 healthy。
+- 验证：两个新后端镜像内 9 个模块可导入、迁移只有一个头；切换后三容器健康、6 分钟后端日志无 ERROR / traceback；库里两列已存在；公网 `index.html` 带新 build id，`/api/auth/logto/config` 200，未登录访问 `/api/admin/examples` 401；容器内参考卡模型解析为 `openai/gpt-6.2-sol`（档位 high）。**没有对真实样例跑过一次参考卡读取**（要记在某个管理员账号上扣积分，未执行）；没有在浏览器里登录看过后台页面。
+- 回滚：`releases/20261121-examplecard-439606d2/before/docker-compose.override.yml` 写回并 `docker compose up -d --no-deps backend trajectory-worker frontend`；回到旧后端前执行 `alter table light_examples drop column if exists card, drop column if exists card_meta` 并把 `alembic_version` 改回 `pr8e4f5a6b7c`。切换脚本 `releases/20261121-examplecard-439606d2/activate.sh`。
+
 ## 2026-11-19 gw2 与高德两台：轨迹简洁模式对话视图、投影卡死修复、样例库分类设置
 
 - 内容（main）：PR #218 样例库分类可由管理员设置（迁移 `pq7d3e4f5a6b`，新表 `light_taxonomy`）、#219 简洁模式对话视图（每轮积分、原地展开详细）、#220 积分构成的用途名称、#221 留存内容读取失败不再取消进行中的下载、#222/#223 对话里显示图片和视频。高德线：分支 `gaode/patch-20261119-trajchat`（= `gaode/patch-20261117-cardfiles` + 会话回放 #146、从旧到新 #156、以及 #219–#223 中与轨迹相关的提交；不含 #218）。

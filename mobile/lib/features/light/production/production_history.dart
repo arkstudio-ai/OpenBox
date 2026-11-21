@@ -245,6 +245,7 @@ class _HistoryTile extends ConsumerWidget {
     final media = task.output ?? task.materials.firstOrNull;
     final title = [
       if (task.legacy) task.title,
+      task.posterTitle,
       task.productName,
       task.brief,
       [task.shop, task.kind.label(i18n)].where((s) => s.isNotEmpty).join(' · '),
@@ -278,12 +279,11 @@ class _HistoryTile extends ConsumerWidget {
                           color: t.surface,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Icon(
-                          task.kind == ProductionKind.menu
-                              ? Icons.restaurant_menu
-                              : Icons.movie_outlined,
-                          color: t.n800,
-                        ),
+                        child: Icon(switch (task.kind) {
+                          ProductionKind.menu => Icons.restaurant_menu,
+                          ProductionKind.poster => Icons.image_outlined,
+                          _ => Icons.movie_outlined,
+                        }, color: t.n800),
                       ),
               ),
               const SizedBox(width: 12),

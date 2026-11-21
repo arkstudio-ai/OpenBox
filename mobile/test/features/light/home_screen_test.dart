@@ -239,8 +239,14 @@ void main() {
       'video',
       'footage_edit',
       'menu',
+      'poster',
     ]);
-    expect(find.byKey(const Key('light-entry-poster')), findsNothing);
+    final menu = tester.getTopLeft(find.byKey(const Key('light-entry-menu')));
+    final poster = tester.getTopLeft(
+      find.byKey(const Key('light-entry-poster')),
+    );
+    expect(menu.dy, poster.dy);
+    expect(menu.dx, lessThan(poster.dx));
     expect(find.text('所有事都能省心托管'), findsNothing);
     expect(find.byKey(const Key('light-assistant-recent')), findsNothing);
     await tester.tap(find.byKey(const Key('light-production-history')));
@@ -252,7 +258,7 @@ void main() {
     tester,
   ) async {
     final (_, router) = await _mount(tester);
-    for (final entry in ['video', 'footage_edit', 'menu']) {
+    for (final entry in ['video', 'footage_edit', 'menu', 'poster']) {
       await tester.tap(find.byKey(Key('light-entry-$entry')));
       await tester.pumpAndSettle();
       expect(router.state.uri.path, '/light/topic/$entry');

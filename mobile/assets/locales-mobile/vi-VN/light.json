@@ -251,47 +251,56 @@
     "kind": {
       "video": "Tạo video",
       "footage_edit": "Dựng cảnh quay",
-      "menu": "Tạo thực đơn"
+      "menu": "Tạo thực đơn",
+      "poster": "Làm áp phích"
     },
     "home": {
       "video": "Tạo cảnh mới từ tư liệu",
       "footage_edit": "Dựng video từ cảnh quay thực tế",
-      "menu": "Tạo ảnh thực đơn từ món ăn"
+      "menu": "Tạo ảnh thực đơn từ món ăn",
+      "poster": "Tạo áp phích quảng cáo"
     },
     "materials": {
       "video": "Chọn tư liệu",
       "footage_edit": "Chọn cảnh quay",
-      "menu": "Thông tin món ăn"
+      "menu": "Thông tin món ăn",
+      "poster": "Thông tin áp phích"
     },
     "materialsBody": {
       "video": "Chọn ảnh hoặc video làm tư liệu tham khảo.",
       "footage_edit": "Chọn video và ảnh bạn muốn đưa vào bản dựng.",
-      "menu": "Nhập tên món hoặc đọc từ ảnh."
+      "menu": "Nhập tên món hoặc đọc từ ảnh.",
+      "poster": "Nhập chủ đề và thêm ảnh cửa hàng hoặc món ăn nếu muốn."
     },
     "style": {
       "video": "Mẫu video nổi bật",
       "footage_edit": "Phong cách dựng",
-      "menu": "Mẫu thực đơn"
+      "menu": "Mẫu thực đơn",
+      "poster": "Mẫu áp phích"
     },
     "styleBody": {
       "video": "Dựa vào bố cục và nhịp mẫu để tạo cảnh mới.",
       "footage_edit": "Chọn nhịp dựng cho cảnh quay của bạn.",
-      "menu": "Chọn bố cục cho ảnh thực đơn."
+      "menu": "Mở một danh mục, rồi chọn thực đơn mẫu để tham khảo.",
+      "poster": "Chọn danh mục, sau đó chọn một áp phích tham khảo."
     },
     "review": {
       "video": "Nội dung video",
       "footage_edit": "Phụ đề và lời dẫn",
-      "menu": "Kiểm tra món"
+      "menu": "Kiểm tra món",
+      "poster": "Kiểm tra nội dung"
     },
     "generate": {
       "video": "Tạo video",
       "footage_edit": "Bắt đầu dựng",
-      "menu": "Tạo thực đơn"
+      "menu": "Tạo thực đơn",
+      "poster": "Tạo áp phích"
     },
     "done": {
       "video": "Video đã xong",
       "footage_edit": "Bản dựng đã xong",
-      "menu": "Thực đơn đã xong"
+      "menu": "Thực đơn đã xong",
+      "poster": "Áp phích đã sẵn sàng"
     },
     "status": {
       "draft": "Bản nháp",
@@ -320,7 +329,8 @@
       "remake_frames": "Đang điều chỉnh phân cảnh và món ăn",
       "remake_shots": "Đang tạo bảy cảnh có lời thoại",
       "menu": "Đang tạo ảnh thực đơn",
-      "agent": "Trợ lý đang xử lý"
+      "agent": "Trợ lý đang xử lý",
+      "poster": "Đang tạo áp phích"
     },
     "decision": {
       "review": "Duyệt đề xuất",
@@ -329,6 +339,30 @@
       "blockedBody": "Một yêu cầu đang chờ xác minh. Mở cuộc trò chuyện để xem tác vụ.",
       "failed": "Chưa hoàn thành",
       "failedBody": "Bản nháp và tư liệu đã tạo vẫn nằm trong tác vụ này."
+    },
+    "examples": {
+      "unclassified": "Chưa phân loại",
+      "title": "Chọn từ thư viện mẫu",
+      "choose": "Dùng mẫu này",
+      "preview": "Xem trước mẫu",
+      "unavailable": "Mẫu này không còn khả dụng. Hãy chọn mẫu khác.",
+      "emptyMenu": "Chưa có mẫu thực đơn nào.",
+      "selected": "Đã chọn {{title}}",
+      "count_one": "{{count}} mẫu",
+      "count_other": "{{count}} mẫu",
+      "menuCategories": {
+        "menu_mono": "Đen trắng tối giản",
+        "menu_red": "Đỏ ấm",
+        "menu_chalk": "Chữ phấn viết tay",
+        "menu_dark": "Tông tối sang trọng"
+      },
+      "emptyPoster": "Chưa có mẫu áp phích.",
+      "posterCategories": {
+        "new_item": "Món mới",
+        "holiday": "Sự kiện ngày lễ",
+        "opening": "Khai trương",
+        "groupbuy": "Ưu đãi nhóm"
+      }
     },
     "template": {
       "silk_road": {
@@ -513,6 +547,17 @@
       "filmNumber": "Bản v{{number}}",
       "shotNumber": "Đoạn v{{number}}",
       "composeFailed": "Ghép lại thất bại. Bạn có thể thử lại."
+    },
+    "savePoster": "Lưu áp phích",
+    "poster": {
+      "referenceMaterials": "Ảnh tham khảo (không bắt buộc)",
+      "subject": "Chủ đề áp phích",
+      "headline": "Tiêu đề áp phích",
+      "copy": "Nội dung quảng cáo",
+      "signature": "Tên hiển thị",
+      "selectedExample": "Mẫu đã chọn",
+      "changeExample": "Đổi mẫu",
+      "titleRequired": "Hãy nhập tiêu đề áp phích."
     }
   }
 }

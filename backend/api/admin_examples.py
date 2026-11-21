@@ -49,6 +49,7 @@ class ExampleIn(BaseModel):
     inputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     outputs: list[AssetRef] = Field(default_factory=list, max_length=12)
     source: dict = Field(default_factory=dict)
+    title_translations: dict[Literal["zh-CN", "en-US", "vi-VN"], str] | None = None
 
 
 class PrefillIn(BaseModel):
@@ -136,8 +137,14 @@ async def _apply(row: LightExample, body: ExampleIn) -> None:
         row.look = body.look
     elif (examples._shown_output(row) or {}).get("oss_key") != shown_before:
         row.look = ""  # another picture leads now; it is read again when the card next shows it
+    titles = body.title_translations
+    if titles is None:
+        titles = examples.title_translations(row)
     row.source = {k: v for k, v in body.source.items()
                   if k in ("session_id", "job_id", "user_id", "workspace_id", "shop_name", "headline") and v is not None}
+    if titles:
+        row.source = {**row.source, "title_translations": titles}
+        row.source = {**row.source, "title_translations": examples.title_translations(row)}
     row.updated_at = examples._now()
 
 

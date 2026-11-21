@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from light import mode as light_mode
-from light import production, production_form, shot_editor, shot_frame_edits
+from light import examples, production, production_form, shot_editor, shot_frame_edits
 
 router = APIRouter(prefix="/api/light", tags=["light"], dependencies=[Depends(get_workspace)])
 
@@ -88,10 +88,15 @@ async def start(body: StartBody, current_user: dict = Depends(get_current_user))
         _raise(exc)
 
 
+@router.get("/examples")
+async def production_examples(entry_id: production_form.EntryId, current_user: dict = Depends(get_current_user)):
+    _scope(current_user)
+    return {"items": await examples.production_previews(entry_id)}
+
+
 @router.get("/examples/{example_id}/preview")
 async def example_preview(example_id: str, current_user: dict = Depends(get_current_user)):
     """Fresh links for one example on the pick card (the card's own links last half a day)."""
-    from light import examples
     row = await examples.get_active(example_id)
     shown = examples.preview(row) if row is not None else None
     if shown is None:
@@ -112,7 +117,7 @@ async def create_production(body: production_form.StartForm, current_user: dict 
 async def production_history(
     limit: int = Query(24, ge=1, le=50),
     offset: int = Query(0, ge=0),
-    entry_id: Literal["video", "footage_edit", "menu"] | None = None,
+    entry_id: production_form.EntryId | None = None,
     current_user: dict = Depends(get_current_user),
 ):
     return await production.history(*_scope(current_user), limit, offset, entry_id=entry_id)

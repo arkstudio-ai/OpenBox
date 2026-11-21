@@ -253,47 +253,56 @@
     "kind": {
       "video": "Make a video",
       "footage_edit": "Edit my footage",
-      "menu": "Make a menu"
+      "menu": "Make a menu",
+      "poster": "Make a poster"
     },
     "home": {
       "video": "Generate fresh scenes from your materials",
       "footage_edit": "Turn your footage into a video",
-      "menu": "Create a menu from your dishes"
+      "menu": "Create a menu from your dishes",
+      "poster": "Create a promotional poster"
     },
     "materials": {
       "video": "Choose materials",
       "footage_edit": "Choose your footage",
-      "menu": "Dishes"
+      "menu": "Dishes",
+      "poster": "Poster details"
     },
     "materialsBody": {
       "video": "Choose images or clips for the new scenes to reference.",
       "footage_edit": "Select the clips and photos you want in your edit.",
-      "menu": "Enter dishes or read them from photos."
+      "menu": "Enter dishes or read them from photos.",
+      "poster": "Add a topic and, if you like, photos of your shop or dishes."
     },
     "style": {
       "video": "Remake a hit",
       "footage_edit": "Editing style",
-      "menu": "Menu template"
+      "menu": "Menu template",
+      "poster": "Poster templates"
     },
     "styleBody": {
       "video": "Use a sample’s structure and pacing to create new scenes.",
       "footage_edit": "Choose a pace for your footage.",
-      "menu": "Select a layout for your menu image."
+      "menu": "Open a category, then choose a menu to use as a reference.",
+      "poster": "Choose a category, then pick a poster as your reference."
     },
     "review": {
       "video": "Video copy",
       "footage_edit": "Captions and narration",
-      "menu": "Review dishes"
+      "menu": "Review dishes",
+      "poster": "Review copy"
     },
     "generate": {
       "video": "Generate video",
       "footage_edit": "Start editing",
-      "menu": "Generate menu"
+      "menu": "Generate menu",
+      "poster": "Generate poster"
     },
     "done": {
       "video": "Video ready",
       "footage_edit": "Edit ready",
-      "menu": "Menu ready"
+      "menu": "Menu ready",
+      "poster": "Your poster is ready"
     },
     "status": {
       "draft": "Draft",
@@ -322,7 +331,8 @@
       "remake_frames": "Adapting the storyboard and product",
       "remake_shots": "Generating seven scenes with dialogue",
       "menu": "Generating the menu image",
-      "agent": "Assistant is working"
+      "agent": "Assistant is working",
+      "poster": "Generating your poster"
     },
     "decision": {
       "review": "Review the proposal",
@@ -331,6 +341,30 @@
       "blockedBody": "A submission still needs verification. Open the conversation to review this task.",
       "failed": "Production interrupted",
       "failedBody": "Your draft and generated materials are still in this task."
+    },
+    "examples": {
+      "unclassified": "Uncategorized",
+      "title": "Choose from examples",
+      "choose": "Use this example",
+      "preview": "Preview example",
+      "unavailable": "This example is no longer available. Choose another example.",
+      "emptyMenu": "No menu templates are available yet.",
+      "selected": "Selected {{title}}",
+      "count_one": "{{count}} example",
+      "count_other": "{{count}} examples",
+      "menuCategories": {
+        "menu_mono": "Minimal black and white",
+        "menu_red": "Warm red",
+        "menu_chalk": "Handwritten chalk",
+        "menu_dark": "Elegant dark"
+      },
+      "emptyPoster": "No poster templates are available yet.",
+      "posterCategories": {
+        "new_item": "New items",
+        "holiday": "Holiday events",
+        "opening": "Grand opening",
+        "groupbuy": "Group deals"
+      }
     },
     "template": {
       "silk_road": {
@@ -515,6 +549,17 @@
       "filmNumber": "Cut v{{number}}",
       "shotNumber": "Clip v{{number}}",
       "composeFailed": "Reassembly failed. You can try again."
+    },
+    "savePoster": "Save poster",
+    "poster": {
+      "referenceMaterials": "Reference photos (optional)",
+      "subject": "Poster topic",
+      "headline": "Poster headline",
+      "copy": "Promotional copy",
+      "signature": "Signature",
+      "selectedExample": "Selected example",
+      "changeExample": "Change",
+      "titleRequired": "Enter a poster headline."
     }
   }
 }

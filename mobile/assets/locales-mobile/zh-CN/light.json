@@ -251,47 +251,56 @@
     "kind": {
       "video": "做一条视频",
       "footage_edit": "你拍我剪",
-      "menu": "做菜单"
+      "menu": "做菜单",
+      "poster": "做海报"
     },
     "home": {
       "video": "用门店素材生成新画面",
       "footage_edit": "用实拍素材剪辑",
-      "menu": "生成菜单图片"
+      "menu": "生成菜单图片",
+      "poster": "生成活动海报"
     },
     "materials": {
       "video": "选素材",
       "footage_edit": "选实拍素材",
-      "menu": "菜品资料"
+      "menu": "菜品资料",
+      "poster": "海报资料"
     },
     "materialsBody": {
       "video": "选店内素材，作为生成新画面的参考",
       "footage_edit": "用你拍的原片剪成一条",
-      "menu": "手动输入菜名，或从图片识别"
+      "menu": "手动输入菜名，或从图片识别",
+      "poster": "填写海报主题，可添加门店或菜品素材"
     },
     "style": {
       "video": "爆款复刻",
       "footage_edit": "剪辑风格",
-      "menu": "菜单模板"
+      "menu": "菜单模板",
+      "poster": "海报模板"
     },
     "styleBody": {
       "video": "参考样片的结构和节奏，生成新画面",
       "footage_edit": "选择原片的剪辑节奏",
-      "menu": "选择模板风格，生成菜单图片"
+      "menu": "选一个分类，再挑一张菜单作为参考",
+      "poster": "选一个分类，再挑一张海报作为参考"
     },
     "review": {
       "video": "视频文案",
       "footage_edit": "字幕与旁白",
-      "menu": "核对菜品"
+      "menu": "核对菜品",
+      "poster": "核对文案"
     },
     "generate": {
       "video": "生成视频",
       "footage_edit": "开始剪辑",
-      "menu": "生成菜单"
+      "menu": "生成菜单",
+      "poster": "生成海报"
     },
     "done": {
       "video": "视频已生成",
       "footage_edit": "剪辑已完成",
-      "menu": "菜单已生成"
+      "menu": "菜单已生成",
+      "poster": "海报已生成"
     },
     "status": {
       "draft": "草稿",
@@ -320,7 +329,8 @@
       "edit": "正在剪辑实拍素材",
       "compose": "正在合成视频",
       "menu": "正在生成菜单图片",
-      "agent": "助理正在处理"
+      "agent": "助理正在处理",
+      "poster": "正在生成海报"
     },
     "decision": {
       "review": "方案待确认",
@@ -329,6 +339,30 @@
       "blockedBody": "有一项提交结果待核实。可打开对话查看当前任务。",
       "failed": "这次制作未完成",
       "failedBody": "草稿和已生成的素材仍在这条任务里。"
+    },
+    "examples": {
+      "unclassified": "未分类",
+      "title": "从样例库选",
+      "choose": "使用这个样例",
+      "preview": "预览样例",
+      "unavailable": "这个样例已下架，请选择其他样例。",
+      "emptyMenu": "暂无可用的菜单模板。",
+      "selected": "已选 {{title}}",
+      "count_one": "{{count}} 个样例",
+      "count_other": "{{count}} 个样例",
+      "menuCategories": {
+        "menu_mono": "简约黑白",
+        "menu_red": "烟火红",
+        "menu_chalk": "手写粉笔",
+        "menu_dark": "深色高级"
+      },
+      "emptyPoster": "暂无可用的海报模板。",
+      "posterCategories": {
+        "new_item": "新品上市",
+        "holiday": "节日活动",
+        "opening": "开业",
+        "groupbuy": "团购"
+      }
     },
     "template": {
       "silk_road": {
@@ -513,6 +547,17 @@
       "filmNumber": "成片 v{{number}}",
       "shotNumber": "片段 v{{number}}",
       "composeFailed": "重新合成失败，可以再试一次。"
+    },
+    "savePoster": "保存海报",
+    "poster": {
+      "referenceMaterials": "参考素材（选填）",
+      "subject": "海报主题",
+      "headline": "海报标题",
+      "copy": "宣传内容",
+      "signature": "署名",
+      "selectedExample": "已选样例",
+      "changeExample": "更换",
+      "titleRequired": "请填写海报标题。"
     }
   }
 }

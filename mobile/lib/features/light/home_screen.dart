@@ -104,18 +104,14 @@ class LightHomeScreen extends ConsumerWidget {
                   onRetry: () => ref.invalidate(lightEntriesProvider),
                 ),
                 data: (view) {
-                  final video = view.byId(ProductionKind.video.id);
-                  final other = [
-                    ?view.byId(ProductionKind.footage.id),
-                    ?view.byId(ProductionKind.menu.id),
+                  final entries = [
+                    for (final kind in ProductionKind.values)
+                      ?view.byId(kind.id),
                   ];
-                  Widget card(
-                    LightEntry entry, {
-                    bool hero = false,
-                  }) => LightEntryCard(
+                  Widget card(LightEntry entry) => LightEntryCard(
                     key: Key('light-entry-${entry.id}'),
                     entry: entry,
-                    hero: hero,
+                    featured: entry.id == ProductionKind.video.id,
                     subtitle: i18n.t('light:production.home.${entry.id}'),
                     reason: entry.available
                         ? null
@@ -127,18 +123,23 @@ class LightHomeScreen extends ConsumerWidget {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (video != null) card(video, hero: true),
-                      if (other.isNotEmpty) ...[
-                        if (video != null) const SizedBox(height: 10),
+                      for (
+                        var index = 0;
+                        index < entries.length;
+                        index += 2
+                      ) ...[
+                        if (index > 0) const SizedBox(height: 10),
                         IntrinsicHeight(
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Expanded(child: card(other.first)),
-                              if (other.length == 2) ...[
-                                const SizedBox(width: 10),
-                                Expanded(child: card(other.last)),
-                              ],
+                              Expanded(child: card(entries[index])),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: index + 1 < entries.length
+                                    ? card(entries[index + 1])
+                                    : const SizedBox.shrink(),
+                              ),
                             ],
                           ),
                         ),
@@ -171,15 +172,16 @@ class _Skeleton extends StatelessWidget {
     );
     return Column(
       children: [
-        box(86),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(child: box(100)),
-            const SizedBox(width: 10),
-            Expanded(child: box(100)),
-          ],
-        ),
+        for (var row = 0; row < 2; row++) ...[
+          if (row > 0) const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: box(100)),
+              const SizedBox(width: 10),
+              Expanded(child: box(100)),
+            ],
+          ),
+        ],
       ],
     );
   }

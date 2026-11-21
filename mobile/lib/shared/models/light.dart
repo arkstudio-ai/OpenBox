@@ -93,6 +93,10 @@ class LightExamplePreview {
     this.mime = '',
     this.mediaUrl,
     this.posterUrl,
+    this.scene,
+    this.sceneLabel = '',
+    this.titleTranslations = const {},
+    this.tags = const [],
   });
 
   static LightExamplePreview? fromJson(dynamic json) {
@@ -107,12 +111,22 @@ class LightExamplePreview {
       mime: asString(json['mime']) ?? '',
       mediaUrl: media == null || media.isEmpty ? null : media,
       posterUrl: poster == null || poster.isEmpty ? null : poster,
+      scene: asString(json['scene']),
+      sceneLabel: asString(json['scene_label']) ?? '',
+      titleTranslations: lightTitleTranslations(json['title_translations']),
+      tags: asList(json['tags']).whereType<String>().toList(),
     );
   }
 
   final String exampleId;
   final String title;
   final String mime;
+  final String? scene;
+  final String sceneLabel;
+  final Map<String, String> titleTranslations;
+
+  String titleFor(String language) => titleTranslations[language] ?? title;
+  final List<String> tags;
 
   /// The piece itself (a signed link): the full image or the mp4.
   final String? mediaUrl;
@@ -122,6 +136,12 @@ class LightExamplePreview {
 
   bool get isVideo => mime.startsWith('video/');
 }
+
+Map<String, String> lightTitleTranslations(Object? value) => {
+  for (final entry in asMap(value).entries)
+    if (entry.value case final String title when title.isNotEmpty)
+      entry.key: title,
+};
 
 class LightSubtype {
   const LightSubtype({

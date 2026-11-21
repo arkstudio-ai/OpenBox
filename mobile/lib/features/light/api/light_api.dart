@@ -56,6 +56,17 @@ class LightApi {
     return preview;
   }
 
+  Future<List<LightExamplePreview>> productionExamples(String entryId) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/light/examples',
+      queryParameters: {'entry_id': entryId},
+    );
+    return [
+      for (final item in asList(resp.data?['items']))
+        ?LightExamplePreview.fromJson(item),
+    ];
+  }
+
   /// 省心托管 jobs of this workspace.
   Future<List<LightAutopilot>> autopilots() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/light/autopilot');

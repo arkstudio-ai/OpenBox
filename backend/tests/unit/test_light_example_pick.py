@@ -240,7 +240,8 @@ async def test_picking_an_example_keeps_it_on_the_conversation_and_the_prompt_ho
     liked = await _example("poster", "团购大字报", scene="groupbuy", rating=3)
     other = await _example("poster", "团购实拍", scene="groupbuy", rating=5)
     before = await light_mode_fragment(owner, await get_session(session.id, user_id=owner))
-    assert "「团购大字报」" in before and "「团购实拍」" in before  # nobody chose yet: the library's own pick
+    # Nobody chose yet: the library's own pick, the best one alone.
+    assert "「团购实拍」" in before and "「团购大字报」" not in before
 
     _, request_id = await _call(session, owner, scene="groupbuy")
     await q.reply(request_id, [["团购大字报"]], owner)
@@ -512,8 +513,42 @@ async def test_a_picked_example_hands_over_its_look_instead_of_the_old_prompt(mo
     # Without a look (the reading failed), the old prompt is still what the agent gets.
     plain = await _example("poster", "没读过", recipe="生成提示词：大字促销")
     assert "当时的方案卡/提示词：生成提示词：大字促销" in examples.render([plain], chosen=True)
-    # The automatic three keep their prompts: nobody chose them, and three looks would blur into one.
+    # An automatic match without a reference card keeps its prompt: nobody chose it by its look.
     assert "样子说明" not in examples.render([liked]) and "好味来烧腊" in examples.render([liked])
+
+
+async def test_a_reference_card_replaces_the_look_and_the_old_prompt_and_only_one_example_is_matched(monkeypatch):
+    from light import example_look
+    read = []
+
+    async def fake_read(row, ctx):
+        read.append(row.id)
+        return LOOK
+    monkeypatch.setattr(example_look, "read", fake_read)
+    card_text = "版式：竖版双栏，左窄右宽\n\n配色：米白底，墨绿标题\n文案结构：店名、分区标题、菜名与价格三层"
+    owner, session = await _guided("menu")
+    carded = await _example("menu", "有参考卡", scene="menu_red", rating=5, look="版式：旧的样子说明",
+                            recipe="生成提示词：好味来烧腊 经典烧鹅饭 优惠价 25元", card=card_text)
+    fresh = await _example("menu", "只有参考卡", scene="menu_red", rating=4, card=card_text)
+    await _example("menu", "第三条", scene="menu_red", rating=3, look="版式：早就读过")
+
+    # Nobody chose yet: the best match alone, by its card, with no link to another shop's file.
+    section = (await light_mode_fragment(owner, await get_session(session.id, user_id=owner))).split("参考样例", 1)[1]
+    assert "「有参考卡」" in section and "「只有参考卡」" not in section and "「第三条」" not in section
+    assert "参考卡（" in section and "配色：米白底，墨绿标题" in section
+    assert "样子说明" not in section and "好味来烧腊" not in section and "https://signed" not in section
+
+    # Chosen on the card: the same card leads, and no look is read for an example that has one.
+    _, request_id = await _call(session, owner, scene="menu_red")
+    assert fresh.id not in read and carded.id not in read
+    await q.reply(request_id, [["有参考卡"]], owner)
+    assert await apply_answers(session.id, owner) is not None
+    row = await card(request_id)
+    async with get_db_session() as db:
+        output = (await db.get(Part, row.part_id)).data["output"]
+    assert "参考卡" in output and "文案结构：店名、分区标题、菜名与价格三层" in output
+    assert "版式, 配色, 字体, 图片 and 装饰 sections" in output and "unchanged on any retry" in output
+    assert "旧的样子说明" not in output and "好味来烧腊" not in output and "https://signed" not in output
 
 
 async def test_console_keeps_a_look_and_drops_it_when_the_picture_changes():

@@ -73,7 +73,14 @@ def _chosen_output(row) -> str:
     from light import examples
     lead = ("The owner picked this example. Make this piece in its structure, rhythm and style, and say so in "
             "one short line before the next step.")
-    if (row.look or "").strip():
+    if examples.usable_card(row):
+        lead += (" It comes with 参考卡, written after looking at the finished piece. For a picture, write the "
+                 "image prompt's Style and Layout lines from its 版式, 配色, 字体, 图片 and 装饰 sections, in place of "
+                 "the skill's default style note and default layout line and even where it differs from a style "
+                 "named earlier; keep those two lines unchanged on any retry, a retry changes only what the "
+                 "failure was about. For a video, follow its shot rhythm, captions and ending. Take the copy "
+                 "structure as levels only; every word, name and price comes from this owner.")
+    elif (row.look or "").strip():
         lead += (" It comes with 样子说明, a description of the picked picture: write the image prompt's Style and "
                  "Layout lines from it (palette, layout, imagery, decoration, how names and prices are set), in "
                  "place of the skill's default style note and default layout line and even where it differs from "

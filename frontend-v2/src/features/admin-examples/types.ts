@@ -29,6 +29,8 @@ export interface CardState {
   frames?: number
   heard?: boolean
   error?: string
+  /** The cut as it was made (fonts, transitions, effects, music), one fact per line; absent when no edit is on record. */
+  edit_lines?: string[]
 }
 
 export interface Example {

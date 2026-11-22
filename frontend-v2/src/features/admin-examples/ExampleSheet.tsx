@@ -180,6 +180,15 @@ function CardSection({ example, card, onEdit, onReset }: { example: Example; car
       <Field id={`${id}-card`} label={t("card.full")} hint={t("card.fullHint")}>
         <textarea id={`${id}-card`} className={AREA} rows={12} maxLength={MAX_CARD} value={shownCard} disabled={state === "reading"} onChange={(e) => onEdit(e.target.value)} />
       </Field>
+      {live.card_state?.kind === "video" &&
+        (live.card_state.edit_lines?.length ? (
+          <details className="text-xs" data-testid="example-card-edit">
+            <summary className="text-n600 hover:text-ink cursor-pointer">{t("card.edit", { count: live.card_state.edit_lines.length })}</summary>
+            <pre className="text-n600 mt-2 font-sans text-xs leading-5 whitespace-pre-wrap">{live.card_state.edit_lines.join("\n")}</pre>
+          </details>
+        ) : (
+          state === "ready" && <p className="text-n500 text-xs">{t("card.noEdit")}</p>
+        ))}
     </section>
   )
 }

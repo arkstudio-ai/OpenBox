@@ -6,7 +6,9 @@ dishes and prices. Nobody had looked at the finished piece itself. Here the
 deployment's default chat model does, once per example:
 
 - a picture (menu, poster): the piece itself, scaled down by the bucket;
-- a clip (做一条视频, 你拍我剪): frames about every 1.5 s plus the speech it carries;
+- a clip (做一条视频, 你拍我剪): frames about every second and one from the middle of each shot, the speech
+  it carries with sentence times, and the edit sheet of the cut (light/example_edit.py): the fonts,
+  transitions, effects and music it was actually made with;
 
 and, with the recipe beside it, writes the ``card`` kept on the example: layout
 or shot rhythm, type and caption style, how the copy is built, what to reuse.
@@ -32,7 +34,7 @@ log = create_logger(__name__)
 CARD_LIMIT = 2400
 #: How much of the recipe the reader is given; the rest of a long one is more of the same prompts.
 RECIPE_INPUT = 8000
-TRANSCRIPT_INPUT = 1500
+TRANSCRIPT_INPUT = 2500
 FRAME_WIDTH = 480
 MIN_FRAMES, MAX_FRAMES = 8, 32
 MAX_FRAME_BYTES = 2 * 1024 * 1024
@@ -65,13 +67,21 @@ IMAGE_SYSTEM = (
 VIDEO_SYSTEM = (
     "你在把一条已经做好、团队认可的餐饮短视频整理成「参考卡」。另一位剪辑师看不到这条片子，"
     "会只凭这张卡给别家店做同样水准的一条。你拿到的是按时间顺序抽出的画面（每张标了秒数）、"
-    "片子里的语音转写（可能没有）和当时的配方（方案卡、生成或剪辑提示词）。"
+    "片子里的语音转写（带每句的起止秒，可能没有）、当时的配方（方案卡、生成或剪辑提示词），"
+    "以及剪辑清单（可能没有）。剪辑清单是这条片子提交剪辑时的真实参数，是准确的：镜头起止、字体、字号、颜色、"
+    "转场、滤镜、运镜、配乐、配音都以它为准，和你从画面上看到的有出入时也以它为准。"
+    "清单里的参数名（字体名、入场动画名、转场名、滤镜名、花字预设、音色、曲目编号）原样照抄，方便别人照填。"
+    "没有剪辑清单时，字体、转场特效、配乐这三节只写画面和声音里能确认的，确认不了的写「未记录」。"
     "参考卡按下面的小标题分行写，每行以小标题开头：\n"
     "整体：总时长、横竖屏、一共大约几个镜头、整体节奏（快切还是舒缓）、是什么类型的片子。\n"
     "开头钩子：前三秒是什么画面、有没有大字、靠什么留人。\n"
     "分镜节奏：一个镜头一行，格式为 起止秒｜景别｜运镜或动作｜画面是哪一类内容｜字幕或花字怎么出现。"
-    "只写内容的类别（比如 主打成品特写、制作过程、门头、顾客反应），不写具体是什么菜。\n"
-    "字幕花字：位置、字体气质、颜色、有没有描边或底条、一屏几个字、出现和消失的方式。\n"
+    "有剪辑清单时起止秒和镜头数照清单。只写内容的类别（比如 主打成品特写、制作过程、门头、顾客反应），不写具体是什么菜。\n"
+    "字体与字幕：字幕和花字各用什么字体、字号、颜色、描边、花字预设，放在画面哪里，一屏几个字，入场动画是什么。\n"
+    "转场与特效：镜头之间是硬切还是转场，用了哪种转场、多长；有没有变速、推拉摇移、滤镜、虚化背景、画中画，用在哪几个镜头。\n"
+    "配乐与配音：有没有配乐，是什么情绪和节奏，音量多大，有人声时压不压低，切点有没有卡拍，淡入淡出；"
+    "有没有合成配音，什么音色和语速。曲目名和曲目编号单独写一句，并注明换一家店默认只按情绪和节奏另选一首，"
+    "老板点名要同一首时才用这个编号。\n"
     "旁白台词：有没有人声，是旁白还是出镜说话，按什么顺序讲（钩子、卖点、价格或优惠、行动号召），每段大约几秒，语气怎样。\n"
     "收尾：最后一两秒是什么画面，有没有收尾卡，上面放哪几类信息。\n"
     "配方要点：配方里哪些写法直接决定了这个效果（镜头怎么描述、时长怎么分配、风格和运镜的约束）。\n"
@@ -127,11 +137,21 @@ def parse(text: str, names: tuple[str, ...] = ()) -> str:
     return card
 
 
-def frame_times(duration: float) -> list[float]:
-    """About one frame every 1.5 s, 8–32 of them, never the very first or last frame."""
-    count = max(MIN_FRAMES, min(MAX_FRAMES, math.ceil(duration / 1.5)))
+def frame_times(duration: float, marks: list[float] | tuple[float, ...] = ()) -> list[float]:
+    """About one frame a second, 8–32 of them, never the very first or last frame.
+
+    ``marks`` (the middle of each shot, from the edit sheet) come first, so no shot goes unseen; the even
+    frames fill what is left, skipping those within a third of a second of a mark.
+    """
+    kept = sorted({round(at, 2) for at in marks if 0.05 < at < duration - 0.05})[:MAX_FRAMES]
+    count = max(MIN_FRAMES, min(MAX_FRAMES, math.ceil(duration)))
     step = duration / count
-    return [round(step * (i + 0.5), 2) for i in range(count)]
+    for at in (round(step * (i + 0.5), 2) for i in range(count)):
+        if len(kept) >= count:
+            break
+        if all(abs(at - other) >= 0.34 for other in kept):
+            kept.append(at)
+    return sorted(kept)
 
 
 def card_model(config) -> str:
@@ -155,7 +175,15 @@ async def _fetch(client, url: str) -> str | None:
     return "data:image/jpeg;base64," + base64.b64encode(response.content).decode()
 
 
-async def _clip(output: dict) -> dict:
+def _heard(result: dict) -> str:
+    """The speech with each sentence's times when the engine gave them, else as one text."""
+    sentences = [s for s in result.get("sentences") or [] if isinstance(s, dict) and s.get("text")]
+    if sentences:
+        return "\n".join(f"[{s.get('from_sec', 0):g}–{s.get('to_sec', 0):g} 秒] {s['text']}" for s in sentences)
+    return str(result.get("text") or "").strip()
+
+
+async def _clip(output: dict, marks: list[float] | tuple[float, ...] = ()) -> dict:
     """Frames and speech of the finished clip: ``{duration, orientation, frames: [(sec, data_url)], transcript}``."""
     import httpx
     from core.oss import get_oss
@@ -180,13 +208,13 @@ async def _clip(output: dict) -> dict:
         try:
             from tool.video_production import _configured_transcription_target, _provider_transcribe
             heard = await _provider_transcribe(_configured_transcription_target(), oss.presign_get(key, 1800))
-            return str(heard.get("text") or "").strip()
+            return _heard(heard)
         except Exception as exc:  # music only, or no transcription service: the frames still count
             log.info("light example card: clip not transcribed error=%s", type(exc).__name__)
             return ""
 
     async def pictures() -> list[tuple[float, str]]:
-        times = frame_times(duration)
+        times = frame_times(duration, marks)
         async with httpx.AsyncClient(timeout=30) as client:
             got = await asyncio.gather(*(_fetch(client, snapshot_url(oss, key, at, width=FRAME_WIDTH, expires_sec=600))
                                          for at in times))
@@ -229,12 +257,22 @@ async def read(row, ctx) -> dict:
         system, images = IMAGE_SYSTEM, [await example_look._picture(str(output["oss_key"]))]
         lines.append("附图是成品。请写参考卡。")
     else:
-        clip = await _clip(output)
+        from light import example_edit
+        try:
+            edit = await example_edit.for_output(output)
+        except Exception as exc:  # the card is still worth writing from what can be seen and heard
+            log.warning("light example card: edit sheet not read example=%s error=%s", row.id, type(exc).__name__)
+            edit = None
+        clip = await _clip(output, example_edit.cut_points(edit))
         system, images = VIDEO_SYSTEM, [image for _, image in clip["frames"]]
         lines.insert(0, f"成片：{clip['duration']:.1f} 秒，{ {'portrait': '竖屏', 'landscape': '横屏', 'square': '方形'}.get(clip['orientation'], '方向未知') }")
-        lines.append("语音转写：" + (clip["transcript"][:TRANSCRIPT_INPUT] or "（没有人声或没转出来）"))
+        lines.append("语音转写：\n" + (clip["transcript"][:TRANSCRIPT_INPUT] or "（没有人声或没转出来）"))
+        sheet_lines = example_edit.lines(edit)
+        lines.append("剪辑清单：\n" + ("\n".join(sheet_lines) if sheet_lines
+                                    else "（没有。这条片子不是经剪辑工具合成的，或剪辑记录找不到）"))
         lines.append("附图按顺序是成片第 " + "、".join(f"{at:g}" for at, _ in clip["frames"]) + " 秒的画面。请写参考卡。")
-        meta.update(frames=len(images), heard=bool(clip["transcript"]), duration=round(clip["duration"], 1))
+        meta.update(frames=len(images), heard=bool(clip["transcript"]), duration=round(clip["duration"], 1),
+                    **({"edit": edit, "edit_lines": sheet_lines} if edit else {}))
     pieces, finished = [], False
     async with asyncio.timeout(READ_SECONDS):
         async with aclosing(stream_llm(None, [system], [{"role": "user", "content": "\n".join(lines), "_images": images}],

@@ -115,7 +115,9 @@ def _apply_card(row: LightExample, body: ExampleIn, piece_changed: bool) -> None
     if card != (row.card or ""):
         row.card = card
         # Emptied by hand means "read it again".
-        row.card_meta = {"state": "edited", "at": example_card._now()} if card else {}
+        # The edit sheet is a fact about the piece, not part of the text: it stays beside a hand-written card.
+        sheet = {key: value for key, value in (row.card_meta or {}).items() if key in ("edit", "edit_lines")}
+        row.card_meta = {"state": "edited", "at": example_card._now(), **sheet} if card else {}
     elif piece_changed and (row.card_meta or {}).get("state") != "edited":
         row.card, row.card_meta = "", {}
     else:

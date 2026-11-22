@@ -236,6 +236,14 @@
     "moreTemplatesComing": "更多模板正在添加中",
     "retiredTemplate": "这个模板已下架，请选择其他模板。",
     "settings": "制作设置",
+    "music": {
+      "title": "配乐",
+      "auto": "自动选曲",
+      "upbeat": "轻快种草",
+      "calm": "舒缓",
+      "energetic": "动感",
+      "off": "不配乐"
+    },
     "chatTier": "文本模型",
     "videoTier": {
       "forInsert": "用于 AI 补镜",

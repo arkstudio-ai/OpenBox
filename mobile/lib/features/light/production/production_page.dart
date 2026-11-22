@@ -891,11 +891,15 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         (task.kind == ProductionKind.footage ||
             task.supportsVideoTiers(task.template));
     final hasVoice = task.kind == ProductionKind.footage;
+    final hasMusic = task.kind == ProductionKind.video;
+    final music = ProductionMusic.fromId(_pending['music_style']) ?? task.music;
     final voice = _pending['voice_id'] as String? ?? task.voiceId;
     final voices = hasVoice && voice.startsWith('voice:')
         ? ref.watch(productionVoicesProvider).valueOrNull
         : null;
-    if (chat == null && !hasVideo && !hasVoice) return const SizedBox.shrink();
+    if (chat == null && !hasVideo && !hasVoice && !hasMusic) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -949,6 +953,27 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   onChoose: _busy
                       ? null
                       : (tier) => _stage('video_tier', tier.name),
+                ),
+              if (hasMusic && (chat != null || hasVideo))
+                Divider(height: 1, indent: 16, endIndent: 16, color: t.hair),
+              if (hasMusic)
+                ProductionSettingRow(
+                  key: const Key('production-music-settings'),
+                  icon: Icons.music_note_rounded,
+                  label: _text('music.title'),
+                  value: music.label(_i18n),
+                  onTap: _busy
+                      ? null
+                      : () async {
+                          final choice = await chooseProductionMusic(
+                            context,
+                            _i18n,
+                            music,
+                          );
+                          if (mounted && choice != null && choice != music) {
+                            _stage('music_style', choice.name);
+                          }
+                        },
                 ),
               if (hasVoice && (chat != null || hasVideo))
                 Divider(height: 1, indent: 16, endIndent: 16, color: t.hair),
@@ -1166,6 +1191,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       productionStyleLabel(_i18n, task),
       if (task.supportsVideoTiers(task.template) && task.videoTier != null)
         "${_text('videoTier.title')} ${task.videoTier!.label(_i18n)}",
+      if (task.kind == ProductionKind.video)
+        "${_text('music.title')} ${task.music.label(_i18n)}",
     ].where((value) => value.isNotEmpty).join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1197,13 +1224,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   : task.suggestedProduct,
               counterText: '',
             ),
-          ),
-          SwitchListTile.adaptive(
-            key: const Key('production-beat-music'),
-            contentPadding: EdgeInsets.zero,
-            title: Text(_text('beatMusic')),
-            value: _pending['beat_music'] as bool? ?? task.beatMusic,
-            onChanged: _busy ? null : (value) => _stage('beat_music', value),
           ),
         ],
         if (menu)

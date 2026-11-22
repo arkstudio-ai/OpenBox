@@ -1,12 +1,15 @@
 import 'dart:ui' as ui;
 
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
+import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/light/production/production_api.dart';
 import 'package:bossip_mobile/features/light/production/production_media.dart';
+import 'package:bossip_mobile/features/light/production/production_page.dart';
 import 'package:bossip_mobile/features/light/production/production_stages.dart';
 import 'package:bossip_mobile/features/light/production/production_widgets.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
+import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -60,6 +63,62 @@ void main() {
           home: Scaffold(body: body),
         ),
       );
+
+  testWidgets('AI video has an independent music picker and saves the choice', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(430, 850);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final saved = <String, dynamic>{
+      'session_id': 'music-test',
+      'entry_id': 'video',
+      'revision': 1,
+      'shop': '兴旺菜馆',
+      'page': 'materials',
+      'status': 'draft',
+      'video_tier': 'fast',
+      'available_video_tiers': ['fast', 'medium', 'high'],
+    };
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            expect(request.path, '/api/light/productions/music-test');
+            if (request.method == 'PATCH') {
+              expect(request.data, {'revision': 1, 'music_style': 'calm'});
+              saved.addAll({'music_style': 'calm', 'revision': 2});
+            }
+            handler.resolve(
+              Response(requestOptions: request, data: Map.of(saved)),
+            );
+          },
+        ),
+      );
+    await tester.pumpWidget(
+      host(
+        const ProductionPage(sessionId: 'music-test'),
+        overrides: [
+          lightProductionApiProvider.overrideWithValue(LightProductionApi(dio)),
+          appConfigProvider.overrideWith((ref) async => AppConfig.fromJson({})),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    final row = find.byKey(const Key('production-music-settings'));
+    await tester.ensureVisible(row);
+    expect(find.text('自动选曲'), findsOneWidget);
+    expect(find.byKey(const Key('production-voice-settings')), findsNothing);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    expect(find.text('不配乐'), findsOneWidget);
+    await tester.tap(find.text('舒缓'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 500));
+    expect(saved['music_style'], 'calm');
+    expect(find.descendant(of: row, matching: find.text('舒缓')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('library paints video covers and falls back for older servers', (
     tester,

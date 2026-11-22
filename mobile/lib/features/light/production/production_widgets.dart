@@ -337,6 +337,58 @@ class ProductionTierPicker extends ConsumerWidget {
   }
 }
 
+Future<ProductionMusic?> chooseProductionMusic(
+  BuildContext context,
+  I18nState i18n,
+  ProductionMusic selected,
+) {
+  final theme = context.tokens;
+  final title = i18n.t('light:production.music.title');
+  return showModalBottomSheet<ProductionMusic>(
+    context: context,
+    backgroundColor: theme.bg,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (sheet) => SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.w800,
+                color: theme.ink,
+              ),
+            ),
+          ),
+          for (final style in ProductionMusic.values) ...[
+            if (style != ProductionMusic.values.first)
+              Divider(height: 1, color: theme.hair),
+            ListTile(
+              key: Key('production-music-${style.name}'),
+              selected: selected == style,
+              selectedColor: theme.ink,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              minTileHeight: 52,
+              title: Text(style.label(i18n)),
+              trailing: selected == style
+                  ? Icon(Icons.check_rounded, color: theme.a700, size: 21)
+                  : null,
+              onTap: () => Navigator.pop(sheet, style),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
 class ProductionSettingRow extends StatelessWidget {
   const ProductionSettingRow({
     super.key,

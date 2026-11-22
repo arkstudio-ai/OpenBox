@@ -650,7 +650,18 @@ async def action(user_id, workspace_id, session_id, body: ShotAction):
             revised = _apply_title_changes(revised, layers, _title_changes(form, base, timeline, layers))
             request = video_compose.VideoComposeArgs(action="submit", idempotency_key=key, timeline=revised,
                                                       filename=view["output"]["name"])
-            result = await video_compose.execute_compose(request, ctx)
+            from video.timeline import AudioClip
+
+            current = next((job for job in jobs if job.kind == "compose"
+                            and job.output_asset_id == editor["films"][0]["media"]["id"]), master)
+            credit = (current.request_data or {}).get("soundtrack") or {}
+            audio = _timeline(current).get("audio") or []
+            if credit.get("track_id", "").startswith("netease:") and audio:
+                result = await video_compose.execute_compose(
+                    request, ctx, inherited_music=(AudioClip.model_validate(audio[-1]), credit),
+                )
+            else:
+                result = await video_compose.execute_compose(request, ctx)
         meta = result.metadata or {}
         if not meta.get("job_id") or meta.get("status") in {"failed", "cancelled"} or meta.get("duplicate_in_flight"):
             raise _fail(result.output, "LIGHT_SHOT_SUBMIT")

@@ -31,7 +31,7 @@ BOUNDED_FRAME_SIZE = (1536, 624)
 # IMS AudioBeatDetection measured this public library recording. The reveal
 # anchor is on the template's edited timeline.
 _BEAT_MUSIC = "icepublic-b9dc19f465b7f3114ab19145e67a5278"
-_REVEAL_ANCHOR = 50.56
+MUSIC_REVEAL_SEC = 50.56
 _MUSIC_DOWNBEAT = 50.62
 
 
@@ -40,7 +40,7 @@ def frame_size(model):
 
 
 def beat_score():
-    offset = round(_MUSIC_DOWNBEAT - _REVEAL_ANCHOR, 3)
+    offset = round(_MUSIC_DOWNBEAT - MUSIC_REVEAL_SEC, 3)
     return [
         {"library_id": _BEAT_MUSIC, "in_sec": offset, "from_sec": 0, "to_sec": 39.76,
          "volume": .76, "fade_in_sec": .20, "fade_out_sec": .18},
@@ -241,7 +241,21 @@ def is_complete_cut(run, job) -> bool:
             return False
         soundtrack = [audio for audio in timeline.audio
                       if not (run.get("voice_id") and "/production-voice/" in (audio.asset or ""))]
-        if controls and not controls["beat_music"]:
+        if run.get("music_style") == "off" or request.get("music_source") == "unavailable":
+            if soundtrack:
+                return False
+        elif run.get("music_style") and (credit := request.get("soundtrack")):
+            if len(soundtrack) != 1:
+                return False
+            track_id = credit["track_id"]
+            clip = soundtrack[0]
+            if track_id.startswith("netease:"):
+                number = track_id.removeprefix("netease:")
+                if not urlsplit(clip.asset or "").path.startswith(f"/music/catalog/{number}/"):
+                    return False
+            elif clip.library_id != track_id:
+                return False
+        elif controls and not controls["beat_music"]:
             if soundtrack:
                 return False
         elif controls or len(soundtrack) != 1:

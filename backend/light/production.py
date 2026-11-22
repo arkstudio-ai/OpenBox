@@ -17,7 +17,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, remake_case, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, production_music, remake_case, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -138,6 +138,8 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
         raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
     if "redo_narration" in changes and row.light_entry != "footage_edit":
         raise LightError("PRODUCTION_NARRATION_STATE", "Narration replacement requires original footage.")
+    if "music_style" in changes and row.light_entry != "video":
+        raise LightError("PRODUCTION_MUSIC_STATE", "This music setting requires an AI video.")
     if "voice_id" in changes:
         selected = changes["voice_id"]
         if row.light_entry != "footage_edit" or (
@@ -287,8 +289,9 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
     edited_at = form.get("edited_at")
     since = datetime.fromisoformat(edited_at) if edited_at else _utc(row.created_at)
     run = form.get("run") or {}
+    guided_music = row.light_entry == "video" and run.get("music_style") not in {None, "off"}
     needs_render = run.get("action") == "render" and (
-        row.light_entry == "footage_edit" or (row.light_entry == "video" and form["template"])
+        row.light_entry == "footage_edit" or (row.light_entry == "video" and form["template"]) or guided_music
     )
     results = [
         (_utc(part.created_at), part.data["asset_id"]) for part in files
@@ -423,6 +426,10 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
         if row.light_entry == "video":
             # Older mobile clients may still send their saved narration choice.
             changes.pop("voice_id", None)
+            if "music_style" in changes:
+                changes["beat_music"] = changes["music_style"] != "off"
+            elif "beat_music" in changes:
+                changes["music_style"] = "auto" if changes["beat_music"] else "off"
         form = row.light_production
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
@@ -823,7 +830,9 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                                            if (body.action == "render" and row.light_entry == "footage_edit"
                                                and form.get("redo_narration")) else {}),
                                         **({"creative_motion": True} if creative_motion else {}),
-                                        **({"video_model": row.video_model, "video_resolution": row.video_resolution}
+                                        **({"video_model": row.video_model, "video_resolution": row.video_resolution,
+                                            "music_style": production_music.preference(form),
+                                            "music_template": form["template"]}
                                            if body.action == "render" and row.light_entry == "video" else {})}}
                 if exact_remake:
                     prior = form.get("run") or {}

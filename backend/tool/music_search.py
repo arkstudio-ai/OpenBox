@@ -68,7 +68,7 @@ async def search(args: MusicSearchArgs, _ctx: ToolContext) -> ToolResult:
 music_search_tool = define_tool(
     "music_search",
     description=(
-        "Find eligible instrumental tracks to score a real-footage edit, by moods such as 轻快, 美食, "
+        "Find eligible instrumental tracks to score a video, by moods such as 轻快, 美食, "
         "舒缓, 动感 or 俏皮. Returns curated NetEase tracks with measured beats, or IMS tracks "
         "when the curated library has no eligible track. Pass an actual returned track_id in "
         "video_compose's music argument. Use exclude_track_ids when changing the current music. "

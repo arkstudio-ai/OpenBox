@@ -212,9 +212,10 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
                 assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_TEMPLATE_RETIRED"
             saved = (await client.patch(path, json={
                 "revision": entry["revision"], "page": "review", "video_tier": tier, "script": "热菜上桌",
-                "voice_id": "system:documentary",
+                "voice_id": "system:documentary", "music_style": "upbeat",
             })).json()
             assert saved["video_tier"] == tier
+            assert saved["music_style"] == "upbeat"
             assert "voice_id" not in saved
             async with get_db_session() as db:
                 draft = await db.get(Session, entry["session_id"])
@@ -232,6 +233,7 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
                 row = await db.get(Session, session.id)
                 assert "voice_id" not in row.light_production
                 assert "voice_id" not in row.light_production["run"]
+                assert row.light_production["run"]["music_style"] == "upbeat"
                 assert "spoken_line and native audio" in forms.turn_instruction(row, "render")
 
 

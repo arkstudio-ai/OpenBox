@@ -265,7 +265,7 @@ describe("ExamplesPage", () => {
   })
 
   it("shows the reference card, has it read again, and sends it only once the team edits it", async () => {
-    const read = example({ card: "整体：十五秒竖屏快切", card_state: { state: "ready", model: "gpt-6.2-sol", kind: "video", frames: 10, heard: true } })
+    const read = example({ card: "整体：十五秒竖屏快切", card_state: { state: "ready", model: "gpt-6.2-sol", kind: "video", frames: 10, heard: true, edit_lines: ["画布 720×1280，24 帧/秒", "配乐：无"] } })
     vi.mocked(http.get).mockImplementation(async (path: string) => {
       if (path.endsWith("/taxonomy")) return TAXONOMY
       if (path.includes("/assets/")) return { url: "https://signed/final.mp4", mime: "video/mp4", name: "final.mp4", expires_in: 3600 }
@@ -280,6 +280,8 @@ describe("ExamplesPage", () => {
     const dialog = await screen.findByRole("dialog")
     expect((within(dialog).getByLabelText("内容") as HTMLTextAreaElement).value).toBe("整体：十五秒竖屏快切")
     expect(within(dialog).getByTestId("example-card-state").textContent).toBe("已读取 · gpt-6.2-sol · 10 帧 · 含语音")
+    expect(within(dialog).getByTestId("example-card-edit").textContent).toContain("剪辑清单（2 行")
+    expect(within(dialog).getByTestId("example-card-edit").textContent).toContain("配乐：无")
     fireEvent.click(within(dialog).getByRole("button", { name: "重新读取" }))
     await waitFor(() => expect(http.post).toHaveBeenCalledWith("/api/admin/examples/lex_1/card", {}))
     await waitFor(() => expect((within(dialog).getByLabelText("内容") as HTMLTextAreaElement).disabled).toBe(false))

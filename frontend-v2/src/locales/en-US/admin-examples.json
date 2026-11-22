@@ -154,6 +154,8 @@
       "ready": "Read",
       "failed": "Failed",
       "edited": "Manual"
-    }
+    },
+    "edit": "Edit sheet ({{count}} lines: the fonts, transitions, effects and music actually used)",
+    "noEdit": "No edit is on record for this clip; the card was written from picture and sound only."
   }
 }

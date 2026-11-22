@@ -87,3 +87,47 @@ def test_default_address_follows_the_chosen_interface_language():
     assert "Address the user as「anh/chị」" in prompt_section(Profile(), ui_language="vi-VN")
     assert _settings_from_extra({"ui_language": "vi-VN"})["address"] == "anh/chị"
     assert _settings_from_extra({})["address"] == "老板"
+
+
+async def test_recogniser_is_told_the_users_language(monkeypatch):
+    import httpx
+    import core.ui_language as ui
+    from tool import video_production as vp
+
+    assert [ui.speech_language(lang) for lang in ("zh-CN", "en-US", "vi-VN", None)] == ["zh", "en", "vi", "zh"]
+
+    async def stored(user_id):
+        return {"u-vi": "vi-VN", "u-en": "en-US"}.get(user_id)
+
+    monkeypatch.setattr(ui, "stored_ui_language", stored)
+    assert await vp._speech_language(None, "u-vi") == "vi"
+    assert await vp._speech_language(None, "u-en") == "en"
+    assert await vp._speech_language(None, "u-never-chose") == "zh"
+    assert await vp._speech_language("zh", "u-vi") == "zh"  # Chinese footage under a Vietnamese interface
+    assert vp.VideoTranscribeArgs(action="status", job_id="j", language="vi").language == "vi"
+
+    sent = []
+
+    class Stop(Exception):
+        pass
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, *, headers, json):
+            sent.append(json["parameters"]["language_hints"])
+            raise Stop()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: Client())
+    target = vp.VideoTranscriptionTarget(engine="dashscope", model="fun-asr", api_key="k", base_url="https://d.test",
+                                         timeout_seconds=30, poll_interval_seconds=0.25, similarity_threshold=0.9)
+    for language in ("vi", "en"):
+        try:
+            await vp._provider_transcribe(target, "https://oss.test/a.mp4", language)
+        except Stop:
+            pass
+    assert sent == [["vi"], ["en"]]

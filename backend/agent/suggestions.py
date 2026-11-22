@@ -166,12 +166,14 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
         variant = next((value for value in ("none", "off") if value in variants), None)
         system = [SYSTEM]
         if inherit_identity:
-            from assistant.identity import DEFAULT_ADDRESS
+            from assistant.identity import default_address
             from assistant.profile import load
+            from core.ui_language import stored_ui_language
             profile = await load(ticket.user_id)
+            fallback_address = default_address(await stored_ui_language(ticket.user_id))
             system.append(
                 "Current account identity for the assistant in this conversation: "
-                + json.dumps({"assistant_name": profile.name, "user_address": profile.address or DEFAULT_ADDRESS},
+                + json.dumps({"assistant_name": profile.name, "user_address": profile.address or fallback_address},
                              ensure_ascii=False)
                 + ". These settings override older names in conversation and previous_summary; an empty assistant "
                 "name means no custom name. Do not suggest restoring an old name, resolving an obsolete name "

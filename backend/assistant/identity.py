@@ -6,13 +6,21 @@ document or a recalled greeting stays immutable evidence, including placeholders
 
 
 DEFAULT_ADDRESS = "老板"
+#: The default per interface language. A Chinese word in a Vietnamese or English reply reads as a bug,
+#: so a user who chose one of those languages gets its neutral polite form; no choice keeps 老板.
+DEFAULT_ADDRESSES = {"zh-CN": "老板", "en-US": "boss", "vi-VN": "anh/chị"}
 
 
-def identity_lines(name: str, address: str, *, language: str = "en", greeting_only: bool = False) -> list[str]:
+def default_address(ui_language: str | None = None) -> str:
+    return DEFAULT_ADDRESSES.get(ui_language or "", DEFAULT_ADDRESS)
+
+
+def identity_lines(name: str, address: str, *, language: str = "en", greeting_only: bool = False,
+                   ui_language: str | None = None) -> list[str]:
     # Empty and explicitly cleared settings share the product default. Keep the
     # stored value empty so choosing a default is not mistaken for a custom name.
     custom_address = bool(address)
-    address = address or DEFAULT_ADDRESS
+    address = address or default_address(ui_language)
     if language == "zh":
         voice_address = (f"- 仅在通话开场称呼用户「{address}」。这是保存的称呼，不是每轮回复的前缀。"
                          "通话中的回答、提问和后台结果播报直接说内容，不重复称呼；用户询问其设置时可说明。"

@@ -16,6 +16,7 @@ import difflib
 import json
 import re
 import sys
+import unicodedata
 
 #: Punctuation and whitespace never reach the ear, so they never count against
 #: a take. Kept byte-identical to the server rule these numbers were tuned on.
@@ -27,7 +28,9 @@ DEFAULT_THRESHOLD = 0.90
 
 
 def normalize_spoken_text(value: str) -> str:
-    compact = _PUNCT.sub("", value or "")
+    # NFC + casefold: a Vietnamese or English line heard back as "hôm nay" must equal the
+    # written "Hôm nay", and a decomposed diacritic must equal its composed form.
+    compact = _PUNCT.sub("", unicodedata.normalize("NFC", value or "")).casefold()
     return compact.translate({ord(char): None for char in _FILLERS})
 
 

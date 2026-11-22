@@ -117,10 +117,12 @@ async def current_settings(db, user_id):
 def _settings_from_extra(extra):
     from assistant.profile import from_extra, decided_from_extra, Profile
     from memory.preferences import REVISION_KEY
+    from assistant.identity import default_address
+    from core.ui_language import from_preferences
     profile, default = from_extra(extra).as_dict(), Profile().as_dict()
     decided = decided_from_extra(extra)
     return {"revision": int(extra.get(REVISION_KEY) or 0), "name": profile["name"] or "个人助理",
-        "address": profile["address"] or "老板", **{key: value for key, value in profile.items()
+        "address": profile["address"] or default_address(from_preferences({"extra": extra})), **{key: value for key, value in profile.items()
             if key not in {"name", "address"} and (value != default[key] or key == "language" and key in decided)}}
 
 

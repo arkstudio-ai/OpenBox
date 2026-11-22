@@ -21,6 +21,8 @@ cd mobile && flutter run --dart-define=API_BASE=http://localhost:8080
 
 本地联调账号:`devtest / devtest1234`。API 地址通过 `--dart-define=API_BASE=…` 覆盖；默认值为生产 `https://ai.bossipai.com.cn`，避免安装包误连设备自己的 localhost。
 
+`--dart-define=DEFAULT_LANGUAGE=vi-VN`（或 `en-US` / `zh-CN`）让这个包在用户自己选语言之前按指定语言打开，不看手机语言；不传则跟随手机。给海外合作方的测试包用。
+
 ### 2026-09-10：移动端超管控制台
 
 - 平台 admin 可从侧边栏底部账号“更多 → 超管系统”进入舰队、技能与订阅管理，普通用户和 workspace owner 不显示入口。

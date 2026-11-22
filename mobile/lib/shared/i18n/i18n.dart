@@ -6,6 +6,8 @@ import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/env.dart';
+
 /// Lightweight i18next-compatible i18n, mirroring frontend-v2
 /// `shared/i18n/index.ts`: namespaces = features, keys `ns:block.element`,
 /// plurals `_one`/`_other`, interpolation `{{var}}`.
@@ -175,20 +177,32 @@ class I18nState {
 }
 
 class I18nController extends Notifier<I18nState> {
-  I18nController(this._bundle, this._prefs, {Locale Function()? systemLocale})
-    : _systemLocale =
-          systemLocale ?? (() => PlatformDispatcher.instance.locale);
+  I18nController(
+    this._bundle,
+    this._prefs, {
+    Locale Function()? systemLocale,
+    String buildLanguage = Env.defaultLanguage,
+  }) : _systemLocale =
+           systemLocale ?? (() => PlatformDispatcher.instance.locale),
+       _buildLanguage = supportedLangs.contains(buildLanguage)
+           ? buildLanguage
+           : null;
 
   final I18nBundle _bundle;
   final SharedPreferences _prefs;
   final Locale Function() _systemLocale;
+
+  /// A build's own default (`DEFAULT_LANGUAGE`) stands in for the device's.
+  final String? _buildLanguage;
+
+  String _unchosen() => _buildLanguage ?? languageForDevice(_systemLocale());
 
   @override
   I18nState build() {
     final stored = _prefs.getString(_langStorageKey);
     final override = supportedLangs.contains(stored) ? stored : null;
     return I18nState(
-      language: override ?? languageForDevice(_systemLocale()),
+      language: override ?? _unchosen(),
       bundle: _bundle,
       followsSystem: override == null,
     );
@@ -214,7 +228,7 @@ class I18nController extends Notifier<I18nState> {
   void setLanguage(String? lang) {
     if (lang != null && !supportedLangs.contains(lang)) return;
     state = I18nState(
-      language: lang ?? languageForDevice(_systemLocale()),
+      language: lang ?? _unchosen(),
       bundle: _bundle,
       followsSystem: lang == null,
     );
@@ -227,7 +241,7 @@ class I18nController extends Notifier<I18nState> {
 
   void refreshSystemLanguage() {
     if (!state.followsSystem) return;
-    final lang = languageForDevice(_systemLocale());
+    final lang = _unchosen();
     if (lang != state.language) {
       state = I18nState(language: lang, bundle: _bundle);
     }

@@ -33,6 +33,13 @@ abstract final class Env {
     defaultValue: 'com.bossip.bipmobile://callback',
   );
 
+  /// The language a build opens in before the user picks one, instead of the
+  /// device's: `--dart-define=DEFAULT_LANGUAGE=vi-VN` for a partner build.
+  /// Empty (the default) follows the device.
+  static const String defaultLanguage = String.fromEnvironment(
+    'DEFAULT_LANGUAGE',
+  );
+
   /// WS origin derives from the HTTP origin (`http→ws`, `https→wss`),
   /// same as web `wsBase()`.
   static String get wsBase => apiBase.replaceFirst(RegExp('^http'), 'ws');

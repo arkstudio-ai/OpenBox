@@ -28,6 +28,15 @@ HEADER = "accept-language"
 STATE_ATTR = "ui_language"
 
 
+#: What a speech recogniser is told to expect, per interface language.
+SPEECH: dict[str, str] = {"zh-CN": "zh", "en-US": "en", "vi-VN": "vi"}
+
+
+def speech_language(lang: str | None) -> str:
+    """The recogniser hint for a user in ``lang``; Chinese for a user who never chose a language."""
+    return SPEECH.get(lang or "", SPEECH[DEFAULT])
+
+
 def chain(lang: str) -> tuple[str, ...]:
     """The language itself, then its fallbacks: ``("vi-VN", "en-US")``."""
     return (lang, *FALLBACK.get(lang, ()))

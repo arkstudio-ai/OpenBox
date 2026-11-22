@@ -218,6 +218,8 @@ class VideoTranscribeArgs(BaseModel):
     job_id: str | None = Field(default=None, max_length=96)
     #: An owned, ready audio asset or video with an audio track.
     asset_id: str | None = Field(default=None, max_length=512)
+    #: The language spoken in the recording, when it is not the user's interface language.
+    language: Literal["zh", "en", "vi"] | None = None
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
@@ -1142,14 +1144,14 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
 
 
 async def _dashscope_transcribe(
-    target: VideoTranscriptionTarget, audio_url: str
+    target: VideoTranscriptionTarget, audio_url: str, language: str = "zh"
 ) -> dict[str, Any]:
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response, observe_service_response
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
         payload = {"model": target.model, "input": {"file_urls": [audio_url]},
-                   "parameters": {"channel_id": [0], "language_hints": ["zh"]}}
+                   "parameters": {"channel_id": [0], "language_hints": [language]}}
         async with capture_service_dispatch(purpose="audio_transcription", provider="dashscope",
                 model=target.model, operation="POST /api/v1/services/audio/asr/transcription",
                 body=payload, profile="audio_transcription") as capture:
@@ -1241,9 +1243,10 @@ async def _dashscope_transcribe(
     return result
 
 
-async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str) -> dict[str, Any]:
+async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str,
+                              language: str = "zh") -> dict[str, Any]:
     if target.engine == "dashscope":
-        return await _dashscope_transcribe(target, audio_url)
+        return await _dashscope_transcribe(target, audio_url, language)
 
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response
@@ -3442,6 +3445,14 @@ def _transcription_lines(job) -> list[str]:
     return lines
 
 
+async def _speech_language(explicit: str | None, user_id: str | None) -> str:
+    """The language the recogniser is told to expect: the caller's, else the user's interface language."""
+    if explicit:
+        return explicit
+    from core.ui_language import speech_language, stored_ui_language
+    return speech_language(await stored_ui_language(user_id))
+
+
 async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
     """Transcribe an owned audio/video asset directly, without sandbox extraction."""
     try:
@@ -3473,10 +3484,13 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 facts = await ensure_meta(source.id, user_id=ctx.user_id)
                 if facts is not None and not facts.get("has_audio"):
                     raise _RequestError(f"video '{args.asset_id}' has no sound track to transcribe.")
+            language = await _speech_language(args.language, ctx.user_id)
             request_data = {
                 "source_asset_id": source.id,
                 "source_bytes": source.size,
                 "model": target.model,
+                # Chinese stays unrecorded so a replayed key from before this field still matches.
+                **({"language": language} if language != "zh" else {}),
             }
             job, _unused, created = await _create_pending_job(
                 ctx=ctx,
@@ -3502,7 +3516,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             )
             from agent.trajectory import service_scope
             async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
-                transcript = await _provider_transcribe(target, audio_url)
+                transcript = await _provider_transcribe(target, audio_url, language)
             credits = None
             try:
                 from billing.media import settle_transcription
@@ -3584,7 +3598,8 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             )
             from agent.trajectory import service_scope
             async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
-                transcript = await _provider_transcribe(target, audio_url)
+                transcript = await _provider_transcribe(
+                    target, audio_url, (job.request_data or {}).get("language") or "zh")
             await _update_job(
                 job.id,
                 status="completed",
@@ -3633,7 +3648,8 @@ After an ambiguous paid submit, reconcile the same job/key; never replace it."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
 Transcribe owned audio/video directly using asset_id and idempotency_key. \
-Returns speech and measured sentence/word times (seconds) for cuts and captions."""
+Returns speech and measured sentence/word times (seconds) for cuts and captions. \
+The recogniser expects the user's interface language; pass language (zh, en, vi) when the recording is in another."""
 
 video_generate_tool = define_tool(
     "video_generate",

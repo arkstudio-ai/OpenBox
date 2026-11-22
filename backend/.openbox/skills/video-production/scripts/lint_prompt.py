@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from typing import Any
 
 #: Punctuation/fillers are inaudible, so they do not count toward the limit.
@@ -34,8 +35,24 @@ _DIALOGUE_LABEL = re.compile(
 
 
 def normalize_spoken_text(value: str) -> str:
-    compact = _PUNCT.sub("", value or "")
+    # NFC + casefold: a Vietnamese or English line heard back as "hôm nay" must equal the
+    # written "Hôm nay", and a decomposed diacritic must equal its composed form.
+    compact = _PUNCT.sub("", unicodedata.normalize("NFC", value or "")).casefold()
     return compact.translate({ord(char): None for char in _FILLERS})
+
+
+#: Same measure as plan_shots.py: a Vietnamese syllable is about 1.2 Chinese characters when
+#: spoken and an English word about 2, so the 40-character advice is not a letter count.
+_LATIN_RUN = re.compile(r"[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+(?:['’][A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+)*")
+_VIETNAMESE = re.compile(r"[ăâđêôơưĂÂĐÊÔƠƯ\u1EA0-\u1EF9]")
+
+
+def _spoken_units(text: str) -> int:
+    words = _LATIN_RUN.findall(text or "")
+    if not words:
+        return len(normalize_spoken_text(text))
+    rest = normalize_spoken_text(_LATIN_RUN.sub("", text))
+    return round(len(rest) + (1.2 if _VIETNAMESE.search(text) else 2.0) * len(words))
 
 
 #: The strong form of the no-text rule: it names text itself, not just
@@ -229,7 +246,7 @@ def lint_prompt(
             "prompt 不能出现 @：模型会把它念成“艾特”，台词写在「口播台词：」后",
         )
     if speech:
-        spoken_length = len(normalize_spoken_text(script_text))
+        spoken_length = _spoken_units(script_text)
         if spoken_length > 40:
             warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
         labelled = _DIALOGUE_LABEL.search(prompt)

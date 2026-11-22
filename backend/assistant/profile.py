@@ -187,6 +187,15 @@ async def _extra(user_id: str) -> dict:
     return ((await PgPreferenceRepo().get(user_id)) or {}).get("extra") or {}
 
 
+async def _ui_language(user_id: str) -> str | None:
+    """The interface language the user chose, for the default form of address; ``None`` when unread or unset."""
+    try:
+        from core.ui_language import from_preferences
+        return from_preferences({"extra": await _extra(user_id)})
+    except Exception:
+        return None
+
+
 async def load(user_id: str) -> Profile:
     """The user's profile, or the defaults when it cannot be read."""
     try:
@@ -414,19 +423,21 @@ async def user_section(user_id: str, workspace_id: str | None) -> str:
     """The assistant's "This user" section, read fresh for each prompt."""
     import asyncio
     from assistant import followups, style
-    current, card, due = await asyncio.gather(load_view(user_id), style.style_card(user_id, workspace_id),
-                                              followups.due(user_id, workspace_id))
+    current, card, due, ui_language = await asyncio.gather(
+        load_view(user_id), style.style_card(user_id, workspace_id), followups.due(user_id, workspace_id),
+        _ui_language(user_id))
     return prompt_section(Profile(**{key: current[key] for key in FIELDS}), card.lines(),
-        [summary for _, summary in due], language_decided="language" in current["decided"])
+        [summary for _, summary in due], language_decided="language" in current["decided"], ui_language=ui_language)
 
 
 async def settings_section(user_id: str, workspace_id: str | None = None) -> str:
     """Applicable global style is shared; private follow-ups and reactions are not."""
     import asyncio
     from assistant.style import _learned
-    current, learned = await asyncio.gather(load_view(user_id), _learned(user_id, workspace_id))
+    current, learned, ui_language = await asyncio.gather(
+        load_view(user_id), _learned(user_id, workspace_id), _ui_language(user_id))
     return prompt_section(Profile(**{key: current[key] for key in FIELDS}), learned,
-        language_decided="language" in current["decided"])
+        language_decided="language" in current["decided"], ui_language=ui_language)
 
 
 _LENGTH_TEXT = {
@@ -439,14 +450,15 @@ _TONE_TEXT = {
 }
 
 
-def prompt_section(profile: Profile, learned: list[str] = (), followups: list[str] = (), *, language_decided=False) -> str:
+def prompt_section(profile: Profile, learned: list[str] = (), followups: list[str] = (), *, language_decided=False,
+                   ui_language: str | None = None) -> str:
     """The current identity (including defaults), preferences and learned context.
 
     ``learned``: how they like to be helped, from their own words and feedback (assistant/style.py);
     ``followups``: plans of theirs that just passed, to ask about once if it fits.
     """
     from assistant.identity import identity_lines
-    lines = identity_lines(profile.name, profile.address)
+    lines = identity_lines(profile.name, profile.address, ui_language=ui_language)
     if profile.business:
         lines.append(f"- Their business: {BUSINESS_TEXT.get(profile.business, profile.business)}. Keep examples and "
                      "suggestions to it when nothing else is said.")

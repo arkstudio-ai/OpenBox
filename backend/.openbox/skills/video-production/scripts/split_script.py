@@ -13,8 +13,50 @@ import json
 import re
 import sys
 
-PRIMARY_BOUNDARY = re.compile(r"(?<=[。！？!?；;…])|\n+")
+PRIMARY_BOUNDARY = re.compile(r"(?<=[。！？!?；;…])|(?<=\.)(?=\s)|\n+")
 SECONDARY_BOUNDARY = re.compile(r"(?<=[，,、：:])")
+
+
+#: Same measure as plan_shots.py. A Chinese script keeps its plain character count; a line with
+#: Latin-script words counts a Vietnamese syllable as 1.2 and an English word as 2, so "40
+#: characters" means the same seconds of speech in every language.
+_LATIN_RUN = re.compile(r"[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+(?:['’][A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+)*")
+_VIETNAMESE = re.compile(r"[ăâđêôơưĂÂĐÊÔƠƯ\u1EA0-\u1EF9]")
+_CJK = re.compile(r"[一-鿿㐀-䶿0-9]")
+
+
+def _measure(text: str) -> float:
+    words = _LATIN_RUN.findall(text)
+    if not words:
+        return len(text)
+    per_word = 1.2 if _VIETNAMESE.search(text) else 2.0
+    return round(len(_CJK.findall(_LATIN_RUN.sub("", text))) + per_word * len(words), 1)
+
+
+def _join(left: str, right: str) -> str:
+    """Chinese runs on; words in a Latin script need the space the split took away."""
+    if left and right and _LATIN_RUN.match(right) and not (
+            "\u2e80" <= left[-1] <= "\u9fff" or left[-1] in "。！？；：，、…（）《》【】“”‘’"):
+        return left + " " + right
+    return left + right
+
+
+def _hard_split(part: str, max_chars: int) -> list[str]:
+    """A unit with no boundary left: cut Chinese by characters, a Latin script between words."""
+    if not _LATIN_RUN.search(part):
+        return [part[index:index + max_chars] for index in range(0, len(part), max_chars)]
+    pieces: list[str] = []
+    current = ""
+    for word in part.split():
+        candidate = f"{current} {word}" if current else word
+        if current and _measure(candidate) > max_chars:
+            pieces.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    return pieces
 
 
 def _split_units(text: str, max_chars: int) -> list[str]:
@@ -22,17 +64,13 @@ def _split_units(text: str, max_chars: int) -> list[str]:
     for sentence in (part.strip() for part in PRIMARY_BOUNDARY.split(text)):
         if not sentence:
             continue
-        if len(sentence) <= max_chars:
+        if _measure(sentence) <= max_chars:
             units.append(sentence)
             continue
         for part in (piece.strip() for piece in SECONDARY_BOUNDARY.split(sentence)):
             if not part:
                 continue
-            while len(part) > max_chars:
-                units.append(part[:max_chars])
-                part = part[max_chars:]
-            if part:
-                units.append(part)
+            units.extend(_hard_split(part, max_chars) if _measure(part) > max_chars else [part])
     return units
 
 
@@ -48,11 +86,11 @@ def split_script(text: str, *, max_chars: int = 40, rate: float = 4.0) -> dict:
     segments: list[str] = []
     current = ""
     for unit in _split_units(text, max_chars):
-        if current and len(current) + len(unit) > max_chars:
+        if current and _measure(_join(current, unit)) > max_chars:
             segments.append(current)
             current = unit
         else:
-            current += unit
+            current = _join(current, unit)
     if current:
         segments.append(current)
 
@@ -61,8 +99,8 @@ def split_script(text: str, *, max_chars: int = 40, rate: float = 4.0) -> dict:
             "idx": index,
             "scriptText": segment,
             "line": segment,
-            "chars": len(segment),
-            "estSeconds": round(len(segment) / rate, 1),
+            "chars": _measure(segment),
+            "estSeconds": round(_measure(segment) / rate, 1),
         }
         for index, segment in enumerate(segments, start=1)
     ]

@@ -47,7 +47,14 @@ MIN_SHOT_SECONDS = 3
 
 #: Only spoken characters count. Punctuation is not pronounced, and Latin
 #: words are read as words rather than as their letter count.
-_LATIN_RUN = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)*")
+#: Latin-script words, accented letters included (Vietnamese "người" is one syllable, not "ng" + "i").
+_LATIN_RUN = re.compile(r"[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+(?:['’][A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+)*")
+#: Letters only Vietnamese spelling uses. Its words are single syllables, each about one Chinese
+#: character long when spoken: 3.4 syllables a second across five generated shots on 2026-11-22
+#: (2.6-4.6), against 4 characters a second for Mandarin — hence 1.2. An English word stays at 2.
+_VIETNAMESE = re.compile(r"[ăâđêôơưĂÂĐÊÔƠƯ\u1EA0-\u1EF9]")
+VIETNAMESE_SYLLABLE = 1.2
+LATIN_WORD = 2.0
 _SPOKEN = re.compile(r"[一-鿿㐀-䶿0-9]")
 
 
@@ -55,8 +62,8 @@ def spoken_length(line: str) -> float:
     """Characters-equivalent of one line, as a narrator would say it."""
     latin_words = _LATIN_RUN.findall(line)
     without_latin = _LATIN_RUN.sub("", line)
-    # A short English word takes roughly as long as two Chinese characters.
-    return len(_SPOKEN.findall(without_latin)) + 2.0 * len(latin_words)
+    per_word = VIETNAMESE_SYLLABLE if _VIETNAMESE.search(line) else LATIN_WORD
+    return len(_SPOKEN.findall(without_latin)) + per_word * len(latin_words)
 
 
 def shot_duration(

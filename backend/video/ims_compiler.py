@@ -477,11 +477,14 @@ def _fit_line(cue: Cue, timeline: Timeline) -> list[Cue]:
             lines[-1] += phrase
         elif _width(phrase) <= room:
             lines.append(phrase)
+        elif " " in phrase.strip():
+            # A spaced script (Vietnamese, English) breaks between words, never inside one.
+            lines.extend(_wrap_words(phrase, room))
         else:
             parts = math.ceil(_width(phrase) / room)
             size = math.ceil(len(phrase) / parts)
             lines.extend(phrase[i:i + size] for i in range(0, len(phrase), size))
-    lines = [line.rstrip("，,、") or line for line in lines]
+    lines = [line.strip().rstrip("，,、") or line for line in lines]
     total = sum(_width(line) for line in lines)
     pieces, at = [], cue.from_sec
     for index, line in enumerate(lines):
@@ -489,6 +492,19 @@ def _fit_line(cue: Cue, timeline: Timeline) -> list[Cue]:
         pieces.append(Cue(from_sec=at, to_sec=end, text=line))
         at = end
     return pieces
+
+
+def _wrap_words(phrase: str, room: float) -> list[str]:
+    lines: list[str] = []
+    current = ""
+    for word in phrase.split():
+        candidate = f"{current} {word}" if current else word
+        if current and _width(candidate) > room:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    return lines + [current] if current else lines
 
 
 def _width(text: str) -> float:

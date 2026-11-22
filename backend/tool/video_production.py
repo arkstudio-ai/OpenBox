@@ -1791,8 +1791,9 @@ _SPOKEN_FILLERS = "嗯呃唔诶哦噢喔呀啊吧呢啦嘛"
 
 
 def normalize_spoken_text(value: str) -> str:
-    """What is audible: punctuation and fillers do not count (mirrors lint_prompt.py)."""
-    compact = _SPOKEN_PUNCT.sub("", value or "")
+    """What is audible: punctuation, fillers, letter case and Unicode form do not count (mirrors lint_prompt.py)."""
+    import unicodedata
+    compact = _SPOKEN_PUNCT.sub("", unicodedata.normalize("NFC", value or "")).casefold()
     return compact.translate({ord(char): None for char in _SPOKEN_FILLERS})
 
 

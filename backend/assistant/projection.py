@@ -167,17 +167,19 @@ async def project_main_messages(messages: list, *, ctx, for_compaction=False) ->
     async with read_session() as db:
         main = await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
         if not for_compaction:
-            from assistant.identity import DEFAULT_ADDRESS
+            from assistant.identity import default_address
+            from core.ui_language import from_preferences
             from assistant.profile import from_extra
             from db.models.preference import UserPreference
             extra = await db.scalar(select(UserPreference.extra).where(UserPreference.user_id == main.user_id))
             profile = from_extra(extra)
+            fallback_address = default_address(from_preferences({"extra": extra}))
             identity = _block("assistant:current-identity",
                 "本轮实时读取的账号设置，不是历史聊天。自己的名字和对用户的称呼以这里为准，"
-                "历史回复、摘要和话术里的旧称呼不再适用；没有自定义称呼或已清空时默认叫老板。"
+                "历史回复、摘要和话术里的旧称呼不再适用；没有自定义称呼或已清空时默认叫" + fallback_address + "。"
                 "这只决定当前交流的身份，不代表新操作授权；引用原文或为第三方写作仍保留原文身份。\n"
                 + json.dumps({"assistant_name": profile.name,
-                              "user_address": profile.address or DEFAULT_ADDRESS}, ensure_ascii=False))
+                              "user_address": profile.address or fallback_address}, ensure_ascii=False))
         report = await bound_report_locked(db, main, run_id=ctx.run_id, generation=ctx.run_generation,
                                            verify_sources=False)
         coordination = None

@@ -26,12 +26,17 @@ ASSETS = Path(__file__).with_name("remake_assets") / "silk-road"
 CANVAS = {"width": 1680, "height": 660, "fps": 24}
 DURATION = 62.125
 FRAME_SIZE = (1536, 608)
-SEEDANCE_FRAME_SIZE = (1536, 624)
+# RunningHub Turbo and Seedance accept frames up to a 2.5:1 ratio.
+BOUNDED_FRAME_SIZE = (1536, 624)
 # IMS AudioBeatDetection measured this public library recording. The reveal
 # anchor is on the template's edited timeline.
 _BEAT_MUSIC = "icepublic-b9dc19f465b7f3114ab19145e67a5278"
 _REVEAL_ANCHOR = 50.56
 _MUSIC_DOWNBEAT = 50.62
+
+
+def frame_size(model):
+    return BOUNDED_FRAME_SIZE if model in {TURBO, SEEDANCE} else FRAME_SIZE
 
 
 def beat_score():
@@ -276,7 +281,9 @@ async def render(ctx, form, run, plan):
     controls = run.get("silk_controls")
     framed = controls is not None and plan.world is not None
     filming_model = run.get("video_model")
-    frame_size = SEEDANCE_FRAME_SIZE if filming_model == SEEDANCE else FRAME_SIZE
+    input_size = frame_size(filming_model)
+    image_size = f"{input_size[0]}x{input_size[1]}"
+    preserve_edges = filming_model == TURBO
     use_beats = controls["beat_music"] if controls is not None else bool(
         re.search(r"配乐(?:按|跟)节拍|按节拍配乐", remake_case.reference_copy(form))
     )
@@ -333,8 +340,12 @@ async def render(ctx, form, run, plan):
             saved = (run.get("shot_inputs") or {}).get(str(index), {})
             known = _references(saved)
             prompts = {
-                role: endpoint_prompt(plan, index, role, has_cast=bool(actors), has_location=bool(location),
-                                      has_product=role in PRODUCT_FRAMES.get(index, set()))
+                role: (
+                    endpoint_prompt(plan, index, role, has_cast=bool(actors), has_location=bool(location),
+                                    has_product=role in PRODUCT_FRAMES.get(index, set()))
+                    + "按超宽银幕构图，关键人物、手部动作和商品放在画面中央约六成的高度内。"
+                    "上下边缘只留背景，画幅校正时仍能完整看到主体。"
+                )
                 for role in FRAME_ROLES
             }
             share_location = index != 7
@@ -343,14 +354,21 @@ async def render(ctx, form, run, plan):
             motion = animate_endpoints(plan.world, index)
 
             async def make(role, opening=None):
-                if known.get(role):
-                    return known[role]
-                refs = [*([opening] if opening else ()), *common,
-                        *(product[:1] if role in PRODUCT_FRAMES.get(index, set()) else ())]
+                saved_frame = known.get(role)
+                if saved_frame and filming_model != TURBO:
+                    return saved_frame
                 async with frame_slots:
-                    raw = await _still(task, f"{prefix}:shot{index}:{role}", "silk-frame", prompts[role],
-                                       list(dict.fromkeys(refs)), size="1536x608", quality="medium")
-                    frame = await _normalize_frame(task, raw, frame_size)
+                    if saved_frame:
+                        # A retry can still hold the over-wide frames from an earlier release.
+                        frame = await _normalize_frame(task, saved_frame, input_size, preserve_edges=preserve_edges)
+                    else:
+                        refs = [*([opening] if opening else ()), *common,
+                                *(product[:1] if role in PRODUCT_FRAMES.get(index, set()) else ())]
+                        raw = await _still(task, f"{prefix}:shot{index}:{role}", "silk-frame", prompts[role],
+                                           list(dict.fromkeys(refs)), size=image_size, quality="medium")
+                        frame = await _normalize_frame(task, raw, input_size)
+                if frame == saved_frame:
+                    return frame
                 await publish_inputs(ctx, prefix, index, motion, {
                     "roles": [role], "input_asset_ids": [frame], "frame_prompts": prompts,
                 }, merge=True)

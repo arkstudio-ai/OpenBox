@@ -85,33 +85,46 @@ def _asset_id(source):
     return next((part for part in unquote(urlsplit(source).path).split("/") if part.startswith("asset_")), "")
 
 
-def _matching_frame(data, size):
+def _matching_frame(data, size, *, reuse_matching=False, preserve_edges=False):
     from PIL import Image, ImageOps
 
     with Image.open(io.BytesIO(data)) as image:
+        if (reuse_matching and image.format == "JPEG" and image.mode == "RGB" and image.size == size
+                and image.getexif().get(274, 1) == 1):
+            image.load()
+            return data
         image = ImageOps.exif_transpose(image)
-        frame = ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+        resize = ImageOps.pad if preserve_edges else ImageOps.fit
+        frame = resize(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
         output = io.BytesIO()
         frame.save(output, format="JPEG", quality=94)
         return output.getvalue()
 
 
-async def _normalize_frame(ctx, asset_id, size):
+async def _normalize_frame(ctx, asset_id, size, *, preserve_edges=False):
     from core.oss import get_oss
     from light.remake import _reference_asset
     from PIL import Image
 
     async with get_db_session() as db:
         asset = await db.scalar(owned_ready_query(ctx.user_id, ctx.workspace_id).where(FileAsset.id == asset_id))
-    if not asset or asset.size > 20_000_000:
+    if not asset:
+        raise _fail("Select a readable image.", "LIGHT_PRODUCTION_ASSET")
+    if not preserve_edges and asset.size > 20_000_000:
         raise _fail("Select a supported image under 20 MB.", "LIGHT_PRODUCTION_ASSET")
     try:
         data = await get_oss().get_object(asset.oss_key)
-        frame = await asyncio.to_thread(_matching_frame, data, size)
+        frame = await asyncio.to_thread(
+            _matching_frame, data, size, reuse_matching=asset.transient and asset_id.startswith("asset_remake_"),
+            preserve_edges=preserve_edges,
+        )
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise _fail("The selected frame is not a readable image.", "LIGHT_PRODUCTION_ASSET") from exc
     width, height = size
-    return await _reference_asset(ctx, f"shot-input-{asset_id}-{width}x{height}", frame)
+    if frame is data and asset.mime in {"image/jpeg", "image/jpg"}:
+        return asset_id
+    suffix = "-padded" if preserve_edges else ""
+    return await _reference_asset(ctx, f"shot-input-{asset_id}-{width}x{height}{suffix}", frame)
 
 
 def _timeline(job):
@@ -480,11 +493,14 @@ async def _retake_args(ctx, source, body, key):
             minimum = 300 if source.model == SEEDANCE else 240
             scale = max(minimum / min(width, height), min(1, 1920 / max(width, height)))
             width, height = max(minimum, round(width * scale)), max(minimum, round(height * scale))
-            if source.model == SEEDANCE:
+            if source.model in {SEEDANCE, TURBO}:
                 width, height = min(width, height * 5 // 2), min(height, width * 5 // 2)
             size = (width, height)
             sources = tuple(dict.fromkeys(frames.values()))
-            normalized = await asyncio.gather(*(_normalize_frame(ctx, frame, size) for frame in sources))
+            normalized = await asyncio.gather(*(
+                _normalize_frame(ctx, frame, size, **({"preserve_edges": True} if source.model == TURBO else {}))
+                for frame in sources
+            ))
             by_source = dict(zip(sources, normalized, strict=True))
             frames = {role: by_source[frame] for role, frame in frames.items()}
         refs = [VideoInputRef(asset_id=value, role=role) for role, value in frames.items()]

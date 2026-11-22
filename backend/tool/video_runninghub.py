@@ -3,6 +3,9 @@
 Input assets decide the endpoint; prompt keywords never discard a reference.
 This adapter does no scheduling or billing: the existing video job owns both.
 """
+import asyncio
+import hashlib
+from io import BytesIO
 from typing import Any
 
 from tool.video_providers import CAPABILITY_HINT, VideoRequestError
@@ -10,7 +13,73 @@ from tool.video_providers import CAPABILITY_HINT, VideoRequestError
 MODEL = "MiniMax-H3-Max-Turbo"
 PREFIX = "/openapi/v2/minimax/h3-max-turbo"
 RATIOS = {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
-IMAGE_MIMES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+MAX_FRAME_BYTES = 10_000_000
+INPUT_DOWNLOAD_FAILED = "runninghub_input_media_download_failed"
+
+
+class FrameValidationError(VideoRequestError):
+    """The source cannot be read or converted to a Turbo frame."""
+
+
+def _adapt_frame(data: bytes) -> bytes | None:
+    """Return an upload-ready copy, or None if the original already fits."""
+    from PIL import Image, ImageOps
+
+    with Image.open(BytesIO(data)) as source:
+        width, height = source.size
+        within_ratio = 2 * width <= 5 * height and 2 * height <= 5 * width
+        if (within_ratio and len(data) <= MAX_FRAME_BYTES
+                and source.format in {"JPEG", "PNG", "WEBP"}):
+            source.verify()
+            return None
+        image = ImageOps.exif_transpose(source)
+        # Video frames are opaque. Composite any transparent pixels onto the same
+        # matte we use for padding, without stretching or cropping the photo.
+        if image.mode in {"RGBA", "LA", "PA"} or "transparency" in image.info:
+            rgba = image.convert("RGBA")
+            image = Image.new("RGB", rgba.size, "black")
+            image.paste(rgba, mask=rgba.getchannel("A"))
+        else:
+            image = image.convert("RGB")
+        image.thumbnail((3840, 3840), Image.Resampling.LANCZOS)
+        width, height = image.size
+        padding_size = (max(width, (2 * height + 4) // 5), max(height, (2 * width + 4) // 5))
+        frame = Image.new("RGB", padding_size, "black")
+        frame.paste(image, ((frame.width - width) // 2, (frame.height - height) // 2))
+        output = BytesIO()
+        frame.save(output, format="JPEG", quality=90, optimize=True)
+        if output.tell() > MAX_FRAME_BYTES:
+            frame.thumbnail((1920, 1920), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            frame.save(output, format="JPEG", quality=85, optimize=True)
+        if output.tell() > MAX_FRAME_BYTES:
+            raise ValueError("converted frame too large")
+        return output.getvalue()
+
+
+async def prepare_frame_assets(assets, roles, *, user_id: str, save_copies: bool = False) -> dict[str, str]:
+    """Keep source assets intact and store model-only copies when needed."""
+    from core.oss import get_oss
+
+    oss = get_oss()
+
+    async def check(asset, role):
+        label = "首帧" if role == "first_frame" else "尾帧"
+        try:
+            data = await oss.get_object(asset.oss_key, timeout=20)
+            adapted = await asyncio.to_thread(_adapt_frame, data)
+            if adapted is None or not save_copies:
+                return None
+            digest = hashlib.sha256(adapted).hexdigest()
+            key = f"analysis/{user_id}/runninghub-frames/{asset.id}-{digest}.jpg"
+            await oss.put_object(key, adapted, content_type="image/jpeg", forbid_overwrite=True)
+            return (asset.id, key)
+        except Exception as exc:
+            raise FrameValidationError(f"快速档{label}暂时无法读取或处理，请稍后重试。") from exc
+
+    sources = {asset.id: (asset, role) for asset, role in zip(assets, roles, strict=True)}
+    copies = await asyncio.gather(*(check(asset, role) for asset, role in sources.values()))
+    return dict(copy for copy in copies if copy is not None)
 
 
 class SubmissionRejected(VideoRequestError):
@@ -32,12 +101,33 @@ def has_error(data: dict[str, Any]) -> bool:
     return data.get("errorCode") not in (None, "", 0, "0")
 
 
+def input_download_failed(data: dict[str, Any]) -> bool:
+    reason = str(data.get("errorMessage") or "").lower()
+    return error_code(data) == "1007" and (
+        "failed to download input media" in reason or "输入素材下载失败" in reason
+    )
+
+
+def terminal_input_download_failure(data: dict[str, Any]) -> bool:
+    return (
+        str(data.get("status", "")).upper() in {"FAILED", "FAILURE", "ERROR"}
+        and input_download_failed(data)
+    )
+
+
 def error_message(data: dict[str, Any], media: str = "视频") -> str:
     # Provider text can echo credentials or signed URLs. Only our own messages
     # cross the tool's public-error boundary.
     code = error_code(data)
     if code == "605":
         return "RunningHub 账户余额不足（605）；请联系管理员充值。"
+    if input_download_failed(data):
+        return f"RunningHub 下载{media}输入素材失败（1007）。"
+    if code == "1007":
+        reason = str(data.get("errorMessage") or "").lower()
+        if media == "视频" and ("aspect ratio" in reason or "宽高比" in reason):
+            return "RunningHub 首尾帧宽高比不符合要求（1007），请调整到 0.4–2.5 后再生成。"
+        return f"RunningHub {media}参数校验失败（1007），请检查输入。"
     return f"RunningHub {media}请求失败（错误码 {code}）；请检查渠道配置和账户状态。"
 
 
@@ -62,8 +152,8 @@ def validate(
         raise VideoRequestError("RunningHub Turbo prompt must contain 1–2048 characters")
     if watermark or not generate_audio:
         raise VideoRequestError("RunningHub Turbo has no watermark or mute parameter; use watermark=false and generate_audio=true")
-    if any(mime not in IMAGE_MIMES for mime in input_mimes):
-        raise VideoRequestError("RunningHub Turbo accepts JPEG/PNG/WEBP frames, not video or audio references; select a reference-capable video model" + CAPABILITY_HINT)
+    if any(not mime.startswith("image/") for mime in input_mimes):
+        raise VideoRequestError("RunningHub Turbo needs an image for each frame; select a reference-capable video model for video or audio inputs" + CAPABILITY_HINT)
     if len(input_mimes) > 2:
         raise VideoRequestError("RunningHub Turbo accepts one first frame and at most one last frame" + CAPABILITY_HINT)
     if roles and len(roles) != len(input_mimes):

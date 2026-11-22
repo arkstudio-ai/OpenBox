@@ -22,6 +22,7 @@ from light import remake_case as case
 from light.remake_lettering import end_card
 from tool import image_gen, video_compose, video_production
 from tool.tool import ToolContext
+from tool.video_runninghub import INPUT_DOWNLOAD_FAILED, terminal_input_download_failure
 from video.timeline import Cue
 
 log = create_logger(__name__)
@@ -288,32 +289,78 @@ async def _existing_job(ctx, kind: str, key: str) -> VideoJob | None:
         ).order_by(VideoJob.created_at.desc(), VideoJob.id.desc()).limit(1))
 
 
+async def _legacy_input_download_failed(job: VideoJob) -> bool:
+    """Older rows flattened every RunningHub 1007 into the same message."""
+    if (job.status != "failed" or not job.provider_task_id
+            or "1007" not in (job.error or "")
+            or (job.result_data or {}).get("failure_code")):
+        return False
+    from tool.video_providers import provider_route_mismatch
+
+    try:
+        route, _ = video_production._configured_target(job.model)
+        if route.channel != "runninghub" or provider_route_mismatch(job.request_data, route):
+            return False
+        response = await asyncio.wait_for(video_production._provider_status(route, job.provider_task_id), timeout=8)
+        return terminal_input_download_failure(response)
+    except Exception:
+        log.info("could not recover the original download failure for video job %s", job.id)
+        return False
+
+
 async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
     if kind == "segment":
         execute, args_type, deadline = video_production.execute_generate, video_production.VideoGenerateArgs, MAX_VIDEO_WAIT
     else:
         execute, args_type, deadline = video_compose.execute_compose, video_compose.VideoComposeArgs, MAX_COMPOSE_WAIT
-    prior = await _existing_job(ctx, kind, request.idempotency_key)
-    key = request.idempotency_key
+    root_key = request.idempotency_key
+    prior = await _existing_job(ctx, kind, root_key)
+    key = root_key
+    refresh_key = f"{root_key}:retry:media:{_digest(run['id'])[:12]}" if kind == "segment" else None
     if prior and prior.status in _FAILED:
-        ambiguous = ((prior.result_data or {}).get("submit_error") or {}).get("submission_outcome") == "ambiguous"
-        if ambiguous or not any(item["id"] == prior.id for item in run["existing"]):
+        result_data = prior.result_data or {}
+        ambiguous = (result_data.get("submit_error") or {}).get("submission_outcome") == "ambiguous"
+        already_known = any(item["id"] == prior.id for item in run["existing"])
+        if ambiguous:
             raise RemakeStopped(f"{label}需要核实原任务。")
-        key = f"{key}:retry:{_digest(run['id'])[:12]}"
+        download_failed = refresh_key and prior.status == "failed" and prior.provider_task_id and (
+            result_data.get("failure_code") == INPUT_DOWNLOAD_FAILED
+            or (already_known and await _legacy_input_download_failed(prior))
+        )
+        if download_failed and prior.idempotency_key == refresh_key:
+            raise RemakeStopped(f"{label}刷新链接后素材仍下载失败，进度已保留。")
+        if download_failed:
+            key = refresh_key
+        elif already_known:
+            key = f"{root_key}:retry:{_digest(run['id'])[:12]}"
+        else:
+            raise RemakeStopped(f"{label}需要核实原任务。")
         prior = None
-    if prior:
-        job_id = prior.id
-    else:
+
+    async def submit(attempt_key):
+        if attempt_key == refresh_key:
+            # OSS signatures have second-level precision. Let the replacement
+            # submit mint a distinct URL even after an immediate upstream failure.
+            await asyncio.sleep(1)
         await _check(ctx)
         valid = await execute(request.model_copy(update={"action": "validate"}), ctx)
         if not valid.output.startswith("valid=true"):
-            log.warning("remake validation refused session=%s key=%s title=%s", ctx.session_id, key, valid.title)
+            log.warning("remake validation refused session=%s key=%s title=%s", ctx.session_id, attempt_key, valid.title)
+            if valid.metadata.get("frame_validation"):
+                raise RemakeStopped(f"{label}未提交。{valid.output}")
             raise RemakeStopped(f"{label}未通过制作参数校验。")
-        result = await execute(request.model_copy(update={"idempotency_key": key}), ctx)
+        result = await execute(request.model_copy(update={"idempotency_key": attempt_key}), ctx)
         job_id = result.metadata.get("job_id")
         if not job_id:
-            log.warning("remake submission refused session=%s key=%s title=%s", ctx.session_id, key, result.title)
+            log.warning("remake submission refused session=%s key=%s title=%s", ctx.session_id, attempt_key, result.title)
             raise RemakeStopped(f"{label}提交失败。{result.output[:220]}")
+        return job_id
+
+    if prior:
+        job_id = prior.id
+        key = prior.idempotency_key
+    else:
+        job_id = await submit(key)
     limit = time.monotonic() + deadline
     while time.monotonic() < limit:
         await _check(ctx)
@@ -321,6 +368,13 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
         status, asset = result.metadata.get("status"), result.metadata.get("asset_id")
         if status == "completed" and asset:
             return asset
+        if (refresh_key and status == "failed" and not result.metadata.get("ambiguous_submit")
+                and result.metadata.get("failure_code") == INPUT_DOWNLOAD_FAILED):
+            if key == refresh_key:
+                raise RemakeStopped(f"{label}刷新链接后素材仍下载失败，进度已保留。")
+            key = refresh_key
+            job_id = await submit(key)
+            continue
         if status in _FAILED or result.metadata.get("ambiguous_submit"):
             raise RemakeStopped(f"{label}尚未交付，进度已保留。")
         await asyncio.sleep(2)

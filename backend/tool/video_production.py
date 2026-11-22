@@ -534,7 +534,8 @@ async def _resolve_generation_inputs(
 
 
 def _presigned_provider_refs(
-    rows: list[Any], *, input_url_ttl_seconds: int, roles: list[str] | None = None
+    rows: list[Any], *, input_url_ttl_seconds: int, roles: list[str] | None = None,
+    provider_image_keys: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     """Turn owned image/video/audio rows into provider reference inputs.
 
@@ -552,7 +553,8 @@ def _presigned_provider_refs(
     oss = get_oss()
     refs: list[dict[str, str]] = []
     for index, row in enumerate(rows):
-        url = oss.presign_get(row.oss_key, expires_sec=input_url_ttl_seconds)
+        key = (provider_image_keys or {}).get(row.id, row.oss_key)
+        url = oss.presign_get(key, expires_sec=input_url_ttl_seconds)
         kind = _asset_kind(row.mime)
         default_role = _DEFAULT_ROLE_BY_KIND.get(kind, "reference_image")
         refs.append(
@@ -829,6 +831,19 @@ async def _update_job(job_id: str, **values) -> None:
         for key, value in values.items():
             setattr(job, key, value)
         await record_job_in_tx(db, job)
+
+
+def _provider_failure(target, data: dict, state: str, result_data: dict | None) -> dict:
+    from tool.video_providers import failure_detail
+    from tool.video_runninghub import INPUT_DOWNLOAD_FAILED, terminal_input_download_failure
+
+    detail = data.get("error")
+    message = failure_detail(target, data) or str(detail or state)
+    values = {"error": message[:1000], "completed_at": datetime.now(timezone.utc)}
+    if (getattr(target, "channel", "ark") == "runninghub" and state == "failed"
+            and terminal_input_download_failure(data)):
+        values["result_data"] = {**(result_data or {}), "failure_code": INPUT_DOWNLOAD_FAILED}
+    return values
 
 
 #: Job states reserved for a paid call that has not reached the provider yet.
@@ -2202,7 +2217,12 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
         if capabilities:
             parts.append(f"supports={', '.join(capabilities)}")
         if entry.channel == "runninghub":
-            parts.append("routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from count/order; images inherit frame ratio (adaptive); prompt<=2048 characters")
+            parts.append(
+                "routing=resolve conversation intent first; no assets: text-to-video; explicit first_frame plus optional "
+                "last_frame: image-to-video; generic/multi-image references unsupported; never infer frame roles from "
+                "count/order; frames inherit their picture ratio, and the backend pads or compresses a provider-only "
+                "copy when needed; prompt<=2048 characters"
+            )
         if entry.channel == "dashscope":
             parts.append("routing=first_frame plus optional last_frame OR reference_image/video/audio; never mix frame roles with reference roles; last_frame requires first_frame; image<=10, video<=5, audio<=5; total reference video/audio duration each<=15s; input+output video duration<=30s; prompt<=20000 characters; output=30fps")
         if entry.channel == "sd2" and not reference_support["video"] and entry.supports_reference_video:
@@ -2242,32 +2262,44 @@ async def _execute_models(ctx: ToolContext) -> ToolResult:
     )
 
 
+async def _prepare_provider_inputs(target, approved, inputs, roles, ctx, *, save_copies=False) -> dict[str, str]:
+    from core.config import get_config
+    from tool import video_providers
+
+    video_providers.validate_request(
+        target,
+        resolution=approved["resolution"],
+        ratio=approved["ratio"],
+        duration=approved["duration"],
+        generate_audio=approved["generate_audio"],
+        input_mimes=[row.mime for row in inputs],
+        declared=video_providers.declared_model(target.model, get_config()),
+        roles=tuple(roles),
+        prompt=approved["prompt"],
+        watermark=approved["watermark"],
+    )
+    if getattr(target, "channel", "ark") == "runninghub" and inputs:
+        from tool.video_runninghub import prepare_frame_assets
+
+        return await prepare_frame_assets(inputs, roles, user_id=ctx.user_id, save_copies=save_copies)
+    return {}
+
+
 async def _execute_validate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     """Validate capabilities and owned inputs without quoting or submitting."""
     from core.config import get_config
-    from tool import video_providers
+    from tool.video_runninghub import FrameValidationError
 
     try:
         approved = await _resolve_open_submission(args, ctx, may_ask=False)
         target, _settings = _configured_target(approved["model"])
         inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
-        video_providers.validate_request(
-            target,
-            resolution=approved["resolution"],
-            ratio=approved["ratio"],
-            duration=approved["duration"],
-            generate_audio=approved["generate_audio"],
-            input_mimes=[row.mime for row in inputs],
-            declared=video_providers.declared_model(target.model, get_config()),
-            roles=tuple(roles),
-            prompt=approved["prompt"],
-            watermark=approved["watermark"],
-        )
+        await _prepare_provider_inputs(target, approved, inputs, roles, ctx)
     except Exception as exc:
         return ToolResult(
             title="This request would be rejected",
             output=_public_error(exc),
-            metadata={"valid": False},
+            metadata={"valid": False, **({"frame_validation": True} if isinstance(exc, FrameValidationError) else {})},
         )
 
     duration = approved["duration"]
@@ -2704,8 +2736,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 raise _RequestError(f"This resolution is not offered by your tariff tier: {_quote.snapshot.get('reason')}")
             if getattr(target, "channel", "ark") == "runninghub" and _quote.credits is None:
                 raise _RequestError("RunningHub video has no verified price for these parameters; no paid request was submitted")
-            _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
-                                       note=f"{target.model} {resolution} {duration}s")
             rejected = await _run_rejected_submission(ctx, target)
             if rejected is not None:
                 return _rejected_submission_result(
@@ -2720,23 +2750,17 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
             from core.config import get_config as _get_config
 
-            video_providers.validate_request(
-                target,
-                resolution=resolution,
-                ratio=ratio,
-                duration=duration,
-                generate_audio=generate_audio,
-                input_mimes=[row.mime for row in inputs],
-                declared=video_providers.declared_model(target.model, _get_config()),
-                roles=tuple(roles),
-                prompt=prompt,
-                watermark=watermark,
+            provider_image_keys = await _prepare_provider_inputs(
+                target, approved, inputs, roles, ctx, save_copies=True,
             )
+            _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
+                                       note=f"{target.model} {resolution} {duration}s")
             channel = getattr(target, "channel", "ark")
             refs = _presigned_provider_refs(
                 inputs,
                 input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
                 roles=roles,
+                **({"provider_image_keys": provider_image_keys} if provider_image_keys else {}),
             )
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
@@ -2937,9 +2961,17 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
             async def submit_and_persist_provider_identity():
                 nonlocal accepted_task_id, rate_limit_retried
-                from agent.trajectory import service_scope
+                from agent.trajectory import retain_derived_media_inputs, service_scope
+                retained_media = {}
+                asset_urls = {}
+                for ref, row in zip(refs, inputs):
+                    url = ref["url"]
+                    if row.id in provider_image_keys:
+                        retained_media.update(await retain_derived_media_inputs(ctx, [url], row.id))
+                    if url not in retained_media:
+                        asset_urls[url] = row.id
                 async with service_scope(ctx, job=job,
-                        asset_urls={ref["url"]: row.id for ref, row in zip(refs, inputs)}):
+                        asset_urls=asset_urls, **({"retained_media": retained_media} if retained_media else {})):
                     try:
                         submitted = await send_once()
                     except Exception as first_error:
@@ -2967,13 +2999,15 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 # in OSS, so retain an in-progress state until finalization wins
                 # the database claim and completes that transfer.
                 stored_state = "in_progress" if submitted_state == "completed" else submitted_state
+                terminal = (_provider_failure(target, submitted, stored_state, getattr(job, "result_data", None))
+                            if stored_state in {"failed", "cancelled"} else {"error": None})
                 await _update_job(
                     job.id,
                     provider_task_id=accepted_task_id,
                     status=stored_state,
                     attempt=1,
                     started_at=datetime.now(timezone.utc),
-                    error=None,
+                    **terminal,
                 )
                 return submitted, submitted_state
 
@@ -2996,13 +3030,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 asset = await _job_asset(job)
                 await _attach_completed(job, ctx)
             elif state in {"failed", "cancelled"}:
-                detail = response.get("error")
-                message = detail.get("message") if isinstance(detail, dict) else str(detail or state)
-                await _update_job(
-                    job.id,
-                    error=message[:1000],
-                    completed_at=datetime.now(timezone.utc),
-                )
                 await _mark_asset(job.output_asset_id, status="failed")
                 job = await _owned_job(job.id, ctx, "segment")
             lines = _job_lines(job, asset)
@@ -3282,19 +3309,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 else:
                     job = await asyncio.shield(finalization)
             elif state in {"failed", "cancelled"}:
-                from tool.video_providers import failure_detail
-
-                detail = data.get("error")
-                message = (
-                    detail.get("message")
-                    if isinstance(detail, dict)
-                    else (failure_detail(target, data) or str(detail or state))
-                )
                 await _update_job(
                     job.id,
                     status=state,
-                    error=message[:1000],
-                    completed_at=datetime.now(timezone.utc),
+                    **_provider_failure(target, data, state, getattr(job, "result_data", None)),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
                 job = await _owned_job(job.id, ctx, "segment")
@@ -3400,6 +3418,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         "version": version,
         "retry_after_seconds": retry_delay,
     }
+    if job.status == "failed" and (getattr(job, "result_data", None) or {}).get("failure_code"):
+        metadata["failure_code"] = job.result_data["failure_code"]
     if workspace_path:
         metadata["workspace_path"] = workspace_path
     if polling_paused:

@@ -21,6 +21,38 @@ void main() {
   });
 
   test(
+    'a build default language stands in for the device until a pick',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      I18nController make(String build) => I18nController(
+        I18nBundle({}),
+        prefs,
+        systemLocale: () => const Locale('zh', 'CN'),
+        buildLanguage: build,
+      );
+      final container = ProviderContainer(
+        overrides: [i18nProvider.overrideWith(() => make('vi-VN'))],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(i18nProvider.notifier);
+      expect(container.read(i18nProvider).language, 'vi-VN');
+      controller.refreshSystemLanguage();
+      expect(container.read(i18nProvider).language, 'vi-VN');
+      controller.setLanguage('zh-CN');
+      expect(container.read(i18nProvider).language, 'zh-CN');
+      controller.setLanguage(null);
+      expect(container.read(i18nProvider).language, 'vi-VN');
+
+      final unknown = ProviderContainer(
+        overrides: [i18nProvider.overrideWith(() => make('xx'))],
+      );
+      addTearDown(unknown.dispose);
+      expect(unknown.read(i18nProvider).language, 'zh-CN');
+    },
+  );
+
+  test(
     'phone language wins over legacy account locale and follows changes',
     () async {
       SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});

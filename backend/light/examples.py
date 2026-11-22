@@ -353,36 +353,41 @@ def with_pick(extra: dict | None, entry_id: str, scene: str | None, example_id: 
     return extra
 
 
+def usable_card(row) -> str:
+    """The reference card when there is one to follow: read by the model or written by the team."""
+    return (getattr(row, "card", "") or "").strip()
+
+
 def render(rows: list, ctx: dict | None = None, *, chosen: bool = False) -> str:
-    """The 参考样例 section: a summary, the recipe as it was, the output links, then the rules.
+    """The 参考样例 section: a summary, then the reference card (or, without one, the look or the recipe
+    as it was), then the rules.
 
     ``chosen``: the one row is what the owner picked on the example card."""
     if not rows:
         return ""
     tax = taxonomy()
     lines = ["参考样例（老板在样例卡上亲自选的这一条，这次就照它的结构、节奏和风格做，不再参考别的）："
-             if chosen else "参考样例（同行业同类门店做过、团队认可的产出，照它们的结构和风格做）："]
+             if chosen else "参考样例（同行业同类门店做过、团队认可的产出，照它的结构和风格做）："]
     for index, row in enumerate(rows, 1):
         head = f"{index}. 「{row.title}」（{tax.label(row.industry, row.shop_type)}，评分 {row.rating}/5）"
         if row.notes:
             head += f"：{_clean(row.notes, NOTES_LIMIT)}"
         lines.append(head)
+        card = usable_card(row)
         look = (row.look or "").strip() if chosen else ""
-        if look:
+        if card:
+            # Written after looking at the finished piece, with no shop name, dish or price in it.
+            lines.append("   参考卡（团队看过这条成品后写下的；结构、节奏和风格照它来。做图时，出图提示词的 Style 和 Layout "
+                         "两行照它的版式、配色、字体、图片、装饰写；文案结构只学层次，不学内容）：")
+            lines.extend("   " + line for line in card.splitlines() if line.strip())
+        elif look:
             # The look is what the owner chose; the old prompt names another shop's dishes and prices.
             lines.append("   样子说明（出图提示词的 Style 和 Layout 两行照这个写，配色、版式、图片用法、装饰都跟它走）：")
             lines.extend("   " + line for line in look.splitlines())
         elif row.recipe:
             lines.append("   当时的方案卡/提示词：" + _clean(row.recipe, RECIPE_LIMIT))
-        links = []
-        for output in row.outputs or []:
-            if not isinstance(output, dict):
-                continue
-            url = _signed(output)
-            name = output.get("name") or output.get("asset_id") or ""
-            links.append(f"{name}（{url}）" if url else str(name))
-        if links:
-            lines.append("   产出：" + "；".join(links))
+        # No links to the finished piece: it belongs to another shop's account, so no tool of this owner's can
+        # open it, and a freshly signed link would change the prompt on every turn.
     lines.append("规则：" + " ".join(f"{n}) {rule}" for n, rule in enumerate(RULES, 1)))
     return "\n".join(lines)
 
@@ -420,8 +425,9 @@ async def examples_fragment(user_id: str | None, session) -> str:
     try:
         ctx = await shop_context(user_id)
         chosen = await get_active(picked)
+        # One example at a time: nobody chose between several, and the agent would only average them.
         rows = [chosen] if chosen is not None else await pick(
-            entry_id, ctx["industry"], ctx["shop_type"], scene=getattr(session, "light_scene", None))
+            entry_id, ctx["industry"], ctx["shop_type"], limit=1, scene=getattr(session, "light_scene", None))
         if not rows:
             return ""
         await _count(getattr(session, "id", "") or "", rows)

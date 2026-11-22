@@ -112,9 +112,13 @@ async def read(row, ctx) -> str:
     return look
 
 
+def _has_card(row) -> bool:
+    return bool((getattr(row, "card", "") or "").strip())
+
+
 async def ensure(row, ctx) -> str:
     """The example's look, read and saved now when it has none yet; "" when it cannot be read."""
-    if row.look:
+    if row.look or _has_card(row):  # the reference card already says what the piece looks like
         return row.look
     if readable(row) is None:
         return ""
@@ -136,7 +140,7 @@ async def ensure(row, ctx) -> str:
 
 async def ensure_all(rows: list, ctx) -> None:
     """Read the looks the candidates still lack, together, within the time the card may wait."""
-    missing = [row for row in rows if not row.look and readable(row) is not None]
+    missing = [row for row in rows if not row.look and not _has_card(row) and readable(row) is not None]
     if not missing:
         return
     try:

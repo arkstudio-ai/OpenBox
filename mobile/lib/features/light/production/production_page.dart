@@ -19,9 +19,11 @@ import '../widgets/light_input_bar.dart';
 import 'production_api.dart';
 import 'production_examples.dart';
 import 'production_media.dart';
+import 'production_narration.dart';
 import 'production_shot_models.dart';
 import 'production_shots.dart';
 import 'production_stages.dart';
+import 'production_voice.dart';
 import 'production_widgets.dart';
 
 class ProductionPage extends ConsumerStatefulWidget {
@@ -49,6 +51,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   bool _advancedUpdated = false;
   bool _inAgent = false;
   bool _confirmingAssembly = false;
+  bool? _showRemakes;
+
+  bool _redoNarration(LightProduction task) =>
+      _pending['redo_narration'] as bool? ?? task.redoNarration;
   double? _uploadProgress;
   Object? _error;
   int _snapshot = 0;
@@ -299,7 +305,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       case 'materials':
         await _goTo('style');
       case 'style' when task.kind == ProductionKind.footage:
-        await _send('render');
+        if (task.redoNarration) {
+          await _reviewNarration(task);
+        } else {
+          await _send('render');
+        }
       case 'style':
         _receive(
           await _api.edit(task, {
@@ -323,6 +333,18 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         );
     }
   });
+
+  Future<void> _reviewNarration(LightProduction task) async {
+    final rendered = await Navigator.of(context).push<LightProduction>(
+      MaterialPageRoute(builder: (_) => NarrationReviewPage(task: task)),
+    );
+    if (!mounted) return;
+    if (rendered != null) {
+      _receive(rendered);
+    } else {
+      await _refresh();
+    }
+  }
 
   void _leave() {
     if (context.canPop()) {
@@ -582,14 +604,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               description: _text('styleBody.${task.kind.id}'),
             ),
             const SizedBox(height: 24),
-            ProductionExamples(
-              task: task,
-              enabled: !_busy,
-              onChoose: (id) => _perform(() async {
-                _receive(await _api.edit(_task!, {'reference_example_id': id}));
-              }),
-            ),
-            if (!task.kind.imagesOnly)
+            if (task.kind == ProductionKind.video) _templateSections(task),
+            if (task.kind != ProductionKind.video || !_remakes(task))
+              ProductionExamples(
+                task: task,
+                enabled: !_busy,
+                onChoose: (id) => _perform(() async {
+                  _receive(
+                    await _api.edit(_task!, {'reference_example_id': id}),
+                  );
+                }),
+              ),
+            if (!task.kind.imagesOnly &&
+                (task.kind != ProductionKind.video || _remakes(task)))
               ProductionTemplates(
                 task: task,
                 selected: task.referenceExampleId == null
@@ -613,8 +640,13 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               ),
             if (task.kind == ProductionKind.footage) ...[
               const SizedBox(height: 12),
-              _originalAudio(task),
-              _creativeEffects(task),
+              _sourceSpeech(task),
+              if (!_redoNarration(task)) ...[
+                _originalAudio(task),
+                _creativeEffects(task),
+              ],
+              if (_redoNarration(task) && task.status == 'draft')
+                const SizedBox(height: 12),
             ],
           ],
         ),
@@ -742,6 +774,56 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     ],
   );
 
+  bool _remakes(LightProduction task) => _showRemakes ?? task.remake;
+
+  Widget _templateSections(LightProduction task) {
+    final selected = _remakes(task);
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SegmentedButton<bool>(
+          key: const Key('production-video-template-sections'),
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) =>
+                  states.contains(WidgetState.selected) ? t.hairSoft : t.card,
+            ),
+            foregroundColor: WidgetStatePropertyAll(t.ink),
+            side: WidgetStatePropertyAll(BorderSide(color: t.hair)),
+          ),
+          segments: [
+            ButtonSegment(
+              value: false,
+              label: Text(_text('examples.videoLibrary')),
+            ),
+            ButtonSegment(value: true, label: Text(_text('examples.remakes'))),
+          ],
+          selected: {selected},
+          onSelectionChanged: _busy
+              ? null
+              : (change) => setState(() => _showRemakes = change.single),
+        ),
+        const SizedBox(height: 12),
+        if (selected) ...[
+          Text(_text('examples.remakesHint'), style: TextStyle(color: t.n800)),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+
+  Widget _sourceSpeech(LightProduction task) => SourceSpeechSettings(
+    task: task,
+    enabled: !_busy,
+    redo: _redoNarration(task),
+    onChange: (value) => _stage('redo_narration', value),
+  );
+
   Widget _shopField({bool signature = false}) => TextField(
     key: const Key('production-shop'),
     controller: _shop,
@@ -808,7 +890,12 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         task.availableVideoTiers.isNotEmpty &&
         (task.kind == ProductionKind.footage ||
             task.supportsVideoTiers(task.template));
-    if (chat == null && !hasVideo) return const SizedBox.shrink();
+    final hasVoice = task.kind == ProductionKind.footage;
+    final voice = _pending['voice_id'] as String? ?? task.voiceId;
+    final voices = hasVoice && voice.startsWith('voice:')
+        ? ref.watch(productionVoicesProvider).valueOrNull
+        : null;
+    if (chat == null && !hasVideo && !hasVoice) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -863,9 +950,35 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                       ? null
                       : (tier) => _stage('video_tier', tier.name),
                 ),
+              if (hasVoice && (chat != null || hasVideo))
+                Divider(height: 1, indent: 16, endIndent: 16, color: t.hair),
+              if (hasVoice)
+                ProductionSettingRow(
+                  key: const Key('production-voice-settings'),
+                  icon: Icons.graphic_eq,
+                  label: voiceText(_i18n, 'settings'),
+                  value: voiceLabel(
+                    _i18n,
+                    voice,
+                    name: savedVoiceName(voices, voice),
+                  ),
+                  onTap: _busy
+                      ? null
+                      : () async {
+                          final choice = await chooseProductionVoice(
+                            context,
+                            voice,
+                            allowNone: true,
+                          );
+                          if (mounted && choice != null) {
+                            _stage('voice_id', choice);
+                          }
+                        },
+                ),
             ],
           ),
         ),
+        if (task.kind == ProductionKind.footage) _sourceSpeech(task),
       ],
     );
   }
@@ -1212,7 +1325,13 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       'failed' => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          primary('retry', () => _perform(() => _send('render'))),
+          primary(
+            'retry',
+            () => _perform(
+              () =>
+                  task.redoNarration ? _reviewNarration(task) : _send('render'),
+            ),
+          ),
           secondary('editDraft', () => _perform(() => _send('edit'))),
         ],
       ),
@@ -1225,17 +1344,22 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             primary(
-              'next',
-              task.referenceExampleId == null &&
-                      (_pending['template'] as String? ?? task.template).isEmpty
-                  ? null
-                  : _next,
+              _remakes(task)
+                  ? 'examples.useRemake'
+                  : 'examples.useVideoTemplate',
+              (_remakes(task)
+                      ? task.kind.templates.contains(
+                          _pending['template'] as String? ?? task.template,
+                        )
+                      : task.referenceExampleId != null)
+                  ? _next
+                  : null,
             ),
             secondary('skip', () => _next(skip: true)),
           ],
         ),
         'style' when task.kind == ProductionKind.footage => primary(
-          'generate.footage_edit',
+          _redoNarration(task) ? 'voice.reviewAction' : 'generate.footage_edit',
           _canRender(task) ? _next : null,
         ),
         'style' => primary(

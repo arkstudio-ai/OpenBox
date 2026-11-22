@@ -11,13 +11,13 @@
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from light import mode as light_mode
-from light import examples, production, production_form, shot_editor, shot_frame_edits
+from light import examples, production, production_form, production_narration, production_voice, shot_editor, shot_frame_edits
 
 router = APIRouter(prefix="/api/light", tags=["light"], dependencies=[Depends(get_workspace)])
 
@@ -145,6 +145,90 @@ async def production_action(session_id: str, body: production_form.FormAction,
                             current_user: dict = Depends(get_current_user)):
     try:
         return await production.action(*_scope(current_user), session_id, body, current_user.get("ui_language"))
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+class AuditionBody(BaseModel):
+    voice_id: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/production-voices")
+async def production_voices(current_user: dict = Depends(get_current_user)):
+    user, _ = _scope(current_user)
+    return await production_voice.catalogue(user, current_user.get("ui_language"))
+
+
+@router.post("/production-voices")
+async def production_voice_create(
+    name: str = Form(min_length=1, max_length=32),
+    request_id: str = Form(pattern=r"^[a-f0-9]{16,40}$"),
+    audio: UploadFile = File(),
+    consent: bool = Form(default=False),
+    current_user: dict = Depends(get_current_user),
+):
+    user, _ = _scope(current_user)
+    if not consent:
+        _raise(light_mode.LightError("PRODUCTION_VOICE_CONSENT", "Confirm permission to use this voice."))
+    formats = {"wav": "audio/wav", "m4a": "audio/mp4", "mp3": "audio/mpeg"}
+    extension = (audio.filename or "").lower().rpartition(".")[2]
+    sound = await audio.read(production_voice.MAX_SAMPLE_BYTES + 1)
+    if not name.strip() or extension not in formats or not 0 < len(sound) <= production_voice.MAX_SAMPLE_BYTES:
+        _raise(light_mode.LightError("PRODUCTION_VOICE_SAMPLE", "Choose a named WAV, M4A or MP3 up to 10 MB."))
+    format_mime = formats[extension]
+    try:
+        return await production_voice.create(user, name.strip(), sound, format_mime, request_id,
+                                             current_user.get("ui_language"))
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/production-voices/audition")
+async def production_voice_audition(body: AuditionBody, current_user: dict = Depends(get_current_user)):
+    user, workspace = _scope(current_user)
+    try:
+        return await production_voice.audition(user, workspace, body.voice_id, current_user.get("ui_language"))
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.get("/productions/{session_id}/narration")
+async def production_speech(session_id: str, current_user: dict = Depends(get_current_user)):
+    try:
+        return await production_narration.detect(*_scope(current_user), session_id)
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/productions/{session_id}/narration/draft")
+async def production_narration_draft(
+    session_id: str, body: production_narration.DraftRequest, current_user: dict = Depends(get_current_user),
+):
+    try:
+        return await production_narration.draft(*_scope(current_user), session_id, body,
+                                                current_user.get("ui_language") or "zh-CN")
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.patch("/productions/{session_id}/narration/draft")
+async def production_narration_edit(
+    session_id: str, body: production_narration.PreviewRequest, current_user: dict = Depends(get_current_user),
+):
+    try:
+        return await production_narration.edit_lines(*_scope(current_user), session_id, body,
+                                                     current_user.get("ui_language") or "zh-CN")
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/productions/{session_id}/narration/preview")
+async def production_narration_preview(
+    session_id: str, body: production_narration.PreviewRequest, current_user: dict = Depends(get_current_user),
+):
+    try:
+        return await production_narration.preview(*_scope(current_user), session_id, body,
+                                                  current_user.get("ui_language") or "zh-CN")
     except light_mode.LightError as exc:
         _raise(exc)
 

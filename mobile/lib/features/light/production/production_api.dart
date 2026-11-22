@@ -165,6 +165,8 @@ class LightProduction {
       notes = asString(json['notes']) ?? '',
       agentRevision = asInt(json['agent_revision']) ?? 0,
       keepOriginal = json['keep_original'] != false,
+      redoNarration = json['redo_narration'] == true,
+      voiceId = asString(json['voice_id']) ?? '',
       creativeEffects = json['creative_effects'] == true,
       assets = asList(json['asset_ids']).whereType<String>().toList(),
       materials = [
@@ -211,7 +213,8 @@ class LightProduction {
   final Set<ProductionVideoTier> availableVideoTiers;
   final String notes;
   final int agentRevision;
-  final bool keepOriginal;
+  final bool keepOriginal, redoNarration;
+  final String voiceId;
   final bool creativeEffects;
   final List<String> assets;
   final List<ProductionMedia> materials;
@@ -313,14 +316,16 @@ class LightProductionApi {
   Future<LightProduction> action(
     LightProduction task,
     String action,
-    String requestId,
-  ) async {
+    String requestId, {
+    String? narrationPreviewId,
+  }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '$_path/${task.sessionId}/actions',
       data: {
         'revision': task.revision,
         'action': action,
         'request_id': requestId,
+        'narration_preview_id': ?narrationPreviewId,
       },
     );
     return LightProduction.fromJson(response.data!);
@@ -342,6 +347,72 @@ class LightProductionApi {
       hasMore: response.data?['has_more'] == true,
     );
   }
+
+  static const _voices = '/api/light/production-voices';
+  static final _mediaWait = Options(
+    receiveTimeout: const Duration(seconds: 150),
+  );
+
+  Future<Map<String, dynamic>> voices() async =>
+      (await _dio.get<Map<String, dynamic>>(
+        _voices,
+        options: _mediaWait,
+      )).data!;
+
+  Future<Map<String, dynamic>> addVoice(
+    String name,
+    String path,
+    String requestId,
+  ) async => (await _dio.post<Map<String, dynamic>>(
+    _voices,
+    data: FormData.fromMap({
+      'name': name,
+      'consent': 'true',
+      'request_id': requestId,
+      'audio': await MultipartFile.fromFile(path),
+    }),
+    options: _mediaWait,
+  )).data!;
+
+  Future<String> auditionVoice(String id) async =>
+      (await _dio.post<Map<String, dynamic>>(
+            '$_voices/audition',
+            data: {'voice_id': id},
+            options: _mediaWait,
+          )).data!['url']
+          as String;
+
+  Future<Map<String, dynamic>> speech(String sessionId) async =>
+      (await _dio.get<Map<String, dynamic>>(
+        '$_path/$sessionId/narration',
+        options: _mediaWait,
+      )).data!;
+
+  Future<Map<String, dynamic>> narrationDraft(
+    LightProduction task,
+    String emphasis,
+    List<String>? lines,
+  ) async => (await _dio.post<Map<String, dynamic>>(
+    '$_path/${task.sessionId}/narration/draft',
+    data: {'revision': task.revision, 'emphasis': emphasis, 'lines': ?lines},
+    options: _mediaWait,
+  )).data!;
+
+  Future<void> saveNarrationLines(LightProduction task, List<String> lines) =>
+      _dio.patch<Map<String, dynamic>>(
+        '$_path/${task.sessionId}/narration/draft',
+        data: {'revision': task.revision, 'lines': lines},
+        options: _mediaWait,
+      );
+
+  Future<Map<String, dynamic>> narrationPreview(
+    LightProduction task,
+    List<String> lines,
+  ) async => (await _dio.post<Map<String, dynamic>>(
+    '$_path/${task.sessionId}/narration/preview',
+    data: {'revision': task.revision, 'lines': lines},
+    options: _mediaWait,
+  )).data!;
 
   Future<ResourcePage> library({
     required String kind,

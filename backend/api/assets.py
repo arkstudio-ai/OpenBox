@@ -362,7 +362,9 @@ async def complete_asset(
             # On a 你拍我剪 page the whole clip is read now (speech + picture),
             # while the owner is still uploading the rest.
             from billing.footage import is_footage_session
-            if await is_footage_session(row.session_id):
+            from billing.service import billing_mode
+
+            if billing_mode() != "enforce" and await is_footage_session(row.session_id):
                 from tool.footage_analyze import prepare_in_background
                 prepare_in_background(row.id, row.user_id)
             else:

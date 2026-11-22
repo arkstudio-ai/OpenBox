@@ -327,7 +327,8 @@ def test_complete_cut_requires_every_approved_shot_and_exact_edit():
         for i in range(1, 9)
     ]
     timeline = film.timeline_for(cuts, "lettering")
-    run = {"wan_cuts": cuts, "wan_final_key": "final", "remake_adaptation": plan_data()}
+    run = {"wan_cuts": cuts, "wan_final_key": "final", "remake_adaptation": plan_data(),
+           "soda_visual_review": {"reviewed": True}, "voice_id": "voice:legacy"}
     job = SimpleNamespace(
         idempotency_key="final",
         kind="compose",

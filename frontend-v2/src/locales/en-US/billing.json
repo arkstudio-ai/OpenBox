@@ -128,6 +128,9 @@
       "video_compose": "Video composition",
       "video_generate": "Video generation",
       "image_gen": "Image generation",
+      "footage_analyze": "Footage analysis",
+      "narration_script": "Narration scripting",
+      "voice_synthesis": "Voice synthesis",
       "video_transcribe": "Transcription",
       "video_analyze": "Video analysis",
       "hot_trends": "Hot trends"

@@ -14,6 +14,7 @@ from auth.workspace import get_workspace
 from db.base import _upgrade_desktop_assistant_columns, get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.light_example import LightExample
+from db.models.session import Session
 from db.repository.user_repo import PgUserRepo
 from light import examples, mode, production, production_form as forms, video_tiers
 from light import remake, remake_case
@@ -211,8 +212,14 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
                 assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_TEMPLATE_RETIRED"
             saved = (await client.patch(path, json={
                 "revision": entry["revision"], "page": "review", "video_tier": tier, "script": "热菜上桌",
+                "voice_id": "system:documentary",
             })).json()
             assert saved["video_tier"] == tier
+            assert "voice_id" not in saved
+            async with get_db_session() as db:
+                draft = await db.get(Session, entry["session_id"])
+                draft.light_production = {**draft.light_production, "voice_id": "voice:legacy"}
+            assert "voice_id" not in (await client.get(path)).json()
             queued = await client.post(f"{path}/actions", json={
                 "revision": saved["revision"], "action": "render", "request_id": uuid4().hex,
             })
@@ -222,6 +229,10 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
             async with get_db_session() as db:
                 item = await db.scalar(select(AgentInboxItem).where(AgentInboxItem.session_id == session.id))
                 assert (item.video_model, item.video_resolution) == (model, resolution)
+                row = await db.get(Session, session.id)
+                assert "voice_id" not in row.light_production
+                assert "voice_id" not in row.light_production["run"]
+                assert "spoken_line and native audio" in forms.turn_instruction(row, "render")
 
 
 async def test_saved_draft_and_idempotent_queue_share_the_agent_session(monkeypatch):

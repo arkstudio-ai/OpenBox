@@ -234,12 +234,14 @@ def is_complete_cut(run, job) -> bool:
                 or len(timeline.overlays) != 9
                 or not math.isclose(float(request["duration_sec"]), DURATION, abs_tol=0.05)):
             return False
+        soundtrack = [audio for audio in timeline.audio
+                      if not (run.get("voice_id") and "/production-voice/" in (audio.asset or ""))]
         if controls and not controls["beat_music"]:
-            if timeline.audio:
+            if soundtrack:
                 return False
-        elif controls or len(timeline.audio) != 1:
+        elif controls or len(soundtrack) != 1:
             expected_score = [AudioClip.model_validate(clip) for clip in beat_score()]
-            if [audio.model_copy(update={"source_sec": None}) for audio in timeline.audio] != expected_score:
+            if [audio.model_copy(update={"source_sec": None}) for audio in soundtrack] != expected_score:
                 return False
         for actual_shot, expected_shot in zip(timeline.shots, expected, strict=True):
             if not (matches(actual_shot.asset, expected_shot.asset) if expected_shot.asset != "black"

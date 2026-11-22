@@ -54,7 +54,10 @@ def _now() -> datetime:
 
 
 def _form(row: Session) -> dict:
-    return row.light_production or forms.initial_form(row.light_entry, "", "")
+    form = row.light_production or forms.initial_form(row.light_entry, "", "")
+    if row.light_entry == "video" and "voice_id" in form:
+        return {key: value for key, value in form.items() if key != "voice_id"}
+    return form
 
 
 def _utc(value: datetime) -> datetime:
@@ -133,6 +136,13 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
             raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
     if "poster_title" in changes and row.light_entry != "poster":
         raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
+    if "redo_narration" in changes and row.light_entry != "footage_edit":
+        raise LightError("PRODUCTION_NARRATION_STATE", "Narration replacement requires original footage.")
+    if "voice_id" in changes:
+        selected = changes["voice_id"]
+        if row.light_entry != "footage_edit" or (
+                selected and selected != "none" and not selected.startswith(("system:", "voice:"))):
+            raise LightError("PRODUCTION_VOICE_UNAVAILABLE", "Choose an available voice.")
     if "dishes" in changes and row.light_entry != "menu":
         raise LightError("LIGHT_PRODUCTION_DISHES", "Only menus have dish rows")
     if "creative_effects" in changes and row.light_entry != "footage_edit":
@@ -145,7 +155,7 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
 
 
 def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
-    form = dict(row.light_production)
+    form = dict(_form(row))
     actual = {key: value for key, value in changes.items()
               if key != "reference_example_id" and form.get(key) != value}
     reference_id = row.light_example_id
@@ -165,6 +175,11 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
         return
     row.light_example_id = reference_id
     form.update(actual)
+    if {"asset_ids", "shop", "template", "keep_original"}.intersection(actual):
+        form.pop("narration_draft", None)
+        form.pop("narration_preview", None)
+    elif {"voice_id", "redo_narration"}.intersection(actual):
+        form.pop("narration_preview", None)
     if "video_tier" in actual:
         row.video_model, row.video_resolution = video_tiers.resolve_tier(form["video_tier"])
         if (form["template"] == silk_road.TEMPLATE
@@ -358,6 +373,7 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
             **{key: value for key, value in form.items() if key not in {
                 "run", "edited_at", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
                 "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits", "chat_tier",
+                "narration_preview", "narration_draft",
             }},
             **_work_view(row, receipts.get((form.get("run") or {}).get("id")), guide_jobs, output,
                          row.id in questions),
@@ -404,6 +420,9 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
         if view["status"] in _BUSY or view["status"] == "completed" or row.light_production.get("proposal"):
             raise LightError("LIGHT_PRODUCTION_STATE", "Finish the current production action before editing", 409)
         changes = body.model_dump(exclude_none=True, exclude={"revision"})
+        if row.light_entry == "video":
+            # Older mobile clients may still send their saved narration choice.
+            changes.pop("voice_id", None)
         form = row.light_production
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
@@ -714,7 +733,7 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
     queued = False
     async with get_db_session() as db:
         row = await _lock(db, session_id, user_id, workspace_id)
-        form = row.light_production
+        form = _form(row)
         if (form.get("run") or {}).get("client_id") == body.request_id:
             if form["run"]["action"] != body.action:
                 raise LightError("LIGHT_PRODUCTION_CHANGED", "Request already accepted for a different action", 409)
@@ -723,6 +742,10 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
             _check_revision(form, body.revision)
             view = (await _views(db, [row], include_shots=body.action == "edit"))[0]
             _validate_action(row, view, body.action)
+            if body.action == "render" and row.light_entry == "footage_edit":
+                from light.production_narration import check_confirmation
+
+                check_confirmation(form, body.narration_preview_id, lang or "zh-CN")
             if body.action == "edit":
                 page = "style" if row.light_entry == "footage_edit" else "review"
                 row.light_production = {**form, "revision": form["revision"] + 1, "page": page, "run": None,
@@ -795,6 +818,10 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 row.light_production = {**form, "run": {"id": receipt.id, "action": body.action,
                                         "client_id": body.request_id, "revision": form["revision"], "job_prefix": prefix,
                                         "existing": existing,
+                                        **({"confirmed_narration": {"shots": form["narration_draft"]["shots"],
+                                                                     "preview": form["narration_preview"]}}
+                                           if (body.action == "render" and row.light_entry == "footage_edit"
+                                               and form.get("redo_narration")) else {}),
                                         **({"creative_motion": True} if creative_motion else {}),
                                         **({"video_model": row.video_model, "video_resolution": row.video_resolution}
                                            if body.action == "render" and row.light_entry == "video" else {})}}

@@ -396,6 +396,7 @@ const _mediaKinds = {
   'video_compose',
   'video_generate',
   'video_transcribe',
+  'footage_analyze',
   'image_gen',
   'hot_trends',
 };

@@ -58,6 +58,9 @@ async def current_result_context(session):
     if job:
         facts.update(job_id=job.id, duration_sec=(job.result_data or {}).get("duration_sec")
                      or (job.request_data or {}).get("duration_sec"))
+        soundtrack = (job.request_data or {}).get("soundtrack")
+        if soundtrack:
+            facts["soundtrack"] = soundtrack
         timeline = (job.request_data or {}).get("timeline")
         if timeline and len(timeline.get("shots") or []) <= 60:
             facts["measured_edit_map"] = edit_map(timeline, session.light_production)
@@ -81,6 +84,14 @@ async def current_result_context(session):
             "Never construct OSS URLs, use unsigned curl downloads, or treat an AccessDenied response as media. "
             "Attach the new complete result "
             "to this same conversation. "
+        )
+    if job and job.kind == "compose" and session.light_entry == "footage_edit":
+        guidance += (
+            "For an explicit music-only change, reveal music_search and video_compose. Select a different "
+            "track with music_search exclude_track_ids containing the current soundtrack.track_id when known "
+            "and call video_compose action=replace_music with the current job_id, music.track_id and a new "
+            "idempotency_key. This uses the saved timeline and preserves all visual cuts and original speech. "
+            "Omit timeline and music.cut_after. If delivery=automatic, end the turn and let the watcher attach it. "
         )
     return guidance + json.dumps(facts, ensure_ascii=False)
 

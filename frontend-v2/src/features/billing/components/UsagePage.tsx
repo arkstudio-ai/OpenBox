@@ -12,7 +12,7 @@ import { CreditBalanceCard } from "./CreditBalanceCard"
 import { UsageFilters } from "./UsageFilters"
 
 // Usage events billed by media quantity (duration, minutes, images) rather than tokens.
-const MEDIA_KINDS = new Set(["video_compose", "video_generate", "video_transcribe", "image_gen", "hot_trends"])
+const MEDIA_KINDS = new Set(["video_compose", "video_generate", "video_transcribe", "image_gen", "hot_trends", "footage_analyze"])
 
 function UsageRow({ entry }: { entry: UsageEntry }) {
   const { t } = useTranslation("billing")

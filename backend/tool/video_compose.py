@@ -27,6 +27,7 @@ from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 from video import ims_client
 from video.ims_compiler import CompiledJob, TimelineCompileError, compile_ims
+from video.music_catalog import MusicSelection
 from video.timeline import Overlay, Shot, Timeline
 
 log = create_logger("tool.video_compose")
@@ -39,11 +40,12 @@ _DEFERRED_RECHECK_SECONDS = 60
 
 
 class VideoComposeArgs(BaseModel):
-    action: Literal["schema", "validate", "submit", "status", "wait", "cancel"]
+    action: Literal["schema", "validate", "submit", "replace_music", "status", "wait", "cancel"]
     #: An OpenBox timeline (action="schema" returns the exact format). Shots
     #: reference assets you own by asset_id; oss:// and OSS https URLs are
     #: accepted only when they point at your own objects.
     timeline: dict[str, Any] | None = None
+    music: MusicSelection | None = None
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     #: Name for the finished file; sanitised, ``.mp4`` enforced.
     filename: str | None = Field(default=None, max_length=200)
@@ -57,6 +59,12 @@ class VideoComposeArgs(BaseModel):
     @model_validator(mode="after")
     def _required_by_action(self) -> "VideoComposeArgs":
         if self.action == "schema":
+            return self
+        if self.action == "replace_music":
+            if not self.music or not self.idempotency_key:
+                raise ValueError("replace_music requires music and an idempotency_key")
+            if self.timeline is not None or self.music.cut_after:
+                raise ValueError("replace_music reuses the original cuts; send only the new music")
             return self
         if self.action in ("validate", "submit"):
             if self.timeline is None:
@@ -234,6 +242,10 @@ async def _execute_schema() -> ToolResult:
         "shots[].filter / filter: a colour preset on one shot or the whole cut; shots[].backdrop=blur with fit=contain puts the same clip, blurred and filling the canvas, behind a landscape clip instead of black bars",
         "overlays[]: picture-in-picture or a logo over the main picture — asset, from_sec, to_sec, in_sec, x, y, width, height (canvas fractions), opacity, volume (muted by default); each on its own track",
         "audio[].voiceover: narration spoken by the renderer's AI voice from text — {\"text\", \"voice\", \"speech_rate\", \"pitch_rate\"}; place it with from_sec/to_sec (the voice needs about 0.3 s per character at speech_rate 0; a shorter span is warned because the line's end may be cut off), volume 1; a bed with duck_under_voice=true drops while it speaks. Lay it only over shots in which nobody is seen talking (generated with no_speech=true and generate_audio=false): a presenter whose mouth moves to a dub never matches — such a shot speaks its own video_generate spoken_line instead",
+        "submit or validate: optional music={track_id, cut_after?, in_sec?, volume?}; "
+        "choose track_id from music_search, and use one-based cut_after for nearby beat alignment of muted hard cuts. "
+        "Do not also add a music bed to audio[]. For a music-only change call replace_music with music "
+        "(no cut_after), idempotency_key, and optionally the completed same-chat job_id.\n"
         "audio[]: optional sound beds (BGM, voice-over) on their own tracks: asset or library_id (a music-library track, icepublic-…), from_sec, to_sec, in_sec, volume (default 0.3), fade_in_sec, fade_out_sec, duck_under_captions + duck_volume (lower the bed while captions show); a library track shorter than its span repeats, a longer one is cut",
         "transition_out sits on the shot it leads out of and overlaps the next shot",
         "texts[].align=center ignores x; y is the top edge of the text box",
@@ -266,10 +278,88 @@ def _oss_or_refuse():
         ) from exc
 
 
+async def _prepare_timeline(args: VideoComposeArgs, ctx: ToolContext, oss):
+    from video import bgm_library, music_catalog, netease_music
+
+    parent = None
+    if args.action == "replace_music":
+        parent = await _replacement_source(args.job_id, ctx)
+        previous = (parent.request_data or {}).get("soundtrack") or {}
+        if previous.get("track_id") == args.music.track_id:
+            raise ComposeRefusal("Choose another track with music_search exclude_track_ids")
+        timeline = _parse_timeline(parent.request_data.get("edit_timeline") or parent.request_data["timeline"])
+        if not previous:
+            timeline = timeline.model_copy(update={"audio": [audio for audio in timeline.audio if not audio.library_id]})
+    else:
+        from light.production_narration import compose_plan
+
+        confirmed = await compose_plan(ctx, args.idempotency_key, oss.host)
+        timeline = confirmed or _parse_timeline(args.timeline or {})
+        if confirmed and args.music:
+            args = args.model_copy(update={"music": args.music.model_copy(update={"cut_after": []})})
+    if args.music is None:
+        return await _resolve_shot_assets(timeline, ctx, oss), {}
+
+    selection = args.music
+    track = netease_music.prepared(selection.track_id, ctx)
+    if track is None and netease_music.api_base() and selection.track_id.startswith("netease:"):
+        raise ComposeRefusal("Prepare the selected live track with music_search prepare_track_id first")
+    if track is None:
+        track = next((item for item in music_catalog.catalogue() if item.id == selection.track_id), None)
+    fallback = None if track else await bgm_library.track(selection.track_id)
+    if not track and not fallback:
+        raise ComposeRefusal("Unknown music track; select a track returned by music_search")
+    if len(timeline.audio) >= 6 or any(item.library_id for item in timeline.audio):
+        raise ComposeRefusal("Leave one audio track free and pass background music only in music.track_id")
+    snapped = []
+    if track and selection.cut_after:
+        from tool.video_production import _find_owned_asset
+
+        lengths = {}
+        requested = sorted(set(selection.cut_after))
+        for index in requested:
+            if not 1 <= index < len(timeline.shots):
+                raise ComposeRefusal("cut_after uses one-based shot numbers before a cut")
+            asset = timeline.shots[index - 1].asset
+            if asset not in lengths and "://" not in asset:
+                row = await _find_owned_asset(asset, ctx)
+                lengths[asset] = float((row.meta or {}).get("duration_sec") or 0) if row else 0
+        timeline, snapped = music_catalog.snap_cuts(timeline, track, selection, lengths)
+
+    edit = await _resolve_shot_assets(timeline, ctx, oss)
+    bed = music_catalog.music_audio(selection, edit, sec=track.sec if track else fallback.sec,
+                                    track=track, host=oss.host)
+    soundtrack = track.credit() if track else {"track_id": fallback.id, "attribution": fallback.name}
+    soundtrack.update({"in_sec": bed.in_sec, "beat_cuts": snapped})
+    if parent:
+        soundtrack["replaces_job_id"] = parent.id
+    final = edit.model_copy(update={"audio": [*edit.audio, bed]})
+    return final, {"edit_timeline": edit.model_dump(mode="json"), "soundtrack": soundtrack}
+
+
+async def _replacement_source(job_id: str | None, ctx: ToolContext):
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    query = select(VideoJob).where(
+        VideoJob.kind == KIND, VideoJob.user_id == ctx.user_id,
+        VideoJob.session_id == ctx.session_id, VideoJob.status == "completed",
+    )
+    if job_id:
+        query = query.where(VideoJob.id == job_id)
+    async with get_db_session() as db:
+        job = await db.scalar(query.order_by(VideoJob.completed_at.desc(), VideoJob.id.desc()).limit(1))
+    if job is None or not (job.request_data or {}).get("timeline"):
+        raise ComposeRefusal("No completed editable composition in this conversation")
+    return job
+
+
 async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:
     try:
         oss = _oss_or_refuse()
-        timeline = await _resolve_shot_assets(_parse_timeline(args.timeline or {}), ctx, oss)
+        timeline, _music_data = await _prepare_timeline(args, ctx, oss)
         compiled = _compile(timeline, output_url=f"https://{oss.host}/assets/{ctx.user_id}/validate/preview.mp4")
     except Exception as exc:
         return ToolResult(title="Timeline rejected", output=_public(exc), metadata={"valid": False})
@@ -286,7 +376,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
 
     try:
         oss = _oss_or_refuse()
-        timeline = await _resolve_shot_assets(_parse_timeline(args.timeline or {}), ctx, oss)
+        timeline, music_data = await _prepare_timeline(args, ctx, oss)
         await _check_budget(ctx)
         from billing.media import precheck_compose
 
@@ -303,7 +393,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
     try:
         job, asset, created = await vp._create_pending_job(
             ctx=ctx, kind=KIND, idempotency_key=args.idempotency_key or "", model="ims",
-            prompt=None, request_data={"timeline": resolved}, filename=args.filename or None,
+            prompt=None, request_data={"timeline": resolved, **music_data}, filename=args.filename or None,
             request_hash=request_hash,
         )
     except RuntimeError as exc:
@@ -340,6 +430,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
                                     note=f"{compiled.duration_sec}s {_price.tier}", exclude_job_id=job.id):
             await vp._update_job(job.id, request_data={
                 "timeline": resolved,
+                **music_data,
                 "ims_timeline": compiled.timeline,
                 "output_media_config": compiled.output_media_config,
                 "client_token": compiled.client_token,
@@ -525,6 +616,9 @@ async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: V
     duration = (job.request_data or {}).get("duration_sec")
     if duration is not None:
         lines.append(f"duration_sec={duration}")
+    soundtrack = (job.request_data or {}).get("soundtrack") or {}
+    if soundtrack:
+        lines.append(f"soundtrack={json.dumps(soundtrack, ensure_ascii=False)}")
     if workspace_path:
         lines.append(f"workspace_path={workspace_path}")
     if job.status == "completed":
@@ -610,7 +704,7 @@ async def execute_compose(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         return await _execute_schema()
     if args.action == "validate":
         return await _execute_validate(args, ctx)
-    if args.action == "submit":
+    if args.action in {"submit", "replace_music"}:
         return await _execute_submit(args, ctx)
     return await _execute_job_action(args, ctx)
 
@@ -619,7 +713,11 @@ VIDEO_COMPOSE_DESCRIPTION = """\
 Compose a finished MP4 from shots you already own — transitions, styled \
 captions, animated banners — rendered in the cloud (Aliyun IMS), not with \
 ffmpeg in the sandbox. Pass an OpenBox timeline (action="schema" gives the \
-exact format and the verified effect names) plus an idempotency_key. Shots \
+exact format and the verified effect names) plus an idempotency_key. Set \
+music={track_id, cut_after, in_sec, volume} with the ID from music_search; \
+only track_id is required. Use action="replace_music" with music and an \
+idempotency_key to preserve all cuts of a completed composition in this chat. \
+job_id may be omitted to use the latest completed cut. Shots \
 reference asset_ids from video_generate or share_file; assets never leave the \
 account. Use action="validate" first: it is free and reports duration and \
 warnings. Then action="submit", and "wait"/"status" on the job_id until \

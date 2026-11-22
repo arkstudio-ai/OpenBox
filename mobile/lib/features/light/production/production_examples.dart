@@ -8,6 +8,7 @@ import '../../../shared/widgets/media_viewer.dart';
 import '../api/light_api.dart';
 import 'production_api.dart';
 import 'production_media.dart';
+import 'production_voice.dart' show VoiceFooter;
 import 'production_widgets.dart';
 
 final _examplesProvider = FutureProvider.autoDispose
@@ -32,15 +33,17 @@ class ProductionExamples extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final request = _examplesProvider(task.kind.id);
     final result = ref.watch(request);
-    if (task.kind.imagesOnly) {
+    if (task.kind.imagesOnly || task.kind == ProductionKind.video) {
       return result.when(
         data: (rows) => rows.isEmpty
             ? Text(
-                i18n.t(
-                  task.kind == ProductionKind.poster
-                      ? 'light:production.examples.emptyPoster'
-                      : 'light:production.examples.emptyMenu',
-                ),
+                i18n.t(switch (task.kind) {
+                  ProductionKind.poster =>
+                    'light:production.examples.emptyPoster',
+                  ProductionKind.video =>
+                    'light:production.examples.emptyVideo',
+                  _ => 'light:production.examples.emptyMenu',
+                }),
               )
             : _ExampleCategories(
                 rows: rows,
@@ -167,9 +170,11 @@ class _ExampleCategories extends ConsumerWidget {
     if (scene == null || example.sceneLabel.isEmpty) {
       return i18n.t('light:production.examples.unclassified');
     }
-    final categories = task.kind == ProductionKind.poster
-        ? 'posterCategories'
-        : 'menuCategories';
+    final categories = switch (task.kind) {
+      ProductionKind.poster => 'posterCategories',
+      ProductionKind.video => 'videoCategories',
+      _ => 'menuCategories',
+    };
     final path = 'production.examples.$categories.$scene';
     final shippedLabel = i18n.bundle.lookup('zh-CN', 'light', path);
     return shippedLabel == example.sceneLabel
@@ -199,7 +204,8 @@ class _ExampleCategories extends ConsumerWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 12.0;
-            final width = constraints.maxWidth >= 300
+            final width =
+                task.kind != ProductionKind.video && constraints.maxWidth >= 300
                 ? (constraints.maxWidth - spacing) / 2
                 : constraints.maxWidth;
             return Wrap(
@@ -266,68 +272,196 @@ class _ExampleCategoryCard extends ConsumerWidget {
             : () async {
                 final id = await Navigator.of(context).push<String>(
                   MaterialPageRoute(
-                    builder: (context) => Scaffold(
-                      backgroundColor: context.tokens.bg,
-                      appBar: AppBar(title: Text(title)),
-                      body: SafeArea(
-                        top: false,
-                        child: _ExampleList(
-                          rows: rows,
-                          selected: selectedId,
-                          showTags: true,
-                        ),
-                      ),
-                    ),
+                    builder: (context) => kind == ProductionKind.video
+                        ? _VideoCategoryPage(
+                            title: title,
+                            rows: rows,
+                            selected: selectedId,
+                          )
+                        : Scaffold(
+                            backgroundColor: context.tokens.bg,
+                            appBar: AppBar(title: Text(title)),
+                            body: SafeArea(
+                              top: false,
+                              child: _ExampleList(
+                                rows: rows,
+                                selected: selectedId,
+                                showTags: true,
+                              ),
+                            ),
+                          ),
                   ),
                 );
                 if (id != null && context.mounted) onChoose(id);
               },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AspectRatio(
-              aspectRatio: 1.65,
-              child: _ExampleThumbnail(row: rows.first),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Row(
+        child: kind == ProductionKind.video
+            ? _videoRow(t, selected)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  AspectRatio(
+                    aspectRatio: 1.65,
+                    child: _ExampleThumbnail(row: rows.first),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                    child: Row(
                       children: [
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.ink,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: t.ink,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                i18n.t(
+                                  'light:production.examples.count',
+                                  count: rows.length,
+                                ),
+                                style: TextStyle(color: t.n800, fontSize: 12),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          i18n.t(
-                            'light:production.examples.count',
-                            count: rows.length,
-                          ),
-                          style: TextStyle(color: t.n800, fontSize: 12),
+                        Icon(
+                          selected ? Icons.check_circle : Icons.chevron_right,
+                          color: selected ? t.a700 : t.n700,
+                          size: 19,
                         ),
                       ],
                     ),
                   ),
-                  Icon(
-                    selected ? Icons.check_circle : Icons.chevron_right,
-                    color: selected ? t.a700 : t.n700,
-                    size: 19,
-                  ),
                 ],
               ),
-            ),
-          ],
+      ),
+    );
+  }
+
+  Widget _videoRow(BossipTokens t, bool selected) => Padding(
+    padding: const EdgeInsets.all(10),
+    child: Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 124,
+            height: 88,
+            child: _ExampleThumbnail(row: rows.first),
+          ),
         ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              color: t.ink,
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+        ),
+        Icon(
+          selected ? Icons.check_circle : Icons.chevron_right,
+          color: selected ? t.a700 : t.n700,
+          size: 20,
+        ),
+      ],
+    ),
+  );
+}
+
+class _VideoCategoryPage extends ConsumerStatefulWidget {
+  const _VideoCategoryPage({
+    required this.title,
+    required this.rows,
+    required this.selected,
+  });
+  final String title;
+  final List<LightExamplePreview> rows;
+  final String? selected;
+
+  @override
+  ConsumerState<_VideoCategoryPage> createState() => _VideoCategoryPageState();
+}
+
+class _VideoCategoryPageState extends ConsumerState<_VideoCategoryPage> {
+  late String? _selected =
+      widget.rows.any((row) => row.exampleId == widget.selected)
+      ? widget.selected
+      : null;
+
+  @override
+  Widget build(BuildContext context) {
+    final i18n = ref.watch(i18nProvider);
+    final t = context.tokens;
+    return Scaffold(
+      appBar: AppBar(title: Text(ProductionKind.video.label(i18n))),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          ProductionHeading(
+            widget.title,
+            description: i18n.t('light:production.examples.choose'),
+          ),
+          const SizedBox(height: 16),
+          for (final row in widget.rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Material(
+                color: _selected == row.exampleId ? t.hairSoft : t.card,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(
+                    color: _selected == row.exampleId ? t.a700 : t.hair,
+                  ),
+                ),
+                child: InkWell(
+                  key: Key('production-example-${row.exampleId}'),
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => setState(() => _selected = row.exampleId),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Row(
+                      children: [
+                        _ExamplePreview(row: row, width: 126, height: 80),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            row.titleFor(i18n.language),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          _selected == row.exampleId
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                          color: _selected == row.exampleId ? t.a700 : t.n700,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      bottomNavigationBar: VoiceFooter(
+        label: i18n.t('light:production.examples.useVideoTemplate'),
+        onPressed: _selected == null
+            ? null
+            : () => Navigator.pop(context, _selected),
       ),
     );
   }
@@ -407,9 +541,10 @@ class _ExampleList extends ConsumerWidget {
 }
 
 class _ExamplePreview extends ConsumerWidget {
-  const _ExamplePreview({required this.row});
+  const _ExamplePreview({required this.row, this.width = 54, this.height = 54});
 
   final LightExamplePreview row;
+  final double width, height;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -442,8 +577,8 @@ class _ExamplePreview extends ConsumerWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: SizedBox(
-            width: 54,
-            height: 54,
+            width: width,
+            height: height,
             child: _ExampleThumbnail(row: row),
           ),
         ),

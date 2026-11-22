@@ -212,6 +212,10 @@ async def deliver(job, *, prompt: str = DELIVERED_PROMPT, text: str = DELIVERED_
     ctx = ToolContext(session_id=job.session_id, user_id=job.user_id, workspace_id=session.workspace_id,
                       project_id=session.project_id or "", message_id=assistant.id)
     attached = await vp._attach_completed(job, ctx)
+    soundtrack = (job.request_data or {}).get("soundtrack") or {}
+    if attached and soundtrack.get("license_url"):
+        text += (f"\n\n配乐《{soundtrack['attribution']}》。音轨已截取和混音。"
+                 f"[曲目]({soundtrack['source_url']}) · [许可]({soundtrack['license_url']})")
     await chat.say(job.session_id, assistant.id, job.user_id,
                    text if attached else "成片已经在上面了。")
     await chat.finish(job.session_id, assistant.id, job.user_id)

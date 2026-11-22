@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bossip_mobile/app/app.dart';
 import 'package:bossip_mobile/app/router.dart';
+import 'package:bossip_mobile/features/auth/state/auth_flow.dart';
 import 'package:bossip_mobile/features/chat/chat_screen.dart';
 import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/features/light/production/production_api.dart';
@@ -10,7 +11,10 @@ import 'package:bossip_mobile/features/light/production/production_page.dart';
 import 'package:bossip_mobile/main.dart' as app;
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/api/ui_mode_store.dart';
 import 'package:bossip_mobile/shared/config/env.dart';
+import 'package:bossip_mobile/shared/i18n/i18n.dart';
+import 'package:bossip_mobile/shared/models/ui_mode.dart';
 import 'package:bossip_mobile/shared/router/paths.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -39,6 +43,8 @@ void main() {
   const output = String.fromEnvironment('FOOTAGE_QA_OUT');
   const resume = String.fromEnvironment('FOOTAGE_QA_RESUME');
   const creative = bool.fromEnvironment('FOOTAGE_QA_CREATIVE');
+  const replaceMusic = bool.fromEnvironment('FOOTAGE_QA_REPLACE_MUSIC');
+  const passwordFile = String.fromEnvironment('FOOTAGE_QA_PASSWORD_FILE');
 
   testWidgets(
     'App edits the selected real footage and plays the IMS result',
@@ -92,8 +98,17 @@ void main() {
         tester.element(find.byType(BossipApp)),
         listen: false,
       );
-      await until(() => !c.read(authProvider).isLoading, 'signed-in');
+      await until(() => !c.read(authProvider).isLoading, 'auth-ready');
+      if (c.read(authProvider).user?.username != 'devtest' &&
+          passwordFile.isNotEmpty) {
+        await c
+            .read(authFlowProvider)
+            .login('devtest', File(passwordFile).readAsStringSync().trim());
+      }
       expect(c.read(authProvider).user?.username, 'devtest');
+      mark('signed-in');
+      await c.read(uiModeProvider.notifier).setMode(UiMode.light);
+      c.read(i18nProvider.notifier).setLanguage('zh-CN');
       final router = c.read(routerProvider);
       final api = c.read(lightProductionApiProvider);
       final dio = c.read(apiDioProvider);
@@ -217,12 +232,59 @@ void main() {
         'same-agent-session',
       );
       await capture('advanced');
+      var expectedAssetId = task.output?.id;
+      if (replaceMusic) {
+        final field = find.byType(EditableText).hitTestable().last;
+        await tester.enterText(
+          field,
+          '帮我换一首更俏皮的配乐，画面、剪点、字幕和原声都保留，只换音乐，直接合成一版。',
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        mark('replace-music-send');
+        final send = find.byIcon(Icons.arrow_upward).hitTestable().last;
+        await tester.tap(send);
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump(const Duration(milliseconds: 300));
+        final deadline = DateTime.now().add(const Duration(minutes: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          final latest = await api.get(id);
+          if (latest.status == 'completed' &&
+              latest.output?.video == true &&
+              latest.output?.id != task.output?.id) {
+            expectedAssetId = latest.output!.id;
+            break;
+          }
+          await tester.pump(const Duration(milliseconds: 200));
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+        await capture('replacement-chat');
+        expect(
+          expectedAssetId,
+          isNot(task.output?.id),
+          reason: 'The Agent should attach a new version.',
+        );
+        mark('replacement-ready');
+        final asset = (await dio.get<Map<String, dynamic>>(
+          '/api/assets/$expectedAssetId/url',
+        )).data!;
+        await Dio().download(
+          asset['url'] as String,
+          '${evidence.path}/replaced.mp4',
+        );
+        File('${evidence.path}/replacement.json').writeAsStringSync(
+          jsonEncode({
+            'session': id,
+            'old_asset': task.output?.id,
+            'new_asset': expectedAssetId,
+          }),
+        );
+      }
       await tap('production-return');
       await until(
         () => shown('production-result-preview'),
         'returned-to-same-result',
       );
-      expect((await api.get(id)).output?.id, task.output?.id);
+      expect((await api.get(id)).output?.id, expectedAssetId);
       expect(tester.takeException(), isNull);
     },
     skip: directory.isEmpty && resume.isEmpty,

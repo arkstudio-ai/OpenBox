@@ -44,7 +44,8 @@ class UsageDateRange:
 
 
 USAGE_KINDS = {"chat", "title", "suggestions", "compaction", "compaction_chunk", "bash_judge", "cron_summary",
-               "video_compose", "video_generate", "image_gen", "video_transcribe", "video_analyze", "hot_trends"}
+               "video_compose", "video_generate", "image_gen", "video_transcribe", "video_analyze", "hot_trends",
+               "voice_synthesis", "narration_script", "footage_analyze"}
 
 
 def usage_kind(kind: str | None = Query(None, min_length=1, max_length=32)) -> str | None:

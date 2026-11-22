@@ -286,7 +286,7 @@ async def production_previews(entry_id: str) -> list[dict]:
 
     tax = await refresh()
     rows = sorted(await _active(entry_id), key=lambda row: (row.rating, row.created_at, row.id), reverse=True)
-    if entry_id not in {"menu", "poster"}:
+    if entry_id not in {"menu", "poster", "video"}:
         return [shown for row in rows if (shown := preview(row)) is not None]
 
     order = {scene: index for index, scene in enumerate(tax.scene_ids(entry_id))}
@@ -294,7 +294,7 @@ async def production_previews(entry_id: str) -> list[dict]:
     previews = []
     for row in rows:
         shown = preview(row)
-        if shown is None:
+        if shown is None or (entry_id == "video" and row.scene not in order):
             continue
         scene = row.scene if row.scene in order else None
         previews.append({

@@ -87,7 +87,7 @@ async def warm(model: str) -> None:
         pass  # opportunistic; the check keeps its own deadline
 
 
-async def complete(model: str, system: str, text: str, timeout: float) -> str:
+async def complete(model: str, system: str, text: str, timeout: float, *, meter=None) -> str:
     """One plain completion with the model's reasoning turned down as far as it goes."""
     from agent.llm import _get_provider_kwargs, _needs_responses_api, reasoning_profile
     provider = _get_provider_kwargs(model)
@@ -124,6 +124,8 @@ async def complete(model: str, system: str, text: str, timeout: float) -> str:
     if response.status_code >= 400:
         raise RuntimeError(f"provider_http_{response.status_code}")
     data = response.json()
+    if meter is not None:
+        await meter.finish(data.get("usage"))
     if "choices" in data:
         return str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
     return str(data.get("output_text") or "".join(

@@ -35,8 +35,8 @@ def base_catalogue() -> dict:
         from core.config import PRODUCT_CHAT_TIERS
 
         bundled = json.loads(packaged.read_text())["models"]
-        for _, model_id, *_ in PRODUCT_CHAT_TIERS:
-            model = model_id.rsplit("/", 1)[-1]
+        models = [model_id.rsplit("/", 1)[-1] for _, model_id, *_ in PRODUCT_CHAT_TIERS]
+        for model in [*models, "qwen-audio-3.1-tts-flash"]:
             data["models"].setdefault(model, bundled[model])
     _base_cache = (str(path), mtime, data)
     return data

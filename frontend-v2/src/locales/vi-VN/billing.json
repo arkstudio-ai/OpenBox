@@ -128,6 +128,9 @@
       "video_compose": "Ghép video",
       "video_generate": "Tạo video",
       "image_gen": "Tạo ảnh",
+      "footage_analyze": "Phân tích cảnh quay",
+      "narration_script": "Biên tập lời đọc",
+      "voice_synthesis": "Tổng hợp giọng nói",
       "video_transcribe": "Chuyển giọng nói thành chữ",
       "video_analyze": "Phân tích video",
       "hot_trends": "Xu hướng nóng"

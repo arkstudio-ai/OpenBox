@@ -54,7 +54,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍一张你的店或招牌，做成你的第一条视频。</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>用于录制语音消息或与个人助理通话。发送的语音消息会保存供回放，并转成文字。</string>
+	<string>用于录制语音消息、与个人助理通话，或录制制作配音所需的声音样本。发送的语音消息会保存供回放，并转成文字。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于从相册选择照片或视频上传到你的工作区。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

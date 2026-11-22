@@ -135,6 +135,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
     from tool.capability_search import capability_search_tool
     from tool.video_production import video_generate_tool, video_transcribe_tool
     from tool.video_compose import video_compose_tool
+    from tool.music_search import music_search_tool
     from tool.video_analyze import video_analyze_tool
     from tool.footage_analyze import footage_analyze_tool
     from tool.hot_trends import hot_trends_tool
@@ -151,7 +152,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
         skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool, image_to_pdf_tool, example_pick_tool,
         light_production_form_tool, light_remake_tool, light_wan_story_tool,
-        video_generate_tool, video_transcribe_tool, video_compose_tool, video_analyze_tool, footage_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
+        video_generate_tool, video_transcribe_tool, video_compose_tool, music_search_tool, video_analyze_tool, footage_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
         computer_tool, browser_mode_tool, browser_action_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
         memory_prepare_tool, memory_search_tool, memory_read_sources_tool, memory_read_more_tool, current_task_state_tool, memory_forget_tool,

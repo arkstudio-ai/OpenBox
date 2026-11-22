@@ -431,7 +431,8 @@ async def _workspace_lock(workspace_id: str) -> AsyncIterator[None]:
 
 @asynccontextmanager
 async def hold_for_submit(session_id: str | None, *, credits: Decimal | None, step: str,
-                          exclude_job_id: str | None = None, already_admitted: bool = False) -> AsyncIterator[None]:
+                          exclude_job_id: str | None = None, already_admitted: bool = False,
+                          workspace_id: str | None = None) -> AsyncIterator[None]:
     """Admit one paid submit only if the balance still covers it after everything in flight.
 
     Enforce mode only. Holds the workspace's balance row lock until the body
@@ -447,18 +448,20 @@ async def hold_for_submit(session_id: str | None, *, credits: Decimal | None, st
     from db.base import get_db_session
     from db.models.session import Session
 
-    async with get_db_session() as db:
-        session = await db.get(Session, session_id or "")
-    if session is None:
-        raise BillingError("BILLING_SESSION_REQUIRED", "A billable session is required")
-    async with _workspace_lock(session.workspace_id), get_db_session() as db:
-        account = await lock_balance(db, session.workspace_id)
+    if workspace_id is None:
+        async with get_db_session() as db:
+            session = await db.get(Session, session_id or "")
+        if session is None:
+            raise BillingError("BILLING_SESSION_REQUIRED", "A billable session is required")
+        workspace_id = session.workspace_id
+    async with _workspace_lock(workspace_id), get_db_session() as db:
+        account = await lock_balance(db, workspace_id)
         from billing.subscriptions import ensure_period_allowance
         await ensure_period_allowance(db, account, datetime.now(timezone.utc))
         if account.balance <= 0:
             raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
         need = Decimal(credits) if credits is not None and credits > 0 else Decimal(0)
-        in_flight = await workspace_in_flight(db, session.workspace_id, exclude_job_id=exclude_job_id)
+        in_flight = await workspace_in_flight(db, workspace_id, exclude_job_id=exclude_job_id)
         available = account.balance - in_flight
         if available < need:
             raise BillingError(

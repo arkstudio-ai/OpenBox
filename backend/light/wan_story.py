@@ -152,7 +152,8 @@ def is_complete_cut(run: dict, job, *, require_delivery_review: bool = True) -> 
         except (KeyError, TypeError, ValueError):
             return False
     req = job.request_data or {}
-    shots = (req.get("timeline") or {}).get("shots") or []
+    timeline = req.get("timeline") or {}
+    shots = timeline.get("shots") or []
     if len(shots) != len(cuts) or len({cut["source"] for cut in cuts}) != len(cuts):
         return False
     for shot, cut in zip(shots, cuts):

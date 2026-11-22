@@ -106,6 +106,8 @@ class EditForm(FormFields):
     video_tier: VideoTier | None = None
     chat_tier: ChatTier | None = None
     reference_example_id: str | None = Field(default=None, max_length=64)
+    voice_id: str | None = Field(default=None, max_length=64)
+    redo_narration: bool | None = None
 
 
 class StartForm(BaseModel):
@@ -118,6 +120,7 @@ class FormAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
     action: Action
+    narration_preview_id: str | None = Field(default=None, max_length=64)
     request_id: str = Field(min_length=16, max_length=48, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
@@ -188,7 +191,7 @@ def restrict_guided_tools(tools, session, action):
     elif action == "render":
         allowed = {"capability_search"} | {
             "video": {"video_generate", "video_compose", "image_gen", "footage_analyze"},
-            "footage_edit": {"footage_analyze", "video_compose", "video_transcribe"},
+            "footage_edit": {"footage_analyze", "music_search", "video_compose", "video_transcribe"},
             "menu": {"image_gen"},
             "poster": {"image_gen"},
         }[session.light_entry]
@@ -272,7 +275,10 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "compose with video_compose into one vertical MP4. Omit model/resolution to use the picked route. Use "
             "its advertised ratio/input options. If video reference is unsupported by the selected model, inspect it with "
             "footage_analyze and describe it in the video prompt. Use only confirmed words for titles/dialogue. "
-            "Deliver the final attachment. For a single shot call video_generate action=attach after it completes."
+            "When the script calls for speech, generate it in the relevant shot with its speaker, exact words and "
+            "timing via spoken_line and native audio. Use the clip audio for all speech and preserve it in the edit. "
+            "Deliver the final attachment. "
+            "A complete single shot may be attached directly."
         )
         if form.get("video_tier") == "fast":
             task += (
@@ -280,8 +286,19 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
                 " With reference pictures, prepare an intentional opening frame using the materials, then use"
                 " first_frame (and optionally last_frame) with ratio=adaptive. Inspect reference videos as needed."
             )
+    elif entry == "footage_edit" and (form.get("run") or {}).get("confirmed_narration"):
+        tools = "music_search, video_compose"
+        cut = form["run"]["confirmed_narration"]
+        task = (
+            "The user approved the exact picture cuts, replacement voice and timed captions after playback. "
+            "Choose a fitting instrumental bed through music_search if possible and submit using video_compose. "
+            "Submit timeline={} (the server supplies the approved cut), music={track_id, volume} when available, "
+            "and this turn's composition idempotency key. The approved timings cannot change. "
+            "On delivery=automatic end the turn so the watcher attaches the complete MP4. "
+            f"Approved visual beats: {json.dumps([shot['label'] for shot in cut['shots']], ensure_ascii=False)}. "
+        )
     elif entry == "footage_edit":
-        tools = "footage_analyze, video_compose"
+        tools = "footage_analyze, music_search, video_compose"
         task = (
             "If videos are selected, read them in one footage_analyze call. Reuse its cached clip descriptions, "
             "action timings and ASR sentences. Use video_transcribe only for a needed spoken clip whose "
@@ -301,10 +318,25 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "by selecting close-up source ranges or applying a subtle zoom_in on a suitable non-speaking shot. "
             "Use one or two purposeful action cuts or verified short IMS fades/wipes, avoiding overlap across "
             "speech. Do not invent names, prices, claims or voiceover. "
-            "Choose one IMS library track that suits the style when available, unless the owner wants no "
-            "music or the selected footage has music that would clash. Use library_id from the analysis "
-            "catalogue, low volume, fades, and duck_under_captions for retained speech. "
+            "Unless the owner asks for no music, use music_search to find an instrumental track that suits "
+            "this particular edit. Choose the track yourself and pass music={track_id, cut_after, volume} "
+            "alongside timeline to video_compose. Keep background music out of audio[] in that case. "
+            "For an important food or action cut between two silent shots, choose its timing using the returned "
+            "beat_seconds and list the preceding shot's one-based number in cut_after. Leave a little editing "
+            "room at the start and end of those source ranges so it can align to a nearby beat. "
+            "Protect whole spoken phrases and keep their timed ASR captions for automatic music ducking. "
+            "If music_search returns no usable track, the source audio alone is fine. "
         )
+        from video.netease_music import api_base as live_music_api
+
+        if live_music_api():
+            task += (
+                "Live NetEase search is enabled for this edit. Derive natural keyword searches from the actual "
+                "footage and its intended rhythm. Pass query to music_search, decide which result fits, then "
+                "call music_search with prepare_track_id and the approximate edit length. Use its measured "
+                "beat_seconds if present. If the full source is unavailable, choose another result or refine "
+                "the keywords. Do not use any preselected track. "
+            )
         if form.get("creative_effects"):
             tools += ", image_gen"
             task += (

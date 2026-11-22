@@ -7,10 +7,27 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/utils/error_text.dart';
 import 'production_api.dart';
 import 'production_media.dart';
+import 'production_voice.dart'
+    show productionVoicesProvider, savedVoiceName, voiceLabel;
 import 'production_widgets.dart';
 
 String productionErrorText(I18nState i18n, Object error) {
   final api = apiErrorOf(error);
+  final voiceKey = switch (api?.code) {
+    'PRODUCTION_VOICE_UNAVAILABLE' => 'voiceUnavailable',
+    'PRODUCTION_VOICE_SAMPLE' => 'sampleError',
+    'PRODUCTION_VOICE_CONSENT' => 'consent',
+    'INSUFFICIENT_CREDITS' => 'needCredits',
+    'PRODUCTION_VOICE_PROVIDER' ||
+    'PRODUCTION_VOICE_CHANGED' => 'providerError',
+    'PRODUCTION_NARRATION_PLAN' => 'planError',
+    'PRODUCTION_NARRATION_DETECTION' => 'speechUnknown',
+    'PRODUCTION_NARRATION_PREVIEW' => 'previewError',
+    'PRODUCTION_NARRATION_CONFIRM' ||
+    'PRODUCTION_NARRATION_STATE' => 'confirmError',
+    _ => null,
+  };
+  if (voiceKey != null) return i18n.t('light:production.voice.$voiceKey');
   if (api?.code == 'LIGHT_VIDEO_TIER_UNAVAILABLE') {
     return i18n.t('light:production.videoTier.manualUnavailable');
   }
@@ -245,6 +262,13 @@ class ProductionResult extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final media = task.output!;
     final style = productionStyleLabel(i18n, task);
+    final voiced =
+        task.kind == ProductionKind.footage &&
+        task.redoNarration &&
+        task.voiceId.isNotEmpty;
+    final voices = voiced && task.voiceId.startsWith('voice:')
+        ? ref.watch(productionVoicesProvider).valueOrNull
+        : null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
@@ -254,6 +278,21 @@ class ProductionResult extends ConsumerWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: ProductionTag(text: style),
+          ),
+        ],
+        if (voiced) ...[
+          const SizedBox(height: 10),
+          Text(
+            i18n.t(
+              'light:production.voice.doneVoice',
+              vars: {
+                'voice': voiceLabel(
+                  i18n,
+                  task.voiceId,
+                  name: savedVoiceName(voices, task.voiceId),
+                ),
+              },
+            ),
           ),
         ],
         const SizedBox(height: 18),

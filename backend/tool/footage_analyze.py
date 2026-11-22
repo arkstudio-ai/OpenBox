@@ -216,6 +216,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
     reading = {
         "v": READING_VERSION, "transcript": str(heard.get("text") or "").strip() or None,
         "sentences": heard.get("sentences") or [], "subject": seen.get("subject"),
+        "speech_checked": meta.get("has_audio") is False or (transcribe and meta.get("has_audio") is True and not heard.get("error")),
         "segments": seen.get("segments") or [], "best": seen.get("best"),
         "beats": [b for b in (seen.get("beats") or []) if isinstance(b, dict)][:3],
         "hook": str(seen.get("hook") or "").strip() or None,

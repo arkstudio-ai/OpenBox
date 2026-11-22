@@ -18,6 +18,15 @@ seconds, not in generating anything. **Never call `video_generate` or
 `image_gen` here**, and never use bash, files or desktop scripts: everything
 runs in the cloud.
 
+For a confirmed App render, follow the App's saved choices without opening any
+question cards. Use `music_search` to find the track and pass its ID in
+`video_compose.music.track_id`; keep that bed out of `timeline.audio`.
+Choose meaningful silent shot boundaries for `music.cut_after`.
+When a finished cut's owner asks to change only the backing music in advanced
+chat, choose another track with `music_search` and use
+`video_compose(action="replace_music")` with the current completed job ID,
+the new track ID and a new idempotency key. Reuse the existing edit.
+
 ## Steps
 
 The Light page shows these steps; put the matching `step_id` on every

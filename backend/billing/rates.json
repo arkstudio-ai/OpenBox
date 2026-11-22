@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-20.1",
+  "version": "2026-11-21.1",
   "verified_at": "2026-09-05",
   "credits_per_cny": "1",
   "usd_cny": "6.7787",
@@ -13,6 +13,23 @@
     "google": "https://ai.google.dev/gemini-api/docs/pricing"
   },
   "models": {
+    "qwen-audio-3.1-tts-flash": {
+      "vendor": "alibaba",
+      "currency": "CNY",
+      "input": "1.5",
+      "output": "12",
+      "verified_at": "2026-11-21",
+      "source": "https://help.aliyun.com/zh/model-studio/model-pricing#qwen-audio-tts",
+      "cost": {
+        "basis": "百炼华北2刊例",
+        "channel": "dashscope",
+        "currency": "CNY",
+        "input": "1.5",
+        "output": "12",
+        "verified_at": "2026-11-21",
+        "source": "https://help.aliyun.com/zh/model-studio/model-pricing#qwen-audio-tts"
+      }
+    },
     "gpt-6.2-sol": {
       "vendor": "openai",
       "currency": "USD",

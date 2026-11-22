@@ -141,6 +141,9 @@
       "video_compose": "视频合成",
       "video_generate": "视频生成",
       "image_gen": "图片生成",
+      "footage_analyze": "素材分析",
+      "narration_script": "口播文案优化",
+      "voice_synthesis": "语音合成",
       "video_transcribe": "语音转写",
       "video_analyze": "视频拆解",
       "hot_trends": "热点采集"

@@ -1,0 +1,154 @@
+{
+  "page": {
+    "create": "Tạo tác vụ theo lịch",
+    "pauseAll": "Tạm dừng tất cả",
+    "resumeAll": "Tiếp tục tất cả",
+    "loading": "Đang tải tác vụ theo lịch…",
+    "loadFailed": "Không tải được các tác vụ theo lịch. Hãy làm mới rồi thử lại.",
+    "empty": {
+      "title": "Chưa có tác vụ theo lịch",
+      "body": "Mỗi tác vụ thuộc về một dự án và chạy trong thư mục của dự án đó. Nếu được tạo trong cuộc trò chuyện, tác vụ cũng gửi kết quả về cuộc trò chuyện đó."
+    },
+    "title": "Tác vụ theo lịch",
+    "subtitle": "Quản lý theo dự án. Agent thực hiện các tác vụ đúng lịch.",
+    "createManual": "Tạo thủ công",
+    "createChat": "Tạo qua trò chuyện"
+  },
+  "status": {
+    "healthy": "Bộ lập lịch đang hoạt động",
+    "unhealthy": "Bộ lập lịch gặp sự cố",
+    "lastTick": "Lần kiểm tra gần nhất: {{when}}",
+    "enabledCount_one": "{{count}} tác vụ đang bật",
+    "enabledCount_other": "{{count}} tác vụ đang bật",
+    "runningCount_one": "{{count}} tác vụ đang chạy",
+    "runningCount_other": "{{count}} tác vụ đang chạy"
+  },
+  "job": {
+    "state": {
+      "running": "Đang chạy",
+      "enabled": "Đã bật",
+      "disabled": "Đã tắt",
+      "autoDisabled": "Đã tự tắt sau nhiều lần thất bại"
+    },
+    "action": {
+      "runNow": "Chạy ngay",
+      "enable": "Bật",
+      "disable": "Tắt",
+      "edit": "Chỉnh sửa",
+      "delete": "Xóa"
+    },
+    "nextRun": "Lần tới: {{when}}",
+    "lastRun": "Lần gần nhất: {{when}}",
+    "stats": "{{total}} lượt chạy · {{ok}} thành công · {{failed}} thất bại",
+    "showRuns": "Xem các lượt chạy",
+    "lastError": "Lượt gần nhất thất bại và tác vụ đã bị tắt. Xem lịch sử để biết chi tiết.",
+    "deleteConfirm": {
+      "title": "Xóa tác vụ theo lịch",
+      "body": "Xóa “{{name}}”? Bạn không thể hoàn tác thao tác này. Lịch sử chạy được lưu trong 30 ngày."
+    },
+    "hideRuns": "Ẩn lịch sử chạy",
+    "manageInAssistant": "Quản lý lịch và xem các tác vụ của lịch này trong trợ lý riêng"
+  },
+  "run": {
+    "status": {
+      "ok": "Thành công",
+      "error": "Thất bại",
+      "skipped": "Đã bỏ qua",
+      "running": "Đang chạy"
+    },
+    "silent": "Không có nội dung cần báo",
+    "tokens": "{{formatted}} token",
+    "failed": "Lượt chạy này thất bại.",
+    "loading": "Đang tải lịch sử chạy…",
+    "loadFailed": "Không tải được lịch sử chạy.",
+    "empty": "Chưa có lượt chạy nào.",
+    "retentionHint": "Mỗi tác vụ lưu 20 bản ghi nội dung mới nhất. Nhật ký lượt chạy được lưu trong 30 ngày.",
+    "transcript": "Xem bản ghi"
+  },
+  "form": {
+    "createTitle": "Tạo tác vụ theo lịch",
+    "editTitle": "Chỉnh sửa tác vụ theo lịch",
+    "name": "Tên",
+    "namePlaceholder": "Ví dụ: Kiểm tra bản dựng hằng ngày",
+    "task": "Tác vụ",
+    "taskPlaceholder": "Mô tả việc Agent cần làm theo lịch…",
+    "schedule": "Lịch chạy",
+    "mode": {
+      "daily": "Hằng ngày",
+      "weekly": "Hằng tuần",
+      "interval": "Theo khoảng thời gian",
+      "custom": "Biểu thức cron"
+    },
+    "weekday": "Ngày trong tuần",
+    "time": "Giờ",
+    "timezone": "Múi giờ: {{tz}}",
+    "every": "Lặp lại mỗi",
+    "unit": "Đơn vị",
+    "unitOptions": {
+      "minutes": "Phút",
+      "hours": "Giờ"
+    },
+    "minInterval_one": "Khoảng cách tối thiểu: {{count}} phút",
+    "minInterval_other": "Khoảng cách tối thiểu: {{count}} phút",
+    "expr": "Biểu thức cron",
+    "exprHint": "Biểu thức gồm 5 trường, tính theo múi giờ {{tz}}. Tác vụ đặt vào giờ tròn có thể chạy lệch tối đa 5 phút.",
+    "saveFailed": "Không lưu được. Hãy kiểm tra dữ liệu đã nhập rồi thử lại.",
+    "cancel": "Hủy",
+    "create": "Tạo",
+    "save": "Lưu",
+    "saving": "Đang lưu…",
+    "project": "Dự án",
+    "projectHint": "Tác vụ chạy trong thư mục của dự án này. Nhật ký được lưu trong thư mục cron/."
+  },
+  "weekday": {
+    "sun": "Chủ nhật",
+    "mon": "Thứ hai",
+    "tue": "Thứ ba",
+    "wed": "Thứ tư",
+    "thu": "Thứ năm",
+    "fri": "Thứ sáu",
+    "sat": "Thứ bảy"
+  },
+  "describe": {
+    "once": "Một lần lúc {{time}}",
+    "daily": "Hằng ngày lúc {{time}}",
+    "weekly": "{{weekday}} hằng tuần lúc {{time}}",
+    "everyMinutes_one": "Mỗi {{count}} phút",
+    "everyMinutes_other": "Mỗi {{count}} phút",
+    "everyHours_one": "Mỗi {{count}} giờ",
+    "everyHours_other": "Mỗi {{count}} giờ",
+    "cron": "Cron: {{expr}}"
+  },
+  "pill": {
+    "running": "Đang chạy",
+    "paused": "Đã tạm dừng",
+    "lastOk": "Lần trước: thành công · {{when}}",
+    "lastFailed": "Lần trước: thất bại · {{when}}",
+    "neverRan": "Chưa chạy lần nào",
+    "next": "Lần tới: {{when}}",
+    "aria": "Trạng thái tác vụ theo lịch"
+  },
+  "chatCreate": {
+    "title": "Tạo qua trò chuyện",
+    "body": "Chọn dự án cho tác vụ. Agent sẽ hướng dẫn bạn thiết lập trong một cuộc trò chuyện mới.",
+    "sessionTitle": "Thiết lập tác vụ theo lịch",
+    "start": "Bắt đầu trò chuyện",
+    "starting": "Đang mở…",
+    "failed": "Không mở được cuộc trò chuyện. Hãy thử lại.",
+    "prompt": "Hãy cùng tôi thiết lập một tác vụ theo lịch. Trước tiên, giải thích ngắn gọn cách tác vụ theo lịch hoạt động ở đây. Sau đó, hỏi tôi cần làm việc gì và khi nào cần chạy. Hãy tạo tác vụ sau khi chúng ta xác nhận các chi tiết."
+  },
+  "detail": {
+    "back": "Tất cả tác vụ theo lịch",
+    "runs": "Lịch sử chạy",
+    "notFound": "Tác vụ theo lịch này không còn tồn tại.",
+    "noTranscript": "Lượt chạy này không có bản ghi.",
+    "pickRun": "Chọn một lượt chạy ở bên trái để xem chi tiết."
+  },
+  "panel": {
+    "empty": {
+      "title": "Dự án này chưa có tác vụ theo lịch",
+      "body": "Nhắn cho Agent, chẳng hạn “Mỗi sáng lúc 9 giờ…”, để tạo tác vụ cho dự án này. Bạn có thể quản lý tất cả tác vụ trên trang tác vụ."
+    },
+    "manageAll": "Quản lý tất cả tác vụ theo lịch trong Cài đặt"
+  }
+}

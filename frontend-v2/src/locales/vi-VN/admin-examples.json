@@ -1,0 +1,159 @@
+{
+  "filters": {
+    "label": "Bộ lọc",
+    "entry": "Tính năng",
+    "industry": "Ngành",
+    "shopType": "Loại cửa hàng",
+    "scene": "Thể loại",
+    "unclassified": "Chưa phân loại",
+    "status": "Trạng thái",
+    "keyword": "Tìm kiếm",
+    "placeholder": "Tiêu đề",
+    "all": "Tất cả"
+  },
+  "status": {
+    "active": "Đã bật",
+    "disabled": "Đã tắt"
+  },
+  "column": {
+    "title": "Tiêu đề",
+    "entry": "Tính năng / Thể loại",
+    "industry": "Ngành / Loại cửa hàng",
+    "tags": "Thẻ",
+    "rating": "Điểm đánh giá",
+    "status": "Trạng thái",
+    "useCount": "Lượt tham chiếu",
+    "pickCount": "Lượt chọn",
+    "updatedAt": "Cập nhật",
+    "actions": "Thao tác",
+    "card": "Thẻ tham khảo"
+  },
+  "action": {
+    "new": "Tạo thủ công",
+    "edit": "Chỉnh sửa",
+    "enable": "Bật",
+    "disable": "Tắt",
+    "preview": "Xem trước",
+    "taxonomy": "Cài đặt phân loại"
+  },
+  "list": {
+    "empty": "Chưa có mẫu nào. Chọn “Thêm vào kho mẫu” ở một lượt trong Nhật ký thực thi hoặc tạo mẫu thủ công.",
+    "error": "Không tải được kho mẫu.",
+    "loading": "Đang tải kho mẫu…",
+    "total": "Tổng cộng {{count}} mẫu"
+  },
+  "coverage": {
+    "title": "Số mẫu theo tính năng và thể loại",
+    "hint": "Chỉ đếm mẫu đã bật. Mỗi ô cần {{target}} mẫu để khách hàng thấy đủ một hàng trên thẻ mẫu.",
+    "cell": "{{label}} {{count}}/{{target}}",
+    "under": "Còn thiếu {{missing}} mẫu",
+    "unclassified": "{{count}} mẫu chưa phân loại"
+  },
+  "form": {
+    "collectTitle": "Thêm vào kho mẫu",
+    "collectDescription": "Thông tin đã được điền từ phiên làm việc. Hãy thêm loại cửa hàng, thẻ, điểm và ghi chú rồi lưu.",
+    "editTitle": "Chỉnh sửa mẫu",
+    "newTitle": "Tạo mẫu thủ công",
+    "newDescription": "Dùng asset_id có sẵn cho tư liệu đầu vào và sản phẩm. Dán thẻ phương án hoặc câu lệnh vào mục “Cách thực hiện”.",
+    "close": "Đóng",
+    "entry": "Tính năng",
+    "industry": "Ngành",
+    "shopType": "Loại cửa hàng",
+    "subtype": "Thể loại con / Phong cách (không bắt buộc)",
+    "subtypePlaceholder": "Ví dụ: dish_closeup, menu_red",
+    "scene": "Thể loại",
+    "sceneNone": "Chưa phân loại",
+    "sceneUnused": "Tính năng này không có thể loại",
+    "title": "Tiêu đề",
+    "tags": "Thẻ",
+    "tagsHint": "Tối đa 12 thẻ, phân cách bằng dấu phẩy. Ví dụ: khám phá quán, buổi tối, 30 tệ/người.",
+    "rating": "Điểm đánh giá",
+    "ratingHint": "5 = khách hàng duyệt ngay, có thể dùng làm mẫu. 3 = bố cục dùng được, lời văn bình thường. 1 = chỉ dùng làm ví dụ về điều cần tránh.",
+    "notes": "Ghi chú",
+    "notesHint": "Mẫu có gì hay và AI nên học điều gì? AI sẽ nhận nguyên văn ghi chú.",
+    "recipe": "Cách thực hiện (thẻ phương án hoặc câu lệnh gốc)",
+    "inputs": "Tư liệu đầu vào",
+    "outputs": "Sản phẩm",
+    "assetIds": "Mỗi dòng một asset_id",
+    "source": "Nguồn",
+    "sourceLine": "Phiên {{session}} · Cửa hàng {{shop}} · Tiêu đề {{headline}}",
+    "noAssets": "Chưa có sản phẩm. Hãy nhập asset_id thủ công hoặc chọn sản phẩm khác trong Nhật ký thực thi.",
+    "loading": "Đang đọc phiên làm việc…",
+    "loadFailed": "Không đọc được phiên làm việc.",
+    "save": "Lưu",
+    "saving": "Đang lưu…",
+    "saved": "Đã thêm vào kho mẫu",
+    "needTitle": "Cần có tiêu đề",
+    "needOutput": "Cần ít nhất một sản phẩm",
+    "remove": "Gỡ",
+    "removeAsset": "Gỡ {{name}}",
+    "tooManyAssets": "{{kind}} có {{count}} mục, vượt giới hạn {{max}}. Hãy gỡ bớt trước khi lưu.",
+    "recipeTooLong": "Cách thực hiện có {{count}} ký tự, vượt giới hạn {{max}}. Hãy rút gọn trước khi lưu.",
+    "errors": {
+      "EXAMPLE_INVALID": "Phân loại hoặc asset_id không hợp lệ: {{message}}",
+      "SESSION_NOT_FOUND": "Không tìm thấy phiên làm việc",
+      "HTTP_422": "Có dữ liệu vượt giới hạn hoặc sai định dạng. Hãy kiểm tra rồi lưu lại.",
+      "default": "Không lưu được. Hãy thử lại sau."
+    }
+  },
+  "preview": {
+    "unavailable": "Hiện không thể xem trước"
+  },
+  "taxonomy": {
+    "title": "Cài đặt phân loại",
+    "description": "Mẫu được xếp theo thể loại của từng tính năng, ngành và loại cửa hàng. Các thay đổi áp dụng cho bộ lọc, biểu mẫu và việc tìm mẫu phù hợp.",
+    "scenes": "Thể loại theo tính năng",
+    "scenesHint": "Các thể loại có sẵn xuất hiện ở bước chọn đầu tiên trong ứng dụng và chỉ có thể đổi tên. Các thể loại tự thêm dùng để xếp mẫu. AI chọn thể loại phù hợp với nhu cầu của chủ cửa hàng.",
+    "industries": "Ngành và loại cửa hàng",
+    "industriesHint": "Từ khóa giúp nhận diện loại cửa hàng dựa trên tên và tiêu đề. Hãy phân cách các từ khóa bằng dấu phẩy. Các ngành có sẵn dùng cho hồ sơ chủ cửa hàng và chỉ có thể đổi tên.",
+    "sceneName": "Tên thể loại của {{entry}}",
+    "industryName": "Tên ngành",
+    "shopName": "Tên loại cửa hàng trong ngành {{industry}}",
+    "keywords": "Từ khóa, ví dụ: lẩu, xiên nướng",
+    "keywordsOf": "Từ khóa của {{name}}",
+    "addScene": "+ Thêm thể loại",
+    "addShop": "+ Thêm loại cửa hàng",
+    "addIndustry": "+ Thêm ngành",
+    "removeNamed": "Gỡ {{name}}",
+    "builtin": "Có sẵn trong ứng dụng và hồ sơ chủ cửa hàng, chỉ có thể đổi tên",
+    "builtinTag": "Có sẵn",
+    "generic": "Mỗi ngành giữ một loại cửa hàng chung",
+    "genericLabel": "Khác",
+    "saved": "Đã lưu phân loại",
+    "problem": {
+      "empty": "Có tên chưa được điền",
+      "duplicate": "Hai mục trong cùng nhóm bị trùng tên"
+    },
+    "errors": {
+      "TAXONOMY_IN_USE": "Một số mẫu vẫn dùng phân loại này. Hãy chuyển chúng sang phân loại khác trước: {{message}}",
+      "TAXONOMY_INVALID": "Phân loại không hợp lệ: {{message}}",
+      "HTTP_422": "Có tên hoặc từ khóa vượt giới hạn. Hãy kiểm tra rồi lưu lại.",
+      "default": "Không lưu được. Hãy thử lại sau."
+    }
+  },
+  "card": {
+    "title": "Thẻ tham khảo",
+    "read": "Phân tích lại",
+    "afterSave": "Sau khi lưu, AI sẽ phân tích ảnh hoặc khung hình và lời nói trong video, kết hợp với cách thực hiện để tạo thẻ tham khảo. Quá trình mất khoảng 1–2 phút. Mở lại mẫu để xem hoặc sửa thẻ.",
+    "full": "Nội dung",
+    "fullHint": "Chỉ ghi bố cục, nhịp điệu, phong cách và cách viết. Không đưa tên cửa hàng, tên món hay giá vào thẻ. Nội dung sửa thủ công sẽ không bị ghi đè.",
+    "frames": "{{count}} khung hình",
+    "heard": "Có lời nói",
+    "silent": "Không có lời nói",
+    "state": {
+      "none": "Chưa phân tích. Quá trình bắt đầu sau khi lưu.",
+      "reading": "Đang phân tích sản phẩm, mất khoảng 1–2 phút…",
+      "ready": "Đã phân tích",
+      "failed": "Phân tích thất bại. Hãy chọn “Phân tích lại”.",
+      "edited": "Đã sửa thủ công, sẽ không bị ghi đè",
+      "editing": "Đã chỉnh sửa, sẽ lưu cùng mẫu"
+    },
+    "short": {
+      "none": "—",
+      "reading": "Đang phân tích",
+      "ready": "Đã phân tích",
+      "failed": "Thất bại",
+      "edited": "Thủ công"
+    }
+  }
+}

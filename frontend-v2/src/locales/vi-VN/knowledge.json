@@ -1,0 +1,253 @@
+{
+  "title": "Kho kiến thức",
+  "subtitle": "Đây là nơi lưu những điều trợ lý ghi nhớ từ cuộc trò chuyện, các chủ đề đã sắp xếp và tệp bạn tải lên. Bạn có thể xem, sửa hoặc xóa bất cứ lúc nào.",
+  "addMemory": "Thêm ghi nhớ",
+  "uploadFile": "Tải tệp lên",
+  "uploading": "Đang tải lên…",
+  "searchLabel": "Tìm trong kho kiến thức",
+  "searchPlaceholder": "Tìm ghi nhớ, chủ đề và tệp",
+  "clearSearch": "Xóa nội dung tìm kiếm",
+  "scope": "Hiển thị",
+  "allScopes": "Tất cả",
+  "personal": "Cá nhân",
+  "views": "Các mục trong kho kiến thức",
+  "view": {
+    "overview": "Tất cả",
+    "memories": "Ghi nhớ",
+    "topics": "Chủ đề",
+    "files": "Tệp",
+    "experiences": "Kinh nghiệm"
+  },
+  "seeAll": "Xem tất cả",
+  "loadMore": "Tải thêm",
+  "loading": "Đang tải…",
+  "retry": "Thử lại",
+  "loadFailed": "Hiện chưa tải được một số nội dung.",
+  "section": {
+    "memories": "Đã ghi nhớ",
+    "memoriesHint": "Trợ lý sẽ dùng các ghi nhớ này trong những lần trò chuyện sau. Bạn có thể sửa thông tin sai hoặc yêu cầu trợ lý quên điều không cần lưu.",
+    "topics": "Chủ đề",
+    "topicsHint": "Các ghi nhớ liên quan được tự động gom theo chủ đề để bạn dễ xem ở một nơi.",
+    "files": "Tệp",
+    "filesHint": "Tệp tải lên được tự động sắp xếp để trợ lý tham khảo khi trả lời."
+  },
+  "welcome": {
+    "title": "Kho kiến thức của bạn còn trống",
+    "body": "Sở thích, thỏa thuận và những chi tiết quan trọng bạn nhắc đến khi trò chuyện sẽ tự động được lưu ở đây.",
+    "startChat": "Bắt đầu trò chuyện",
+    "steps": {
+      "chat": {
+        "title": "Ghi nhớ trong lúc trò chuyện",
+        "body": "Hãy kể với trợ lý về thói quen, sở thích hoặc thỏa thuận của bạn. Trợ lý sẽ ghi lại."
+      },
+      "topics": {
+        "title": "Sắp xếp theo chủ đề",
+        "body": "Các chi tiết liên quan được tập hợp thành trang chủ đề để bạn dễ đọc lại."
+      },
+      "files": {
+        "title": "Thêm tài liệu của bạn",
+        "body": "Tải lên tệp PDF, Word hoặc các tài liệu khác để trợ lý tham khảo."
+      }
+    }
+  },
+  "empty": {
+    "memories": "Chưa có ghi nhớ. Hãy nhắc đến một sở thích trong cuộc trò chuyện hoặc tự thêm ở đây.",
+    "topics": "Chủ đề sẽ tự xuất hiện khi có đủ các ghi nhớ liên quan.",
+    "files": "Chưa tải tệp nào lên.",
+    "searchTitle": "Không tìm thấy kết quả cho “{{query}}”",
+    "searchBody": "Thử từ khóa khác hoặc hỏi trực tiếp trợ lý trong cuộc trò chuyện.",
+    "askAssistant": "Hỏi trợ lý"
+  },
+  "memory": {
+    "edit": "Chỉnh sửa",
+    "forget": "Quên",
+    "openDetail": "Xem chi tiết và nguồn",
+    "moreTopics": "+{{count}}"
+  },
+  "timeline": {
+    "today": "Hôm nay",
+    "yesterday": "Hôm qua",
+    "week": "Tuần qua",
+    "earlier": "Trước đó"
+  },
+  "how": {
+    "learned": "Ghi nhớ từ cuộc trò chuyện",
+    "added": "Bạn đã xác nhận",
+    "style": "Cách bạn muốn được hỗ trợ",
+    "until": "Đến {{date}}"
+  },
+  "topic": {
+    "sources": "{{count}} nguồn",
+    "updating": "Đang cập nhật",
+    "updatingHint": "Nguồn liên quan đã thay đổi, nên trợ lý đang sắp xếp lại chủ đề."
+  },
+  "file": {
+    "read": "Đọc",
+    "download": "Tải tệp gốc",
+    "retry": "Xử lý lại",
+    "dropTitle": "Kéo tệp vào đây hoặc nhấn để chọn",
+    "dropActive": "Thả để tải lên",
+    "dropHint": "Hỗ trợ PDF có thể chọn văn bản, Word, TXT, Markdown, CSV và trang web. Mỗi tệp tối đa 10 MB.",
+    "accepted": "“{{name}}” đã được thêm và đang được sắp xếp.",
+    "alreadyExists": "“{{name}}” đã có trong kho kiến thức. Hệ thống không thêm bản trùng.",
+    "unavailable": "Tài khoản này chưa thể tải tệp lên.",
+    "status": {
+      "pending": "Đang chờ",
+      "parsing": "Đang sắp xếp",
+      "retry": "Sắp thử lại",
+      "ready": "Có thể đọc",
+      "indexing": "Có thể đọc, đang chuẩn bị tìm kiếm",
+      "index_failed": "Có thể đọc, nhưng không chuẩn bị được tính năng tìm kiếm",
+      "searchable": "Có thể đọc và tìm kiếm",
+      "failed": "Không sắp xếp được"
+    },
+    "delete": "Xóa",
+    "deleteTitle": "Xóa tệp này?",
+    "deleteBody": "Tệp và nội dung trích từ tệp sẽ bị xóa khỏi kho kiến thức. Trợ lý sẽ không dùng chúng nữa. Cuộc trò chuyện không bị ảnh hưởng. Bạn không thể hoàn tác thao tác này.",
+    "deleteConfirm": "Xóa",
+    "deleting": "Đang xóa…",
+    "deleted": "Đã xóa “{{name}}”.",
+    "deletedPending": "Đã xóa “{{name}}” khỏi kho kiến thức. Tệp gốc vẫn nằm trong bộ lưu trữ cho đến khi hệ thống xóa xong.",
+    "cleanupPending": "Đang xóa tệp gốc trong bộ lưu trữ: {{count}} tệp. Quá trình sẽ tự hoàn tất.",
+    "cancel": "Hủy"
+  },
+  "editor": {
+    "createTitle": "Thêm ghi nhớ",
+    "createHint": "Ghi lại sở thích, thỏa thuận hoặc thông tin mà trợ lý cần lưu ý trong các cuộc trò chuyện sau.",
+    "editTitle": "Chỉnh sửa ghi nhớ",
+    "editHint": "Sau khi lưu, trợ lý sẽ dùng nội dung mới và các chủ đề liên quan sẽ tự cập nhật.",
+    "label": "Ghi nhớ",
+    "placeholder": "Ví dụ: Tôi dị ứng với đậu phộng. Gửi báo cáo tuần cho Alex vào chiều thứ sáu.",
+    "saveTo": "Lưu vào",
+    "characters": "{{count}} / {{limit}}",
+    "save": "Lưu",
+    "saving": "Đang lưu…",
+    "cancel": "Hủy",
+    "created": "Đã thêm. Từ giờ trợ lý sẽ lưu ý điều này.",
+    "saved": "Đã lưu. Các chủ đề liên quan sẽ cập nhật trong nền.",
+    "conflict": "Ghi nhớ vừa được cập nhật ở nơi khác. Nội dung của bạn vẫn ở đây. Hãy sao chép, đóng rồi mở lại để lưu.",
+    "sensitive": "Để bảo vệ bạn, ghi nhớ không lưu mật khẩu, số giấy tờ tùy thân, số thẻ, số điện thoại, email hoặc số nhà. Hãy chỉ giữ tên thành phố hoặc quận, hoặc bỏ các số rồi lưu lại."
+  },
+  "forget": {
+    "title": "Quên ghi nhớ này?",
+    "body": "Trợ lý sẽ ngừng dùng ghi nhớ này và các chủ đề liên quan sẽ tự cập nhật. Lịch sử trò chuyện không bị xóa.",
+    "clearSources": "Xóa cả nội dung gốc đã lưu ({{count}})",
+    "clearSourcesHint": "Các ghi nhớ khác dựa trên cùng nội dung gốc cũng sẽ bị quên.",
+    "confirm": "Quên",
+    "forgetting": "Đang xử lý…",
+    "cancel": "Hủy",
+    "done": "Đã quên. Dữ liệu liên quan đang được xóa trong nền."
+  },
+  "detail": {
+    "title": "Chi tiết ghi nhớ",
+    "close": "Đóng",
+    "scope": "Phạm vi",
+    "created": "Đã ghi nhớ",
+    "updated": "Cập nhật lần cuối",
+    "topics": "Chủ đề",
+    "sources": "Nguồn",
+    "sourcesHint": "Trợ lý ghi nhớ thông tin này từ các nguồn sau.",
+    "noSources": "Không có nguồn để hiển thị.",
+    "sourceUnavailable": "Nội dung gốc này không còn khả dụng.",
+    "openChat": "Mở cuộc trò chuyện",
+    "history": "Lịch sử thay đổi",
+    "noHistory": "Chưa có thay đổi.",
+    "unavailable": "Nội dung này không còn khả dụng.",
+    "forgotten": "Ghi nhớ này đã bị quên",
+    "cleanupPending": "Trợ lý không còn dùng ghi nhớ này. Dữ liệu liên quan đang được xóa trong nền.",
+    "cleanupDone": "Đã xóa toàn bộ dữ liệu liên quan.",
+    "checkAgain": "Làm mới tiến độ",
+    "sourceKind": {
+      "user_statement": "Bạn đã nói trong cuộc trò chuyện",
+      "user_confirmation": "Bạn đã xác nhận",
+      "manual": "Bạn tự thêm",
+      "user_correction": "Bạn đã đính chính",
+      "verified_memory_revision": "Bản ghi đã sửa",
+      "document_chunk": "Từ một tệp",
+      "wiki_import": "Tài liệu đã nhập",
+      "question": "Câu trả lời của bạn cho trợ lý",
+      "other": "Bản ghi liên quan"
+    },
+    "reason": {
+      "automatic_candidate": "Phát hiện trong cuộc trò chuyện",
+      "automatic_verified": "Đã xác minh và ghi nhớ",
+      "automatic_corrected": "Đã sửa theo cuộc trò chuyện",
+      "user_confirmed": "Bạn đã xác nhận",
+      "user_confirmed_edited": "Bạn đã xác nhận và chỉnh sửa",
+      "user_corrected": "Bạn đã chỉnh sửa",
+      "manual_created": "Bạn tự thêm",
+      "user_forgotten": "Bạn yêu cầu trợ lý quên",
+      "source_forgotten": "Đã xóa nội dung gốc",
+      "user_rejected": "Bạn đã từ chối",
+      "ttl_expired": "Đã hết hạn",
+      "source_changed": "Nguồn đã thay đổi",
+      "other": "Đã cập nhật"
+    },
+    "supersededSource": "Bạn đã đính chính thông tin này sau đó, nên nội dung cũ không còn áp dụng.",
+    "yourCorrection": "Đính chính của bạn"
+  },
+  "processing": {
+    "pending": "Đang ghi nhớ thông tin từ {{count}} lượt trò chuyện…",
+    "failedTitle": "Không lưu được {{count}} điều bạn đã nói",
+    "failedHint": "Thường do lỗi mạng hoặc dịch vụ tạm thời. Hãy thử lại, hoặc bỏ qua điều bạn không cần lưu.",
+    "show": "Hiện",
+    "hide": "Ẩn",
+    "retry": "Thử lại",
+    "retryAll": "Thử lại tất cả",
+    "dismiss": "Không cần",
+    "openChat": "Mở cuộc trò chuyện",
+    "retried": "Đang thử lưu lại. Kết quả sẽ sớm xuất hiện ở đây.",
+    "dismissed": "Được, trợ lý sẽ không nhắc lại mục này.",
+    "untitled": "Cuộc trò chuyện chưa có tên"
+  },
+  "manage": {
+    "title": "Quản lý",
+    "autoSave": "Ghi nhớ những điều tôi nói khi trò chuyện",
+    "autoSaveHint": "Trợ lý lưu sở thích và thông tin bạn chia sẻ khi trò chuyện.",
+    "autoSaveOffHint": "Khi tắt, trợ lý ngừng lưu thông tin mới từ cuộc trò chuyện và vẫn dùng các ghi nhớ đã có.",
+    "autoSaveOn": "Đã bật. Trợ lý sẽ ghi nhớ thông tin bạn chia sẻ từ bây giờ.",
+    "autoSaveOff": "Đã tắt. Trợ lý không lưu thêm thông tin từ các cuộc trò chuyện. Những ghi nhớ đã có vẫn được dùng và bạn có thể xóa chúng bất cứ lúc nào.",
+    "export": "Xuất tất cả ghi nhớ",
+    "exportFile": "ghi-nho-cua-toi.md",
+    "clear": "Xóa tất cả ghi nhớ…",
+    "clearTitle": "Xóa tất cả ghi nhớ?",
+    "clearScope": "Trợ lý sẽ quên và ngừng dùng tất cả ghi nhớ trong “{{scope}}”. Các chủ đề liên quan sẽ tự cập nhật. Tệp tải lên và cuộc trò chuyện không bị ảnh hưởng. Bạn không thể hoàn tác.",
+    "clearEverywhere": "Trợ lý sẽ quên và ngừng dùng tất cả ghi nhớ. Các chủ đề liên quan sẽ tự cập nhật. Tệp tải lên và cuộc trò chuyện không bị ảnh hưởng. Bạn không thể hoàn tác.",
+    "clearConfirm": "Tôi hiểu, hãy xóa tất cả",
+    "clearAction": "Xóa tất cả",
+    "clearing": "Đang xóa…",
+    "cleared": "Đã xóa {{count}} ghi nhớ."
+  },
+  "experience": {
+    "hint": "Quy trình dùng lại được đề xuất để bạn kiểm tra. Hãy thử, ghi lại kết quả rồi bật kỹ năng riêng. Nếu chỉnh sửa, bạn cần kiểm tra lại.",
+    "empty": "Chưa có quy trình đề xuất. Trợ lý có thể tổng hợp cách làm dùng lại khi một tác vụ có kết quả rõ ràng.",
+    "unavailable": "Không có bằng chứng gốc, nên quy trình này đã bị tắt",
+    "version": "Phiên bản {{version}}",
+    "state": {
+      "candidate": "Cần kiểm tra",
+      "validated": "Đã kiểm tra, chưa bật",
+      "enabled": "Đã bật",
+      "retired": "Đã tắt",
+      "needs_review": "Không có bằng chứng"
+    },
+    "field": {
+      "title": "Tên",
+      "conditions": "Điều kiện áp dụng",
+      "steps": "Các bước (mỗi dòng một bước khi sửa)",
+      "expected_result": "Kết quả mong đợi",
+      "failure_boundaries": "Khi nào nên dừng hoặc tránh dùng quy trình",
+      "test_plan": "Cách kiểm tra"
+    },
+    "editHint": "Khi lưu, quy trình sẽ tạm dừng. Các tác vụ sau chỉ dùng bản mới khi bạn đã kiểm tra và bật lại.",
+    "saveDraft": "Lưu để kiểm tra lại",
+    "lastReview": "Lần kiểm tra trước",
+    "reviewNotes": "Các bước thử và kết quả quan sát được",
+    "reviewPlaceholder": "Mô tả nội dung đã thử, kết quả thực tế và các mục chưa kiểm tra xong (ít nhất 10 ký tự).",
+    "reviewPassed": "Tôi đã thử và kết quả đúng như mong đợi",
+    "recordReview": "Lưu kết quả kiểm tra",
+    "cancelEdit": "Hủy chỉnh sửa",
+    "edit": "Chỉnh sửa các bước",
+    "enable": "Bật kỹ năng riêng",
+    "retire": "Ngừng sử dụng"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "activation": {
+    "title": "Đang chuẩn bị máy tính đám mây của bạn",
+    "ready": "Máy tính đám mây đã sẵn sàng",
+    "readyHint": "Bạn có thể dùng các công cụ sandbox hoặc mở máy tính đám mây từ thanh bên.",
+    "hint": "Đã xác nhận thanh toán và hệ thống đang tự chuẩn bị máy tính của bạn. Bạn có thể tiếp tục trò chuyện hoặc đóng trang. Khi mở lại, bạn sẽ thấy tiến độ đã lưu.",
+    "attention": "Cần xác minh thiết lập máy tính",
+    "attentionHint": "Chưa xác nhận được kết quả mua máy tính đám mây. Hệ thống đang tìm máy tính ban đầu để tránh mua trùng. Hãy liên hệ quản trị viên để xác minh đơn hàng.",
+    "retrying": "Chưa thể hoàn tất thiết lập. Máy chủ sẽ tự thử lại. Bạn không cần thanh toán lần nữa.",
+    "reconnecting": "Đang kết nối lại để lấy trạng thái mới nhất. Phía trên là tiến độ được lưu gần nhất.",
+    "retryFailed": "Không gửi được yêu cầu thử lại. Tác vụ nền vẫn tiếp tục. Hãy thử lại sau.",
+    "viewProgress": "Máy tính đám mây · Xem tiến độ thiết lập",
+    "progress": "Tiến độ thiết lập",
+    "close": "Đóng thanh tiến độ thiết lập",
+    "continueChat": "Tiếp tục trò chuyện",
+    "done": "Đã hiểu",
+    "retry": "Thử lại ngay",
+    "subscriptionRequired": "Máy tính đám mây yêu cầu gói trả phí",
+    "subscriptionHint": "Bạn cần có gói đăng ký còn hiệu lực. Số dư điểm không cấp quyền truy cập máy tính đám mây. Hãy đăng ký hoặc gia hạn trong mục Thanh toán. Khi thanh toán được xác nhận, hệ thống tự khôi phục quyền truy cập và dữ liệu nếu máy tính vẫn còn. Bạn vẫn có thể trò chuyện bằng văn bản.",
+    "subscribe": "Xem các gói",
+    "steps": {
+      "paid": "Đã xác nhận thanh toán",
+      "assigning": "Cấp hoặc tạo máy tính",
+      "starting": "Khởi động máy tính",
+      "connecting": "Xác minh kết nối sandbox",
+      "ready": "Sẵn sàng sử dụng"
+    }
+  },
+  "tabs": {
+    "new": "Tab mới",
+    "review": "Xem thay đổi",
+    "terminal": "Terminal",
+    "browser": "Trình duyệt",
+    "files": "Tệp",
+    "desktop": "Máy tính đám mây",
+    "cron": "Lịch chạy"
+  },
+  "panel": {
+    "collapse": "Thu gọn bảng"
+  },
+  "menu": {
+    "title": "Bàn làm việc",
+    "review": "Xem thay đổi",
+    "terminal": "Terminal",
+    "browser": "Trình duyệt",
+    "files": "Tệp",
+    "pending_one": "{{count}} mục đang chờ",
+    "pending_other": "{{count}} mục đang chờ",
+    "clean": "Không có thay đổi",
+    "online": "Sandbox đang trực tuyến",
+    "desktop": "Máy tính đám mây",
+    "cron": "Tác vụ theo lịch"
+  },
+  "sandbox": {
+    "none": "Không có sandbox đang chạy",
+    "create": "Tạo sandbox"
+  },
+  "review": {
+    "lastChanges": "Thay đổi trong lượt này",
+    "empty": "Chưa có thay đổi",
+    "emptyHint": "Khi Agent chỉnh sửa tệp, bạn sẽ thấy các phần thay đổi ở đây.",
+    "skippedNew": "Tệp mới",
+    "skippedDeleted": "Đã xóa cả tệp",
+    "unchanged_one": "{{count}} dòng không thay đổi",
+    "unchanged_other": "{{count}} dòng không thay đổi",
+    "openInFiles": "Mở trong mục Tệp"
+  },
+  "terminal": {
+    "empty": "Không có sandbox đang chạy",
+    "emptyHint": "Tạo sandbox để mở Terminal.",
+    "connecting": "Đang kết nối với Terminal…",
+    "disconnected": "Terminal đã ngắt kết nối"
+  },
+  "browser": {
+    "placeholder": "Nhập URL rồi nhấn Enter",
+    "empty": "Khung xem trang",
+    "loading": "Đang mở…",
+    "failed": "Không tải được trang"
+  },
+  "files": {
+    "filter": "Lọc tệp…",
+    "fileList": "Danh sách tệp",
+    "copyPath": "Sao chép đường dẫn",
+    "pathCopied": "Đã sao chép đường dẫn",
+    "viewSource": "Xem mã nguồn",
+    "empty": "Sandbox chưa có tệp",
+    "loadFailed": "Không đọc được tệp",
+    "binary": "Không thể xem trước tệp nhị phân",
+    "tooLarge": "Tệp lớn, chỉ hiển thị {{limit}} dòng đầu",
+    "pickFile": "Chọn một tệp để xem",
+    "notSupported": "Không hỗ trợ xem trước"
+  },
+  "desktop": {
+    "loading": "Đang kết nối với máy tính đám mây…",
+    "provision": "Không gian làm việc này chưa có máy tính đám mây",
+    "provisionHint": "Hệ thống sẽ tạo một máy tính đám mây riêng cho không gian làm việc này. Quá trình thiết lập lần đầu mất 2–3 phút.",
+    "provisionAction": "Thiết lập máy tính đám mây",
+    "provisionRestricted": "Hãy nhờ chủ sở hữu hoặc quản trị viên thiết lập",
+    "provisioning": "Đang chuẩn bị máy tính đám mây. Lần thiết lập đầu tiên mất 2–3 phút…",
+    "assigning": "Đang cấp một máy tính đám mây đã chuẩn bị sẵn…",
+    "provisionFailed": "Không thiết lập được máy tính đám mây",
+    "provisionRetry": "Thử lại",
+    "connected": "Đã kết nối",
+    "subscriptionRequired": "Đăng ký hoặc gia hạn để kết nối",
+    "closed": "Đã đóng kết nối",
+    "error": "Không thể kết nối",
+    "unavailable": "Máy tính đám mây hiện không khả dụng",
+    "sdkFailed": "Không tải được thành phần máy tính đám mây",
+    "reconnect": "Kết nối lại",
+    "allowControl": "Cho phép điều khiển",
+    "readonly": "Bạn đang ở chế độ chỉ xem. Chọn “Cho phép điều khiển” để thao tác.",
+    "controlOn": "Bạn đang điều khiển",
+    "frameTitle": "Khung xem máy tính đám mây",
+    "clipboard": "Đồng bộ bộ nhớ tạm",
+    "imeHint": "Chuyển bộ gõ từ xa bằng phím Shift",
+    "imeHintDetail": "Giữ bộ gõ của máy bạn ở chế độ tiếng Anh. Trong ô nhập liệu từ xa, nhấn Shift để chuyển giữa tiếng Trung và tiếng Anh. SDK đám mây chặn phím Caps Lock.",
+    "upload": "Tải tệp lên máy tính đám mây",
+    "fullscreen": "Toàn màn hình",
+    "exitFullscreen": "Thoát toàn màn hình",
+    "keyboard": "Nhập bằng bàn phím",
+    "channel": {
+      "up": "Kênh đang trực tuyến",
+      "down": "Kênh đang ngoại tuyến",
+      "pending": "Kênh đang khởi động",
+      "revoked": "Kênh đã bị thu hồi"
+    }
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "title": "Gói đăng ký",
+  "subtitle": "Quản lý gói đăng ký, điểm và thanh toán của các không gian làm việc.",
+  "tabs": {
+    "subscriptions": "Gói đăng ký",
+    "orders": "Đơn hàng"
+  },
+  "list": {
+    "previous": "Trang trước",
+    "next": "Trang sau",
+    "range": "{{from}}–{{to}} trên {{total}}",
+    "loading": "Đang tải",
+    "error": "Không tải được danh sách. Hãy thử lại.",
+    "search": "Tìm kiếm",
+    "reset": "Đặt lại"
+  },
+  "common": {
+    "all": "Tất cả"
+  },
+  "filters": {
+    "label": "Bộ lọc",
+    "plan": "Gói",
+    "state": "Trạng thái gói đăng ký",
+    "provider": "Kênh thanh toán",
+    "status": "Trạng thái đơn hàng",
+    "kind": "Loại đơn hàng",
+    "from": "Ngày bắt đầu",
+    "to": "Ngày kết thúc",
+    "invalidRange": "Ngày bắt đầu không được sau ngày kết thúc.",
+    "keyword": "Tìm kiếm"
+  },
+  "plans": {
+    "free": "Miễn phí",
+    "pro": "Pro",
+    "max": "Max"
+  },
+  "cycles": {
+    "monthly": "Hằng tháng",
+    "yearly": "Hằng năm"
+  },
+  "states": {
+    "active": "Còn hiệu lực",
+    "expired": "Đã hết hạn",
+    "free": "Miễn phí"
+  },
+  "orderStatus": {
+    "pending": "Chờ thanh toán",
+    "paid": "Đã thanh toán",
+    "cancelled": "Đã hủy"
+  },
+  "kinds": {
+    "topup": "Nạp điểm",
+    "subscription": "Đăng ký gói"
+  },
+  "usageStatus": {
+    "charged": "Đã trừ điểm",
+    "shadow": "Đã ghi nhận",
+    "historical": "Ước tính từ lịch sử",
+    "unpriced": "Chờ định giá",
+    "pending": "Đang xử lý",
+    "unreported": "Chờ số liệu sử dụng"
+  },
+  "subscriptions": {
+    "nav": "Danh sách gói đăng ký",
+    "empty": "Không có không gian làm việc nào khớp với bộ lọc.",
+    "searchPlaceholder": "Không gian làm việc, tên người dùng hoặc email",
+    "columns": {
+      "workspace": "Không gian làm việc",
+      "owner": "Chủ sở hữu",
+      "plan": "Gói",
+      "cycle": "Chu kỳ",
+      "term": "Bắt đầu / Hết hạn",
+      "state": "Trạng thái",
+      "balance": "Số dư",
+      "queued": "Chờ có hiệu lực",
+      "lastPaid": "Thanh toán gần nhất"
+    }
+  },
+  "orders": {
+    "nav": "Danh sách đơn hàng",
+    "empty": "Không có đơn hàng nào khớp với bộ lọc.",
+    "searchPlaceholder": "Mã đơn, mã của kênh, không gian làm việc hoặc người dùng",
+    "cancelled": "Lý do hủy: {{reason}}",
+    "columns": {
+      "id": "Đơn hàng",
+      "createdAt": "Đã tạo",
+      "workspace": "Không gian làm việc",
+      "user": "Người đặt",
+      "product": "Loại và sản phẩm",
+      "amount": "Số tiền",
+      "credits": "Điểm",
+      "provider": "Kênh",
+      "status": "Trạng thái",
+      "paidAt": "Thời điểm thanh toán",
+      "providerOrderId": "Mã đơn của kênh"
+    }
+  },
+  "workspace": {
+    "back": "Quay lại danh sách gói đăng ký",
+    "loading": "Đang tải thông tin không gian làm việc",
+    "error": "Không tải được thông tin không gian làm việc. Hãy thử lại.",
+    "notFound": "Không tìm thấy không gian làm việc.",
+    "deleted": "Đã xóa",
+    "readOnly": "Không thể chỉnh sửa tài khoản hoặc không gian làm việc này. Bạn vẫn có thể xem lịch sử thanh toán.",
+    "fields": {
+      "kind": "Loại",
+      "owner": "Chủ sở hữu",
+      "members": "Thành viên",
+      "expires": "Hết hạn",
+      "balance": "Số dư",
+      "created": "Đã tạo",
+      "deletedAt": "Đã xóa",
+      "queued": "Kỳ gia hạn đang chờ"
+    },
+    "terms": {
+      "title": "Lịch sử đăng ký",
+      "empty": "Không gian làm việc này chưa có kỳ đăng ký.",
+      "current": "Hiện tại",
+      "queued": "Chờ có hiệu lực",
+      "columns": {
+        "orderId": "Đơn hàng",
+        "plan": "Gói",
+        "cycle": "Chu kỳ",
+        "startsAt": "Bắt đầu",
+        "endsAt": "Kết thúc",
+        "phase": "Trạng thái kỳ"
+      },
+      "adminSource": "Quản trị viên cấp",
+      "cancelled": "Đã kết thúc"
+    },
+    "orders": {
+      "title": "Đơn hàng",
+      "empty": "Không gian làm việc này chưa có đơn hàng.",
+      "hint": "{{value}} đơn gần nhất, mới nhất ở đầu."
+    },
+    "ledger": {
+      "title": "Lịch sử giao dịch điểm",
+      "empty": "Không gian làm việc này chưa có giao dịch điểm.",
+      "hint": "{{value}} giao dịch gần nhất, mới nhất ở đầu.",
+      "columns": {
+        "createdAt": "Thời gian",
+        "kind": "Loại",
+        "amount": "Thay đổi",
+        "balanceAfter": "Số dư sau giao dịch",
+        "reference": "Tham chiếu"
+      }
+    },
+    "usage": {
+      "title": "Mức sử dụng trong {{days}} ngày qua",
+      "empty": "Chưa phát sinh mức sử dụng trong {{days}} ngày qua.",
+      "since": "Từ {{time}}",
+      "events": "{{value}} lượt gọi",
+      "tokens": "token",
+      "credits": "điểm"
+    },
+    "manageHint": "Gói đăng ký và điểm thuộc không gian làm việc này. Mọi thay đổi đều được ghi lại."
+  },
+  "actions": {
+    "manage": "Thao tác",
+    "credits": "Cộng điểm",
+    "grant": "Cấp / Gia hạn",
+    "change": "Sửa gói đăng ký",
+    "cancel": "Kết thúc gói đăng ký",
+    "currentBalance": "Số dư hiện tại: {{balance}} điểm",
+    "creditsAmount": "Số điểm cần cộng",
+    "creditsLimit": "Lớn hơn 0 và tối đa 1.000.000 điểm, với tối đa 6 chữ số thập phân.",
+    "duration": "Thời hạn",
+    "oneMonth": "1 tháng",
+    "oneYear": "1 năm",
+    "endsAt": "Hết hạn lúc (theo múi giờ thiết bị)",
+    "reason": "Lý do (bắt buộc)",
+    "confirmTarget": "Xác nhận đúng tài khoản {{user}} · {{workspace}} và các thông tin ở trên.",
+    "close": "Đóng",
+    "saving": "Đang gửi…",
+    "retry": "Xác nhận và thử lại thao tác này",
+    "success": "Đã lưu và cập nhật lại gói đăng ký cùng số dư.",
+    "creditsHint": "Cộng điểm có thể sử dụng ngay mà không tạo đơn thanh toán hoặc thay đổi gói đăng ký.",
+    "grantHint": "Kỳ mới bắt đầu sau các kỳ hiện tại và đang chờ, hoặc có hiệu lực ngay nếu chưa có kỳ hợp lệ. Bao gồm quyền lợi và điểm định kỳ của gói.",
+    "changeHint": "Thay đổi gói và thời điểm hết hạn. Các đơn và điểm đã cấp được giữ nguyên. Các kỳ không được chồng lấn.",
+    "cancelHint": "Kết thúc ngay kỳ này. Các kỳ đang chờ và điểm đã cấp vẫn còn. Không hoàn tiền.",
+    "queuedUntil": "Các kỳ gia hạn hiện có kéo dài đến {{time}}.",
+    "datePrompt": "Chọn ngày hết hạn"
+  },
+  "actionErrors": {
+    "ADMIN_REQUIRED": "Quyền quản trị đã thay đổi. Hãy đăng nhập lại.",
+    "WORKSPACE_NOT_FOUND": "Không tìm thấy không gian làm việc.",
+    "BILLING_ACCOUNT_UNAVAILABLE": "Không gian làm việc hoặc tài khoản này không còn hoạt động.",
+    "IDEMPOTENCY_CONFLICT": "Yêu cầu này khác yêu cầu ban đầu. Hãy làm mới rồi kiểm tra lịch sử giao dịch.",
+    "SUBSCRIPTION_CHANGED": "Kỳ đăng ký đã thay đổi. Hãy làm mới trước khi thử lại.",
+    "SUBSCRIPTION_ENDED": "Kỳ đăng ký này đã hết hạn hoặc đã kết thúc.",
+    "SUBSCRIPTION_NOT_FOUND": "Không tìm thấy gói đăng ký.",
+    "SUBSCRIPTION_OVERLAP": "Thời điểm hết hạn chồng lấn với kỳ khác. Hãy điều chỉnh kỳ liền kề trước.",
+    "INVALID_SUBSCRIPTION_END": "Thời điểm hết hạn phải sau hiện tại và sau ngày bắt đầu, trong giới hạn 10 năm.",
+    "SUBSCRIPTION_TOO_LONG": "Các kỳ đang chờ không thể kéo dài quá 10 năm.",
+    "UNKNOWN_RESULT": "Chưa xác nhận được kết quả. Khi thử lại, hệ thống kiểm tra thao tác ban đầu để tránh cấp trùng.",
+    "default": "Không lưu được. Hãy kiểm tra dữ liệu hoặc làm mới rồi thử lại."
+  },
+  "ledgerKinds": {
+    "admin_grant": "Quản trị viên cấp điểm",
+    "allowance": "Điểm theo gói",
+    "topup": "Nạp điểm có thanh toán",
+    "usage": "Sử dụng điểm",
+    "grant": "Cấp điểm",
+    "signup_gift": "Điểm chào mừng"
+  },
+  "operations": {
+    "title": "Nhật ký quản trị",
+    "hint": "50 thao tác gần nhất, gồm người thực hiện, lý do và kết quả.",
+    "time": "Thời gian",
+    "actor": "Người thực hiện",
+    "result": "Kết quả",
+    "empty": "Chưa có thao tác quản trị.",
+    "grant_credits": "Cộng điểm",
+    "grant_subscription": "Cấp / Gia hạn",
+    "change_subscription": "Sửa gói đăng ký",
+    "cancel_subscription": "Kết thúc gói đăng ký"
+  }
+}

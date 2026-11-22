@@ -1,0 +1,291 @@
+{
+  "mobile": {
+    "createEntry": "Tạo mục mới",
+    "manageEntry": "Quản lý",
+    "overview": "Tổng quan",
+    "desktopStates": "Trạng thái máy tính đám mây",
+    "tapState": "Chọn một trạng thái để xem danh sách máy tương ứng.",
+    "capacity": "Quản lý sức chứa",
+    "uploadZip": "Tải lên ZIP",
+    "selectEntries": "Chọn mục",
+    "installView": "Lượt cài đặt",
+    "reviewQueue": "Hàng đợi xét duyệt",
+    "editorIdentity": "Thông tin định danh",
+    "editorPresentation": "Hiển thị trong kho",
+    "editorContent": "Nội dung",
+    "readOnly": "Chỉ đọc",
+    "states": {
+      "assigned": "Đã cấp",
+      "prewarm": "Sẵn sàng cấp",
+      "reserve": "Dự trữ",
+      "released": "Đã thu hồi",
+      "retired": "Đã ngừng sử dụng",
+      "recycling": "Đang xây dựng lại",
+      "purchasing": "Đang mua",
+      "draining": "Đang rút khỏi kho máy",
+      "running": "Đang chạy",
+      "stopped": "Đã dừng",
+      "starting": "Đang khởi động",
+      "up": "Trực tuyến",
+      "down": "Ngoại tuyến",
+      "ready": "Đã sẵn sàng",
+      "connecting": "Đang kết nối",
+      "unknown": "Không rõ"
+    },
+    "forbidden": "Chỉ có quản trị viên nền tảng mới có thể truy cập trang này.",
+    "confirmTarget": "Nhập đầy đủ mã đối tượng để xác nhận: {{target}}",
+    "unknownResult": "Chưa xác nhận được kết quả. Hãy hủy và làm mới trạng thái thực tế trước khi quyết định thử lại.",
+    "details": "Xem chi tiết",
+    "operations": "Quản lý",
+    "noDesktops": "Không có máy tính đám mây nào phù hợp.",
+    "searchDesktops": "Tìm theo ID máy, không gian làm việc hoặc trạng thái",
+    "refresh": "Làm mới",
+    "adoptHint": "Kiểm tra máy, trạng thái trong kho và việc thu hồi máy khỏi người dùng trước. Khi tiếp nhận, máy chủ vẫn kiểm tra các điều kiện này.",
+    "empty": "Không có bản ghi nào phù hợp.",
+    "filterSummary": "Đã áp dụng {{count}} bộ lọc",
+    "invalidName": "Sử dụng chữ thường, chữ số và dấu gạch nối, tối đa 64 ký tự.",
+    "archiveOnlyZip": "Chỉ chọn tệp nén ZIP.",
+    "memberSelected": "Người dùng hiện tại: {{user}}",
+    "fieldTarget": "Mã đối tượng"
+  },
+  "title": "Quản lý đội máy",
+  "subtitle": "Kiểm tra kho máy sẵn sàng, trạng thái máy và cảnh báo đối soát.",
+  "console": {
+    "title": "Trang quản trị"
+  },
+  "nav": {
+    "fleet": "Đội máy",
+    "skills": "Kỹ năng",
+    "billing": "Gói đăng ký",
+    "trajectories": "Nhật ký thực thi",
+    "examples": "Kho mẫu",
+    "notifications": "Thông báo",
+    "messages": "Tin nhắn",
+    "pricing": "Giá mô hình"
+  },
+  "section": {
+    "fleet": {
+      "title": "Quản lý đội máy",
+      "subtitle": "Kiểm tra kho máy sẵn sàng, trạng thái máy và cảnh báo đối soát."
+    },
+    "skills": {
+      "title": "Quản lý kỹ năng",
+      "subtitle": "Quản lý hiển thị trong kho kỹ năng, xét duyệt nội dung gửi lên và xem lượt cài đặt."
+    },
+    "billing": {
+      "title": "Gói đăng ký",
+      "subtitle": "Xem gói đăng ký, đơn hàng và mức dùng của từng không gian làm việc."
+    },
+    "trajectories": {
+      "title": "Nhật ký thực thi",
+      "subtitle": "Theo dõi và phát lại các phiên Agent đã ghi ở mọi không gian làm việc. Dữ liệu chỉ đọc."
+    },
+    "examples": {
+      "title": "Kho mẫu tham khảo",
+      "subtitle": "Lưu sản phẩm đã duyệt theo tính năng, ngành và loại cửa hàng để AI tham khảo khi tạo sản phẩm mới."
+    },
+    "notifications": {
+      "title": "Kiểm thử thông báo",
+      "subtitle": "Kiểm tra nội dung thông báo, khả năng nhận trên điện thoại và trạng thái gửi."
+    },
+    "messages": {
+      "title": "Tin nhắn",
+      "subtitle": "Soạn và đăng thông báo hoặc trang chủ đề."
+    },
+    "pricing": {
+      "title": "Giá mô hình",
+      "subtitle": "Xem chi phí, giá bán và biên lợi nhuận của từng mục tính phí. Thay đổi có hiệu lực ngay và được ghi nhật ký."
+    }
+  },
+  "confirm": {
+    "title": "Xác nhận thao tác"
+  },
+  "loadFailed": "Không tải được dữ liệu đội máy.",
+  "snapshot": "Bản chụp trạng thái mới nhất: {{time}} · {{sources}}",
+  "pool": {
+    "title": "Kho máy sẵn sàng",
+    "watermark": "{{current}}/{{target}} máy đã sẵn sàng",
+    "autoOn": "Đã bật tự động mua máy",
+    "autoOff": "Đã tắt tự động mua máy",
+    "autoPaused": "Tạm dừng tự động mua: {{current}} máy sẵn sàng, vượt ngưỡng {{threshold}}",
+    "autoRenewOn": "Đã bật tự động gia hạn",
+    "autoRenewOff": "Đã tắt tự động gia hạn",
+    "gates": "Điều kiện mua: đơn giá ≤ ¥{{price}} · mỗi chu kỳ ≤ {{tick}} máy · mỗi ngày ≤ {{day}} máy · số dư ≥ {{multiple}} × đơn giá",
+    "pauseGate": "Tạm dừng tự động mua khi có hơn {{threshold}} máy sẵn sàng",
+    "dryRun": "Xem trước kế hoạch mua",
+    "ensure": "Bổ sung máy dự phòng",
+    "confirmEnsure": "Bổ sung máy theo các điều kiện mua hiện tại? Nếu tính năng tự động mua đang tắt, hệ thống chỉ lập kế hoạch.",
+    "ensureResult": "{{status}}: {{current}}/{{target}} máy sẵn sàng, dự kiến thêm {{quantity}} máy",
+    "ensureFailed": "Không bổ sung được máy. Hãy kiểm tra lỗi máy chủ.",
+    "resume": "Tiếp tục tự động mua",
+    "confirmResume": "Kho dự phòng đã có {{current}} máy, nên hệ thống đã tạm dừng mua để tránh dư thừa. Tiếp tục để chu kỳ bổ sung tiếp theo có thể mua máy?",
+    "resumeFailed": "Không thể tiếp tục tự động mua máy. Hãy kiểm tra lỗi máy chủ.",
+    "adoptId": "ID máy tính ECD cần tiếp nhận",
+    "reserveState": "Dự trữ (không dựng lại)",
+    "prewarmState": "Sẵn sàng cấp",
+    "rebuildOnAdopt": "Dựng lại từ ảnh hệ thống chuẩn",
+    "gatewayReleaseVerified": "Đã xác minh bản phát hành cổng BossIP",
+    "adopt": "Tiếp nhận máy",
+    "adoptFailed": "Không tiếp nhận được máy. Hãy kiểm tra lỗi máy chủ.",
+    "confirmAdoptRebuild": "Xóa toàn bộ dữ liệu đĩa hệ thống trên {{id}}, ngắt liên kết người dùng hiện tại và dựng lại máy từ ảnh hệ thống chuẩn hiện hành?"
+  },
+  "desktops": {
+    "title": "Máy tính đám mây",
+    "count": "{{count}} máy tính đám mây",
+    "id": "ID máy tính",
+    "state": "Trạng thái kho máy / Trạng thái chạy",
+    "owner": "Không gian làm việc",
+    "ecdUsers": "Người dùng ECD",
+    "unbound": "Chưa liên kết",
+    "unknown": "Không rõ",
+    "channel": "Kênh",
+    "billing": "Thanh toán / Cấu hình",
+    "expires": "Hết hạn",
+    "actions": "Thao tác",
+    "release": "Thu hồi",
+    "recycle": "Dựng lại",
+    "retire": "Ngừng sử dụng",
+    "confirmRelease": "Thu hồi máy này và hủy quyền truy cập từ không gian làm việc?",
+    "confirmRecycle": "Xóa dữ liệu của máy này và dựng lại từ ảnh hệ thống chuẩn hiện tại?",
+    "confirmRetire": "Đánh dấu máy này ngừng sử dụng để hệ thống không gia hạn nữa?"
+  },
+  "alerts": {
+    "title": "Cảnh báo",
+    "empty": "Không có cảnh báo chưa xử lý.",
+    "ack": "Ghi nhận",
+    "mute": "Tắt tiếng trong 24 giờ"
+  },
+  "diag": {
+    "open": "Chẩn đoán",
+    "title": "Chẩn đoán trình duyệt",
+    "close": "Đóng",
+    "collect": "Chụp trạng thái",
+    "collecting": "Đang thu thập…",
+    "collectFailed": "Không chụp được trạng thái: {{error}}",
+    "collectedVia": "Đã chụp trạng thái qua {{via}} trong {{ms}} ms",
+    "fallback": "Kênh không sẵn sàng, đã dùng Trợ lý đám mây: {{error}}",
+    "latest": "Bản chụp trạng thái mới nhất {{time}} · {{reason}}",
+    "noSnapshot": "Chưa có bản chụp trạng thái. Hãy chụp để xem các thành phần trình duyệt trên máy.",
+    "findings": "Phát hiện",
+    "noFindings": "Không tìm thấy gì bất thường.",
+    "sections": "Các phần không thu thập được: {{sections}}",
+    "timeline": "Dòng thời gian",
+    "timelineEmpty": "Chưa ghi nhận sự kiện nào cho máy này.",
+    "loadFailed": "Không tải được dữ liệu chẩn đoán.",
+    "logs": "Phần cuối nhật ký",
+    "chromeLog": "Nhật ký Chrome",
+    "relayLog": "Nhật ký chuyển tiếp",
+    "journal": "Nhật ký máy chủ thao tác",
+    "empty": "(trống)",
+    "detail": "Chi tiết",
+    "lights": {
+      "chrome": "Chrome",
+      "relay": "Chuyển tiếp",
+      "x": "Hiển thị",
+      "unit": "Dịch vụ",
+      "runtime": "Môi trường chạy"
+    },
+    "light": {
+      "ok": "Bình thường",
+      "degraded": "Suy giảm",
+      "down": "Ngừng hoạt động",
+      "unknown": "Không rõ"
+    },
+    "kinds": {
+      "browser.ensure": "Chuẩn bị trình duyệt",
+      "browser.chrome_launch": "Khởi chạy Chrome",
+      "browser.relay_start": "Khởi động bộ chuyển tiếp",
+      "browser.runtime_check": "Kiểm tra môi trường chạy",
+      "browser.runtime_repair": "Sửa môi trường chạy",
+      "browser.diag": "Chụp trạng thái",
+      "channel.verify": "Kiểm tra kênh",
+      "lease.acquire": "Giữ quyền dùng máy"
+    },
+    "duration": "{{ms}} ms",
+    "cites": "diag:{{id}}",
+    "pick": "Chọn bản chụp trạng thái",
+    "freshReason": "vừa chụp",
+    "fields": {
+      "session": "phiên",
+      "toolCall": "lượt gọi công cụ",
+      "request": "yêu cầu",
+      "event": "sự kiện"
+    }
+  },
+  "push": {
+    "scope": "Dành cho quản trị viên. Chỉ gửi đến điện thoại đang đăng nhập tài khoản này.",
+    "refresh": "Làm mới trạng thái",
+    "device": "Điện thoại và kênh",
+    "phone": "Điện thoại hiện tại",
+    "permission": "Thông báo",
+    "appState": "Trạng thái ứng dụng",
+    "channel": "Kênh máy chủ",
+    "noDevice": "Chưa liên kết điện thoại",
+    "enabled": "Bật",
+    "disabled": "Tắt",
+    "configured": "Đã cấu hình",
+    "unconfigured": "Chưa cấu hình",
+    "setupHint": "Đăng nhập bằng tài khoản quản trị này trên điện thoại và bật thông báo trong phần Cài đặt.",
+    "template": "Kịch bản thử",
+    "preview": "Xem thử thông báo",
+    "instructions": "Sau khi gửi, hãy đưa ứng dụng xuống nền hoặc khóa điện thoại trong vòng 10 giây. Mỗi lượt thử cách nhau 30 giây.",
+    "send": "Gửi thông báo thử từ máy chủ",
+    "sending": "Đang gửi…",
+    "queued": "Đã đưa vào hàng đợi. Hãy đưa ứng dụng xuống nền hoặc khóa điện thoại và chờ thông báo.",
+    "local": "Thử hiển thị cục bộ",
+    "localQueued": "Đã lên lịch thử trên thiết bị. Hãy đưa ứng dụng xuống nền hoặc khóa máy trong vòng 10 giây. Thử nghiệm này không dùng máy chủ.",
+    "localFailed": "Không lên lịch được thông báo trên thiết bị. Hãy kiểm tra quyền của hệ thống.",
+    "history": "Các thử nghiệm gần đây",
+    "receiptHint": "Kênh chấp nhận gửi chưa có nghĩa là điện thoại đã nhận. Hãy chạm thông báo trên điện thoại để xác nhận. Thiết bị không hiện biểu ngữ hệ thống khi ứng dụng đang mở.",
+    "empty": "Chưa thử",
+    "requestFailed": "Yêu cầu thất bại. Hãy làm mới trạng thái rồi thử lại.",
+    "waitingBackground": "Đang chờ ứng dụng xuống nền.",
+    "deliveryFailed": "Không gửi được. Hãy kiểm tra kết nối điện thoại và kênh thông báo đẩy.",
+    "platform": {
+      "ios": "iPhone / iPad",
+      "android": "Android"
+    },
+    "provider": {
+      "apns": "Apple APNs",
+      "jpush": "JPush"
+    },
+    "presence": {
+      "foreground": "Ứng dụng đang mở · không gửi",
+      "foreground_inactive": "Tạm không hoạt động · không gửi",
+      "background": "Chạy nền · cho phép gửi",
+      "offline_inferred": "Có thể ngoại tuyến · cho phép gửi",
+      "reconnecting": "Đang kết nối lại · gửi sau",
+      "unknown": "Không rõ · gửi sau"
+    },
+    "status": {
+      "pending": "Đang chờ",
+      "sending": "Đang gửi",
+      "accepted": "Kênh đã chấp nhận",
+      "received": "Ứng dụng đã nhận",
+      "opened": "Thông báo đã mở",
+      "failed": "Gửi thất bại",
+      "cancelled": "Đã hủy",
+      "unbound": "Chưa liên kết điện thoại"
+    },
+    "reason": {
+      "app_foreground": "Ứng dụng đang mở trên màn hình. Chưa gửi thông báo đẩy.",
+      "state_changed_before_send": "Trạng thái ứng dụng hoặc liên kết điện thoại đã đổi trước khi gửi.",
+      "expired_or_revoked": "Hết hạn hoặc đăng nhập di động bị thay đổi.",
+      "binding_revoked": "Liên kết điện thoại đã thay đổi.",
+      "action_resolved": "Đã giải quyết xong.",
+      "retry_exhausted": "Đã hết lượt thử. Hãy kiểm tra kênh thông báo đẩy."
+    },
+    "templateName": {
+      "system_test": "Thông báo cơ bản",
+      "task_completed": "Tác vụ đã hòan tất",
+      "task_failed": "Tác vụ gặp lỗi",
+      "input_required": "Cần trả lời",
+      "approval_required": "Cần phê duyệt",
+      "cron_completed": "Tác vụ theo lịch đã hoàn thành",
+      "cron_failed": "Tác vụ theo lịch thất bại",
+      "platform_auth_expired": "Đã hết hạn quyền",
+      "publish_done": "Đã xuất bản",
+      "publish_failed": "Xuất bản gặp lỗi"
+    }
+  }
+}

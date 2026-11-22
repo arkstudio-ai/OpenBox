@@ -1,0 +1,203 @@
+{
+  "manage": {
+    "create": "Thêm kỹ năng / MCP",
+    "edit": "Chỉnh sửa",
+    "delete": "Xóa",
+    "restore": "Phục hồi",
+    "deleted": "Đã xóa",
+    "trash": "Thùng rác",
+    "restored": "Đã khôi phục ở trạng thái ẩn. Hãy kiểm tra mục này trước khi hiện lại trong kho.",
+    "upload": "Tải lên các tệp ZIP",
+    "uploadHint": "Mỗi tệp ZIP chứa một kỹ năng và phải có SKILL.md. Có thể chọn nhiều tệp. Mục mới được ẩn để xét duyệt. Không ghi đè tên trùng và không chạy tập lệnh.",
+    "select": "Chọn {{title}}",
+    "selectPage": "Chọn hoặc bỏ chọn các mục trên trang",
+    "deleteSelected": "Xóa mục đã chọn ({{count}})",
+    "deleteTitle": "Xóa {{count}} mục trong kho",
+    "deleteHint": "Các mục được chuyển vào thùng rác và không còn xuất hiện trong kho. Bản đã cài và kỹ năng riêng của tác giả vẫn được giữ. Hãy gỡ từng bản trong phần quản lý máy tính đám mây nếu cần.",
+    "deleteResult": "Đã xóa {{success}} mục, thất bại {{failed}} mục.",
+    "name": "Tên định danh (chữ thường, chữ số và dấu gạch nối)",
+    "title": "Tên hiển thị",
+    "description": "Mô tả",
+    "icon": "Biểu tượng (emoji hoặc URL ảnh HTTPS)",
+    "content": "Nội dung SKILL.md",
+    "config": "JSON cấu hình MCP",
+    "createHint": "Mục mới được ẩn khỏi kho. Tên định danh phải trùng với trường name trong SKILL.md.",
+    "editHint": "Thay đổi áp dụng cho mục trong kho và các lần cài mới. Bản nháp riêng của tác giả và các bản đã cài được giữ nguyên. Không thể đổi tên định danh.",
+    "invalidJson": "Hãy nhập một đối tượng JSON MCP hợp lệ.",
+    "save": "Lưu",
+    "close": "Hoàn thành / đóng",
+    "retry": "Tải lại"
+  },
+  "desktop": {
+    "collection": "Bộ sưu tập ({{count}} kỹ năng): {{names}}. Gỡ cài đặt sẽ xóa toàn bộ thư mục bộ sưu tập.",
+    "live": "Cài đặt thực tế trên máy",
+    "history": "Lịch sử cài đặt nền tảng",
+    "hint": "Chọn máy tính đám mây và thành viên, sau đó quét kỹ năng và máy chủ MCP đã cài, kể cả mục cài thủ công. Thao tác quét không khởi động hay tạo máy và không đọc thư mục của người dùng khác.",
+    "search": "Tìm kiếm ID máy tính, không gian làm việc, tên người dùng hay thư điện tử",
+    "empty": "Không tìm thấy máy tính đã cấp. Xem lịch sử cài đặt từ nền tảng ở tab còn lại.",
+    "nav": "Danh sách máy tính đám mây",
+    "connection": "Máy: {{status}} · Kênh: {{channel}}",
+    "user": "Thư mục người dùng (thành viên không gian làm việc)",
+    "noMember": "Không có thành viên không gian làm việc đang hoạt động sẵn sàng để quét.",
+    "scan": "Quét / làm mới cài đặt thực tế",
+    "scanning": "Đang quét…",
+    "unknown": "Chưa rõ trạng thái cài đặt thực tế. Hãy kiểm tra máy và kết nối rồi thử lại.",
+    "partial": "Quét chưa đầy đủ ({{kinds}}). Chưa xác định được trạng thái cài đặt của các loại chưa quét.",
+    "scannedAt": "Đã quét lúc {{time}}. Đây là trạng thái tại thời điểm đó. Hãy làm mới khi cần.",
+    "noSkills": "Đã quét xong. Người dùng này chưa cài kỹ năng hay máy chủ MCP.",
+    "uninstall": "Gỡ cài đặt",
+    "protected": "Hệ thống / bảo vệ",
+    "removed": "Đã gỡ và kiểm tra lại. Tệp của tác giả và bản cài của người dùng khác được giữ nguyên.",
+    "removeFailed": "Không thể xác thực việc gỡ cài đặt. Hãy quét lại trước khi thử lại.",
+    "removeTitle": "Gỡ cài đặt \"{{name}}\"",
+    "removeHint": "Chỉ gỡ {{dir}} của người dùng {{user}} trên máy {{desktop}}. Mục trong kho và tệp của tác giả được giữ nguyên. Tạm dừng tự khôi phục tệp cá nhân này để mục không xuất hiện lại. Người dùng khác không bị ảnh hưởng."
+  },
+  "title": "Quản lý kỹ năng",
+  "subtitle": "Quản lý hiển thị trong kho kỹ năng, xét duyệt mục gửi lên và xem lượt cài đặt.",
+  "tab": {
+    "store": "Mục trong kho",
+    "review": "Mục gửi xét duyệt",
+    "installs": "Lượt cài đặt"
+  },
+  "list": {
+    "range": "{{from}}–{{to}} trên {{total}}",
+    "previous": "Trang trước",
+    "next": "Tiếp theo",
+    "loading": "Đang tải",
+    "error": "Không tải được danh sách này. Hãy thử lại ngay."
+  },
+  "status": {
+    "listed": "Đang hiển thị",
+    "delisted": "Đã ẩn",
+    "pending": "Đang xét duyệt",
+    "rejected": "Đã từ chối"
+  },
+  "action": {
+    "list": "Hiện trong kho",
+    "delist": "Ẩn khỏi kho",
+    "feature": "Đặt làm nổi bật",
+    "unfeature": "Bỏ nổi bật",
+    "markOfficial": "Đánh dấu chính thức",
+    "unmarkOfficial": "Chính thức Unmark",
+    "view": "Xem",
+    "approve": "Duyệt",
+    "reject": "Từ chối",
+    "download": "Tải về ZIP",
+    "cancel": "Hủy"
+  },
+  "store": {
+    "search": "Tìm theo tiêu đề, tác giả hoặc catalog_id",
+    "searchLabel": "Tìm kiếm các mục trong kho",
+    "empty": "Kho kỹ năng chưa có mục nào.",
+    "nav": "Các trang của danh sách trong kho",
+    "featured": "Nổi bật",
+    "official": "Chính thức",
+    "installsOf": "Xem ai đã cài đặt {{title}}",
+    "filter": {
+      "origin": "Nguồn gốc",
+      "kind": "Loại",
+      "listing": "Trạng thái"
+    },
+    "origin": {
+      "all": "Tất cả",
+      "official": "Chính thức",
+      "community": "Cộng đồng",
+      "third_party": "Bên thứ ba"
+    },
+    "kind": {
+      "all": "Tất cả",
+      "skill": "Kỹ năng",
+      "mcp": "MCP"
+    },
+    "listing": {
+      "all": "Tất cả",
+      "listed": "Đang hiển thị",
+      "delisted": "Đã ẩn",
+      "pending": "Đang xét duyệt",
+      "rejected": "Đã từ chối"
+    },
+    "column": {
+      "entry": "Mục",
+      "origin": "Nguồn gốc",
+      "author": "Tác giả",
+      "version": "Phiên bản",
+      "publishedAt": "Đã xuất bản",
+      "installs": "Lượt cài đặt",
+      "status": "Trạng thái",
+      "actions": "Thao tác"
+    }
+  },
+  "dialog": {
+    "reason": "Lý do (bắt buộc)",
+    "note": "Ghi chú (tùy chọn)",
+    "reasonPlaceholder": "Hãy đưa ra một lý do cụ thể. Nó sẽ được ghi lại trong nhật ký kiểm toán.",
+    "reasonRequired": "Cần nhập lý do cho thao tác này.",
+    "failed": "Không thực hiện được. Hãy thử lại sau.",
+    "list": {
+      "title": "Hiện {{title}} trong kho",
+      "body": "Khi mục này hiển thị trong kho, mọi người dùng đều có thể tìm và cài đặt."
+    },
+    "delist": {
+      "title": "Ẩn {{title}} khỏi kho",
+      "body": "Mục sẽ ẩn khỏi kho và người dùng không thể cài mới. Các bản đã có trong sandbox vẫn hoạt động. Tác giả sẽ nhận được lý do."
+    },
+    "approve": {
+      "title": "Phê duyệt {{title}}",
+      "body": "Khi duyệt, mục sẽ xuất hiện công khai trong phần Cộng đồng của kho kỹ năng."
+    },
+    "reject": {
+      "title": "Từ chối {{title}}",
+      "body": "Tác giả sẽ nhận được lý do kèm tên và phiên bản kỹ năng. Họ có thể chỉnh sửa rồi gửi lại."
+    }
+  },
+  "review": {
+    "filter": "Trạng thái hàng đợi",
+    "state": {
+      "pending": "Đang xét duyệt",
+      "rejected": "Đã từ chối"
+    },
+    "queueNav": "Các trang của hàng đợi xét duyệt",
+    "emptyPending": "Không có mục nào chờ xét duyệt.",
+    "emptyRejected": "Chưa từ chối mục nào.",
+    "pick": "Chọn một mục ở bên trái để đọc.",
+    "submittedAt": "Gửi lúc {{time}}",
+    "skillMd": "SKILL.md",
+    "skillMdNotice": "Chỉ hiển thị văn bản thuần, không kết xuất Markdown hoặc chạy nội dung.",
+    "skillMdEmpty": "Tệp nén này không chứa SKILL.md.",
+    "archiveRefused": "Máy chủ không mở tệp nén này vì tệp quá lớn, chứa quá nhiều mục hoặc không phải ZIP đọc được. Hệ thống chưa đọc nội dung, nên việc thiếu thông tin và danh sách tệp không có nghĩa là gói trống.",
+    "truncated": "Nội dung quá dài nên phần cuối đã được lược bớt.",
+    "files": "Tệp ({{count}})",
+    "filesTruncated": "Quá nhiều mục để liệt kê; chỉ hiển thị những mục đầu tiên.",
+    "downloadFailed": "Không tải xuống được. Hãy thử lại sau.",
+    "loadFailed": "Không tải được mục gửi xét duyệt.",
+    "meta": {
+      "author": "Tác giả",
+      "version": "Phiên bản",
+      "submittedAt": "Thời điểm gửi",
+      "size": "Kích thước",
+      "requiresMcp": "Yêu cầu MCP",
+      "sha256": "SHA-256",
+      "none": "Không có"
+    },
+    "fileColumn": {
+      "path": "Đường dẫn",
+      "size": "Kích thước"
+    }
+  },
+  "installs": {
+    "search": "Tìm kiếm theo tên người dùng, địa chỉ thư điện tử hay tên kỹ năng",
+    "searchLabel": "Tìm kiếm các bản ghi cài đặt",
+    "empty": "Chưa ghi lại cài đặt nào.",
+    "nav": "Cài đặt trang bản ghi",
+    "filtered": "Chỉ {{catalog}}",
+    "clearFilter": "Xóa bộ lọc kỹ năng",
+    "footnote": "Đây là lịch sử cài đặt qua nền tảng. Để xem các cài đặt thủ công, kiểm tra trạng thái hiện tại hoặc gỡ cài đặt, hãy dùng mục Cài đặt thực tế trên máy.",
+    "column": {
+      "user": "Người dùng",
+      "skill": "Kỹ năng",
+      "kind": "Loại",
+      "installDir": "Cài đặt thư mục",
+      "installedAt": "Đã cài đặt"
+    }
+  }
+}

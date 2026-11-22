@@ -1,0 +1,198 @@
+{
+  "page": {
+    "title": "Trung tâm kỹ năng",
+    "subtitle": "Quản lý kỹ năng và máy chủ MCP đã cài, hoặc thêm mục mới từ kho kỹ năng."
+  },
+  "tab": {
+    "mine": "Của tôi",
+    "store": "Kho kỹ năng"
+  },
+  "filter": {
+    "all": "Tất cả",
+    "skill": "Kỹ năng",
+    "mcp": "MCP"
+  },
+  "searchPlaceholder": "Tìm kỹ năng và máy chủ MCP",
+  "section": {
+    "personal": "Cá nhân · {{count}}",
+    "skills": "Kỹ năng · {{count}}",
+    "mcp": "Máy chủ MCP · {{count}}",
+    "storeSkills": "Kỹ năng",
+    "storeMcp": "Máy chủ MCP",
+    "storeOfficial": "Chính thức",
+    "storeCommunity": "Cộng đồng",
+    "storeThirdParty": "Bên thứ ba"
+  },
+  "status": {
+    "connected": "Đã kết nối",
+    "disconnected": "Chưa kết nối",
+    "error": "Lỗi"
+  },
+  "badge": {
+    "host": "Có sẵn",
+    "tools": "{{count}} công cụ",
+    "needsMcp": "Cần {{names}}",
+    "needsKey": "Cần khóa truy cập",
+    "packCount": "{{count}} kỹ năng",
+    "personal": "Cá nhân",
+    "unpublished": "Chưa tải lên",
+    "published": "Đã xuất bản",
+    "storeInstalled": "Từ kho",
+    "community": "Cộng đồng",
+    "builtin": "Có sẵn",
+    "builtinHint": "Kỹ năng đi kèm ảnh hệ thống sandbox và không thể gỡ. Agent có thể đọc các tập lệnh và tài nguyên đi kèm.",
+    "hostHint": "Kỹ năng được cài trên máy chủ và không thể gỡ. Agent chỉ dùng được SKILL.md vì các công cụ chạy trong sandbox và không đọc được tệp đi kèm.",
+    "featured": "Nổi bật",
+    "installs": "{{count}} lần cài đặt",
+    "kindSkill": "Kỹ năng",
+    "kindMcp": "MCP",
+    "official": "Chính thức",
+    "listing": {
+      "pending": "Đang xét duyệt",
+      "listed": "Đang hiển thị",
+      "rejected": "Đã từ chối",
+      "delisted": "Đã ẩn",
+      "withdrawn": "Đã rút khỏi kho"
+    }
+  },
+  "action": {
+    "add": "Thêm",
+    "createWithChat": "Tạo trong trò chuyện",
+    "install": "Cài đặt",
+    "installed": "Đã cài đặt",
+    "uninstall": "Gỡ cài đặt",
+    "remove": "Gỡ",
+    "connect": "Kết nối",
+    "disconnect": "Ngắt kết nối",
+    "homepage": "Mở trang chủ",
+    "publish": "Tải lên kho",
+    "updatePublish": "Cập nhật bản trên kho",
+    "download": "Tải về ZIP",
+    "expand": "Mở rộng",
+    "collapse": "Thu gọn",
+    "withdraw": "Rút khỏi kho",
+    "resubmit": "Gửi lại"
+  },
+  "mine": {
+    "emptyTitle": "Chưa cài đặt gì",
+    "emptyHint": "Chọn một mục trong kho kỹ năng hoặc tải lên kỹ năng của bạn.",
+    "browseStore": "Xem kho kỹ năng",
+    "missingDependency": "Chưa kết nối máy chủ MCP cần thiết: {{names}}",
+    "confirmPack": "“{{name}}” là một gói. Khi gỡ, cả {{count}} kỹ năng trong gói đều bị gỡ. Tiếp tục?",
+    "showReason": "Hiện lý do",
+    "hideReason": "Ẩn lý do",
+    "listingReason": "Lý do: {{note}}"
+  },
+  "store": {
+    "noMatch": "Không có gì khớp với tìm kiếm đó.",
+    "empty": "Kho kỹ năng chưa có mục nào."
+  },
+  "publish": {
+    "title": "Tải lên kho kỹ năng",
+    "updateTitle": "Cập nhật bản trên kho",
+    "body": "Tải “{{name}}” lên kho kỹ năng?",
+    "updateBody": "Thay phiên bản công khai trong kho bằng bản “{{name}}” hiện tại?",
+    "publicNotice": "Sau khi tải lên, mọi người dùng đều có thể tìm và cài đặt kỹ năng này. Hãy kiểm tra để đảm bảo kỹ năng không chứa khóa truy cập, thông tin tài khoản hoặc dữ liệu riêng tư.",
+    "confirm": "Tải lên",
+    "confirmUpdate": "Cập nhật",
+    "working": "Đang tải lên…",
+    "resubmitTitle": "Gửi lại vào kho kỹ năng",
+    "resubmitBody": "Gửi lại “{{name}}” vào kho kỹ năng?",
+    "reviewNotice": "Quản trị viên sẽ xét duyệt kỹ năng. Sau khi được duyệt, mọi người dùng đều có thể tìm và cài đặt. Hãy kiểm tra xem kỹ năng có chứa khóa truy cập, thông tin tài khoản hoặc dữ liệu riêng tư không.",
+    "confirmSubmit": "Gửi xét duyệt",
+    "confirmResubmit": "Gửi lại",
+    "submitting": "Đang gửi…"
+  },
+  "create": {
+    "title": "Tạo kỹ năng qua trò chuyện",
+    "subtitle": "Mô tả kỹ năng bạn cần. Agent sẽ hỏi rõ yêu cầu, tạo và kiểm thử kỹ năng trong cuộc trò chuyện.",
+    "projectLabel": "Lưu vào dự án",
+    "noProjects": "Không có dự án sẵn sàng",
+    "briefLabel": "Kỹ năng này nên làm gì?",
+    "briefPlaceholder": "Ví dụ: tạo kỹ năng tóm tắt cập nhật của đối thủ cạnh tranh hàng tuần với các nguồn liên kết.",
+    "chatHint": "Bạn sẽ chuyển sang một cuộc trò chuyện mới để tiếp tục điều chỉnh kỹ năng.",
+    "prompt": "Hãy giúp tôi tạo một kỹ năng cá nhân qua trò chuyện.\nYêu cầu của tôi: {{brief}}\nDùng quy trình skill-creator. Chỉ hỏi lại những điều cần thiết, rồi lưu vào Kỹ năng của tôi và kiểm thử.",
+    "confirm": "Bắt đầu tạo trong trò chuyện",
+    "starting": "Đang bắt đầu trò chuyện…"
+  },
+  "install": {
+    "title": "Cài đặt",
+    "confirm": "Cài đặt",
+    "installing": "Đang cài đặt…",
+    "dependsTitle": "Kỹ năng này cần một máy chủ MCP",
+    "dependsHint": "Hướng dẫn của kỹ năng sử dụng công cụ do các máy chủ MCP này cung cấp. Nếu thiếu máy chủ, kỹ năng vẫn tải được nhưng sẽ lỗi ngay ở lượt gọi công cụ đầu tiên.",
+    "dependsWarning": "Bạn chưa chọn một số mục phụ thuộc. Kỹ năng có thể không hoạt động.",
+    "credentialsFor": "Giấy chứng nhận cho {{name}}"
+  },
+  "upload": {
+    "batchNameHint": "Chỉ có thể đặt tên tùy chỉnh khi tải một tệp. Khi tải nhiều tệp, hệ thống dùng tên từng tệp nén.",
+    "title": "Thêm kỹ năng hoặc máy chủ MCP",
+    "subtitle": "Thêm tệp nén, SKILL.md, kho Git hoặc máy chủ MCP vào mục Của tôi.",
+    "modeArchive": "Tệp nén",
+    "modePaste": "Dán SKILL.md",
+    "modeGit": "Kho Git",
+    "modeMcp": "Máy chủ MCP",
+    "pickArchive": "Chọn tệp nén",
+    "archiveHint": "Hỗ trợ .zip, .tar và .tar.gz, tối đa 50 MB",
+    "nameLabel": "Tên (tùy chọn)",
+    "contentLabel": "Nội dung SKILL.md",
+    "frontmatterHint": "Phần frontmatter hỗ trợ icon (emoji) và requires-mcp (tên các máy chủ MCP mà kỹ năng cần).",
+    "gitLabel": "URL kho Git",
+    "gitHint": "Hỗ trợ HTTPS, Git hoặc SSH. Tệp install.sh trong kho sẽ tự động chạy.",
+    "mcpTab": {
+      "form": "Biểu mẫu",
+      "json": "Dán JSON"
+    },
+    "transport": {
+      "stdio": "Tiến trình cục bộ",
+      "remote": "Từ xa"
+    },
+    "mcpName": "Tên máy chủ",
+    "command": "Lệnh",
+    "args": "Tham số",
+    "env": "Biến môi trường (mỗi dòng một cặp KEY=value)",
+    "mcpUrl": "URL máy chủ",
+    "headers": "Header (mỗi dòng một cặp Key: value)",
+    "remoteHint": "Máy chủ từ xa ưu tiên Streamable HTTP và chuyển sang SSE nếu cần.",
+    "jsonLabel": "JSON cấu hình MCP",
+    "jsonHint": "Chấp nhận đối tượng bao ngoài mcpServers hoặc servers, hoặc cấu hình của một máy chủ.",
+    "jsonError": {
+      "invalidJson": "Đó không phải là JSON hợp lệ.",
+      "invalidShape": "Không nhận ra cấu trúc. Hãy dán cấu hình của một máy chủ hoặc một đối tượng mcpServers.",
+      "noServers": "Không tìm thấy máy chủ MCP trong cấu hình.",
+      "needName": "Cấu hình của một máy chủ cần có tên.",
+      "empty": "Hãy dán cấu hình trước."
+    },
+    "confirm": "Thêm",
+    "installing": "Đang xử lý…",
+    "skillTemplate": "---\nname: my-skill\ndescription: ...\nicon: 🛠️\n---\n\n# My Skill",
+    "gitPlaceholder": "https://github.com/owner/repo.git",
+    "namePlaceholder": "my-server",
+    "argsPlaceholder": "-y @modelcontextprotocol/server-memory",
+    "envPlaceholder": "API_KEY=sk-...",
+    "urlPlaceholder": "https://mcp.example.com/mcp",
+    "headersPlaceholder": "Authorization: Bearer ...",
+    "jsonPlaceholder": "{\n  \"mcpServers\": {\n    \"memory\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-memory\"]\n    }\n  }\n}"
+  },
+  "common": {
+    "cancel": "Hủy"
+  },
+  "deps": {
+    "title": "Kỹ năng này cần máy chủ MCP",
+    "subtitle": "“{{skill}}” sử dụng các công cụ của những máy chủ này. Hãy thiết lập để kỹ năng có thể hoạt động ngay.",
+    "willInstall": "Sẽ được cài đặt và kết nối",
+    "willConnect": "Đã cấu hình, sẽ kết nối lại",
+    "unknown": "Không có trong kho kỹ năng. Hãy thêm thủ công: {{names}}",
+    "confirm": "Cài đặt máy chủ cần thiết",
+    "working": "Đang xử lý…",
+    "later": "Để sau",
+    "fixNow": "Thiết lập"
+  },
+  "withdraw": {
+    "title": "Rút khỏi kho kỹ năng",
+    "body": "Rút “{{name}}” khỏi kho kỹ năng?",
+    "notice": "Sau khi rút, kỹ năng sẽ ẩn khỏi kho và người dùng mới không thể cài đặt. Người đã cài vẫn giữ bản của họ. Phiên bản đã đăng được lưu lại để bạn có thể gửi xét duyệt lại.",
+    "confirm": "Rút khỏi kho",
+    "working": "Đang rút khỏi kho…"
+  }
+}

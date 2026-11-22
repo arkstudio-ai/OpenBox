@@ -1,0 +1,81 @@
+{
+  "nav": { "capabilities": "Tính năng", "workflow": "Cách hoạt động", "useCases": "Tình huống sử dụng", "faq": "Câu hỏi thường gặp" },
+  "signIn": "Đăng nhập",
+  "register": "Tạo tài khoản",
+  "start": "Bắt đầu ngay",
+  "hero": {
+    "eyebrow": "Không gian làm việc AI trên đám mây cho chủ doanh nghiệp và các đội ngũ đang phát triển",
+    "title": "Một trợ lý AI luôn trực tuyến cho công việc vận hành hằng ngày.",
+    "lede": "BossIP đưa tiếp thị, đơn hàng, khách hàng, tài chính và quản lý đội ngũ vào cùng một không gian làm việc, giúp bạn biến ý tưởng thành các việc cần làm cụ thể.",
+    "primary": "Bắt đầu ngay",
+    "secondary": "Xem tính năng",
+    "metrics": [
+      { "value": "Luôn trực tuyến", "label": "Sẵn sàng trên đám mây" },
+      { "value": "Trọn quy trình", "label": "Từ tăng trưởng đến đánh giá kết quả" }
+    ]
+  },
+  "preview": {
+    "title": "Công việc kinh doanh hôm nay",
+    "status": "AI đang trực tuyến",
+    "rails": ["Kế hoạch", "Tiếp thị", "Tài chính", "Đội ngũ"],
+    "kicker": "Việc nên làm tiếp theo",
+    "panelTitle": "Danh sách việc cần làm để ra mắt combo cuối tuần",
+    "time": "Hôm nay 16:30",
+    "tasks": [
+      { "title": "Soạn ba nội dung quảng bá tại địa phương", "body": "Chọn điểm nổi bật theo mức giá, khung giờ và lượng hàng còn lại." },
+      { "title": "Xem lại biên lợi nhuận và kế hoạch tồn kho", "body": "So sánh chi phí nguyên liệu, doanh số dự kiến và nhân sự trong cùng một bảng." },
+      { "title": "Thống nhất cách trả lời khách hàng", "body": "Tổng hợp câu hỏi thường gặp và đánh dấu các trường hợp cần xem xét trực tiếp." }
+    ],
+    "signalKicker": "Chỉ số kinh doanh",
+    "signalValue": "+18%",
+    "signalBody": "Tỷ lệ chuyển đổi vào giờ trưa tăng so với tuần trước"
+  },
+  "band": "Một tài khoản kết nối các quyết định hằng ngày, việc cần thực hiện và quá trình phối hợp của đội ngũ.",
+  "capabilities": {
+    "eyebrow": "Tính năng chính",
+    "title": "BossIP hỗ trợ cả tiếp thị lẫn vận hành doanh nghiệp.",
+    "items": [
+      { "title": "Tiếp thị và tăng trưởng", "body": "Lập kế hoạch chiến dịch, viết quảng cáo, soạn bài mạng xã hội và đánh giá hiệu quả từng kênh." },
+      { "title": "Vận hành cửa hàng", "body": "Sắp xếp việc xử lý đơn hàng, tồn kho, ca làm, chăm sóc khách và làm việc với nhà cung cấp thành danh sách rõ ràng." },
+      { "title": "Tài chính và báo cáo", "body": "Tổng hợp doanh thu, chi phí, biên lợi nhuận và dòng tiền, rồi giải thích các thay đổi bằng ngôn ngữ dễ hiểu." },
+      { "title": "Quản lý doanh nghiệp", "body": "Ghi lại nội dung họp, quy định, mục tiêu và dự án, kèm người phụ trách và thời hạn." }
+    ]
+  },
+  "workflow": {
+    "eyebrow": "Cách hoạt động",
+    "title": "Từ một yêu cầu đến những việc cụ thể có thể theo dõi.",
+    "steps": [
+      { "title": "Nêu mục tiêu", "body": "Ví dụ: “Lên chương trình cho khách quay lại mua tuần sau” hoặc “Giải thích vì sao lợi nhuận tháng này giảm”." },
+      { "title": "Chia nhỏ công việc", "body": "AI hỏi thêm thông tin còn thiếu, sắp xếp tệp và dữ liệu rồi chia công việc thành các bước cụ thể." },
+      { "title": "Thực hiện và đánh giá", "body": "Dùng lại kết quả dưới dạng mẫu, báo cáo và đề xuất cho lần sau để bớt công chuẩn bị." }
+    ]
+  },
+  "useCases": {
+    "eyebrow": "Tình huống sử dụng",
+    "title": "Để BossIP sắp xếp những việc chủ doanh nghiệp phải xử lý mỗi ngày.",
+    "items": [
+      { "title": "Chủ cửa hàng và chuỗi cửa hàng", "body": "Ra mắt món mới, chạy ưu đãi địa phương, xử lý đánh giá, xếp ca, chuẩn bị hàng và tổng hợp báo cáo tuần." },
+      { "title": "Đội ngũ bán hàng địa phương và thương hiệu", "body": "Soạn nội dung cho từng kênh, giao việc cho nhà sáng tạo, lập ngân sách và theo dõi khách hàng tiềm năng." },
+      { "title": "Doanh nghiệp đang phát triển", "body": "Phân tích kinh doanh, ghi biên bản họp, theo dõi dự án, lập đề xuất cho khách hàng và soạn quy định quản lý." }
+    ]
+  },
+  "faq": {
+    "eyebrow": "Câu hỏi thường gặp",
+    "title": "Những điều chủ doanh nghiệp thường hỏi trước tiên.",
+    "items": [
+      { "q": "BossIP là công cụ trò chuyện hay hệ thống quản lý kinh doanh?", "a": "BossIP là trợ lý kinh doanh trên đám mây. Bạn có thể trò chuyện với trợ lý và theo dõi công việc, tài liệu nguồn và kết quả." },
+      { "q": "Tôi có cần biết kỹ thuật không?", "a": "Bạn chỉ cần mô tả mục tiêu theo cách thông thường. Trợ lý sẽ hỏi thêm nếu thiếu thông tin và tự xử lý bảng tính, tài liệu và trang web." },
+      { "q": "Đội ngũ của tôi có thể dùng chung không?", "a": "Có. Dự án và cuộc trò chuyện nằm trong không gian làm việc chung. Bạn có thể mời đồng nghiệp chia sẻ tài liệu và phân công công việc." }
+    ]
+  },
+  "final": {
+    "eyebrow": "Sẵn sàng khi bạn cần",
+    "title": "Để AI sắp xếp công việc vận hành hôm nay trước khi việc dồn lại.",
+    "cta": "Bắt đầu ngay"
+  },
+  "footer": {
+    "copy": "Không gian làm việc AI trên đám mây cho vận hành doanh nghiệp.",
+    "rights": "© 2026 BossIP",
+    "links": { "terms": "Điều khoản", "privacy": "Quyền riêng tư", "contact": "Liên hệ" }
+  }
+}

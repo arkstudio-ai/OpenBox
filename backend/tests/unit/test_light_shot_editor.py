@@ -104,6 +104,26 @@ async def test_recomposition_replaces_each_occurrence_and_keeps_the_cut_timing(m
     assert rebuilt["audio"][0]["asset"] == "asset_music"
 
 
+async def test_silent_shortcut_retake_removes_only_the_replaced_dialogue_caption(monkeypatch):
+    from video import media_probe
+
+    monkeypatch.setattr(media_probe, "ensure_meta", AsyncMock(return_value={"duration_sec": 5}))
+    original = SimpleNamespace(output_asset_id="asset_old", request_data={"spoken_line": "来，趁热。"})
+    replacement = SimpleNamespace(output_asset_id="asset_new", request_data={"shot": 2})
+    timeline = {
+        "shots": [{"asset": "asset_keep", "duration_sec": 5}, {"asset": "asset_old", "duration_sec": 5}],
+        "captions": [{"text": "来，趁热。", "from_sec": 2, "to_sec": 3},
+                     {"text": "来，趁热。", "from_sec": 7, "to_sec": 8},
+                     {"text": "孜然烤羊腿", "from_sec": 8, "to_sec": 9}],
+        "audio": [{"asset": "asset_music", "from_sec": 5, "to_sec": 10, "duck_under_captions": True}],
+    }
+    rebuilt = await shot_editor._replace_sections(SimpleNamespace(user_id="owner"), timeline,
+                                                    {2: original}, [replacement], drop_removed_dialogue=True)
+    assert [(c["text"], c["from_sec"]) for c in rebuilt["captions"]] == [("来，趁热。", 2), ("孜然烤羊腿", 8)]
+    assert rebuilt["audio"][0]["from_sec"] == 5
+    assert rebuilt["shots"][1]["asset"] == "asset_new"
+
+
 async def test_tail_edit_sends_two_native_endpoints_instead_of_the_motion_reference(monkeypatch):
     from tool import video_providers
     from video import media_probe

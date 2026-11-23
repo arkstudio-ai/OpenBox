@@ -8,12 +8,12 @@ from urllib.parse import unquote, urlsplit
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from light import silk_road
+from light import shortcut_plan, silk_road
 from light.reference_plan import ShotPlan
 
 TEMPLATE = "wan_story"
 SODA_TEMPLATE = "soda_story"
-TEMPLATES = (TEMPLATE, SODA_TEMPLATE, silk_road.TEMPLATE)
+TEMPLATES = (TEMPLATE, SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE)
 VERSION = "wan-story-v2"
 VERSIONS = ("wan-story-v1", VERSION)
 MODEL = "wan3.0-video"
@@ -54,7 +54,7 @@ class Plan(BaseModel):
 class StoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["prepare", "render"]
-    plan: ShotPlan | silk_road.Plan | None = Field(
+    plan: shortcut_plan.ShortcutPlan | ShotPlan | silk_road.Plan | None = Field(
         default=None,
         description="The director's storyboard. Required on prepare. Omit on render when the App has already approved a plan.",
     )
@@ -95,6 +95,8 @@ def planning_instruction(form: dict, action: str) -> str:
     directing = DIRECTING
     if form.get("template") == SODA_TEMPLATE:
         from light.soda_story import DIRECTING as directing
+    elif form.get("template") == shortcut_plan.TEMPLATE:
+        directing = shortcut_plan.DIRECTING
     elif form.get("template") == silk_road.TEMPLATE:
         directing = silk_road.DIRECTING
         data["确认菜名"] = form.get("product_name", "")
@@ -106,7 +108,9 @@ def planning_instruction(form: dict, action: str) -> str:
     ) + "\n表单数据：" + json.dumps(data, ensure_ascii=False)
 
 
-def parse_plan(data):
+def parse_plan(data, *, template=None):
+    if template == shortcut_plan.TEMPLATE:
+        return shortcut_plan.ShortcutPlan.model_validate(data)
     if isinstance(data, dict) and data.get("format") == silk_road.FORMAT:
         return silk_road.Plan.model_validate(data)
     return (ShotPlan if isinstance(data, dict) and "shots" in data else Plan).model_validate(data)

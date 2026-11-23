@@ -25,6 +25,12 @@ def api_base() -> str:
     return os.environ.get("OPENBOX_NETEASE_API", "").rstrip("/")
 
 
+def _params(**values):
+    if protocol := os.environ.get("OPENBOX_NETEASE_API_CRYPTO"):
+        values["crypto"] = protocol
+    return values
+
+
 def _session(ctx):
     key = (ctx.user_id, ctx.session_id)
     if key not in _sessions:
@@ -42,7 +48,7 @@ def prepared(track_id: str, ctx) -> MusicTrack | None:
 async def search(query: str, duration: float, excluded: set[str], ctx) -> list[dict]:
     async with httpx.AsyncClient(timeout=15.0, trust_env=False) as http:
         response = await http.get(f"{api_base()}/cloudsearch",
-                                  params={"keywords": query, "type": 1, "limit": 18})
+                                  params=_params(keywords=query, type=1, limit=18))
         response.raise_for_status()
     offered, _ = _session(ctx)
     choices = []
@@ -114,7 +120,7 @@ async def prepare(track_id: str, minimum_sec: float, ctx) -> MusicTrack:
     number = track_id.split(":", 1)[1]
     async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
         response = await client.get(f"{api_base()}/song/url/v1",
-                                    params={"id": number, "level": "standard", "ua": "pc"})
+                                    params=_params(id=number, level="standard", ua="pc"))
         response.raise_for_status()
         entries = response.json().get("data") or []
         source = entries[0] if entries else {}

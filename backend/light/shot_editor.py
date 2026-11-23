@@ -587,7 +587,7 @@ async def _retake_args(ctx, source, body, key):
     )
 
 
-async def _replace_sections(ctx, timeline, used, replacements):
+async def _replace_sections(ctx, timeline, used, replacements, *, drop_removed_dialogue=False):
     from video.media_probe import ensure_meta
     from video.timeline import Timeline
 
@@ -613,7 +613,24 @@ async def _replace_sections(ctx, timeline, used, replacements):
             if shot["speed"] < .25:
                 raise _fail("The new fragment is too short to keep this cut in sync.")
         revised.append(shot)
-    return Timeline.model_validate({**timeline, "shots": revised}).model_dump(mode="json")
+    result = Timeline.model_validate({**timeline, "shots": revised})
+    if drop_removed_dialogue:
+        from tool.video_production import normalize_spoken_text
+
+        removed = {}
+        for new in replacements:
+            old = used[_indices(new)]
+            line = (old.request_data or {}).get("spoken_line")
+            if line and not (new.request_data or {}).get("spoken_line"):
+                removed[old.output_asset_id] = normalize_spoken_text(line)
+        spans = Timeline.model_validate(timeline).shot_spans()
+        captions = [caption for caption in result.captions if not any(
+            span and span[0] - 0.02 <= caption.from_sec < caption.to_sec <= span[1] + 0.02
+            and removed.get(_asset_id(shot["asset"])) == normalize_spoken_text(caption.text)
+            for shot, span in zip(timeline["shots"], spans, strict=True)
+        )]
+        result = result.model_copy(update={"captions": captions})
+    return result.model_dump(mode="json")
 
 
 def _align_silk_handoff(form, timeline, used):
@@ -712,7 +729,10 @@ async def action(user_id, workspace_id, session_id, body: ShotAction):
             request = await _retake_args(ctx, source, body, key)
             result = await video_production.execute_generate(request, ctx)
         else:
-            revised = await _replace_sections(ctx, timeline, used, replacements)
+            from light.shortcut_plan import TEMPLATE as SHORTCUT_STORY
+
+            revised = await _replace_sections(ctx, timeline, used, replacements,
+                                              drop_removed_dialogue=form.get("template") == SHORTCUT_STORY)
             revised = _align_silk_handoff(
                 form, revised, {**used, **{_indices(job): job for job in replacements}},
             )

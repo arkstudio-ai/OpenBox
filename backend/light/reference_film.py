@@ -355,10 +355,13 @@ def lettering(headline, shop, *, ink="#FFF8E9", outline=None):
     return buf.getvalue()
 
 
-def timeline_for(cuts, art, *, music_start=None):
+def timeline_for(cuts, art, *, music_start=None, hero_shot=None):
     indices = [c["shot"] for c in cuts]
     if len(cuts) < 5 or len(set(indices)) != len(indices) or min(indices) < 1:
         raise RemakeStopped("所有剧情镜头审片完成后才可以合成。")
+    if hero_shot is not None and hero_shot not in indices:
+        raise RemakeStopped("商品特写缺失，无法放置题字。")
+    hero_shot = hero_shot or indices[-1]
     shots, captions, holds, at = [], [], [], 0.0
     for cut in cuts:
         start, length = cut["in_sec"], cut["duration_sec"]
@@ -389,7 +392,8 @@ def timeline_for(cuts, art, *, music_start=None):
                     "to_sec": round(at + cue["to_sec"] - start, 3),
                 }
             )
-        hero_at = at
+        if cut["shot"] == hero_shot:
+            hero_at, hero_end = at, at + length
         at += length
     if at < 18:
         raise RemakeStopped("完整剧情不足18秒，请调整分镜，不能交付过短片段。")
@@ -420,7 +424,7 @@ def timeline_for(cuts, art, *, music_start=None):
                 "height": 1,
                 "fit": "contain",
                 "from_sec": round(hero_at + 0.12, 3),
-                "to_sec": round(at, 3),
+                "to_sec": round(hero_end, 3),
             }
         ],
     }

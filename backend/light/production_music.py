@@ -9,6 +9,7 @@ from httpx import HTTPError
 
 from core.log import create_logger
 from core.oss import OssError
+from light import shortcut_plan
 from video import bgm_library, music_catalog, netease_music
 
 MusicStyle = Literal["auto", "upbeat", "calm", "energetic", "off"]
@@ -23,7 +24,9 @@ _AUTO = {
     "": ("轻松 美食 纯音乐", "bgm-cuisine"),
     "silk_road": ("轻柔 纯音乐", "bgm-relaxing"),
     "soda_story": ("俏皮 纯音乐", "bgm-quirky"),
+    shortcut_plan.TEMPLATE: ("Carefree Kevin MacLeod", "bgm-quirky"),
 }
+CAREFREE = "netease:33190124"
 
 
 def preference(form: dict) -> MusicStyle:
@@ -50,12 +53,13 @@ async def for_composition(ctx, key: str | None) -> tuple[MusicStyle, str] | None
     return None
 
 
-async def _netease_track(ctx, query, duration):
+async def _netease_track(ctx, query, duration, *, exact_id=None):
     if netease_music.api_base():
         try:
             async with asyncio.timeout(24):
                 choices = await netease_music.search(query, duration, set(), ctx)
-                for choice in choices[:3]:
+                candidates = [choice for choice in choices if not exact_id or choice["track_id"] == exact_id]
+                for choice in candidates[:3]:
                     try:
                         return await netease_music.prepare(choice["track_id"], duration, ctx)
                     except (HTTPError, OSError, OssError, SubprocessError, ValueError) as exc:
@@ -77,19 +81,25 @@ async def mix(ctx, timeline, style: MusicStyle, template: str, host: str, *, tra
         return timeline, {**data, "music_source": "template" if original_bed else "unavailable"}
 
     query, tag = _STYLES.get(style, _AUTO.get(template, _STYLES["upbeat"]))
+    spans = edit.shot_spans()
+    shortcut = template == shortcut_plan.TEMPLATE and len(spans) >= shortcut_plan.REVEAL
+    start = spans[shortcut_plan.REVEAL - 1][0] if shortcut and spans[shortcut_plan.REVEAL - 1] else 0
     track = netease_music.prepared(track_id, ctx) if track_id and track_id.startswith("netease:") else None
     if not track or track.sec < total:
-        track = await _netease_track(ctx, query, total)
+        track = await _netease_track(ctx, query, total, exact_id=CAREFREE if shortcut and style == "auto" else None)
     offset = 0.0
     if track:
         from light.silk_road import MUSIC_REVEAL_SEC, TEMPLATE as SILK_ROAD
 
-        spans = edit.shot_spans()
         # Line up the reveal (or first cut) by sliding the audio, keeping picture and dialogue timing fixed.
         anchor = MUSIC_REVEAL_SEC if template == SILK_ROAD else (spans[1][0] if len(spans) > 1 else 0)
-        offset = round(next((beat - anchor for beat in track.beats if anchor <= beat <= anchor + 1
-                             and beat - anchor + total <= track.sec), 0.0), 4)
+        if not shortcut:
+            offset = round(next((beat - anchor for beat in track.beats if anchor <= beat <= anchor + 1
+                                 and beat - anchor + total <= track.sec), 0.0), 4)
         credit = track.credit()
+        if track.id == CAREFREE:
+            credit.update(license_url="https://creativecommons.org/licenses/by/4.0/",
+                          attribution="Carefree — Kevin MacLeod (incompetech.com)")
         source, sec = "netease", track.sec
     else:
         if original_bed and style == "auto":
@@ -103,6 +113,8 @@ async def mix(ctx, timeline, style: MusicStyle, template: str, host: str, *, tra
     volume = 0.12 if any(shot.volume > 0 for shot in edit.shots) or edit.audio else 0.36
     selection = music_catalog.MusicSelection(track_id=credit["track_id"], in_sec=offset, volume=volume)
     bed = music_catalog.music_audio(selection, edit, sec=sec, track=track, host=host)
+    if start:
+        bed = bed.model_copy(update={"from_sec": start, "volume": 0.32, "duck_volume": 0.13})
     return edit.model_copy(update={"audio": [*edit.audio, bed]}), {
         **data, "music_source": source, "edit_timeline": edit.model_dump(mode="json"),
         "soundtrack": {**credit, "in_sec": bed.in_sec, "beat_cuts": []},

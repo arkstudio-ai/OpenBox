@@ -451,8 +451,13 @@ class _TemplatePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final recipe = const ['soda_story', 'silk_road'].contains(template);
+    final recipe = const [
+      shortcutStory,
+      'soda_story',
+      'silk_road',
+    ].contains(template);
     final asset = switch (template) {
+      shortcutStory => shortcutStoryPoster,
       'soda_story' => sodaStoryPoster,
       'silk_road' => silkRoadPoster,
       _ => null,
@@ -477,6 +482,7 @@ class _TemplatePreview extends StatelessWidget {
               Center(
                 child: IconButton.filled(
                   key: Key(switch (template) {
+                    shortcutStory => 'production-shortcut-preview',
                     'soda_story' => 'production-soda-preview',
                     'silk_road' => 'production-silk-road-preview',
                     _ => 'production-case-preview',
@@ -489,6 +495,7 @@ class _TemplatePreview extends StatelessWidget {
                   onPressed: () => showProductionVideo(
                     context,
                     switch (template) {
+                      shortcutStory => shortcutStoryVideo,
                       'soda_story' => sodaStoryVideo,
                       'silk_road' => silkRoadVideo,
                       _ => crawfishCaseVideo,

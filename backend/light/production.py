@@ -18,7 +18,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, production_music, remake_case, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -525,6 +525,8 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         template = form.get("template")
         if template == silk_road.TEMPLATE:
             recipe, plan_type = silk_road, silk_road.Plan
+        elif template == shortcut_plan.TEMPLATE:
+            recipe, plan_type = wan_story, shortcut_plan.ShortcutPlan
         elif template in wan_story.TEMPLATES:
             recipe, plan_type = wan_story, (wan_story.Plan, wan_story.ShotPlan)
         else:
@@ -539,7 +541,8 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
             if stored is None and form.get("remake_prepared_for") == fingerprint:
                 stored = form.get("remake_adaptation")
             if stored is not None:
-                adaptation = wan_story.parse_plan(stored) if template in wan_story.TEMPLATES else plan_type.model_validate(stored)
+                adaptation = (wan_story.parse_plan(stored, template=template) if template in wan_story.TEMPLATES
+                              else plan_type.model_validate(stored))
         if not isinstance(adaptation, plan_type):
             raise LightError("LIGHT_REMAKE_PLAN", "当前表单需要新的分镜，请根据本次素材与文案填入 plan。", 409)
         if run["action"] == "prepare":
@@ -713,6 +716,9 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
         if view["status"] == "completed":
             raise LightError("LIGHT_PRODUCTION_STATE", "Edit the result before generating a new version", 409)
         form = _form(row)
+        if (form.get("template") == shortcut_plan.TEMPLATE
+                and form.get("remake_prepared_for") != remake_case.input_fingerprint(form)):
+            raise LightError("LIGHT_REMAKE_PLAN", "请先确认当前素材与文案生成的分镜。", 409)
         if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
                 and not (form.get("remake_adaptation") or {}).get("world")):
             raise LightError("LIGHT_VIDEO_FRAME_PLAN", "Prepare the current storyboard before filming.", 409)
@@ -876,7 +882,7 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     row.light_production = {**row.light_production, "run": {
                         **row.light_production["run"], "remake_version": version, "remake_adaptation": preserved,
                         **({"silk_controls": controls} if controls is not None else {}),
-                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs") if k in prior}
+                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs", "director_decisions") if k in prior}
                            if version == wan_story.VERSION and prior.get("job_prefix") == prefix else {}),
                     }}
                 queued = True

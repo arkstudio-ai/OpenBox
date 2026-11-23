@@ -1,13 +1,16 @@
 """RunningHub Turbo contract: separate endpoints, protected references and polling."""
 import json
+from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from PIL import Image
 
 from core.config import OpenBoxConfig
 from tool import video_production as vp, video_providers as providers
-from tool.video_runninghub import MODEL, PREFIX
+from tool.video_runninghub import FrameValidationError, MODEL, PREFIX, prepare_frame_assets
 
 
 @pytest.fixture
@@ -82,11 +85,37 @@ def test_unsupported_inputs_fail_before_paid_submit(route, changes):
         payload(route, **changes)
 
 
-@pytest.mark.parametrize('mime', ['image/gif', 'image/svg+xml', 'image/heic'])
-def test_unsupported_image_formats_are_not_sent_as_png(route, mime):
-    with pytest.raises(providers.VideoRequestError, match='JPEG/PNG/WEBP'):
-        providers.validate_request(route, resolution='768p', ratio='adaptive', duration=5,
-                                   generate_audio=True, input_mimes=[mime])
+def image_bytes(image_format: str) -> bytes:
+    output = BytesIO()
+    Image.new('RGB', (16, 16), 'red').save(output, format=image_format)
+    return output.getvalue()
+
+
+async def test_gif_is_converted_to_a_jpeg_for_runninghub(monkeypatch):
+    asset = SimpleNamespace(id='frame', oss_key='source.gif')
+    oss = SimpleNamespace(get_object=AsyncMock(return_value=image_bytes('GIF')), put_object=AsyncMock())
+    monkeypatch.setattr('core.oss.get_oss', lambda: oss)
+
+    copies = await prepare_frame_assets([asset], ['first_frame'], user_id='u', save_copies=True)
+
+    stored_key, stored_bytes = oss.put_object.await_args.args
+    assert copies == {asset.id: stored_key}
+    assert stored_key.endswith('.jpg') and stored_key != asset.oss_key
+    assert oss.put_object.await_args.kwargs == {'content_type': 'image/jpeg', 'forbid_overwrite': True}
+    with Image.open(BytesIO(stored_bytes)) as image:
+        assert image.format == 'JPEG'
+
+
+@pytest.mark.parametrize('source', [b'<svg xmlns="http://www.w3.org/2000/svg"/>', b'damaged frame'])
+async def test_undecodable_frame_fails_before_upload(monkeypatch, source):
+    asset = SimpleNamespace(id='frame', oss_key='source')
+    oss = SimpleNamespace(get_object=AsyncMock(return_value=source), put_object=AsyncMock())
+    monkeypatch.setattr('core.oss.get_oss', lambda: oss)
+
+    with pytest.raises(FrameValidationError, match='首帧'):
+        await prepare_frame_assets([asset], ['first_frame'], user_id='u', save_copies=True)
+
+    oss.put_object.assert_not_awaited()
 
 
 @pytest.mark.parametrize('images,ratio', [(False, '9:16'), (True, 'adaptive')])
@@ -175,13 +204,17 @@ def test_status_contract_never_finishes_without_a_video(route, data, expected):
     (['first_frame'], True), (['last_frame', 'first_frame'], True),
 ])
 async def test_validate_checks_explicit_intent_and_reports_asset_bindings(config, route, monkeypatch, roles, valid):
-    from types import SimpleNamespace
     from tool.tool import ToolContext
     # Actual asset IDs are resolved before routing; list order does not decide
     # which of the pictures becomes the start or end of the shot.
-    rows = {f'asset-{i}': SimpleNamespace(id=f'asset-{i}', mime='image/png') for i in range(len(roles))}
+    rows = {
+        f'asset-{i}': SimpleNamespace(id=f'asset-{i}', mime='image/png', oss_key=f'frame-{i}.png')
+        for i in range(len(roles))
+    }
     async def owned(asset_id, _ctx):
         return rows[asset_id]
+    oss = SimpleNamespace(get_object=AsyncMock(return_value=image_bytes('PNG')), put_object=AsyncMock())
+    monkeypatch.setattr('core.oss.get_oss', lambda: oss)
     monkeypatch.setattr(vp, '_find_owned_asset', owned)
     monkeypatch.setattr(vp, '_session_video_model_id', AsyncMock(return_value=None))
     monkeypatch.setattr(vp, '_session_video_resolution', AsyncMock(return_value=None))
@@ -204,11 +237,12 @@ async def test_validate_checks_explicit_intent_and_reports_asset_bindings(config
         assert 'estimated_credits' not in result.metadata and 'credits' not in result.output
     else:
         assert 'estimated_credits' not in result.metadata
+    assert oss.get_object.await_count == (len(roles) if valid else 0)
+    oss.put_object.assert_not_awaited()
     submit.assert_not_awaited()
 
 
 async def test_reusing_an_asset_as_both_endpoints_does_not_silently_drop_its_last_frame(monkeypatch):
-    from types import SimpleNamespace
     row = SimpleNamespace(id='loop-frame', mime='image/png')
     monkeypatch.setattr(vp, '_find_owned_asset', AsyncMock(return_value=row))
     refs = [vp.VideoInputRef(asset_id=row.id, role=role) for role in ['first_frame', 'last_frame', 'first_frame']]

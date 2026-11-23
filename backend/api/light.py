@@ -123,6 +123,16 @@ async def production_history(
     return await production.history(*_scope(current_user), limit, offset, entry_id=entry_id)
 
 
+@router.get("/productions/preview")
+async def production_preview(entry_id: production_form.EntryId, brief: str = Query("", max_length=300),
+                             current_user: dict = Depends(get_current_user)):
+    try:
+        return await production.preview(*_scope(current_user), production_form.StartForm(entry_id=entry_id, brief=brief),
+                                        current_user.get("ui_language"))
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
 @router.get("/productions/{session_id}")
 async def get_production(session_id: str, current_user: dict = Depends(get_current_user)):
     try:

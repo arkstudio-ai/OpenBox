@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -43,11 +44,13 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   final _productName = TextEditingController();
   final _pending = <String, Object?>{};
   LightProduction? _task;
+  Future<LightProduction>? _creating;
   Future<bool>? _saving;
   Timer? _autosave;
   Timer? _poll;
   bool _busy = false;
-  bool _refreshing = false;
+  Future<void>? _refreshing;
+  LightProduction? _beforeAdvanced;
   bool _advancedUpdated = false;
   bool _inAgent = false;
   bool _confirmingAssembly = false;
@@ -62,6 +65,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
 
   LightProductionApi get _api => ref.read(lightProductionApiProvider);
   I18nState get _i18n => ref.read(i18nProvider);
+  String get _sessionId => _task?.sessionId ?? widget.sessionId;
   bool get _imagesOnly => _task?.kind.imagesOnly ?? false;
   List<ProductionDish> get _dishes =>
       _pending['dishes'] is List<Map<String, String>>
@@ -77,7 +81,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     if (initial != null && initial.sessionId == widget.sessionId) {
       _readTask(initial);
     }
-    unawaited(_refresh());
+    if (_sessionId.isNotEmpty) unawaited(_refresh());
     _poll = Timer.periodic(const Duration(seconds: 3), (_) {
       if ((_task?.working == true || _task?.shotWorkspace?.active == true) &&
           !_inAgent &&
@@ -109,7 +113,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     }
   }
 
-  void _receive(LightProduction task) {
+  void _receive(LightProduction task, {bool fromRefresh = false}) {
     if (mounted) {
       final offerAssembly =
           _task?.shotWorkspace?.active == true &&
@@ -119,6 +123,15 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         _snapshot++;
         _readTask(task);
         _error = null;
+        final before = fromRefresh ? _beforeAdvanced : null;
+        final updated = _task!;
+        if (before != null &&
+            (updated.agentRevision > before.agentRevision ||
+                updated.output?.id != before.output?.id ||
+                !_sameShotVersions(before, updated))) {
+          _beforeAdvanced = null;
+          _advancedUpdated = true;
+        }
       });
       if (offerAssembly) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -128,6 +141,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         });
       }
     }
+  }
+
+  bool _sameShotVersions(LightProduction before, LightProduction updated) {
+    final previous = before.shotWorkspace?.shots ?? const [];
+    final current = updated.shotWorkspace?.shots ?? const [];
+    if (previous.length != current.length) return false;
+    for (var i = 0; i < previous.length; i++) {
+      if (previous[i].index != current[i].index ||
+          previous[i].version?.id != current[i].version?.id) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _shotDetail(ProductionShot shot) async {
@@ -191,13 +217,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     }
   }
 
-  Future<void> _refresh({bool alert = false}) async {
-    if (_refreshing) return;
-    _refreshing = true;
+  Future<void> _refresh({bool alert = false}) => _refreshing ??= _load(
+    alert: alert,
+  ).whenComplete(() => _refreshing = null);
+
+  Future<void> _load({required bool alert}) async {
+    final sessionId = _sessionId;
+    if (sessionId.isEmpty) return;
     final snapshot = _snapshot;
     try {
-      final task = await _api.get(widget.sessionId);
-      if (_saving == null && _snapshot == snapshot) _receive(task);
+      final task = await _api.get(sessionId);
+      if (_saving == null && _snapshot == snapshot) {
+        _receive(task, fromRefresh: true);
+      }
     } catch (error) {
       if (mounted) {
         if (_task == null) {
@@ -206,8 +238,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           _notify(error);
         }
       }
-    } finally {
-      _refreshing = false;
     }
   }
 
@@ -216,7 +246,15 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
 
   void _stage(String key, Object? value) {
     if (!mounted) return;
-    setState(() => _pending[key] = value);
+    setState(() {
+      if (_sessionId.isEmpty &&
+          key == 'shop' &&
+          (value as String).trim() == _task!.shop) {
+        _pending.remove(key);
+      } else {
+        _pending[key] = value;
+      }
+    });
     _autosave?.cancel();
     _autosave = Timer(
       const Duration(milliseconds: 480),
@@ -229,21 +267,35 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     return _saving ??= _saveEdits().whenComplete(() => _saving = null);
   }
 
+  Future<LightProduction> _ensureDraft() async {
+    final task = _task!;
+    if (task.sessionId.isNotEmpty) return task;
+    return _creating ??= _api
+        .create(task.kind, brief: task.brief)
+        .then((saved) {
+          _receive(saved);
+          return saved;
+        })
+        .whenComplete(() => _creating = null);
+  }
+
   Future<bool> _saveEdits() async {
     while (mounted && _pending.isNotEmpty && _task != null) {
       final changes = Map<String, Object?>.of(_pending);
       try {
-        final saved = await _api.edit(_task!, changes);
+        final task = await _ensureDraft();
+        if (!mounted) return false;
+        final saved = await _api.edit(task, changes);
         if (!mounted) return false;
         if (changes.containsKey('chat_tier')) {
-          ref.invalidate(pickedModelProvider(widget.sessionId));
+          ref.invalidate(pickedModelProvider(task.sessionId));
         }
         if (changes.containsKey('video_tier')) {
-          ref.invalidate(pickedVideoProvider(widget.sessionId));
+          ref.invalidate(pickedVideoProvider(task.sessionId));
         }
         if (changes.containsKey('chat_tier') ||
             changes.containsKey('video_tier')) {
-          ref.invalidate(chatSessionProvider(widget.sessionId));
+          ref.invalidate(chatSessionProvider(task.sessionId));
         }
         for (final change in changes.entries) {
           if (_pending[change.key] == change.value) _pending.remove(change.key);
@@ -254,7 +306,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           if (apiErrorOf(error)?.code == 'LIGHT_PRODUCTION_CHANGED') {
             // Keep the user's unsaved text; obtain the new revision before another explicit save.
             try {
-              _receive(await _api.get(widget.sessionId));
+              _receive(await _api.get(_sessionId));
             } catch (_) {}
           }
           if (mounted) {
@@ -296,7 +348,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   }
 
   Future<void> _goTo(String page) async =>
-      _receive(await _api.edit(_task!, {'page': page}));
+      _receive(await _api.edit(await _ensureDraft(), {'page': page}));
 
   Future<void> _next({bool skip = false}) => _perform(() async {
     final task = _task!;
@@ -374,15 +426,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     _inAgent = true;
     try {
       if (!await _flush() || !mounted) return;
-      final revision = _task!.agentRevision;
-      final outputId = _task!.output?.id;
-      await context.push(Paths.lightProductionAgent(widget.sessionId));
+      final before = await _ensureDraft();
       if (!mounted) return;
+      if (_advancedUpdated) setState(() => _advancedUpdated = false);
+      await context.push(Paths.lightProductionAgent(before.sessionId));
+      if (!mounted) return;
+      // Any request started before leaving chat may still contain the old result.
+      _snapshot++;
+      await _refreshing;
+      if (!mounted) return;
+      _beforeAdvanced = before;
       await _refresh(alert: true);
-      if (mounted &&
-          (_task!.agentRevision > revision || _task!.output?.id != outputId)) {
-        setState(() => _advancedUpdated = true);
-      }
+    } catch (error) {
+      if (mounted) _notify(error);
     } finally {
       _inAgent = false;
     }
@@ -396,8 +452,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       builder: (_) =>
           ProductionLibrary(imagesOnly: _imagesOnly, selected: _task!.assets),
     );
-    if (selected != null && mounted) {
-      _receive(await _api.edit(_task!, {'asset_ids': selected}));
+    if (selected != null && mounted && !listEquals(selected, _task!.assets)) {
+      final task = await _ensureDraft();
+      if (mounted) _receive(await _api.edit(task, {'asset_ids': selected}));
     }
   });
 
@@ -468,12 +525,14 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                 : name.endsWith('.heic')
                 ? 'image/heic'
                 : 'image/jpeg');
+        final task = await _ensureDraft();
+        if (!mounted) return;
         final id = await api.uploadStream(
           name: file.name,
           mime: mime,
           length: length,
           stream: file.openRead,
-          sessionId: widget.sessionId,
+          sessionId: task.sessionId,
           onProgress: (fraction) {
             if (mounted) {
               setState(
@@ -549,6 +608,20 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               ? ProductionLoading(error: _error, onRetry: _refresh)
               : Column(
                   children: [
+                    if (_advancedUpdated)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Chip(
+                            avatar: const Icon(
+                              Icons.check_circle_outline,
+                              size: 16,
+                            ),
+                            label: Text(_text('updatedFromChat')),
+                          ),
+                        ),
+                      ),
                     Expanded(
                       child: switch (task.status) {
                         'working' || 'completed'
@@ -585,16 +658,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
     keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
     children: [
-      if (_advancedUpdated) ...[
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Chip(
-            avatar: const Icon(Icons.check_circle_outline, size: 16),
-            label: Text(_text('updatedFromChat')),
-          ),
-        ),
-        const SizedBox(height: 10),
-      ],
       switch (task.page) {
         'style' => Column(
           crossAxisAlignment: CrossAxisAlignment.start,

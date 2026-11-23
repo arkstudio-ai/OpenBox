@@ -552,6 +552,7 @@
     "selected": "已选 {{count}} 个素材",
     "confirmMaterials": "确认 {{count}} 个素材",
     "emptyLibrary": "素材库还没有这类文件。",
+    "previewMaterial": "预览「{{name}}」",
     "remove": "移除",
     "removeMissing": "清除已无法使用的素材",
     "fileTooLarge": "单个素材最多 200 MB。",

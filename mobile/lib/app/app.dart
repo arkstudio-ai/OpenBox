@@ -12,6 +12,7 @@ import '../shared/i18n/device_timezone.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/widgets/toast.dart';
 import 'device_preferences.dart';
+import 'home_anchor.dart';
 import 'notification_host.dart';
 import 'router.dart';
 import 'workspace_bootstrap.dart';
@@ -64,6 +65,8 @@ class _BossipAppState extends ConsumerState<BossipApp>
       title: 'bossip',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
+      onNavigationNotification: (notification) =>
+          reportFrameworkBack(router, notification),
       theme: buildBossipTheme(appearance.theme, Brightness.light),
       darkTheme: buildBossipTheme(appearance.theme, Brightness.dark),
       themeMode: switch (appearance.mode) {

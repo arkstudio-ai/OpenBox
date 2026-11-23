@@ -256,6 +256,14 @@ class LightProductionApi {
   final Dio _dio;
   static const _path = '/api/light/productions';
 
+  Future<LightProduction> preview(ProductionKind kind, {String? brief}) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '$_path/preview',
+      queryParameters: {'entry_id': kind.id, 'brief': ?brief},
+    );
+    return LightProduction.fromJson(response.data!);
+  }
+
   Future<LightProduction> create(ProductionKind kind, {String? brief}) async {
     final response = await _dio.post<Map<String, dynamic>>(
       _path,

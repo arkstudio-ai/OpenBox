@@ -9,8 +9,8 @@ import '../../../shared/i18n/i18n.dart';
 /// 消息 / 我的 on a `StatefulShellRoute`, each branch keeping its own state.
 /// The app layer supplies the badge counts; this widget only draws the bar.
 ///
-/// System back on any other tab returns to 首页 first; on 首页 it leaves the
-/// app, as a home screen does.
+/// System back on another tab returns to 首页. Repeated back gestures at the
+/// tab root stay on 首页.
 class LightShell extends ConsumerWidget {
   const LightShell({
     super.key,
@@ -41,9 +41,9 @@ class LightShell extends ConsumerWidget {
           )
         : icon;
     return PopScope<Object?>(
-      canPop: shell.currentIndex == 0,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) shell.goBranch(0);
+        if (!didPop && shell.currentIndex != 0) shell.goBranch(0);
       },
       child: Scaffold(
         backgroundColor: t.bg,

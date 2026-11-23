@@ -12,7 +12,9 @@ class InboxLink {
   const InboxLink({
     required this.kind,
     this.workspaceId,
+    this.userId,
     this.sessionId,
+    this.turnId,
     this.taskId,
     this.resultId,
     this.jobId,
@@ -29,7 +31,9 @@ class InboxLink {
     return InboxLink(
       kind: kind,
       workspaceId: asString(json['workspaceId']),
+      userId: asString(json['userId']),
       sessionId: asString(json['sessionId']),
+      turnId: asString(json['turnId']),
       taskId: asString(json['taskId']),
       resultId: asString(json['resultId']),
       jobId: asString(json['jobId']),
@@ -42,7 +46,9 @@ class InboxLink {
 
   final String kind;
   final String? workspaceId;
+  final String? userId;
   final String? sessionId;
+  final String? turnId;
   final String? taskId;
   final String? resultId;
   final String? jobId;

@@ -552,6 +552,7 @@
     "selected": "Đã chọn {{count}} tư liệu",
     "confirmMaterials": "Dùng {{count}} tư liệu",
     "emptyLibrary": "Thư viện chưa có tệp loại này.",
+    "previewMaterial": "Xem trước {{name}}",
     "remove": "Bỏ chọn",
     "removeMissing": "Bỏ tư liệu không khả dụng",
     "fileTooLarge": "Mỗi tệp tối đa 200 MB.",

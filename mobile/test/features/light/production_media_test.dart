@@ -1,20 +1,27 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/light/production/production_api.dart';
+import 'package:bossip_mobile/features/light/production/production_history.dart';
 import 'package:bossip_mobile/features/light/production/production_media.dart';
 import 'package:bossip_mobile/features/light/production/production_page.dart';
+import 'package:bossip_mobile/features/light/production/production_shots.dart';
 import 'package:bossip_mobile/features/light/production/production_stages.dart';
 import 'package:bossip_mobile/features/light/production/production_widgets.dart';
+import 'package:bossip_mobile/features/light/state/light_providers.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/app_config.dart';
+import 'package:bossip_mobile/shared/router/paths.dart';
+import 'package:bossip_mobile/shared/widgets/media_viewer.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 ui.Image _frame() {
@@ -63,6 +70,98 @@ void main() {
           home: Scaffold(body: body),
         ),
       );
+
+  testWidgets('opening video creation is read-only until the first edit', (
+    tester,
+  ) async {
+    const path = '/api/light/productions';
+    const start = '/light/topic/video';
+    const preview = {'entry_id': 'video', 'shop': '默认门店'};
+    final requests = <String>[];
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            requests.add('${request.method} ${request.path}');
+            final data = switch ((request.method, request.path)) {
+              ('GET', '$path/preview') => preview,
+              ('POST', path) => {...preview, 'session_id': 'video-draft'},
+              ('PATCH', '$path/video-draft') => {
+                ...preview,
+                'session_id': 'video-draft',
+                'revision': 2,
+                ...request.data as Map,
+              },
+              _ => throw StateError('Unexpected request ${request.path}'),
+            };
+            handler.resolve(
+              Response(
+                requestOptions: request,
+                data: Map<String, dynamic>.from(data),
+              ),
+            );
+          },
+        ),
+      );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, _) => Scaffold(
+            body: TextButton(
+              onPressed: () => context.push(start),
+              child: const Text('开始制作'),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: start,
+          builder: (_, _) =>
+              const ProductionStartPage(kind: ProductionKind.video),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+          lightProductionApiProvider.overrideWithValue(LightProductionApi(dio)),
+          appConfigProvider.overrideWith((ref) async => AppConfig.fromJson({})),
+        ],
+        child: MaterialApp.router(
+          routerConfig: router,
+          theme: ThemeData(
+            extensions: [
+              BossipTokens.resolve(BossipThemeName.default_, Brightness.light),
+            ],
+          ),
+        ),
+      ),
+    );
+    final startButton = find.text('开始制作');
+    final shop = find.byKey(const Key('production-shop'));
+    await tester.tap(startButton);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(shop).controller!.text, '默认门店');
+    await tester.tap(find.byKey(const Key('production-back')));
+    await tester.pumpAndSettle();
+    expect(requests, ['GET $path/preview']);
+    await tester.tap(startButton);
+    await tester.pumpAndSettle();
+    await tester.enterText(shop, '已填写的门店');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(requests, [
+      'GET $path/preview',
+      'GET $path/preview',
+      'POST $path',
+      'PATCH $path/video-draft',
+    ]);
+    expect(tester.widget<TextField>(shop).controller!.text, '已填写的门店');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('AI video has an independent music picker and saves the choice', (
     tester,
@@ -119,6 +218,125 @@ void main() {
     expect(find.descendant(of: row, matching: find.text('舒缓')), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'returning from advanced chat refreshes the clip and final version',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 850);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      const sessionId = 'advanced-sync';
+      final requestInFlight = Completer<void>();
+      Map<String, dynamic> task(int film, int clip) {
+        Map<String, dynamic> video(String id) => {
+          'id': id,
+          'name': '$id.mp4',
+          'mime': 'video/mp4',
+          'width': 1280,
+          'height': 720,
+        };
+        return {
+          'session_id': sessionId,
+          'entry_id': 'video',
+          'status': 'completed',
+          'revision': 16,
+          'agent_revision': 16,
+          'output': video('film-$film'),
+          'shot_editor': {
+            'title': '说好只吃一口',
+            'films': [
+              {'number': film, 'current': true, 'media': video('film-$film')},
+            ],
+            'shots': [
+              {
+                'index': 8,
+                'title': '目送公交离站',
+                'status': 'ready',
+                'version': {'id': 'shot-$clip', 'media': video('clip-$clip')},
+              },
+            ],
+          },
+        };
+      }
+
+      var requests = 0;
+      var response = task(1, 2);
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) async {
+              final data = ++requests == 1 ? task(1, 1) : response;
+              if (requests == 1) await requestInFlight.future;
+              handler.resolve(Response(requestOptions: request, data: data));
+            },
+          ),
+        );
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => ProductionPage(
+              sessionId: sessionId,
+              initial: LightProduction.fromJson(task(1, 1)),
+            ),
+          ),
+          GoRoute(
+            path: Paths.chat(sessionId),
+            builder: (_, _) => const Scaffold(body: Text('Agent')),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+            lightProductionApiProvider.overrideWithValue(
+              LightProductionApi(dio),
+            ),
+            videoThumbnailProvider.overrideWith((_, _) async => null),
+          ],
+          child: MaterialApp.router(
+            routerConfig: router,
+            theme: ThemeData(
+              extensions: [
+                BossipTokens.resolve(
+                  BossipThemeName.default_,
+                  Brightness.light,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final advanced = find.byKey(const Key('production-advanced'));
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      expect(find.text('Agent'), findsOneWidget);
+      router.pop();
+      requestInFlight.complete();
+      await tester.pumpAndSettle();
+      expect(requests, 2);
+      expect(find.text('已从对话更新'), findsOneWidget);
+      final page = tester.widget<ProductionShotList>(
+        find.byType(ProductionShotList),
+      );
+      expect(page.task.shotWorkspace!.shots.single.version!.id, 'shot-2');
+
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      response = task(2, 2);
+      router.pop();
+      await tester.pumpAndSettle();
+      expect(requests, 3);
+      expect(find.text('当前成片 · v2'), findsOneWidget);
+      expect(find.text('已从对话更新'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('library paints video covers and falls back for older servers', (
     tester,
@@ -211,6 +429,115 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('确认 1 个素材'), findsOneWidget);
   });
+
+  testWidgets(
+    'library opens full-size photos and video without selecting them',
+    (tester) async {
+      const photo = 'https://assets.test/thumbnail.jpg';
+      const original = 'https://assets.test/original.jpg';
+      const cover = 'https://assets.test/cover.jpg';
+      const clip = 'https://assets.test/original.mp4';
+      for (final url in [photo, original, cover]) {
+        _cacheImage(url);
+      }
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              expect(request.path, '/api/assets');
+              final video = request.queryParameters['kind'] == 'video';
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: {
+                    'items': [
+                      if (video)
+                        {
+                          'id': 'video',
+                          'name': '海鲜.mp4',
+                          'kind': 'video',
+                          'mime': 'video/mp4',
+                          'thumbnail': cover,
+                        }
+                      else
+                        {
+                          'id': 'photo',
+                          'name': '菜单.jpg',
+                          'kind': 'image',
+                          'mime': 'image/jpeg',
+                          'url': photo,
+                        },
+                    ],
+                  },
+                ),
+              );
+            },
+          ),
+        );
+      final loaded = <String>[];
+      List<String>? confirmed;
+      await tester.pumpWidget(
+        host(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                confirmed = await showModalBottomSheet<List<String>>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) =>
+                      const ProductionLibrary(imagesOnly: false, selected: []),
+                );
+              },
+              child: const Text('打开素材库'),
+            ),
+          ),
+          overrides: [
+            lightProductionApiProvider.overrideWithValue(
+              LightProductionApi(dio),
+            ),
+            lightAssetUrlProvider.overrideWith((_, id) async {
+              loaded.add(id);
+              return id == 'photo' ? original : clip;
+            }),
+          ],
+        ),
+      );
+      await tester.tap(find.text('打开素材库'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('production-library-preview-photo')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaViewer), findsOneWidget);
+      expect(
+        tester.widget<MediaPreviewImage>(find.byType(MediaPreviewImage)).url,
+        original,
+      );
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      final close = find.byKey(const Key('media-viewer-close'));
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(find.text('确认 0 个素材'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('production-library-photo')));
+      await tester.tap(find.text('视频'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('production-library-preview-video')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaViewer), findsOneWidget);
+      expect(
+        tester.widget<MediaPreviewVideo>(find.byType(MediaPreviewVideo)).source,
+        clip,
+      );
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(loaded, ['photo', 'video']);
+      await tester.tap(find.text('确认 1 个素材'));
+      await tester.pumpAndSettle();
+      expect(confirmed, ['photo']);
+    },
+  );
 
   testWidgets('the same OSS preview survives polling and draft saves', (
     tester,

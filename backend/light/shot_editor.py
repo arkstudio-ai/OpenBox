@@ -283,6 +283,67 @@ def _used(timeline, by_asset):
     return result
 
 
+def _film_sources(jobs, output_ids, known_indices, advanced_turns):
+    """Trace delivered shots, including replacements on a finished film's timeline."""
+    from video.timeline import Timeline
+
+    segments = {job.output_asset_id: job for job in jobs if job.kind == "segment" and _finished(job)}
+    films = sorted((job for job in jobs if job.kind == "compose" and _finished(job)
+                    and job.output_asset_id in output_ids), key=_stamp)
+    edits_by_turn = defaultdict(list)
+    for segment in segments.values():
+        if turn := advanced_turns.get(segment.attached_message_id):
+            edits_by_turn[turn].append(segment)
+    sources = {}
+    for film in films:
+        timeline = _timeline(film)
+        own_sources = {i: job for i, job in _used(timeline, segments).items() if i in known_indices}
+        cuts = timeline.get("shots") or []
+        measured = timeline
+        if len(cuts) == 1:
+            clip = cuts[0]
+            parent = sources.get(_asset_id(clip["asset"]))
+            if (parent and not clip.get("in_sec") and clip.get("speed", 1) == 1
+                    and (clip.get("duration_sec") is None or
+                         (parent[2] is not None and abs(clip["duration_sec"] - parent[2]) <= .12))):
+                own_sources, measured, _ = parent
+                own_sources = dict(own_sources)
+
+        try:
+            parsed = Timeline.model_validate(measured)
+        except ValueError:
+            continue
+        turn = advanced_turns.get(film.attached_message_id)
+        spans = list(zip(parsed.shots, parsed.shot_spans()))
+        for overlay in timeline.get("overlays", ()) if turn else ():
+            if (overlay.get("kind", "video") != "video" or overlay.get("opacity", 1) != 1
+                    or (overlay.get("x"), overlay.get("y"), overlay.get("width"), overlay.get("height")) != (0, 0, 1, 1)):
+                continue
+            # Legacy Agent edits can use a derived overlay with burned-in lettering.
+            # The full-canvas overlay must cover one measured cut and have a unique
+            # replacement from this same turn. Chat reports cut ordinals, not slot IDs.
+            matches = [(ordinal, segments.get(_asset_id(shot.asset)))
+                       for ordinal, (shot, span) in enumerate(spans, 1)
+                       if span and abs(span[0] - overlay["from_sec"]) <= .12
+                       and abs(span[1] - overlay["to_sec"]) <= .12]
+            if len(matches) != 1 or matches[0][1] is None:
+                continue
+            ordinal, previous = matches[0]
+            index = _indices(previous)
+            if index not in known_indices:
+                continue
+            replacement = segments.get(_asset_id(overlay["asset"]))
+            if replacement is None:
+                candidates = [job for job in edits_by_turn[turn] if _indices(job) in {index, ordinal}
+                              and _stamp(previous) < _stamp(job) <= _stamp(film)]
+                replacement = candidates[0] if len(candidates) == 1 else None
+            if replacement is not None:
+                own_sources[index] = replacement
+        duration = (film.request_data or {}).get("duration_sec")
+        sources[film.output_asset_id] = (own_sources, measured, duration or parsed.duration_sec)
+    return {asset_id: used for asset_id, (used, _, _) in sources.items()}
+
+
 def _duration(job, asset):
     return float(((asset.meta or {}).get("duration_sec") if asset else None)
                  or (job.result_data or {}).get("duration_sec") or 0)
@@ -331,7 +392,7 @@ def _available_version(job, assets, oss):
             **_frame_pair(job.request_data or {}, assets, oss, video=video, duration=duration)}
 
 
-async def project(db, row, jobs, output_ids, oss):
+async def project(db, row, jobs, output_ids, oss, *, advanced_turns=None):
     """A private editor projection for the opened task, with fresh signed previews."""
     if (row.light_entry != "video" or not row.light_production
             or not (output_ids or (row.light_production.get("run") or {}).get("action") == "render")):
@@ -345,6 +406,13 @@ async def project(db, row, jobs, output_ids, oss):
     indices = sorted(set(labels) | {int(i) for i in prepared} | set(originals))
     if not indices:
         return None
+    film_sources = _film_sources(jobs, output_ids, set(indices), advanced_turns or {})
+    for used in film_sources.values():
+        for index, job in used.items():
+            if job not in originals[index] and job not in edits.get(index, ()):
+                originals[index].append(job)
+    for group in originals.values():
+        group.sort(key=_stamp)
     if not oss:
         from core.oss import OssNotConfigured, get_oss
         try:
@@ -360,6 +428,7 @@ async def project(db, row, jobs, output_ids, oss):
                                              .where(FileAsset.id.in_(asset_ids)))).all()} if asset_ids else {}
     by_asset = {job.output_asset_id: job for job in all_versions if _finished(job)}
     used = _used(timeline, by_asset)
+    current_sources = film_sources.get(output_ids[0], used) if output_ids else used
     frame_drafts = await read_drafts(db, row, now=_now().isoformat())
     frame_history = form.get("shot_frame_inputs") or {}
     title_layers = _title_layers(form, base) if master else {}
@@ -381,9 +450,9 @@ async def project(db, row, jobs, output_ids, oss):
                 version["frame_prompts"] = frame_history.get(job.id, pinned)
                 versions.append(version)
         accepted = next((v for v in versions if v["media"]["id"] == original_sources.get(index)), None)
-        committed = used.get(index)
-        latest = next((v for v in reversed(versions)
-                       if any(v["id"] == job.id for job in edits.get(index, ()))), None)
+        committed = current_sources.get(index) or used.get(index)
+        latest_ids = {job.id for job in edits.get(index, ()) if not committed or _stamp(job) >= _stamp(committed)}
+        latest = next((v for v in reversed(versions) if v["id"] in latest_ids), None)
         displayed = latest or next((v for v in versions if committed and v["id"] == committed.id), None) or accepted or (versions[-1] if versions else None)
         attempt = next(iter(reversed(edits.get(index) or group)), None)
         active = bool(attempt and attempt.status in ACTIVE)
@@ -393,11 +462,11 @@ async def project(db, row, jobs, output_ids, oss):
         card = {"index": index, "title": labels.get(index) or "", "status": (
             "generating" if active else "failed" if failed else "ready" if displayed else
             "generating" if exact or initial else "waiting"),
-            "editable": bool(displayed and not active)
-                        and bool(committed) and bool(model == row.video_model),
+            "editable": bool(displayed and not active and master)
+                        and index in used and bool(model == row.video_model),
             "frame_editable": bool(model and getattr(declared_model(model, config), "supports_first_last_frame", False)),
             "version": displayed, "versions": versions,
-            "pending": bool(committed and latest and latest["id"] != committed.id),
+            "pending": bool(master and committed and latest and latest["id"] != committed.id),
         }
         if displayed:
             card["frame_drafts"] = {
@@ -418,7 +487,7 @@ async def project(db, row, jobs, output_ids, oss):
         if asset_id not in assets:
             continue
         job = film_jobs.get(asset_id)
-        sources = _used(_timeline(job), by_asset) if job else {}
+        sources = film_sources.get(asset_id, {})
         if job and not sources:
             _, origin, inherited = _assembly(form, jobs, [asset_id])
             if origin:
@@ -427,7 +496,8 @@ async def project(db, row, jobs, output_ids, oss):
                 "created_at": _stamp(job).isoformat() if job else _utc(assets[asset_id].created_at).isoformat(),
                 "duration_sec": _duration(job, assets[asset_id]) if job else 0,
                 "current": asset_id == output_ids[0],
-                "segments": [{"index": idx, "version_id": source.id} for idx, source in sorted(sources.items())]}
+                "segments": [{"index": idx, "version_id": source.id} for idx, source in sorted(sources.items())
+                             if source.output_asset_id in assets]}
         films.append(film)
     pending_request = form.get("shot_edit_request") or {}
     editor_jobs = [job for job in jobs if base and job.idempotency_key.startswith(f"{KEY_PREFIX}{base.id}:")]

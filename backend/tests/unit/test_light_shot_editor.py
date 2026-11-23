@@ -39,6 +39,46 @@ def test_advanced_music_only_versions_inherit_the_editable_shots():
     assert shot_editor._assembly(form, [base, edit], ["asset_edit"])[1] is None
 
 
+def test_advanced_overlay_and_full_recomposition_keep_the_replaced_slot_in_history():
+    def segment(asset_id, slot, message=None, offset=0):
+        return SimpleNamespace(kind="segment", status="completed", output_asset_id=asset_id,
+                               request_data={"shot": slot}, attached_message_id=message, completed_at=None,
+                               created_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=offset))
+
+    first = segment("asset_first", 2)
+    old = segment("asset_old", 1)
+    retake = segment("asset_retake", 3, "retake-message", 1)
+    base = _compose("base", "asset_base", {"shots": [
+        {"asset": "asset_first", "duration_sec": 2}, {"asset": "asset_first", "duration_sec": 2},
+        {"asset": "asset_old", "duration_sec": 2},
+    ]})
+    overlay = {"asset": "asset_with_lettering", "from_sec": 4, "to_sec": 6,
+               "x": 0, "y": 0, "width": 1, "height": 1}
+    repaired = _compose("repair", "asset_repaired", {"shots": [
+        {"asset": "asset_base", "duration_sec": 6},
+    ], "overlays": [overlay]}, 2)
+    latest = _compose("recompose", "asset_latest", {"shots": [
+        {"asset": "asset_repaired", "duration_sec": 6},
+    ]}, 3)
+    base.attached_message_id = None
+    repaired.attached_message_id = "repair-message"
+    latest.attached_message_id = "recompose-message"
+    turns = {"retake-message": "user-repair", "repair-message": "user-repair", "recompose-message": "user-recompose"}
+    jobs = [first, old, retake, latest, base, repaired]
+    outputs = ["asset_latest", "asset_repaired", "asset_base"]
+
+    sources = shot_editor._film_sources(jobs, outputs, {1, 2}, turns)
+    assert sources == {
+        "asset_base": {1: old, 2: first},
+        "asset_repaired": {1: retake, 2: first},
+        "asset_latest": {1: retake, 2: first},
+    }
+    latest.request_data["timeline"]["shots"][0]["duration_sec"] = 1
+    assert shot_editor._film_sources(jobs, outputs, {1, 2}, turns)["asset_latest"] == {}
+    turns["retake-message"] = "unrelated-turn"
+    assert shot_editor._film_sources(jobs, outputs, {1, 2}, turns)["asset_repaired"] == {1: old, 2: first}
+
+
 async def test_recomposition_replaces_each_occurrence_and_keeps_the_cut_timing(monkeypatch):
     from video import media_probe
 

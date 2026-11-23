@@ -107,6 +107,15 @@ abstract final class Paths {
   static const String admin = '/app/admin';
   static const String adminNotifications = '/app/admin/notifications';
 
+  /// The full trajectory viewer is a web admin route.
+  static String adminTrajectoryTurn(
+    String userId,
+    String sessionId,
+    String turnId,
+  ) =>
+      '$admin/trajectories/users/${Uri.encodeComponent(userId)}/turns/'
+      '${Uri.encodeComponent(sessionId)}/${Uri.encodeComponent(turnId)}';
+
   static const String desktop = '/app/desktop';
 
   /// Message centre (web `paths.inbox`); `topic` is the in-app topic page

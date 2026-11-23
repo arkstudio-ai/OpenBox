@@ -554,6 +554,7 @@
     "selected": "{{count}} materials selected",
     "confirmMaterials": "Use {{count}} materials",
     "emptyLibrary": "No files of this type in your library.",
+    "previewMaterial": "Preview {{name}}",
     "remove": "Remove",
     "removeMissing": "Remove unavailable materials",
     "fileTooLarge": "Each file can be up to 200 MB.",

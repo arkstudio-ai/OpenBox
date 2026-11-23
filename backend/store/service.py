@@ -74,12 +74,27 @@ async def get_store(workspace_id: str, user_id: str | None = None) -> dict | Non
     return await _from_first_video_form(workspace_id, user_id) if user_id else None
 
 
-async def _from_first_video_form(workspace_id: str, user_id: str) -> dict | None:
+async def _first_video_form(workspace_id: str, user_id: str) -> dict | None:
     from db.repository.preference_repo import PgPreferenceRepo
     prefs = await PgPreferenceRepo().get(user_id)
     extra = (prefs or {}).get("extra") or {}
     record = extra.get("first_video") if isinstance(extra, dict) else None
     if not isinstance(record, dict) or record.get("workspace_id") != workspace_id:
+        return None
+    return record
+
+
+async def preview_shop_name(workspace_id: str, user_id: str) -> str:
+    store = await get_store(workspace_id)
+    if store is not None:
+        return store["name"]
+    record = await _first_video_form(workspace_id, user_id)
+    return _line((record or {}).get("shop_name"), 40)
+
+
+async def _from_first_video_form(workspace_id: str, user_id: str) -> dict | None:
+    record = await _first_video_form(workspace_id, user_id)
+    if record is None:
         return None
     return await record_first_video_shop(
         workspace_id=workspace_id, user_id=user_id, shop_name=record.get("shop_name"),

@@ -1,12 +1,19 @@
+import 'package:bossip_mobile/app/auth_redirect.dart';
 import 'package:bossip_mobile/features/inbox/inbox_screen.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
+import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/api/ui_mode_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
+import 'package:bossip_mobile/shared/config/env.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
+import 'package:bossip_mobile/shared/models/auth_user.dart';
+import 'package:bossip_mobile/shared/models/ui_mode.dart';
 import 'package:bossip_mobile/shared/models/workspace.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -16,6 +23,23 @@ class _OfflineWsClient extends AgentWsClient {
   _OfflineWsClient() : super(Dio());
   @override
   Future<void> connect() async {}
+}
+
+class _InboxAuth extends AuthController {
+  _InboxAuth(this.role);
+  final String role;
+
+  @override
+  AuthState build() => AuthState(
+    user: AuthUser(id: 'user', username: 'User', role: role),
+    isLoading: false,
+  );
+}
+
+class _InboxMode extends UiModeController {
+  @override
+  UiModeState build() =>
+      const UiModeState(userId: 'user', mode: UiMode.light, loaded: true);
 }
 
 class _Workspace extends ActiveWorkspaceController {
@@ -127,13 +151,24 @@ class _Server {
 
 late I18nBundle _bundle;
 
-Future<GoRouter> _mount(WidgetTester tester, _Server server) async {
+Future<GoRouter> _mount(
+  WidgetTester tester,
+  _Server server, {
+  bool light = false,
+  String? role,
+}) async {
   SharedPreferences.setMockInitialValues({'bossip:lang': 'zh-CN'});
   final prefs = await SharedPreferences.getInstance();
   final router = GoRouter(
-    initialLocation: '/app/inbox',
+    initialLocation: light ? '/inbox' : '/app/inbox',
+    redirect: (_, state) =>
+        uiModeHome(state.matchedLocation, state.uri, light: light),
     routes: [
       GoRoute(path: '/app/inbox', builder: (_, _) => const InboxScreen()),
+      GoRoute(
+        path: '/inbox',
+        builder: (_, _) => const InboxScreen(embedded: true),
+      ),
       for (final path in [
         '/app/s/:sessionId',
         '/app/auth-center',
@@ -150,6 +185,8 @@ Future<GoRouter> _mount(WidgetTester tester, _Server server) async {
         apiDioProvider.overrideWithValue(server.dio()),
         wsClientProvider.overrideWithValue(_OfflineWsClient()),
         activeWorkspaceProvider.overrideWith(_Workspace.new),
+        if (light) uiModeProvider.overrideWith(_InboxMode.new),
+        if (role != null) authProvider.overrideWith(() => _InboxAuth(role)),
       ],
       child: MaterialApp.router(
         routerConfig: router,
@@ -169,6 +206,67 @@ void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     _bundle = await I18nBundle.load();
+  });
+
+  testWidgets('an unread failed-turn notice opens its exact admin trace', (
+    tester,
+  ) async {
+    const launcher = MethodChannel('plugins.flutter.io/url_launcher');
+    final opened = <MethodCall>[];
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(launcher, (call) async {
+      opened.add(call);
+      return true;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(launcher, null));
+    final server = _Server();
+    server.pages[''] = [
+      _item(
+        'failed',
+        category: 'system',
+        kind: 'trajectory_turn_failed',
+        link: {
+          'kind': 'admin_trajectory_turn',
+          'userId': 'user-a',
+          'sessionId': 'session-b',
+          'turnId': 'turn-c',
+        },
+      ),
+    ];
+    final router = await _mount(tester, server, light: true, role: 'admin');
+    expect(find.byKey(const ValueKey('inbox-unread-failed')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('inbox-failed')));
+    await tester.pumpAndSettle();
+    expect(
+      server.requests.map((request) => request.path),
+      contains('/api/inbox/failed/read'),
+    );
+    expect(find.byKey(const ValueKey('inbox-unread-failed')), findsNothing);
+    expect(opened, hasLength(1));
+    expect(opened.single.method, 'launch');
+    final arguments = opened.single.arguments as Map<Object?, Object?>;
+    expect(
+      arguments['url'],
+      '${Env.webBase}/app/admin/trajectories/users/user-a/turns/session-b/turn-c',
+    );
+    expect(arguments['useSafariVC'], isTrue);
+    expect(arguments['headers'], isEmpty);
+    expect(router.canPop(), isFalse);
+  });
+
+  testWidgets('marking a linkless notice read does not re-open the inbox', (
+    tester,
+  ) async {
+    final server = _Server();
+    server.pages[''] = [
+      {..._item('note', category: 'notice'), 'link': null},
+    ];
+    final router = await _mount(tester, server, light: true);
+    await tester.tap(find.byKey(const ValueKey('inbox-note')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('inbox-unread-note')), findsNothing);
+    expect(router.state.uri.path, '/inbox');
+    expect(router.canPop(), isFalse);
   });
 
   testWidgets(

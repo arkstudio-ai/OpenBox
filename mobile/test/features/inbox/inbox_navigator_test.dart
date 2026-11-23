@@ -305,4 +305,25 @@ void main() {
     h.container.dispose();
     h.router.dispose();
   });
+
+  test(
+    'an admin trace does not open for an account without admin access',
+    () async {
+      final h = _harness();
+      addTearDown(h.container.dispose);
+      addTearDown(h.router.dispose);
+      expect(
+        await InboxNavigator(h.container.read, h.router).open(
+          const InboxLink(
+            kind: 'admin_trajectory_turn',
+            userId: 'user-a',
+            sessionId: 'session-b',
+            turnId: 'turn-c',
+          ),
+        ),
+        InboxOpen.unavailable,
+      );
+      expect(h.router.routeInformationProvider.value.uri.path, '/');
+    },
+  );
 }

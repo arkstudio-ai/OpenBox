@@ -9,6 +9,7 @@ import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/api/ui_mode_store.dart';
 import '../../../shared/api/workspace_scope.dart';
+import '../../../shared/config/env.dart';
 import '../../../shared/models/first_video.dart';
 import '../../../shared/models/inbox.dart';
 import '../../../shared/models/json.dart';
@@ -44,10 +45,8 @@ class InboxNavigator {
     final actor = _read(authProvider).user?.id;
     bool current() =>
         actor == _read(authProvider).user?.id && (stillCurrent?.call() ?? true);
-    if (link == null) {
-      unawaited(router.push(Paths.inbox));
-      return InboxOpen.opened;
-    }
+    if (!current()) return InboxOpen.unavailable;
+    if (link == null) return _openInbox();
     switch (link.kind) {
       case 'url':
         final uri = Uri.tryParse(link.url ?? '');
@@ -62,6 +61,8 @@ class InboxNavigator {
       case 'admin_skills':
         unawaited(router.push('${Paths.admin}/skills'));
         return InboxOpen.opened;
+      case 'admin_trajectory_turn':
+        return _openTrajectoryTurn(link);
       case 'session':
       case 'assistant_task':
       case 'cron':
@@ -69,8 +70,37 @@ class InboxNavigator {
       case 'skills':
         return _openInWorkspace(link, current, kind: kind);
       default:
-        unawaited(router.push(Paths.inbox));
-        return InboxOpen.opened;
+        return _openInbox();
+    }
+  }
+
+  InboxOpen _openInbox() {
+    final matches = router.routerDelegate.currentConfiguration.matches;
+    final current = matches.isEmpty
+        ? router.routeInformationProvider.value.uri
+        : router.state.uri;
+    if (current.path != Paths.inbox && current.path != Paths.lightInbox) {
+      final light = _read(uiModeProvider).mode == UiMode.light;
+      unawaited(router.push(light ? Paths.lightInbox : Paths.inbox));
+    }
+    return InboxOpen.opened;
+  }
+
+  Future<InboxOpen> _openTrajectoryTurn(InboxLink link) async {
+    final userId = link.userId;
+    final sessionId = link.sessionId;
+    final turnId = link.turnId;
+    if (_read(authProvider).user?.role != 'admin' ||
+        [userId, sessionId, turnId].any((id) => id == null || id.isEmpty)) {
+      return InboxOpen.unavailable;
+    }
+    final path = Paths.adminTrajectoryTurn(userId!, sessionId!, turnId!);
+    try {
+      final url = Uri.parse(Env.webBase).resolve(path);
+      final opened = await launchUrl(url, mode: LaunchMode.inAppBrowserView);
+      return opened ? InboxOpen.opened : InboxOpen.unavailable;
+    } catch (_) {
+      return InboxOpen.unavailable;
     }
   }
 

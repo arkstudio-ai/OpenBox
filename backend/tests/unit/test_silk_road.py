@@ -70,6 +70,15 @@ def test_silk_road_requires_the_full_ims_cut_and_measured_duration():
     assert mix.audio[-1].to_sec - mix.audio[-1].fade_out_sec == pytest.approx(60.80)
     job.request_data["timeline"]["audio"][0]["in_sec"] = 0.7
     assert not wan_story.is_complete_cut(run, job)
+    run["music_style"] = "upbeat"
+    song = f"https://bucket.oss-cn-hangzhou.aliyuncs.com/music/catalog/12/{'a' * 64}.mp3"
+    job.request_data["timeline"]["audio"] = [{"asset": song, "to_sec": 62.125}]
+    job.request_data["soundtrack"] = {"track_id": "netease:12"}
+    assert wan_story.is_complete_cut(run, job)
+    job.request_data["soundtrack"]["track_id"] = "netease:13"
+    assert not wan_story.is_complete_cut(run, job)
+    del run["music_style"]
+    del job.request_data["soundtrack"]
     run["silk_controls"] = {"beat_music": False}
     job.request_data["timeline"]["audio"] = []
     assert wan_story.is_complete_cut(run, job)

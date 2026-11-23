@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -35,6 +36,25 @@ bool anchorsOnLightHome(String location) {
   return uiModeHome(path, uri, light: true) == null;
 }
 
+bool _hasLightShell(GoRouter router) =>
+    router.routerDelegate.currentConfiguration.matches.firstOrNull
+        is ShellRouteMatch;
+
+/// Keep Android predictive back routed to the app on Light tabs. When a tab
+/// mounts, its new navigator can report that it can't pop after the shell has
+/// registered its own Back handler.
+bool reportFrameworkBack(GoRouter router, NavigationNotification notification) {
+  final lifecycle = WidgetsBinding.instance.lifecycleState;
+  if (lifecycle != null && lifecycle != AppLifecycleState.detached) {
+    unawaited(
+      SystemNavigator.setFrameworkHandlesBack(
+        notification.canHandlePop || _hasLightShell(router),
+      ),
+    );
+  }
+  return true;
+}
+
 class HomeAnchoredRouter extends GoRouter {
   HomeAnchoredRouter({
     required List<RouteBase> routes,
@@ -54,9 +74,7 @@ class HomeAnchoredRouter extends GoRouter {
   @override
   void go(String location, {Object? extra}) {
     final stack = routerDelegate.currentConfiguration;
-    final onTabs =
-        stack.matches.isNotEmpty && stack.matches.first is ShellRouteMatch;
-    if (light() && onTabs && anchorsOnLightHome(location)) {
+    if (light() && _hasLightShell(this) && anchorsOnLightHome(location)) {
       // Already there: nothing to open twice.
       if (stack.uri.toString() != location) {
         unawaited(push<void>(location, extra: extra));

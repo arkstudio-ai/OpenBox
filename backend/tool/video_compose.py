@@ -278,7 +278,7 @@ def _oss_or_refuse():
         ) from exc
 
 
-async def _prepare_timeline(args: VideoComposeArgs, ctx: ToolContext, oss):
+async def _prepare_timeline(args: VideoComposeArgs, ctx: ToolContext, oss, *, inherited_music=None):
     from video import bgm_library, music_catalog, netease_music
 
     parent = None
@@ -297,6 +297,27 @@ async def _prepare_timeline(args: VideoComposeArgs, ctx: ToolContext, oss):
         timeline = confirmed or _parse_timeline(args.timeline or {})
         if confirmed and args.music:
             args = args.model_copy(update={"music": args.music.model_copy(update={"cut_after": []})})
+
+    if inherited_music is not None:
+        saved_bed, credit = inherited_music
+        if not timeline.audio or timeline.audio[-1] != saved_bed:
+            raise ComposeRefusal("The approved soundtrack changed. Reload the edit and try again.")
+        edit = timeline.model_copy(update={"audio": timeline.audio[:-1]})
+        edit = await _resolve_shot_assets(edit, ctx, oss)
+        return edit.model_copy(update={"audio": [*edit.audio, saved_bed]}), {
+            "edit_timeline": edit.model_dump(mode="json"), "soundtrack": credit,
+        }
+
+    if args.action == "submit":
+        from light import production_music
+
+        preference = await production_music.for_composition(ctx, args.idempotency_key)
+        if preference:
+            edit = await _resolve_shot_assets(timeline, ctx, oss)
+            return await production_music.mix(
+                ctx, edit, *preference, oss.host, track_id=args.music.track_id if args.music else None,
+            )
+
     if args.music is None:
         return await _resolve_shot_assets(timeline, ctx, oss), {}
 
@@ -371,25 +392,30 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
                       metadata={"valid": True, "duration_sec": compiled.duration_sec, "warnings": compiled.warnings})
 
 
-async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:
+async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext, *, inherited_music=None) -> ToolResult:
     from tool import video_production as vp
 
     try:
         oss = _oss_or_refuse()
-        timeline, music_data = await _prepare_timeline(args, ctx, oss)
         await _check_budget(ctx)
         from billing.media import precheck_compose
 
         await precheck_compose(ctx.session_id)
+        timeline, music_data = await _prepare_timeline(args, ctx, oss, inherited_music=inherited_music)
     except Exception as exc:
         return ToolResult(title="Composition refused", output=_public(exc))
 
     # The output key is only known once the asset row exists, and the compiled
     # request (hence its hash and token) includes that key. So reserve first
-    # with a hash of the *resolved timeline*, which is what the person asked
-    # for, then compile against the reserved key.
+    # before compiling against the reserved key. Guided scoring hashes the
+    # requested edit and preference so changing live search results on retry
+    # cannot replace the recording already submitted.
     resolved = timeline.model_dump(mode="json")
-    request_hash = vp.content_hash(resolved)
+    style = music_data.get("music_style")
+    request_hash = vp.content_hash(
+        {"timeline": args.timeline, "music_style": style, "track_id": args.music.track_id if args.music else None}
+        if style else resolved
+    )
     try:
         job, asset, created = await vp._create_pending_job(
             ctx=ctx, kind=KIND, idempotency_key=args.idempotency_key or "", model="ims",
@@ -699,13 +725,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def execute_compose(args: VideoComposeArgs, ctx: ToolContext) -> ToolResult:
+async def execute_compose(args: VideoComposeArgs, ctx: ToolContext, *, inherited_music=None) -> ToolResult:
     if args.action == "schema":
         return await _execute_schema()
     if args.action == "validate":
         return await _execute_validate(args, ctx)
     if args.action in {"submit", "replace_music"}:
-        return await _execute_submit(args, ctx)
+        return await _execute_submit(args, ctx, inherited_music=inherited_music)
     return await _execute_job_action(args, ctx)
 
 

@@ -44,6 +44,19 @@ enum ProductionVideoTier {
   String label(I18nState i18n) => i18n.t('light:production.videoTier.$name');
 }
 
+enum ProductionMusic {
+  auto,
+  upbeat,
+  calm,
+  energetic,
+  off;
+
+  static ProductionMusic? fromId(Object? id) =>
+      values.where((style) => style.name == id).firstOrNull;
+
+  String label(I18nState i18n) => i18n.t('light:production.music.$name');
+}
+
 class ProductionMedia {
   const ProductionMedia({
     required this.id,
@@ -148,7 +161,11 @@ class LightProduction {
       referenceCopy = asString(json['reference_copy']) ?? '',
       productName = asString(json['product_name']) ?? '',
       suggestedProduct = asString(json['suggested_product']) ?? '',
-      beatMusic = json['beat_music'] != false,
+      music =
+          ProductionMusic.fromId(json['music_style']) ??
+          (json['beat_music'] == false
+              ? ProductionMusic.off
+              : ProductionMusic.auto),
       remakePrepared = json['remake_prepared'] == true,
       template = asString(json['template']) ?? '',
       referenceExampleId = asString(json['reference_example_id']),
@@ -199,7 +216,7 @@ class LightProduction {
   final String posterTitle;
   final String referenceCopy;
   final String productName, suggestedProduct;
-  final bool beatMusic;
+  final ProductionMusic music;
   final bool remakePrepared;
   final String template;
   final String? referenceExampleId;
@@ -238,6 +255,14 @@ class LightProductionApi {
 
   final Dio _dio;
   static const _path = '/api/light/productions';
+
+  Future<LightProduction> preview(ProductionKind kind, {String? brief}) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '$_path/preview',
+      queryParameters: {'entry_id': kind.id, 'brief': ?brief},
+    );
+    return LightProduction.fromJson(response.data!);
+  }
 
   Future<LightProduction> create(ProductionKind kind, {String? brief}) async {
     final response = await _dio.post<Map<String, dynamic>>(

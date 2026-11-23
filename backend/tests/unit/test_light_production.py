@@ -59,6 +59,46 @@ async def test_production_history_filters_before_paginating(monkeypatch):
         assert [item["brief"] for item in menu["items"]] == ["晚市菜单"] and not menu["has_more"]
 
 
+async def test_video_preview_creates_no_session_and_history_filters_untouched_drafts(monkeypatch):
+    from db.models.message import Message
+    from db.models.store import Store
+    from db.repository.preference_repo import PgPreferenceRepo
+
+    owner = await _user()
+
+    async def facts(_):
+        return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
+
+    monkeypatch.setattr(mode, "_workspace_facts", facts)
+    await PgPreferenceRepo().upsert(owner["id"], extra={"first_video": {
+        "workspace_id": owner["default_workspace_id"], "shop_name": "默认门店",
+    }})
+    path = "/api/light/productions"
+    async with _client(owner) as client:
+        for _ in range(2):
+            response = await client.get(f"{path}/preview", params={"entry_id": "video"})
+            assert response.status_code == 200, response.text
+            assert response.json()["shop"] == "默认门店"
+            assert "session_id" not in response.json()
+        async with get_db_session() as db:
+            assert await db.scalar(select(Session.id).where(Session.user_id == owner["id"])) is None
+            assert await db.scalar(select(Store.id).where(Store.workspace_id == owner["default_workspace_id"])) is None
+
+        edited_id = (await client.post(path, json={"entry_id": "video"})).json()["session_id"]
+        saved = await client.patch(f"{path}/{edited_id}", json={"revision": 1, "shop": "我的门店"})
+        assert saved.status_code == 200 and saved.json()["revision"] == 2
+        chat_id = (await client.post(path, json={"entry_id": "video"})).json()["session_id"]
+        async with get_db_session() as db:
+            db.add(Message(id=uuid4().hex, session_id=chat_id, user_id=owner["id"],
+                           role="user", created_at=datetime.now(timezone.utc)))
+        blank_id = (await client.post(path, json={"entry_id": "video"})).json()["session_id"]
+        first = (await client.get(path, params={"limit": 1})).json()
+        second = (await client.get(path, params={"entry_id": "video", "limit": 1, "offset": 1})).json()
+        assert [item["session_id"] for item in first["items"]] == [chat_id] and first["has_more"]
+        assert [item["session_id"] for item in second["items"]] == [edited_id] and not second["has_more"]
+        assert (await client.get(f"{path}/{blank_id}")).status_code == 200
+
+
 async def test_production_uses_only_the_selected_active_example(monkeypatch):
     owner = await _user()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -212,9 +252,10 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
                 assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_TEMPLATE_RETIRED"
             saved = (await client.patch(path, json={
                 "revision": entry["revision"], "page": "review", "video_tier": tier, "script": "热菜上桌",
-                "voice_id": "system:documentary",
+                "voice_id": "system:documentary", "music_style": "upbeat",
             })).json()
             assert saved["video_tier"] == tier
+            assert saved["music_style"] == "upbeat"
             assert "voice_id" not in saved
             async with get_db_session() as db:
                 draft = await db.get(Session, entry["session_id"])
@@ -232,6 +273,7 @@ async def test_video_draft_retires_old_choices_and_locks_the_model_for_render(mo
                 row = await db.get(Session, session.id)
                 assert "voice_id" not in row.light_production
                 assert "voice_id" not in row.light_production["run"]
+                assert row.light_production["run"]["music_style"] == "upbeat"
                 assert "spoken_line and native audio" in forms.turn_instruction(row, "render")
 
 

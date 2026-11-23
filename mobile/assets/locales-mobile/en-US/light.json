@@ -238,6 +238,14 @@
     "moreTemplatesComing": "More templates are on the way",
     "retiredTemplate": "This template has been retired. Choose another template.",
     "settings": "Production settings",
+    "music": {
+      "title": "Music",
+      "auto": "Auto",
+      "upbeat": "Upbeat",
+      "calm": "Calm",
+      "energetic": "Energetic",
+      "off": "No music"
+    },
     "chatTier": "Text model",
     "videoTier": {
       "forInsert": "For AI inserts",
@@ -546,6 +554,7 @@
     "selected": "{{count}} materials selected",
     "confirmMaterials": "Use {{count}} materials",
     "emptyLibrary": "No files of this type in your library.",
+    "previewMaterial": "Preview {{name}}",
     "remove": "Remove",
     "removeMissing": "Remove unavailable materials",
     "fileTooLarge": "Each file can be up to 200 MB.",

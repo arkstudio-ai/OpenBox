@@ -373,15 +373,17 @@ void main() {
           }
           mark('material-selected');
           await capture('silk-materials');
+          await tap('production-music-settings');
+          expect(
+            tester.widget<ListTile>(key('production-music-auto')).selected,
+            isTrue,
+          );
+          await tap('production-music-auto');
           await tap('production-primary');
           await tap('production-template-silk_road');
           await capture('silk-template');
           await tap('production-primary');
           if (product.isNotEmpty) {
-            expect(
-              tester.widget<SwitchListTile>(key('production-beat-music')).value,
-              isTrue,
-            );
             await tester.enterText(key('production-product-name'), product);
           }
           await tester.ensureVisible(key('production-script'));

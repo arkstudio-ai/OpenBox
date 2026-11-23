@@ -326,7 +326,6 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
   @override
   Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
-    final t = context.tokens;
     return SafeArea(
       child: FractionallySizedBox(
         heightFactor: .82,
@@ -373,77 +372,16 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
                       itemBuilder: (context, index) {
                         final media = _media[index];
                         final selected = _selected.contains(media.id);
-                        return Semantics(
+                        return _LibraryTile(
+                          media: media,
                           selected: selected,
-                          button: true,
-                          label: media.name,
-                          child: InkWell(
-                            key: Key('production-library-${media.id}'),
-                            borderRadius: BorderRadius.circular(14),
-                            onTap:
-                                !_selected.contains(media.id) &&
-                                    _selected.length >= 10
-                                ? null
-                                : () => setState(() {
-                                    if (!_selected.remove(media.id)) {
-                                      _selected.add(media.id);
-                                    }
-                                  }),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                ProductionThumbnail(media: media),
-                                Positioned(
-                                  left: 0,
-                                  right: 0,
-                                  bottom: 0,
-                                  child: ClipRRect(
-                                    borderRadius: const BorderRadius.vertical(
-                                      bottom: Radius.circular(12),
-                                    ),
-                                    child: DecoratedBox(
-                                      decoration: const BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.bottomCenter,
-                                          end: Alignment.topCenter,
-                                          colors: [
-                                            Colors.black87,
-                                            Colors.transparent,
-                                          ],
-                                        ),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          5,
-                                          12,
-                                          5,
-                                          5,
-                                        ),
-                                        child: Text(
-                                          media.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (selected)
-                                  Positioned(
-                                    right: 5,
-                                    top: 5,
-                                    child: Icon(
-                                      Icons.check_circle,
-                                      color: t.a700,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+                          onToggle: !selected && _selected.length >= 10
+                              ? null
+                              : () => setState(() {
+                                  if (!_selected.remove(media.id)) {
+                                    _selected.add(media.id);
+                                  }
+                                }),
                         );
                       },
                     ),
@@ -491,6 +429,110 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LibraryTile extends ConsumerWidget {
+  const _LibraryTile({
+    required this.media,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  final ProductionMedia media;
+  final bool selected;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final i18n = ref.watch(i18nProvider);
+    const radius = BorderRadius.all(Radius.circular(12));
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Semantics(
+          selected: selected,
+          button: true,
+          label: media.name,
+          child: InkWell(
+            key: Key('production-library-${media.id}'),
+            borderRadius: radius,
+            onTap: onToggle,
+            child: ClipRRect(
+              borderRadius: radius,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ProductionThumbnail(media: media, showVideoBadge: false),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [Colors.black87, Colors.transparent],
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(5, 12, 5, 5),
+                        child: Text(
+                          media.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (selected)
+                    PositionedDirectional(
+                      end: 5,
+                      top: 5,
+                      child: Icon(
+                        Icons.check_circle,
+                        color: context.tokens.a700,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        PositionedDirectional(
+          start: 0,
+          top: 0,
+          child: SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              key: Key('production-library-preview-${media.id}'),
+              padding: EdgeInsets.zero,
+              tooltip: i18n.t(
+                'light:production.previewMaterial',
+                vars: {'name': media.name},
+              ),
+              onPressed: () => openProductionMedia(context, media),
+              icon: CircleAvatar(
+                radius: 14,
+                backgroundColor: Colors.black54,
+                foregroundColor: Colors.white,
+                child: Icon(
+                  media.video
+                      ? Icons.play_arrow_rounded
+                      : Icons.fullscreen_rounded,
+                  size: 19,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

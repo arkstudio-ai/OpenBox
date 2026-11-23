@@ -223,6 +223,73 @@ async def test_same_idempotency_key_submits_once_and_conflicting_content_is_refu
     assert "conflict" in conflict.output and len(ims.submits) == 1
 
 
+@pytest.mark.parametrize("style", ["calm", "off"])
+async def test_guided_video_uses_saved_music_and_preserves_native_audio(env, monkeypatch, style):
+    from db.base import get_db_session
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+    from video import bgm_library, netease_music
+    from video.music_catalog import MusicTrack
+
+    _, ims = env
+    ctx, aid = await _user_with_asset()
+    ctx.session_id = uuid.uuid4().hex
+    prefix = f"light:{ctx.session_id}:3"
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(Session(id=ctx.session_id, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                       project_id="project", light_entry="video", created_at=now, updated_at=now,
+                       light_production={"run": {"action": "render", "job_prefix": prefix,
+                                                 "music_style": style, "music_template": ""}}))
+    original = bgm_library.snapshot()[0]
+    async def library_track(_):
+        return original
+
+    monkeypatch.setattr(bgm_library, "track", library_track)
+    monkeypatch.setattr(netease_music, "api_base", lambda: "http://local")
+    calls = []
+
+    async def search(query, duration, excluded, session):
+        calls.append(query)
+        assert duration == 9.5 and session == ctx
+        return [{"track_id": "netease:1"}]
+
+    async def prepare(track_id, duration, session):
+        assert track_id == "netease:1"
+        return MusicTrack(id=track_id, title="Quiet", artist="Test", moods=[], sec=30, bpm=120,
+                          beats=[0.16, 4.66, 5.16], oss_key=f"music/catalog/1/{'f' * 64}.mp3",
+                          source_url="", license_url="", attribution="Quiet — Test")
+
+    monkeypatch.setattr(netease_music, "search", search)
+    monkeypatch.setattr(netease_music, "prepare", prepare)
+    timeline = _timeline(aid)
+    timeline["audio"] = [{"library_id": original.id, "to_sec": 9.5}]
+    args = VideoComposeArgs(action="submit", timeline=timeline, idempotency_key=f"{prefix}:final")
+    result = await execute_compose(args, ctx)
+    assert result.metadata.get("job_id"), result.output
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, result.metadata["job_id"])
+    data = job.request_data
+    assert data["timeline"]["shots"][0]["volume"] == 1
+    assert data["timeline"]["captions"][0]["text"] == "第一句"
+    if style == "off":
+        assert not calls and not data["timeline"]["audio"]
+    else:
+        assert len(calls) == 1 and "舒缓" in calls[0]
+        assert data["music_source"] == "netease"
+        assert data["soundtrack"]["in_sec"] == 0.16
+        bed, = data["timeline"]["audio"]
+        assert bed["volume"] == 0.12 and bed["duck_volume"] < bed["volume"]
+        assert f"/music/catalog/1/" in bed["asset"]
+        regenerated = await execute_compose(
+            args.model_copy(update={"idempotency_key": "shot-edit:compose", "timeline": data["timeline"]}),
+            ctx, inherited_music=(vc._parse_timeline(data["timeline"]).audio[-1], data["soundtrack"]),
+        )
+        assert regenerated.metadata.get("job_id"), regenerated.output
+        assert json.loads(ims.submits[0]["timeline"])["AudioTracks"] == json.loads(ims.submits[1]["timeline"])["AudioTracks"]
+        assert len(calls) == 1
+
+
 async def test_ims_submit_failure_fails_job_and_asset(env, monkeypatch):
     oss, ims = env
     ctx, aid = await _user_with_asset()

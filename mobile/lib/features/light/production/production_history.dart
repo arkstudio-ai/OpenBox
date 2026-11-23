@@ -12,6 +12,7 @@ import '../../../shared/utils/error_text.dart';
 import '../utils/activity_date.dart';
 import 'production_api.dart';
 import 'production_media.dart';
+import 'production_page.dart';
 import 'production_stages.dart';
 
 class ProductionStartPage extends ConsumerStatefulWidget {
@@ -27,6 +28,7 @@ class ProductionStartPage extends ConsumerStatefulWidget {
 
 class _ProductionStartPageState extends ConsumerState<ProductionStartPage> {
   Object? _error;
+  LightProduction? _preview;
 
   @override
   void initState() {
@@ -37,9 +39,13 @@ class _ProductionStartPageState extends ConsumerState<ProductionStartPage> {
   Future<void> _start() async {
     setState(() => _error = null);
     try {
-      final task = await ref
-          .read(lightProductionApiProvider)
-          .create(widget.kind, brief: widget.brief);
+      final api = ref.read(lightProductionApiProvider);
+      if (widget.kind == ProductionKind.video) {
+        final task = await api.preview(widget.kind, brief: widget.brief);
+        if (mounted) setState(() => _preview = task);
+        return;
+      }
+      final task = await api.create(widget.kind, brief: widget.brief);
       if (mounted) {
         context.pushReplacement(
           Paths.lightProduction(task.sessionId),
@@ -53,6 +59,9 @@ class _ProductionStartPageState extends ConsumerState<ProductionStartPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_preview case final task?) {
+      return ProductionPage(sessionId: task.sessionId, initial: task);
+    }
     final i18n = ref.watch(i18nProvider);
     return Scaffold(
       appBar: AppBar(title: Text(widget.kind.label(i18n))),

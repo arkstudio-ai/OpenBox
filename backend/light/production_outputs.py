@@ -112,16 +112,17 @@ def is_advanced_parent(parent, text, owner, cutoff):
 
 
 async def advanced_result_messages(db, rows, files_by_session, receipts):
+    """Map advanced result messages to the owner's originating chat turn."""
     owners = {row.id: row for row in rows}
     ids = {part.message_id for parts in files_by_session.values() for part in parts}
     if not ids:
-        return set()
+        return {}
     assistants = list((await db.scalars(select(Message).where(
         Message.id.in_(ids), Message.session_id.in_(owners), Message.role == "assistant",
     ))).all())
     parent_ids = {message.parent_id for message in assistants if message.parent_id}
     if not parent_ids:
-        return set()
+        return {}
     pairs = (await db.execute(select(Message, Part).join(Part, Part.message_id == Message.id).where(
         Message.id.in_(parent_ids), Message.role == "user", Part.type == "text",
     ))).all()
@@ -134,6 +135,6 @@ async def advanced_result_messages(db, rows, files_by_session, receipts):
         cutoff = receipt.created_at if receipt else owner.created_at
         if is_advanced_parent(parent, part.data or {}, owner, cutoff):
             accepted[parent.id] = parent.session_id
-    return {message.id for message in assistants
+    return {message.id: message.parent_id for message in assistants
             if accepted.get(message.parent_id) == message.session_id
             and message.user_id == owners[message.session_id].user_id}

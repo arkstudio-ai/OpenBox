@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from light import remake_case, silk_road, wan_story
+from light.production_music import MusicStyle
 from core.config import ChatTier
 from light.video_tiers import VideoTier
 
@@ -105,6 +106,7 @@ class EditForm(FormFields):
     page: Page | None = None
     video_tier: VideoTier | None = None
     chat_tier: ChatTier | None = None
+    music_style: MusicStyle | None = None
     reference_example_id: str | None = Field(default=None, max_length=64)
     voice_id: str | None = Field(default=None, max_length=64)
     redo_narration: bool | None = None
@@ -199,6 +201,8 @@ def restrict_guided_tools(tools, session, action):
             allowed.add("image_gen")
             if (session.light_production.get("run") or {}).get("creative_motion"):
                 allowed.add("video_generate")
+        if session.light_entry == "video" and (session.light_production.get("run") or {}).get("music_style") not in {None, "off"}:
+            allowed.add("music_search")
     else:
         return {name: tool for name, tool in tools.items() if tool.id not in {"light_remake", "light_wan_story"}}
     return {name: tool for name, tool in tools.items() if tool.id in allowed}
@@ -277,9 +281,27 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "footage_analyze and describe it in the video prompt. Use only confirmed words for titles/dialogue. "
             "When the script calls for speech, generate it in the relevant shot with its speaker, exact words and "
             "timing via spoken_line and native audio. Use the clip audio for all speech and preserve it in the edit. "
-            "Deliver the final attachment. "
-            "A complete single shot may be attached directly."
+            "Build the final soundtrack from the clips' dialogue and ambience. "
+            "Ask video_generate for clean, unscored source clips. Deliver the final attachment."
         )
+        style = (form.get("run") or {}).get("music_style")
+        if style and style != "off":
+            task += (
+                " Submit the final IMS timeline even for a single shot. Set duration_sec on every shot, "
+                "leave background music out of timeline.audio."
+            )
+            from video.netease_music import api_base as live_music_api
+
+            if live_music_api():
+                tools += ", music_search"
+                task += (
+                    f" The selected soundtrack style is {style}. Derive a NetEase search query from "
+                    "the scene and intended pace. Keep it instrumental, choose a fitting track, "
+                    "prepare it with music_search and pass its ID as music.track_id. If no suitable "
+                    "recording is available, submit without music so the App can choose a fallback."
+                )
+        else:
+            task += " A complete single shot may be attached directly."
         if form.get("video_tier") == "fast":
             task += (
                 " Fast tier uses MiniMax H3 Turbo: request 5–15 seconds and generate_audio=true."

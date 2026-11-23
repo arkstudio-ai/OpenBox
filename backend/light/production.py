@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import JSON, func, or_, select, type_coerce, update
 
 from agent.inbox import accept_inbox_item_locked, schedule_inbox_wake
 from assets.service import owned_ready_query
@@ -12,12 +12,13 @@ from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
 from db.models.light_example import LightExample
+from db.models.message import Message
 from db.models.part import Part
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, remake_case, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, production_music, remake_case, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -71,15 +72,13 @@ def _chat_tier(config, *, tier=None, model=None):
                  if row.tier == tier or row.model == model), None)
 
 
-async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
-    from agent.agent import default_agent_name
+async def _start_form(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None, *, save: bool):
     from agent.model_resolve import resolve
     from auth.quota import check_session_quota
     from core.config import get_config
     from light.entries import light_entries
     from light.mode import _workspace_facts, availability
-    from session.session import create_session
-    from store.service import get_store
+    from store.service import get_store, preview_shop_name
 
     entry = light_entries(lang).entry(body.entry_id)
     if entry is None:
@@ -88,19 +87,34 @@ async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: s
     if state != "ok":
         raise LightError("LIGHT_ENTRY_UNAVAILABLE", "Production is unavailable", 409, availability=state)
     config = get_config()
-    await check_session_quota(user_id, config)
-    shop = await get_store(workspace_id, user_id)
-    name = (shop or {}).get("name") or ""
+    if save:
+        await check_session_quota(user_id, config)
+        name = ((await get_store(workspace_id, user_id)) or {}).get("name") or ""
+    else:
+        name = await preview_shop_name(workspace_id, user_id)
     model, _ = resolve("", config, context="light production")
     chat_tier = _chat_tier(config, model=model)
     form = forms.initial_form(body.entry_id, name[:80], body.brief)
-    if body.entry_id in {"video", "footage_edit"}:
-        tiers = video_tiers.available_tiers(config)
-        if tiers:
-            form["video_tier"] = tiers[0]
+    tiers = video_tiers.available_tiers(config) if body.entry_id in {"video", "footage_edit"} else []
+    if tiers:
+        form["video_tier"] = tiers[0]
+    return form, body.brief or entry.title, model, chat_tier, tiers
+
+
+async def preview(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
+    form, title, _, chat_tier, tiers = await _start_form(user_id, workspace_id, body, lang, save=False)
+    return {**form, "entry_id": body.entry_id, "title": title, "status": "draft", "available_video_tiers": tiers,
+            **({"chat_tier": chat_tier.tier} if chat_tier else {})}
+
+
+async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
+    from agent.agent import default_agent_name
+    from session.session import create_session
+
+    form, title, model, chat_tier, _ = await _start_form(user_id, workspace_id, body, lang, save=True)
     session = await create_session(
         model=model, variant=chat_tier.variant if chat_tier else None,
-        agent=default_agent_name(), title=body.brief or entry.title, user_id=user_id,
+        agent=default_agent_name(), title=title, user_id=user_id,
         workspace_id=workspace_id, light_entry=body.entry_id,
         light_production=form,
     )
@@ -138,6 +152,8 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
         raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
     if "redo_narration" in changes and row.light_entry != "footage_edit":
         raise LightError("PRODUCTION_NARRATION_STATE", "Narration replacement requires original footage.")
+    if "music_style" in changes and row.light_entry != "video":
+        raise LightError("PRODUCTION_MUSIC_STATE", "This music setting requires an AI video.")
     if "voice_id" in changes:
         selected = changes["voice_id"]
         if row.light_entry != "footage_edit" or (
@@ -287,8 +303,9 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
     edited_at = form.get("edited_at")
     since = datetime.fromisoformat(edited_at) if edited_at else _utc(row.created_at)
     run = form.get("run") or {}
+    guided_music = row.light_entry == "video" and run.get("music_style") not in {None, "off"}
     needs_render = run.get("action") == "render" and (
-        row.light_entry == "footage_edit" or (row.light_entry == "video" and form["template"])
+        row.light_entry == "footage_edit" or (row.light_entry == "video" and form["template"]) or guided_music
     )
     results = [
         (_utc(part.created_at), part.data["asset_id"]) for part in files
@@ -336,7 +353,7 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         form = _form(row)
         stamp = form.get("edited_at")
         since = datetime.fromisoformat(stamp) if stamp else _utc(row.created_at)
-        jobs = [job for job in jobs_by_session[row.id] if _utc(job.created_at) >= since]
+        jobs = [job for job in jobs_by_session[row.id] if job.user_id == row.user_id and _utc(job.created_at) >= since]
         relevant_jobs[row.id] = jobs
         output_ids[row.id] = _output_candidates(row, jobs, files_by_session[row.id], advanced_messages=advanced_messages)
         saved_assets.update(output_ids[row.id])
@@ -359,7 +376,10 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         output = next((media[key] for key in output_ids[row.id] if key in media), None)
         jobs = relevant_jobs[row.id]
         guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
-        editor = await shot_editor.project(db, row, jobs, [key for key in output_ids[row.id] if key in media], oss) if include_shots else None
+        editor = await shot_editor.project(
+            db, row, jobs, [key for key in output_ids[row.id] if key in media], oss,
+            advanced_turns=advanced_messages,
+        ) if include_shots else None
         chat_tier = _chat_tier(config, model=row.model) or _chat_tier(config, model=config.model)
         reference_fields = {}
         if include_shots and row.light_production and row.light_example_id:
@@ -406,6 +426,17 @@ async def history(user_id: str, workspace_id: str, limit: int, offset: int, *, e
     query = _owned(user_id, workspace_id, include_legacy=True)
     if entry_id is not None:
         query = query.where(Session.light_entry == entry_id)
+    if entry_id in {None, "video"}:
+        # Older clients create a session as soon as they open the video form.
+        # Default values alone do not make a production record.
+        form = type_coerce(Session.light_production, JSON)
+        query = query.where(or_(
+            Session.light_entry != "video", Session.light_production.is_(None), Session.status != "idle",
+            func.coalesce(form["revision"].as_integer(), 0) != 1,
+            func.coalesce(form["brief"].as_string(), "") != "", Session.light_example_id.is_not(None),
+            select(Message.id).where(Message.session_id == Session.id, Message.role == "user").exists(),
+            select(VideoJob.id).where(VideoJob.session_id == Session.id, VideoJob.user_id == Session.user_id).exists(),
+        ))
     query = query.order_by(Session.updated_at.desc(), Session.id).offset(offset).limit(limit + 1)
     async with get_db_session() as db:
         rows = list((await db.scalars(query)).all())
@@ -423,6 +454,10 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
         if row.light_entry == "video":
             # Older mobile clients may still send their saved narration choice.
             changes.pop("voice_id", None)
+            if "music_style" in changes:
+                changes["beat_music"] = changes["music_style"] != "off"
+            elif "beat_music" in changes:
+                changes["music_style"] = "auto" if changes["beat_music"] else "off"
         form = row.light_production
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
@@ -823,7 +858,9 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                                            if (body.action == "render" and row.light_entry == "footage_edit"
                                                and form.get("redo_narration")) else {}),
                                         **({"creative_motion": True} if creative_motion else {}),
-                                        **({"video_model": row.video_model, "video_resolution": row.video_resolution}
+                                        **({"video_model": row.video_model, "video_resolution": row.video_resolution,
+                                            "music_style": production_music.preference(form),
+                                            "music_template": form["template"]}
                                            if body.action == "render" and row.light_entry == "video" else {})}}
                 if exact_remake:
                     prior = form.get("run") or {}

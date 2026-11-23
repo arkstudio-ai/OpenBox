@@ -71,7 +71,7 @@ def _beat_grid(path: Path) -> tuple[float, float | None, list[float]]:
     ], timeout=12))
     samples = array("f")
     samples.frombytes(subprocess.check_output([
-        "ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-t", "42", "-ac", "1",
+        "ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-t", "54", "-ac", "1",
         "-ar", "4000", "-af", "highpass=f=55,lowpass=f=850", "-f", "f32le", "-",
     ], timeout=20))
     step = 0.01

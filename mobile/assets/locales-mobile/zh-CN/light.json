@@ -236,6 +236,14 @@
     "moreTemplatesComing": "更多模板正在添加中",
     "retiredTemplate": "这个模板已下架，请选择其他模板。",
     "settings": "制作设置",
+    "music": {
+      "title": "配乐",
+      "auto": "自动选曲",
+      "upbeat": "轻快种草",
+      "calm": "舒缓",
+      "energetic": "动感",
+      "off": "不配乐"
+    },
     "chatTier": "文本模型",
     "videoTier": {
       "forInsert": "用于 AI 补镜",
@@ -544,6 +552,7 @@
     "selected": "已选 {{count}} 个素材",
     "confirmMaterials": "确认 {{count}} 个素材",
     "emptyLibrary": "素材库还没有这类文件。",
+    "previewMaterial": "预览「{{name}}」",
     "remove": "移除",
     "removeMissing": "清除已无法使用的素材",
     "fileTooLarge": "单个素材最多 200 MB。",

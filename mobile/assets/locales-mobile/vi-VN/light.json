@@ -236,6 +236,14 @@
     "moreTemplatesComing": "Đang bổ sung thêm mẫu",
     "retiredTemplate": "Mẫu này đã ngừng cung cấp. Hãy chọn mẫu khác.",
     "settings": "Cài đặt sản xuất",
+    "music": {
+      "title": "Nhạc nền",
+      "auto": "Tự động chọn",
+      "upbeat": "Vui tươi",
+      "calm": "Êm dịu",
+      "energetic": "Sôi động",
+      "off": "Không nhạc nền"
+    },
     "chatTier": "Mô hình văn bản",
     "videoTier": {
       "forInsert": "Dùng cho cảnh chèn AI",
@@ -544,6 +552,7 @@
     "selected": "Đã chọn {{count}} tư liệu",
     "confirmMaterials": "Dùng {{count}} tư liệu",
     "emptyLibrary": "Thư viện chưa có tệp loại này.",
+    "previewMaterial": "Xem trước {{name}}",
     "remove": "Bỏ chọn",
     "removeMissing": "Bỏ tư liệu không khả dụng",
     "fileTooLarge": "Mỗi tệp tối đa 200 MB.",

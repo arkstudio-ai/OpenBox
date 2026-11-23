@@ -5,6 +5,7 @@ import io
 import math
 import unicodedata
 from functools import lru_cache
+from textwrap import wrap
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -90,11 +91,14 @@ def end_card(headline: str, shop: str, *, headline_ink=INK) -> bytes:
                 _label(draw, (x+(w-width)//2, y+pad+i*em+(em-height)//2), char, em, INK)
         else:
             # Long or mixed-script shop names use a separate horizontal signature.
-            chars_per_line = min(14, len(shop))
-            em = max(17, min(31, 315 // chars_per_line))
-            for i in range(0, len(shop), chars_per_line):
-                line = shop[i:i+chars_per_line]
-                _label(draw, (45, 60 + (i//chars_per_line)*em), line, em, headline_ink)
+            lines = (wrap(shop, width=14) if _cjk(shop)
+                     else wrap(shop, width=24, break_long_words=False, break_on_hyphens=False))
+            em = 28
+            max_width = left - 60
+            while em > 1 and max(draw.textlength(line, font=_brush(em)) for line in lines) > max_width:
+                em -= 1
+            for index, line in enumerate(lines):
+                _label(draw, (45, 60 + index * (em + 4)), line, em, headline_ink)
     stream = io.BytesIO()
     canvas.save(stream, format="PNG", optimize=True)
     return stream.getvalue()

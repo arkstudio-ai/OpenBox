@@ -687,6 +687,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                     : null,
                 onChoose: (value) async {
                   if (_busy) return;
+                  if (!task.supportsVideoTiers(value)) {
+                    _pending.remove('video_tier');
+                  }
                   if (task.referenceExampleId == null) {
                     _stage('template', value);
                     return;

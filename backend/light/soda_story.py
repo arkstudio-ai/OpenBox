@@ -171,19 +171,22 @@ def cut_for(shot, index, asset, meta, transcript):
             "mute_audio": not cues, "review_version": REVIEW, "take": 1}
 
 
-async def _review(ctx, shot, index, asset, meta):
+async def _transcript(ctx, asset):
     from tool.video_production import VideoTranscribeArgs, execute_transcribe
 
+    result = await execute_transcribe(VideoTranscribeArgs(
+        action="submit", asset_id=asset, idempotency_key=f"soda-asr:{asset}"), ctx)
+    if result.metadata.get("status") != "completed":
+        return {}
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, result.metadata["job_id"])
+        return (job.result_data or {}).get("transcript") or {}
+
+
+async def _review(ctx, shot, index, asset, meta):
     if not meta:
         raise RemakeStopped(f"第 {index} 镜仍在保存，已记录生成作业。")
-    transcript = {}
-    if shot.line and meta.get("has_audio"):
-        result = await execute_transcribe(VideoTranscribeArgs(
-            action="submit", asset_id=asset, idempotency_key=f"soda-asr:{asset}"), ctx)
-        if result.metadata.get("status") == "completed":
-            async with get_db_session() as db:
-                job = await db.get(VideoJob, result.metadata["job_id"])
-                transcript = (job.result_data or {}).get("transcript") or {}
+    transcript = await _transcript(ctx, asset) if shot.line and meta.get("has_audio") else {}
     return cut_for(shot, index, asset, meta, transcript)
 
 

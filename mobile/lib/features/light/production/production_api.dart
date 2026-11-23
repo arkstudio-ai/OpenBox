@@ -10,6 +10,8 @@ import '../../../shared/models/light.dart';
 import '../../../shared/models/resource.dart';
 import 'production_shot_models.dart';
 
+const shortcutStory = 'shortcut_story';
+
 enum ProductionKind {
   video('video'),
   footage('footage_edit'),
@@ -27,7 +29,7 @@ enum ProductionKind {
   bool get imagesOnly => this == menu || this == poster;
 
   List<String> get templates => switch (this) {
-    video => ['soda_story', 'silk_road'],
+    video => [shortcutStory, 'soda_story', 'silk_road'],
     footage => ['documentary', 'quick_cut', 'product'],
     menu || poster => const [],
   };
@@ -242,9 +244,10 @@ class LightProduction {
   bool get working => status == 'working';
   bool supportsVideoTiers(String selectedTemplate) =>
       kind == ProductionKind.video &&
+      selectedTemplate != shortcutStory &&
       (selectedTemplate.isEmpty || kind.templates.contains(selectedTemplate));
   bool get manualPreparation =>
-      const ['soda_story', 'silk_road'].contains(template);
+      const [shortcutStory, 'soda_story', 'silk_road'].contains(template);
   bool get wanRemake => manualPreparation || template == 'wan_story';
   bool get remake =>
       kind == ProductionKind.video && (wanRemake || template == 'twist');

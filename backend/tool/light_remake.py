@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from light import production, remake_case, silk_road, wan_story
+from light import production, remake_case, shortcut_plan, silk_road, wan_story
 from light.mode import LightError
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -76,6 +76,8 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
         try:
             if form["template"] == wan_story.SODA_TEMPLATE:
                 from light.soda_story import render
+            elif isinstance(plan, shortcut_plan.ShortcutPlan):
+                from light.shortcut_story import render
             elif isinstance(plan, silk_road.Plan):
                 from light.silk_road import render
             elif isinstance(plan, wan_story.ShotPlan):
@@ -108,7 +110,7 @@ light_wan_story_tool = define_tool(
 )
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=8)
 def wan_tool_for_action(action: str, template: str | None = None):
     """Expose only the operation selected by the owner's App button."""
     if action not in {"prepare", "render"}:
@@ -123,7 +125,10 @@ def wan_tool_for_action(action: str, template: str | None = None):
 
     parameters = wan_story.RenderRequest
     if action == "prepare":
-        parameters = SilkRoadPrepareRequest if template == silk_road.TEMPLATE else wan_story.PrepareRequest
+        parameters = {
+            silk_road.TEMPLATE: SilkRoadPrepareRequest,
+            shortcut_plan.TEMPLATE: shortcut_plan.PrepareRequest,
+        }.get(template, wan_story.PrepareRequest)
     return define_tool(
         "light_wan_story",
         description=(

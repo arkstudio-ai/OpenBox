@@ -125,14 +125,35 @@ class Quote:
     cost: Decimal | None = None
 
 
+def _model_rate(model_id: str, data: dict) -> tuple[str, dict | None]:
+    model = model_id.rsplit("/", 1)[-1].lower()
+    model = data.get("aliases", {}).get(model, model)
+    return model, data["models"].get(model)
+
+
+def _scheduled_rate(rate: dict, local: datetime) -> dict:
+    scheduled = rate.get("scheduled_rate")
+    if scheduled and local.date().isoformat() >= scheduled["effective_on"]:
+        return {**rate, **scheduled}
+    return rate
+
+
+def long_context_cutoff(model_id: str) -> int | None:
+    """Input boundary of the active surcharge, in inclusive input tokens."""
+    at = datetime.now(timezone.utc)
+    _, rate = _model_rate(model_id, catalogue(at=at))
+    if not rate or rate.get("valid_until") and at.date().isoformat() > rate["valid_until"]:
+        return None
+    cutoff = _scheduled_rate(rate, at.astimezone(ZoneInfo("Asia/Shanghai"))).get("long_context_above")
+    return cutoff if type(cutoff) is int and cutoff > 0 else None
+
+
 def quote(model_id: str, usage: dict, *, at: datetime | None = None, rates: dict | None = None) -> Quote:
     at = at or datetime.now(timezone.utc)
     if at.tzinfo is None:
         at = at.replace(tzinfo=timezone.utc)
     data = rates if rates is not None else catalogue(at=at)
-    model = model_id.rsplit("/", 1)[-1].lower()
-    model = data.get("aliases", {}).get(model, model)
-    rate = data["models"].get(model)
+    model, rate = _model_rate(model_id, data)
     snapshot = {"version": data["version"], "verified_at": data["verified_at"], "model": model}
     if rate is None:
         return Quote(None, {**snapshot, "reason": data.get("unpriced", {}).get(model, "Model has no verified price")})
@@ -140,9 +161,7 @@ def quote(model_id: str, usage: dict, *, at: datetime | None = None, rates: dict
     if rate.get("valid_until") and at.date().isoformat() > rate["valid_until"]:
         return Quote(None, {**snapshot, "reason": "Published promotional tariff has expired"})
     local = at.astimezone(ZoneInfo("Asia/Shanghai"))
-    scheduled = rate.get("scheduled_rate")
-    if scheduled and local.date().isoformat() >= scheduled["effective_on"]:
-        rate = {**rate, **scheduled}
+    rate = _scheduled_rate(rate, local)
     peak = local.weekday() < 5 and (9 <= local.hour < 12 or 14 <= local.hour < 18)
     multiplier = Decimal(rate.get("peak_multiplier", "1")) if peak else Decimal(1)
     long = usage["input"] > rate.get("long_context_above", float("inf"))

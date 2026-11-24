@@ -4,6 +4,7 @@ import copy
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
@@ -12,9 +13,11 @@ from agent.agent import get_agent, AgentDef
 from agent.caching import session_cache_key
 from agent.compaction import (
     ASSISTANT_SUMMARY_RULES,
+    STAGE_RESUME_ORIGIN,
     create_compaction,
     get_model_context_limit,
     is_overflow,
+    is_stage_summary_continuation,
     process_compaction,
     prune_tool_outputs,
 )
@@ -62,7 +65,7 @@ from models.message import (
 )
 from session.session import (
     get_session, update_session, update_session_context, set_session_status, set_session_title,
-    create_assistant_message, update_message_info, save_part, get_messages,
+    create_assistant_message, create_user_message, update_message_info, save_part, get_messages,
 )
 from snapshot import snapshot
 from tool.tool import ToolContext, ToolResult
@@ -1188,6 +1191,9 @@ async def run_loop(
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
         fresh_reveals: frozenset[str] = frozenset()
         continued_tools: frozenset[str] = frozenset()
+        reuse_tool_scope: tuple[str, str] | None = None
+        used_tool_ids: set[str] = set()
+        exposure_user = None
         finish_reason_prev = ""  # Previous step's finish reason
         context_stall = ContextStallDetector()
         for seen in await recent_step_input_tokens(session_id, context_stall.window):
@@ -1198,6 +1204,7 @@ async def run_loop(
         run_message_ids: set[str] = set()
         compact_fail_count = 0  # Consecutive proactive compaction failures
         provider_compact_fail_count = 0
+        stage_summary_paused = False
         async def _roll_assistant_history() -> None:
             """After a settled, answered ordinary assistant turn, fold old history.
 
@@ -1625,12 +1632,22 @@ async def run_loop(
                     output_schema, lambda payload: structured.setdefault("value", payload)
                 )
 
+            # A stage checkpoint is synthetic. Continue planning tools for
+            # the user's actual task instead of routing on the resume text.
+            if exposure_user is None or not is_stage_summary_continuation(last_user):
+                exposure_user = last_user
             with latency_span("context.exposure_signals"):
                 exposure_signals = await collect_exposure_signals(
-                    last_user,
+                    exposure_user,
                     session_id=session_id,
                     user_id=user_id,
                 )
+            tool_scope = ((exposure_user.id, model_id)
+                          if session.kind == "normal" and agent_name == "build" and exposure_mode == "portable"
+                          else None)
+            if tool_scope != reuse_tool_scope:
+                used_tool_ids.clear()
+                reuse_tool_scope = tool_scope
             editor_id = preferred_editor_id(model_id, eligible_tools)
             with latency_span("context.assemble_catalogue"):
                 preliminary_runtime = assemble_tool_runtime(
@@ -1638,6 +1655,7 @@ async def run_loop(
                     mode=exposure_mode,
                     agent_name=agent_name,
                     signals=exposure_signals,
+                    used_tool_ids=used_tool_ids,
                     editor_id=editor_id,
                     synthetic_tools=synthetic_tools,
                     exposure_config=config.tool_exposure,
@@ -1676,6 +1694,7 @@ async def run_loop(
                         signals=exposure_signals,
                         revealed_ids=revealed_ids,
                         requested_ids=(fresh_reveals & revealed_ids) | continued_tools,
+                        used_tool_ids=used_tool_ids,
                         editor_id=editor_id,
                         synthetic_tools=synthetic_tools,
                         exposure_config=config.tool_exposure,
@@ -1935,6 +1954,7 @@ async def run_loop(
                 session_kind=session.kind,
                 memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
                 device_locale=device_locale,
+                turn_started_at=getattr(exposure_user, "created_at", None) if tool_scope is not None else None,
             )
             try:
                 from light.prompt import light_mode_fragment
@@ -2018,8 +2038,6 @@ async def run_loop(
                 and runtime.provider_plan.deferred_ids
                 and sandbox_catalogue_availability != "unavailable"
             ):
-                from datetime import datetime, timezone
-
                 from agent.native_tool_search import (
                     NATIVE_CAPABILITY_CACHE,
                     NativeCapabilityKey,
@@ -2431,7 +2449,21 @@ async def run_loop(
             )
 
             from dataclasses import replace
-            from agent.context_budget import RequestPrefix, count_payload, measure_request
+            from agent.context_budget import RequestPrefix, count_payload, measure_request, stage_summary_threshold
+
+            stage_threshold = (
+                stage_summary_threshold(model_id)
+                if config.compaction.auto and config.compaction.stage_summary and not stage_summary_paused
+                and session.kind == "normal" and agent_name == "build"
+                and not getattr(session, "api_key_id", None) and not guided_action
+                else None
+            )
+
+            def needs_stage_summary(sized):
+                return (
+                    stage_threshold is not None and not stage_summary_paused
+                    and stage_threshold <= sized.input_tokens < sized.threshold
+                )
 
             user_variant = getattr(last_user, "variant", None)
             if user_variant is None:
@@ -2480,25 +2512,33 @@ async def run_loop(
                 await update_session_context(
                     session_id, context=budget.input_tokens, limit=budget.context_limit, user_id=user_id,
                 )
-            if compaction_pending or (budget is not None and config.compaction.auto and budget.under_pressure):
+            if compaction_pending or (budget is not None and config.compaction.auto
+                                      and (budget.under_pressure or needs_stage_summary(budget))):
                 auto = True
+                stage_summary = budget is not None and needs_stage_summary(budget)
                 if compaction_pending:
                     part = compaction_pending[1]
                     auto = part.get("auto", True) if isinstance(part, dict) else part.auto
-                if compact_fail_count >= config.compaction.max_retries + 1:
+                    stage_summary = part.get("stage_summary", False) if isinstance(part, dict) else part.stage_summary
+                if not stage_summary and compact_fail_count >= config.compaction.max_retries + 1:
                     failed = True
                     bus.publish(SESSION_ERROR, {
                         "userId": user_id, "sessionId": session_id, "generation": lease.generation,
                         "error": {"code": "COMPACTION_FAILED", "message": "Context remains above the configured budget after compaction."},
                     })
                     break
-                compact_fail_count += 1
+                if not stage_summary:
+                    compact_fail_count += 1
                 if not compaction_pending:
                     request = await create_compaction(
                         session_id, auto=auto, user_id=user_id, messages=msgs,
                         model_id=model_id, run_fence=run_fence,
+                        stage_summary=stage_summary,
                     )
                     if request is None:
+                        if stage_summary:
+                            stage_summary_paused = True
+                            continue
                         raise RuntimeError("Could not create compaction request")
                     model_surface = await load_canonical_model_surface(
                         session_id, user_id=user_id, run_fence=run_fence,
@@ -2530,7 +2570,18 @@ async def run_loop(
                         "timing_source": "producer_monotonic",
                     }, context=step_traces[step])
                     finished_steps.add(step)
-                if compact_result == "continue":
+                if stage_summary and (compact_result != "continue"
+                                      or stage_threshold is not None and after_budget.input_tokens >= stage_threshold):
+                    stage_summary_paused = True
+                    if compact_result != "continue":
+                        await create_user_message(
+                            session_id=session_id, user_id=user_id, agent=agent_name,
+                            text="The optional stage summary was skipped. Continue the current task using the original context.",
+                            model=model_id, variant=user_variant, synthetic=True,
+                            origin="system_recovery", origin_ref={"entrypoint": STAGE_RESUME_ORIGIN},
+                            run_fence=run_fence,
+                        )
+                if compact_result == "continue" or stage_summary:
                     continue  # Next iteration remeasures the actual next request.
                 break
             if not single_candidate:
@@ -2650,6 +2701,7 @@ async def run_loop(
                     nonlocal admission_candidate, admission_messages, latest_messages
                     nonlocal candidate_pruned, candidate_prune_tokens, candidate_observed, compact_fail_count
                     nonlocal report_identity
+                    nonlocal stage_summary_paused
                     from session.agent_event_log import AgentEventPrefixDriftError
                     if admission_candidate is not None:
                         # Only the one budget receipt appended by this exact
@@ -2687,15 +2739,19 @@ async def run_loop(
                             raise AgentEventPrefixDriftError("Reload the candidate after pruning tool output")
                         await update_session_context(session_id, context=sized.input_tokens,
                             limit=sized.context_limit, user_id=user_id)
-                        if config.compaction.auto and sized.under_pressure:
-                            if compact_fail_count >= config.compaction.max_retries + 1:
+                        stage_summary = needs_stage_summary(sized)
+                        if config.compaction.auto and (sized.under_pressure or stage_summary):
+                            if not stage_summary and compact_fail_count >= config.compaction.max_retries + 1:
                                 raise AssistantError(409, "COMPACTION_FAILED",
                                     "Context remains above the configured budget after compaction.")
                             request = await create_compaction(session_id, auto=True, user_id=user_id,
-                                messages=list(candidate.messages), model_id=model_id, run_fence=run_fence)
-                            if request is None:
+                                messages=list(candidate.messages), model_id=model_id, run_fence=run_fence,
+                                stage_summary=stage_summary)
+                            if request is not None:
+                                raise _CandidateCompaction()
+                            if not stage_summary:
                                 raise RuntimeError("Could not create compaction request")
-                            raise _CandidateCompaction()
+                            stage_summary_paused = True
                         compact_fail_count = 0
                     return latest_messages
 
@@ -2786,6 +2842,7 @@ async def run_loop(
                 await _prepare_provider_attempt(refresh_memory=False)
 
             async def _attempt_provider_step():
+                nonlocal candidate_compaction, stage_summary_paused
                 if candidate_error is not None:
                     return StepResult(outcome=StepOutcome.ERROR, error=candidate_error["message"])
                 if candidate_compaction:
@@ -2821,14 +2878,21 @@ async def run_loop(
                                   cache_key=prepared_attempt.prompt_cache_key,
                                   native_plan=prepared_attempt.native_plan),
                 )
-                if config.compaction.auto and final_budget.under_pressure:
-                    await create_compaction(
+                stage_summary = needs_stage_summary(final_budget)
+                if config.compaction.auto and (final_budget.under_pressure or stage_summary):
+                    request = await create_compaction(
                         session_id, auto=True, user_id=user_id,
                         messages=list((await load_canonical_model_surface(
                             session_id, user_id=user_id, run_fence=run_fence,
-                        )).messages), model_id=model_id, run_fence=run_fence,
+                        )).messages), model_id=model_id, run_fence=run_fence, stage_summary=stage_summary,
                     )
-                    return StepResult(outcome=StepOutcome.COMPACT, finish_reason="compact")
+                    if request is not None:
+                        candidate_compaction = stage_summary
+                        return StepResult(outcome=StepOutcome.COMPACT, finish_reason="compact")
+                    if not stage_summary:
+                        return StepResult(outcome=StepOutcome.ERROR, error="Could not create compaction request",
+                                          error_code="COMPACTION_FAILED")
+                    stage_summary_paused = True
                 ctx._native_tool_plan = prepared_attempt.native_plan
                 ctx._native_portable_tools = prepared_attempt.native_portable_tools
                 ctx._native_portable_system = prepared_attempt.native_portable_system
@@ -3064,6 +3128,11 @@ async def run_loop(
             continued_tools = continuation_ids(
                 result.completed_tool_parts, (tool.id for tool in tools.values()), continued_tools,
             )
+            if reuse_tool_scope is not None:
+                for part in result.completed_tool_parts:
+                    tool_id = getattr(part, "canonical_tool_id", None) or getattr(part, "tool", None)
+                    if tool_id in runtime.step_executable_ids:
+                        used_tool_ids.add(tool_id)
             fresh_reveals = (fresh_reveals | frozenset(ctx._capability_revealed_ids)) - frozenset(
                 part.tool for part in result.completed_tool_parts if getattr(part, "tool", None)
             )
@@ -3654,6 +3723,7 @@ async def _build_system_prompt(
     session_kind: str | None = None,
     memory_packet: bool = False,
     device_locale: DeviceLocale | None = None,
+    turn_started_at: str | None = None,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -3666,7 +3736,17 @@ async def _build_system_prompt(
     local_now = locale.now()
     calendar = f"Today's date: {local_now.date().isoformat()}"
     if locale.timezone:
-        calendar += f"\nUser's time zone: {locale.timezone}. Local time: {local_now.isoformat(timespec='minutes')}."
+        calendar += f"\nUser's time zone: {locale.timezone}."
+        if turn_started_at:
+            try:
+                started = datetime.fromisoformat(turn_started_at)
+            except ValueError:
+                started = None
+            if started is not None and started.tzinfo is not None:
+                accepted = started.astimezone(local_now.tzinfo).isoformat(timespec="minutes")
+                calendar += f" Local time when this user request was accepted: {accepted}."
+        else:
+            calendar += f" Local time: {local_now.isoformat(timespec='minutes')}."
 
     if agent_def.name == "assistant":
         from assistant.profile import user_section
@@ -4700,7 +4780,7 @@ async def _insert_reminders(
 async def _insert_todo_notices(messages: list[dict], session_id: str) -> list[dict]:
     """Tell the model what the user changed on the todo card.
 
-    Ephemeral, like the other reminders: appended to the last user message
+    Ephemeral, like the other reminders: appended to the request
     for this one call rather than persisted, and taken off the queue so it
     is said once. The item itself is already on the list — this only makes
     sure the model notices it instead of working around it.
@@ -4726,7 +4806,7 @@ def _insert_todo_notice_snapshot(
         "Keep these changes in your todo list and act on them.\n"
         "</system-reminder>"
     )
-    return _append_to_last_user(messages, reminder)
+    return _append_runtime_reminder(messages, reminder)
 
 
 def _prepend_to_last_user(messages: list[dict], context: str) -> list[dict]:
@@ -4744,15 +4824,11 @@ def _prepend_to_last_user(messages: list[dict], context: str) -> list[dict]:
     return result
 
 
-def _append_to_last_user(messages: list[dict], reminder: str) -> list[dict]:
-    """Hang an ephemeral reminder off the newest user message."""
-    result = list(messages)
-    for i in range(len(result) - 1, -1, -1):
-        if result[i].get("role") == "user":
-            result[i] = dict(result[i])
-            result[i]["content"] = (result[i].get("content") or "") + "\n\n" + reminder
-            return result
-    return result
+def _append_runtime_reminder(messages: list[dict], reminder: str) -> list[dict]:
+    """Add live state after the replayed history, keeping old messages intact."""
+    if not any(message.get("role") == "user" for message in messages):
+        return messages
+    return [*messages, {"role": "user", "content": reminder}]
 
 
 async def _insert_todo_pacing(messages: list[dict], session_id: str) -> list[dict]:
@@ -4777,7 +4853,7 @@ async def _insert_todo_pacing(messages: list[dict], session_id: str) -> list[dic
     if waiting is None:
         return messages
 
-    return _append_to_last_user(
+    return _append_runtime_reminder(
         messages,
         "<system-reminder>\n"
         "Your todo list has tasks waiting and none in progress. Call "

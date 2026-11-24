@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from core.config import ToolExposureConfig
 
 
-Priority = Literal["resident", "product_pinned", "requested", "explicit_intent", "revealed", "other"]
+Priority = Literal["resident", "product_pinned", "requested", "explicit_intent", "revealed", "other", "turn_reuse"]
 CatalogueDecision = Literal[
     "ok",
     "warn",
@@ -32,6 +32,7 @@ _PRIORITY_ORDER: Mapping[Priority, int] = MappingProxyType({
     "explicit_intent": 3,
     "revealed": 4,
     "other": 5,
+    "turn_reuse": 6,
 })
 _NO_TRIM_STRATEGIES = frozenset({"legacy_eager", "shadow", "emergency_eager"})
 
@@ -136,6 +137,8 @@ class ExposureBudgetResult:
 
 def _priority(reason: str) -> Priority:
     normalized = (reason or "").strip().lower()
+    if normalized == "turn_reuse":
+        return "turn_reuse"
     if normalized == "requested":
         return "requested"
     if normalized in {
@@ -238,6 +241,7 @@ def _decision_reason(priority: Priority) -> str:
         "explicit_intent": "selected_explicit_intent",
         "revealed": "selected_revealed",
         "other": "selected_other",
+        "turn_reuse": "selected_turn_reuse",
     }[priority]
 
 
@@ -259,7 +263,8 @@ def apply_exposure_budget(
     discovery and explicit intent may consume burst capacity up to the hard
     boundary; a request may also retire those other controls when that is
     what lets it fit.  Historical reveals and other candidates only fill the
-    soft target.  Anything removed is added to discovery with a
+    soft target. Already-used research tools fill only the hard-budget space
+    left after all higher priorities. Anything removed is added to discovery with a
     machine-readable reason.  ``reserved_chars`` is request-local definitions
     (structured output) that share the same boundary.
     """
@@ -278,7 +283,7 @@ def apply_exposure_budget(
         )
     _validate_inputs(catalog, plan)
 
-    from agent.tool_exposure import pack_precedence, pack_rank
+    from agent.tool_exposure import BROWSER_ACTION_CHILD_IDS, pack_precedence, pack_rank
 
     original_reasons = dict(plan.reasons)
     classified = {
@@ -295,6 +300,8 @@ def apply_exposure_budget(
         plan.direct_ids,
         key=lambda tool_id: (
             _PRIORITY_ORDER[classified[tool_id]],
+            # The reused composite can only run if its child schemas fit.
+            classified[tool_id] == "turn_reuse" and tool_id == "browser_action",
             pack_rank(tool_id, packs[tool_id]),
             pack_precedence(packs[tool_id]),
             tool_id,
@@ -335,6 +342,10 @@ def apply_exposure_budget(
                 soft_pinned.append(tool_id)
             continue
 
+        if priority == "turn_reuse" and tool_id == "browser_action" and not BROWSER_ACTION_CHILD_IDS <= kept:
+            trimmed[tool_id] = "browser_children_unavailable"
+            continue
+
         if size > active_budgets.single_tool_hard_chars:
             trimmed[tool_id] = "single_tool_hard_limit"
             continue
@@ -343,11 +354,8 @@ def apply_exposure_budget(
             trimmed[tool_id] = f"intent_pack_hard_limit:{pack}"
             continue
 
-        total_limit = (
-            active_budgets.visible_hard_chars
-            if priority in {"requested", "explicit_intent"}
-            else active_budgets.visible_soft_chars
-        )
+        uses_hard_limit = priority in {"requested", "explicit_intent", "turn_reuse"}
+        total_limit = active_budgets.visible_hard_chars if uses_hard_limit else active_budgets.visible_soft_chars
         if visible_chars + size > total_limit and priority == "requested" and not no_trim:
             # Discovery told the model it could load this tool. A pack's
             # non-lead controls only ever filled the soft target, so the least
@@ -369,7 +377,7 @@ def apply_exposure_budget(
                         pack_totals[other_pack] -= catalog.entries[other].schema_chars
                     trimmed[other] = "product_pinned_soft_limit" + (f":{other_pack}" if other_pack else "")
         if visible_chars + size > total_limit:
-            limit_name = "hard" if priority in {"requested", "explicit_intent"} else "soft"
+            limit_name = "hard" if uses_hard_limit else "soft"
             trimmed[tool_id] = f"initial_visible_{limit_name}_limit"
             continue
 

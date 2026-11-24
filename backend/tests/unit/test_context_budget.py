@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent import compaction, llm
-from agent.context_budget import RequestPrefix, count_payload, measure_request, request_payload
+from agent.context_budget import RequestPrefix, count_payload, measure_request, request_payload, stage_summary_threshold
 from core.config import CompactionConfig, ModelConfig, OpenBoxConfig
 from tests.unit.test_durable_questions import state  # noqa: F401
 from tests.unit.test_full_history import _seed
@@ -24,6 +24,61 @@ def test_eighty_percent_threshold_and_output_headroom(monkeypatch):
     assert measure_request("openai/gpt-4o", [], RequestPrefix()).threshold == 96000
     with pytest.raises(ValidationError):
         CompactionConfig(threshold_ratio=0.8, retain_ratio=0.9)
+
+
+def test_stage_summary_threshold_follows_the_billing_cutoff():
+    assert stage_summary_threshold("openai/gpt-6.2-sol") == 250_000
+    assert stage_summary_threshold("test/unpriced") is None
+
+
+@pytest.mark.parametrize("complete", [True, False], ids=["keeps-evidence", "falls-back"])
+async def test_cost_stage_summary_preserves_reported_source_and_keeps_work_running(
+    state, long_chat, monkeypatch, complete,
+):
+    from models.message import TextPart, TokenUsage
+    from session.session import create_assistant_message, create_user_message, save_part, update_message_info
+
+    _small_window(monkeypatch, prune=True)
+    monkeypatch.setattr("agent.context_budget.stage_summary_threshold", lambda model: 9_000)
+    monkeypatch.setattr(compaction, "STAGE_SUMMARY_TAIL_TOKENS", 128)
+    ids = await _seed("s1", "u1", turns=2, tool_output="Raw original source material " * 500)
+    answer = await create_assistant_message("s1", ids[-2], agent="build", model_id="openai/gpt-4o", user_id="u1")
+    citation = "Source: [Original lesson](https://example.test/original)\n02:51–02:56 shows the starting number."
+    await save_part(TextPart(text=citation, session_id="s1", message_id=answer.id), is_new=True, user_id="u1")
+    answer.finish = "stop"
+    answer.tokens = TokenUsage(input=9200, output=1)
+    await update_message_info(answer, user_id="u1")
+    await create_user_message("s1", "Later context. " * 100, user_id="u1", model="openai/gpt-4o")
+    calls = []
+    observed_intents = []
+    collect_signals_for_user = long_chat.loop.collect_exposure_signals
+
+    async def collect_signals(user, **kwargs):
+        signals = await collect_signals_for_user(user, **kwargs)
+        observed_intents.append(signals.user_task_text)
+        return signals
+
+    async def summary(**kwargs):
+        calls.append(("summary", kwargs["messages"]))
+        yield {"type": "text_delta", "text": "Continue the lesson research."}
+        yield {"type": "finish", "reason": "stop" if complete else "length", "usage": {"input": 8000, "output": 20}}
+
+    async def provider(**kwargs):
+        calls.append(("model", kwargs["messages"]))
+        yield {"type": "text_delta", "text": "Done."}
+        yield {"type": "finish", "reason": "stop", "usage": {"input": 400, "output": 10}}
+
+    monkeypatch.setattr("agent.llm.stream_llm", summary)
+    monkeypatch.setattr(long_chat.processor, "stream_llm", provider)
+    monkeypatch.setattr(long_chat.loop, "collect_exposure_signals", collect_signals)
+    await _send(long_chat, "Continue using the original material.")
+    assert [kind for kind, _ in calls] == ["summary", "model"]
+    assert "Keep an evidence ledger" in calls[0][1][-1]["content"]
+    continuation = "\n".join(str(message.get("content", "")) for message in calls[1][1])
+    assert citation in continuation
+    assert (compaction.STAGE_EVIDENCE_HEADING in continuation) is complete
+    assert observed_intents == ["Continue using the original material."] * 3
+    assert not [data for kind, data in state if kind == "session.error"]
 
 
 def test_request_count_includes_tools_arguments_and_unicode(long_chat):

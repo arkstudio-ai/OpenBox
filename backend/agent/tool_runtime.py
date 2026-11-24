@@ -127,6 +127,7 @@ def assemble_tool_runtime(
     signals: ExposureSignals = ExposureSignals(),
     revealed_ids: Iterable[str] = (),
     requested_ids: Iterable[str] = (),
+    used_tool_ids: Iterable[str] = (),
     editor_id: str | None = None,
     synthetic_tools: Mapping[str, ToolInfo] | None = None,
     exposure_config=None,
@@ -188,6 +189,7 @@ def assemble_tool_runtime(
             signals=signals,
             revealed_ids=revealed_ids,
             requested_ids=requested_ids,
+            used_tool_ids=used_tool_ids,
             editor_id=editor_id,
         )
         candidate_plan = None

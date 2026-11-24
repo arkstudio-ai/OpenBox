@@ -42,6 +42,11 @@ BUILD_RESIDENT_IDS = frozenset({
     "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state", "memory_forget",
 })
 
+_TURN_RESEARCH_TOOLS = frozenset({
+    "web_search", "web_fetch", "view_image", "browser_action", "todo_write", "todo_read", "share_file",
+})
+BROWSER_ACTION_CHILD_IDS = frozenset({"bash", "view_image"})
+
 AGENT_RESIDENT_IDS: Mapping[str, frozenset[str]] = MappingProxyType({
     "build": BUILD_RESIDENT_IDS,
     "plan": frozenset({"bash", "read", "glob", "grep", "question", "plan_exit", "memory_prepare", "memory_search", "memory_read_sources", "memory_read_more", "current_task_state"}),
@@ -376,7 +381,7 @@ def route_explicit_intent_packs(signals: ExposureSignals) -> tuple[str, ...]:
     urls = signals.urls or tuple(_URL.findall(text))
     kinds = {kind.lower() for kind in signals.attachment_kinds}
 
-    if urls or re.search(r"\b(search|research|verify|latest|docs?)\b|搜索|查证|最新|文档", text):
+    if urls or re.search(r"\b(search|research|verify|latest|docs?)\b|搜索|查证|最新|文档|查找|检索|溯源|原片|出处", text):
         packs.add("research")
     if re.search(r"browser|网页|浏览器|桌面|点击", text):
         packs.add("browser")
@@ -454,6 +459,7 @@ def portable_plan(
     signals: ExposureSignals = ExposureSignals(),
     revealed_ids: Iterable[str] = (),
     requested_ids: Iterable[str] = (),
+    used_tool_ids: Iterable[str] = (),
     editor_id: str | None = None,
 ) -> ExposurePlan:
     """Plan direct/deferred definitions without performing any I/O."""
@@ -520,6 +526,19 @@ def portable_plan(
             direct.add(tool_id)
             if reasons.get(tool_id) not in {"resident", "model_editor"}:
                 reasons[tool_id] = "requested"
+
+    # A research turn often switches between search, reading and report
+    # assembly. Keep previously used definitions in spare budget so switching
+    # steps does not keep rewriting the provider's cache prefix. Current
+    # permission, product state, intent and discovery take precedence.
+    reusable_ids = _TURN_RESEARCH_TOOLS.intersection(used_tool_ids)
+    if "browser_action" in reusable_ids and BROWSER_ACTION_CHILD_IDS <= eligible:
+        reusable_ids |= BROWSER_ACTION_CHILD_IDS
+    for tool_id in reusable_ids:
+        entry = catalog.entries.get(tool_id)
+        if entry and entry.source == "builtin" and entry.plane == "platform" and tool_id not in direct:
+            direct.add(tool_id)
+            reasons[tool_id] = "turn_reuse"
 
     direct_ids = tuple(sorted(direct))
     deferred_ids = tuple(sorted(eligible - direct))

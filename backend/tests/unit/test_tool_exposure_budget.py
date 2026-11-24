@@ -173,6 +173,56 @@ def test_storyboard_image_tool_survives_use_and_todo_bookkeeping(monkeypatch):
     assert "image_gen" not in portable_plan(restricted, agent_name="build", requested_ids=continued).direct_ids
 
 
+def test_used_research_definition_stays_visible_until_other_tools_need_the_budget():
+    from agent.prompt_visibility import build_tool_visibility_fragment
+    from agent.tool_exposure import ExposureSignals, portable_plan
+
+    sizes = {"read": 7, "capability_search": 4, "web_search": 12, "web_fetch": 6, "share_file": 8}
+    catalog = _catalog(sizes)
+    delivery = ExposureSignals(user_task_text="导出报告")
+
+    def step(*, requested=(), used=(), signals=delivery, current_catalog=catalog):
+        plan = portable_plan(current_catalog, agent_name="build", signals=signals,
+                             requested_ids=requested, used_tool_ids=used)
+        return apply_exposure_budget(current_catalog, plan, budgets=_budgets()).plan
+
+    research = step(requested={"web_fetch"})
+    report = step(requested={"share_file"}, used={"web_fetch"})
+    assert research.direct_ids == report.direct_ids
+    assert report.reasons["web_fetch"] == "turn_reuse"
+    assert build_tool_visibility_fragment(
+        research.direct_ids, strategy=research.strategy, deferred_count=len(research.deferred_ids)
+    ) == build_tool_visibility_fragment(
+        report.direct_ids, strategy=report.strategy, deferred_count=len(report.deferred_ids)
+    )
+    assert "web_fetch" not in step(requested={"share_file"}).direct_ids
+
+    with_new_request = step(requested={"web_search", "share_file"}, used={"web_fetch"})
+    assert {"web_search", "share_file"} <= set(with_new_request.direct_ids)
+    assert "web_fetch" in with_new_request.deferred_ids
+
+    restricted = _catalog({tool: size for tool, size in sizes.items() if tool != "web_fetch"})
+    assert "web_fetch" not in step(used={"web_fetch"}, current_catalog=restricted).direct_ids
+
+
+def test_browser_reuse_requires_its_children_in_the_final_payload():
+    from agent.tool_exposure import portable_plan
+
+    sizes = {"bash": 7, "read": 3, "browser_action": 11, "view_image": 6, "capability_search": 4}
+    catalog = _catalog(sizes)
+    plan = portable_plan(catalog, agent_name="build", used_tool_ids={"browser_action"})
+    assert {"browser_action", "bash", "view_image"} <= set(
+        apply_exposure_budget(catalog, plan, budgets=_budgets()).plan.direct_ids
+    )
+    limited = apply_exposure_budget(catalog, plan, budgets=_budgets(visible_hard_chars=25))
+    assert "browser_action" in limited.plan.deferred_ids
+
+    revoked = _catalog({tool: size for tool, size in sizes.items() if tool != "view_image"})
+    plan = portable_plan(revoked, agent_name="build", used_tool_ids={"browser_action"})
+    result = apply_exposure_budget(revoked, plan, budgets=_budgets())
+    assert result.deferred_reasons["browser_action"] == "browser_children_unavailable"
+
+
 def test_priority_is_resident_then_product_then_intent_then_reveal_then_other():
     catalog = _catalog({"core": 10, "recovery": 8, "intent": 10, "revealed": 4, "other": 2})
     # Worst-first input catches implementations that slice direct_ids by position.

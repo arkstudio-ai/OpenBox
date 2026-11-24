@@ -365,7 +365,7 @@ async def test_todo_notice_is_preserved_for_retry_and_acknowledged_once():
     assert result.outcome is StepOutcome.CONTINUE
     assert retries == 1
     assert len(payloads) == 2
-    assert all("修复重试" in item[0]["content"] for item in payloads)
+    assert all(item[0]["content"] == "continue" and "修复重试" in item[-1]["content"] for item in payloads)
     assert acknowledged == [("session-1", list(notices))]
 
 

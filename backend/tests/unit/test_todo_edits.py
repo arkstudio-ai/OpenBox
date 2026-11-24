@@ -96,7 +96,7 @@ async def test_notices_are_handed_over_once():
     assert await todo_mod.take_notices("s") == []
 
 
-async def test_a_notice_rides_along_on_the_last_user_message():
+async def test_a_notice_is_appended_after_the_unchanged_history():
     await todo_mod.add_notice("s", "- added: mine")
     msgs = [
         {"role": "user", "content": "go"},
@@ -104,9 +104,10 @@ async def test_a_notice_rides_along_on_the_last_user_message():
         {"role": "user", "content": "continue"},
     ]
     out = await _insert_todo_notices(msgs, "s")
-    assert "- added: mine" in out[2]["content"]
-    assert out[2]["content"].startswith("continue")
-    assert out[0]["content"] == "go"
+    assert out[:-1] == msgs
+    assert len(out) == len(msgs) + 1
+    assert out[-1]["role"] == "user"
+    assert "- added: mine" in out[-1]["content"]
 
 
 async def test_nothing_queued_leaves_the_messages_alone():
@@ -210,9 +211,16 @@ async def test_refusing_the_cancel_is_explained_to_the_model():
 
 async def test_a_stalled_list_is_raised_on_the_next_step():
     await todo_mod.replace_todos("s", [TodoItem(subject="first"), TodoItem(subject="second")])
-    out = await _insert_todo_pacing([{"role": "user", "content": "go"}], "s")
-    assert "in_progress" in out[0]["content"]
-    assert "first" in out[0]["content"]
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "tool_calls": [{"id": "call_todo"}]},
+        {"role": "tool", "tool_call_id": "call_todo", "content": "Tasks recorded"},
+    ]
+    out = await _insert_todo_pacing(history, "s")
+    assert out[:-1] == history
+    assert history[0]["content"] == "go"
+    assert "in_progress" in out[-1]["content"]
+    assert "first" in out[-1]["content"]
 
 
 async def test_a_moving_list_is_left_alone():

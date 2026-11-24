@@ -193,6 +193,11 @@ def test_automation_intent_is_direct_but_ordinary_code_is_not():
     )
 
 
+def test_source_citation_request_routes_research_from_the_first_step():
+    signals = ExposureSignals(user_task_text="请优先找他本人公开发布的完整排盘教学，用原片中的示例逐步复算。请标明出处和时间点。")
+    assert "research" in route_explicit_intent_packs(signals)
+
+
 def test_loading_video_skill_alone_does_not_route_video_pack():
     packs = route_intent_packs(ExposureSignals(
         user_task_text="只加载并总结 video-production skill，不执行视频",

@@ -32,3 +32,15 @@ def test_tool_specific_rules_only_name_visible_tools():
     assert "web_search" not in fragment
     assert "computer" not in fragment
     assert "todo_write" not in fragment
+
+
+def test_portable_prefix_is_identical_after_switching_optional_tools():
+    before = build_tool_visibility_fragment(
+        ["bash", "browser_action", "view_image", "capability_search"], strategy="portable", deferred_count=20,
+    )
+    after = build_tool_visibility_fragment(
+        ["bash", "web_search", "web_fetch", "share_file", "capability_search"], strategy="portable", deferred_count=19,
+    )
+    assert before == after
+    assert "tool definitions supplied with this request" in after
+    assert "Do not call or simulate unavailable tools" in after

@@ -34,6 +34,8 @@ class ProviderConfig(BaseModel):
 
 class CompactionConfig(BaseModel):
     auto: bool = True
+    # For priced chat routes, summarize settled work before the input surcharge.
+    stage_summary: bool = True
     prune: bool = True
     threshold_ratio: float = Field(default=0.8, gt=0, lt=1)
     retain_ratio: float = Field(default=0.16, ge=0, lt=1)

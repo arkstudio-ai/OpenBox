@@ -1,3 +1,4 @@
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +50,24 @@ async def test_first_acceptance_freezes_locale_but_a_retry_stays_idempotent():
     locale = await for_turn(user_id, SimpleNamespace(parts=[part]))
     assert locale == DeviceLocale("vi-VN", "Asia/Ho_Chi_Minh")
     assert valid_timezone("../etc/passwd") is None
+
+
+async def test_portable_system_time_stays_stable_within_the_user_request(monkeypatch):
+    from agent.agent import AgentDef
+
+    clock = iter([
+        datetime.fromisoformat("2026-11-24T11:00:05+08:00"),
+        datetime.fromisoformat("2026-11-24T11:07:53+08:00"),
+    ])
+    monkeypatch.setattr(DeviceLocale, "now", lambda _locale: next(clock))
+    agent = AgentDef(name="build", description="Test")
+    locale = DeviceLocale(timezone="Asia/Singapore")
+    options = {"device_locale": locale, "turn_started_at": "2026-11-24T03:00:00Z"}
+    before = await loop._build_system_prompt(agent, "test/model", **options)
+    after = await loop._build_system_prompt(agent, "test/model", **options)
+
+    assert before == after
+    assert "Local time when this user request was accepted: 2026-11-24T11:00+08:00" in "\n".join(after)
 
 
 @pytest.mark.parametrize(("language", "zone", "label"), [

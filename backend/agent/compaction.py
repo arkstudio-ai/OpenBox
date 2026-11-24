@@ -53,6 +53,49 @@ When constructing the summary, try to stick to this template:
 ---"""
 
 
+STAGE_SUMMARY_RULES = """This is a checkpoint for a task still in progress.
+Keep an evidence ledger for any source the user asked to trace. For each finding
+carry forward the exact source title and original URL, publisher and attribution
+when known, original media timestamp or range, and what the passage establishes.
+Preserve the distinction between original and secondary material, observations
+and derivations, and confirmed and unverified points. Keep paired URL and time
+references together. Never infer a missing timestamp, link, or attribution.
+Keep any completed evidence ledger from earlier summaries verbatim.
+"""
+
+STAGE_SUMMARY_TAIL_TOKENS = 32_000
+STAGE_EVIDENCE_HEADING = "## Previously reported source evidence (verbatim)"
+STAGE_RESUME_ORIGIN = "stage_summary_continuation"
+_SOURCE_URL = re.compile(r"https?://[^\s<>]+")
+_MEDIA_TIME = re.compile(r"(?<![\d:])(?:\d{1,2}:)?\d{1,2}:[0-5]\d(?![\d:])")
+
+
+def stage_evidence_text(messages: list) -> str:
+    """Carry forward already-reported citations even if the summarizer omits them."""
+    evidence: list[str] = []
+    for message in messages:
+        if message.role != "assistant" or message.finish not in {"stop", "tool_calls", "tool-calls"} or message.error:
+            continue
+        for part in message.parts or ():
+            value = part if isinstance(part, dict) else part.model_dump()
+            if value.get("type") != "text":
+                continue
+            text = str(value.get("text") or "").strip()
+            if message.summary and message.agent == "compaction":
+                _, _, text = text.partition(STAGE_EVIDENCE_HEADING + "\n")
+            if _SOURCE_URL.search(text) and _MEDIA_TIME.search(text) and text not in evidence:
+                evidence.append(text)
+    return "\n\n".join(evidence)
+
+
+def is_stage_summary_continuation(message) -> bool:
+    for part in message.parts or ():
+        origin = part.get("origin_ref") if isinstance(part, dict) else getattr(part, "origin_ref", None)
+        if origin and origin.get("entrypoint") == STAGE_RESUME_ORIGIN:
+            return True
+    return False
+
+
 # The personal assistant's one long-running conversation (V2 8.6) is
 # summarized again and again, and the user can open the summary.
 ASSISTANT_SUMMARY_RULES = """This is the user's long-running conversation with their personal assistant. Also:
@@ -162,7 +205,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
                             messages: list | None = None, model_id: str = "",
                             run_fence: tuple[str, str, int] | None = None,
                             bind_trigger: bool = False, tail_turns: int | None = None,
-                            preserve_tokens: int | None = None):
+                            preserve_tokens: int | None = None, stage_summary: bool = False):
     """Create a compaction request (special user message with compaction part).
 
     When `messages` is supplied, a tail of recent history is marked to survive
@@ -190,7 +233,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
                 cfg = get_config()
                 from agent.context_budget import threshold_tokens
                 usable = threshold_tokens(model_id)
-                configured = preserve_tokens
+                configured = min(STAGE_SUMMARY_TAIL_TOKENS, usable // 4) if stage_summary else preserve_tokens
                 if configured is None:
                     configured = getattr(getattr(cfg, "compaction", None), "preserve_recent_tokens", None)
                 if configured is None:
@@ -217,6 +260,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
         part = CompactionPart(
             id=ascending("part"),
             auto=auto,
+            stage_summary=stage_summary,
             session_id=session_id,
             message_id=message_id,
             tail_start_id=tail_start_id,
@@ -309,7 +353,7 @@ def _compaction_input_tokens(messages: list[dict]) -> int:
     return count_payload(messages)
 
 
-def _chunk_requests(messages: list[dict], budget: int, *, measure=None) -> list[list[dict]]:
+def _chunk_requests(messages: list[dict], budget: int, *, measure=None, instructions: str = "") -> list[list[dict]]:
     """Bound serialized source fragments, including tool arguments/results.
 
     Treat source as data rather than sending incomplete provider tool-call
@@ -318,9 +362,11 @@ def _chunk_requests(messages: list[dict], budget: int, *, measure=None) -> list[
     """
     import json
 
+    prompt = CHUNK_SUMMARY_PROMPT + ("\n\n" + instructions if instructions else "")
+
     def request(fragment):
         return [{"role": "user", "content": fragment},
-                {"role": "user", "content": CHUNK_SUMMARY_PROMPT}]
+                {"role": "user", "content": prompt}]
 
     measure = measure or _compaction_input_tokens
     if measure(request("")) >= budget:
@@ -356,6 +402,8 @@ async def _chunked_summarize(
     prefix: RequestPrefix | None = None,
     abort: asyncio.Event | None = None,
     provenance=None,
+    *,
+    instructions: str = "",
 ) -> list[str]:
     """Split large message history into chunks, summarize each independently.
 
@@ -372,6 +420,7 @@ async def _chunked_summarize(
         _chunk_requests, messages, chunk_budget, measure=lambda value: measure_request(
             model_id, value, prefix, max_output_tokens=output_limit,
         ).input_tokens,
+        instructions=instructions,
     )
     log.info(f"Chunked compaction: {len(chunks)} chunks from {len(messages)} messages; "
              f"model={model_id}, input budget={chunk_budget}")
@@ -459,10 +508,6 @@ async def process_compaction(
     compaction_id = ascending("compaction")
     compaction_started = time.monotonic()
     compaction_trace = current_trace()
-    await record_trace("compaction.started", {"compaction_id": compaction_id,
-        "auto": auto, "model": model_id, "input": public_value(messages),
-        "timing_source": "producer_monotonic"}, context=compaction_trace)
-
     async def record_failure(summary="", reason=None):
         await record_trace("compaction.finished", {
             "compaction_id": compaction_id, "status": "failed", "summary": summary,
@@ -475,6 +520,7 @@ async def process_compaction(
     # parent_id MUST point to this message for filter_compacted() boundary detection.
     compaction_user_id = ""
     tail_start_id = None
+    stage_summary = False
     for msg in reversed(messages):
         role = msg.role if isinstance(msg.role, str) else msg.role.value
         if role == "user":
@@ -484,12 +530,16 @@ async def process_compaction(
                 if p.get("type") == "compaction":
                     compaction_user_id = msg.id
                     tail_start_id = p.get("tail_start_id")
+                    stage_summary = bool(p.get("stage_summary"))
                     break
             if compaction_user_id:
                 break
     if not compaction_user_id:
         compaction_user_id = messages[-1].id if messages else ""
 
+    await record_trace("compaction.started", {"compaction_id": compaction_id,
+        "auto": auto, "stage_summary": stage_summary, "model": model_id, "input": public_value(messages),
+        "timing_source": "producer_monotonic"}, context=compaction_trace)
     assistant = await create_assistant_message(
         session_id=session_id,
         parent_id=compaction_user_id,
@@ -556,10 +606,16 @@ async def process_compaction(
     messages = compaction_range.source.messages()
     tail_start_id = compaction_range.tail_start_id
     provenance = None
+    if stage_summary:
+        instructions = STAGE_SUMMARY_RULES
     summary_prompt = COMPACTION_PROMPT + ("\n\n" + instructions if instructions else "")
     from assistant.policy import AssistantError
     messages = await project_compaction_memory_view(messages, session_id=session_id, user_id=user_id)
-    messages = prune_tool_outputs_view(messages, aggressive=True)
+    # Old tool results may still hold the only source URL or media timestamp.
+    # Let the stage summary read them before replacing the covered model view.
+    evidence = stage_evidence_text(messages) if stage_summary else ""
+    if not stage_summary:
+        messages = prune_tool_outputs_view(messages, aggressive=True)
     log.info(
         f"Frozen compaction Event range "
         f"{compaction_range.source.start_sequence}..{compaction_range.source.end_sequence} "
@@ -590,6 +646,7 @@ async def process_compaction(
         try:
             chunk_summaries = await _chunked_summarize(
                 compaction_messages, model_id, safe_limit, session_id, user_id, prefix, abort, provenance,
+                instructions=STAGE_SUMMARY_RULES if stage_summary else "",
             )
         except CompactionInterrupted:
             return await finish_interrupted()
@@ -734,6 +791,8 @@ async def process_compaction(
         SummaryNotCompactError,
         finalize_compaction_replacement,
     )
+    if evidence:
+        summary_text = f"{summary_text.rstrip()}\n\n{STAGE_EVIDENCE_HEADING}\n{evidence}"
     summary_token_count = count_payload([{"role": "assistant", "content": summary_text}])
     try:
         await finalize_compaction_replacement(
@@ -818,7 +877,9 @@ async def process_compaction(
         await create_user_message(
             session_id=session_id,
             text="Context was compacted. Continue working on the current task.",
-            origin="system_recovery", origin_ref={"entrypoint": "compaction_continuation"},
+            origin="system_recovery", origin_ref={
+                "entrypoint": STAGE_RESUME_ORIGIN if stage_summary else "compaction_continuation",
+            },
             agent=session.agent if session else "build",
             model=model_id,
             variant=prefix.variant,

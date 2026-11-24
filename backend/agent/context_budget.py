@@ -33,6 +33,15 @@ class ContextBudget:
         return self.input_tokens >= self.threshold
 
 
+def stage_summary_threshold(model_id: str) -> int | None:
+    from billing.pricing import long_context_cutoff
+
+    cutoff = long_context_cutoff(model_id)
+    # Leave about 8% for the next tool result and tokenizer estimation error.
+    # Round down to whole thousands (250k for the 272k price step).
+    return (cutoff * 92 // 100_000 * 1000 or None) if cutoff else None
+
+
 def count_payload(value: Any) -> int:
     """Count complete text/schema content without treating image bytes as text."""
     images = 0

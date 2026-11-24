@@ -71,6 +71,33 @@ void main() {
         ),
       );
 
+  testWidgets('the brand story asks for phone and end-card copy', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    final task = LightProduction.fromJson({
+      'entry_id': 'video',
+      'template': productStory,
+    });
+    await tester.pumpWidget(
+      host(
+        ProductionRemakeCopy(
+          task: task,
+          controller: controller,
+          enabled: true,
+          onChanged: (_) {},
+        ),
+      ),
+    );
+    final field = tester.widget<TextField>(
+      find.byKey(const Key('production-script')),
+    );
+    expect(field.decoration?.hintText, '写下手机型号、片尾短句或希望保留的一句对白');
+    expect(find.textContaining('留空使用模板的 21 镜生日故事'), findsOneWidget);
+    expect(find.textContaining('菜名'), findsNothing);
+  });
+
   testWidgets('opening video creation is read-only until the first edit', (
     tester,
   ) async {

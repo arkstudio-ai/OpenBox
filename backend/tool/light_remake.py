@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from light import production, remake_case, shortcut_plan, silk_road, wan_story
+from light import product_story_plan, production, remake_case, shortcut_plan, silk_road, wan_story
 from light.mode import LightError
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -76,6 +76,8 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
         try:
             if form["template"] == wan_story.SODA_TEMPLATE:
                 from light.soda_story import render
+            elif isinstance(plan, product_story_plan.Plan):
+                from light.product_story import render
             elif isinstance(plan, shortcut_plan.ShortcutPlan):
                 from light.shortcut_story import render
             elif isinstance(plan, silk_road.Plan):
@@ -88,12 +90,14 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
             return ToolResult(
                 title="制作已暂停", output=str(exc), metadata={"error": True, "do_not_retry": True}
             )
+        shot_count = (len(product_story_plan.case()["shots"]) if isinstance(plan, product_story_plan.Plan)
+                      else wan_story.shot_count(run))
         return ToolResult(
             title=f"《{plan.title}》已完成",
             output=(f"已确认的剧情镜头与片尾已合成为一份 {duration:.1f} 秒成片，并已附在本对话。"
                     f"\n完整成片 asset_id={asset}，duration_sec={duration:.4f}。"
                     "这是云端资源；后续高级剪辑或字幕修改使用 video_compose 复用这个资源，不要重新调用制作按钮工具。"),
-            metadata={"asset_id": asset, "duration_sec": duration, "shots": wan_story.shot_count(run)},
+            metadata={"asset_id": asset, "duration_sec": duration, "shots": shot_count},
         )
     except LightError as exc:
         return ToolResult(title="制作已暂停", output=str(exc), metadata={"error": True})
@@ -110,7 +114,7 @@ light_wan_story_tool = define_tool(
 )
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=10)
 def wan_tool_for_action(action: str, template: str | None = None):
     """Expose only the operation selected by the owner's App button."""
     if action not in {"prepare", "render"}:
@@ -128,6 +132,7 @@ def wan_tool_for_action(action: str, template: str | None = None):
         parameters = {
             silk_road.TEMPLATE: SilkRoadPrepareRequest,
             shortcut_plan.TEMPLATE: shortcut_plan.PrepareRequest,
+            product_story_plan.TEMPLATE: product_story_plan.PrepareRequest,
         }.get(template, wan_story.PrepareRequest)
     return define_tool(
         "light_wan_story",

@@ -171,11 +171,12 @@ def cut_for(shot, index, asset, meta, transcript):
             "mute_audio": not cues, "review_version": REVIEW, "take": 1}
 
 
-async def _transcript(ctx, asset):
+async def _transcript(ctx, asset, *, language=None):
     from tool.video_production import VideoTranscribeArgs, execute_transcribe
 
     result = await execute_transcribe(VideoTranscribeArgs(
-        action="submit", asset_id=asset, idempotency_key=f"soda-asr:{asset}"), ctx)
+        action="submit", asset_id=asset, language=language,
+        idempotency_key=f"soda-asr:{asset}" + (f":{language}" if language else "")), ctx)
     if result.metadata.get("status") != "completed":
         return {}
     async with get_db_session() as db:

@@ -9,6 +9,8 @@ import '../../chat/api/assets_api.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 
+const headphoneAdVideo = 'assets/light_production/headphone-ad.mp4';
+const headphoneAdPoster = 'assets/light_production/headphone-ad.jpg';
 const silkRoadVideo = 'assets/light_production/silk-road.mp4';
 const silkRoadPoster = 'assets/light_production/silk-road.jpg';
 const sodaStoryVideo = 'assets/light_production/soda-story.mp4';

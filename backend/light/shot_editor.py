@@ -397,10 +397,13 @@ async def project(db, row, jobs, output_ids, oss, *, advanced_turns=None):
     if (row.light_entry != "video" or not row.light_production
             or not (output_ids or (row.light_production.get("run") or {}).get("action") == "render")):
         return None
+    from light.product_story_plan import TEMPLATE as PRODUCT_STORY
     from light.production import _asset_view, _now, _utc
     from light.shot_frame_edits import read_drafts
 
     form = row.light_production
+    if form.get("template") == PRODUCT_STORY:
+        return None
     base, master, timeline = _assembly(form, jobs, output_ids)
     labels, prepared, original_sources, originals, edits = _slots(form, jobs, timeline, base)
     indices = sorted(set(labels) | {int(i) for i in prepared} | set(originals))

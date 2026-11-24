@@ -18,7 +18,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -219,7 +219,7 @@ def _shot_progress(run, jobs, phase):
     prefix = run.get("job_prefix")
     plan = run.get("remake_adaptation") or {}
     if (run.get("action") != "render" or not prefix or not isinstance(plan, dict)
-            or plan.get("format") not in {"shot-list-v2", silk_road.FORMAT}
+            or plan.get("format") not in {"shot-list-v2", silk_road.FORMAT, product_story_plan.FORMAT}
             or phase not in {"wan_shots", "wan_edit", "compose"}):
         return None
     total = wan_story.shot_count(run)
@@ -510,7 +510,7 @@ async def update_from_agent(ctx, *, revision: int, changes: dict, proposal: str 
         return row.light_production["revision"]
 
 
-async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan | wan_story.ShotPlan | silk_road.Plan | None, *, requested_action: str | None = None):
+async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan | wan_story.ShotPlan | silk_road.Plan | product_story_plan.Plan | None, *, requested_action: str | None = None):
     async with get_db_session() as db:
         row = await _lock(db, ctx.session_id, ctx.user_id, ctx.workspace_id, run_fence=ctx.run_fence)
         form = row.light_production
@@ -525,6 +525,10 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         template = form.get("template")
         if template == silk_road.TEMPLATE:
             recipe, plan_type = silk_road, silk_road.Plan
+        elif template == product_story_plan.TEMPLATE:
+            recipe, plan_type = product_story_plan, product_story_plan.Plan
+            if run["action"] == "prepare" and adaptation is None:
+                adaptation = plan_type()
         elif template == shortcut_plan.TEMPLATE:
             recipe, plan_type = wan_story, shortcut_plan.ShortcutPlan
         elif template in wan_story.TEMPLATES:
@@ -630,7 +634,7 @@ async def save_reference_cut(ctx, prefix: str, cut: dict) -> None:
         run = form.get("run") or {}
         index = cut["shot"]
         if (run.get("job_prefix") != prefix or run.get("remake_version") != wan_story.VERSION
-                or (run.get("remake_adaptation") or {}).get("format") not in {"shot-list-v2", silk_road.FORMAT}
+                or (run.get("remake_adaptation") or {}).get("format") not in {"shot-list-v2", silk_road.FORMAT, product_story_plan.FORMAT}
                 or not cut.get("review_version") or run.get("wan_review_version") != cut["review_version"]
                 or not 1 <= index <= wan_story.shot_count(run)):
             raise LightError("LIGHT_PRODUCTION_CHANGED", "The shot belongs to another edit.", 409)
@@ -716,7 +720,7 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
         if view["status"] == "completed":
             raise LightError("LIGHT_PRODUCTION_STATE", "Edit the result before generating a new version", 409)
         form = _form(row)
-        if (form.get("template") == shortcut_plan.TEMPLATE
+        if (form.get("template") in {shortcut_plan.TEMPLATE, product_story_plan.TEMPLATE}
                 and form.get("remake_prepared_for") != remake_case.input_fingerprint(form)):
             raise LightError("LIGHT_REMAKE_PLAN", "请先确认当前素材与文案生成的分镜。", 409)
         if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")

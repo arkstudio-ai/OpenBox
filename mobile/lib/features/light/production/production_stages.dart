@@ -57,19 +57,20 @@ class ProductionRemakeCopy extends ConsumerWidget {
     super.key,
     required this.controller,
     required this.enabled,
-    required this.wanStory,
+    required this.task,
     required this.onChanged,
   });
 
   final TextEditingController controller;
   final bool enabled;
-  final bool wanStory;
+  final LightProduction task;
   final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
+    final productReference = task.template == productStory;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -80,7 +81,9 @@ class ProductionRemakeCopy extends ConsumerWidget {
         const SizedBox(height: 5),
         Text(
           i18n.t(
-            wanStory
+            productReference
+                ? 'light:production.template.product_story.referenceHelp'
+                : task.wanRemake
                 ? 'light:production.wanReferenceHelp'
                 : 'light:production.referenceHelp',
           ),
@@ -90,7 +93,11 @@ class ProductionRemakeCopy extends ConsumerWidget {
         ProductionCopyField(
           controller: controller,
           enabled: enabled,
-          hint: i18n.t('light:production.referencePlaceholder'),
+          hint: i18n.t(
+            productReference
+                ? 'light:production.template.product_story.referencePlaceholder'
+                : 'light:production.referencePlaceholder',
+          ),
           minLines: 3,
           onChanged: onChanged,
         ),

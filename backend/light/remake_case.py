@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from light import shortcut_plan, silk_road, wan_story
+from light import product_story_plan, shortcut_plan, silk_road, wan_story
 from tool.video_runninghub import MODEL
 
 TEMPLATE = "twist"
@@ -64,7 +64,7 @@ def reference_copy(form: dict) -> str:
 def input_fingerprint(form: dict) -> str:
     snapshot = {key: form[key] for key in ("shop", "brief", "asset_ids")}
     snapshot.update(reference_copy=reference_copy(form), template_version=version_for(form))
-    if form.get("template") in {wan_story.SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE}:
+    if form.get("template") in {wan_story.SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE, product_story_plan.TEMPLATE}:
         snapshot["template"] = form["template"]
     if form.get("template") == silk_road.TEMPLATE:
         snapshot.update(product_name=form.get("product_name", ""), frame_plan=1)

@@ -475,6 +475,12 @@
       }
     },
     "template": {
+      "product_story": {
+        "title": "Quảng cáo kể chuyện",
+        "body": "Xem quảng cáo tai nghe gốc. Tạo video ngang 54 giây từ ảnh điện thoại, có lời thoại, khoảnh khắc chụp ảnh chung và cảnh giới thiệu sản phẩm.",
+        "referenceHelp": "Để trống sẽ dùng câu chuyện sinh nhật 21 cảnh của mẫu. Bạn cũng có thể nhập mẫu điện thoại, câu kết hoặc lời thoại muốn giữ.",
+        "referencePlaceholder": "Nhập mẫu điện thoại, câu kết hoặc một câu thoại muốn giữ"
+      },
       "shortcut_story": {
         "title": "Nhanh hơn một bước",
         "body": "Hai cách để đạt cùng một mục tiêu. Dùng sản phẩm của bạn để tạo bất ngờ ở bước ngoặt."
@@ -561,6 +567,8 @@
     "removeMissing": "Bỏ tư liệu không khả dụng",
     "fileTooLarge": "Mỗi tệp tối đa 200 MB.",
     "previewUnavailable": "Không thể xem trước.",
+    "playHeadphoneReference": "Phát quảng cáo tai nghe gốc",
+    "headphoneReferenceTitle": "Quảng cáo tai nghe gốc",
     "playCase": "Phát mẫu video tôm hùm đất",
     "previewMenu": "Xem mẫu thực đơn",
     "playPreview": "Phát",

@@ -191,8 +191,16 @@ class ProductionTemplates extends ConsumerWidget {
                         if (task.kind != ProductionKind.footage) ...[
                           _TemplatePreview(
                             template: template,
-                            title: productionTemplateLabel(i18n, template),
-                            caseLabel: i18n.t('light:production.playCase'),
+                            title: template == productStory
+                                ? i18n.t(
+                                    'light:production.headphoneReferenceTitle',
+                                  )
+                                : productionTemplateLabel(i18n, template),
+                            caseLabel: i18n.t(
+                              template == productStory
+                                  ? 'light:production.playHeadphoneReference'
+                                  : 'light:production.playCase',
+                            ),
                           ),
                           const SizedBox(width: 14),
                         ],
@@ -452,11 +460,13 @@ class _TemplatePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final recipe = const [
+      productStory,
       shortcutStory,
       'soda_story',
       'silk_road',
     ].contains(template);
     final asset = switch (template) {
+      productStory => headphoneAdPoster,
       shortcutStory => shortcutStoryPoster,
       'soda_story' => sodaStoryPoster,
       'silk_road' => silkRoadPoster,
@@ -482,6 +492,7 @@ class _TemplatePreview extends StatelessWidget {
               Center(
                 child: IconButton.filled(
                   key: Key(switch (template) {
+                    productStory => 'production-headphone-preview',
                     shortcutStory => 'production-shortcut-preview',
                     'soda_story' => 'production-soda-preview',
                     'silk_road' => 'production-silk-road-preview',
@@ -495,6 +506,7 @@ class _TemplatePreview extends StatelessWidget {
                   onPressed: () => showProductionVideo(
                     context,
                     switch (template) {
+                      productStory => headphoneAdVideo,
                       shortcutStory => shortcutStoryVideo,
                       'soda_story' => sodaStoryVideo,
                       'silk_road' => silkRoadVideo,

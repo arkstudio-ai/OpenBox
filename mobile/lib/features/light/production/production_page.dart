@@ -957,7 +957,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         (task.kind == ProductionKind.footage ||
             task.supportsVideoTiers(task.template));
     final hasVoice = task.kind == ProductionKind.footage;
-    final hasMusic = task.kind == ProductionKind.video;
+    final hasMusic = task.supportsMusic;
     final music = ProductionMusic.fromId(_pending['music_style']) ?? task.music;
     final voice = _pending['voice_id'] as String? ?? task.voiceId;
     final voices = hasVoice && voice.startsWith('voice:')
@@ -1257,7 +1257,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       productionStyleLabel(_i18n, task),
       if (task.supportsVideoTiers(task.template) && task.videoTier != null)
         "${_text('videoTier.title')} ${task.videoTier!.label(_i18n)}",
-      if (task.kind == ProductionKind.video)
+      if (task.supportsMusic)
         "${_text('music.title')} ${task.music.label(_i18n)}",
     ].where((value) => value.isNotEmpty).join(' · ');
     return Column(
@@ -1300,7 +1300,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           )
         else if (task.remake)
           ProductionRemakeCopy(
-            wanStory: task.wanRemake,
+            task: task,
             controller: _script,
             enabled: !_busy,
             onChanged: (value) => _stage('reference_copy', value),

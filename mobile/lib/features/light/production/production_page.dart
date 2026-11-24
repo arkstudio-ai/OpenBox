@@ -21,6 +21,7 @@ import 'production_api.dart';
 import 'production_examples.dart';
 import 'production_media.dart';
 import 'production_narration.dart';
+import 'production_promotion.dart';
 import 'production_shot_models.dart';
 import 'production_shots.dart';
 import 'production_stages.dart';
@@ -705,6 +706,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                 },
               ),
             if (task.kind == ProductionKind.footage) ...[
+              _promotion(task),
               const SizedBox(height: 12),
               _sourceSpeech(task),
               if (!_redoNarration(task)) ...[
@@ -1231,6 +1233,14 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     onChanged: _busy ? null : (value) => _stage('creative_effects', value),
   );
 
+  Widget _promotion(LightProduction task) => ProductionPromotion(
+    brief:
+        _pending['promotion_brief'] as Map<String, String>? ??
+        task.promotionBrief,
+    enabled: !_busy,
+    onChanged: (brief) => _stage('promotion_brief', brief),
+  );
+
   Widget _review(LightProduction task) {
     if (task.kind == ProductionKind.poster) {
       return Column(
@@ -1274,6 +1284,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           ),
         if (task.materials.isNotEmpty) ...[
           ProductionMediaStrip(media: task.materials),
+          const SizedBox(height: 16),
+        ],
+        if (task.kind == ProductionKind.video) ...[
+          _promotion(task),
           const SizedBox(height: 16),
         ],
         if (task.template == 'silk_road') ...[

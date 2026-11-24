@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from core.config import ChatTier
 from light import product_story_plan, remake_case, shortcut_plan, silk_road, video_language, wan_story
 from light.production_music import MusicStyle
+from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE, PromotionBrief
 from light.video_tiers import VideoTier
 
 EntryId = Literal["video", "footage_edit", "menu", "poster"]
@@ -113,6 +114,7 @@ class EditForm(FormFields):
     reference_example_id: str | None = Field(default=None, max_length=64)
     voice_id: str | None = Field(default=None, max_length=64)
     redo_narration: bool | None = None
+    promotion_brief: PromotionBrief | None = None
 
 
 class StartForm(BaseModel):
@@ -153,6 +155,8 @@ def prompt_data(form: dict) -> str:
         data.update(product_name=form.get("product_name", ""), beat_music=form.get("beat_music", True))
     if "creative_effects" in form:
         data["creative_effects"] = form["creative_effects"]
+    if promotion := form.get("promotion_brief"):
+        data["promotion_brief"] = promotion
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -296,8 +300,10 @@ def prepare_prompt(entry: str, form: dict) -> str:
             "For a footage edit, write subtitles or short optional narration suitable for the actual footage. "
             "Save the editable text with light_production_form."
         )
+    promotion = PROMOTION_GUIDANCE if form.get("promotion_brief") else ""
     return (
         f"Prepare the editable form only. {task} Use action=update and revision={form['revision']}. "
+        f"{promotion}"
         "Save only script (video/footage) or dishes (menu). If needed, reveal light_production_form with capability_search. "
         "Do not generate or render media, "
         "ask for confirmation, or place the draft only in your reply. "
@@ -361,6 +367,13 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
         )
     elif entry == "footage_edit":
         tools = "footage_analyze, music_search, video_compose"
+        closing = (
+            "Use the supplied campaign call_to_action as one brief closing text in IMS timeline 'texts' "
+            "when it is not already spoken. Keep other promotional lettering in designed images. "
+            if (form.get("promotion_brief") or {}).get("call_to_action") else
+            "Leave IMS timeline 'texts' empty. Promotional headlines, shop names, and other graphic "
+            "lettering belong in designed images. "
+        )
         task = (
             "If videos are selected, read them in one footage_analyze call. Reuse its cached clip descriptions, "
             "action timings and ASR sentences. Use video_transcribe only for a needed spoken clip whose "
@@ -374,9 +387,8 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "false, mute all original audio, including any separately placed cutaway audio. "
             "Time short speech captions from ASR on the edited timeline. Translate captions into the requested "
             "output language when needed, preserving meaning, names and timing without changing the original audio. "
-            "Use supplied copy as editorial guidance. Reserve IMS captions for timed speech and leave the "
-            "IMS timeline 'texts' empty. Promotional headlines, shop names, and other graphic lettering "
-            "belong in designed images. Feature real product details "
+            f"Use supplied copy as editorial guidance. Reserve IMS captions for timed speech. {closing}"
+            "Feature real product details "
             "by selecting close-up source ranges or applying a subtle zoom_in on a suitable non-speaking shot. "
             "Use one or two purposeful action cuts or verified short IMS fades/wipes, avoiding overlap across "
             "speech. Do not invent names, prices, claims or voiceover. "
@@ -457,9 +469,10 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "the menu in the prompt and use the image tool's configured size and quality. Inspect the result "
             "against the confirmed list, especially price pairing, spelling and diacritics, before delivering."
         )
+    promotion = PROMOTION_GUIDANCE if form.get("promotion_brief") else ""
     return (
         "I confirmed the current form and pressed Generate in the app. Start production now. "
-        f"{task} Reveal {tools} with capability_search if necessary. You already have confirmation. "
+        f"{task} {promotion}Reveal {tools} with capability_search if necessary. You already have confirmation. "
         "Do not ask another Question or use examples/settings from old turns. Use the current form below "
         "and the library example, if the owner selected one for this task. "
         f"Use stable idempotency keys under '{job_prefix}' with ':shot1', ':shot2' etc. and ':final' for composition. "

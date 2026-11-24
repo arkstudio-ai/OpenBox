@@ -20,6 +20,7 @@ from db.models.file_asset import FileAsset
 from db.models.session import Session
 from light import production, production_usage, production_voice, video_language
 from light.mode import LightError
+from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE
 from tool.footage_analyze import MAX_CLIP_SECONDS, READING_VERSION, _prepare, snapshot_url
 from video import ims_client
 from video.ims_compiler import compile_ims
@@ -51,7 +52,10 @@ class _ShotPlan(BaseModel):
 
 
 def fingerprint(form: dict) -> str:
-    return _digest([form.get(key) for key in ("asset_ids", "shop", "template", "keep_original")])
+    inputs = [form.get(key) for key in ("asset_ids", "shop", "template", "keep_original")]
+    if promotion := form.get("promotion_brief"):
+        inputs.append(promotion)
+    return _digest(inputs)
 
 
 def _digest(value) -> str:
@@ -204,8 +208,9 @@ async def draft(user: str, workspace: str, sid: str, req: DraftRequest, locale: 
     old = form.get("narration_draft") if req.lines is not None else None
     if req.lines is not None and (not old or len(old["shots"]) != len(req.lines)):
         raise LightError("PRODUCTION_NARRATION_STATE", "Open the current voiceover draft before editing.", 409)
+    promotion = form.get("promotion_brief")
     locale = video_language.LOCALES[video_language.for_form(
-        {"reference_copy": req.emphasis, "brief": form.get("brief")}, locale)]
+        {"reference_copy": req.emphasis, "brief": form.get("brief"), "promotion_brief": promotion}, locale)]
     if old and not req.emphasis.strip():
         locale = old.get("locale") or locale
     data = await _structured(model, (
@@ -219,8 +224,10 @@ async def draft(user: str, workspace: str, sid: str, req: DraftRequest, locale: 
         "Write the labels and voiceover in the output language. Use short natural lines that fit "
         "the shot when spoken aloud, including pauses. A shot may use an empty text for a natural pause. "
         "Respect the provided emphasis only where the footage supports it. If the user supplies edits, "
-        "refine those lines to fit the evidence and duration. With existing shots reuse those exact ranges."
+        "refine those lines to fit the evidence and duration. With existing shots reuse those exact ranges. "
+        + (PROMOTION_GUIDANCE if promotion else "")
     ), {"shop": form["shop"], "style": form["template"], "emphasis": req.emphasis.strip(),
+        **({"promotion_brief": promotion} if promotion else {}),
         "sources": readings, "existing": [
             {"source": next(i for i, row in enumerate(rows, 1) if row.id == shot["asset_id"]),
              "start": shot["source_in"], "end": round(shot["source_in"] + shot["end"] - shot["start"], 2),

@@ -587,6 +587,18 @@
     "optimize": "Refine copy",
     "recognize": "Read dishes from photos",
     "scriptPlaceholder": "Edit your copy here",
+    "promotion": {
+      "title": "Promotion brief",
+      "optional": "Optional",
+      "empty": "Audience, main offer, and call to action",
+      "audience": "Who do you want to reach?",
+      "offer": "What are you promoting?",
+      "call_to_action": "What should customers do next?",
+      "details": "Additional selling points (optional)",
+      "detailsHint": "Amenities, services, nearby places, or offer terms",
+      "close": "Close",
+      "done": "Done"
+    },
     "referenceTitle": "Reference copy (optional)",
     "wanReferenceHelp": "Share a selling point, a line, or an idea. The assistant adapts the story to your materials and chooses where to cut.",
     "referenceHelp": "The seven-scene story stays. The model uses your materials and copy to adapt the product and dialogue.",

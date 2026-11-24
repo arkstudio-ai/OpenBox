@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from light import product_story_plan, shortcut_plan, silk_road, video_language
 from light.reference_plan import ShotPlan
+from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE
 
 TEMPLATE = "wan_story"
 SODA_TEMPLATE = "soda_story"
@@ -103,6 +104,10 @@ def planning_instruction(form: dict, action: str) -> str:
     elif form.get("template") == silk_road.TEMPLATE:
         directing = silk_road.DIRECTING
         data["确认菜名"] = form.get("product_name", "")
+    if promotion := form.get("promotion_brief"):
+        data["promotion_brief"] = promotion
+        if action == "prepare":
+            directing += "\n" + PROMOTION_GUIDANCE + "Adapt only the slots permitted by the chosen recipe.\n"
     prepare = ("直接调用 light_wan_story，action=prepare。按上面的规则填写可选 plan，工具会装入完整分镜。"
                if form.get("template") == product_story_plan.TEMPLATE else
                "直接调用 light_wan_story，action=prepare，把完整分镜放在 plan。")

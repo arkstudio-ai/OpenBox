@@ -402,14 +402,18 @@ class ProductionSettingRow extends StatelessWidget {
     super.key,
     required this.icon,
     required this.label,
-    required this.value,
+    this.value,
     this.detail,
+    this.detailMaxLines,
+    this.minTileHeight = 50,
     this.onTap,
   });
 
   final IconData icon;
-  final String label, value;
-  final String? detail;
+  final String label;
+  final String? value, detail;
+  final int? detailMaxLines;
+  final double minTileHeight;
   final VoidCallback? onTap;
 
   @override
@@ -417,7 +421,7 @@ class ProductionSettingRow extends StatelessWidget {
     final t = context.tokens;
     return ListTile(
       contentPadding: const EdgeInsets.fromLTRB(16, 2, 12, 2),
-      minTileHeight: 50,
+      minTileHeight: minTileHeight,
       minLeadingWidth: 22,
       horizontalTitleGap: 12,
       leading: Icon(icon, color: t.ink, size: 21),
@@ -431,12 +435,19 @@ class ProductionSettingRow extends StatelessWidget {
       ),
       subtitle: detail == null
           ? null
-          : Text(detail!, style: TextStyle(color: t.n700, fontSize: 12)),
+          : Text(
+              detail!,
+              maxLines: detailMaxLines,
+              overflow: detailMaxLines == null ? null : TextOverflow.ellipsis,
+              style: TextStyle(color: t.n700, fontSize: 12),
+            ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(value, style: TextStyle(color: t.ink, fontSize: 15)),
-          const SizedBox(width: 4),
+          if (value case final value?) ...[
+            Text(value, style: TextStyle(color: t.ink, fontSize: 15)),
+            const SizedBox(width: 4),
+          ],
           Icon(Icons.chevron_right_rounded, color: t.n700, size: 20),
         ],
       ),

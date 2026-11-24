@@ -150,6 +150,8 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
             raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
     if "poster_title" in changes and row.light_entry != "poster":
         raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
+    if "promotion_brief" in changes and row.light_entry not in {"video", "footage_edit"}:
+        raise LightError("LIGHT_PRODUCTION_PROMOTION", "Promotion details are available for video productions.")
     if "redo_narration" in changes and row.light_entry != "footage_edit":
         raise LightError("PRODUCTION_NARRATION_STATE", "Narration replacement requires original footage.")
     if "music_style" in changes and row.light_entry != "video":
@@ -191,7 +193,7 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
         return
     row.light_example_id = reference_id
     form.update(actual)
-    if {"asset_ids", "shop", "template", "keep_original"}.intersection(actual):
+    if {"asset_ids", "shop", "template", "keep_original", "promotion_brief"}.intersection(actual):
         form.pop("narration_draft", None)
         form.pop("narration_preview", None)
     elif {"voice_id", "redo_narration"}.intersection(actual):
@@ -452,6 +454,8 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
         if view["status"] in _BUSY or view["status"] == "completed" or row.light_production.get("proposal"):
             raise LightError("LIGHT_PRODUCTION_STATE", "Finish the current production action before editing", 409)
         changes = body.model_dump(exclude_none=True, exclude={"revision"})
+        if body.promotion_brief is not None:
+            changes["promotion_brief"] = body.promotion_brief.model_dump(exclude_defaults=True)
         if row.light_entry == "video":
             # Older mobile clients may still send their saved narration choice.
             changes.pop("voice_id", None)
@@ -460,6 +464,8 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
             elif "beat_music" in changes:
                 changes["music_style"] = "auto" if changes["beat_music"] else "off"
         form = row.light_production
+        if changes.get("promotion_brief") == {} and not form.get("promotion_brief"):
+            changes.pop("promotion_brief")
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
         if reference_id:

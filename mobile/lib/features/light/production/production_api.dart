@@ -186,6 +186,10 @@ class LightProduction {
           ?ProductionVideoTier.fromId(id),
       },
       notes = asString(json['notes']) ?? '',
+      promotionBrief = {
+        for (final entry in asMap(json['promotion_brief']).entries)
+          if (entry.value case final String value) entry.key: value,
+      },
       agentRevision = asInt(json['agent_revision']) ?? 0,
       keepOriginal = json['keep_original'] != false,
       redoNarration = json['redo_narration'] == true,
@@ -235,6 +239,7 @@ class LightProduction {
   final String? chatTier;
   final Set<ProductionVideoTier> availableVideoTiers;
   final String notes;
+  final Map<String, String> promotionBrief;
   final int agentRevision;
   final bool keepOriginal, redoNarration;
   final String voiceId;

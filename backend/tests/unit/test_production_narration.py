@@ -38,6 +38,7 @@ def test_an_old_preview_cannot_replace_the_current_voice_or_footage():
     for edit in (
         {"asset_ids": ["different"]},
         {"voice_id": "system:bright"},
+        {"promotion_brief": {"offer": "晚间驻唱和咖啡"}},
         {"narration_preview": None},
     ):
         with pytest.raises(LightError) as error:

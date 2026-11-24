@@ -18,7 +18,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_tiers, wan_story
+from light import examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -294,7 +294,8 @@ def _asset_view(asset, oss) -> dict:
             thumbnail = snapshot_url(oss, asset.oss_key, 0.0, width=480)
     meta = getattr(asset, "meta", None) or {}
     return {"id": asset.id, "name": asset.name, "mime": asset.mime, "thumbnail": thumbnail,
-            **({"width": meta["width"], "height": meta["height"]} if meta.get("width") and meta.get("height") else {})}
+            **({"width": meta["width"], "height": meta["height"]} if meta.get("width") and meta.get("height") else {}),
+            **({"subtitles_srt": meta["subtitles_srt"]} if meta.get("subtitles_srt") else {})}
 
 
 def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messages=frozenset()) -> list[str]:
@@ -527,8 +528,9 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
             recipe, plan_type = silk_road, silk_road.Plan
         elif template == product_story_plan.TEMPLATE:
             recipe, plan_type = product_story_plan, product_story_plan.Plan
-            if run["action"] == "prepare" and adaptation is None:
-                adaptation = plan_type()
+            if run["action"] == "prepare":
+                language = run.get("video_language", "zh")
+                adaptation = (adaptation or plan_type()).localized(language)
         elif template == shortcut_plan.TEMPLATE:
             recipe, plan_type = wan_story, shortcut_plan.ShortcutPlan
         elif template in wan_story.TEMPLATES:
@@ -550,6 +552,11 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         if not isinstance(adaptation, plan_type):
             raise LightError("LIGHT_REMAKE_PLAN", "当前表单需要新的分镜，请根据本次素材与文案填入 plan。", 409)
         if run["action"] == "prepare":
+            language = run.get("video_language", "zh")
+            if isinstance(adaptation, (silk_road.Plan, remake_case.Adaptation)):
+                adaptation = adaptation.localized(language)
+            elif not isinstance(adaptation, product_story_plan.Plan):
+                adaptation = adaptation.model_copy(update={"language": language})
             if isinstance(adaptation, silk_road.Plan):
                 if name := form.get("product_name"):
                     adaptation = adaptation.model_copy(update={"product": name})
@@ -863,6 +870,10 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 row.light_production = {**form, "run": {"id": receipt.id, "action": body.action,
                                         "client_id": body.request_id, "revision": form["revision"], "job_prefix": prefix,
                                         "existing": existing,
+                                        **({"video_language": video_language.for_form(form, lang)}
+                                           if row.light_entry in {"video", "footage_edit"} else {}),
+                                        **({"artwork_language": forms.artwork_language(form, lang)}
+                                           if row.light_entry in forms.IMAGE_ENTRIES else {}),
                                         **({"confirmed_narration": {"shots": form["narration_draft"]["shots"],
                                                                      "preview": form["narration_preview"]}}
                                            if (body.action == "render" and row.light_entry == "footage_edit"
@@ -885,6 +896,8 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                         controls = None
                     row.light_production = {**row.light_production, "run": {
                         **row.light_production["run"], "remake_version": version, "remake_adaptation": preserved,
+                        **({"video_language": (preserved or form.get("remake_adaptation") or {}).get("language", "zh")}
+                           if body.action == "render" and (preserved or form.get("remake_adaptation")) else {}),
                         **({"silk_controls": controls} if controls is not None else {}),
                         **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs", "director_decisions") if k in prior}
                            if version == wan_story.VERSION and prior.get("job_prefix") == prefix else {}),

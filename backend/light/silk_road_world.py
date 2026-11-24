@@ -8,7 +8,7 @@ class Take(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     setting: str = Field(min_length=1, max_length=145)
-    title: str = Field(default="", max_length=14, description="Short action label for the App's shot card.")
+    title: str = Field(default="", max_length=38, description="Short action label for the App's shot card.")
     action: str = Field(min_length=1, max_length=420)
     first_frame: str = Field(default="", max_length=320, description="Opening still. Specify composition, actor and wardrobe, gaze, and the exact state of each prop.")
     last_frame: str = Field(default="", max_length=320, description="Closing still. Specify what changed in the action and preserve scene, clothes and prop continuity.")
@@ -18,8 +18,8 @@ class Take(BaseModel):
 class Chapter(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str = Field(min_length=2, max_length=4)
-    subtitle: str = Field(min_length=1, max_length=15)
+    title: str = Field(min_length=2, max_length=36)
+    subtitle: str = Field(min_length=1, max_length=52)
 
 
 class World(BaseModel):

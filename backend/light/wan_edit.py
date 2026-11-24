@@ -35,7 +35,9 @@ class Decision(BaseModel):
 
 
 def _words(text):
-    return "".join(ch for ch in text if ch.isalnum()).lower()
+    from unicodedata import normalize
+
+    return "".join(ch for ch in normalize("NFC", text) if ch.isalnum()).lower()
 
 
 def captions(lines, transcript):
@@ -320,9 +322,11 @@ async def review(ctx, plan, index, asset_id, requested, lines, reference_copy, f
         raise RemakeStopped("待核实生成视频的帧率与时长。")
     fps = float(meta["fps"])
     duration = min(float(meta["duration_sec"]), requested)
+    language = plan.language
+    suffix = f":{language}" if language != "zh" else ""
     trans = await vp.execute_transcribe(
         vp.VideoTranscribeArgs(
-            action="submit", asset_id=asset_id, idempotency_key=f"light-remake-caption:{asset_id}"
+            action="submit", asset_id=asset_id, language=language, idempotency_key=f"light-remake-caption:{asset_id}{suffix}"
         ),
         ctx,
     )

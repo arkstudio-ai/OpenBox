@@ -18,7 +18,7 @@ from core.oss import get_oss
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
 from db.models.session import Session
-from light import production, production_usage, production_voice
+from light import production, production_usage, production_voice, video_language
 from light.mode import LightError
 from tool.footage_analyze import MAX_CLIP_SECONDS, READING_VERSION, _prepare, snapshot_url
 from video import ims_client
@@ -204,6 +204,10 @@ async def draft(user: str, workspace: str, sid: str, req: DraftRequest, locale: 
     old = form.get("narration_draft") if req.lines is not None else None
     if req.lines is not None and (not old or len(old["shots"]) != len(req.lines)):
         raise LightError("PRODUCTION_NARRATION_STATE", "Open the current voiceover draft before editing.", 409)
+    locale = video_language.LOCALES[video_language.for_form(
+        {"reference_copy": req.emphasis, "brief": form.get("brief")}, locale)]
+    if old and not req.emphasis.strip():
+        locale = old.get("locale") or locale
     data = await _structured(model, (
         "You edit a vertical documentary clip and its new voiceover. Return only JSON "
         '{"shots":[{"source":1,"start":0,"end":6,"label":"visible action","text":"short spoken sentence"}]}. '
@@ -211,9 +215,9 @@ async def draft(user: str, workspace: str, sid: str, req: DraftRequest, locale: 
         "shots (one for a single short clip), 3–9 seconds each where possible, under 38 seconds combined. "
         "Show the action named in each spoken line. Favor complete original spoken ideas and their order, "
         "matched to relevant cutaway footage. Use captions, scenes and recorded speech as evidence; "
-        "never invent prices, offers, names or actions. Keep important supplied names exact in Chinese. "
-        "Write short natural lines that fit (max about 3.1 Chinese characters or 2 English words per second, "
-        "counting pauses), with some breathing room. A shot may use an empty text for a natural pause. "
+        "Never invent prices, offers, names or actions. Keep supplied names exactly as written. "
+        "Write the labels and voiceover in the output language. Use short natural lines that fit "
+        "the shot when spoken aloud, including pauses. A shot may use an empty text for a natural pause. "
         "Respect the provided emphasis only where the footage supports it. If the user supplies edits, "
         "refine those lines to fit the evidence and duration. With existing shots reuse those exact ranges."
     ), {"shop": form["shop"], "style": form["template"], "emphasis": req.emphasis.strip(),
@@ -255,7 +259,7 @@ async def edit_lines(user: str, workspace: str, sid: str, req: PreviewRequest, l
     form, _, rows = await _snapshot(user, workspace, sid, req.revision)
     current = form.get("narration_draft") or {}
     if (not form.get("redo_narration") or current.get("materials") != fingerprint(form)
-            or current.get("locale") != locale or len(current.get("shots") or []) != len(req.lines)):
+            or len(current.get("shots") or []) != len(req.lines)):
         raise LightError("PRODUCTION_NARRATION_STATE", "Open the current voiceover draft before editing.", 409)
     if req.lines != (current.get("lines") or [shot["text"] for shot in current["shots"]]):
         current = {**current, "lines": req.lines}
@@ -321,9 +325,9 @@ async def preview(user: str, workspace: str, sid: str, req: PreviewRequest, loca
     shots = current.get("shots") or []
     selected = form.get("voice_id", "")
     if (not form.get("redo_narration") or not selected or not shots
-            or current["materials"] != fingerprint(form) or len(req.lines) != len(shots) or not any(req.lines)
-            or current["locale"] != locale):
+            or current["materials"] != fingerprint(form) or len(req.lines) != len(shots) or not any(req.lines)):
         raise LightError("PRODUCTION_NARRATION_STATE", "Review the current shots and choose a voice first.", 409)
+    locale = current.get("locale") or locale
     digest = _digest([current["id"], selected, req.lines, locale])
     prior = form.get("narration_preview") or {}
     if prior.get("id") == digest and prior.get("draft_id") == current["id"]:
@@ -403,7 +407,7 @@ def check_confirmation(form: dict, supplied: str | None, locale: str | None) -> 
     preview = form.get("narration_preview") or {}
     if (not supplied or preview.get("id") != supplied or preview.get("draft_id") != draft.get("id")
             or draft.get("materials") != fingerprint(form) or preview.get("voice_id") != form.get("voice_id")
-            or preview.get("locale") != locale):
+            or preview.get("locale") != (draft.get("locale") or locale)):
         raise LightError("PRODUCTION_NARRATION_CONFIRM", "Preview and confirm the current voice and script first.", 409)
 
 

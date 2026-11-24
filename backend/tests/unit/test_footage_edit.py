@@ -110,7 +110,8 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
     user, session, ids = await _owner_with_clips([15, 15, 15, 15, 15], audio=[True, True, False, False, False])
     heard: list[str] = []
 
-    async def fake_asr(target, url):
+    async def fake_asr(target, url, language):
+        assert language == "auto"
         heard.append(url)
         return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}]}
 
@@ -238,7 +239,8 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
     user, session, ids = await _owner_with_clips([15, 15], audio=[True, False])
     calls = {"asr": 0, "vision": 0}
 
-    async def fake_asr(target, url):
+    async def fake_asr(target, url, language):
+        assert language == "auto"
         calls["asr"] += 1
         return {"text": "欢迎光临", "sentences": [{"from_sec": 0, "to_sec": 1.5, "text": "欢迎光临"}]}
 

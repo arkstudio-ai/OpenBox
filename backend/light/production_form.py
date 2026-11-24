@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from core.config import ChatTier
-from light import product_story_plan, remake_case, shortcut_plan, silk_road, wan_story
+from light import product_story_plan, remake_case, shortcut_plan, silk_road, video_language, wan_story
 from light.production_music import MusicStyle
 from light.video_tiers import VideoTier
 
@@ -60,9 +60,10 @@ TEMPLATES = {
             "以文字为主，避免大图挤占菜价。"
         ),
         "bilingual_table": (
-            "中英双语台卡。竖幅暖白与深绿，中文菜名在上、英文在下，价格只出现一次并与该菜同组。"
-            "沿用用户提供的英文。缺英文时准确翻译菜名，无法确认食材或做法时可保留专名音译，避免补造信息。"
-            "可用真实菜品局部照片作视觉锚点，版式随菜目数量调整。"
+            "Portrait bilingual table card in warm white and dark green. Set each dish’s primary name first and "
+            "its second-language name below. Use a single confirmed price for each pair. Keep owner-provided "
+            "translations and retain proper names. Translate only what can be understood reliably. "
+            "Adapt the spacing to the number of items; real dish photos can anchor the layout."
         ),
         "": "参考用户选中的样例的版式和风格，用当前门店确认的菜品、价格和素材制作菜单。",
     },
@@ -238,18 +239,53 @@ def turn_instruction(session, action: str) -> str:
     form = session.light_production
     if remake_case.applies(session.light_entry, form):
         return remake_case.planning_instruction(form, action)
-    if action == "prepare":
-        return prepare_prompt(session.light_entry, form)
     run = form.get("run") or {}
-    return render_prompt(session.light_entry, form, run.get("job_prefix", f"light:{session.id}:{form['revision']}"),
-                         run.get("existing", []))
+    instruction = (prepare_prompt(session.light_entry, form) if action == "prepare" else
+                   render_prompt(session.light_entry, form, run.get("job_prefix", f"light:{session.id}:{form['revision']}"),
+                                 run.get("existing", [])))
+    if session.light_entry in {"video", "footage_edit"} and (language := run.get("video_language")):
+        instruction += "\n" + video_language.direction(language)
+    if session.light_entry in IMAGE_ENTRIES:
+        instruction += "\n" + _artwork_instruction(session.light_entry, form)
+    return instruction
+
+
+_ARTWORK_NAMES = {"zh": "Simplified Chinese", "en": "English", "vi": "Vietnamese (Tiếng Việt)"}
+
+
+def artwork_language(form: dict, lang: str | None) -> video_language.Language:
+    approved_copy = "\n".join(filter(None, [
+        form.get("script"), form.get("poster_title"), form.get("notes"),
+        *(item["name"] for item in form.get("dishes") or []),
+    ]))
+    return video_language.for_form({"reference_copy": approved_copy, "brief": form.get("brief")}, lang)
+
+
+def _artwork_instruction(entry: str, form: dict) -> str:
+    language = (form.get("run") or {}).get("artwork_language", "zh")
+    direction = (
+        f"Artwork and newly written copy language: {_ARTWORK_NAMES[language]}. "
+        "Preserve approved shop names, dish names, text and prices exactly, including tone marks, accents, "
+        "currency symbols and separators. Use examples only for their visual design, never for their words. "
+    )
+    if entry == "menu" and form["template"] == "bilingual_table":
+        second = "zh" if language == "en" else "en"
+        direction += (
+            f"Use {_ARTWORK_NAMES[language]} first and {_ARTWORK_NAMES[second]} second for the bilingual layout "
+            "unless the owner explicitly specified a different pair. Each dish has one price. "
+        )
+    if language == "vi":
+        direction += ("Use a typeface with full Vietnamese support. Verify the exported image retains every "
+                      "accent and letter such as ă, â, đ, ê, ô, ơ and ư, and their combinations with tone marks. ")
+    return direction
 
 
 def prepare_prompt(entry: str, form: dict) -> str:
     if entry == "menu":
         task = (
             "Read the supplied menu and dish photos. Read names and prices only when clear, keep the owner's "
-            "existing names/prices, and leave an unknown price blank. Do not invent dishes or prices. "
+            "existing names/prices, and leave an unknown price blank. For a newly read dish, use the artwork language "
+            "only when the dish name can be translated reliably. Do not invent dishes or prices. "
             "Save the editable dish rows with the light_production_form tool. If nothing is legible, save an empty list."
         )
     else:
@@ -283,6 +319,8 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "footage_analyze and describe it in the video prompt. Use only confirmed words for titles/dialogue. "
             "When the script calls for speech, generate it in the relevant shot with its speaker, exact words and "
             "timing via spoken_line and native audio. Use the clip audio for all speech and preserve it in the edit. "
+            "Time readable speech captions from actual ASR on the edited timeline, in the requested output language. "
+            "Use the exact approved words when they match the recording and keep their natural accents. "
             "Build the final soundtrack from the clips' dialogue and ambience. "
             "Ask video_generate for clean, unscored source clips. Deliver the final attachment."
         )
@@ -326,7 +364,7 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
         task = (
             "If videos are selected, read them in one footage_analyze call. Reuse its cached clip descriptions, "
             "action timings and ASR sentences. Use video_transcribe only for a needed spoken clip whose "
-            "analysis has no transcript. Use selected originals for all documentary imagery, with photos as stills. "
+            "analysis has no transcript, with language=auto if the source language is unknown. Use selected originals for all documentary imagery, with photos as stills. "
             "Decide a story from the supplied footage before choosing effects. Open with a strong real moment, "
             "use wider shots for context and close-ups to reveal details, and end on an image that pays off "
             "the opening. Decide shot order and length around action and pacing. Keep events and proportions "

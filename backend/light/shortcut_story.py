@@ -9,6 +9,7 @@ from light import shortcut_review, soda_story, wan_edit, wan_story
 from light.reference_film import speech_window, timeline_for
 from light.remake import RemakeStopped, _digest, _existing_job, _job, _parallel, _reference_asset
 from light.remake_lettering import end_card
+from light.video_language import for_text, speech_hint
 from light.shortcut_plan import HANDOFF, OPENING, PRODUCT, REVEAL, REVIEWED_SHOTS, SETUP_ROLES
 from light.wan_remake import _on_set, _still
 from tool import video_compose, video_production as vp
@@ -120,7 +121,7 @@ async def _confirm_setups(ctx, prefix, run, plan, pairs, anchor, material):
     raise AssertionError("The setup check must resolve or stop")
 
 
-def shot_request(prefix, index, shot, frames, take=1, *, correction="", visible_setup=""):
+def shot_request(prefix, index, shot, frames, take=1, *, correction="", visible_setup="", language=None):
     first, last = frames
     refs = [vp.VideoInputRef(asset_id=first, role="first_frame")]
     if last:
@@ -144,7 +145,7 @@ def shot_request(prefix, index, shot, frames, take=1, *, correction="", visible_
         input_assets=refs, spoken_line=shot.line or None, no_speech=not shot.line,
         prompt=("竖屏相机直出的连续实拍素材，单机位。"
                 f"{boundary}{camera}{visible}{performer}"
-                f"开拍画面：{_on_set(visible_setup or shot.frame)}。{motion}。{speech}"
+                f"开拍画面：{_on_set(visible_setup or shot.frame)}。{motion}。{speech}{speech_hint(language, shot.line)}"
                 + ("先把句子说完整，最后留一点自然停顿。" if take == 2 and shot.line else "")
                 + "保留实际发生的动作同期声和现场底噪。画面和音轨均无配乐、说明或旁白。"
                   "保持演员、道具和商品外观，无文字、字幕、标题和水印。"),
@@ -173,13 +174,15 @@ async def _film(ctx, prefix, run, plan, index, frames, *, incoming=None, visible
     correction = ""
     for take in (1, 2):
         request = shot_request(prefix, index, shot, frames, take, correction=correction,
-                               visible_setup=visible_setup)
+                               visible_setup=visible_setup, language=plan.language)
         await publish_request(ctx, prefix, request)
         asset = await _job(ctx, request, kind="segment", label=f"剧情镜头 {index}", run=run)
         meta = await ensure_meta(asset, user_id=ctx.user_id)
         if not meta:
             raise RemakeStopped(f"第 {index} 镜仍在保存，已记录生成作业。")
-        transcript = await soda_story._transcript(ctx, asset) if shot.line and meta.get("has_audio") else {}
+
+        transcript = (await soda_story._transcript(ctx, asset, language=for_text(shot.line, plan.language))
+                      if shot.line and meta.get("has_audio") else {})
         try:
             cut = accepted_cut(shot, index, asset, meta, transcript)
         except RemakeStopped:

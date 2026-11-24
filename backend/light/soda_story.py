@@ -20,6 +20,7 @@ from db.models.file_asset import FileAsset
 from db.models.video_job import VideoJob
 from light import wan_story
 from light.reference_film import lettering, speech_window, timeline_for
+from light.video_language import for_text, speech_hint
 from light.remake import RemakeStopped, _check, _digest, _job, _reference_asset
 from light.wan_remake import _on_set, _still
 from tool import video_compose, video_production as vp
@@ -121,7 +122,7 @@ async def _shooting_frames(ctx, prefix, plan, materials):
     ))
 
 
-def shot_request(prefix, index, shot, first, *, model=MODEL, resolution="768p"):
+def shot_request(prefix, index, shot, first, *, model=MODEL, resolution="768p", language=None):
     speech = (
         f"只有{shot.speaker}开口，约0.3秒开讲，简短自然地讲完「{shot.line}」，全片只说这句。"
         if shot.line else "所有人保持闭口，不生成对白、哼唱或旁白。"
@@ -134,7 +135,7 @@ def shot_request(prefix, index, shot, first, *, model=MODEL, resolution="768p"):
         input_assets=[vp.VideoInputRef(asset_id=first, role="first_frame")],
         spoken_line=shot.line or None, no_speech=not shot.line,
         prompt=("写实竖屏餐饮广告，一个连续实拍镜头。严格保持首帧人物、空间、服装、光线和出现的道具。"
-                + _on_set(shot.action) + "。" + speech + "只保留微弱现场声，无配乐、字幕、字样或水印。"),
+                + _on_set(shot.action) + "。" + speech + speech_hint(language, shot.line) + "只保留微弱现场声，无配乐、字幕、字样或水印。"),
     )
 
 
@@ -184,11 +185,18 @@ async def _transcript(ctx, asset, *, language=None):
         return (job.result_data or {}).get("transcript") or {}
 
 
-async def _review(ctx, shot, index, asset, meta):
+async def _review(ctx, shot, index, asset, meta, *, language=None):
     if not meta:
         raise RemakeStopped(f"第 {index} 镜仍在保存，已记录生成作业。")
-    transcript = await _transcript(ctx, asset) if shot.line and meta.get("has_audio") else {}
-    return cut_for(shot, index, asset, meta, transcript)
+    spoken_language = for_text(shot.line, language)
+    transcript = (await _transcript(ctx, asset, language=spoken_language)
+                  if shot.line and meta.get("has_audio") else {})
+    cut = cut_for(shot, index, asset, meta, transcript)
+    if shot.line and spoken_language == "vi" and (
+        not cut["cues"] or any(for_text(cue["text"], "vi") != "vi" for cue in cut["cues"])
+    ):
+        raise RemakeStopped(f"Cảnh {index}: chưa xác nhận được lời thoại tiếng Việt.")
+    return cut
 
 
 async def render(ctx, form, run, plan):
@@ -226,13 +234,13 @@ async def render(ctx, form, run, plan):
             await _check(task)
             request = shot_request(prefix, i, shot, frames[i - 1],
                                    model=run.get("video_model") or MODEL,
-                                   resolution=run.get("video_resolution") or "768p")
+                                   resolution=run.get("video_resolution") or "768p", language=plan.language)
             await publish_request(ctx, prefix, request)
             asset = await _job(task, request, kind="segment", label=f"剧情镜头 {i}", run=run)
             meta = await ensure_meta(asset, user_id=task.user_id)
             if needs_visual_review:
                 samples[i] = asyncio.create_task(soda_visual_edit.sample(task, asset, meta, shot.seconds))
-            cut = await _review(task, shot, i, asset, meta)
+            cut = await _review(task, shot, i, asset, meta, language=plan.language)
             await save_reference_cut(ctx, prefix, cut)
             cuts[i] = cut
 

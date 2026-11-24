@@ -237,6 +237,7 @@ class MediaPreviewVideo extends ConsumerStatefulWidget {
     this.bundled = false,
     this.loop = false,
     this.decorate,
+    this.subtitles,
   });
 
   final String source;
@@ -244,6 +245,7 @@ class MediaPreviewVideo extends ConsumerStatefulWidget {
   final bool bundled;
   final bool loop;
   final Widget Function(Widget video)? decorate;
+  final String? subtitles;
 
   @override
   ConsumerState<MediaPreviewVideo> createState() => _MediaPreviewVideoState();
@@ -252,7 +254,12 @@ class MediaPreviewVideo extends ConsumerStatefulWidget {
 class _MediaPreviewVideoState extends ConsumerState<MediaPreviewVideo> {
   late final VideoPlayerController _controller = widget.bundled
       ? VideoPlayerController.asset(widget.source)
-      : VideoPlayerController.networkUrl(Uri.parse(widget.source));
+      : VideoPlayerController.networkUrl(
+          Uri.parse(widget.source),
+          closedCaptionFile: widget.subtitles == null
+              ? null
+              : Future.value(SubRipCaptionFile(widget.subtitles!)),
+        );
   late final Future<void> _load;
   bool _playbackFailed = false;
 
@@ -323,6 +330,17 @@ class _MediaPreviewVideoState extends ConsumerState<MediaPreviewVideo> {
                           fit: StackFit.expand,
                           children: [
                             video!,
+                            if (value.caption.text.isNotEmpty)
+                              Positioned(
+                                left: 12,
+                                right: 12,
+                                bottom: 8,
+                                child: IgnorePointer(
+                                  child: ClosedCaption(
+                                    text: value.caption.text,
+                                  ),
+                                ),
+                              ),
                             if (value.isBuffering) const MediaPreviewLoading(),
                           ],
                         ),

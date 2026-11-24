@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from light.silk_road_world import (
     DIRECTING, PRODUCT_FRAMES, World, animate_endpoints, endpoint_prompt, take_prompt,
 )
+from light.video_language import END_CARD, Language
 from light.video_tiers import SEEDANCE, TURBO
 
 TEMPLATE = "silk_road"
@@ -63,12 +64,13 @@ class Plan(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     format: Literal["silk-road-v1"] = FORMAT
-    title: str = Field(min_length=1, max_length=18)
+    language: Language = "zh"
+    title: str = Field(min_length=1, max_length=44)
     product: str = Field(min_length=1, max_length=36)
     appearance: str = Field(min_length=1, max_length=280)
     bite: str = Field(min_length=1, max_length=80, description="The one bite of the signature dish, without later plot beats.")
     decoy: str = Field(default="浅米色干馕", min_length=1, max_length=48)
-    note: str = Field(default="一路回味", min_length=1, max_length=18)
+    note: str = Field(default="一路回味", min_length=1, max_length=44)
     direction: str = Field(default="", max_length=260, description="Optional storyboard summary for the preview.")
     take_notes: list[TakeNote] = Field(default_factory=list, max_length=9)
     world: World | None = None
@@ -77,6 +79,15 @@ class Plan(BaseModel):
     @classmethod
     def single_prop(cls, value: str) -> str:
         return re.split(r"[；;。！？!?\r\n]", value, maxsplit=1)[0].strip() or value
+
+    def localized(self, language: Language) -> Plan:
+        values = {"language": language}
+        if language != "zh":
+            if self.note == "一路回味":
+                values["note"] = {"en": "A taste to remember", "vi": "Hương vị còn mãi"}[language]
+            if self.decoy == "浅米色干馕":
+                values["decoy"] = {"en": "pale flatbread", "vi": "bánh mì dẹt màu be nhạt"}[language]
+        return self.model_copy(update=values)
 
     def for_shop(self, shop: str) -> Plan:
         if not shop:
@@ -94,15 +105,24 @@ def case():
 
 
 def display_script(plan: Plan) -> str:
+    end = f"{END_CARD[plan.language]} · {plan.product} · {plan.note}"
+    seconds = {"zh": "秒", "en": "sec", "vi": "giây"}[plan.language]
+    header = f"《{plan.title}》 · 62 {seconds}"
     if plan.world:
         return "\n".join([
-            f"《{plan.title}》 · 62 秒",
+            header,
             plan.world.premise,
             *(f"{take.setting} · {take.action}" for take in plan.world.takes),
-            f"片尾 · {plan.product} · {plan.note}",
+            end,
         ])
+    if plan.language != "zh":
+        beats = {
+            "vi": ("Nếm món ăn trong lều", "Mua nhầm ở chợ", "Trao quà ở bến tàu"),
+            "en": ("Tasting in the tent", "A mix-up at the market", "A gift at the dock"),
+        }[plan.language]
+        return "\n".join([header, *beats, plan.appearance, plan.direction, end])
     return "\n".join([
-        f"《{plan.title}》 · 62 秒 · 丝路叙事",
+        f"{header} · 丝路叙事",
         f"帐篷初尝 · 旅人在暖光下品尝{plan.product}。",
         f"集市错买 · 把{plan.decoy}当作旅途干粮。沙地试吃和驼队反应相接。",
         f"码头相赠 · 同伴揭开包布，给出一盘{plan.product}。登船复尝，挥手离港。",

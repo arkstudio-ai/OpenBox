@@ -19,6 +19,7 @@ from db.base import get_db_session
 from db.models.file_asset import FileAsset
 from db.models.video_job import VideoJob
 from light import product_story_plan as recipe
+from light.video_language import NAMES
 from light.wan_edit import _words
 from light.reference_film import speech_window
 from light.remake import RemakeStopped, _check, _digest, _existing_job, _job, _material_refs, _parallel, _reference_asset
@@ -30,11 +31,16 @@ from video.media_probe import ensure_meta
 
 REVIEW = "product-story-dialogue-v1"
 SPEAKERS = {1: "女儿", 2: "爸爸", 14: "女儿"}
+VIETNAMESE_PERFORMANCE = {
+    1: "Cô bé chỉ vào bức ảnh trong album rồi ngước nhìn ba. Cô bé nói với ba, hơi ngạc nhiên.",
+    2: "Người ba nhìn con gái, mỉm cười và trả lời. Nói xong, anh đưa tay lấy điện thoại và chìa khóa.",
+    14: "Cô bé nhìn về phía ba và nhẹ nhàng gọi ba đến chụp ảnh cùng gia đình.",
+}
 
 
 async def _product_frames(ctx, prefix, plan, form):
     refs = await _material_refs(ctx, form["asset_ids"])
-    is_original = re.sub(r"\s+", "", plan.product) == "小米18" and not plan.appearance
+    is_original = re.sub(r"\s+", "", plan.product).casefold() in {"小米18", "xiaomi18"} and not plan.appearance
     if refs and is_original:
         material = await _asset(ctx, refs[0])
         ref = await get_oss().get_object(material.oss_key)
@@ -77,18 +83,30 @@ async def _asset(ctx, asset_id):
 def shot_request(prefix, index, shot, frame, take):
     line = shot["spoken_line"]
     performance = (
-        f"仅{SPEAKERS[index]}按指定中文原话自然说一遍，其他人不说话，"
+        f"仅{SPEAKERS[index]}用 {NAMES[shot['language']]} 逐字说指定台词一次，其他人不说话，"
         "留一点表情反应和室内原声。"
         if line else "无人说话，不出现旁白、哼唱或背景音乐。"
     )
+    prompt = f"{shot['prompt']} 连续横屏电影镜头，保持首帧人物、道具位置和服装。{performance}"
+    if take == 2 and line:
+        prompt += "口型清楚，先完整说出台词再停顿。"
+    if take >= 3:
+        pace = "Nói chậm, phát âm rõ từng tiếng và đúng dấu thanh." if take == 3 else (
+            "Nói với giọng tiếng Việt miền Nam tự nhiên. Ngắt nhẹ ở dấu phẩy và nói trọn câu."
+        )
+        prompt = (
+            "Cảnh quảng cáo gia đình chân thực, ngang 16:9, bắt đầu từ ảnh đã cho. "
+            "Giữ nguyên khuôn mặt, trang phục và đồ vật. "
+            f"{VIETNAMESE_PERFORMANCE[index]} {pace} "
+            "Chỉ nhân vật này nói đúng một lần. Khớp khẩu hình, không chữ, không nhạc."
+        )
     return vp.VideoGenerateArgs(
         action="submit", model=MODEL, resolution="768p", ratio="adaptive",
         duration=shot["generate_seconds"], generate_audio=True, watermark=False,
         shot=index, input_assets=[vp.VideoInputRef(asset_id=frame, role="first_frame")],
         spoken_line=line, no_speech=not line,
-        idempotency_key=f"{prefix}:shot{index}" + (":retake:2" if take > 1 else ""),
-        prompt=f"{shot['prompt']} 连续横屏电影镜头，保持首帧人物、道具位置和服装。{performance}"
-               + ("口型清楚，先完整说出台词再停顿。" if take > 1 and line else ""),
+        idempotency_key=f"{prefix}:shot{index}" + (f":retake:{take}" if take > 1 else ""),
+        prompt=prompt,
     )
 
 
@@ -128,7 +146,8 @@ def choose_cut(shot, index, asset, meta, transcript):
 async def _film(ctx, prefix, run, index, shot, frame):
     from light.shot_editor import publish_request
 
-    for take in (1, 2):
+    last_take = 4 if shot["language"] == "vi" and shot["spoken_line"] else 2
+    for take in range(1, last_take + 1):
         req = shot_request(prefix, index, shot, frame, take)
         await publish_request(ctx, prefix, req)
         try:
@@ -136,19 +155,49 @@ async def _film(ctx, prefix, run, index, shot, frame):
         except RemakeStopped:
             prior = await _existing_job(ctx, "segment", req.idempotency_key)
             ambiguous = ((prior.result_data or {}).get("submit_error") or {}).get("submission_outcome") if prior else None
-            if take == 1 and prior and prior.status == "failed" and prior.provider_task_id and ambiguous != "ambiguous":
+            if take < last_take and prior and prior.status == "failed" and prior.provider_task_id and ambiguous != "ambiguous":
                 continue
             raise
         meta = await ensure_meta(source, user_id=ctx.user_id)
         if not meta:
             raise RemakeStopped(f"第 {index} 镜还在保存，重试会沿用这个作业。")
-        transcript = (await _transcript(ctx, source, language="zh")
+        transcript = (await _transcript(ctx, source, language=shot["language"])
                       if shot["spoken_line"] and meta.get("has_audio") else {})
         try:
             return {**choose_cut(shot, index, source, meta, transcript), "take": take}
         except RemakeStopped:
-            if take != 1:
-                raise
+            if take == last_take:
+                if shot["language"] != "vi" or not transcript.get("sentences"):
+                    raise
+                cut = await _dub(ctx, index, shot, source, meta, transcript)
+                return {**cut, "take": take}
+
+
+async def _dub(ctx, index, shot, source, meta, transcript):
+    from light import production_voice
+
+    # Keep the take's visible speaking interval. Replace its mispronounced voice
+    # with the approved words, and use the duration of that replacement for the cue.
+    line = shot["spoken_line"]
+    preset = "system:steady" if index == 2 else "system:bright"
+    model, voice = await production_voice.resolve(ctx.user_id, preset, "vi")
+    key = await production_voice.render_clip(user=ctx.user_id, workspace=ctx.workspace_id,
+                                               session=ctx.session_id, model=model, voice=voice,
+                                               text=line, locale="vi")
+    _, duration = production_voice._canonical_wav(await get_oss().get_object(key))
+    sentence = transcript["sentences"][0]
+    start = sentence["from_sec"]
+    end = min(float(meta["duration_sec"]), transcript["sentences"][-1]["to_sec"])
+    if not 0 <= start < end or duration <= 0:
+        raise RemakeStopped(f"第 {index} 镜无法对齐越南语对白。")
+    tempo = max(.75, min(2.0, duration / (end - start)))
+    stop = start + duration / tempo
+    if stop > float(meta["duration_sec"]):
+        raise RemakeStopped(f"第 {index} 镜不能保留完整越南语对白。")
+    cut = choose_cut(shot, index, source, meta, {"sentences": [
+        {"text": line, "from_sec": start, "to_sec": stop},
+    ]})
+    return {**cut, "dub": {"key": key, "tempo": tempo}}
 
 
 async def _download(ctx, asset_id, path):
@@ -168,7 +217,7 @@ async def _publish(ctx, key, path, plan, cuts, measured):
     oss_key = f"assets/{ctx.user_id}/{asset_id}/{name}"
     await _check(ctx)
     await get_oss().put_object_file(oss_key, path, content_type="video/mp4", forbid_overwrite=True)
-    request = recipe.final_request(cuts)
+    request = recipe.final_request(cuts, plan.language)
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
         row = await prepare_agent_event_write(db, session_id=ctx.session_id, user_id=ctx.user_id,
@@ -183,7 +232,7 @@ async def _publish(ctx, key, path, plan, cuts, measured):
                          size=path.stat().st_size, oss_key=oss_key, created_at=now, status="ready",
                          source="agent", transient=False, meta={
                              "width": 1280, "height": 720, "fps": recipe.FPS, "duration_sec": recipe.DURATION,
-                             "has_audio": True,
+                             "has_audio": True, "subtitles_srt": measured["subtitles_srt"],
                          }))
         await db.flush()
         job = VideoJob(id=ascending("video"), user_id=ctx.user_id, session_id=row.id, project_id=row.project_id,
@@ -222,7 +271,7 @@ async def render(ctx, form, run, plan):
             await _parallel(remaining, film, concurrency=5)
 
         ordered = [cuts[index] for index in range(1, recipe.FILMED_COUNT + 1)]
-        key = f"{prefix}:final:{_digest(json.dumps(recipe.final_request(ordered), sort_keys=True))}"
+        key = f"{prefix}:final:{_digest(json.dumps(recipe.final_request(ordered, plan.language), sort_keys=True))}"
         await remake_stage(ctx, prefix, "wan_edit")
         run = await save_wan_edit(ctx, prefix, cuts=ordered, final_key=key)
         await remake_stage(ctx, prefix, "compose")
@@ -238,6 +287,9 @@ async def render(ctx, form, run, plan):
                     await _download(task, asset, folder / f"source-{index:02d}.{extension}")
 
                 await _parallel(media, download, concurrency=6)
+                for cut in ordered:
+                    if dub := cut.get("dub"):
+                        (folder / f"voice-{cut['shot']:02d}.wav").write_bytes(await get_oss().get_object(dub["key"]))
                 output, verified = await post.assemble(folder, plan, ordered)
                 job = await _publish(task, key, output, plan, ordered, verified)
     except OssError as exc:

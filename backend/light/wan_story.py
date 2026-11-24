@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from light import product_story_plan, shortcut_plan, silk_road
+from light import product_story_plan, shortcut_plan, silk_road, video_language
 from light.reference_plan import ShotPlan
 
 TEMPLATE = "wan_story"
@@ -27,7 +27,7 @@ Direction = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 class Line(BaseModel):
     model_config = ConfigDict(extra="forbid")
     speaker: Short
-    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=18)]
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=65)]
 
 
 class Scene(BaseModel):
@@ -40,6 +40,7 @@ class Plan(BaseModel):
     """The agent writes the story, blocking and words from the current form."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    language: video_language.Language = "zh"
     title: Short
     product: Short
     appearance: Direction
@@ -48,7 +49,7 @@ class Plan(BaseModel):
     reveal_frame: Direction
     opening: Scene
     response: Scene
-    headline: Annotated[str, StringConstraints(min_length=2, max_length=10)]
+    headline: Annotated[str, StringConstraints(min_length=2, max_length=44)]
 
 
 class StoryRequest(BaseModel):
@@ -78,7 +79,7 @@ def display_script(plan: Plan) -> str:
     lines = [f"《{plan.title}》", plan.setting_and_cast]
     for scene in (plan.opening, plan.response):
         lines.extend(["", scene.action, *(f"{line.speaker}：「{line.text}」" for line in scene.lines)])
-    lines.extend(["", f"片尾 · {plan.product}「{plan.headline}」"])
+    lines.extend(["", f"{video_language.END_CARD[plan.language]} · {plan.product}「{plan.headline}」"])
     return "\n".join(lines)
 
 
@@ -105,6 +106,9 @@ def planning_instruction(form: dict, action: str) -> str:
     prepare = ("直接调用 light_wan_story，action=prepare。按上面的规则填写可选 plan，工具会装入完整分镜。"
                if form.get("template") == product_story_plan.TEMPLATE else
                "直接调用 light_wan_story，action=prepare，把完整分镜放在 plan。")
+    language = (form.get("run") or {}).get("video_language")
+    if language and action == "prepare":
+        directing += video_language.direction(language)
     return directing + (
         prepare + "只保存文案供用户编辑，成功后结束。"
         if action == "prepare" else

@@ -21,7 +21,7 @@ from db.models.session import Session
 from light import production, production_usage, production_voice, video_language
 from light.mode import LightError
 from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE
-from tool.footage_analyze import MAX_CLIP_SECONDS, READING_VERSION, _prepare, snapshot_url
+from tool.footage_analyze import MAX_CLIP_SECONDS, _prepare, matches_reading, snapshot_url
 from video import ims_client
 from video.ims_compiler import compile_ims
 from video.timeline import AudioClip, Cue, Shot, Timeline
@@ -80,16 +80,16 @@ async def _snapshot(user: str, workspace: str, sid: str, revision: int | None = 
     return row.light_production, row.model, [by_id[id_] for id_ in ids]
 
 
-async def _read(asset, user: str) -> dict:
+async def _read(asset, user: str, model: str) -> dict:
     if asset.mime.startswith("image/"):
         return {"duration": 6, "speech": False, "subject": asset.name}
     meta = asset.meta or {}
     reading = meta.get("reading") or {}
-    cached = reading.get("v") == READING_VERSION and (
+    cached = matches_reading(reading, model) and (
         reading.get("transcript") or reading.get("speech_checked") or meta.get("has_audio") is False)
     if not cached:
         try:
-            reading = await _prepare(asset.id, user) or {}
+            reading = await _prepare(asset.id, user, model) or {}
             async with get_db_session() as db:
                 fresh = await db.get(FileAsset, asset.id)
                 meta = fresh.meta or {} if fresh else meta
@@ -115,18 +115,21 @@ async def _read(asset, user: str) -> dict:
     }
 
 
-async def _read_all(rows, user, workspace, sid):
+async def _read_all(rows, user, workspace, sid, model):
+    from agent.model_resolve import resolve
     from billing import footage
+    from core.config import get_config
     from video.media_probe import ensure_meta
 
+    model, _ = resolve(model, get_config(), context="guided narration")
     videos = [row for row in rows if row.mime.startswith("video/")]
     if not videos:
-        return await asyncio.gather(*(_read(row, user) for row in rows))
+        return await asyncio.gather(*(_read(row, user, model) for row in rows))
     measurements = await asyncio.gather(*(ensure_meta(row.id, user_id=user) for row in videos))
     eligible = {row.id: float((meta or {}).get("duration_sec") or 0) for row, meta in zip(videos, measurements)}
     eligible = {id_: length for id_, length in eligible.items() if 0 < length <= MAX_CLIP_SECONDS}
     if not eligible:
-        return [await _read(row, user) if row.mime.startswith("image/") else
+        return [await _read(row, user, model) if row.mime.startswith("image/") else
                 {"duration": 0, "speech": None} for row in rows]
     batch = hashlib.sha256("|".join(sorted(eligible)).encode()).hexdigest()[:16]
     key = f"footage_analyze:{sid}:{batch}"
@@ -135,17 +138,17 @@ async def _read_all(rows, user, workspace, sid):
         cached = await production_usage.metered(key)
         if not cached:
             async with production_usage.admit(workspace, sid, footage.quote_analysis(total), "素材分析"):
-                readings = await asyncio.gather(*(_read(row, user) for row in rows))
+                readings = await asyncio.gather(*(_read(row, user, model) for row in rows))
             if any(reading["speech"] is not None for row, reading in zip(rows, readings) if row.id in eligible):
                 await footage.settle_analysis(key=key, workspace_id=workspace, user_id=user,
                                               session_id=sid, total_seconds=total, clips=len(eligible))
             return readings
-        return await asyncio.gather(*(_read(row, user) for row in rows))
+        return await asyncio.gather(*(_read(row, user, model) for row in rows))
 
 
 async def detect(user: str, workspace: str, sid: str) -> dict:
-    form, _, rows = await _snapshot(user, workspace, sid)
-    readings = await _read_all(rows, user, workspace, sid)
+    form, model, rows = await _snapshot(user, workspace, sid)
+    readings = await _read_all(rows, user, workspace, sid, model)
     oss = get_oss()
     sources = [{
         "asset_id": row.id, "name": row.name, "text": reading["transcript"], "sentences": reading["sentences"],
@@ -202,7 +205,7 @@ async def draft(user: str, workspace: str, sid: str, req: DraftRequest, locale: 
     form, model, rows = await _snapshot(user, workspace, sid, req.revision)
     if not form.get("redo_narration"):
         raise LightError("PRODUCTION_NARRATION_STATE", "Enable narration first.", 409)
-    readings = await _read_all(rows, user, workspace, sid)
+    readings = await _read_all(rows, user, workspace, sid, model)
     if any(r["speech"] is None for r in readings):
         raise LightError("PRODUCTION_NARRATION_DETECTION", "Some source audio could not be checked. Try again.")
     old = form.get("narration_draft") if req.lines is not None else None
@@ -340,7 +343,7 @@ async def preview(user: str, workspace: str, sid: str, req: PreviewRequest, loca
     if prior.get("id") == digest and prior.get("draft_id") == current["id"]:
         return _preview_view(prior)
     if req.lines != [shot["text"] for shot in shots]:
-        evidence = await _read_all(rows, user, workspace, sid)
+        evidence = await _read_all(rows, user, workspace, sid, model)
         references = {row.id: reading for row, reading in zip(rows, evidence)}
         assessment = await _structured(model, (
             'Check edits for factual and shot alignment. Return only {"mismatch":0} if accurate or '

@@ -116,7 +116,11 @@ async def deliver_unclaimed_attachments(lease, expected, *, is_assistant):
                 raise AssetDeliveryError(expected_asset_ids=expected, missing_asset_ids=[],
                     code="asset_origin_unavailable", retryable=False)
             for item in originals:
-                if item.attachments:
+                if inbox.uses_guided_asset_delivery(session, item.origin_ref):
+                    async with get_db_session() as db:
+                        await inbox._validate_owned_attachments_locked(db, user_id=lease.user_id,
+                            attachment_ids=item.attachments, workspace_id=session.workspace_id)
+                elif item.attachments:
                     await deliver_asset_ids(lease.session_id, lease.user_id, item.attachments,
                         expected_asset_ids=item.attachments, delivery_id=item.id)
         else:
@@ -126,8 +130,5 @@ async def deliver_unclaimed_attachments(lease, expected, *, is_assistant):
         raise
     except Exception as exc:
         error = inbox._safe_delivery_failure(exc, expected_asset_ids=expected)
-        if isinstance(exc, inbox.InboxAttachmentError):
-            error.update(code="asset_unavailable", retryable=False,
-                message="The attachment is no longer available.")
         return await _record_failure(lease, expected, error)
     return inbox.AttachmentDeliveryResult((), (), direct_trigger=True)

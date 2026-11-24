@@ -181,7 +181,6 @@ async def bind(ctx, plan, index, first, anchor, feedback="", *, reference_copy="
 
     from agent.llm import _get_provider_kwargs
     from agent.trajectory import capture_service_dispatch, service_scope
-    from core.config import get_config
     from core.oss import get_oss
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
@@ -237,7 +236,7 @@ async def bind(ctx, plan, index, first, anchor, feedback="", *, reference_copy="
         "description": "Ground the actors and action in the actual first frame before filming.",
         "parameters": Direction.model_json_schema(),
     }
-    model = get_config().video_analysis.model
+    model = vision_contract.selected_model(getattr(ctx, "model_id", None))
     messages = [{"role": "user", "content": content}]
     error = ""
     for _ in range(2):

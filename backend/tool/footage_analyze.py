@@ -33,13 +33,14 @@ from pydantic import BaseModel, Field, model_validator
 
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
+from video.vision_contract import request_options, selected_model
 
 log = create_logger("tool.footage_analyze")
 
 MAX_CLIPS = 10
 #: Bump when what a clip reading contains changes, so old cached readings are redone.
 READING_VERSION = 4   # Source speech language is detected instead of assumed.
-_readings: dict[str, asyncio.Task] = {}
+_readings: dict[tuple[str, str], asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
 #: 480 px, not 360: a sign or a price tag has to be readable in the frame for the
@@ -119,15 +120,13 @@ def snapshot_url(oss, key: str, at_sec: float, *, width: int = FRAME_WIDTH, exac
     return oss._presign("GET", key, expires_sec, subresource={"x-oss-process": process})
 
 
-async def _vision(frames: list[tuple[float, str]], *, duration: float, orientation: str, speech: str) -> dict:
+async def _vision(frames: list[tuple[float, str]], *, duration: float, orientation: str, speech: str, model: str) -> dict:
     """One vision call over the timed frames; its tokens are inside the per-minute price."""
     import litellm
 
     from agent.llm import _get_provider_kwargs
-    from core.config import get_config
     from question.runtime import assert_current
 
-    cfg = get_config().video_analysis
     await assert_current("request")
     content: list[dict[str, Any]] = [{"type": "text", "text": PROMPT.format(
         duration=round(duration, 1), orientation=orientation, speech=speech)}]
@@ -138,8 +137,9 @@ async def _vision(frames: list[tuple[float, str]], *, duration: float, orientati
     async def attempt() -> dict:
         # A thinking model spends part of the budget before it writes; 4000 keeps the JSON whole.
         response = await asyncio.wait_for(litellm.acompletion(
-            model=cfg.model, messages=[{"role": "user", "content": content}], temperature=0.2,
-            max_tokens=4000, timeout=ATTEMPT_SECONDS, **_get_provider_kwargs(cfg.model)), ATTEMPT_SECONDS)
+            model=model, messages=[{"role": "user", "content": content}], temperature=0.2,
+            max_tokens=4000, timeout=ATTEMPT_SECONDS,
+            **request_options(model, None, _get_provider_kwargs(model))), ATTEMPT_SECONDS)
         return parse_picture(response.choices[0].message.content or "")
 
     return await first_answer(attempt, hedge_after=HEDGE_SECONDS)
@@ -185,7 +185,7 @@ def parse_picture(text: str) -> dict:
     raise ValueError("the JSON object in the reply does not parse")
 
 
-async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
+async def read_clip(row, meta: dict, oss, *, transcribe: bool, model: str) -> dict:
     """Speech and picture of one clip, read at the same time; cached on its meta."""
     from tool.video_production import _configured_transcription_target, _provider_transcribe
 
@@ -206,7 +206,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
     async def picture() -> dict[str, Any]:
         frames = [(at, snapshot_url(oss, row.oss_key, at)) for at in _frame_times(duration)]
         try:
-            return await _vision(frames, duration=duration, orientation=orientation,
+            return await _vision(frames, duration=duration, orientation=orientation, model=model,
                                  speech="有声音" if meta.get("has_audio") else "没有声音")
         except Exception as exc:
             log.warning("footage %s: picture reading failed: %s", row.id, type(exc).__name__)
@@ -214,7 +214,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
 
     heard, seen = await asyncio.gather(speech(), picture())
     reading = {
-        "v": READING_VERSION, "transcript": str(heard.get("text") or "").strip() or None,
+        "v": READING_VERSION, "model": model, "transcript": str(heard.get("text") or "").strip() or None,
         "sentences": heard.get("sentences") or [], "subject": seen.get("subject"),
         "speech_checked": meta.get("has_audio") is False or (transcribe and meta.get("has_audio") is True and not heard.get("error")),
         "segments": seen.get("segments") or [], "best": seen.get("best"),
@@ -234,7 +234,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
     return reading
 
 
-async def _prepare(asset_id: str, user_id: str) -> dict | None:
+async def _prepare(asset_id: str, user_id: str, model: str) -> dict | None:
     from core.oss import get_oss
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
@@ -247,16 +247,22 @@ async def _prepare(asset_id: str, user_id: str) -> dict | None:
         row = await db.get(FileAsset, asset_id)
     if row is None:
         return None
-    return await read_clip(row, meta, get_oss(), transcribe=True)
+    return await read_clip(row, meta, get_oss(), transcribe=True, model=model)
 
 
-def prepare_in_background(asset_id: str, user_id: str) -> None:
+def prepare_in_background(asset_id: str, user_id: str, model_id: str | None = None) -> None:
     """Upload hook on a 你拍我剪 page: read the clip now, while the owner uploads the rest."""
-    if asset_id in _readings and not _readings[asset_id].done():
+    model = selected_model(model_id)
+    key = (asset_id, model)
+    if key in _readings and not _readings[key].done():
         return
-    task = asyncio.create_task(_prepare(asset_id, user_id))
-    _readings[asset_id] = task
-    task.add_done_callback(lambda _t: _readings.pop(asset_id, None) if _readings.get(asset_id) is _t else None)
+    task = asyncio.create_task(_prepare(asset_id, user_id, model))
+    _readings[key] = task
+    task.add_done_callback(lambda done: _readings.pop(key, None) if _readings.get(key) is done else None)
+
+
+def matches_reading(reading, model: str) -> bool:
+    return isinstance(reading, dict) and reading.get("v") == READING_VERSION and reading.get("model") == model
 
 
 async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: bool) -> dict:
@@ -270,7 +276,8 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
         raise FootageRefusal(f"clip {index + 1} ({asset_id}) is not a ready upload of yours")
     if not str(row.mime or "").startswith("video/"):
         raise FootageRefusal(f"clip {index + 1} is {row.mime}; only videos can be cut")
-    pending = _readings.get(asset_id)
+    model = selected_model(ctx.model_id)
+    pending = _readings.get((asset_id, model))
     if pending is not None:
         # Read on upload and still running here: wait for it rather than paying twice.
         try:
@@ -286,9 +293,9 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
     if duration > MAX_CLIP_SECONDS:
         raise FootageRefusal(f"clip {index + 1} is {duration:.0f}s; one clip may be at most {MAX_CLIP_SECONDS}s")
     reading = (row.meta or {}).get("reading") if isinstance(row.meta, dict) else None
-    if (not isinstance(reading, dict) or reading.get("v") != READING_VERSION
+    if (not matches_reading(reading, model)
             or (transcribe and meta.get("has_audio") and not reading.get("speech_checked"))):
-        reading = await read_clip(row, meta, oss, transcribe=transcribe)
+        reading = await read_clip(row, meta, oss, transcribe=transcribe, model=model)
     return {
         "clip": index + 1, "asset_id": asset_id, "name": row.name,
         "duration_sec": round(duration, 2), "orientation": meta.get("orientation"),

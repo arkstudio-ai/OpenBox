@@ -9,9 +9,11 @@ import pytest
 
 from light import reference_film, reference_quality as quality, wan_story
 from light.reference_plan import ShotPlan
+from tool.tool import ToolContext
 
 
-async def test_visual_schema_retry_identifies_the_invalid_field_and_keeps_the_original_request(monkeypatch):
+@pytest.mark.parametrize("tier", ["standard", "creative", "deep", "fast"])
+async def test_visual_schema_retry_uses_the_selected_model_and_keeps_the_original_request(monkeypatch, tier):
     import litellm
     from agent import llm, trajectory
     from core import config
@@ -22,7 +24,9 @@ async def test_visual_schema_retry_identifies_the_invalid_field_and_keeps_the_or
 
     monkeypatch.setattr(trajectory, "service_scope", scope)
     monkeypatch.setattr(trajectory, "capture_service_dispatch", scope)
-    monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(video_analysis=SimpleNamespace(model="vision")))
+    config_value = config.OpenBoxConfig(model_tiers={"product_chat": True})
+    chosen = next(row.model for row in config_value.model_tiers.chat if row.tier == tier)
+    monkeypatch.setattr(config, "get_config", lambda: config_value)
     monkeypatch.setattr(llm, "_get_provider_kwargs", lambda model: {})
     monkeypatch.setattr(quality, "_check", AsyncMock())
     monkeypatch.setattr(quality, "owned_images", AsyncMock(return_value={"https://example.invalid/product": "card",
@@ -30,14 +34,16 @@ async def test_visual_schema_retry_identifies_the_invalid_field_and_keeps_the_or
     messages = []
 
     async def respond(**options):
+        assert options["model"] == chosen
         messages.append(deepcopy(options["messages"]))
         values = product_report(confidence=1.6 if len(messages) == 1 else .95)["report"]
         choice = SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(values)))
         return SimpleNamespace(choices=[choice])
 
     monkeypatch.setattr(litellm, "acompletion", respond)
-    answer = await quality.ask(None, "review_product", quality.ProductReport, "Inspect the product.",
+    answer = await quality.ask(ToolContext(model_id=chosen), "review_product", quality.ProductReport, "Inspect the product.",
                                {"language": "vi"}, ["card", "card", "take"])
+    assert answer["model"] == chosen
     assert answer["report"]["confidence"] == .95
     assert messages[1][0] == messages[0][0] and 'confidence' in messages[1][1]["content"]
     assert [part["image_url"]["url"] for part in messages[0][0]["content"][1:]] == [

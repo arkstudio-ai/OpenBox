@@ -407,6 +407,53 @@ async def test_product_chat_tier_is_pinned_on_the_same_assistant_session(monkeyp
             assert (item.model, item.variant) == (session.model, session.variant)
 
 
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_guided_video_prepare_checks_owned_materials_without_desktop(monkeypatch, deleted):
+    from unittest.mock import AsyncMock
+
+    from agent import inbox
+    from db.models.file_asset import FileAsset
+    from sandbox.entitlement import SandboxSubscriptionRequired
+
+    owner = await _user()
+    monkeypatch.setattr(production, "schedule_inbox_wake", lambda *_: None)
+    deliver = AsyncMock(side_effect=SandboxSubscriptionRequired())
+    monkeypatch.setattr("sandbox.assets.deliver_asset_ids", deliver)
+
+    async with _client(owner) as client:
+        entry = await client.post("/api/light/productions", json={"entry_id": "video"})
+        assert entry.status_code == 201, entry.text
+        session_id = entry.json()["session_id"]
+        path = f"/api/light/productions/{session_id}"
+        asset_id = uuid4().hex
+        async with get_db_session() as db:
+            db.add(FileAsset(id=asset_id, user_id=owner["id"], workspace_id=owner["default_workspace_id"],
+                             name="product.mov", oss_key=f"assets/{asset_id}/product.mov", mime="video/quicktime",
+                             size=500, source="user", status="ready", is_deleted=False,
+                             created_at=datetime.now(timezone.utc)))
+        saved = await client.patch(path, json={"revision": 1, "asset_ids": [asset_id], "page": "review"})
+        assert saved.status_code == 200, saved.text
+        action = await client.post(f"{path}/actions", json={
+            "revision": saved.json()["revision"], "action": "prepare", "request_id": uuid4().hex,
+        })
+        assert action.status_code == 200, action.text
+
+    lease, batch = await inbox._reserve_and_claim(session_id, owner["id"])
+    try:
+        if deleted:
+            async with get_db_session() as db:
+                (await db.get(FileAsset, asset_id)).is_deleted = True
+        result = await inbox._deliver_claimed_batch(lease, batch)
+        deliver.assert_not_awaited()
+        item_ids = tuple(item.id for item in batch.receipts)
+        if deleted:
+            assert result.terminal_item_ids == item_ids and result.result_message_id
+        else:
+            assert result.runnable_item_ids == item_ids and not result.terminal_item_ids
+    finally:
+        await lease.release(session_status="idle")
+
+
 def test_remake_preserves_eyelines_serving_endpoints_and_store_card():
     from tool import video_runninghub
     from video.timeline import Timeline

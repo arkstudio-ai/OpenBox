@@ -211,9 +211,8 @@ async def decide(ctx, evidence, url, asset_id, starts, ends, *, references=None)
     import litellm
     from agent.llm import _get_provider_kwargs
     from agent.trajectory import capture_service_dispatch, service_scope
-    from core.config import get_config
 
-    model = get_config().video_analysis.model
+    model = vision_contract.selected_model(getattr(ctx, "model_id", None))
     guide = (
         "你是这条广告的剪辑师。图中下方数字为原始帧号，结合实际画面和已识别对白选入点 first、最后保留帧 last。"
         "first 和 last 必须分别从候选整数中选。保留完整对话、动作和反应；选择人物、物品、背景和动作自然且接得上的帧。"

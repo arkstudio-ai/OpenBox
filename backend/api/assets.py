@@ -361,12 +361,16 @@ async def complete_asset(
             # (video/media_probe.py); in the background, the upload is done.
             # On a 你拍我剪 page the whole clip is read now (speech + picture),
             # while the owner is still uploading the rest.
-            from billing.footage import is_footage_session
             from billing.service import billing_mode
+            from db.models.session import Session
 
-            if billing_mode() != "enforce" and await is_footage_session(row.session_id):
+            session = await db.get(Session, row.session_id) if row.session_id and billing_mode() != "enforce" else None
+            if session and session.light_entry == "footage_edit":
+                from agent.model_resolve import resolve
+                from core.config import get_config
                 from tool.footage_analyze import prepare_in_background
-                prepare_in_background(row.id, row.user_id)
+                model, _ = resolve(session.model, get_config(), context="footage upload")
+                prepare_in_background(row.id, row.user_id, model)
             else:
                 from video.media_probe import probe_in_background
                 probe_in_background(row.id, row.user_id)

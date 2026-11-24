@@ -141,6 +141,29 @@ def test_dub_cast_follows_the_actual_actors_including_a_female_authority():
     assert post._voice_choices(plan, 25) == ["Emily_v3.1", "Luna_v3.1"]
 
 
+async def test_short_dub_uses_configured_voice_recognizer_when_file_asr_detects_no_fragment(tmp_path, monkeypatch):
+    from assistant import voice_messages
+
+    voice = tmp_path / "line-25.wav"
+    voice.write_bytes(_sound(1.7))
+    register = AsyncMock(return_value="voice-asset")
+    transcript = AsyncMock(return_value={})
+    recognize = AsyncMock(return_value={"text": "Cả nhóm đang chờ, giờ em mới tới à?"})
+    monkeypatch.setattr(post, "_reference_asset", register)
+    monkeypatch.setattr(soda_story, "_transcript", transcript)
+    monkeypatch.setattr(voice_messages, "enabled", lambda: True)
+    monkeypatch.setattr(voice_messages, "recognize", recognize)
+    assert await post._hear_dub(None, voice, "vi") == "Cả nhóm đang chờ, giờ em mới tới à?"
+    assert recognize.await_args.args[1] == "audio/wav"
+    with wave.open(io.BytesIO(recognize.await_args.args[0])) as sample:
+        assert sample.getframerate() == 16000 and sample.getnchannels() == 1
+        assert sample.getnframes() / 16000 == pytest.approx(2.55, abs=.01)
+    assert voice.read_bytes() == _sound(1.7)
+    transcript.return_value = {"text": "A conflicting line."}
+    assert await post._hear_dub(None, voice, "vi") == "A conflicting line."
+    assert recognize.await_count == 1
+
+
 @pytest.mark.asyncio
 async def test_silent_native_and_wrong_vietnamese_tone_use_another_voice_and_fit_on_camera(tmp_path, monkeypatch):
     await post.video.ff("-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "2", "-c:a", "aac",

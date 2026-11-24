@@ -145,7 +145,26 @@ async def _hear_dub(ctx, rendered, language):
     digest = hashlib.sha256(sound).hexdigest()[:24]
     asset = await _reference_asset(ctx, f"commercial-voice-{digest}", sound, mime="audio/mpeg")
     result = await _transcript(ctx, asset, language=language)
-    return str(result.get("text") or " ".join(row["text"] for row in result.get("sentences", []) if row.get("text"))).strip()
+    heard = str(result.get("text") or " ".join(row["text"] for row in result.get("sentences", []) if row.get("text"))).strip()
+    if heard:
+        return heard
+    return await _hear_short_dub(rendered)
+
+
+async def _hear_short_dub(rendered):
+    from assistant.policy import AssistantError
+    from assistant.voice_messages import enabled, recognize
+
+    if not enabled():
+        return ""
+    # File ASR sometimes reports no valid fragment for a short, trimmed utterance. Keep the output audio intact.
+    wav = rendered.with_name(rendered.stem + "-asr.wav")
+    await video.ff("-i", rendered, "-vn", "-af", "adelay=350:all=1,apad=pad_dur=0.5",
+                   "-ac", 1, "-ar", 16000, "-c:a", "pcm_s16le", wav)
+    try:
+        return (await recognize(wav.read_bytes(), "audio/wav"))["text"]
+    except AssistantError:
+        return ""
 
 
 def _voice_choices(plan, index):

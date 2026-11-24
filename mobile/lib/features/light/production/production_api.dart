@@ -11,6 +11,7 @@ import '../../../shared/models/resource.dart';
 import 'production_shot_models.dart';
 
 const shortcutStory = 'shortcut_story';
+const productStory = 'product_story';
 
 enum ProductionKind {
   video('video'),
@@ -29,7 +30,7 @@ enum ProductionKind {
   bool get imagesOnly => this == menu || this == poster;
 
   List<String> get templates => switch (this) {
-    video => [shortcutStory, 'soda_story', 'silk_road'],
+    video => [productStory, shortcutStory, 'soda_story', 'silk_road'],
     footage => ['documentary', 'quick_cut', 'product'],
     menu || poster => const [],
   };
@@ -245,9 +246,16 @@ class LightProduction {
   bool supportsVideoTiers(String selectedTemplate) =>
       kind == ProductionKind.video &&
       selectedTemplate != shortcutStory &&
+      selectedTemplate != productStory &&
       (selectedTemplate.isEmpty || kind.templates.contains(selectedTemplate));
-  bool get manualPreparation =>
-      const [shortcutStory, 'soda_story', 'silk_road'].contains(template);
+  bool get manualPreparation => const [
+    productStory,
+    shortcutStory,
+    'soda_story',
+    'silk_road',
+  ].contains(template);
+  bool get supportsMusic =>
+      kind == ProductionKind.video && template != productStory;
   bool get wanRemake => manualPreparation || template == 'wan_story';
   bool get remake =>
       kind == ProductionKind.video && (wanRemake || template == 'twist');

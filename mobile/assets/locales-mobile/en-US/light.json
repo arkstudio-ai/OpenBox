@@ -477,6 +477,12 @@
       }
     },
     "template": {
+      "product_story": {
+        "title": "Cinematic product story",
+        "body": "Preview the original headphone ad. Make a 54-second landscape birthday story from a phone reference, with live dialogue, a selfie reveal and a product end card.",
+        "referenceHelp": "Leave this blank to use the template’s 21-shot birthday story. You can add a phone model, an end-card line, or dialogue you want to keep.",
+        "referencePlaceholder": "Add a phone model, an end-card line, or a line of dialogue"
+      },
       "shortcut_story": {
         "title": "Already There",
         "body": "Two ways to reach the same goal. Show how your product makes the easier way possible."
@@ -563,6 +569,8 @@
     "removeMissing": "Remove unavailable materials",
     "fileTooLarge": "Each file can be up to 200 MB.",
     "previewUnavailable": "Preview unavailable.",
+    "playHeadphoneReference": "Play the original headphone ad",
+    "headphoneReferenceTitle": "Original headphone commercial",
     "playCase": "Play the crawfish remake",
     "previewMenu": "Preview menu sample",
     "playPreview": "Play",

@@ -47,6 +47,7 @@ void main() {
   const enabled = bool.fromEnvironment('LIGHT_QA');
   const generate = bool.fromEnvironment('LIGHT_QA_GENERATE');
   const silkRoad = bool.fromEnvironment('LIGHT_QA_SILK_ROAD');
+  const cinematic = bool.fromEnvironment('LIGHT_QA_PRODUCT_STORY');
   const verifyShotEditor = bool.fromEnvironment('LIGHT_QA_SILK_SHOT_EDITOR');
   const evidencePath = String.fromEnvironment('LIGHT_QA_EVIDENCE_DIR');
   const username = String.fromEnvironment('LIGHT_QA_USERNAME');
@@ -66,6 +67,7 @@ void main() {
       expect(
         username.isNotEmpty &&
             (silkRoad ||
+                cinematic ||
                 [password, photo, clip].every((value) => value.isNotEmpty)),
         isTrue,
       );
@@ -219,6 +221,140 @@ void main() {
           () => find.text('已选 1 个素材').evaluate().isNotEmpty,
           'material-saved',
         );
+      }
+
+      if (cinematic) {
+        const fixture = String.fromEnvironment('LIGHT_QA_PRODUCT_PHOTO');
+        const copy = '照已定稿的小米18概念广告《这一张，有你》，保留三句对白和54秒横屏分镜。';
+        await home();
+        await tap('light-entry-video');
+        await until(() => shown('production-shop'), 'product-story-materials');
+        String? created;
+        final dio = container.read(apiDioProvider);
+        final captureDraft = InterceptorsWrapper(
+          onResponse: (response, handler) {
+            if (response.requestOptions.method == 'POST' &&
+                response.requestOptions.path == '/api/light/productions' &&
+                response.data is Map<String, dynamic>) {
+              created = LightProduction.fromJson(
+                response.data as Map<String, dynamic>,
+              ).sessionId;
+            }
+            handler.next(response);
+          },
+        );
+        final source = File(fixture);
+        expect(source.existsSync(), isTrue);
+        final originalPicker = ImagePickerPlatform.instance;
+        ImagePickerPlatform.instance = _FixturePicker([
+          XFile(source.path, mimeType: 'image/png'),
+        ]);
+        dio.interceptors.add(captureDraft);
+        try {
+          await tap('production-source-upload');
+          await until(
+            () => find.text('已选 1 个素材').evaluate().isNotEmpty,
+            'product-story-material-saved',
+            seconds: 120,
+          );
+        } finally {
+          ImagePickerPlatform.instance = originalPicker;
+          dio.interceptors.remove(captureDraft);
+        }
+        expect(created, isNotNull);
+        final id = created!;
+        File('${evidence.path}/session-id.txt').writeAsStringSync(id);
+
+        await tap('production-primary');
+        final remakes = find.text('复刻爆款');
+        await until(
+          () => remakes.evaluate().isNotEmpty,
+          'product-story-remakes-tab',
+        );
+        await tester.tap(remakes.last);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tap('production-template-$productStory');
+        await capture('01-product-story-card');
+        await tap('production-headphone-preview');
+        VideoPlayerController player() => tester
+            .widget<VideoPlayer>(find.byType(VideoPlayer).last)
+            .controller;
+        await until(
+          () =>
+              find.byType(VideoPlayer).evaluate().isNotEmpty &&
+              player().value.isPlaying &&
+              player().value.position > const Duration(milliseconds: 300),
+          'headphone-reference-plays',
+        );
+        expect(
+          player().value.duration.inMilliseconds,
+          inInclusiveRange(53150, 53300),
+        );
+        await capture('02-headphone-reference-playing');
+        await tap('media-viewer-close');
+
+        await tap('production-primary');
+        await tester.ensureVisible(key('production-script'));
+        await tester.enterText(key('production-script'), copy);
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tap('production-primary');
+        await until(
+          () => shown('production-remake-script'),
+          'product-story-plan',
+          seconds: 260,
+        );
+        final plan = await api.get(id);
+        expect(plan.template, productStory);
+        expect(plan.referenceCopy, copy);
+        expect(plan.remakePrepared, isTrue);
+        for (final item in [
+          '54 秒 · 21 镜',
+          '小米 18',
+          '爸，往我这边一点。',
+          '在手机里回看同一张合照',
+        ]) {
+          expect(plan.script, contains(item));
+        }
+        await capture('03-product-story-plan');
+        if (!generate) return;
+
+        await tap('production-primary');
+        await until(
+          () => shown('production-progress'),
+          'product-story-generating',
+        );
+        await capture('04-product-story-generating');
+        await until(
+          () =>
+              shown('production-result-preview') ||
+              find.text('重试制作').evaluate().isNotEmpty,
+          'product-story-finished',
+          seconds: 1940,
+        );
+        final result = await api.get(id);
+        expect(result.status, 'completed', reason: 'App production $id');
+        expect(result.output?.video, isTrue);
+        await capture('05-product-story-result');
+        await tap('production-result-preview');
+        await until(
+          () =>
+              find.byType(VideoPlayer).evaluate().isNotEmpty &&
+              player().value.position > const Duration(seconds: 1),
+          'product-story-result-plays',
+          seconds: 85,
+        );
+        expect(
+          player().value.duration.inMilliseconds,
+          inInclusiveRange(53990, 54010),
+        );
+        await player().seekTo(const Duration(milliseconds: 52700));
+        await tester.pump(const Duration(milliseconds: 500));
+        await capture('06-product-story-tail');
+        await tap('media-viewer-close');
+        await openFromHistory(id);
+        expect((await api.get(id)).output?.id, result.output?.id);
+        debugPrint('PRODUCT_STORY_APP_RESULT $id ${result.output!.id}');
+        return;
       }
 
       if (silkRoad) {

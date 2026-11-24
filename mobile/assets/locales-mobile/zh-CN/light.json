@@ -475,6 +475,12 @@
       }
     },
     "template": {
+      "product_story": {
+        "title": "品牌剧情广告",
+        "body": "参考耳机广告的完整原片。用手机产品图拍一条 54 秒横屏生日故事，包含同期对白、合照反转和产品片尾。",
+        "referenceHelp": "留空使用模板的 21 镜生日故事。你也可以填写要出现在片尾的手机型号、短句或希望保留的对白。",
+        "referencePlaceholder": "写下手机型号、片尾短句或希望保留的一句对白"
+      },
       "shortcut_story": {
         "title": "先一步做到",
         "body": "同一个目标，两种办法。用你的商品拍出从费劲到轻松的反转。"
@@ -561,6 +567,8 @@
     "removeMissing": "清除已无法使用的素材",
     "fileTooLarge": "单个素材最多 200 MB。",
     "previewUnavailable": "暂时无法预览。",
+    "playHeadphoneReference": "播放耳机广告原片",
+    "headphoneReferenceTitle": "耳机商业广告 · 原片",
     "playCase": "播放小龙虾复刻案例",
     "previewMenu": "查看菜单样例",
     "playPreview": "播放",

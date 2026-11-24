@@ -5,7 +5,7 @@ FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+    curl ffmpeg fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /bin/uv

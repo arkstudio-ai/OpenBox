@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from core.config import ChatTier
-from light import remake_case, shortcut_plan, silk_road, wan_story
+from light import product_story_plan, remake_case, shortcut_plan, silk_road, wan_story
 from light.production_music import MusicStyle
 from light.video_tiers import VideoTier
 
@@ -36,6 +36,7 @@ TEMPLATES = {
         "wok": "烟火气特写。开场直接用最有吸引力的动作，接制作过程、成品揭晓，共三个约 5 秒的新镜头。",
         silk_road.TEMPLATE: "《丝路留香》，约 62 秒超宽银幕。参考原片的镜头和转场，用当前素材适配人物、场景和剧情。",
         wan_story.SODA_TEMPLATE: "苏打水广告样片。参考低机位开场、正反打、冷暖转场和产品题字，重新编剧和拍摄。",
+        product_story_plan.TEMPLATE: "品牌剧情广告。参考耳机广告的道具衔接和商品亮相，拍摄54秒横屏生日合照故事。",
         shortcut_plan.TEMPLATE: "《早就吃上了》，约30秒七镜。围绕同一个目标拍出两种办法，用商品亮相解释为什么有人先一步做到。",
         wan_story.TEMPLATE: "参考样片《这局，吃虾》的广告节奏，根据所选商品与用户创意重新编剧、拍摄和剪辑。",
         remake_case.TEMPLATE: "《这单谁买》，30 秒七段。按验证过的样片分镜，适配真实商品与参考文案。",

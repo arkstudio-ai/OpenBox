@@ -8,12 +8,12 @@ from urllib.parse import unquote, urlsplit
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from light import shortcut_plan, silk_road
+from light import product_story_plan, shortcut_plan, silk_road
 from light.reference_plan import ShotPlan
 
 TEMPLATE = "wan_story"
 SODA_TEMPLATE = "soda_story"
-TEMPLATES = (TEMPLATE, SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE)
+TEMPLATES = (TEMPLATE, SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE, product_story_plan.TEMPLATE)
 VERSION = "wan-story-v2"
 VERSIONS = ("wan-story-v1", VERSION)
 MODEL = "wan3.0-video"
@@ -54,7 +54,7 @@ class Plan(BaseModel):
 class StoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["prepare", "render"]
-    plan: shortcut_plan.ShortcutPlan | ShotPlan | silk_road.Plan | None = Field(
+    plan: product_story_plan.Plan | shortcut_plan.ShortcutPlan | ShotPlan | silk_road.Plan | None = Field(
         default=None,
         description="The director's storyboard. Required on prepare. Omit on render when the App has already approved a plan.",
     )
@@ -95,13 +95,18 @@ def planning_instruction(form: dict, action: str) -> str:
     directing = DIRECTING
     if form.get("template") == SODA_TEMPLATE:
         from light.soda_story import DIRECTING as directing
+    elif form.get("template") == product_story_plan.TEMPLATE:
+        directing = product_story_plan.DIRECTING
     elif form.get("template") == shortcut_plan.TEMPLATE:
         directing = shortcut_plan.DIRECTING
     elif form.get("template") == silk_road.TEMPLATE:
         directing = silk_road.DIRECTING
         data["确认菜名"] = form.get("product_name", "")
+    prepare = ("直接调用 light_wan_story，action=prepare。按上面的规则填写可选 plan，工具会装入完整分镜。"
+               if form.get("template") == product_story_plan.TEMPLATE else
+               "直接调用 light_wan_story，action=prepare，把完整分镜放在 plan。")
     return directing + (
-        "直接调用 light_wan_story，action=prepare，把完整分镜放在 plan。只保存文案供用户编辑，成功后结束。"
+        prepare + "只保存文案供用户编辑，成功后结束。"
         if action == "prepare" else
         "用户已点击生成。直接调用 light_wan_story，action=render，省略plan以使用已确认分镜。"
         "只有完整合成并核对所有分镜的成片可以交付。"
@@ -109,6 +114,8 @@ def planning_instruction(form: dict, action: str) -> str:
 
 
 def parse_plan(data, *, template=None):
+    if template == product_story_plan.TEMPLATE:
+        return product_story_plan.Plan.model_validate(data)
     if template == shortcut_plan.TEMPLATE:
         return shortcut_plan.ShortcutPlan.model_validate(data)
     if isinstance(data, dict) and data.get("format") == silk_road.FORMAT:
@@ -118,6 +125,8 @@ def parse_plan(data, *, template=None):
 
 def shot_count(run: dict) -> int:
     saved = run.get("remake_adaptation") or {}
+    if saved.get("format") == product_story_plan.FORMAT:
+        return product_story_plan.FILMED_COUNT
     if saved.get("format") == silk_road.FORMAT:
         return len(silk_road.case()["shots"])
     return len(saved["shots"]) if saved.get("format") == "shot-list-v2" else 3
@@ -127,6 +136,8 @@ def shot_count(run: dict) -> int:
 
 def is_complete_cut(run: dict, job, *, require_delivery_review: bool = True) -> bool:
     """Verify the persisted edit against the authored, ordered segment assets, even during recovery."""
+    if (run.get("remake_adaptation") or {}).get("format") == product_story_plan.FORMAT:
+        return product_story_plan.is_complete_cut(run, job)
     if (run.get("remake_adaptation") or {}).get("format") == silk_road.FORMAT:
         return silk_road.is_complete_cut(run, job)
     original = run.get("wan_cuts") or []

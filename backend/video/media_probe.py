@@ -1,7 +1,7 @@
 """What an uploaded video is, read by IMS instead of ffprobe (你拍我剪 F1).
 
-The backend image has no ffmpeg and the free plan has no desktop, so the
-facts the footage flow needs — duration, displayed size and orientation,
+The footage flow works without a desktop or local decoding. Its media facts —
+duration, displayed size and orientation,
 codec, whether there is sound — come from IMS ``RegisterMediaInfo`` +
 ``GetMediaInfo`` on the object's bucket URL (measured on light-test
 2026-11-02: ~2 s per clip, HEVC/mov and rotated iPhone clips included). The

@@ -49,7 +49,8 @@ def for_form(form: dict, lang: str | None) -> Language:
     copy = form.get("reference_copy")
     if not copy and not form.get("remake_adaptation"):
         copy = form.get("script")
-    inputs = [text for text in (copy, form.get("brief")) if text]
+    promotion = form.get("promotion_brief") or {}
+    inputs = [text for text in (copy, form.get("brief"), *promotion.values()) if text]
     if requested := next((value for text in inputs if (value := _requested(text))), None):
         return requested
     default = speech_language(lang)

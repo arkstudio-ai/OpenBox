@@ -585,6 +585,18 @@
     "optimize": "重新优化",
     "recognize": "识别图片菜品",
     "scriptPlaceholder": "在这里编辑文案",
+    "promotion": {
+      "title": "推广重点",
+      "optional": "选填",
+      "empty": "客群、主推卖点和片尾引导",
+      "audience": "想吸引谁？",
+      "offer": "这次主推什么？",
+      "call_to_action": "看完希望顾客做什么？",
+      "details": "补充卖点（选填）",
+      "detailsHint": "可填服务、周边或活动条件",
+      "close": "关闭",
+      "done": "完成"
+    },
     "referenceTitle": "参考文案（选填）",
     "wanReferenceHelp": "文案可以是卖点、一句对白或一个想法。助理会结合素材改编剧情、安排接镜和剪点。",
     "referenceHelp": "样片的七段剧情会保留，模型会结合你的素材和文案改编商品与台词。",

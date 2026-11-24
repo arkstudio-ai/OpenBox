@@ -585,6 +585,18 @@
     "optimize": "Tối ưu nội dung",
     "recognize": "Đọc món từ ảnh",
     "scriptPlaceholder": "Chỉnh nội dung ở đây",
+    "promotion": {
+      "title": "Trọng tâm quảng bá",
+      "optional": "Tùy chọn",
+      "empty": "Nhóm khách, điểm nổi bật và lời kêu gọi",
+      "audience": "Bạn muốn thu hút nhóm khách nào?",
+      "offer": "Bạn muốn quảng bá điều gì?",
+      "call_to_action": "Bạn muốn khách làm gì sau khi xem?",
+      "details": "Điểm nổi bật bổ sung (tùy chọn)",
+      "detailsHint": "Tiện nghi, dịch vụ, địa điểm lân cận hoặc điều kiện ưu đãi",
+      "close": "Đóng",
+      "done": "Xong"
+    },
     "referenceTitle": "Nội dung tham khảo (tùy chọn)",
     "wanReferenceHelp": "Nhập điểm nổi bật, một câu thoại hoặc ý tưởng. Trợ lý sẽ điều chỉnh kịch bản theo tư liệu và chọn điểm cắt.",
     "referenceHelp": "Giữ câu chuyện bảy cảnh, dùng tư liệu và nội dung của bạn để điều chỉnh món ăn và lời thoại.",

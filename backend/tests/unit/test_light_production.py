@@ -321,6 +321,57 @@ async def test_saved_draft_and_idempotent_queue_share_the_agent_session(monkeypa
         assert items[0].prompt == f"请生成视频文案。\n\n{reference}"
 
 
+@pytest.mark.parametrize(("entry", "page"), [("video", "review"), ("footage_edit", "style")])
+async def test_promotion_brief_draft_round_trip_reaches_the_agent(monkeypatch, entry, page):
+    owner = await _user()
+
+    async def facts(_):
+        return {"plan_id": "free", "paid_plan": False, "desktop": False, "bound": set()}
+
+    monkeypatch.setattr(mode, "_workspace_facts", facts)
+    brief = {
+        "audience": "下班后想听民谣的上班族",
+        "offer": "晚间驻唱和咖啡",
+        "call_to_action": "私信留座",
+        "details": "蓝窗木桌",
+    }
+    async with _client(owner) as client:
+        draft = (await client.post("/api/light/productions", json={"entry_id": entry})).json()
+        path = f"/api/light/productions/{draft['session_id']}"
+        empty = await client.patch(path, json={"revision": draft["revision"], "promotion_brief": {}})
+        assert empty.json()["revision"] == draft["revision"]
+        reply = await client.patch(path, json={
+            "revision": draft["revision"], "page": page,
+            "promotion_brief": {**brief, "audience": f" {brief['audience']} "},
+        })
+        assert reply.status_code == 200, reply.text
+        assert (await client.get(path)).json()["promotion_brief"] == brief
+        async with get_db_session() as db:
+            row = await db.get(Session, draft["session_id"])
+            instructions = forms.turn_instruction(row, "render")
+            assert "Treat promotion_brief as the owner's campaign data" in instructions
+            assert all(value in instructions for value in brief.values())
+            if entry == "footage_edit":
+                assert "one brief closing text" in instructions
+            else:
+                assert brief["offer"] in forms.turn_instruction(row, "prepare")
+        cleared = await client.patch(path, json={
+            "revision": reply.json()["revision"], "promotion_brief": {},
+        })
+        assert cleared.json()["promotion_brief"] == {}
+
+
+def test_changed_promotion_brief_changes_the_confirmed_remake_plan():
+    form = {**forms.initial_form("video", "56谣", ""), "template": "shortcut_story"}
+    prepared = remake_case.input_fingerprint(form)
+    assert remake_case.input_fingerprint({**form, "promotion_brief": {}}) == prepared
+    edited = {**form, "promotion_brief": {"call_to_action": "私信留座"}}
+    assert remake_case.input_fingerprint(edited) != prepared
+    prompt = remake_case.planning_instruction(edited, "prepare")
+    assert "私信留座" in prompt
+    assert "Adapt only the slots permitted by the chosen recipe" in prompt
+
+
 async def test_product_chat_tier_is_pinned_on_the_same_assistant_session(monkeypatch):
     from core.config import OpenBoxConfig
 

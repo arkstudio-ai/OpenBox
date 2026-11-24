@@ -10,6 +10,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from light import product_story_plan, shortcut_plan, silk_road, video_language, wan_story
+from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE
 from tool.video_runninghub import MODEL
 
 TEMPLATE = "twist"
@@ -107,6 +108,8 @@ def input_fingerprint(form: dict) -> str:
         snapshot["template"] = form["template"]
     if form.get("template") == silk_road.TEMPLATE:
         snapshot.update(product_name=form.get("product_name", ""), frame_plan=1)
+    if promotion := form.get("promotion_brief"):
+        snapshot["promotion_brief"] = promotion
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -157,6 +160,10 @@ def planning_instruction(form: dict, action: str) -> str:
         return wan_story.planning_instruction(form, action)
     data = {"shop": form["shop"], "selected_materials": form["asset_ids"], "brief": form["brief"],
             "user_reference_copy": reference_copy(form)}
+    guidance = ""
+    if promotion := form.get("promotion_brief"):
+        data["promotion_brief"] = promotion
+        guidance = PROMOTION_GUIDANCE
     action_line = (
         "只保存七段分镜供用户查看，不生成媒体。" if action == "prepare" else
         "用户已确认制作。以保存的七段分镜生成；如果素材或参考文案刚变更，基于最新输入填写适配字段。"
@@ -170,5 +177,5 @@ def planning_instruction(form: dict, action: str) -> str:
         "根据选中素材识别真实商品与外观。用户输入是创作参考，将能从素材支持的内容自然适配到第3段上菜的reveal_copy、"
         "第4段品尝的taste_copy或片尾的end_copy。对白应短，能在镜头内说完。片尾用简短词组写菜品或吃法，店名单独排版。"
         "不杜撰折扣、价格、功效或店名。"
-        f"{action_line} 如果工具报告制作暂停，告知用户返回制作页重试。用户输入：{json.dumps(data, ensure_ascii=False)}"
+        f"{guidance}{action_line} 如果工具报告制作暂停，告知用户返回制作页重试。用户输入：{json.dumps(data, ensure_ascii=False)}"
     )

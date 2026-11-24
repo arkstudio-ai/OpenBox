@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
+import 'package:bossip_mobile/features/light/api/light_api.dart';
 import 'package:bossip_mobile/features/light/production/production_api.dart';
 import 'package:bossip_mobile/features/light/production/production_history.dart';
 import 'package:bossip_mobile/features/light/production/production_media.dart';
@@ -70,6 +71,131 @@ void main() {
           home: Scaffold(body: body),
         ),
       );
+
+  for (final (kind, page) in [('video', 'review'), ('footage_edit', 'style')]) {
+    testWidgets('$kind saves its promotion brief from the bottom sheet', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      const session = 'brief-draft';
+      var saved = <String, dynamic>{
+        'session_id': session,
+        'entry_id': kind,
+        'page': page,
+        'shop': '56谣',
+        'template': kind == 'video' ? shortcutStory : 'documentary',
+        'revision': 1,
+      };
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              if (request.method == 'PATCH') {
+                saved = {
+                  ...saved,
+                  ...request.data as Map<String, dynamic>,
+                  'revision': 2,
+                };
+              }
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: request.path == '/api/light/examples'
+                      ? {'items': <Object>[]}
+                      : saved,
+                ),
+              );
+            },
+          ),
+        );
+      Widget draft() => host(
+        ProductionPage(
+          sessionId: session,
+          initial: LightProduction.fromJson(saved),
+        ),
+        overrides: [
+          lightProductionApiProvider.overrideWithValue(LightProductionApi(dio)),
+          lightApiProvider.overrideWithValue(LightApi(dio)),
+        ],
+      );
+      const audience = '下班小聚';
+      const offer = '晚间驻唱和咖啡';
+      const action = '私信留座';
+      const details = '可以选窗边座位';
+      final card = find.byKey(const Key('production-promotion'));
+      final audienceField = find.byKey(
+        const Key('production-promotion-audience'),
+      );
+      final offerField = find.byKey(const Key('production-promotion-offer'));
+      final actionField = find.byKey(
+        const Key('production-promotion-call_to_action'),
+      );
+      final detailsField = find.byKey(
+        const Key('production-promotion-details'),
+      );
+      final close = find.byKey(const Key('production-promotion-close'));
+      final done = find.byKey(const Key('production-promotion-done'));
+      final sheet = find.byType(BottomSheet);
+
+      await tester.pumpWidget(draft());
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(offerField, findsNothing);
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      expect(sheet, findsOneWidget);
+      expect(find.descendant(of: sheet, matching: offerField), findsOneWidget);
+      expect(tester.getSize(offerField).height, greaterThanOrEqualTo(52));
+      await tester.enterText(audienceField, '这次编辑将关闭');
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(saved['promotion_brief'], isNull);
+      expect(find.text('选填'), findsOneWidget);
+
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      await tester.enterText(audienceField, audience);
+      await tester.enterText(offerField, offer);
+      await tester.enterText(actionField, action);
+      await tester.enterText(detailsField, details);
+      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      expect(saved['promotion_brief'], isNull);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 330);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(tester.getBottomRight(done).dy, lessThanOrEqualTo(900 - 330));
+      await tester.tap(done);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      expect(sheet, findsNothing);
+      expect(saved['promotion_brief'], {
+        'audience': audience,
+        'offer': offer,
+        'call_to_action': action,
+        'details': details,
+      });
+      expect(find.text('$audience · $offer · $action'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(draft());
+      await tester.pumpAndSettle();
+      expect(offerField, findsNothing);
+      expect(find.text('$audience · $offer · $action'), findsOneWidget);
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(offerField).controller!.text, offer);
+      expect(tester.widget<TextField>(detailsField).controller!.text, details);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets('the brand story asks for phone and end-card copy', (
     tester,

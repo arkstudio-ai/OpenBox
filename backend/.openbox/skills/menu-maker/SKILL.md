@@ -74,7 +74,8 @@ asks for a different look: then call it with `again: true`.
   blurred, cut off or covered: put it in the table as `?` and ask about it in
   the review card.
 - **Typed lines**: accept anything from "红烧肉 38" to a pasted list. Split on
-  new lines, commas or spaces; a trailing number is the price.
+  new lines or clear item separators. Read a trailing price with its original
+  currency and numeric separators, such as `45.000 ₫`; do not split inside it.
 - **"改上次那版"**: the earlier dish table is in this conversation's history.
   If there is none in this conversation, say so in one line and ask for a
   photo or typed lines.
@@ -109,8 +110,9 @@ prices (`?`) must be resolved before moving on.
 One card, single choice: `A4 打印（竖版）` / `手机竖图（发朋友圈、贴群里）` /
 `桌贴（横版小卡）`. Use the shop name from the assistant profile or the
 conversation for the heading when there is one; otherwise ask once with an
-option `不写店名`. Leave a plain square near the bottom right labeled
-「扫码点餐」 unless the owner says they have no ordering code.
+option in the session language to omit the shop name. Reserve a square for
+an ordering QR code unless the owner says there is none. Label it in the
+artwork language.
 
 | choice | `size` | notes |
 |---|---|---|
@@ -127,9 +129,9 @@ above. Prompt shape:
 Use case: productivity-visual
 Asset type: restaurant menu, <A4 print | phone portrait | landscape table card>
 Style: <the picked example's look in your own words, or without one the chosen style, e.g. 烟火红：deep red background, warm gold headings, festive but tidy>
-Layout: <the picked example's layout from 参考卡 or 样子说明, or without one: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders>; signature dishes marked with a small 「招牌」 badge that covers no name or price; a blank square labeled 「扫码点餐」 bottom right
-Text (verbatim, render every character exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
-<the confirmed table, one line per dish, with ¥ before each price>
+Layout: <the picked example's layout from 参考卡 or 样子说明, or without one: shop name "<店名>" as the heading; categories as section headings; each line = dish name left, price right with dot leaders>; signature dishes may have a small badge in the artwork language; a reserved ordering QR area unless the owner says there is none, labeled in the artwork language
+Text (render each approved line verbatim; use the session language or the owner-requested language for new labels; preserve Vietnamese diacritics):
+<the confirmed table, one line per dish, with its exact price, optional currency symbol, and separators>
 Constraints: no other text, no invented dishes, no photos of people; prices aligned in one column; generous margins for printing
 ```
 
@@ -156,7 +158,7 @@ A copy shop asks for a PDF, not a picture. Once the image passed the check
 
 | layout | call |
 |---|---|
-| A4 打印 | `paper: "a4"`, `name: "<店名>菜单.pdf"` (or `菜单.pdf` without a shop name) |
+| A4 打印 | `paper: "a4"`, a localized menu filename, optionally prefixed by the shop name (e.g. `Bếp Nhà - Thực đơn.pdf`) |
 | 手机竖图 / 桌贴 | `paper: "image"`, same naming |
 
 It costs nothing and needs no sandbox; the PDF lands on the same card as the

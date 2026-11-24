@@ -258,6 +258,7 @@ Future<void> openProductionMedia(BuildContext context, ProductionMedia media) =>
                     ? MediaPreviewVideo(
                         key: ValueKey(source),
                         source: source,
+                        subtitles: media.subtitles,
                         failedText: i18n.t('first_video:result.playFailed'),
                       )
                     : MediaPreviewImage(

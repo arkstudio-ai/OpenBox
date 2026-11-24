@@ -32,7 +32,7 @@ def output_language_line(lang: str | None) -> str:
     """One line per fragment (docs/LIGHT_MODE_I18N_PLAN.md §2.4): replies, card titles and options, on-screen text."""
     name = LANGUAGE_NAMES.get(lang or DEFAULT_LANG, LANGUAGE_NAMES[DEFAULT_LANG])
     line = (
-        f"默认对用户的所有输出（回复、卡片、文案、菜单、成片标题、字幕及新生成的对白和旁白）用{name}。"
+        f"默认对用户的所有输出（回复、卡片、文案、菜单、海报、成片标题、字幕及新生成的对白和旁白）用{name}。"
         "技能说明和示例的语言不会改变输出语言。保留原声、店名和用户要求逐字使用的文字；"
         "用户明确要求另一种或多种输出语言时，按其要求或所选多语模板制作。"
     )

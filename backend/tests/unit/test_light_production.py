@@ -668,3 +668,49 @@ def test_shot_progress_counts_only_distinct_shots_in_the_current_render():
     assert production._work_view(row, None, [old], None, False)["shot_progress"]["phase"] == "wan_delivery"
     row.light_production = {"run": {"action": "render", "remake_stage": "wan_shots"}}
     assert "shot_progress" not in production._work_view(row, None, jobs, None, False)
+
+
+def test_vietnamese_production_language_applies_to_multiple_templates():
+    from light import remake, remake_case, soda_story, video_language
+    from light.reference_plan import Shot
+
+    assert video_language.for_form({"brief": "Tao video quang cao quan an."}, "zh-CN") == "vi"
+    assert video_language.for_form({"reference_copy": "", "script": "Tôm hùm đất cay."}, "zh-CN") == "vi"
+    assert video_language.for_form({"brief": "拍一条美食广告"}, "vi-VN") == "vi"
+    assert video_language.for_form({"brief": "请用英文输出"}, "vi-VN") == "en"
+
+    plan = remake_case.Adaptation(taste_copy="Để tôi nếm miếng tôm.").localized("vi")
+    script = remake_case.display_script(plan)
+    assert "Ai trả tiền bữa này?" in script and "Thẻ kết" in script and "这顿我请" not in script
+    take = remake_case.storyboard(plan)[3]
+    request = remake.shot_request("test", take, "photo", plan.product)
+    assert request.spoken_line == plan.taste_copy
+    assert "Tiếng Việt" in request.prompt and "普通话" not in request.prompt
+
+    shot = Shot(scene="Bến tàu", seconds=5, frame="Cận cảnh", action="Quay sang",
+                speaker="Vũ", line="Để tôi nếm miếng tôm này trước nhé.")
+    request = soda_story.shot_request("test", 1, shot, "photo", language="vi")
+    assert request.spoken_line == shot.line and "Tiếng Việt" in request.prompt
+
+
+def test_menu_and_poster_use_the_artwork_language_and_keep_confirmed_text():
+    from types import SimpleNamespace
+
+    from light import production_form as forms
+
+    menu = forms.initial_form("menu", "Bếp Nhà", "")
+    menu.update(template="bilingual_table", dishes=[{"name": "Bánh mì bơ tỏi", "price": "32.000 ₫"}])
+    menu["run"] = {"artwork_language": forms.artwork_language(menu, "zh-CN")}
+    prompt = forms.turn_instruction(SimpleNamespace(light_entry="menu", light_production=menu, id="test"), "render")
+    assert "Vietnamese (Tiếng Việt) first and English second" in prompt
+    assert "Bánh mì bơ tỏi" in prompt and "32.000 ₫" in prompt
+    assert "中文菜名在上" not in prompt
+
+    poster = forms.initial_form("poster", "Bếp Nhà", "Write the poster in Vietnamese")
+    poster["poster_title"] = "Món mới, vị quen"
+    poster["script"] = "Gỏi cuốn tôm tươi"
+    poster["run"] = {"artwork_language": forms.artwork_language(poster, "en-US")}
+    prompt = forms.turn_instruction(SimpleNamespace(light_entry="poster", light_production=poster, id="test"), "render")
+    assert "Artwork and newly written copy language: Vietnamese" in prompt
+    assert "Món mới, vị quen" in prompt and "Gỏi cuốn tôm tươi" in prompt
+    assert "currency symbols and separators" in prompt

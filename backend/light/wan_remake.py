@@ -17,6 +17,7 @@ from db.models.video_job import VideoJob
 from light import remake_case, wan_edit, wan_story
 from light.remake import RemakeStopped, _check, _digest, _job, _material_refs, _reference_asset
 from light.remake_lettering import end_card
+from light.video_language import speech_hint
 from tool import image_gen, video_compose, video_production
 
 
@@ -67,7 +68,7 @@ def shot_request(prefix, index, plan, first, last, direction, take=1):
         instructions = (
             "保持同一间店、同一人物、衣服、左右位置和视线关系。一个实时连续镜头。"
             + _on_set(scene.action)
-            + "。只收演员以下对话，依次在镜头前八秒自然说完，说完以后安静做动作。"
+            + "。" + speech_hint(plan.language, spoken) + "只收演员以下对话，依次在镜头前八秒自然说完，说完以后安静做动作。"
             + " ".join(f"{line.speaker}说「{line.text}」。" for line in scene.lines)
         )
         if index == 2:

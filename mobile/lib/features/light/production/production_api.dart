@@ -67,6 +67,7 @@ class ProductionMedia {
     required this.mime,
     this.thumbnail,
     this.aspectRatio,
+    this.subtitles,
     this.kind,
   });
 
@@ -75,6 +76,7 @@ class ProductionMedia {
   final String mime;
   final String? thumbnail;
   final double? aspectRatio;
+  final String? subtitles;
   final String? kind;
 
   bool get video => kind == 'video' || mime.startsWith('video/');
@@ -87,6 +89,7 @@ class ProductionMedia {
       name: asString(json['name']) ?? '',
       mime: asString(json['mime']) ?? '',
       thumbnail: asString(json['thumbnail']),
+      subtitles: asString(json['subtitles_srt']),
       aspectRatio: width > 0 && height > 0 ? width / height : null,
     );
   }

@@ -9,6 +9,19 @@ from light.mode import LightError
 from tool.tool import ToolContext, ToolResult, define_tool
 
 
+_PREPARED = {"zh": "已写好剧情分镜", "en": "Storyboard ready", "vi": "Đã viết xong kịch bản phân cảnh"}
+
+
+def _delivered(title, language, asset, duration, shots):
+    summary = {
+        "zh": f"已确认的剧情镜头与片尾已合成为一份 {duration:.1f} 秒成片，并已附在本对话。",
+        "en": f"The approved shots and end card are assembled into a {duration:.1f}-second video attached here.",
+        "vi": f"Đã dựng các cảnh và thẻ kết đã duyệt thành video dài {duration:.1f} giây và đính kèm tại đây.",
+    }[language]
+    return ToolResult(title=title, output=f"{summary}\nasset_id={asset}, duration_sec={duration:.4f}.\nFor later edits, reuse this cloud asset with video_compose.",
+                      metadata={"asset_id": asset, "duration_sec": duration, "shots": shots})
+
+
 async def execute(args: remake_case.Adaptation, ctx: ToolContext) -> ToolResult:
     from light.remake import RemakeStopped, render
 
@@ -16,7 +29,7 @@ async def execute(args: remake_case.Adaptation, ctx: ToolContext) -> ToolResult:
         form, run, adaptation = await production.begin_remake(ctx, args)
         if run["action"] == "prepare":
             return ToolResult(
-                title="已适配《这单谁买》七段分镜",
+                title=_PREPARED[adaptation.language],
                 output=form["script"],
                 metadata={"revision": form["revision"], "rendered": False},
             )
@@ -28,11 +41,7 @@ async def execute(args: remake_case.Adaptation, ctx: ToolContext) -> ToolResult:
             return ToolResult(
                 title="复刻制作已暂停", output=reason, metadata={"error": True, "do_not_retry": True}
             )
-        return ToolResult(
-            title="《这单谁买》30 秒成片",
-            output="7 段、30 秒，已合成并保存成片。",
-            metadata={"asset_id": asset_id, "shots": 7, "duration_sec": 30},
-        )
+        return _delivered(remake_case.title(adaptation.language), adaptation.language, asset_id, 30, 7)
     except LightError as exc:
         return ToolResult(title="复刻制作已暂停", output=str(exc), metadata={"error": True})
 
@@ -72,7 +81,7 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
     try:
         form, run, plan = await production.begin_remake(ctx, args.plan, requested_action=args.action)
         if run["action"] == "prepare":
-            return ToolResult(title="已写好剧情分镜", output=form["script"], metadata={"rendered": False})
+            return ToolResult(title=_PREPARED[plan.language], output=form["script"], metadata={"rendered": False})
         try:
             if form["template"] == wan_story.SODA_TEMPLATE:
                 from light.soda_story import render
@@ -92,13 +101,7 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
             )
         shot_count = (len(product_story_plan.case()["shots"]) if isinstance(plan, product_story_plan.Plan)
                       else wan_story.shot_count(run))
-        return ToolResult(
-            title=f"《{plan.title}》已完成",
-            output=(f"已确认的剧情镜头与片尾已合成为一份 {duration:.1f} 秒成片，并已附在本对话。"
-                    f"\n完整成片 asset_id={asset}，duration_sec={duration:.4f}。"
-                    "这是云端资源；后续高级剪辑或字幕修改使用 video_compose 复用这个资源，不要重新调用制作按钮工具。"),
-            metadata={"asset_id": asset, "duration_sec": duration, "shots": shot_count},
-        )
+        return _delivered(plan.title, plan.language, asset, duration, shot_count)
     except LightError as exc:
         return ToolResult(title="制作已暂停", output=str(exc), metadata={"error": True})
 

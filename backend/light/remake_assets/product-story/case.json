@@ -14,7 +14,7 @@
       "title": "旧照片里没有爸爸",
       "frames": 86,
       "generate_seconds": 5,
-      "prompt": "16:9写实的城市家庭电影广告，从上传画面自然开始。所有出现的人脸、衣服、室内物品维持一致，真实的动作和自然光。女孩坐在桌边，看着翻开的实体相册，手指依次点到右页一张她和妈妈过去吹蜡烛的小照片，翻起一小片边缘。她抬头朝画外左侧的爸爸看，眼神有点好奇，嘴自然同步念出一句普通话，句后微歪头。只有穿珊瑚粉的女孩出声。相册照片中的人保持静止，手指自然。 不加字幕、叠字、水印或音乐。",
+      "prompt": "16:9写实的城市家庭电影广告，从上传画面自然开始。所有出现的人脸、衣服、室内物品维持一致，真实的动作和自然光。女孩坐在桌边，看着翻开的实体相册，手指依次点到右页一张她和妈妈过去吹蜡烛的小照片，翻起一小片边缘。她抬头朝画外左侧的爸爸看，眼神有点好奇，嘴自然同步说出指定台词，句后微歪头。只有穿珊瑚粉的女孩出声。相册照片中的人保持静止，手指自然。 不加字幕、叠字、水印或音乐。",
       "spoken_line": "爸，怎么又没你？",
       "product_visible": false,
       "preferred": [
@@ -28,7 +28,7 @@
       "title": "爸爸说他在拍照",
       "frames": 54,
       "generate_seconds": 5,
-      "prompt": "16:9写实的城市家庭电影广告，从上传画面自然开始。所有出现的人脸、衣服、室内物品维持一致，真实的动作和自然光。从相册旁拍爸爸的半身，他低头看女儿，温和地一笑，用自然清楚的普通话立刻说一句。说完视线回到玄关木桌，近侧手伸向桌上的深色手机和钥匙，身体稍微转向门的方向。单机位，面部正面稍侧可见，女儿不在画面。 不加字幕、叠字、水印或音乐。",
+      "prompt": "16:9写实的城市家庭电影广告，从上传画面自然开始。所有出现的人脸、衣服、室内物品维持一致，真实的动作和自然光。从相册旁拍爸爸的半身，他低头看女儿，温和地一笑，用自然清楚的语气立刻说出指定台词。说完视线回到玄关木桌，近侧手伸向桌上的深色手机和钥匙，身体稍微转向门的方向。单机位，面部正面稍侧可见，女儿不在画面。 不加字幕、叠字、水印或音乐。",
       "spoken_line": "我在拍啊。",
       "product_visible": false,
       "preferred": [
@@ -185,7 +185,7 @@
       "title": "女儿请爸爸靠近",
       "frames": 106,
       "generate_seconds": 5,
-      "prompt": "Close eye-level shot of the same birthday table, looking over the father’s navy shoulder at his daughter in a coral cardigan. Continue the reference shot in warm, realistic candlelight. The girl looks up at her father and says the supplied line once in quiet, natural Mandarin Chinese. She holds his gaze with a small smile once she finishes; the father remains silent. Keep the background and framing steady. No displayed text, captions, music, or narration.",
+      "prompt": "Close eye-level shot of the same birthday table, looking over the father’s navy shoulder at his daughter in a coral cardigan. Continue the reference shot in warm, realistic candlelight. The girl looks up at her father and says the supplied line once in a quiet, natural voice. She holds his gaze with a small smile once she finishes; the father remains silent. Keep the background and framing steady. No displayed text, captions, music, or narration.",
       "spoken_line": "爸，往我这边一点。",
       "product_visible": false,
       "preferred": [

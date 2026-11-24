@@ -18,6 +18,7 @@ from core.oss import get_oss
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
 from db.models.video_job import VideoJob
+from light.video_language import for_text, speech_hint
 from light import wan_edit, wan_story
 from light.remake import (
     RemakeStopped,
@@ -105,7 +106,7 @@ def _take_key(prefix, index, take):
     return key
 
 
-def shot_request(prefix, index, shot, first, take=1, direction=None):
+def shot_request(prefix, index, shot, first, take=1, direction=None, *, language=None):
     speaker = direction.speaker if direction else shot.speaker
     action = direction.action if direction else shot.action
     spoken = (
@@ -125,6 +126,7 @@ def shot_request(prefix, index, shot, first, take=1, direction=None):
         + "。"
         + spoken
         + performance
+        + speech_hint(language, shot.line)
     )
     return vp.VideoGenerateArgs(
         action="submit",
@@ -153,11 +155,13 @@ async def review(
     fps, duration = float(meta["fps"]), float(meta["duration_sec"])
     transcript, asr_id = {}, None
     if meta.get("has_audio"):
+        language = for_text(shot.line, plan.language)
+        suffix = f":{language}" if language != "zh" else ""
         result = await vp.execute_transcribe(
             vp.VideoTranscribeArgs(
                 action="submit",
                 asset_id=source,
-                idempotency_key=f"reference-film-asr:{source}",
+                language=language, idempotency_key=f"reference-film-asr:{source}{suffix}",
             ),
             ctx,
         )
@@ -325,9 +329,9 @@ async def review(
 
 
 def lettering(headline, shop, *, ink="#FFF8E9", outline=None):
-    from light.remake_lettering import FOLDER, end_card
+    from light.remake_lettering import FOLDER, _cjk, end_card
 
-    if len(headline.replace(" ", "")) != 4:
+    if not _cjk(headline) or len(headline.replace(" ", "")) != 4:
         return end_card(headline, shop, headline_ink=ink)
     canvas = Image.new("RGBA", (1080, 1920))
     draw = ImageDraw.Draw(canvas)
@@ -602,7 +606,7 @@ async def _repair_take(ctx, form, run, plan, materials, anchor, index, current, 
                     active = apply_coverage(active, index, coverage)
                     chosen = active.shots[index - 1]
             spent += 1
-            request = shot_request(prefix, index, chosen, first, direction=direction).model_copy(
+            request = shot_request(prefix, index, chosen, first, direction=direction, language=plan.language).model_copy(
                 update={"idempotency_key": job_key})
             source = await _job(ctx, request, kind="segment", label=f"导演补拍镜头 {index}", run=run)
             current = {"shot": index, "source": source, "first_reference": first}
@@ -675,7 +679,7 @@ async def _reviewed_takes(ctx, form, run, plan, materials, anchor):
         async with slot(images):
             first = await _still(ctx, prefix, f"frame-v2-{index}", prompt, list(dict.fromkeys(refs))[:4])
         from light.shot_editor import publish_request
-        await publish_request(ctx, prefix, shot_request(prefix, index, shot, first))
+        await publish_request(ctx, prefix, shot_request(prefix, index, shot, first, language=plan.language))
         references[index] = (first, prompt, refs)
         return first
 
@@ -709,7 +713,7 @@ async def _reviewed_takes(ctx, form, run, plan, materials, anchor):
             _, prompt, refs = references[index]
             references[index] = (first, prompt, refs)
             directions.pop(index, None)
-        request = shot_request(prefix, index, plan.shots[index - 1], first, direction=direction)
+        request = shot_request(prefix, index, plan.shots[index - 1], first, direction=direction, language=plan.language)
         from light.shot_editor import publish_request
         await publish_request(ctx, prefix, request)
         check_running()
@@ -871,8 +875,10 @@ async def render(ctx, form, run, plan):
         )
     if (verdict.get("final") or {}).get("output") != output:
         final = await quality.final(segment_ctx, plan, output, meta, delivery, form["shop"], materials)
+        suffix = f":{plan.language}" if plan.language != "zh" else ""
         transcript = await vp.execute_transcribe(vp.VideoTranscribeArgs(
-            action="submit", asset_id=output, idempotency_key=f"ad-delivery-asr:{output}"), segment_ctx)
+            action="submit", asset_id=output, language=plan.language,
+            idempotency_key=f"ad-delivery-asr:{output}{suffix}"), segment_ctx)
         if transcript.metadata.get("status") != "completed":
             raise RemakeStopped("成片对白核对尚未完成，已保留同一份合成视频。")
         async with get_db_session() as db:

@@ -20,6 +20,7 @@ from db.models.file_asset import FileAsset
 from db.models.video_job import VideoJob
 from light import remake_case as case
 from light.remake_lettering import end_card
+from light.video_language import for_text, speech_hint
 from tool import image_gen, video_compose, video_production
 from tool.tool import ToolContext
 from tool.video_runninghub import INPUT_DOWNLOAD_FAILED, terminal_input_download_failure
@@ -141,7 +142,7 @@ def shot_request(prefix: str, shot: dict, frame_id: str, product: str,
             raise ValueError("The serving shot needs its matched landing frame")
         frames.append(video_production.VideoInputRef(asset_id=last_id, role="last_frame"))
     spoken = shot["spoken_line"]
-    direction = (f"只有{shot['speaker']}说话，以同步普通话清楚说一次台词，开场即开口，"
+    direction = (f"只有{shot['speaker']}说话，清楚同步说一次台词。{speech_hint(shot.get('language'), spoken)}开场即开口，"
                  f"在第{shot['duration'] - 0.3:.1f}秒前说完。其他人安静反应。" if spoken else
                  "全程只有自然环境声，无人说话。")
     prompt = ("竖屏中国电影短剧，一镜到底。延续演员、道具和场景。"
@@ -210,8 +211,7 @@ def _spoken_cues(line: str, sentences: list[dict]) -> list[Cue]:
                     and 0 <= item["from_sec"] < item["to_sec"]), key=lambda item: item["from_sec"])
     if not spans:
         return []
-    def words(text):
-        return "".join(char for char in text if char.isalnum()).lower()
+    from light.wan_edit import _words as words
 
     heard = words("".join(item["text"] for item in spans))
     if SequenceMatcher(None, words(line), heard).ratio() < 0.65:
@@ -224,9 +224,12 @@ def _spoken_cues(line: str, sentences: list[dict]) -> list[Cue]:
     return [Cue(text=line, from_sec=spans[0]["from_sec"], to_sec=max(item["to_sec"] for item in spans))]
 
 
-async def _transcribe(ctx: ToolContext, asset_id: str, line: str, expected_duration: int) -> Dialogue:
+async def _transcribe(ctx: ToolContext, asset_id: str, line: str, expected_duration: int, *, language=None) -> Dialogue:
+    language = for_text(line, language)
+    suffix = f":{language}" if language in {"vi", "en"} else ""
     result = await video_production.execute_transcribe(video_production.VideoTranscribeArgs(
-        action="submit", asset_id=asset_id, idempotency_key=f"light-remake-caption:{asset_id}"), ctx)
+        action="submit", asset_id=asset_id, language=language,
+        idempotency_key=f"light-remake-caption:{asset_id}{suffix}"), ctx)
     if result.metadata.get("status") != "completed":
         raise RemakeStopped("对白识别尚未完成，请重试以核对原作业。")
     async with get_db_session() as db:
@@ -239,7 +242,7 @@ async def _transcribe(ctx: ToolContext, asset_id: str, line: str, expected_durat
     return Dialogue(cues, float(duration or max([expected_duration, *(cue.to_sec for cue in cues)])))
 
 
-async def _serving_voice(ctx: ToolContext, run: dict, line: str) -> str:
+async def _serving_voice(ctx: ToolContext, run: dict, line: str, *, language=None) -> str:
     # Only hands are visible here. If the native take contains ambience alone,
     # record the same fictional supervisor on camera and use only its sound.
     frame = await _reference_asset(ctx, f"{case.manifest()['version']}-02", (case.ASSETS / "02.jpg").read_bytes())
@@ -247,8 +250,8 @@ async def _serving_voice(ctx: ToolContext, run: dict, line: str) -> str:
         action="submit", idempotency_key=f"{run['job_prefix']}:serving-voice", resolution=case.RESOLUTION,
         ratio="adaptive", duration=6, generate_audio=True, spoken_line=line, watermark=False,
         input_assets=[video_production.VideoInputRef(asset_id=frame, role="first_frame")],
-        prompt="餐馆里戴细圆眼镜的墨绿衬衣中国女主管，近景，温和但干脆地亲口用清晰普通话说出台词，只说这句话。"
-               "刚开场就开口，4秒内自然说完。她是上一镜替新人解围的那一位，留柔和餐厅底噪，其他人不说话。无配乐和字幕。",
+        prompt=(f"餐馆里戴细圆眼镜的墨绿衬衣中国女主管，近景，温和但干脆地说台词。{speech_hint(language, line)}"
+               "刚开场就开口，4秒内自然说完。她是上一镜替新人解围的那一位，留柔和餐厅底噪，其他人不说话。无配乐和字幕。"),
     )
     return await _job(ctx, request, kind="segment", label="主管上菜对白补录", run=run)
 
@@ -260,10 +263,10 @@ async def compose_remake(ctx: ToolContext, form: dict, run: dict, adaptation: ca
     async def measure(pair):
         shot, asset = pair
         line = shot["spoken_line"]
-        recording = await _transcribe(sound_ctx, asset, line, max(5, shot["duration"]))
+        recording = await _transcribe(sound_ctx, asset, line, max(5, shot["duration"]), language=adaptation.language)
         if not recording.cues and "last_frame" in shot:
-            voice = await _serving_voice(sound_ctx, run, line)
-            recording = replace(await _transcribe(sound_ctx, voice, line, 6), voice_asset=voice)
+            voice = await _serving_voice(sound_ctx, run, line, language=adaptation.language)
+            recording = replace(await _transcribe(sound_ctx, voice, line, 6, language=adaptation.language), voice_asset=voice)
         if not recording.cues:
             raise RemakeStopped(f"第 {shot['shot']} 段没有识别到预定台词，已保留分镜和原声。")
         return shot["shot"], recording
@@ -277,7 +280,7 @@ async def compose_remake(ctx: ToolContext, form: dict, run: dict, adaptation: ca
     edit = _digest(json.dumps(timeline, sort_keys=True))
     return await _job(ctx, video_compose.VideoComposeArgs(
         action="submit", idempotency_key=f"{run['job_prefix']}:final:{edit}", timeline=timeline,
-        filename=f"这单谁买-{adaptation.product}.mp4",
+        filename=f"{case.title(adaptation.language)}-{adaptation.product}.mp4",
     ), kind="compose", label="30 秒成片", run=run)
 
 

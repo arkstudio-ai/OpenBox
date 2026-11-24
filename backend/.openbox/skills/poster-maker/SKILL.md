@@ -69,8 +69,10 @@ dish exactly as photographed.
 
 ## 2. Headlines (`title`)
 
-One `question` card with three headline options, each ≤ 10 characters, plus
-`custom`. Make them different in tone (直接报价 / 情绪 / 节日感), e.g.
+One `question` card with three short headline options plus `custom`. Use the
+requested artwork language. Aim for up to 10 Chinese characters or about 6
+words in Vietnamese or English, and preserve accents and word boundaries.
+Make the options different in tone (直接报价 / 情绪 / 节日感), e.g.
 「招牌牛肉面 19.9」「一碗热汤等你来」「国庆吃面不涨价」.
 
 ## 3. The poster (`deliver`)
@@ -83,7 +85,7 @@ option rather than making both up front.
 Use case: ads-marketing
 Asset type: restaurant promotion poster, portrait for WeChat Moments
 Style: <the picked example's look in your own words, or without one — 大字促销: bold headline, price in a burst, high contrast | 实拍主图: the dish photo as hero, clean type band | 手绘清新: soft illustration, pastel>
-Text (verbatim, render exactly; in the interface language the session's language line names — Simplified Chinese when none is named, Vietnamese with its diacritics, English in English):
+Text (render approved lines verbatim, including accents and currency; write new copy in the requested artwork language or the session language by default):
   Headline: "<chosen headline>"
   Offer: "<the offer line>"
   Small print: "<dates / conditions>"   (omit when there are none)

@@ -9,6 +9,7 @@ from textwrap import wrap
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from light.media_fonts import latin_font, mixed_font
 from light.remake_case import ASSETS
 
 FOLDER = ASSETS / "lettering"
@@ -22,14 +23,24 @@ def _brush(size: int) -> ImageFont.FreeTypeFont:
 
 
 def _label(draw: ImageDraw.ImageDraw, xy, text: str, size: int, ink) -> None:
-    font = _brush(size)
+    font = _text_family(text)(size)
     x, y = xy
     left, top, _, _ = draw.textbbox((0, 0), text, font=font)
     draw.text((x - left, y - top), text, font=font, fill=ink)
 
 
+def _has_cjk(text: str) -> bool:
+    return any("\u3400" <= c <= "\u9fff" for c in text)
+
+
 def _cjk(text: str) -> bool:
     return all(unicodedata.east_asian_width(c) in {"W", "F"} for c in text if not c.isspace())
+
+
+def _text_family(text):
+    if not _has_cjk(text):
+        return latin_font
+    return _brush if _cjk(text) else mixed_font
 
 
 def _headline(text: str, ink=INK) -> Image.Image:
@@ -56,16 +67,17 @@ def _headline(text: str, ink=INK) -> Image.Image:
             _label(draw, (x, y), char, em, ink)
     else:
         words = text.split()
+        text_font = _text_family(text)
         em = max(25, min(117, 700 // max(2, len(max(words, key=len)))))
         lines = [""]
         for word in words:
             candidate = (lines[-1] + " " + word).strip()
-            if lines[-1] and draw.textlength(candidate, font=_brush(em)) > 407:
+            if lines[-1] and draw.textlength(candidate, font=text_font(em)) > 407:
                 lines.append(word)
             else:
                 lines[-1] = candidate
         for i, line in enumerate(lines):
-            size = min(em, int(em * 405 / max(1, draw.textlength(line, font=_brush(em)))))
+            size = min(em, int(em * 405 / max(1, draw.textlength(line, font=text_font(em)))))
             _label(draw, (4, i * em + 8), line, max(12, size), ink)
     return art.crop(art.getbbox() or (0, 0, 1, 1))
 
@@ -95,7 +107,8 @@ def end_card(headline: str, shop: str, *, headline_ink=INK) -> bytes:
                      else wrap(shop, width=24, break_long_words=False, break_on_hyphens=False))
             em = 28
             max_width = left - 60
-            while em > 1 and max(draw.textlength(line, font=_brush(em)) for line in lines) > max_width:
+            text_font = _text_family(shop)
+            while em > 1 and max(draw.textlength(line, font=text_font(em)) for line in lines) > max_width:
                 em -= 1
             for index, line in enumerate(lines):
                 _label(draw, (45, 60 + index * (em + 4)), line, em, headline_ink)

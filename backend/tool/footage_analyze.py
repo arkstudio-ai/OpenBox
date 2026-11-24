@@ -38,7 +38,7 @@ log = create_logger("tool.footage_analyze")
 
 MAX_CLIPS = 10
 #: Bump when what a clip reading contains changes, so old cached readings are redone.
-READING_VERSION = 3   # 3: on-screen text, people and camera motion (2026-11-05)
+READING_VERSION = 4   # Source speech language is detected instead of assumed.
 _readings: dict[str, asyncio.Task] = {}
 MAX_TOTAL_SECONDS = 5 * 60
 MAX_CLIP_SECONDS = 3 * 60
@@ -198,7 +198,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool) -> dict:
             return {}
         try:
             return await _provider_transcribe(_configured_transcription_target(),
-                                              oss.presign_get(row.oss_key, expires_sec=SNAPSHOT_LINK_SECONDS))
+                                              oss.presign_get(row.oss_key, expires_sec=SNAPSHOT_LINK_SECONDS), "auto")
         except Exception as exc:  # silence or noise is not a failure: the picture still counts
             log.info("footage %s: no transcript (%s)", row.id, type(exc).__name__)
             return {"error": str(exc)[:120]}
@@ -286,7 +286,8 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
     if duration > MAX_CLIP_SECONDS:
         raise FootageRefusal(f"clip {index + 1} is {duration:.0f}s; one clip may be at most {MAX_CLIP_SECONDS}s")
     reading = (row.meta or {}).get("reading") if isinstance(row.meta, dict) else None
-    if not isinstance(reading, dict) or reading.get("v") != READING_VERSION:
+    if (not isinstance(reading, dict) or reading.get("v") != READING_VERSION
+            or (transcribe and meta.get("has_audio") and not reading.get("speech_checked"))):
         reading = await read_clip(row, meta, oss, transcribe=transcribe)
     return {
         "clip": index + 1, "asset_id": asset_id, "name": row.name,

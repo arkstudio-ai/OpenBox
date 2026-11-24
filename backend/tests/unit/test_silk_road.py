@@ -177,3 +177,22 @@ def test_chapter_one_keeps_the_typefaces_stroke_proportions():
         stroke = glyph("一", width, height).point(lambda level: 255 if level > 96 else 0)
         left, top, right, bottom = stroke.getbbox()
         assert (right - left) / (bottom - top) > 4
+
+
+def test_vietnamese_chapter_and_end_card_fit_without_four_character_limit():
+    from PIL import Image, ImageDraw
+
+    from light.silk_road_lettering import artwork, chapter, text_face
+    from light.silk_road_world import Chapter
+
+    title = "Hẹn nhau ở bến tàu"
+    note = "Tôm hùm đất cay vẫn còn nóng"
+    assert Chapter(title=title, subtitle=note).title == title
+    plan = silk_road.Plan(title=title, product="Tôm hùm đất cay", appearance=note, bite="Một miếng tôm").localized("vi")
+    assert "Thẻ kết · Tôm hùm đất cay · Hương vị còn mãi" in silk_road.display_script(plan)
+    assert len(artwork(plan, "Bếp Nhà")) == 9
+    mask = chapter(title, note, "right").getchannel("A")
+    assert mask.getbbox()[2] <= silk_road.CANVAS["width"]
+    draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+    face = text_face(draw, title, 51, 400)
+    assert face.getmask("ở").getbbox() and bytes(face.getmask("ở")) != bytes(face.getmask("o"))

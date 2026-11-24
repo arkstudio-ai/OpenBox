@@ -218,8 +218,8 @@ class VideoTranscribeArgs(BaseModel):
     job_id: str | None = Field(default=None, max_length=96)
     #: An owned, ready audio asset or video with an audio track.
     asset_id: str | None = Field(default=None, max_length=512)
-    #: The language spoken in the recording, when it is not the user's interface language.
-    language: Literal["zh", "en", "vi"] | None = None
+    #: The spoken language. Use auto for an original recording whose language is unknown.
+    language: Literal["zh", "en", "vi", "auto"] | None = None
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
@@ -1166,7 +1166,8 @@ async def _dashscope_transcribe(
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
         payload = {"model": target.model, "input": {"file_urls": [audio_url]},
-                   "parameters": {"channel_id": [0], "language_hints": [language]}}
+                   "parameters": {"channel_id": [0],
+                                  **({"language_hints": [language]} if language != "auto" else {})}}
         async with capture_service_dispatch(purpose="audio_transcription", provider="dashscope",
                 model=target.model, operation="POST /api/v1/services/audio/asr/transcription",
                 body=payload, profile="audio_transcription") as capture:

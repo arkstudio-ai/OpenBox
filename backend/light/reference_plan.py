@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from light.video_language import END_CARD, Language
+
 Short = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)
 ]
@@ -24,7 +26,7 @@ class Shot(BaseModel):
     frame: Direction
     action: Direction
     speaker: str = Field(default="", max_length=60)
-    line: str = Field(default="", max_length=24)
+    line: str = Field(default="", max_length=80)
 
     @property
     def can_omit(self):
@@ -46,12 +48,13 @@ class Shot(BaseModel):
 class ShotPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     format: Literal["shot-list-v2"] = "shot-list-v2"
+    language: Language = "zh"
     title: Short
     product: Short
     appearance: Direction
     setting_and_cast: Direction
     identity_frame: Direction
-    headline: Annotated[str, StringConstraints(min_length=2, max_length=10)]
+    headline: Annotated[str, StringConstraints(min_length=2, max_length=44)]
     shots: list[Shot] = Field(min_length=5, max_length=12)
 
     @model_validator(mode="after")
@@ -69,7 +72,7 @@ def display_script(plan: ShotPlan) -> str:
         lines.extend(["", shot.action])
         if shot.line:
             lines.append(f"{shot.speaker}：「{shot.line}」")
-    return "\n".join([*lines, "", f"片尾 · {plan.product}「{plan.headline}」"])
+    return "\n".join([*lines, "", f"{END_CARD[plan.language]} · {plan.product}「{plan.headline}」"])
 
 
 DIRECTING = (
@@ -77,7 +80,7 @@ DIRECTING = (
     "模板样片提供广告节奏与宣传字的风格参考。自行决定题材、人物、地点、叙事结构、对白、是否跨场以及如何展示商品。"
     "用户文案是创意参考，可以改编或采用纯视觉叙事。保留明确指定的事实、商品与品牌文字，不虚构优惠或功效。"
     "使用shot-list-v2给出完整可拍分镜。5至12个短镜头，每镜3至8秒原素材，可留出动作、对白和剪辑余量。"
-    "每镜填写scene、kind、frame、action、seconds，product_in_first_frame明确标记商品在动作开始前是否可见；有对白的scene同时给speaker和line，一镜至多一句24字。"
+    "每镜填写scene、kind、frame、action、seconds，product_in_first_frame明确标记商品在动作开始前是否可见；有对白的scene同时给speaker和line，一镜至多一句，在该镜时长内自然说完。"
     "同一空间使用相同scene。setting_and_cast与identity_frame记录本片实际选定的场景、演员身份和商品视觉特征，供不同机位保持一致。"
     "frame只正向描述开拍前可见的物品、构图和人物位置，不写之后的动作和画外物件。action描述主要动作和视线。可以将删掉仍能看懂的无台词镜头标optional。"
     "kind=detail为商品、环境或道具插镜。末镜kind=product是独立商品画面，预留可读题字的位置，headline由后期排版。"

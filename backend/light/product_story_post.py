@@ -11,7 +11,10 @@ import wave
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from light import product_story_plan as recipe
+from light.media_fonts import latin_font, mixed_font
 from light.remake import RemakeStopped
+from light.remake_lettering import _has_cjk
+from light.video_language import MEDIA_TAGS
 
 WIDTH, HEIGHT = 1280, 720
 RATE = 48000
@@ -70,7 +73,13 @@ async def _clip(folder, index, cut, shot):
         "crop=1280:720,setsar=1"
     )
     voice = bool(shot["spoken_line"])
-    if cut["has_audio"]:
+    if dub := cut.get("dub"):
+        delay = round((cut["cues"][0]["from_sec"] - start) / speed * 1000)
+        inputs = ["-i", folder / f"voice-{index:02d}.wav"]
+        audio = (f"[1:a:0]atempo={dub['tempo'] * speed:.9f},aresample={RATE},"
+                 "aformat=channel_layouts=stereo,highpass=f=75,"
+                 f"adelay={max(0, delay)}:all=1,apad,atrim=duration={duration:.9f}[track]")
+    elif cut["has_audio"]:
         audio = (f"[0:a:0]atrim=start={start:.9f}:end={end:.9f},asetpts=PTS-STARTPTS,atempo={speed:.9f},"
                  f"aresample={RATE},aformat=channel_layouts=stereo,highpass=f=75,"
                  f"volume={1 if voice else .41},afade=t=in:d=0.025,afade=t=out:st={duration - .05:.9f}:d=0.05,"
@@ -113,14 +122,19 @@ def _titles(folder, plan):
     draw = ImageDraw.Draw(graphic)
 
     def label(x, y, size, text, ink, *, edge=1252):
+        family = (lambda pt: ImageFont.truetype(font, pt)) if plan.language == "zh" else (
+            mixed_font if _has_cjk(text) else latin_font
+        )
+        face = family(size)
         while size > 10:
-            face = ImageFont.truetype(font, size)
+            face = family(size)
             if draw.textlength(text, font=face) <= edge - x:
                 break
             size -= 1
         draw.text((x, y), text, font=face, fill=ink, anchor="lt")
 
-    label(744, 245, 17, "概念广告", "#abc9ec")
+    concept = {"zh": "概念广告", "en": "Concept ad", "vi": "Quảng cáo ý tưởng"}
+    label(744, 245, 17, concept[plan.language], "#abc9ec")
     label(738, 279, 60, plan.product, "#f4f8ff")
     label(744, 370, 30, plan.headline, "#deecff")
     label(744, 650, 14, "Music: Dream Culture — Kevin MacLeod", "#b9cee9")
@@ -234,12 +248,14 @@ async def assemble(folder, plan, cuts):
         "apad,atrim=duration=54,volume=1.48,alimiter=limit=0.84:level=false:latency=true[sound]"
     )
     output = folder / "final.mp4"
+    language = MEDIA_TAGS[plan.language]
     await ff(*inputs, "-i", recipe.ASSETS / "dream-culture.mp3", "-i", shutter, "-i", srt,
              "-filter_complex", graph, "-map", "[picture]", "-map", "[sound]", "-map", f"{count+2}:s",
              "-c:v", "libx264", "-threads:v", "4", "-preset", "medium", "-crf", "15", "-r", "24",
              "-pix_fmt", "yuv420p", "-video_track_timescale", "24000", "-colorspace", "bt709",
              "-color_primaries", "bt709", "-color_trc", "bt709", "-c:a", "aac", "-b:a", "192k",
-             "-c:s", "mov_text", "-metadata:s:s:0", "language=zho", "-disposition:s:0", "0",
+             "-c:s", "mov_text", "-metadata:s:s:0", f"language={language}",
+             "-metadata:s:a:0", f"language={language}", "-disposition:s:0", "0",
              "-metadata", f"title={plan.product}｜{plan.title}", "-metadata", f"comment={recipe.CREDITS}",
              "-movflags", "+faststart", output)
     probe = json.loads(await _run("ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", output))
@@ -248,8 +264,9 @@ async def assemble(folder, plan, cuts):
             or (video["width"], video["height"]) != (WIDTH, HEIGHT)
             or any(abs(float(stream["duration"]) - recipe.DURATION) > .001 for stream in (video, audio, probe["format"]))
             or audio["codec_name"] != "aac" or audio["channels"] != 2 or subtitles["codec_name"] != "mov_text"
-            or len(cues) != 3):
+            or subtitles.get("tags", {}).get("language") != language or len(cues) != 3):
         raise RemakeStopped("成片时长、帧数或音轨校验未通过，镜头已保留。")
     await ff("-xerror", "-i", output, "-map", "0:v", "-map", "0:a", "-f", "null", "-")
     return output, {"duration_sec": recipe.DURATION, "frames": recipe.FRAME_COUNT,
-                    "fps": recipe.FPS, "has_audio": True, "dialogue": len(cues), "attribution": recipe.CREDITS}
+                    "fps": recipe.FPS, "has_audio": True, "dialogue": len(cues), "attribution": recipe.CREDITS,
+                    "language": plan.language, "subtitles_srt": srt.read_text(encoding="utf-8")}

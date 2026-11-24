@@ -443,3 +443,77 @@ def test_the_menu_skill_asks_for_an_a4_size_the_image_model_accepts():
         assert width % 16 == 0 and height % 16 == 0  # gpt-image-2 needs the 16-pixel grid
     a4 = sizes[0]
     assert abs(a4[1] / a4[0] - 297 / 210) < 0.04  # image_to_pdf's A4 tolerance
+
+
+@pytest.mark.parametrize("terminal", ["SUCCESS", "FAILED", "other task"])
+async def test_camera_waits_for_accepted_picture_inside_the_same_live_turn(runninghub, monkeypatch, terminal):
+    from light import wan_remake
+    from light.remake import RemakeStopped
+    import tool.image_gen as image_mod
+
+    settings = SimpleNamespace(default_size="auto", default_quality="medium", output_format="png", dedupe=False)
+    target = ProviderTarget("runninghub", "seedream-v5-pro", KEY, BASE, 0, channel="runninghub")
+    monkeypatch.setattr(image_mod, "_configured_target", lambda: (target, settings))
+    def task_reply(request):
+        assert json.loads(request.content) == {"taskId": "rh-task-1"}
+        state = "RUNNING" if runninghub.queries == 1 else terminal
+        if state in {"SUCCESS", "other task"}:
+            return httpx.Response(200, json={"taskId": "wrong-task" if state == "other task" else "rh-task-1",
+                "status": "SUCCESS", "errorCode": "", "results": [{"url": "https://cdn.test/result.png", "outputType": "png"}]})
+        return httpx.Response(200, json={"taskId": "rh-task-1", "status": state, "errorCode": ""})
+    runninghub.query_reply = task_reply
+    user, lease, context = await _seed("camera-live")
+    try:
+        ctx = context("app-render")
+        args = (ctx, "commercial-run", "key-pose", "A clean product photo", [])
+        if terminal == "SUCCESS":
+            asset = await wan_remake._still(*args, size="1536x864", language="vi")
+            assert await wan_remake._still(*args, size="1536x864", language="vi") == asset
+        else:
+            with pytest.raises(RemakeStopped):
+                await wan_remake._still(*args, size="1536x864", language="vi")
+        [effect], _ = await _ledger(user, [])
+        assert effect.state == {"SUCCESS": "succeeded", "FAILED": "failed", "other task": "manual_review"}[terminal]
+        assert len(runninghub.submits) == 1 and runninghub.queries == 2
+        assert len(runninghub.settled) == (1 if terminal == "SUCCESS" else 0)
+        if terminal == "SUCCESS":
+            assert effect.projection["asset_ids"] == [asset] and effect.attempt_count == 1
+        if terminal == "other task":
+            assert effect.last_error["code"] == "image_task_id_mismatch"
+    finally:
+        await lease.release(session_status="idle")
+
+
+async def test_camera_reconciliation_refuses_forged_handles_assets_calls_and_run_fences(runninghub, monkeypatch):
+    from dataclasses import replace
+    from agent.driver import LeaseLostError
+    from agent.effect_ledger import EffectRunFence, poll_owned_runninghub_image
+    import tool.image_gen as image_mod
+
+    target = ProviderTarget("runninghub", "seedream-v5-pro", KEY, BASE, 0, channel="runninghub")
+    settings = SimpleNamespace(default_size="auto", default_quality="medium", output_format="png", dedupe=False)
+    monkeypatch.setattr(image_mod, "_configured_target", lambda: (target, settings))
+    runninghub.query_reply = lambda _: httpx.Response(200, json={"taskId": "rh-task-1", "status": "RUNNING", "errorCode": ""})
+    user, lease, context = await _seed("camera-security")
+    stranger, other, other_context = await _seed("camera-stranger")
+    try:
+        live = context("actual")
+        result = await execute(ImageGenArgs(prompt="Photograph the desk"), live)
+        fence = EffectRunFence.from_tool_context(live)
+        receipt = dict(operation="generate", key=result.metadata["operation_key"], call_part=live.part_id,
+                       task=result.metadata["provider_task_id"], asset=result.metadata["asset_ids"][0])
+        for changes in ({"task": "unknown"}, {"task": ""}, {"asset": "someone-elses-asset"}, {"operation": "edit"}, {"key": "another-call"}, {"call_part": "different-camera-call"}):
+            assert await poll_owned_runninghub_image(fence, **{**receipt, **changes}) == "unavailable"
+        assert await poll_owned_runninghub_image(EffectRunFence.from_tool_context(other_context("other")), **receipt) == "unavailable"
+        with pytest.raises(LeaseLostError):
+            await poll_owned_runninghub_image(replace(fence, generation=fence.generation + 1), **receipt)
+        [effect], _ = await _ledger(user, [])
+        assert await effects.recover_effect_once(effect.id) == "stale"  # Ordinary sweeps still leave the live run alone.
+        assert effect.state == "outcome_unknown" and effect.reconcile_count == 0
+        assert runninghub.queries == 1 and len(runninghub.submits) == 1 and not runninghub.settled
+        runninghub.query_reply = lambda _: httpx.Response(200, json={"taskId": "rh-task-1", "status": "FAILED", "errorCode": "1000"})
+        assert await poll_owned_runninghub_image(fence, **receipt) == "failed"
+        assert await poll_owned_runninghub_image(fence, **receipt) == "failed" and runninghub.queries == 2
+    finally:
+        await other.release(session_status="idle")
+        await lease.release(session_status="idle")

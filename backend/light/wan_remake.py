@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import re
+import time
 from dataclasses import replace
 
 from sqlalchemy import select
@@ -21,7 +22,38 @@ from light.video_language import speech_hint
 from tool import image_gen, video_compose, video_production
 
 
-async def _still(ctx, prefix, name, prompt, references, *, size="1008x1792", quality="high"):
+async def _await_reference_picture(ctx, result, filename, *, edit):
+    """Poll one immutable accepted RunningHub receipt and consume its original owned reservation."""
+    from agent.effect_ledger import EffectRunFence, poll_owned_runninghub_image
+
+    metadata = result.metadata
+    task = metadata.get("provider_task_id")
+    key = metadata.get("operation_key")
+    assets = metadata.get("asset_ids")
+    if (metadata.get("failure_code") != "image_task_pending" or not metadata.get("pending")
+            or not isinstance(key, str) or not isinstance(task, str) or not task or not ctx.run_fence
+            or assets != [image_gen._reserved_image_id(key, 1)]):
+        return None
+    fence = EffectRunFence.from_tool_context(ctx)
+    deadline = time.monotonic() + 10 * 60
+    while time.monotonic() < deadline:
+        await _check(ctx)
+        state = await poll_owned_runninghub_image(fence, operation="edit" if edit else "generate",
+                                                  key=key, task=task, asset=assets[0], call_part=ctx.part_id)
+        if state == "succeeded":
+            await _check(ctx)
+            async with get_db_session() as db:
+                row = await db.scalar(owned_ready_query(ctx.user_id, ctx.workspace_id).where(
+                    FileAsset.id == assets[0], FileAsset.session_id == ctx.session_id, FileAsset.name == filename,
+                    FileAsset.size > 0, FileAsset.mime.startswith("image/")))
+            return row.id if row else None
+        if state != "pending":
+            return None
+        await asyncio.sleep(10)
+    return None
+
+
+async def _still(ctx, prefix, name, prompt, references, *, size="1008x1792", quality="high", language="zh"):
     filename = f"wan-story-{_digest(prefix)}-{name}.png"
     async with get_db_session() as db:
         prior = await db.scalar(
@@ -34,20 +66,32 @@ async def _still(ctx, prefix, name, prompt, references, *, size="1008x1792", qua
         return prior.id
     await _check(ctx)
     frame_ctx = replace(
-        ctx, part_id=f"wan-story-{_digest(prefix + name)}", message_id="", sandbox=None, _on_output=None
+        ctx, part_id=f"wan-story-{_digest(prefix + name)}", message_id="", sandbox=None, _on_output=None,
+        transient_output=True,
     )
     args = image_gen.ImageGenArgs(
         prompt=prompt, input_images=references, size=size, quality=quality, filename=filename
     )
-    result = await image_gen.execute(args, frame_ctx, channel="default")
-    rejection = result.metadata.get("rejection_kind")
-    if result.metadata.get("provider_accepted") is False and rejection in {"not_sent", "rate_limit"}:
-        await asyncio.sleep(30 if rejection == "rate_limit" else 2)
+    result_ctx = frame_ctx
+    result = await image_gen.execute(args, result_ctx, channel="default")
+    for attempt, delay in enumerate((2, 10, 30, 60), start=1):
+        rejection = result.metadata.get("rejection_kind")
+        if result.metadata.get("provider_accepted") is not False or rejection not in {"not_sent", "rate_limit"}:
+            break
+        await asyncio.sleep(max(30, delay) if rejection == "rate_limit" else delay)
         await _check(ctx)
-        retry_ctx = replace(frame_ctx, part_id=frame_ctx.part_id + "-retry")
-        result = await image_gen.execute(args, retry_ctx, channel="default")
+        # A confirmed pre-dispatch refusal has its own settled, uncharged receipt.
+        suffix = "-retry" if attempt == 1 else f"-retry-{attempt}"
+        result_ctx = replace(frame_ctx, part_id=frame_ctx.part_id + suffix)
+        result = await image_gen.execute(args, result_ctx, channel="default")
     asset = result.metadata.get("asset_id")
+    if not asset and result.metadata.get("failure_code") == "image_task_pending":
+        asset = await _await_reference_picture(result_ctx, result, filename, edit=bool(references))
     if not asset:
+        if language == "vi":
+            raise RemakeStopped("Chưa nhận được ảnh tham chiếu từ dịch vụ tạo ảnh. Các bước đã hoàn tất vẫn được lưu.")
+        if language == "en":
+            raise RemakeStopped("The image service did not return the reference picture. Completed work has been saved.")
         raise RemakeStopped(f"参考图没有交付，已保留制作记录。{result.title[:90]}")
     return asset
 

@@ -268,6 +268,7 @@ class ProductionResult extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     final media = task.output!;
+    final aspectRatio = media.video ? (media.aspectRatio ?? 9 / 16) : 3 / 4;
     final style = productionStyleLabel(i18n, task);
     final voiced =
         task.kind == ProductionKind.footage &&
@@ -305,9 +306,9 @@ class ProductionResult extends ConsumerWidget {
         const SizedBox(height: 18),
         Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 276),
+            constraints: BoxConstraints(maxWidth: aspectRatio > 1 ? 480 : 276),
             child: AspectRatio(
-              aspectRatio: media.video ? 9 / 16 : 3 / 4,
+              aspectRatio: aspectRatio,
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 key: const Key('production-result-preview'),
@@ -353,6 +354,7 @@ class ProductionDecision extends ConsumerWidget {
     final template = changes is Map ? changes['template'] : null;
     final script = changes is Map ? changes['script'] : null;
     final notes = changes is Map ? changes['notes'] : null;
+    final feedback = task.reviewFeedback;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
@@ -382,6 +384,34 @@ class ProductionDecision extends ConsumerWidget {
                   if (notes is String && notes.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Text(notes),
+                  ],
+                ],
+              ),
+            ),
+          )
+        else if (feedback['reason'] case final String reason)
+          Card(
+            color: t.card,
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                key: const Key('production-review-feedback'),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (feedback['shot'] case final int number)
+                    Text(
+                      i18n.t(
+                        'light:production.decision.repairShot',
+                        vars: {'number': number.toString()},
+                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  const SizedBox(height: 8),
+                  Text(reason),
+                  if (feedback['correction'] case final String correction) ...[
+                    const SizedBox(height: 8),
+                    Text(correction),
                   ],
                 ],
               ),

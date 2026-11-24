@@ -120,6 +120,8 @@ class ToolContext:
     _native_record_capability: Any = None
     _native_reveal_ttl_seconds: int = 1_800
     _native_max_persisted_reveals: int = 8
+    # Directors explicitly mark constituent media that are only inputs to a later deliverable.
+    transient_output: bool = False
 
     async def update_output(self, output: str) -> None:
         """Push incremental output update (for real-time tool display)."""

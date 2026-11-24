@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from light import product_story_plan, shortcut_plan, silk_road, video_language, wan_story
+from light import commercial_plan, product_story_plan, shortcut_plan, silk_road, video_language, wan_story
 from light.production_promotion import GUIDANCE as PROMOTION_GUIDANCE
 from tool.video_runninghub import MODEL
 
@@ -87,9 +87,13 @@ def tool_for(form: dict) -> str:
     return "light_wan_story" if form.get("template") in wan_story.TEMPLATES else "light_remake"
 
 
+def job_versions():
+    return (manifest()["version"], PREVIOUS_VERSION, *wan_story.VERSIONS)
+
+
 def owns_job(job) -> bool:
     key = getattr(job, "idempotency_key", None) or ""
-    return key.startswith("light:") and any(f":{version}:" in key for version in (manifest()["version"], PREVIOUS_VERSION, *wan_story.VERSIONS))
+    return key.startswith("light:") and any(f":{version}:" in key for version in job_versions())
 
 
 def reference_copy(form: dict) -> str:
@@ -108,6 +112,9 @@ def input_fingerprint(form: dict) -> str:
         snapshot["template"] = form["template"]
     if form.get("template") == silk_road.TEMPLATE:
         snapshot.update(product_name=form.get("product_name", ""), frame_plan=1)
+    elif form.get("template") == product_story_plan.TEMPLATE:
+        snapshot.update(product_name=form.get("product_name", ""), storyboard=commercial_plan.FORMAT,
+                        planning_revision=commercial_plan.PLANNING_REVISION)
     if promotion := form.get("promotion_brief"):
         snapshot["promotion_brief"] = promotion
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

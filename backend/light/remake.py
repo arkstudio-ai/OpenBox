@@ -34,7 +34,12 @@ _FAILED = {"failed", "cancelled"}
 
 
 class RemakeStopped(RuntimeError):
-    pass
+    def __init__(self, message: str, *, vi: str | None = None, en: str | None = None):
+        super().__init__(message)
+        self.translations = {"vi": vi, "en": en}
+
+    def for_language(self, language: str) -> str:
+        return self.translations.get(language) or str(self)
 
 
 def _digest(value: str) -> str:
@@ -47,10 +52,14 @@ async def _check(ctx: ToolContext) -> None:
     await ctx.assert_run_current()
 
 
+def _reference_id(ctx, key):
+    return f"asset_remake_{_digest(f'{ctx.session_id}:{ctx.workspace_id}:{key}')}"
+
+
 async def _reference_asset(ctx: ToolContext, key: str, data: bytes, *, mime: str = "image/jpeg") -> str:
     from session.agent_event_log import prepare_agent_event_write
 
-    asset_id = f"asset_remake_{_digest(f'{ctx.session_id}:{ctx.workspace_id}:{key}')}"
+    asset_id = _reference_id(ctx, key)
     async with get_db_session() as db:
         row = await db.get(FileAsset, asset_id)
         if row is not None and row.status == "ready" and not row.is_deleted:
@@ -69,7 +78,8 @@ async def _reference_asset(ctx: ToolContext, key: str, data: bytes, *, mime: str
     return asset_id
 
 
-async def _material_refs(ctx: ToolContext, asset_ids: list[str]) -> list[str]:
+async def _material_refs(ctx: ToolContext, asset_ids: list[str], *, video_sample: str = "opening",
+                         detail_width: int | None = None) -> list[str]:
     if not asset_ids:
         return []
     async with get_db_session() as db:
@@ -86,13 +96,32 @@ async def _material_refs(ctx: ToolContext, asset_ids: list[str]) -> list[str]:
     if not videos:
         return []
     row = videos[0]
-    duration = (row.meta or {}).get("duration_sec") or 1
+    label = f"video-reference-{_digest(row.id)}"
+    if video_sample != "opening":
+        label += f"-{video_sample}"
+    if detail_width:
+        label += f"-detail-w{detail_width}"
+    async with get_db_session() as db:
+        prior = await db.scalar(owned_ready_query(ctx.user_id, ctx.workspace_id)
+                                .where(FileAsset.id == _reference_id(ctx, label)))
+        if prior:
+            return [prior.id]
+    facts = row.meta or {}
+    if not facts.get("duration_sec") and detail_width:
+        from video.media_probe import ensure_meta
+        facts = await ensure_meta(row.id, user_id=ctx.user_id) or facts
+    duration = facts.get("duration_sec") or 1
+    if detail_width and video_sample != "opening" and not facts.get("duration_sec"):
+        return []
+    opening = 0 if detail_width else min(1, duration / 2)
+    offset = {"opening": opening, "middle": duration * .5, "late": duration * .85}[video_sample]
+    width = min(detail_width, facts.get("width") or detail_width) if detail_width else 720
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(snapshot_url(get_oss(), row.oss_key, min(1, duration / 2), width=720))
+            response = await client.get(snapshot_url(get_oss(), row.oss_key, offset, width=width, exact=bool(detail_width)))
             response.raise_for_status()
             if response.headers.get("content-type", "").startswith("image/jpeg") and len(response.content) <= 4_000_000:
-                return [await _reference_asset(ctx, f"video-reference-{_digest(row.id)}", response.content)]
+                return [await _reference_asset(ctx, label, response.content)]
     except httpx.HTTPError as exc:
         log.info("Selected video reference could not be sampled session=%s error=%s", ctx.session_id, type(exc).__name__)
     return []
@@ -312,7 +341,23 @@ async def _legacy_input_download_failed(job: VideoJob) -> bool:
 
 
 async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
+    def stopped(detail, vi, en):
+        shot = getattr(request, "shot", None)
+        vi_title = f"Cảnh {shot}" if shot else "Video"
+        en_title = f"Shot {shot}" if shot else "Video"
+        return RemakeStopped(f"{label}{detail}", vi=f"{vi_title} — {vi}", en=f"{en_title} — {en}")
+
+    def unavailable_inputs():
+        return stopped("刷新链接后素材仍下载失败，进度已保留。",
+                       "Dịch vụ vẫn chưa tải được tư liệu sau khi làm mới liên kết. Tiến trình đã được lưu.",
+                       "The service still could not download the inputs after refreshing their links. Progress was saved.")
+
+    def needs_original():
+        return stopped("需要核实原任务。", "Cần kiểm tra kết quả của yêu cầu ban đầu.",
+                       "The original request still needs to be verified.")
+
     if kind == "segment":
+        ctx = replace(ctx, transient_output=True)
         execute, args_type, deadline = video_production.execute_generate, video_production.VideoGenerateArgs, MAX_VIDEO_WAIT
     else:
         execute, args_type, deadline = video_compose.execute_compose, video_compose.VideoComposeArgs, MAX_COMPOSE_WAIT
@@ -325,19 +370,19 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
         ambiguous = (result_data.get("submit_error") or {}).get("submission_outcome") == "ambiguous"
         already_known = any(item["id"] == prior.id for item in run["existing"])
         if ambiguous:
-            raise RemakeStopped(f"{label}需要核实原任务。")
+            raise needs_original()
         download_failed = refresh_key and prior.status == "failed" and prior.provider_task_id and (
             result_data.get("failure_code") == INPUT_DOWNLOAD_FAILED
             or (already_known and await _legacy_input_download_failed(prior))
         )
         if download_failed and prior.idempotency_key == refresh_key:
-            raise RemakeStopped(f"{label}刷新链接后素材仍下载失败，进度已保留。")
+            raise unavailable_inputs()
         if download_failed:
             key = refresh_key
         elif already_known:
             key = f"{root_key}:retry:{_digest(run['id'])[:12]}"
         else:
-            raise RemakeStopped(f"{label}需要核实原任务。")
+            raise needs_original()
         prior = None
 
     async def submit(attempt_key):
@@ -350,13 +395,16 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
         if not valid.output.startswith("valid=true"):
             log.warning("remake validation refused session=%s key=%s title=%s", ctx.session_id, attempt_key, valid.title)
             if valid.metadata.get("frame_validation"):
-                raise RemakeStopped(f"{label}未提交。{valid.output}")
-            raise RemakeStopped(f"{label}未通过制作参数校验。")
+                raise stopped(f"未提交。{valid.output}", "Khung hình tham chiếu chưa đạt yêu cầu để quay.",
+                              "The reference frame did not pass validation for filming.")
+            raise stopped("未通过制作参数校验。", "Thông số sản xuất chưa hợp lệ.",
+                          "The production parameters did not pass validation.")
         result = await execute(request.model_copy(update={"idempotency_key": attempt_key}), ctx)
         job_id = result.metadata.get("job_id")
         if not job_id:
             log.warning("remake submission refused session=%s key=%s title=%s", ctx.session_id, attempt_key, result.title)
-            raise RemakeStopped(f"{label}提交失败。{result.output[:220]}")
+            raise stopped(f"提交失败。{result.output[:220]}", "Chưa nhận được mã yêu cầu từ dịch vụ tạo video.",
+                          "The video service did not return a job identifier.")
         return job_id
 
     if prior:
@@ -374,14 +422,16 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
         if (refresh_key and status == "failed" and not result.metadata.get("ambiguous_submit")
                 and result.metadata.get("failure_code") == INPUT_DOWNLOAD_FAILED):
             if key == refresh_key:
-                raise RemakeStopped(f"{label}刷新链接后素材仍下载失败，进度已保留。")
+                raise unavailable_inputs()
             key = refresh_key
             job_id = await submit(key)
             continue
         if status in _FAILED or result.metadata.get("ambiguous_submit"):
-            raise RemakeStopped(f"{label}尚未交付，进度已保留。")
+            raise stopped("尚未交付，进度已保留。", "Dịch vụ chưa trả về video. Tiến trình đã được lưu.",
+                          "The video service has not delivered this result. Progress was saved.")
         await asyncio.sleep(2)
-    raise RemakeStopped(f"{label}仍在处理，重试将查询原作业。")
+    raise stopped("仍在处理，重试将查询原作业。", "Dịch vụ vẫn đang xử lý. Thử lại sẽ kiểm tra yêu cầu ban đầu.",
+                  "The service is still processing. Retrying will check the original job.")
 
 
 async def _parallel(items, operation, *, concurrency: int, stop_on_error: bool = False):

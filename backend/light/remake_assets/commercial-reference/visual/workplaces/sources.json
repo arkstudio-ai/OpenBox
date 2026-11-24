@@ -1,0 +1,32 @@
+[
+  {
+    "file": "manager-office.jpg",
+    "source": "Original in-house commercial continuity test, empty office location plate 07.",
+    "source_sha256": "ebc4a322eb6e21c19c57856749ee804007b8e7acf5a2259353c514b24cc12c3c",
+    "sha256": "839704ddec26dec3fa81a0b246fc9adcb16dc0ec10dff7d84b239bd6002abfc6"
+  },
+  {
+    "file": "design-studio.jpg",
+    "source": "In-house commercial template filming test. Standalone empty design studio generated without input images.",
+    "source_sha256": "771919c093d64a8ca9bffbe98946dc66ab073dc91678a72d182a75bad7204d8b",
+    "sha256": "d1f4435c9af3543d9f62c7b8ecb39a30e441995afa5537f73934ffd24d288e80",
+    "source_asset": "asset_img_2f9915101b85e5d18cb73987949f14e5",
+    "model": "gpt-image-2.6"
+  },
+  {
+    "file": "glass-office.jpg",
+    "source": "In-house commercial template filming test. Standalone empty street-level office generated without input images.",
+    "source_sha256": "af3824c6a2a7de53b30aadf87904b410de61f93300f33eb472523fd45b53060f",
+    "sha256": "31eb20fdd5f2a1c161e018d6d73bf5e96c1fc7383eb5a52b55dabfc0d18f786c",
+    "source_asset": "asset_img_270cbe111f8079264e3132a3c0403c2d",
+    "model": "gpt-image-2.6"
+  },
+  {
+    "file": "print-workroom.jpg",
+    "source": "In-house commercial template filming test. Standalone empty print workshop generated without input images.",
+    "source_sha256": "78a1ae6a59cbd163d576450f56ac1fdb955370a36798c8514cba3f72ef7861eb",
+    "sha256": "b4084edb523395f31e4c58d862073dcb69149420b98f7e7242da96c061dfb264",
+    "source_asset": "asset_img_11ea8593cd89b35008c200a9ee923692",
+    "model": "gpt-image-2.6"
+  }
+]

@@ -346,7 +346,8 @@
       "blocked": "正在核实制作结果",
       "blockedBody": "有一项提交结果待核实。可打开对话查看当前任务。",
       "failed": "这次制作未完成",
-      "failedBody": "草稿和已生成的素材仍在这条任务里。"
+      "failedBody": "草稿和已生成的素材仍在这条任务里。",
+      "repairShot": "第 {{number}} 镜需要修正"
     },
     "voice": {
       "savingLine": "正在保存文案",
@@ -477,9 +478,14 @@
     "template": {
       "product_story": {
         "title": "品牌剧情广告",
-        "body": "参考耳机广告的完整原片。用手机产品图拍一条 54 秒横屏生日故事，包含同期对白、合照反转和产品片尾。",
-        "referenceHelp": "留空使用模板的 21 镜生日故事。你也可以填写要出现在片尾的手机型号、短句或希望保留的对白。",
-        "referencePlaceholder": "写下手机型号、片尾短句或希望保留的一句对白"
+        "body": "用你的商品复刻这支 53 秒耳机广告，沿用原片 28 镜、三次同动作转场和最后的街角舞蹈。",
+        "referenceHelp": "可以填写商品的真实用法、受众或指定对白。助理根据你的商品素材构思分镜，写两句对白，并按原片的放克节奏剪辑。",
+        "referencePlaceholder": "例如，运动员在训练间隙会怎样使用它。",
+        "productName": "商品名称（选填）",
+        "productNameHint": "填写素材中商品的准确名称",
+        "draftStoryboard": "生成分镜",
+        "redraftStoryboard": "重新生成分镜",
+        "materialRequired": "请返回素材页，添加一张清晰的商品照片，或一段能看清商品的实拍。"
       },
       "shortcut_story": {
         "title": "先一步做到",

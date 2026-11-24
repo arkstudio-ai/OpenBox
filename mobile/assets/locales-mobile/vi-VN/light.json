@@ -346,7 +346,8 @@
       "blocked": "Đang kiểm tra kết quả",
       "blockedBody": "Một yêu cầu đang chờ xác minh. Mở cuộc trò chuyện để xem tác vụ.",
       "failed": "Chưa hoàn thành",
-      "failedBody": "Bản nháp và tư liệu đã tạo vẫn nằm trong tác vụ này."
+      "failedBody": "Bản nháp và tư liệu đã tạo vẫn nằm trong tác vụ này.",
+      "repairShot": "Cảnh {{number}} cần chỉnh sửa"
     },
     "voice": {
       "savingLine": "Đang lưu lời đọc",
@@ -477,9 +478,14 @@
     "template": {
       "product_story": {
         "title": "Quảng cáo kể chuyện",
-        "body": "Xem quảng cáo tai nghe gốc. Tạo video ngang 54 giây từ ảnh điện thoại, có lời thoại, khoảnh khắc chụp ảnh chung và cảnh giới thiệu sản phẩm.",
-        "referenceHelp": "Để trống sẽ dùng câu chuyện sinh nhật 21 cảnh của mẫu. Bạn cũng có thể nhập mẫu điện thoại, câu kết hoặc lời thoại muốn giữ.",
-        "referencePlaceholder": "Nhập mẫu điện thoại, câu kết hoặc một câu thoại muốn giữ"
+        "body": "Tạo phim ngang 53 giây từ tư liệu sản phẩm, theo 28 cú máy của quảng cáo tai nghe, ba lần chuyển cảnh bằng cùng một động tác và màn nhảy ở góc phố.",
+        "referenceHelp": "Bạn có thể ghi cách dùng thực tế, đối tượng hoặc lời thoại cần giữ. Trợ lý sẽ xem tư liệu, viết hai câu thoại và dựng phim theo nhịp funk của mẫu.",
+        "referencePlaceholder": "Ví dụ: người tập thể thao dùng sản phẩm khi nghỉ giữa buổi.",
+        "productName": "Tên sản phẩm (không bắt buộc)",
+        "productNameHint": "Nhập tên sản phẩm có trong ảnh hoặc video",
+        "draftStoryboard": "Tạo kịch bản phân cảnh",
+        "redraftStoryboard": "Tạo lại kịch bản phân cảnh",
+        "materialRequired": "Quay lại mục Tư liệu và thêm ảnh hoặc đoạn phim nhìn rõ sản phẩm."
       },
       "shortcut_story": {
         "title": "Nhanh hơn một bước",

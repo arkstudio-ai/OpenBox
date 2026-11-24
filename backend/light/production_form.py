@@ -37,7 +37,7 @@ TEMPLATES = {
         "wok": "烟火气特写。开场直接用最有吸引力的动作，接制作过程、成品揭晓，共三个约 5 秒的新镜头。",
         silk_road.TEMPLATE: "《丝路留香》，约 62 秒超宽银幕。参考原片的镜头和转场，用当前素材适配人物、场景和剧情。",
         wan_story.SODA_TEMPLATE: "苏打水广告样片。参考低机位开场、正反打、冷暖转场和产品题字，重新编剧和拍摄。",
-        product_story_plan.TEMPLATE: "品牌剧情广告。参考耳机广告的道具衔接和商品亮相，拍摄54秒横屏生日合照故事。",
+        product_story_plan.TEMPLATE: "用当前商品素材复刻耳机商业片的五场、28镜、三次同动作转场、放克节奏和街角反转，制作约53秒横屏广告。",
         shortcut_plan.TEMPLATE: "《早就吃上了》，约30秒七镜。围绕同一个目标拍出两种办法，用商品亮相解释为什么有人先一步做到。",
         wan_story.TEMPLATE: "参考样片《这局，吃虾》的广告节奏，根据所选商品与用户创意重新编剧、拍摄和剪辑。",
         remake_case.TEMPLATE: "《这单谁买》，30 秒七段。按验证过的样片分镜，适配真实商品与参考文案。",
@@ -153,6 +153,8 @@ def prompt_data(form: dict) -> str:
         data["reference_copy"] = remake_case.reference_copy(form)
     if form.get("template") == silk_road.TEMPLATE:
         data.update(product_name=form.get("product_name", ""), beat_music=form.get("beat_music", True))
+    elif form.get("template") == product_story_plan.TEMPLATE:
+        data["product_name"] = form.get("product_name", "")
     if "creative_effects" in form:
         data["creative_effects"] = form["creative_effects"]
     if promotion := form.get("promotion_brief"):

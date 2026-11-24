@@ -18,7 +18,7 @@ from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
 from light import production_form as forms
-from light import examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
+from light import commercial_plan, examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
 
@@ -221,12 +221,19 @@ def _shot_progress(run, jobs, phase):
     prefix = run.get("job_prefix")
     plan = run.get("remake_adaptation") or {}
     if (run.get("action") != "render" or not prefix or not isinstance(plan, dict)
-            or plan.get("format") not in {"shot-list-v2", silk_road.FORMAT, product_story_plan.FORMAT}
+            or plan.get("format") not in {"shot-list-v2", silk_road.FORMAT, *product_story_plan.FORMATS}
             or phase not in {"wan_shots", "wan_edit", "compose"}):
         return None
     total = wan_story.shot_count(run)
     indices = range(1, total + 1)
     reviewed = {cut["shot"] for cut in run.get("wan_cuts") or [] if cut.get("shot") in indices}
+    if plan.get("format") == commercial_plan.FORMAT:
+        decisions = run.get("director_decisions") or {}
+        replaced = {item["replaces_review"] for item in decisions.values() if item.get("replaces_review")}
+        for key, decision in decisions.items():
+            take = decision.get("cut") or {}
+            if key not in replaced and decision.get("ok") and take.get("review_board") and take.get("shot") in indices:
+                reviewed.add(take["shot"])
     filmed = set(reviewed)
     retaking = set()
     detail = "wan_quality" if phase == "wan_edit" and run.get("wan_quality") else phase
@@ -243,10 +250,17 @@ def _shot_progress(run, jobs, phase):
         index = (job.request_data or {}).get("shot")
         if index not in indices:
             continue
+        revision = product_story_plan.repair_for(run, index).get("revision")
+        if revision and not key.startswith(f"{prefix}:shot{index}:repair:{revision}:") and key != f"{prefix}:shot{index}:repair:{revision}":
+            continue
         if job.status == "completed" and job.output_asset_id:
             filmed.add(index)
-        elif job.status in _IN_FLIGHT and key.startswith((f"{prefix}:shot{index}:retake:", f"{prefix}:quality-")):
-            retaking.add(index)
+        elif job.status in _IN_FLIGHT:
+            take = key.rsplit(":", 1)[-1]
+            commercial_retake = (plan.get("format") == commercial_plan.FORMAT and take.isdecimal()
+                                 and (int(take) > 1 or index in reviewed))
+            if commercial_retake or revision or key.startswith((f"{prefix}:shot{index}:retake:", f"{prefix}:quality-")):
+                retaking.add(index)
     return {"total": total, "filmed": len(filmed), "reviewed": len(reviewed), "retaking": len(retaking), "phase": detail}
 
 
@@ -279,7 +293,10 @@ def _work_view(row: Session, receipt, jobs: list, output, question: bool) -> dic
     if output:
         return {"status": "completed"}
     if action == "render":
-        return {"status": "failed", "phase": "render"}
+        feedback = run.get("brand_feedback") or {}
+        return {"status": "failed", "phase": "render",
+                **({"review_feedback": {key: feedback[key] for key in ("shot", "reason", "correction")}}
+                   if feedback else {})}
     prepared = (form.get("agent_revision") or 0) > (form.get("run") or {}).get("revision", 0)
     if action == "prepare" and not prepared:
         return {"status": "draft", "phase": "prepare_failed"}
@@ -517,7 +534,7 @@ async def update_from_agent(ctx, *, revision: int, changes: dict, proposal: str 
         return row.light_production["revision"]
 
 
-async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan | wan_story.ShotPlan | silk_road.Plan | product_story_plan.Plan | None, *, requested_action: str | None = None):
+async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan | wan_story.ShotPlan | silk_road.Plan | product_story_plan.BrandPlan | commercial_plan.Plan | None, *, requested_action: str | None = None):
     async with get_db_session() as db:
         row = await _lock(db, ctx.session_id, ctx.user_id, ctx.workspace_id, run_fence=ctx.run_fence)
         form = row.light_production
@@ -533,10 +550,7 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         if template == silk_road.TEMPLATE:
             recipe, plan_type = silk_road, silk_road.Plan
         elif template == product_story_plan.TEMPLATE:
-            recipe, plan_type = product_story_plan, product_story_plan.Plan
-            if run["action"] == "prepare":
-                language = run.get("video_language", "zh")
-                adaptation = (adaptation or plan_type()).localized(language)
+            recipe, plan_type = product_story_plan, (commercial_plan.Plan, product_story_plan.BrandPlan, product_story_plan.Plan)
         elif template == shortcut_plan.TEMPLATE:
             recipe, plan_type = wan_story, shortcut_plan.ShortcutPlan
         elif template in wan_story.TEMPLATES:
@@ -548,6 +562,11 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         if run["remake_version"] != remake_case.version_for(form):
             raise LightError("LIGHT_REMAKE_CHANGED", "样片已更新，请返回制作页重新生成。", 409)
         fingerprint = remake_case.input_fingerprint(form)
+        if (run["action"] == "prepare" and template == product_story_plan.TEMPLATE and adaptation is None
+                and form.get("remake_prepared_for") == fingerprint
+                and (form.get("agent_revision") or 0) > run.get("revision", 0)
+                and (form.get("remake_adaptation") or {}).get("format") == commercial_plan.FORMAT):
+            return form, run, commercial_plan.Plan.model_validate(form["remake_adaptation"])
         if run["action"] == "render":
             stored = run.get("remake_adaptation")
             if stored is None and form.get("remake_prepared_for") == fingerprint:
@@ -555,14 +574,32 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
             if stored is not None:
                 adaptation = (wan_story.parse_plan(stored, template=template) if template in wan_story.TEMPLATES
                               else plan_type.model_validate(stored))
+        if template == product_story_plan.TEMPLATE and adaptation is None:
+            # Release the lock while the owner-bound worker reads the uploaded images.
+            # Persistence rechecks the same fence and prefers any plan already saved by this run.
+            return form, run, None
         if not isinstance(adaptation, plan_type):
             raise LightError("LIGHT_REMAKE_PLAN", "当前表单需要新的分镜，请根据本次素材与文案填入 plan。", 409)
+        if isinstance(adaptation, commercial_plan.Plan):
+            recipe = commercial_plan
+            refs = [*adaptation.product_assets, adaptation.protagonist_asset, adaptation.setting_asset]
+            if not all(asset in form["asset_ids"] for asset in refs if asset):
+                raise LightError("LIGHT_PRODUCTION_ASSET", "Choose product references from the current draft's materials.")
+            adaptation = adaptation.model_copy(update={
+                "product": form.get("product_name") or adaptation.product,
+                "language": run.get("video_language", adaptation.language),
+            })
         if run["action"] == "prepare":
             language = run.get("video_language", "zh")
             if isinstance(adaptation, (silk_road.Plan, remake_case.Adaptation)):
                 adaptation = adaptation.localized(language)
-            elif not isinstance(adaptation, product_story_plan.Plan):
+            else:
                 adaptation = adaptation.model_copy(update={"language": language})
+            if isinstance(adaptation, product_story_plan.BrandPlan):
+                if not set(adaptation.product_assets).issubset(form["asset_ids"]):
+                    raise LightError("LIGHT_PRODUCTION_ASSET", "Choose product references from the current draft's materials.")
+                if name := form.get("product_name"):
+                    adaptation = adaptation.model_copy(update={"product": name})
             if isinstance(adaptation, silk_road.Plan):
                 if name := form.get("product_name"):
                     adaptation = adaptation.model_copy(update={"product": name})
@@ -577,6 +614,8 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         elif run["action"] == "render":
             snapshot = adaptation.model_dump()
             run = {**run, "remake_adaptation": snapshot}
+            if isinstance(adaptation, commercial_plan.Plan) and stored is None:
+                run["commercial_auto_staging"] = True
             if form.get("template") == wan_story.SODA_TEMPLATE and not run.get("video_model"):
                 run.update(video_model=row.video_model, video_resolution=row.video_resolution)
             row.light_production = {**form, "run": run, "remake_adaptation": snapshot,
@@ -588,7 +627,7 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         return row.light_production, run, adaptation
 
 
-async def remake_stage(ctx, key: str, stage: str | None = None, *, error: str | None = None) -> None:
+async def remake_stage(ctx, key: str, stage: str | None = None, *, error: str | None = None, feedback=None) -> None:
     async with get_db_session() as db:
         row = await _lock(db, ctx.session_id, ctx.user_id, ctx.workspace_id, run_fence=ctx.run_fence)
         form = row.light_production
@@ -596,6 +635,8 @@ async def remake_stage(ctx, key: str, stage: str | None = None, *, error: str | 
         if run.get("job_prefix") != key:
             raise LightError("LIGHT_PRODUCTION_CHANGED", "This draft has a newer version.", 409)
         update = {"remake_error": error} if error else {"remake_stage": stage}
+        if feedback:
+            update["brand_feedback"] = feedback
         row.light_production = {**form, "run": {**run, **update}}
         row.updated_at = _now()
 
@@ -647,10 +688,14 @@ async def save_reference_cut(ctx, prefix: str, cut: dict) -> None:
         run = form.get("run") or {}
         index = cut["shot"]
         if (run.get("job_prefix") != prefix or run.get("remake_version") != wan_story.VERSION
-                or (run.get("remake_adaptation") or {}).get("format") not in {"shot-list-v2", silk_road.FORMAT, product_story_plan.FORMAT}
+                or (run.get("remake_adaptation") or {}).get("format") not in {"shot-list-v2", silk_road.FORMAT, *product_story_plan.FORMATS}
                 or not cut.get("review_version") or run.get("wan_review_version") != cut["review_version"]
                 or not 1 <= index <= wan_story.shot_count(run)):
             raise LightError("LIGHT_PRODUCTION_CHANGED", "The shot belongs to another edit.", 409)
+        if run["wan_review_version"] == product_story_plan.VISUAL_REVIEW:
+            current = product_story_plan.repair_for(run, index).get("revision", 0)
+            if cut.get("repair_revision", 0) != current:
+                raise LightError("LIGHT_PRODUCTION_CHANGED", "This take has been superseded.", 409)
         cuts = {c["shot"]: c for c in run.get("wan_cuts") or []}
         if cuts.get(index) == cut:
             return
@@ -659,6 +704,63 @@ async def save_reference_cut(ctx, prefix: str, cut: dict) -> None:
         cuts[index] = cut
         row.light_production = {**form, "run": {**run, "wan_cuts": [cuts[i] for i in sorted(cuts)]}}
         row.updated_at = _now()
+
+
+async def reopen_brand_cut(ctx, prefix, *, cuts, target, report):
+    """Persist the rejected seam and reopen only its take and dependent matches."""
+    async with get_db_session() as db:
+        row = await _lock(db, ctx.session_id, ctx.user_id, ctx.workspace_id, run_fence=ctx.run_fence)
+        form = row.light_production
+        run = form.get("run") or {}
+        if (run.get("job_prefix") != prefix or run.get("wan_review_version") != product_story_plan.VISUAL_REVIEW
+                or run.get("wan_final_key") or run.get("wan_cuts") != cuts):
+            raise LightError("LIGHT_PRODUCTION_CHANGED", "The reviewed cut belongs to another edit.", 409)
+        plan = product_story_plan.ContinuityPlan.model_validate(run["remake_adaptation"])
+        if not 1 <= target <= len(plan.shots):
+            raise LightError("LIGHT_PRODUCTION_CHANGED", "The repair target is outside the storyboard.", 409)
+        repairs = run.get("brand_repairs") or []
+        update = {**run, "brand_feedback": {"shot": target, "reason": report["reason"], "correction": report["correction"]}}
+        if sum(repair.get("kind", "join") == "join" for repair in repairs) < product_story_plan.MAX_JOIN_REPAIRS:
+            update.update(_repair_brand_shot(run, plan, target, "join", report))
+        row.light_production = {**form, "run": update}
+        row.updated_at = _now()
+        return update
+
+
+def _brand_retry(prior):
+    """An explicit retry after a visual rejection gets fresh work only for that shot."""
+    saved = prior.get("remake_adaptation") or {}
+    feedback = prior.get("brand_feedback") or {}
+    kind = feedback.get("kind") or {"wan_shots": "motion", "remake_frames": "endpoint",
+                                    "wan_edit": "join"}.get(prior.get("remake_stage"))
+    target = feedback.get("shot")
+    if saved.get("format") == commercial_plan.FORMAT:
+        if (not prior.get("remake_error") or prior.get("wan_final_key") or kind != "commercial"
+                or not isinstance(target, int) or not 1 <= target <= len(commercial_plan.BEATS)):
+            return {}
+        repairs = list(prior.get("commercial_repairs") or [])
+        revision = 1 + max((r["revision"] for r in repairs if r["target"] == target), default=0)
+        return {"commercial_repairs": [*repairs, {"target": target, "revision": revision, "report": feedback}]}
+    if (saved.get("format") != product_story_plan.CONTINUITY_FORMAT or not prior.get("remake_error")
+            or feedback.get("reason") != prior["remake_error"] or prior.get("wan_final_key")
+            or kind not in {"motion", "endpoint", "join"} or not target):
+        return {}
+    plan = product_story_plan.ContinuityPlan.model_validate(saved)
+    if not 1 <= target <= len(plan.shots):
+        return {}
+    return _repair_brand_shot(prior, plan, target, kind, feedback)
+
+
+def _repair_brand_shot(prior, plan, target, kind, report):
+    repairs = prior.get("brand_repairs") or []
+    affected = [target] if kind == "motion" else product_story_plan.repair_shots(plan, target)
+    cuts = prior.get("wan_cuts") or []
+    return {
+        "brand_repairs": [*repairs, {"revision": len(repairs) + 1, "shots": affected,
+                                     "target": target, "kind": kind, "report": report,
+                                     "previous_cuts": [cut for cut in cuts if cut["shot"] in affected]}],
+        "wan_cuts": [cut for cut in cuts if cut["shot"] not in affected],
+    }
 
 
 async def save_soda_visual_review(ctx, prefix: str, *, original: list[dict], cuts: list[dict], report: dict) -> dict:
@@ -729,11 +831,14 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
     if (action in {"prepare", "render"} and view.get("template") == silk_road.TEMPLATE
             and not view["materials"]):
         raise LightError("LIGHT_PRODUCTION_ASSET", "先选择一张菜品照片或一段能看清菜品的实拍。")
+    if (action in {"prepare", "render"} and view.get("template") == product_story_plan.TEMPLATE
+            and not view["materials"]):
+        raise LightError("LIGHT_PRODUCTION_ASSET", "Select a photo or video that clearly shows your product.")
     if action == "render":
         if view["status"] == "completed":
             raise LightError("LIGHT_PRODUCTION_STATE", "Edit the result before generating a new version", 409)
         form = _form(row)
-        if (form.get("template") in {shortcut_plan.TEMPLATE, product_story_plan.TEMPLATE}
+        if (form.get("template") == shortcut_plan.TEMPLATE
                 and form.get("remake_prepared_for") != remake_case.input_fingerprint(form)):
             raise LightError("LIGHT_REMAKE_PLAN", "请先确认当前素材与文案生成的分镜。", 409)
         if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
@@ -840,6 +945,13 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 version = remake_case.version_for(form) if exact_remake else None
                 if exact_remake:
                     prefix = f"{prefix}:{version}"
+                prior = form.get("run") or {}
+                preserved = prior.get("remake_adaptation") if prior.get("job_prefix") == prefix else None
+                prepared = form.get("remake_adaptation")
+                if exact_remake and form.get("template") == product_story_plan.TEMPLATE:
+                    if form.get("remake_prepared_for") != remake_case.input_fingerprint(form):
+                        prepared = None
+                saved_plan = preserved or prepared
                 existing = [{"id": j.id, "kind": j.kind, "key": j.idempotency_key, "status": j.status,
                              "asset_id": j.output_asset_id} for j in (await db.scalars(select(VideoJob).where(
                                 VideoJob.session_id == row.id, VideoJob.idempotency_key.startswith(prefix + ":"),
@@ -851,8 +963,10 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     existing_shots = {job["key"].removeprefix(prefix + ":").partition(":")[0] for job in existing
                                       if job["kind"] == "segment" and job["key"].startswith(prefix + ":shot")
                                       and job["status"] not in {"failed", "cancelled"}}
-                    total = (wan_story.shot_count({"remake_adaptation": form.get("remake_adaptation")})
+                    total = (wan_story.shot_count({"remake_adaptation": saved_plan})
                              if version == wan_story.VERSION else len(remake_case.manifest()["shots"]))
+                    if form.get("template") == product_story_plan.TEMPLATE and not saved_plan:
+                        total = len(commercial_plan.BEATS)
                     required = max(0, total - len(existing_shots))
                     remaining = await remaining_daily_submits(ToolContext(user_id=user_id))
                     if remaining is not None and remaining < required:
@@ -890,8 +1004,6 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                                             "music_template": form["template"]}
                                            if body.action == "render" and row.light_entry == "video" else {})}}
                 if exact_remake:
-                    prior = form.get("run") or {}
-                    preserved = prior.get("remake_adaptation") if prior.get("job_prefix") == prefix else None
                     if form.get("template") == silk_road.TEMPLATE and body.action == "render":
                         resuming = prior.get("action") == "render" and prior.get("job_prefix") == prefix
                         controls = prior.get("silk_controls") if resuming else {
@@ -902,11 +1014,12 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                         controls = None
                     row.light_production = {**row.light_production, "run": {
                         **row.light_production["run"], "remake_version": version, "remake_adaptation": preserved,
-                        **({"video_language": (preserved or form.get("remake_adaptation") or {}).get("language", "zh")}
-                           if body.action == "render" and (preserved or form.get("remake_adaptation")) else {}),
+                        **({"video_language": saved_plan.get("language", "zh")}
+                           if body.action == "render" and saved_plan else {}),
                         **({"silk_controls": controls} if controls is not None else {}),
-                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs", "director_decisions") if k in prior}
+                        **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs", "director_decisions", "brand_repairs", "commercial_repairs", "commercial_auto_staging", "commercial_carry_calibration") if k in prior}
                            if version == wan_story.VERSION and prior.get("job_prefix") == prefix else {}),
+                        **(_brand_retry(prior) if body.action == "render" and prior.get("job_prefix") == prefix else {}),
                     }}
                 queued = True
             row.updated_at = _now()

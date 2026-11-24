@@ -382,7 +382,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         }
       default:
         await _send(
-          task.manualPreparation && !task.remakePrepared ? 'prepare' : 'render',
+          task.requiresStoryboardPreview && !task.remakePrepared
+              ? 'prepare'
+              : 'render',
         );
     }
   });
@@ -1260,6 +1262,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       );
     }
     final menu = task.kind == ProductionKind.menu;
+    final brandStory = task.template == productStory;
     final summary = [
       task.shop,
       if (task.materials.isNotEmpty)
@@ -1290,7 +1293,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           _promotion(task),
           const SizedBox(height: 16),
         ],
-        if (task.template == 'silk_road') ...[
+        if (brandStory && task.materials.isEmpty) ...[
+          Text(_text('template.product_story.materialRequired')),
+          const SizedBox(height: 12),
+        ],
+        if (brandStory || task.template == 'silk_road') ...[
           TextField(
             key: const Key('production-product-name'),
             controller: _productName,
@@ -1298,8 +1305,14 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             maxLength: 36,
             onChanged: (value) => _stage('product_name', value),
             decoration: InputDecoration(
-              labelText: _text('productName'),
-              hintText: task.suggestedProduct.isEmpty
+              labelText: _text(
+                brandStory
+                    ? 'template.product_story.productName'
+                    : 'productName',
+              ),
+              hintText: brandStory
+                  ? _text('template.product_story.productNameHint')
+                  : task.suggestedProduct.isEmpty
                   ? _text('productNameHint')
                   : task.suggestedProduct,
               counterText: '',
@@ -1336,7 +1349,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             alignment: Alignment.center,
             child: OutlinedButton.icon(
               key: const Key('production-optimize'),
-              onPressed: _busy
+              onPressed: _busy || (brandStory && task.materials.isEmpty)
                   ? null
                   : () {
                       FocusManager.instance.primaryFocus?.unfocus();
@@ -1347,6 +1360,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                 _text(
                   menu
                       ? 'recognize'
+                      : brandStory
+                      ? _brandStoryboardAction(task)
                       : !task.remakePrepared && _script.text.trim().isEmpty
                       ? 'draftCopy'
                       : 'optimize',
@@ -1357,8 +1372,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           if (task.phase == 'prepare_failed')
             Text(_text('prepareFailed'), textAlign: TextAlign.center),
         ],
-        if (task.remakePrepared && !_pending.containsKey('reference_copy'))
-          ProductionRemakeScript(task.script),
+        if (_hasRemakePreview(task)) ProductionRemakeScript(task.script),
         if (task.notes.isNotEmpty)
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -1467,7 +1481,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           task.referenceExampleId == null ? null : _next,
         ),
         _ => primary(
-          task.manualPreparation && !task.remakePrepared
+          task.requiresStoryboardPreview && !_hasRemakePreview(task)
               ? 'draftCopy'
               : 'generate.${task.kind.id}',
           _canRender(task) ? _next : null,
@@ -1476,7 +1490,19 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     };
   }
 
+  bool _hasRemakePreview(LightProduction task) =>
+      task.remakePrepared &&
+      !_pending.containsKey('reference_copy') &&
+      !_pending.containsKey('product_name') &&
+      !_pending.containsKey('promotion_brief');
+
+  String _brandStoryboardAction(LightProduction task) => task.script.isEmpty
+      ? 'template.product_story.draftStoryboard'
+      : 'template.product_story.redraftStoryboard';
+
   bool _canRender(LightProduction task) => switch (task.kind) {
+    ProductionKind.video when task.template == productStory =>
+      task.materials.isNotEmpty,
     ProductionKind.video => task.remake || _script.text.trim().isNotEmpty,
     ProductionKind.footage => task.materials.isNotEmpty,
     ProductionKind.menu => _dishes.isNotEmpty,

@@ -725,7 +725,7 @@ async def _store_output(
                         size=size,
                         status="ready",
                         source="agent",
-                        transient=False,
+                        transient=ctx.transient_output,
                         created_at=datetime.now(timezone.utc),
                     )
                 db.add(asset)
@@ -744,6 +744,7 @@ async def _store_output(
                         mime=mime,
                         size=size,
                         status="ready",
+                        transient=ctx.transient_output,
                     )
                     .execution_options(synchronize_session=False)
                 )
@@ -797,6 +798,11 @@ async def _store_output(
                 raise
             log.warning("generated image stayed in OSS but could not reach workspace", exc_info=True)
 
+    if not ctx.message_id:
+        # Intermediate reference photos belong to the production, which attaches its final film.
+        if ctx.run_fence:
+            await ctx.assert_run_current()
+        return StoredImage(asset_id, name, mime, size, path, attached=False, materialized=materialized)
     attached = True
     try:
         await save_part(
@@ -806,7 +812,7 @@ async def _store_output(
                 asset_id=asset_id,
                 oss_key=key,
                 size=size,
-                transient=False,
+                transient=ctx.transient_output,
                 relation=FileRelation(
                     source_part_id=ctx.part_id or None,
                     group_id=f"tool:{ctx.part_id}" if ctx.part_id else asset_id,
@@ -993,7 +999,7 @@ async def _reserve_image_outputs(
                     size=0,
                     status="pending",
                     source="agent",
-                    transient=False,
+                    transient=ctx.transient_output,
                     created_at=now,
                 )
                 db.add(row)
@@ -1152,7 +1158,7 @@ async def _store_reused(
                 size=size,
                 status="ready",
                 source="agent",
-                transient=False,
+                transient=ctx.transient_output,
                 created_at=datetime.now(timezone.utc),
         )
         db.add(asset)
@@ -1182,6 +1188,10 @@ async def _store_reused(
                 raise
             log.warning("reused image stayed in OSS but could not reach workspace", exc_info=True)
 
+    if not ctx.message_id:
+        if ctx.run_fence:
+            await ctx.assert_run_current()
+        return StoredImage(asset_id, name, mime, size, path, attached=False, materialized=materialized)
     attached = True
     try:
         await save_part(
@@ -1191,7 +1201,7 @@ async def _store_reused(
                 asset_id=asset_id,
                 oss_key=key,
                 size=size,
-                transient=False,
+                transient=ctx.transient_output,
                 relation=FileRelation(
                     source_part_id=ctx.part_id or None,
                     group_id=f"tool:{ctx.part_id}" if ctx.part_id else asset_id,
@@ -2493,6 +2503,9 @@ async def _reconcile_runninghub_task(effect, rows: list[Any]):
         return ReconcileDecision(state="manual_review", provider_handle=task_id,
                                  evidence={"code": "runninghub_route_changed"})
     data = await video_providers.status(route, task_id, operation="image_status")
+    if data.get("taskId") and str(data["taskId"]) != str(task_id):
+        return ReconcileDecision(state="manual_review", provider_handle=task_id,
+                                 evidence={"code": "image_task_id_mismatch"})
     state = runninghub.task_state(data)
     if state in ("failed", "cancelled"):
         await _set_reserved_image_status(rows, "rejected", ctx=None,

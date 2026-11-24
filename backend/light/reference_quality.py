@@ -11,7 +11,7 @@ from typing import Literal
 
 import httpx
 from PIL import Image, ImageDraw, ImageStat
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from core.oss import get_oss
 from db.base import get_db_session
@@ -189,7 +189,9 @@ async def owned_images(ctx, ids):
         for asset_id in dict.fromkeys(ids):
             row = await db.get(FileAsset, asset_id)
             if not row or row.user_id != ctx.user_id or row.is_deleted or row.status != "ready" or not row.mime.startswith("image/"):
-                raise RemakeStopped("审片参考图片不可读取，已保留生成素材。")
+                raise RemakeStopped("审片参考图片不可读取，已保留生成素材。",
+                                    vi="Chưa đọc được ảnh tham chiếu để duyệt cảnh. Tư liệu đã tạo được lưu.",
+                                    en="The reference image for review could not be read. The generated footage was saved.")
             urls[get_oss().presign_get(row.oss_key)] = row.id
     return urls
 
@@ -202,9 +204,13 @@ async def ask(ctx, name, schema, guide, data, images, *, attempts=2, max_tokens=
     from core.config import get_config
 
     urls = await owned_images(ctx, images)
+    by_asset = {asset: url for url, asset in urls.items()}
+    for alias in dict.fromkeys(asset for asset in images if asset not in by_asset):
+        # Distinct owned asset rows can point at the same stored bytes.
+        by_asset[alias] = next(iter(await owned_images(ctx, [alias])))
     messages = [{"role": "user", "content": [
         {"type": "text", "text": guide + "\n" + json.dumps(data, ensure_ascii=False)},
-        *({"type": "image_url", "image_url": {"url": url}} for url in urls),
+        *({"type": "image_url", "image_url": {"url": by_asset[asset]}} for asset in images),
     ]}]
     function = {"name": name, "description": "Submit an evidence-based advertising quality decision.",
                 "parameters": schema.model_json_schema()}
@@ -226,15 +232,27 @@ async def ask(ctx, name, schema, guide, data, images, *, attempts=2, max_tokens=
                 answer = await asyncio.wait_for(litellm.acompletion(**options), timeout + 5)
                 content = vision_contract.output(answer, name)
                 await trace.chunk(vision_contract.response_evidence(answer, content))
-            report = schema.model_validate(parse_picture(content))
+            report = schema.model_validate(parse_picture(content), context=data)
             return {"report": report.model_dump(), "model": model, "evidence": images}
         except asyncio.CancelledError:
             raise
+        except ValidationError as exc:
+            error = type(exc).__name__
+            invalid = [{"field": ".".join(map(str, item["loc"])), "problem": item["msg"]}
+                       for item in exc.errors(include_input=False)[:8]]
+            messages.append({"role": "user", "content": "Return the full corrected result. "
+                             "Correct these fields while preserving the other directions. "
+                             + json.dumps(invalid, ensure_ascii=False)})
         except Exception as exc:
             from question.runtime import RunRevoked
             if isinstance(exc, RunRevoked):
                 raise
             error = type(exc).__name__
+    language = data.get("language")
+    if language == "vi":
+        raise RemakeStopped(f"Chưa nhận được kết quả kiểm tra hợp lệ cho quảng cáo ({error}).")
+    if language == "en":
+        raise RemakeStopped(f"The advertising review returned no valid result ({error}).")
     raise RemakeStopped(f"广告质量审片暂未返回有效结果（{error}），不能跳过检查交付。")
 
 

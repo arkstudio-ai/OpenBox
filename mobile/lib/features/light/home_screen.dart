@@ -129,19 +129,17 @@ class LightHomeScreen extends ConsumerWidget {
                         index += 2
                       ) ...[
                         if (index > 0) const SizedBox(height: 10),
-                        IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: card(entries[index])),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: index + 1 < entries.length
-                                    ? card(entries[index + 1])
-                                    : const SizedBox.shrink(),
-                              ),
-                            ],
-                          ),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: card(entries[index])),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: index + 1 < entries.length
+                                  ? card(entries[index + 1])
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
                         ),
                       ],
                     ],

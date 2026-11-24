@@ -50,6 +50,38 @@ async def asset_for(user, workspace, **changes):
     return row
 
 
+async def test_library_shows_reusable_outputs_and_uploads_but_the_editor_also_has_its_internal_takes():
+    from assets.service import owned_ready_query, resource_query
+    from db.models.video_job import VideoJob
+    from session.session import create_session
+    from tests.unit.test_assistant_sessions_v2 import assistant
+
+    owner, _, workspace, main = await assistant()
+    session = await create_session(user_id=owner, workspace_id=workspace, project_id=main.project_id, light_entry="video")
+    async def asset(name, source="agent", transient=False):
+        return await asset_for(owner, workspace, name=name, session_id=session.id, source=source, transient=transient)
+
+    still_name = "wan-story-" + "c" * 28 + "-commercial-11.png"
+    internal = await asset("segment-generated.mp4")
+    still = await asset(still_name)
+    modern = await asset("temporary-take.mp4", transient=True)
+    upload = await asset(still_name, source="user")
+    separate = await asset("segment-generated.mp4")
+    movie = await asset("advert.mp4")
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        for row, kind, key in [(internal, "segment", f"light:{session.id}:4:wan-story-v2:shot11:1"),
+                               (movie, "compose", f"light:{session.id}:4:wan-story-v2:final"),
+                               (separate, "segment", "user-camera-take")]:
+            db.add(VideoJob(id="video_" + uuid4().hex, session_id=session.id, user_id=owner, kind=kind,
+                            idempotency_key=key, output_asset_id=row.id, status="completed", created_at=now, updated_at=now))
+    async with get_db_session() as db:
+        library = await db.scalars(resource_query(owner, workspace, owned_only=True).with_only_columns(FileAsset.id))
+        editor = await db.scalars(owned_ready_query(owner, workspace).with_only_columns(FileAsset.id))
+        assert set(library) == {upload.id, separate.id, movie.id}
+        assert set(editor) == {internal.id, still.id, modern.id, upload.id, separate.id, movie.id}
+
+
 async def test_descriptions_are_searchable_shared_and_still_owner_scoped():
     from types import SimpleNamespace
     from tests.unit.test_assistant_sessions_v2 import assistant

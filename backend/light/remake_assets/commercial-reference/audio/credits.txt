@@ -1,0 +1,8 @@
+Funkorama — Kevin MacLeod (incompetech.com)
+License: Creative Commons Attribution 4.0 International
+https://creativecommons.org/licenses/by/4.0/
+Original work: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100474
+Music source during this edit: NetEase Cloud Music recording 1296373211.
+Changes: excerpted, tempo-adjusted to the reference, faded, volume adjusted and mixed with sound effects.
+
+reference-foley.flac is an internally synthesized 48 kHz ambience and effects track.

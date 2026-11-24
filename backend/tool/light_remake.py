@@ -2,23 +2,26 @@
 
 from functools import lru_cache
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-from light import product_story_plan, production, remake_case, shortcut_plan, silk_road, wan_story
+from core.log import create_logger
+from light import commercial_plan, product_story_plan, production, remake_case, shortcut_plan, silk_road, wan_story
 from light.mode import LightError
 from tool.tool import ToolContext, ToolResult, define_tool
 
 
 _PREPARED = {"zh": "已写好剧情分镜", "en": "Storyboard ready", "vi": "Đã viết xong kịch bản phân cảnh"}
+_STOPPED = {"zh": "制作已暂停", "en": "Production paused", "vi": "Đã tạm dừng sản xuất"}
+log = create_logger("light.guided_remake")
 
 
 def _delivered(title, language, asset, duration, shots):
     summary = {
-        "zh": f"已确认的剧情镜头与片尾已合成为一份 {duration:.1f} 秒成片，并已附在本对话。",
-        "en": f"The approved shots and end card are assembled into a {duration:.1f}-second video attached here.",
-        "vi": f"Đã dựng các cảnh và thẻ kết đã duyệt thành video dài {duration:.1f} giây và đính kèm tại đây.",
+        "zh": f"{shots} 个镜头已剪成 {duration:.1f} 秒成片，视频已附在本对话。",
+        "en": f"The finished {duration:.1f}-second video is attached here. It contains {shots} shots.",
+        "vi": f"Video hoàn chỉnh dài {duration:.1f} giây gồm {shots} cảnh đã được đính kèm tại đây.",
     }[language]
-    return ToolResult(title=title, output=f"{summary}\nasset_id={asset}, duration_sec={duration:.4f}.\nFor later edits, reuse this cloud asset with video_compose.",
+    return ToolResult(title=title, output=f"{summary}\nasset_id={asset}, duration_sec={duration:.4f}.",
                       metadata={"asset_id": asset, "duration_sec": duration, "shots": shots})
 
 
@@ -36,10 +39,10 @@ async def execute(args: remake_case.Adaptation, ctx: ToolContext) -> ToolResult:
         try:
             asset_id = await render(ctx, form, run, adaptation)
         except RemakeStopped as exc:
-            reason = str(exc)
+            reason = exc.for_language(adaptation.language)
             await production.remake_stage(ctx, run["job_prefix"], error=reason)
             return ToolResult(
-                title="复刻制作已暂停", output=reason, metadata={"error": True, "do_not_retry": True}
+                title=_STOPPED[adaptation.language], output=reason, metadata={"error": True, "do_not_retry": True}
             )
         return _delivered(remake_case.title(adaptation.language), adaptation.language, asset_id, 30, 7)
     except LightError as exc:
@@ -78,14 +81,23 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
     from light.remake import RemakeStopped
     from light.wan_remake import render
 
+    language = getattr(args.plan, "language", "zh")
     try:
         form, run, plan = await production.begin_remake(ctx, args.plan, requested_action=args.action)
-        if run["action"] == "prepare":
-            return ToolResult(title=_PREPARED[plan.language], output=form["script"], metadata={"rendered": False})
+        language = run.get("video_language", language)
         try:
+            if form["template"] == product_story_plan.TEMPLATE and plan is None:
+                if run["action"] == "render":
+                    await production.remake_stage(ctx, run["job_prefix"], "copy")
+                plan = await commercial_plan.adapt(ctx, form, run["video_language"])
+                form, run, plan = await production.begin_remake(ctx, plan, requested_action=args.action)
+            if run["action"] == "prepare":
+                return ToolResult(title=_PREPARED[plan.language], output=form["script"], metadata={"rendered": False})
             if form["template"] == wan_story.SODA_TEMPLATE:
                 from light.soda_story import render
-            elif isinstance(plan, product_story_plan.Plan):
+            elif isinstance(plan, commercial_plan.Plan):
+                from light.commercial_film import render
+            elif isinstance(plan, (product_story_plan.BrandPlan, product_story_plan.Plan)):
                 from light.product_story import render
             elif isinstance(plan, shortcut_plan.ShortcutPlan):
                 from light.shortcut_story import render
@@ -94,16 +106,27 @@ async def execute_wan(args: wan_story.StoryRequest, ctx: ToolContext) -> ToolRes
             elif isinstance(plan, wan_story.ShotPlan):
                 from light.reference_film import render
             asset, duration = await render(ctx, form, run, plan)
-        except RemakeStopped as exc:
-            await production.remake_stage(ctx, run["job_prefix"], error=str(exc))
+        except (RemakeStopped, ValidationError) as exc:
+            if isinstance(exc, ValidationError):
+                if form["template"] != product_story_plan.TEMPLATE:
+                    raise
+                fields = [".".join(map(str, item["loc"])) for item in exc.errors(include_input=False)]
+                log.warning("Commercial production validation session=%s fields=%s", ctx.session_id, fields)
+                reason = {"zh": "生成内容未通过格式校验，制作记录已保存。", "en": "The generated content failed validation. Your production record was saved.",
+                          "vi": "Nội dung vừa tạo chưa đúng định dạng. Tiến trình sản xuất đã được lưu."}[language]
+            else:
+                reason = exc.for_language(language)
+            await production.remake_stage(ctx, run["job_prefix"], error=reason,
+                                          feedback=getattr(exc, "review_feedback", None))
             return ToolResult(
-                title="制作已暂停", output=str(exc), metadata={"error": True, "do_not_retry": True}
+                title=_STOPPED[language], output=reason, metadata={"error": True, "do_not_retry": True}
             )
-        shot_count = (len(product_story_plan.case()["shots"]) if isinstance(plan, product_story_plan.Plan)
+        shot_count = (len(product_story_plan.shots(plan))
+                      if isinstance(plan, (product_story_plan.BrandPlan, product_story_plan.Plan))
                       else wan_story.shot_count(run))
         return _delivered(plan.title, plan.language, asset, duration, shot_count)
     except LightError as exc:
-        return ToolResult(title="制作已暂停", output=str(exc), metadata={"error": True})
+        return ToolResult(title=_STOPPED[language], output=str(exc), metadata={"error": True})
 
 
 light_wan_story_tool = define_tool(
@@ -135,20 +158,25 @@ def wan_tool_for_action(action: str, template: str | None = None):
         parameters = {
             silk_road.TEMPLATE: SilkRoadPrepareRequest,
             shortcut_plan.TEMPLATE: shortcut_plan.PrepareRequest,
-            product_story_plan.TEMPLATE: product_story_plan.PrepareRequest,
+            product_story_plan.TEMPLATE: wan_story.ProductPreviewRequest,
         }.get(template, wan_story.PrepareRequest)
+    if template == product_story_plan.TEMPLATE:
+        description = (f"The owner selected {action} for the commercial reference. Call once with action={action}. "
+                       "The executor reads the uploaded materials and adapts the reference storyboard. "
+                       "Prepare saves a preview. Render autonomously films, reviews, mixes and attaches the finished cut.")
+    elif action == "prepare":
+        description = "The App has requested a new preview screenplay. Supply the complete plan; this does not generate paid media."
+    else:
+        description = ("The owner pressed Generate or Retry in the App. Call once with action=render to film "
+                       "the saved plan, reconcile jobs, review actors and dialogue, and attach the full composition.")
+    # The 28-shot commercial includes provider queues, endpoint checks and bounded automatic retakes.
+    minutes = 90 if template == product_story_plan.TEMPLATE and action == "render" else 55
     return define_tool(
         "light_wan_story",
-        description=(
-            "The App has requested a new preview screenplay. Supply the complete plan; this does not generate paid media."
-            if action == "prepare" else
-            "The owner pressed Generate or Retry in the App. Call this tool once with action=render (or empty arguments) "
-            "to execute the approved saved plan and reconcile existing media jobs. Do not rewrite or submit a plan. "
-            "The executor reviews actual actors, dialogue and props, and attaches only the full composition."
-        ),
+        description=description,
         parameters=parameters,
         execute=execute_owned,
         sandbox_required=False,
         parallel_safe=False,
-        body_timeout=lambda _args, _ctx: 55 * 60,
+        body_timeout=lambda _args, _ctx: minutes * 60,
     )

@@ -156,6 +156,7 @@ class LightProduction {
       page = asString(json['page']) ?? 'materials',
       status = asString(json['status']) ?? 'draft',
       phase = asString(json['phase']),
+      reviewFeedback = asMap(json['review_feedback']),
       shotProgress = ProductionShotProgress.parse(json['shot_progress']),
       shotWorkspace = json['shot_editor'] == null
           ? null
@@ -218,6 +219,7 @@ class LightProduction {
   final String page;
   final String status;
   final String? phase;
+  final Map<String, dynamic> reviewFeedback;
   final ProductionShotProgress? shotProgress;
   final ProductionShotWorkspace? shotWorkspace;
   final String shop;
@@ -262,6 +264,8 @@ class LightProduction {
     'soda_story',
     'silk_road',
   ].contains(template);
+  bool get requiresStoryboardPreview =>
+      manualPreparation && template != productStory;
   bool get supportsMusic =>
       kind == ProductionKind.video && template != productStory;
   bool get wanRemake => manualPreparation || template == 'wan_story';

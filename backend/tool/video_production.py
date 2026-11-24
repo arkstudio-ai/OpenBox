@@ -2894,6 +2894,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     filename=None,
                     request_hash=request_hash,
                     prompt_hash=prompt_hash,
+                    transient=ctx.transient_output,
                 )
             if not created:
                 if job.status == "completed":

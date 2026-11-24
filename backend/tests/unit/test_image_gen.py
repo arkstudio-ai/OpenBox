@@ -161,7 +161,8 @@ async def test_provider_call_selects_edits_and_preserves_input_order(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypatch):
+@pytest.mark.parametrize("message_id,transient", [("message_1", False), ("", False), ("", True)])
+async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypatch, message_id, transient):
     import db.base
     import session.session
     import tool.image_gen as image_mod
@@ -198,8 +199,9 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
             session_id="session_1",
             user_id="user_1",
             project_id="project_1",
-            message_id="message_1",
+            message_id=message_id,
             sandbox=None,
+            transient_output=transient,
         ),
         SimpleNamespace(delete=None),
         b"\x89PNG\r\n\x1a\nbody",
@@ -218,7 +220,11 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
     assert rows[0].source == "agent"
     assert rows[0].project_id == "project_1"
     assert rows[0].status == "ready"
-    assert rows[0].transient is False
+    assert rows[0].transient is transient
+    assert result.attached is bool(message_id)
+    if not message_id:
+        assert parts == []
+        return
     assert len(parts) == 1
     assert parts[0][0].asset_id == result.asset_id
     assert parts[0][0].oss_key == rows[0].oss_key

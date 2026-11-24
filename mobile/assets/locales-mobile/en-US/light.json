@@ -348,7 +348,8 @@
       "blocked": "Checking the outcome",
       "blockedBody": "A submission still needs verification. Open the conversation to review this task.",
       "failed": "Production interrupted",
-      "failedBody": "Your draft and generated materials are still in this task."
+      "failedBody": "Your draft and generated materials are still in this task.",
+      "repairShot": "Shot {{number}} needs a correction"
     },
     "voice": {
       "savingLine": "Saving your edit",
@@ -479,9 +480,14 @@
     "template": {
       "product_story": {
         "title": "Cinematic product story",
-        "body": "Preview the original headphone ad. Make a 54-second landscape birthday story from a phone reference, with live dialogue, a selfie reveal and a product end card.",
-        "referenceHelp": "Leave this blank to use the template’s 21-shot birthday story. You can add a phone model, an end-card line, or dialogue you want to keep.",
-        "referencePlaceholder": "Add a phone model, an end-card line, or a line of dialogue"
+        "body": "Recreate the 53-second headphone commercial with your product, following its 28 shots, three gesture transitions and final street dance.",
+        "referenceHelp": "You can describe how the product is used, who it is for, or any exact dialogue. The assistant adapts the two spoken lines and cuts the film to the reference’s funk rhythm.",
+        "referencePlaceholder": "For example, show an athlete using it between drills.",
+        "productName": "Product name (optional)",
+        "productNameHint": "Enter the name of the product in your photo or video",
+        "draftStoryboard": "Create storyboard",
+        "redraftStoryboard": "Regenerate storyboard",
+        "materialRequired": "Go back to Materials and add a clear product photo or clip."
       },
       "shortcut_story": {
         "title": "Already There",

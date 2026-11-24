@@ -197,31 +197,139 @@ void main() {
     });
   }
 
-  testWidgets('the brand story asks for phone and end-card copy', (
+  testWidgets(
+    'the commercial saves the selected product and renders in one tap',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      const session = 'brand-draft';
+      var saved = <String, dynamic>{
+        'session_id': session,
+        'entry_id': 'video',
+        'page': 'review',
+        'template': productStory,
+        'revision': 1,
+        'asset_ids': ['coffee-photo'],
+        'materials': [
+          {'id': 'coffee-photo', 'name': '咖啡包装.jpg', 'mime': 'image/jpeg'},
+        ],
+      };
+      final actions = <String>[];
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              if (request.method == 'PATCH') {
+                saved = {
+                  ...saved,
+                  ...request.data as Map<String, dynamic>,
+                  'revision': 2,
+                };
+              } else if (request.path.endsWith('/actions')) {
+                final body = request.data as Map<String, dynamic>;
+                actions.add(body['action'] as String);
+                expect(saved['product_name'], '山野咖啡');
+                expect(saved['reference_copy'], '展示手冲过程。片尾：每天一杯。');
+                saved = {
+                  ...saved,
+                  'script': '山野咖啡 · 手冲场景',
+                  'remake_prepared': true,
+                };
+              }
+              handler.resolve(Response(requestOptions: request, data: saved));
+            },
+          ),
+        );
+      await tester.pumpWidget(
+        host(
+          ProductionPage(
+            sessionId: session,
+            initial: LightProduction.fromJson(saved),
+          ),
+          overrides: [
+            lightProductionApiProvider.overrideWithValue(
+              LightProductionApi(dio),
+            ),
+            lightApiProvider.overrideWithValue(LightApi(dio)),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      final product = find.byKey(const Key('production-product-name'));
+      final copy = find.byKey(const Key('production-script'));
+      final primary = find.byKey(const Key('production-primary'));
+      final field = tester.widget<TextField>(product);
+      expect(field.decoration?.labelText, '商品名称（选填）');
+      expect(find.textContaining('根据你的商品素材构思分镜'), findsOneWidget);
+      expect(find.textContaining('手机型号'), findsNothing);
+      expect(
+        find.descendant(of: primary, matching: find.text('生成视频')),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(product);
+      await tester.enterText(product, '山野咖啡');
+      await tester.ensureVisible(copy);
+      await tester.enterText(copy, '展示手冲过程。片尾：每天一杯。');
+      await tester.tap(primary);
+      await tester.pumpAndSettle();
+      expect(actions, ['render']);
+      expect(find.byKey(const Key('production-remake-script')), findsOneWidget);
+    },
+  );
+
+  testWidgets('completed video preview uses landscape media dimensions', (
     tester,
   ) async {
-    final controller = TextEditingController();
-    addTearDown(controller.dispose);
-    final task = LightProduction.fromJson({
-      'entry_id': 'video',
-      'template': productStory,
-    });
+    final media = {'id': 'film', 'name': 'film.mp4', 'mime': 'video/mp4'};
+    final preview = find.byKey(const Key('production-result-preview'));
+    for (final (dimensions, ratio) in [
+      ({'width': 1280, 'height': 720}, 16 / 9),
+      (<String, int>{}, 9 / 16),
+    ]) {
+      await tester.pumpWidget(
+        host(
+          ProductionResult(
+            task: LightProduction.fromJson({
+              'entry_id': 'video',
+              'template': productStory,
+              'output': {...media, ...dimensions},
+            }),
+          ),
+          overrides: [
+            videoThumbnailProvider.overrideWith((_, _) async => null),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getSize(preview).aspectRatio, closeTo(ratio, .01));
+    }
+  });
+
+  testWidgets('a stopped brand review explains the shot and correction', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       host(
-        ProductionRemakeCopy(
-          task: task,
-          controller: controller,
-          enabled: true,
-          onChanged: (_) {},
+        ProductionDecision(
+          task: LightProduction.fromJson({
+            'entry_id': 'video',
+            'status': 'failed',
+            'template': productStory,
+            'review_feedback': {
+              'shot': 6,
+              'reason': '主商品在切镜时消失。',
+              'correction': '让下一镜保留桌面上的同一个商品。',
+            },
+          }),
         ),
       ),
     );
-    final field = tester.widget<TextField>(
-      find.byKey(const Key('production-script')),
-    );
-    expect(field.decoration?.hintText, '写下手机型号、片尾短句或希望保留的一句对白');
-    expect(find.textContaining('留空使用模板的 21 镜生日故事'), findsOneWidget);
-    expect(find.textContaining('菜名'), findsNothing);
+    expect(find.byKey(const Key('production-review-feedback')), findsOneWidget);
+    expect(find.text('第 6 镜需要修正'), findsOneWidget);
+    expect(find.text('主商品在切镜时消失。'), findsOneWidget);
+    expect(find.text('让下一镜保留桌面上的同一个商品。'), findsOneWidget);
   });
 
   testWidgets('opening video creation is read-only until the first edit', (

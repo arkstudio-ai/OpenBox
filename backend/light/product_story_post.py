@@ -65,7 +65,7 @@ async def _clip(folder, index, cut, shot):
     end = (cut["start"] + cut["frames"]) / recipe.FPS
     speed = cut["speed"]
     crop = ("crop=w='trunc(iw*6/7/2)*2':h='trunc(ih*6/7/2)*2':x='iw*0.06':y='ih*0.05',"
-            if index == 14 else "")
+            if index == 14 and not shot.get("adaptive") else "")
     pixels = (
         f"fps=24,trim=start_frame={cut['start']}:end_frame={cut['start'] + cut['frames']},"
         f"setpts=(PTS-STARTPTS)/{speed:.12f},fps=24,tpad=stop_mode=clone:stop_duration=0.15,"
@@ -133,11 +133,37 @@ def _titles(folder, plan):
             size -= 1
         draw.text((x, y), text, font=face, fill=ink, anchor="lt")
 
-    concept = {"zh": "概念广告", "en": "Concept ad", "vi": "Quảng cáo ý tưởng"}
-    label(744, 245, 17, concept[plan.language], "#abc9ec")
-    label(738, 279, 60, plan.product, "#f4f8ff")
-    label(744, 370, 30, plan.headline, "#deecff")
-    label(744, 650, 14, "Music: Dream Culture — Kevin MacLeod", "#b9cee9")
+    if isinstance(plan, recipe.BrandPlan):
+        def brand_label(text, y, size, color):
+            family = mixed_font if _has_cjk(text) else latin_font
+            for point in range(size, 11, -1):
+                face = family(point)
+                if draw.textlength(text, font=face) <= 470:
+                    draw.text((748, y), text, font=face, fill=color, anchor="lt")
+                    return
+                split = len(text) // 2
+                spaces = [i for i, c in enumerate(text) if c.isspace()]
+                if spaces:
+                    split = min(spaces, key=lambda i: abs(i - split))
+                lines = (text[:split].rstrip(), text[split:].lstrip())
+                if max(draw.textlength(line, font=face) for line in lines) <= 470:
+                    for index, line in enumerate(lines):
+                        draw.text((748, y + index * (point + 10)), line, font=face, fill=color, anchor="lt")
+                    return
+            label(748, y, 12, text, color)
+
+        locked = isinstance(plan, recipe.ContinuityPlan)
+        brand_label(plan.product, 252, 62 if locked else 52, "#f4f8ff")
+        brand_label(plan.headline, 395, 40 if locked else 27, "#deecff")
+        music = {"zh": "配乐", "en": "Music", "vi": "Nhạc"}[plan.language]
+        credit = f"{music} · Dream Culture — Kevin MacLeod"
+    else:
+        concept = {"zh": "概念广告", "en": "Concept ad", "vi": "Quảng cáo ý tưởng"}
+        label(744, 245, 17, concept[plan.language], "#abc9ec")
+        label(738, 279, 60, plan.product, "#f4f8ff")
+        label(744, 370, 30, plan.headline, "#deecff")
+        credit = "Music: Dream Culture — Kevin MacLeod"
+    label(744, 650, 14, credit, "#b9cee9")
     label(744, 673, 13, "incompetech.com · CC BY 4.0 · Excerpted & mixed", "#b9cee9")
     path = folder / "titles.png"
     graphic.save(path)
@@ -201,6 +227,7 @@ def _shutter(folder):
 
 async def assemble(folder, plan, cuts):
     shots = recipe.shots(plan)
+    adaptive = isinstance(plan, recipe.BrandPlan)
     # Keep at most three encoders active in a single production.
     from light.remake import _parallel
 
@@ -209,17 +236,21 @@ async def assemble(folder, plan, cuts):
         return await _clip(folder, index, cut, shots[index - 1])
 
     live = await _parallel(cuts, clip, concurrency=3)
-    still = folder / "selfie.png"
-    await ff("-i", live[-1], "-vf", f"select=eq(n\\,{shots[15]['frames'] - 1})",
-             "-frames:v", "1", "-update", "1", still)
-    phone, title = await asyncio.gather(asyncio.to_thread(_screen, folder, still),
-                                        asyncio.to_thread(_titles, folder, plan))
-    specs = [
-        (17, still, "1", None), (18, phone, "1.19-0.19*on/88", None),
-        (19, folder / "source-19.jpg", "1.01+0.035*on/29", None),
-        (20, folder / "source-20.jpg", "1.04-0.025*on/23", None),
-        (21, folder / "source-21.jpg", "1.00+0.025*on/65", title),
-    ]
+    title = await asyncio.to_thread(_titles, folder, plan)
+    if adaptive:
+        end_card = len(shots)
+        specs = [(end_card, folder / f"source-{end_card:02d}.jpg", "1", title)]
+    else:
+        still = folder / "selfie.png"
+        await ff("-i", live[-1], "-vf", f"select=eq(n\\,{shots[15]['frames'] - 1})",
+                 "-frames:v", "1", "-update", "1", still)
+        phone = await asyncio.to_thread(_screen, folder, still)
+        specs = [
+            (17, still, "1", None), (18, phone, "1.19-0.19*on/88", None),
+            (19, folder / "source-19.jpg", "1.01+0.035*on/29", None),
+            (20, folder / "source-20.jpg", "1.04-0.025*on/23", None),
+            (21, folder / "source-21.jpg", "1.00+0.025*on/65", title),
+        ]
 
     async def post(item):
         index, image, zoom, text = item
@@ -227,7 +258,6 @@ async def assemble(folder, plan, cuts):
 
     clips = live + await _parallel(specs, post, concurrency=2)
     srt, cues = _subtitles(folder, cuts)
-    shutter = _shutter(folder)
     count = len(clips)
     inputs = [item for file in clips for item in ("-threads", "1", "-i", file)]
     graph = "".join(
@@ -236,35 +266,53 @@ async def assemble(folder, plan, cuts):
     )
     graph += "".join(f"[{i}:v][a{i}]" for i in range(count))
     graph += f"concat=n={count}:v=1:a=1[vcat][acat];[vcat]setpts=N/(24*TB)[picture];"
-    first = round((sum(s["frames"] for s in shots[:6]) / recipe.FPS + .98) * 1000)
-    duck = "+".join(f"between(t,{a:.3f},{b:.3f})" for a,b,_ in cues if a >= first / 1000)
-    level = f"if({duck},0.21,0.53)" if duck else "0.53"
-    graph += (
-        f"[{count}:a]aresample={RATE},adelay={first}:all=1,volume='{level}':eval=frame,"
-        "afade=t=in:st=14.14:d=0.38,afade=t=out:st=53.1:d=0.9[music];"
-        f"[{count+1}:a]asplit[s1][s2];[s1]adelay={first}:all=1,volume=0.68[early];"
-        "[s2]adelay=44000:all=1[late];"
-        "[acat][music][early][late]amix=inputs=4:duration=first:normalize=0,"
-        "apad,atrim=duration=54,volume=1.48,alimiter=limit=0.84:level=false:latency=true[sound]"
-    )
+    inputs.extend(("-i", recipe.ASSETS / "dream-culture.mp3"))
+    if adaptive:
+        duck = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, _ in cues)
+        level = f"if({duck},0.14,0.40)" if duck else "0.40"
+        graph += (
+            f"[{count}:a]aresample={RATE},volume='{level}':eval=frame,"
+            "afade=t=in:d=0.40,afade=t=out:st=53.1:d=0.9[music];"
+            "[acat][music]amix=inputs=2:duration=first:normalize=0,"
+            "apad,atrim=duration=54,alimiter=limit=0.84:level=false:latency=true[sound]"
+        )
+    else:
+        inputs.extend(("-i", _shutter(folder)))
+        first = round((sum(s["frames"] for s in shots[:6]) / recipe.FPS + .98) * 1000)
+        duck = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, _ in cues if a >= first / 1000)
+        level = f"if({duck},0.21,0.53)" if duck else "0.53"
+        graph += (
+            f"[{count}:a]aresample={RATE},adelay={first}:all=1,volume='{level}':eval=frame,"
+            "afade=t=in:st=14.14:d=0.38,afade=t=out:st=53.1:d=0.9[music];"
+            f"[{count+1}:a]asplit[s1][s2];[s1]adelay={first}:all=1,volume=0.68[early];"
+            "[s2]adelay=44000:all=1[late];"
+            "[acat][music][early][late]amix=inputs=4:duration=first:normalize=0,"
+            "apad,atrim=duration=54,volume=1.48,alimiter=limit=0.84:level=false:latency=true[sound]"
+        )
     output = folder / "final.mp4"
     language = MEDIA_TAGS[plan.language]
-    await ff(*inputs, "-i", recipe.ASSETS / "dream-culture.mp3", "-i", shutter, "-i", srt,
-             "-filter_complex", graph, "-map", "[picture]", "-map", "[sound]", "-map", f"{count+2}:s",
+    subtitle_opts = []
+    if cues:
+        inputs.extend(("-i", srt))
+        subtitle_index = count + (1 if adaptive else 2)
+        subtitle_opts = ["-map", f"{subtitle_index}:s", "-c:s", "mov_text", "-metadata:s:s:0", f"language={language}",
+                         "-disposition:s:0", "0"]
+    await ff(*inputs, "-filter_complex", graph, "-map", "[picture]", "-map", "[sound]", *subtitle_opts,
              "-c:v", "libx264", "-threads:v", "4", "-preset", "medium", "-crf", "15", "-r", "24",
              "-pix_fmt", "yuv420p", "-video_track_timescale", "24000", "-colorspace", "bt709",
              "-color_primaries", "bt709", "-color_trc", "bt709", "-c:a", "aac", "-b:a", "192k",
-             "-c:s", "mov_text", "-metadata:s:s:0", f"language={language}",
-             "-metadata:s:a:0", f"language={language}", "-disposition:s:0", "0",
+             "-metadata:s:a:0", f"language={language}",
              "-metadata", f"title={plan.product}｜{plan.title}", "-metadata", f"comment={recipe.CREDITS}",
              "-movflags", "+faststart", output)
     probe = json.loads(await _run("ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", output))
-    video, audio, subtitles = probe["streams"]
+    video, audio, *tracks = probe["streams"]
+    subtitle_ok = ((len(tracks) == 1 and tracks[0]["codec_name"] == "mov_text"
+                    and tracks[0].get("tags", {}).get("language") == language) if cues else not tracks)
     if (video["nb_frames"] != str(recipe.FRAME_COUNT) or video["avg_frame_rate"] != "24/1"
             or (video["width"], video["height"]) != (WIDTH, HEIGHT)
             or any(abs(float(stream["duration"]) - recipe.DURATION) > .001 for stream in (video, audio, probe["format"]))
-            or audio["codec_name"] != "aac" or audio["channels"] != 2 or subtitles["codec_name"] != "mov_text"
-            or subtitles.get("tags", {}).get("language") != language or len(cues) != 3):
+            or audio["codec_name"] != "aac" or audio["channels"] != 2 or not subtitle_ok
+            or len(cues) != sum(bool(shot["spoken_line"]) for shot in shots)):
         raise RemakeStopped("成片时长、帧数或音轨校验未通过，镜头已保留。")
     await ff("-xerror", "-i", output, "-map", "0:v", "-map", "0:a", "-f", "null", "-")
     return output, {"duration_sec": recipe.DURATION, "frames": recipe.FRAME_COUNT,

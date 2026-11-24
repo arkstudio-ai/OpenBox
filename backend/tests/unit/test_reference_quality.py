@@ -1,4 +1,6 @@
 import asyncio
+import json
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,6 +9,39 @@ import pytest
 
 from light import reference_film, reference_quality as quality, wan_story
 from light.reference_plan import ShotPlan
+
+
+async def test_visual_schema_retry_identifies_the_invalid_field_and_keeps_the_original_request(monkeypatch):
+    import litellm
+    from agent import llm, trajectory
+    from core import config
+
+    @asynccontextmanager
+    async def scope(*args, **kwargs):
+        yield SimpleNamespace(chunk=AsyncMock())
+
+    monkeypatch.setattr(trajectory, "service_scope", scope)
+    monkeypatch.setattr(trajectory, "capture_service_dispatch", scope)
+    monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(video_analysis=SimpleNamespace(model="vision")))
+    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda model: {})
+    monkeypatch.setattr(quality, "_check", AsyncMock())
+    monkeypatch.setattr(quality, "owned_images", AsyncMock(return_value={"https://example.invalid/product": "card",
+                                                                       "https://example.invalid/actual": "take"}))
+    messages = []
+
+    async def respond(**options):
+        messages.append(deepcopy(options["messages"]))
+        values = product_report(confidence=1.6 if len(messages) == 1 else .95)["report"]
+        choice = SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(values)))
+        return SimpleNamespace(choices=[choice])
+
+    monkeypatch.setattr(litellm, "acompletion", respond)
+    answer = await quality.ask(None, "review_product", quality.ProductReport, "Inspect the product.",
+                               {"language": "vi"}, ["card", "card", "take"])
+    assert answer["report"]["confidence"] == .95
+    assert messages[1][0] == messages[0][0] and 'confidence' in messages[1][1]["content"]
+    assert [part["image_url"]["url"] for part in messages[0][0]["content"][1:]] == [
+        "https://example.invalid/product", "https://example.invalid/product", "https://example.invalid/actual"]
 
 
 def fixture():

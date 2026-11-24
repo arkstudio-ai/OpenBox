@@ -1443,9 +1443,30 @@ async def _origin_run_is_live(db, row: ExternalEffect) -> bool:
     return live
 
 
-async def _claim_for_reconcile(effect_id: str) -> EffectClaim | None:
+@dataclass(frozen=True, slots=True)
+class _WaitingImage:
+    fence: EffectRunFence
+    key: str
+    task: str
+    asset: str
+    call_part: str
+
+    def matches(self, effect) -> bool:
+        context = effect.safe_context or {}
+        return bool(self.task and self.key and self.asset
+                    and effect.tenant_id == self.fence.tenant_id and effect.session_id == self.fence.session_id
+                    and effect.adapter == "image_gen" and context.get("channel") == "runninghub"
+                    and effect.idempotency_key == self.key and effect.provider_handle == self.task
+                    and (effect.provider_receipt or {}).get("task_id") == self.task
+                    and context.get("asset_ids") == [self.asset] and context.get("output_count") == 1
+                    and context.get("billing_key") == f"image:{self.call_part}")
+
+
+async def _claim_for_reconcile(effect_id: str, *, image: _WaitingImage | None = None) -> EffectClaim | None:
     token = secrets.token_hex(24)
     async with get_db_session() as db:
+        if image is not None:
+            await _assert_agent_fence_locked(db, image.fence)
         query = select(ExternalEffect).where(
             ExternalEffect.id == effect_id,
             ExternalEffect.state.not_in(tuple(_TERMINAL_STATES)),
@@ -1461,7 +1482,11 @@ async def _claim_for_reconcile(effect_id: str) -> EffectClaim | None:
             return None
         if row.reconcile_after is not None and _aware(row.reconcile_after) > now:
             return None
-        if await _origin_run_is_live(db, row):
+        if image is not None and (not image.matches(row) or row.state not in {"accepted", "outcome_unknown"}):
+            return None
+        owning_run = (image is not None and image.fence.run_id == row.run_id
+                      and image.fence.generation == row.run_generation)
+        if not owning_run and await _origin_run_is_live(db, row):
             return None
         if row.state == "prepared":
             if _aware(row.prepared_at) > now - timedelta(
@@ -1620,7 +1645,28 @@ async def recover_effect_once(effect_id: str) -> str:
     claim = await _claim_for_reconcile(effect_id)
     if claim is None:
         return "stale"
-    snapshot = await get_effect(effect_id, claim.tenant_id)
+    return await _reconcile_claim(claim)
+
+
+async def poll_owned_runninghub_image(fence: EffectRunFence, *, operation: str, key: str,
+                                      task: str, asset: str, call_part: str) -> str:
+    """Continue only the accepted image that this live caller is already waiting for."""
+    if operation not in {"edit", "generate"} or not all((key, task, asset, call_part)):
+        return "unavailable"
+    image = _WaitingImage(fence, key, task, asset, call_part)
+    effect_id = stable_effect_id(tenant_id=fence.tenant_id, session_id=fence.session_id, adapter="image_gen",
+                                 operation=operation, logical_key=key)
+    claim = await _claim_for_reconcile(effect_id, image=image)
+    if claim is not None:
+        await _reconcile_claim(claim)
+    snapshot = await get_effect(effect_id, fence.tenant_id)
+    if snapshot is None or not image.matches(snapshot):
+        return "unavailable"
+    return snapshot.state if snapshot.state in _TERMINAL_STATES else "pending"
+
+
+async def _reconcile_claim(claim: EffectClaim) -> str:
+    snapshot = await get_effect(claim.effect_id, claim.tenant_id)
     if snapshot is None:
         return "stale"
     if snapshot.state == "prepared":

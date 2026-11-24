@@ -721,6 +721,21 @@ def test_shot_progress_counts_only_distinct_shots_in_the_current_render():
     assert "shot_progress" not in production._work_view(row, None, jobs, None, False)
 
 
+def test_commercial_progress_counts_the_latest_verdict_for_each_paid_take():
+    from light import commercial_plan, production
+
+    decisions = {"raised-hand": {"ok": True, "cut": {"shot": 11, "review_board": "old-board"}},
+                 "entry-review": {"ok": False, "replaces_review": "raised-hand"},
+                 "office-old": {"ok": False},
+                 "office-new": {"ok": True, "replaces_review": "office-old",
+                                "cut": {"shot": 25, "review_board": "office-board"}}}
+    run = {"action": "render", "job_prefix": "work", "remake_adaptation": {"format": commercial_plan.FORMAT},
+           "director_decisions": decisions}
+    assert production._shot_progress(run, [], "wan_shots")["reviewed"] == 1
+    decisions["fresh-entry"] = {"ok": True, "cut": {"shot": 11, "review_board": "actual-hand-entry"}}
+    assert production._shot_progress(run, [], "wan_shots")["reviewed"] == 2
+
+
 def test_vietnamese_production_language_applies_to_multiple_templates():
     from light import remake, remake_case, soda_story, video_language
     from light.reference_plan import Shot

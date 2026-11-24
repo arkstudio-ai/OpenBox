@@ -201,7 +201,6 @@ async def ask(ctx, name, schema, guide, data, images, *, attempts=2, max_tokens=
     import litellm
     from agent.llm import _get_provider_kwargs
     from agent.trajectory import capture_service_dispatch, service_scope
-    from core.config import get_config
 
     urls = await owned_images(ctx, images)
     by_asset = {asset: url for url, asset in urls.items()}
@@ -214,14 +213,13 @@ async def ask(ctx, name, schema, guide, data, images, *, attempts=2, max_tokens=
     ]}]
     function = {"name": name, "description": "Submit an evidence-based advertising quality decision.",
                 "parameters": schema.model_json_schema()}
-    model = get_config().video_analysis.model
+    model = vision_contract.selected_model(getattr(ctx, "model_id", None))
     error = ""
     for _ in range(attempts):
         await _check(ctx)
         try:
-            route = vision_contract.request_options(model, name, _get_provider_kwargs(model))
-            if reasoning_effort and model.startswith("openai/gpt-6"):
-                route["extra_body"] = {**(route.get("extra_body") or {}), "reasoning_effort": reasoning_effort}
+            route = vision_contract.request_options(model, name, _get_provider_kwargs(model),
+                                                    reasoning_effort=reasoning_effort)
             options = dict(model=model, messages=messages, temperature=0.1, max_tokens=max_tokens, timeout=timeout,
                            tools=[{"type": "function", "function": function}], **route)
             async with (service_scope(ctx, asset_urls=urls), capture_service_dispatch(

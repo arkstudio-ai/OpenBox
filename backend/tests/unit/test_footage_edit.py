@@ -115,7 +115,7 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
         heard.append(url)
         return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}]}
 
-    async def fake_vision(frames, *, duration, orientation, speech):
+    async def fake_vision(frames, *, duration, orientation, speech, model):
         assert len(frames) == 5 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
                 "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯",
@@ -244,7 +244,7 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
         calls["asr"] += 1
         return {"text": "欢迎光临", "sentences": [{"from_sec": 0, "to_sec": 1.5, "text": "欢迎光临"}]}
 
-    async def fake_vision(frames, *, duration, orientation, speech):
+    async def fake_vision(frames, *, duration, orientation, speech, model):
         calls["vision"] += 1
         assert "转写" not in speech  # picture and speech are read side by side, not in sequence
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
@@ -284,6 +284,13 @@ async def test_a_clip_read_on_upload_is_not_read_again(monkeypatch):
     again = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=ids), ToolContext(
         session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"]))
     assert calls == {"asr": 1, "vision": 2} and again.metadata["clips"][1]["segments"]
+    changed = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=ids), ToolContext(
+        session_id=session.id, user_id=user["id"], workspace_id=user["default_workspace_id"],
+        model_id="openai/gemini-4-carbon-high"))
+    assert changed.metadata["clips"][0]["segments"] and calls["vision"] == 4
+    async with get_db_session() as db:
+        stored = await db.get(FileAsset, ids[0])
+    assert stored.meta["reading"]["model"] == "openai/gemini-4-carbon-high"
 
 
 def test_cutting_words_and_clips_open_the_video_tools():

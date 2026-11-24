@@ -1366,6 +1366,7 @@ async def _reserve_and_claim(session_id: str, user_id: str):
 class _ClaimedDeliveryItem:
     id: str
     attachments: tuple[str, ...]
+    origin_ref: dict
     delivery_attempts: int
     delivery_last_error: dict | None
 
@@ -1403,6 +1404,7 @@ async def _claimed_delivery_items(
             _ClaimedDeliveryItem(
                 id=row.id,
                 attachments=tuple(row.attachments or ()),
+                origin_ref=dict(row.origin_ref or {}),
                 delivery_attempts=int(row.delivery_attempts or 0),
                 delivery_last_error=(
                     dict(row.delivery_last_error)
@@ -1426,6 +1428,9 @@ def _safe_delivery_failure(
 
     if isinstance(error, SandboxSubscriptionRequired):
         return {"code": error.code, "message": error.detail,
+                "retryable": False, "missing_asset_ids": []}
+    if isinstance(error, InboxAttachmentError):
+        return {"code": "asset_unavailable", "message": "The attachment is no longer available.",
                 "retryable": False, "missing_asset_ids": []}
     if isinstance(error, DesktopNotReady):
         # Its status payload can contain instance credentials and endpoints.
@@ -1870,6 +1875,16 @@ async def deliver_claimed_attachments(
         reset_current_lease(token)
 
 
+def uses_guided_asset_delivery(session, origin_ref: dict | None) -> bool:
+    """Guided actions reference owned OSS assets through their cloud tools."""
+    origin = origin_ref or {}
+    return bool(
+        getattr(session, "light_production", None)
+        and origin.get("entrypoint") == "light_production"
+        and origin.get("action") in {"prepare", "render"}
+    )
+
+
 async def _deliver_claimed_attachments(
     lease,
     *,
@@ -1917,11 +1932,9 @@ async def _deliver_claimed_attachments(
         ):
             terminal.append(row.id)
             continue
+        asset_references_only = is_assistant or uses_guided_asset_delivery(session, row.origin_ref)
         try:
-            if is_assistant:
-                # Keep original asset references; only the linked execution
-                # delivers their bytes to a sandbox. Missing files still use
-                # the shared durable terminal-failure path below.
+            if asset_references_only:
                 async with get_db_session() as db:
                     await _validate_owned_attachments_locked(db, user_id=lease.user_id,
                         attachment_ids=row.attachments, workspace_id=session.workspace_id)
@@ -1944,8 +1957,6 @@ async def _deliver_claimed_attachments(
                 exc,
                 expected_asset_ids=row.attachments,
             )
-            if is_assistant and isinstance(exc, InboxAttachmentError):
-                safe_error["retryable"] = False
             _attempt, is_terminal = await _record_delivery_failure(
                 lease,
                 item_id=row.id,

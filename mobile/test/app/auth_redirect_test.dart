@@ -11,10 +11,12 @@ import 'package:bossip_mobile/features/workspace/state/active_workspace_store.da
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/http_client.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/api/ui_mode_store.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/config/env.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
+import 'package:bossip_mobile/shared/models/ui_mode.dart';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -50,6 +52,21 @@ class _Workspace extends ActiveWorkspaceController {
       const ActiveWorkspaceState(currentId: 'workspace-1');
 }
 
+class _ModeLookup extends UiModeController {
+  _ModeLookup(this.serverMode);
+
+  final UiMode serverMode;
+
+  @override
+  UiModeState build() =>
+      const UiModeState(userId: 'u1', mode: UiMode.pro, loaded: false);
+
+  @override
+  Future<void> whenLoaded() async {
+    state = UiModeState(userId: 'u1', mode: serverMode, loaded: true);
+  }
+}
+
 /// Where the app's real router takes a launch at [location] (its
 /// `initialLocation` when null), redirects included.
 Future<String> _launch(
@@ -60,6 +77,7 @@ Future<String> _launch(
   String? lastChat,
   String bookmarkUser = 'u1',
   String bookmarkWorkspace = 'workspace-1',
+  String serverMode = 'pro',
 }) async {
   SharedPreferences.setMockInitialValues({introSeenKey: introSeen});
   final prefs = await SharedPreferences.getInstance();
@@ -74,6 +92,9 @@ Future<String> _launch(
       prefsProvider.overrideWithValue(prefs),
       authProvider.overrideWith(() => _Auth(auth)),
       activeWorkspaceProvider.overrideWith(_Workspace.new),
+      uiModeProvider.overrideWith(
+        () => _ModeLookup(uiModeFromWire(serverMode)),
+      ),
     ],
   );
   addTearDown(container.dispose);
@@ -259,6 +280,20 @@ void main() {
     testWidgets('a signed-in launch opens the chat home', (tester) async {
       expect(await _launch(tester, _signedIn), '/app');
       expect(await _launch(tester, _signedIn, introSeen: true), '/app');
+    });
+
+    testWidgets('cold launch without a cache waits for Light mode', (
+      tester,
+    ) async {
+      expect(
+        await _launch(
+          tester,
+          _signedIn,
+          serverMode: 'light',
+          lastChat: '/app/s/old',
+        ),
+        '/home',
+      );
     });
 
     testWidgets('a signed-in launch from a link keeps the link', (

@@ -10,9 +10,12 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/project.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/router/paths.dart';
+import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/brand_mark.dart';
+import '../../../shared/widgets/toast.dart';
 import '../../inbox/api/inbox_api.dart';
 import '../../onboarding/widgets/coach_mark.dart';
+import '../state/active_workspace_store.dart';
 import '../state/workspace_store.dart';
 import 'session_row.dart';
 import 'user_row.dart';
@@ -26,10 +29,12 @@ class SessionDrawer extends ConsumerStatefulWidget {
     super.key,
     this.activeSessionId,
     this.assistantUnread = 0,
+    this.standalone = false,
   });
 
   final String? activeSessionId;
   final int assistantUnread;
+  final bool standalone;
 
   @override
   ConsumerState<SessionDrawer> createState() => _SessionDrawerState();
@@ -38,6 +43,10 @@ class SessionDrawer extends ConsumerStatefulWidget {
 class _SessionDrawerState extends ConsumerState<SessionDrawer> {
   final _search = TextEditingController();
   final Set<String> _collapsed = {};
+  final _selected = <String>{};
+  bool _selecting = false;
+  bool _deleting = false;
+  int _scopeVersion = 0;
 
   /// Per-project sidebar filter: plain conversations (default) or cron runs
   /// (web `useWorkspaceUi.sessionFilter`).
@@ -69,6 +78,18 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(
+      activeWorkspaceProvider.select((state) => state.valueOrNull?.currentId),
+      (previous, next) {
+        if (previous == next) return;
+        setState(() {
+          _scopeVersion++;
+          _selected.clear();
+          _selecting = false;
+          _deleting = false;
+        });
+      },
+    );
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final workspace = ref.watch(workspaceProvider);
@@ -79,14 +100,13 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     // does under 760 px, so the projects still get the height.
     final compact = MediaQuery.sizeOf(context).height < 700;
 
-    return Drawer(
-      backgroundColor: t.rail,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 10, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+    final content = SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!widget.standalone) ...[
               const Row(children: [BrandMark()]),
               const WorkspaceSwitcher(),
               const SizedBox(height: 8),
@@ -195,67 +215,83 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 compact: compact,
                 onTap: () => _promptProjectName(i18n),
               ),
-              // Borderless search row: only the focus tint marks it (web).
-              SizedBox(
-                height: compact ? 36 : 40,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 28,
-                        child: Center(
-                          child: Icon(Icons.search, size: 16, color: t.ink),
-                        ),
+            ],
+            _batchBar(i18n, t),
+            // Borderless search row: only the focus tint marks it (web).
+            SizedBox(
+              height: compact ? 36 : 40,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      child: Center(
+                        child: Icon(Icons.search, size: 16, color: t.ink),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _search,
-                          onChanged: (_) => setState(() {}),
-                          style: TextStyle(
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _search,
+                        onChanged: (_) => setState(() {}),
+                        style: TextStyle(
+                          fontSize: FontSizes.base,
+                          color: t.ink,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: i18n.t('workspace:search'),
+                          hintStyle: TextStyle(
+                            color: t.n600,
                             fontSize: FontSizes.base,
-                            color: t.ink,
                           ),
-                          decoration: InputDecoration(
-                            hintText: i18n.t('workspace:search'),
-                            hintStyle: TextStyle(
-                              color: t.n600,
-                              fontSize: FontSizes.base,
-                            ),
-                            isDense: true,
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                          ),
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
                         ),
                       ),
-                      if (_search.text.isNotEmpty)
-                        IconButton(
-                          tooltip: i18n.t('workspace:searchClear'),
-                          onPressed: () => setState(_search.clear),
-                          visualDensity: VisualDensity.compact,
-                          constraints: const BoxConstraints.tightFor(
-                            width: 28,
-                            height: 28,
-                          ),
-                          padding: EdgeInsets.zero,
-                          icon: Icon(Icons.close, size: 14, color: t.n700),
+                    ),
+                    if (_search.text.isNotEmpty)
+                      IconButton(
+                        tooltip: i18n.t('workspace:searchClear'),
+                        onPressed: () => setState(_search.clear),
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 28,
+                          height: 28,
                         ),
-                    ],
-                  ),
+                        padding: EdgeInsets.zero,
+                        icon: Icon(Icons.close, size: 14, color: t.n700),
+                      ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: CoachAnchor(
-                  name: 'drawer.projects',
-                  child: data == null
-                      ? const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : _buildGroups(i18n, t, data, query),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: CoachAnchor(
+                name: 'drawer.projects',
+                child: data == null
+                    ? const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : _buildGroups(i18n, t, data, query),
+              ),
+            ),
+            if (_selecting)
+              FilledButton(
+                onPressed: _deleting || _selected.isEmpty
+                    ? null
+                    : () => _deleteSelected(i18n),
+                style: FilledButton.styleFrom(
+                  backgroundColor: t.danger,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(
+                  i18n.t('workspace:deleteChats', count: _selected.length),
                 ),
               ),
+            if (!widget.standalone) ...[
               Divider(color: t.hair, height: 16),
               UserRow(
                 sessionCount: data?.sessions.length ?? 0,
@@ -265,10 +301,85 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 },
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
+    return widget.standalone
+        ? content
+        : Drawer(backgroundColor: t.rail, child: content);
+  }
+
+  Widget _batchBar(I18nState i18n, BossipTokens t) => Row(
+    children: [
+      if (_selecting) ...[
+        Expanded(
+          child: Text(
+            i18n.t('workspace:chatSelection', count: _selected.length),
+            style: TextStyle(color: t.n700, fontSize: FontSizes.sm),
+          ),
+        ),
+        TextButton(
+          onPressed: _deleting
+              ? null
+              : () => setState(() {
+                  _selecting = false;
+                  _selected.clear();
+                }),
+          child: Text(i18n.t('common:action.cancel')),
+        ),
+      ] else
+        TextButton(
+          onPressed: () => setState(() => _selecting = true),
+          child: Text(i18n.t('workspace:manageChats')),
+        ),
+    ],
+  );
+
+  Future<void> _deleteSelected(I18nState i18n) async {
+    final ids = _selected.toList();
+    final version = _scopeVersion;
+    final confirmed = await _confirm(
+      i18n.t('workspace:deleteChatsTitle', count: ids.length),
+      '${i18n.t('workspace:delChatBody')} ${i18n.t('workspace:delChatBatchMemories')}',
+      confirmLabel: i18n.t('workspace:deleteChats', count: ids.length),
+    );
+    if (!confirmed || !mounted || version != _scopeVersion) return;
+    setState(() => _deleting = true);
+    try {
+      final result = await ref
+          .read(workspaceProvider.notifier)
+          .deleteSessions(ids);
+      if (!mounted || version != _scopeVersion) return;
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(result.failed);
+        _selecting = result.failed.isNotEmpty;
+      });
+      ref
+          .read(toastProvider.notifier)
+          .info(
+            i18n.t(
+              'workspace:chatBatchResult',
+              vars: {
+                'deleted': result.deleted.length,
+                'failed': result.failed.length,
+              },
+            ),
+          );
+      if (result.deleted.contains(widget.activeSessionId)) {
+        context.go(Paths.app);
+      }
+    } catch (error) {
+      if (mounted && version == _scopeVersion) {
+        ref.read(toastProvider.notifier).error(errorText(i18n, error));
+      }
+    } finally {
+      if (mounted && version == _scopeVersion) {
+        setState(() => _deleting = false);
+      }
+    }
   }
 
   Widget _buildGroups(
@@ -277,8 +388,11 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     WorkspaceData data,
     String query,
   ) {
+    final userId = ref.watch(authProvider).userId;
     final conversations = data.sessions
-        .where((s) => s.kind != 'assistant')
+        .where(
+          (s) => s.kind != 'assistant' && (!widget.standalone || !s.isCron),
+        )
         .toList();
     final sessions = query.isEmpty
         ? conversations
@@ -329,11 +443,30 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                         SessionRow(
                           session: session,
                           active: session.id == widget.activeSessionId,
+                          selecting: _selecting,
+                          checked: _selected.contains(session.id),
+                          onToggle:
+                              _deleting ||
+                                  session.isCron ||
+                                  (session.userId != null &&
+                                      session.userId != userId) ||
+                                  (_selected.length >= 100 &&
+                                      !_selected.contains(session.id))
+                              ? null
+                              : () => setState(() {
+                                  if (!_selected.remove(session.id)) {
+                                    _selected.add(session.id);
+                                  }
+                                }),
                           onOpen: () {
                             ref.read(selectedProjectProvider.notifier).state =
                                 project?.id;
-                            Navigator.pop(context);
-                            context.go(Paths.chat(session.id));
+                            if (widget.standalone) {
+                              context.push(Paths.chat(session.id));
+                            } else {
+                              Navigator.pop(context);
+                              context.go(Paths.chat(session.id));
+                            }
                           },
                           onDelete: () => _confirmDeleteSession(i18n, session),
                           onRename: () => _promptRenameSession(i18n, session),
@@ -549,31 +682,42 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
 
   Future<void> _promptRenameSession(I18nState i18n, Session session) async {
     final title = await _promptText(
-      i18n.t('workspace:rename'),
+      i18n.t('workspace:renameChat'),
       initial: session.title,
+      maxLength: 255,
     );
-    if (title != null && title.isNotEmpty) {
-      await ref
-          .read(workspaceProvider.notifier)
-          .renameSession(session.id, title);
+    if (title != null && title.isNotEmpty && mounted) {
+      try {
+        await ref
+            .read(workspaceProvider.notifier)
+            .renameSession(session.id, title);
+      } catch (error) {
+        if (mounted) {
+          ref.read(toastProvider.notifier).error(errorText(i18n, error));
+        }
+      }
     }
   }
 
-  Future<String?> _promptText(String title, {String? initial}) {
-    final controller = TextEditingController(text: initial);
+  Future<String?> _promptText(String title, {String? initial, int? maxLength}) {
+    var value = initial ?? '';
     return showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(title, style: const TextStyle(fontSize: FontSizes.lg)),
-        content: TextField(controller: controller, autofocus: true),
+        content: TextFormField(
+          initialValue: initial,
+          autofocus: true,
+          maxLength: maxLength,
+          onChanged: (text) => value = text,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: Text(ref.read(i18nProvider).t('common:action.cancel')),
           ),
           TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
+            onPressed: () => Navigator.pop(dialogContext, value.trim()),
             child: Text(ref.read(i18nProvider).t('common:action.confirm')),
           ),
         ],
@@ -604,7 +748,11 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
     }
   }
 
-  Future<bool> _confirm(String title, String body) async {
+  Future<bool> _confirm(
+    String title,
+    String body, {
+    String? confirmLabel,
+  }) async {
     final t = context.tokens;
     final i18n = ref.read(i18nProvider);
     final result = await showDialog<bool>(
@@ -623,7 +771,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(
-              i18n.t('common:action.delete'),
+              confirmLabel ?? i18n.t('common:action.delete'),
               style: TextStyle(color: t.danger),
             ),
           ),

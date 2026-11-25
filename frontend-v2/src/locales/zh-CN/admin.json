@@ -1,4 +1,24 @@
 {
+  "accounts": {
+    "username": "账号",
+    "phone": "手机号",
+    "email": "邮箱",
+    "workspace": "默认工作区",
+    "kind": "查询方式",
+    "keyword": "查询关键词",
+    "phoneHint": "请输入带区号的号码",
+    "emailHint": "请输入完整邮箱地址",
+    "search": "搜索",
+    "reset": "重置",
+    "empty": "未找到匹配账号。",
+    "idle": "请输入手机号或邮箱。",
+    "failed": "查询失败，请检查输入格式或重试。",
+    "loading": "正在查询账号",
+    "previous": "上一页",
+    "next": "下一页",
+    "range_other": "共 {{count}} 条",
+    "range_one": "共 {{count}} 条"
+  },
   "mobile": {
     "createEntry": "新增",
     "manageEntry": "管理",
@@ -54,6 +74,7 @@
     "title": "超管系统"
   },
   "nav": {
+    "accounts": "账号查询",
     "fleet": "舰队管理",
     "skills": "技能管理",
     "billing": "订阅管理",
@@ -64,6 +85,7 @@
     "pricing": "模型定价"
   },
   "section": {
+    "accounts": {"title": "账号查询", "subtitle": "按手机号或邮箱定位账号。"},
     "fleet": {
       "title": "舰队管理",
       "subtitle": "查看预热池、桌面状态与对账告警。"

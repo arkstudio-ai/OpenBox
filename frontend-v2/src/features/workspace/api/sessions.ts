@@ -51,7 +51,10 @@ export function useRenameSession() {
   return useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
       http.patch<Session>(`/api/agent/session/${id}`, { title }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) })
+      void qc.invalidateQueries({ queryKey: ["session-search", userId, workspaceId] })
+    },
   })
 }
 
@@ -61,6 +64,24 @@ export function useDeleteSession() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => http.delete<{ ok: boolean }>(`/api/agent/session/${id}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) })
+      void qc.invalidateQueries({ queryKey: ["session-search", userId, workspaceId] })
+    },
+  })
+}
+
+
+export function useBatchDeleteSessions() {
+  const userId = useUserId()
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (sessionIds: string[]) =>
+      http.post<{ deleted: string[]; failed: string[] }>("/api/agent/session/batch-delete", { session_ids: sessionIds }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) })
+      void qc.invalidateQueries({ queryKey: ["session-search", userId, workspaceId] })
+    },
   })
 }

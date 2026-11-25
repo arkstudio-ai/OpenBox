@@ -1,5 +1,6 @@
 """Session routes: CRUD + messages + agent control."""
 import asyncio
+import logging
 import time
 from typing import Annotated, Literal
 
@@ -81,8 +82,14 @@ class PromptBody(BaseModel):
         return value
 
 
+class BatchDeleteSessionsBody(BaseModel):
+    session_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(
+        min_length=1, max_length=100,
+    )
+
+
 class UpdateSessionBody(BaseModel):
-    title: str | None = None
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)] | None = None
     agent: str | None = None
     model: str | None = None
     variant: ReasoningVariant | None = None
@@ -552,6 +559,38 @@ async def search_sessions(q: str = "", current_user: dict = Depends(get_current_
         q, user_id=current_user["user_id"], workspace_id=current_user["workspace_id"])
 
 
+@router.post("/session/batch-delete")
+async def batch_delete_sessions(body: BatchDeleteSessionsBody, current_user: dict = Depends(get_current_user)):
+    deleted, failed = [], []
+    for session_id in dict.fromkeys(body.session_ids):
+        try:
+            await delete_session(session_id, current_user)
+        except HTTPException as error:
+            if error.status_code == 404 and await _already_deleted_in_scope(session_id, current_user):
+                deleted.append(session_id)
+            else:
+                failed.append(session_id)
+        except Exception:
+            logging.getLogger(__name__).exception("Session deletion failed: %s", session_id)
+            failed.append(session_id)
+        else:
+            deleted.append(session_id)
+    return {"deleted": deleted, "failed": failed}
+
+
+async def _already_deleted_in_scope(session_id: str, current_user: dict) -> bool:
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.session import Session
+
+    async with get_db_session() as db:
+        return await db.scalar(select(Session.id).where(
+            Session.id == session_id, Session.user_id == current_user["user_id"],
+            Session.workspace_id == current_user["workspace_id"], Session.kind != "assistant",
+            Session.is_deleted.is_(True),
+        )) is not None
+
+
 @router.get("/session/{session_id}")
 async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
@@ -592,6 +631,9 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
     )
     if not deleted:
         raise HTTPException(404, "Session not found")
+    from bus import bus
+    bus.publish("session.deleted", {"userId": user_id, "sessionId": session_id,
+                                    "workspaceId": current_user["workspace_id"]})
     return {"ok": True}
 
 

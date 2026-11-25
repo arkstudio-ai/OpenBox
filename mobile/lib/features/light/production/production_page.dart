@@ -17,6 +17,7 @@ import '../../chat/state/config_providers.dart';
 import '../../chat/widgets/composer/picker_sheets.dart';
 import '../api/light_api.dart';
 import '../widgets/light_input_bar.dart';
+import 'dish_import_sheet.dart';
 import 'production_api.dart';
 import 'production_examples.dart';
 import 'production_media.dart';
@@ -373,7 +374,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         if (!mounted) return;
         final review = _task!;
         final menuNeedsReading =
-            review.kind == ProductionKind.menu && review.materials.isNotEmpty;
+            review.kind == ProductionKind.menu &&
+            review.materials.isNotEmpty &&
+            review.dishes.isEmpty;
         final needsCopy = review.remake
             ? !review.remakePrepared
             : !review.kind.imagesOnly && review.script.isEmpty;
@@ -446,6 +449,97 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       _inAgent = false;
     }
   }
+
+  Future<void> _importDishes({bool images = false}) => _perform(() async {
+    final revision = _task!;
+    final merged = await showModalBottomSheet<List<ProductionDish>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => DishImportSheet(
+        showImages: images,
+        existing: revision.dishes,
+        hasMaterials: revision.assets.isNotEmpty && revision.assets.length <= 3,
+        recognize: (source) => _recognizeDishes(source, revision),
+      ),
+    );
+    if (merged == null || !mounted) return;
+    final saved = revision.sessionId.isEmpty ? await _ensureDraft() : revision;
+    _receive(
+      await _api.edit(saved, {
+        'dishes': merged.map((dish) => dish.toJson()).toList(),
+      }),
+    );
+  });
+
+  Future<List<ProductionDish>?> _recognizeDishes(
+    DishImageSource source,
+    LightProduction revision,
+  ) async {
+    const limit = 3;
+    List<String>? assets;
+    if (source == DishImageSource.materials) {
+      assets = revision.assets;
+    } else if (source == DishImageSource.library) {
+      assets = await showModalBottomSheet<List<String>>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => const ProductionLibrary(
+          imagesOnly: true,
+          selected: [],
+          limit: limit,
+        ),
+      );
+    } else {
+      final files = await ref
+          .read(lightPhotoPickerProvider)
+          .pick(camera: false, limit: limit);
+      if (files.isEmpty || !mounted) return null;
+      final api = ref.read(lightApiProvider);
+      final saved = revision.sessionId.isEmpty
+          ? await _ensureDraft()
+          : revision;
+      if (!mounted) return null;
+      assets = [];
+      for (final file in files) {
+        final length = await file.length();
+        if (length > 10 * 1024 * 1024) {
+          throw ApiError(
+            status: 422,
+            code: 'LIGHT_MENU_IMPORT_IMAGE',
+            message: _text('dishImport.photoHint'),
+          );
+        }
+        final id = await api.uploadStream(
+          name: file.name,
+          mime:
+              file.mimeType ??
+              (file.name.toLowerCase().endsWith('.png')
+                  ? 'image/png'
+                  : 'image/jpeg'),
+          length: length,
+          stream: file.openRead,
+          sessionId: saved.sessionId,
+        );
+        assets.add(id);
+      }
+    }
+    if (assets == null || assets.isEmpty || !mounted) return null;
+    if (assets.length > limit) throw StateError(_text('dishImport.photoHint'));
+    final saved = revision.sessionId.isEmpty ? await _ensureDraft() : revision;
+    return _api.recognizeDishes(saved, assets);
+  }
+
+  Widget _dishImportButton() => Align(
+    alignment: AlignmentDirectional.centerEnd,
+    child: OutlinedButton.icon(
+      key: const Key('production-dish-import'),
+      onPressed: _busy || _task!.working ? null : _importDishes,
+      icon: const Icon(Icons.playlist_add_outlined),
+      label: Text(_text('dishImport.title')),
+    ),
+  );
 
   Future<void> _library() => _perform(() async {
     final selected = await showModalBottomSheet<List<String>>(
@@ -762,6 +856,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         _shopField(),
       if (task.kind == ProductionKind.menu) ...[
         const SizedBox(height: 14),
+        _dishImportButton(),
         ProductionDishes(
           dishes: _dishes,
           onChange: (dishes) =>
@@ -1319,13 +1414,14 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             ),
           ),
         ],
-        if (menu)
+        if (menu) ...[
+          _dishImportButton(),
           ProductionDishes(
             dishes: _dishes,
             onChange: (dishes) =>
                 _stage('dishes', dishes.map((dish) => dish.toJson()).toList()),
-          )
-        else if (task.remake)
+          ),
+        ] else if (task.remake)
           ProductionRemakeCopy(
             task: task,
             controller: _script,
@@ -1353,7 +1449,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   ? null
                   : () {
                       FocusManager.instance.primaryFocus?.unfocus();
-                      unawaited(_perform(() => _send('prepare')));
+                      unawaited(
+                        menu
+                            ? _importDishes(images: true)
+                            : _perform(() => _send('prepare')),
+                      );
                     },
               icon: const Icon(Icons.refresh),
               label: Text(

@@ -69,6 +69,10 @@ async def test_register(client):
     assert "access_token" in data
     assert data["user"]["username"] == "testuser1"
     assert "password_hash" not in data["user"]
+    assert data["ui_mode"] == "light"
+    headers = {"Authorization": f"Bearer {data['access_token']}"}
+    prefs = await client.get("/api/auth/me/preferences", headers=headers)
+    assert prefs.json()["extra"]["ui_mode"] == "light"
 
 
 async def test_register_weak_password(client):
@@ -210,3 +214,32 @@ async def test_logto_logout_revokes_cookie_and_redirects_to_end_session(client, 
     assert "refresh_token=" in response.headers["set-cookie"]
     assert "Max-Age=0" in response.headers["set-cookie"]
     assert client.cookies.get("refresh_token") is None
+
+
+async def test_native_logto_first_login_is_light_and_verified_phone_is_private(client, monkeypatch):
+    from auth import logto
+    from db.base import get_db_session
+    from db.models.user import User
+    from light.mode import set_ui_mode
+
+    claims = {"sub": "bossip-native-first-login", "username": "bossip-native-first-login",
+              "phone_number": "6581234567", "phone_number_verified": True}
+    monkeypatch.setattr(logto, "is_enabled", lambda: True)
+    monkeypatch.setattr(logto, "verify_id_token", lambda _token: claims)
+    first = await client.post("/api/auth/logto/id-token", json={"id_token": "fixture"})
+    assert first.status_code == 200, first.text
+    actor = first.json()["user"]
+    assert first.json()["ui_mode"] == "light"
+    assert "phone_number" not in actor
+    async with get_db_session() as db:
+        assert (await db.get(User, actor["id"])).phone_number == "+6581234567"
+
+    await set_ui_mode(actor["id"], "pro")
+    claims["phone_number"] = None
+    claims["phone_number_verified"] = False
+    again = await client.post("/api/auth/logto/id-token", json={"id_token": "fixture"})
+    assert again.status_code == 200, again.text
+    assert again.json()["user"]["id"] == actor["id"]
+    assert again.json()["ui_mode"] == "pro"
+    async with get_db_session() as db:
+        assert (await db.get(User, actor["id"])).phone_number is None

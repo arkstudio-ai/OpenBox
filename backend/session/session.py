@@ -641,6 +641,7 @@ async def update_session(
     user_id: str = "default",
     *,
     run_fence: RunFence | None = None,
+    only_untitled: bool = False,
     **kwargs,
 ) -> Session | None:
     """Update session fields."""
@@ -686,6 +687,11 @@ async def update_session(
             SessionORM.id == session_id,
             SessionORM.user_id == user_id,
         )
+        if only_untitled:
+            statement = statement.where(SessionORM.is_deleted.is_(False), or_(
+                SessionORM.title.is_(None), SessionORM.title == "",
+                SessionORM.title.startswith("New session - "),
+            ))
         if ticket is not None:
             statement = statement.where(runtime.write_fence(ticket)).execution_options(
                 synchronize_session=False)
@@ -696,6 +702,8 @@ async def update_session(
             reason = await runtime.write_refusal(db, ticket) if owned else None
             if reason is not None:
                 raise runtime.RunRevoked(ticket, reason, "session")
+        if only_untitled and not result.rowcount:
+            return None
         if setting_keys and previous is not None and previous.user_id == user_id:
             # This write holds no session row lock: it leaves the recording markers
             # alone and records nothing while they report a pause.
@@ -731,9 +739,13 @@ async def set_session_status(
     bus.publish(SESSION_STATUS, payload)
 
 
-async def set_session_title(session_id: str, title: str, user_id: str = "default") -> None:
+async def set_session_title(
+    session_id: str, title: str, user_id: str = "default", *, only_untitled: bool = False,
+) -> None:
     """Update session title and broadcast SSE event."""
-    await update_session(session_id, user_id=user_id, title=title)
+    session = await update_session(session_id, user_id=user_id, title=title, only_untitled=only_untitled)
+    if session is None or session.title != title:
+        return
     bus.publish(SESSION_TITLE, {
         "userId": user_id,
         "sessionId": session_id,

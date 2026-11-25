@@ -9,7 +9,13 @@
     "user": "Uploaded by me",
     "agent": "Model output"
   },
+  "archive": {
+    "generated": "Generated",
+    "unfiled": "Unfiled outputs"
+  },
   "kind": {
+    "files": "Files",
+    "more": "More types",
     "all": "All types",
     "image": "Images",
     "video": "Video",

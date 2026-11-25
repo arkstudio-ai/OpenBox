@@ -18,6 +18,9 @@ class SessionRow extends ConsumerWidget {
     required this.onOpen,
     required this.onDelete,
     required this.onRename,
+    this.selecting = false,
+    this.checked = false,
+    this.onToggle,
   });
 
   final Session session;
@@ -25,6 +28,8 @@ class SessionRow extends ConsumerWidget {
   final VoidCallback onOpen;
   final VoidCallback onDelete;
   final VoidCallback onRename;
+  final bool selecting, checked;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -38,17 +43,24 @@ class SessionRow extends ConsumerWidget {
     final label = !owned && session.ownerUsername?.isNotEmpty == true
         ? '$title · ${session.ownerUsername}'
         : title;
+    final showActions = owned && !selecting;
     return Material(
-      color: active ? t.n200 : Colors.transparent,
+      color: active || checked ? t.n200 : Colors.transparent,
       borderRadius: BorderRadius.circular(Radii.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(Radii.md),
-        onTap: onOpen,
-        onLongPress: owned ? () => _showActions(context, i18n, t) : null,
+        onTap: selecting ? onToggle : onOpen,
+        onLongPress: showActions ? () => _showActions(context, i18n, t) : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           child: Row(
             children: [
+              if (selecting && owned && !session.isCron)
+                Checkbox(
+                  value: checked,
+                  onChanged: onToggle == null ? null : (_) => onToggle!(),
+                  visualDensity: VisualDensity.compact,
+                ),
               if (session.isCron) ...[
                 Icon(Icons.schedule, size: 13, color: t.n600),
                 const SizedBox(width: 6),
@@ -69,6 +81,13 @@ class SessionRow extends ConsumerWidget {
                 const SizedBox(width: 8),
                 const Spinner(size: 12),
               ],
+              if (showActions)
+                IconButton(
+                  tooltip: i18n.t('workspace:sessionActions'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _showActions(context, i18n, t),
+                  icon: const Icon(Icons.more_horiz, size: 19),
+                ),
             ],
           ),
         ),
@@ -86,7 +105,7 @@ class SessionRow extends ConsumerWidget {
             ListTile(
               leading: Icon(Icons.edit_outlined, color: t.n700, size: 20),
               title: Text(
-                i18n.t('workspace:rename'),
+                i18n.t('workspace:renameChat'),
                 style: TextStyle(fontSize: FontSizes.base, color: t.ink),
               ),
               onTap: () {

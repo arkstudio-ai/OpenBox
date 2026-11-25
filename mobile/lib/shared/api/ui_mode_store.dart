@@ -20,6 +20,8 @@ class UiModeState {
     required this.userId,
     required this.mode,
     required this.loaded,
+    this.hasCache = false,
+    this.error,
   });
 
   final String userId;
@@ -27,6 +29,10 @@ class UiModeState {
 
   /// Whether the server has answered for [userId] this run.
   final bool loaded;
+  final bool hasCache;
+  final Object? error;
+
+  bool get ready => loaded || hasCache;
 
   bool get isLight => mode == UiMode.light;
 
@@ -34,6 +40,7 @@ class UiModeState {
     userId: userId,
     mode: mode ?? this.mode,
     loaded: loaded ?? this.loaded,
+    hasCache: hasCache,
   );
 }
 
@@ -46,19 +53,20 @@ class UiModeController extends Notifier<UiModeState> {
   UiModeState build() {
     final userId = ref.watch(authProvider.select((a) => a.userId));
     _loading = null;
-    // No I/O here: the app shell calls [ensureLoaded] once signed in.
-    // Widget tests without preferences see `pro`, which is today's UI.
+    final cachedMode = cached(userId);
     return UiModeState(
       userId: userId,
-      mode: _readCache(userId) ?? UiMode.pro,
+      mode: cachedMode ?? UiMode.pro,
       loaded: false,
+      hasCache: cachedMode != null,
     );
   }
 
-  UiMode? _readCache(String userId) {
+  UiMode? cached(String userId) {
+    if (userId.isEmpty) return null;
     try {
       final raw = ref.read(prefsProvider).getString(cacheKey(userId));
-      return raw == null ? null : uiModeFromWire(raw);
+      return raw == 'light' || raw == 'pro' ? uiModeFromWire(raw) : null;
     } catch (_) {
       return null;
     }
@@ -78,7 +86,7 @@ class UiModeController extends Notifier<UiModeState> {
 
   /// Starts the server fetch for the signed-in account once per run.
   void ensureLoaded() {
-    if (state.loaded || _loading != null) return;
+    if (state.loaded || _loading != null || state.error != null) return;
     if (!ref.read(authProvider).isAuthenticated) return;
     unawaited(_load(state.userId));
   }
@@ -90,23 +98,41 @@ class UiModeController extends Notifier<UiModeState> {
     if (pending != null) await pending.future;
   }
 
+  void retry() {
+    state = state.copyWith();
+    ensureLoaded();
+  }
+
   Future<void> _load(String userId) async {
     final completer = _loading = Completer<void>();
-    UiMode? mode;
     try {
       final response = await ref
           .read(apiDioProvider)
           .get<Map<String, dynamic>>('/api/light/mode');
-      mode = uiModeFromWire(asString(response.data?['ui_mode']));
-    } catch (_) {
-      // Offline or an older server: keep the cache (or today's UI).
-    }
-    if (_loading != completer || state.userId != userId) return;
-    if (mode != null) {
-      state = UiModeState(userId: userId, mode: mode, loaded: true);
+      final raw = asString(response.data?['ui_mode']);
+      if (raw != 'light' && raw != 'pro') {
+        throw const FormatException('Missing interface mode');
+      }
+      if (_loading != completer || state.userId != userId) return;
+      state = UiModeState(
+        userId: userId,
+        mode: uiModeFromWire(raw),
+        loaded: true,
+      );
       _writeCache();
+    } catch (error) {
+      if (_loading != completer || state.userId != userId) return;
+      state = UiModeState(
+        userId: userId,
+        mode: state.mode,
+        loaded: false,
+        hasCache: state.hasCache,
+        error: error,
+      );
+    } finally {
+      if (_loading == completer) _loading = null;
+      completer.complete();
     }
-    if (!completer.isCompleted) completer.complete();
   }
 
   /// Writes the device cache for an account about to be signed in, so the
@@ -122,6 +148,7 @@ class UiModeController extends Notifier<UiModeState> {
   /// What a sign-in just learned from the account preferences. Marks the
   /// account loaded so the cold-start fetch is not repeated this run.
   void adopt(UiMode mode) {
+    _loading = null;
     state = UiModeState(userId: state.userId, mode: mode, loaded: true);
     _writeCache();
   }
@@ -131,6 +158,7 @@ class UiModeController extends Notifier<UiModeState> {
   Future<void> setMode(UiMode mode) async {
     final before = state;
     if (before.mode == mode && before.loaded) return;
+    _loading = null;
     state = before.copyWith(mode: mode, loaded: true);
     _writeCache();
     try {

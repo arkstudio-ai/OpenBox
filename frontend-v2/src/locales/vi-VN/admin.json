@@ -1,4 +1,24 @@
 {
+  "accounts": {
+    "username": "Tài khoản",
+    "phone": "Số điện thoại",
+    "email": "Email",
+    "workspace": "Không gian mặc định",
+    "kind": "Tìm theo",
+    "keyword": "Từ khóa",
+    "phoneHint": "Số điện thoại kèm mã quốc gia",
+    "emailHint": "Địa chỉ email đầy đủ",
+    "search": "Tìm kiếm",
+    "reset": "Đặt lại",
+    "empty": "Không tìm thấy tài khoản phù hợp.",
+    "idle": "Nhập số điện thoại hoặc email.",
+    "failed": "Không thể tìm kiếm. Kiểm tra định dạng hoặc thử lại.",
+    "loading": "Đang tìm tài khoản",
+    "previous": "Trước",
+    "next": "Tiếp",
+    "range_other": "{{count}} kết quả",
+    "range_one": "{{count}} kết quả"
+  },
   "mobile": {
     "createEntry": "Tạo mục mới",
     "manageEntry": "Quản lý",
@@ -54,6 +74,7 @@
     "title": "Trang quản trị"
   },
   "nav": {
+    "accounts": "Tra cứu tài khoản",
     "fleet": "Đội máy",
     "skills": "Kỹ năng",
     "billing": "Gói đăng ký",
@@ -64,6 +85,7 @@
     "pricing": "Giá mô hình"
   },
   "section": {
+    "accounts": {"title": "Tra cứu tài khoản", "subtitle": "Tìm tài khoản theo số điện thoại hoặc email."},
     "fleet": {
       "title": "Quản lý đội máy",
       "subtitle": "Kiểm tra kho máy sẵn sàng, trạng thái máy và cảnh báo đối soát."

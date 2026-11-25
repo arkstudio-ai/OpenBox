@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from light import mode as light_mode
-from light import examples, production, production_form, production_narration, production_voice, shot_editor, shot_frame_edits
+from light import dish_import, examples, production, production_form, production_narration, production_voice, shot_editor, shot_frame_edits
 
 router = APIRouter(prefix="/api/light", tags=["light"], dependencies=[Depends(get_workspace)])
 
@@ -146,6 +146,15 @@ async def edit_production(session_id: str, body: production_form.EditForm,
                           current_user: dict = Depends(get_current_user)):
     try:
         return await production.edit(*_scope(current_user), session_id, body)
+    except light_mode.LightError as exc:
+        _raise(exc)
+
+
+@router.post("/productions/{session_id}/dish-import")
+async def recognize_menu_dishes(session_id: str, body: dish_import.RecognizeDishes,
+                                current_user: dict = Depends(get_current_user)):
+    try:
+        return await dish_import.recognize(*_scope(current_user), session_id, body)
     except light_mode.LightError as exc:
         _raise(exc)
 

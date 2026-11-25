@@ -67,6 +67,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: dict
     mobile_session_id: str | None = None
+    ui_mode: str | None = None
 
 class PreferencesUpdate(BaseModel):
     theme: str | None = None
@@ -198,13 +199,15 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     # Create user
     user_id = generate_id()
     hashed = hash_password(body.password)
-    created = await _user_repo.create(id=user_id, username=username, password_hash=hashed, email=email)
+    from light.mode import NEW_USER_MODE
+
+    created = await _user_repo.create(
+        id=user_id, username=username, password_hash=hashed, email=email, ui_mode=NEW_USER_MODE,
+    )
     from billing.signup_gift import grant_signup_gift_safely
     await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
     from light.first_video import offer as offer_first_video
     await offer_first_video(user_id)
-    from light.mode import default_mode_for_new_user
-    await default_mode_for_new_user(user_id)
 
     # Issue tokens only after creating the exclusive mobile lease.
     from auth.mobile import login_claims
@@ -227,7 +230,8 @@ async def register(body: RegisterRequest, request: Request, response: Response):
         None,
         request,
     )
-    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"),
+                         ui_mode=NEW_USER_MODE)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -285,7 +289,10 @@ async def login(body: LoginRequest, request: Request, response: Response):
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
     )
 
-    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
+    from light.mode import ui_mode
+
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"),
+                         ui_mode=await ui_mode(user["id"]))
 
 
 @router.get("/logto/config")
@@ -411,11 +418,14 @@ async def _sign_in_logto_identity(
     mobile SDK's ID token — so a person arriving from either client provisions
     and resolves to exactly one account.
     """
+    from auth.contact import verified_phone
     from auth.logto import PROVIDER, derive_username
+    from light.mode import NEW_USER_MODE
 
     subject = str(claims["sub"])
     email = claims.get("email")
     avatar = claims.get("picture")
+    phone_number = verified_phone(claims)
 
     # Keyed on `sub` only. A local username/password account with the same email
     # stays a separate user — silently merging identities across auth methods is
@@ -429,14 +439,13 @@ async def _sign_in_logto_identity(
         user_id = generate_id()
         created = await _user_repo.create(
             id=user_id, username=username, password_hash=None, email=email,
-            oauth_provider=PROVIDER, oauth_id=subject, avatar_url=avatar,
+            oauth_provider=PROVIDER, oauth_id=subject, avatar_url=avatar, ui_mode=NEW_USER_MODE,
+            phone_number=phone_number,
         )
         from billing.signup_gift import grant_signup_gift_safely
         await grant_signup_gift_safely(created.get("default_workspace_id"), user_id)
         from light.first_video import offer as offer_first_video
         await offer_first_video(user_id)
-        from light.mode import default_mode_for_new_user
-        await default_mode_for_new_user(user_id)
 
         user = await _user_repo.get(user_id)
         from audit import record
@@ -454,6 +463,9 @@ async def _sign_in_logto_identity(
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account is disabled")
 
+    if "phone_number" in claims or "phone_number_verified" in claims:
+        await _user_repo.sync_verified_phone(user["id"], phone_number)
+
     from auth.mobile import login_claims
     claims = await login_claims(request, user["id"], native=native)
     access = create_access_token(user["id"], user.get("role", "user"), session_claims=claims)
@@ -462,7 +474,10 @@ async def _sign_in_logto_identity(
         key="refresh_token", value=refresh_token, httponly=True, secure=False,
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
     )
-    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
+    from light.mode import ui_mode
+
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"),
+                         ui_mode=await ui_mode(user["id"]))
 
 
 @router.post("/refresh")

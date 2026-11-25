@@ -81,6 +81,12 @@ class LightMeScreen extends ConsumerWidget {
         const Key('light-me-desktop'),
       ),
       (
+        'workspace:chatHistory',
+        Icons.chat_bubble_outline,
+        Paths.lightConversations,
+        const Key('light-me-conversations'),
+      ),
+      (
         'light:me.resources',
         Icons.folder_open_outlined,
         Paths.resources(),

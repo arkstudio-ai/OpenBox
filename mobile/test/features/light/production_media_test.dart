@@ -617,10 +617,7 @@ void main() {
             expect(request.path, '/api/assets');
             final video = request.queryParameters['kind'] == 'video';
             expect(request.queryParameters['owned_only'], true);
-            expect(
-              request.queryParameters['video_thumbnails'],
-              video ? true : null,
-            );
+            expect(request.queryParameters['video_thumbnails'], true);
             handler.resolve(
               Response<Map<String, dynamic>>(
                 requestOptions: request,

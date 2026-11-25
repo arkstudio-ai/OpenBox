@@ -67,7 +67,11 @@ class SdkLogtoSession implements LogtoSession {
     final key = '${config.endpoint}\u0000${config.appId}';
     if (_client == null || _clientKey != key) {
       _client = LogtoClient(
-        config: LogtoConfig(endpoint: config.endpoint, appId: config.appId),
+        config: LogtoConfig(
+          endpoint: config.endpoint,
+          appId: config.appId,
+          scopes: const ['email', 'phone'],
+        ),
       );
       _clientKey = key;
     }

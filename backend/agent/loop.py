@@ -4945,7 +4945,7 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
             if len(text.split("\n")[0]) > 100:
                 title += "..."
 
-        await set_session_title(session_id, title, user_id=user_id)
+        await set_session_title(session_id, title, user_id=user_id, only_untitled=True)
     except Exception as e:
         from question.runtime import RunRevoked
         if isinstance(e, RunRevoked):

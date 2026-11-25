@@ -72,7 +72,7 @@ export async function beginLogtoLogin(
     client_id: config.app_id,
     redirect_uri: config.redirect_uri,
     response_type: "code",
-    scope: "openid profile email offline_access",
+    scope: "openid profile email phone offline_access",
     state,
     code_challenge: await pkceChallenge(verifier),
     code_challenge_method: "S256",

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/api/providers.dart';
+import '../../../shared/models/json.dart';
 import '../../../shared/models/project.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/models/workspace.dart';
@@ -106,6 +107,36 @@ class WorkspaceApi {
 
   Future<void> renameSession(String id, String title) async {
     await _dio.patch<dynamic>('/api/agent/session/$id', data: {'title': title});
+  }
+
+  Future<({List<String> deleted, List<String> failed})> deleteSessions(
+    List<String> ids,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/agent/session/batch-delete',
+        data: {'session_ids': ids},
+      );
+      return (
+        deleted: asList(response.data?['deleted']).whereType<String>().toList(),
+        failed: asList(response.data?['failed']).whereType<String>().toList(),
+      );
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      if (status != 404 && status != 405) rethrow;
+    }
+    // The App can be released before the server adds the batch endpoint.
+    final deleted = <String>[];
+    final failed = <String>[];
+    for (final id in ids) {
+      try {
+        await deleteSession(id);
+        deleted.add(id);
+      } on DioException {
+        failed.add(id);
+      }
+    }
+    return (deleted: deleted, failed: failed);
   }
 
   Future<void> deleteSession(String id) async {

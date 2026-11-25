@@ -1161,6 +1161,23 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
 async def _dashscope_transcribe(
     target: VideoTranscriptionTarget, audio_url: str, language: str = "zh"
 ) -> dict[str, Any]:
+    """Transcribe, asking again when the recogniser finds no speech in a clip it reads a moment later.
+
+    Measured 2026-11-25 on 5-second Vietnamese shots: the identical request returned
+    SUCCESS_WITH_NO_VALID_FRAGMENT, then the full line 13 seconds afterwards.
+    """
+    for attempt in range(3):
+        try:
+            return await _dashscope_transcribe_once(target, audio_url, language)
+        except RuntimeError as exc:
+            if "NO_VALID_FRAGMENT" not in str(exc) or attempt == 2:
+                raise
+            await asyncio.sleep(4)
+
+
+async def _dashscope_transcribe_once(
+    target: VideoTranscriptionTarget, audio_url: str, language: str = "zh"
+) -> dict[str, Any]:
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response, observe_service_response
 

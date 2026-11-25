@@ -131,3 +131,35 @@ async def test_recogniser_is_told_the_users_language(monkeypatch):
         except Stop:
             pass
     assert sent == [["vi"], ["en"]]
+
+
+def test_recogniser_is_asked_again_when_it_finds_no_speech(monkeypatch):
+    import asyncio
+    from tool import video_production as vp
+
+    calls = []
+
+    async def once(target, audio_url, language="zh"):
+        calls.append(language)
+        if len(calls) < 3:
+            raise RuntimeError("DashScope transcription failed: SUCCESS_WITH_NO_VALID_FRAGMENT")
+        return {"text": "mười hai tiếng"}
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(vp, "_dashscope_transcribe_once", once)
+    monkeypatch.setattr(vp.asyncio, "sleep", no_wait)
+    assert asyncio.run(vp._dashscope_transcribe(None, "https://x/a.mp4", "vi")) == {"text": "mười hai tiếng"}
+    assert calls == ["vi", "vi", "vi"]
+
+    async def broken(target, audio_url, language="zh"):
+        raise RuntimeError("DashScope transcription failed: InvalidFile")
+
+    monkeypatch.setattr(vp, "_dashscope_transcribe_once", broken)
+    try:
+        asyncio.run(vp._dashscope_transcribe(None, "https://x/a.mp4", "vi"))
+    except RuntimeError as exc:
+        assert "InvalidFile" in str(exc)
+    else:
+        raise AssertionError("a real failure must surface at once")

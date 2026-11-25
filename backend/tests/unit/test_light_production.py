@@ -549,6 +549,7 @@ def test_generated_video_can_hear_its_own_spoken_shots():
     prompt = forms.render_prompt("video", form, "light:s:1", [])
     assert "video_transcribe on every completed spoken shot" in prompt
     assert "never digits" in prompt
+    assert "says nothing about the take" in prompt
 
 
 def test_older_desktop_database_preserves_its_sessions():

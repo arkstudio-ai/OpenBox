@@ -521,6 +521,7 @@ async def process_step(
     abort,
     doom_loop_history: list,
     user_variant: str | None = None,
+    prompt_tokens: int = 0,
     tool_choice: str | None = None,
     execution_lookup: Mapping[str, object] | None = None,
     step_executable_ids: frozenset[str] | set[str] | None = None,
@@ -679,6 +680,7 @@ async def process_step(
                     variant=user_variant,
                     tool_choice=tool_choice,
                     cache_key=prompt_cache_key,
+                    prompt_tokens=prompt_tokens,
                 )
 
                 def replayable(error: Exception) -> bool:

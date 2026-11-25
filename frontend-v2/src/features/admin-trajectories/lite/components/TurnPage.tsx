@@ -203,6 +203,12 @@ export function TrajectoryTurnPage({
               <Duration ms={summary.duration_ms} />
             </dd>
           </div>
+          {summary.active_duration_ms != null && (
+            <div className="flex flex-col">
+              <dt className="text-n500 text-2xs">{t("lite.replay.executionLabel")}</dt>
+              <dd className="font-medium"><Duration ms={summary.active_duration_ms} /></dd>
+            </div>
+          )}
           <div className="flex flex-col">
             <dt className="text-n500 text-2xs">{t("lite.turn.steps")}</dt>
             <dd className="font-medium">

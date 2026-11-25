@@ -86,6 +86,7 @@ def resolve_step_model(
     config,
     context: str = "",
     primary: bool = False,
+    regeneration_model: str | None = None,
 ) -> StepModelSelection:
     """Choose and validate the model for a single agent step.
 
@@ -102,7 +103,9 @@ def resolve_step_model(
         primary and tiers is not None and tiers.product_chat
         and any(row.model == selected for row in tiers.chat)
     )
-    if agent_model and not product_choice:
+    if regeneration_model and primary:
+        requested, source = regeneration_model, "message"
+    elif agent_model and not product_choice:
         requested, source = agent_model, "agent"
     elif message_model:
         requested, source = message_model, "message"

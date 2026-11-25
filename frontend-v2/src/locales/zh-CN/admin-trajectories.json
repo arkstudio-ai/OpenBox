@@ -979,6 +979,7 @@
         "takeover": "请用户接管云电脑",
         "job": "后台任务：{{name}}",
         "artifact": "产物：{{name}}",
+        "attachment": "附件 {{name}}",
         "agent": "分派子任务：{{name}}"
       },
       "collectExample": "收进样例库"
@@ -1004,7 +1005,7 @@
         "model": "模型",
         "resolution": "分辨率",
         "ratio": "比例",
-        "duration": "时长",
+        "duration": "总跨度",
         "generate_audio": "带声音",
         "seed": "种子",
         "size": "尺寸",
@@ -1036,7 +1037,9 @@
       "end": "— 对话到此结束 —",
       "turnCredits": "本轮 {{credits}} 积分",
       "turnUncharged": "本轮未计费",
-      "took": "用时 {{duration}}",
+      "took": "总跨度 {{duration}}",
+      "execution": "累计执行 {{duration}}",
+      "executionLabel": "累计执行",
       "showDetail": "查看详细",
       "hideDetail": "收起详细",
       "detailTitle": "这一轮做了什么",

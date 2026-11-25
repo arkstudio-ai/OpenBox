@@ -979,6 +979,7 @@
         "takeover": "Asked the user to take over the desktop",
         "job": "Background job: {{name}}",
         "artifact": "Output: {{name}}",
+        "attachment": "Attachment {{name}}",
         "agent": "Subtask: {{name}}"
       },
       "collectExample": "Add to examples"
@@ -1036,7 +1037,9 @@
       "end": "— End of conversation —",
       "turnCredits": "{{credits}} credits this turn",
       "turnUncharged": "No charge this turn",
-      "took": "Took {{duration}}",
+      "took": "Elapsed {{duration}}",
+      "execution": "Execution {{duration}}",
+      "executionLabel": "Execution time",
       "showDetail": "Show details",
       "hideDetail": "Hide details",
       "detailTitle": "What happened in this turn",

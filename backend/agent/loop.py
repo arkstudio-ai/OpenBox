@@ -1159,6 +1159,9 @@ async def run_loop(
         # Honour it only while the deployment still offers it, and write the
         # replacement back so the fallback happens once rather than every step.
         from agent.model_resolve import resolve as resolve_model, resolve_step_model
+        from session.surface_log import regeneration_model
+
+        retry_choice = await regeneration_model(session_id, user_id, lease.run_id)
         session_model_id, replaced_from = resolve_model(
             session.model,
             config,
@@ -1470,13 +1473,17 @@ async def run_loop(
             agent_def = copy.copy(get_agent(agent_name))
             agent_def.permission = list(agent_def.permission)  # Deep copy the mutable list
 
+            original_model = getattr(last_user, "model", None)
+            primary = not session.parent_id and agent_def.mode != "subagent"
+            retry_model = retry_choice.get("model") if primary and retry_choice.get("message_id") == last_user.id else None
             step_model = resolve_step_model(
                 agent_model=agent_def.model,
-                message_model=getattr(last_user, "model", None),
+                message_model=original_model,
                 session_model=session_model_id,
                 config=config,
                 context=f"session {session_id} step {step + 1} agent {agent_name}",
-                primary=not session.parent_id and agent_def.mode != "subagent",
+                primary=primary,
+                regeneration_model=retry_model,
             )
             model_id = step_model.model_id
             if step_model.replaced_from:
@@ -2465,9 +2472,9 @@ async def run_loop(
                     and stage_threshold <= sized.input_tokens < sized.threshold
                 )
 
-            user_variant = getattr(last_user, "variant", None)
-            if user_variant is None:
-                user_variant = getattr(session, "variant", None)
+            user_variant = None
+            if not retry_model or retry_model == original_model:
+                user_variant = getattr(last_user, "variant", None) or getattr(session, "variant", None)
             request_prefix = RequestPrefix(
                 system=copy.deepcopy(system), tools=_freeze_provider_tools(tools) or {},
                 variant=user_variant, cache_key=prompt_cache_key, native_plan=copy.deepcopy(native_plan),
@@ -2628,13 +2635,6 @@ async def run_loop(
                 await save_part(step_start, user_id=user_id, run_fence=run_fence)
                 runtime_prepared = True
                 latency_phase("model_and_tools")
-
-            # User messages freeze an explicit selection for replay. Synthetic
-            # continuations (plan approval, reminders, compaction) may omit it;
-            # those inherit the conversation's persisted future-turn choice.
-            user_variant = getattr(last_user, "variant", None)
-            if user_variant is None:
-                user_variant = getattr(session, "variant", None)
 
             from session.agent_event_log import (
                 checkpoint_model_request,
@@ -2914,6 +2914,7 @@ async def run_loop(
                     abort=abort,
                     doom_loop_history=doom_loop_history,
                     user_variant=prepared_attempt.user_variant,
+                    prompt_tokens=max(final_budget.input_tokens, observed),
                     execution_lookup=runtime.execution_lookup,
                     step_executable_ids=runtime.step_executable_ids,
                     provider_to_canonical=runtime.provider_to_canonical,

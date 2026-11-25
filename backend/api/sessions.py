@@ -1093,8 +1093,7 @@ async def regenerate_message(
 
     # Let the caller switch models on the way, so "it failed on this model"
     # and "try it on another one" are a single action.
-    if body and body.model:
-        await _remember_model(session, body.model, user_id)
+    retry_model = await _remember_model(session, body.model if body else None, user_id)
     # Independent of the chat model: a retry may switch only the video model.
     if body:
         await _remember_video_model(session, body.video_model, user_id)
@@ -1103,20 +1102,13 @@ async def regenerate_message(
     lease = await _reserve_prompt_run(session_id, user_id)
 
     try:
-        # Let the caller switch models on the way, so "it failed on this model"
-        # and "try it on another one" are a single action.
-        if body and body.model:
-            await _remember_model(session, body.model, user_id)
-        # Independent of the chat model: a retry may switch only the video model.
-        if body:
-            await _remember_video_model(session, body.video_model, user_id)
-
         last_user = await session_mod.delete_messages_from(
             session_id,
             message_id,
             user_id=user_id,
             replacement_run_id=lease.run_id,
             replacement_generation=lease.generation,
+            retry_model=retry_model,
         )
         if not last_user:
             raise HTTPException(404, "Nothing to regenerate: no prompt precedes that message")

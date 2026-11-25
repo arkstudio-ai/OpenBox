@@ -979,6 +979,7 @@
         "takeover": "Đã yêu cầu người dùng tiếp quản máy tính đám mây",
         "job": "Tác vụ nền: {{name}}",
         "artifact": "Đầu ra: {{name}}",
+        "attachment": "Tệp đính kèm {{name}}",
         "agent": "Tác vụ con: {{name}}"
       },
       "collectExample": "Thêm vào kho mẫu"
@@ -1036,7 +1037,9 @@
       "end": "Kết thúc cuộc trò chuyện",
       "turnCredits": "Lượt này dùng {{credits}} điểm",
       "turnUncharged": "Lượt này không tính điểm",
-      "took": "Mất {{duration}}",
+      "took": "Tổng thời gian {{duration}}",
+      "execution": "Thời gian xử lý {{duration}}",
+      "executionLabel": "Thời gian xử lý",
       "showDetail": "Xem chi tiết",
       "hideDetail": "Thu gọn",
       "detailTitle": "Chi tiết lượt này",

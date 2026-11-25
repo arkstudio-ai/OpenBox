@@ -171,6 +171,8 @@ function Turn({
   const events = turn.events.filter((event) => event.type !== "media_prompt")
   const steps = Object.values(summary.tool_counts).reduce((sum, count) => sum + count.total, 0)
   const duration = formatDuration(summary.duration_ms, i18n.language)
+  const execution = formatDuration(summary.active_duration_ms, i18n.language)
+  const elapsed = duration && (!execution || Math.abs((summary.duration_ms ?? 0) - (summary.active_duration_ms ?? 0)) >= 1000)
   // The person's attachments are on screen themselves; the "see the pro view" note is for when they are not.
   const attachedShown = events.some(fromPerson)
   const panel = `turn-detail-${summary.turn_id}`
@@ -216,7 +218,8 @@ function Turn({
         {summary.status !== "completed" && (
           <TurnStatus status={summary.status} reason={summary.status_reason} />
         )}
-        {duration && <span>{t("lite.replay.took", { duration })}</span>}
+        {execution && <span>{t("lite.replay.execution", { duration: execution })}</span>}
+        {elapsed && <span>{t("lite.replay.took", { duration })}</span>}
         {steps > 0 && <span>{t("lite.turn.stepsCount", { count: steps })}</span>}
         <Clock iso={summary.started_at} />
         <button

@@ -61,6 +61,7 @@ export interface TurnSummary {
   finished_at: string | null
   last_activity_at: string | null
   duration_ms: number | null
+  active_duration_ms?: number | null
   status: TurnStatus | string
   status_reason: string | null
   waiting_kind: string | null
@@ -113,6 +114,7 @@ export type StepType =
 
 /** A record summary plus the server's classification for the step flow. */
 export interface LiteStep extends RecordSummary {
+  artifact_role?: string | null
   step_type: StepType | string
   label: string | null
   group: string | null

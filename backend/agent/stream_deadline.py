@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 class ModelResponseDeadline(Exception):
     """An exhausted request budget must not start another automatic request."""
+    code = "LLM_RESPONSE_TIMEOUT"
 
     def __init__(self, phase: str):
         self.phase = phase
@@ -20,13 +21,16 @@ class StreamLimits:
     total: float = 180
 
 
-def limits_for(model_id: str, variant: str | None, purpose: str) -> StreamLimits:
+def limits_for(model_id: str, variant: str | None, purpose: str, prompt_tokens: int = 0) -> StreamLimits:
     from core.config import get_config
     from agent.llm import reasoning_profile
     configured = next((model for model in get_config().models if model.id == model_id), None)
     reasoning = variant or reasoning_profile(model_id).default_variant
     slow = reasoning not in (None, "none", "minimal", "low") or purpose == "compaction"
-    defaults = StreamLimits(first_progress=90 if slow else 30, total=600 if slow else 180)
+    # Prefill for long chat requests can approach the short-chat deadline
+    # before any text or tool output is streamed.
+    long_prompt = purpose == "chat" and prompt_tokens >= 128_000
+    defaults = StreamLimits(first_progress=90 if slow or long_prompt else 30, total=600 if slow else 180)
     return StreamLimits(**{key: getattr(configured, config_key, None) or getattr(defaults, key)
         for key, config_key in (("first_progress", "first_progress_timeout_seconds"),
             ("idle", "stream_idle_timeout_seconds"), ("total", "response_timeout_seconds"))})

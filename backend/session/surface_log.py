@@ -16,7 +16,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Literal, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import JSON, func, select, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.identifier import ascending
@@ -28,6 +28,19 @@ from db.models.session_surface_event import SessionSurfaceEvent
 
 SurfaceEventKind = Literal["regenerate", "dismiss"]
 SURFACE_SNAPSHOT_VERSION = 1
+
+
+async def regeneration_model(session_id: str, user_id: str, run_id: str) -> dict:
+    """The retry's selected model, bound to the same original message and run on recovery."""
+    from db.base import get_db_session
+
+    async with get_db_session() as db:
+        snapshot = type_coerce(SessionSurfaceEvent.public_snapshot, JSON)
+        choice = await db.scalar(select(snapshot["retry_model"]).where(
+            SessionSurfaceEvent.session_id == session_id, SessionSurfaceEvent.user_id == user_id,
+            SessionSurfaceEvent.kind == "regenerate", SessionSurfaceEvent.replacement_run_id == run_id,
+        ).order_by(SessionSurfaceEvent.sequence.desc()).limit(1))
+    return choice if isinstance(choice, dict) else {}
 
 
 def _iso(value: datetime) -> str:

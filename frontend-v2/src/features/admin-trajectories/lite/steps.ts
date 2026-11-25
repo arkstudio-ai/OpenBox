@@ -148,7 +148,8 @@ export function stepTitle(step: LiteStep, labels: LiteLabels, t: TFunction): str
     case "job":
       return t("lite.turn.step.job", { name: step.title })
     case "artifact":
-      return t("lite.turn.step.artifact", { name: step.title })
+      return t(step.artifact_role === "input" || step.artifact_role === "attachment"
+        ? "lite.turn.step.attachment" : "lite.turn.step.artifact", { name: step.title })
     case "agent":
       return t("lite.turn.step.agent", { name: step.title })
     default:

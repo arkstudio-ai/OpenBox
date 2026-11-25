@@ -152,6 +152,7 @@ class VideoGenerateArgs(BaseModel):
     spoken_line: str | None = Field(default=None, max_length=600, description=(
         "Exactly what is said aloud in this shot, verbatim and nothing else (two speakers: name each). "
         "Required whenever anyone speaks or narrates; the server appends it as 口播台词：… and keeps audio on. "
+        "Spell numbers out in the spoken language (mười hai, twelve, 十二): digits are often skipped or misread. "
         "Never put @ in a prompt: the model reads it aloud."
     ))
     no_speech: bool = Field(default=False, description=(

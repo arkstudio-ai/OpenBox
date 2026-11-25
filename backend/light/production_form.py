@@ -201,7 +201,7 @@ def restrict_guided_tools(tools, session, action):
         allowed = {"light_production_form", "capability_search", "footage_analyze"}
     elif action == "render":
         allowed = {"capability_search"} | {
-            "video": {"video_generate", "video_compose", "image_gen", "footage_analyze"},
+            "video": {"video_generate", "video_compose", "image_gen", "footage_analyze", "video_transcribe"},
             "footage_edit": {"footage_analyze", "music_search", "video_compose", "video_transcribe"},
             "menu": {"image_gen"},
             "poster": {"image_gen"},
@@ -315,7 +315,7 @@ def prepare_prompt(entry: str, form: dict) -> str:
 
 def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict]) -> str:
     if entry == "video":
-        tools = "video_generate, video_compose, image_gen, footage_analyze"
+        tools = "video_generate, video_compose, image_gen, footage_analyze, video_transcribe"
         task = (
             "Generate new footage with video_generate. For each shot use only pertinent assets as references; "
             "use video footage as a reference for structure/content, not as footage in the final edit. For a multi-shot "
@@ -326,8 +326,14 @@ def render_prompt(entry: str, form: dict, job_prefix: str, existing: list[dict])
             "its advertised ratio/input options. If video reference is unsupported by the selected model, inspect it with "
             "footage_analyze and describe it in the video prompt. Use only confirmed words for titles/dialogue. "
             "When the script calls for speech, generate it in the relevant shot with its speaker, exact words and "
-            "timing via spoken_line and native audio. Use the clip audio for all speech and preserve it in the edit. "
-            "Time readable speech captions from actual ASR on the edited timeline, in the requested output language. "
+            "timing via spoken_line and native audio. Write every number in a spoken_line as words of the spoken "
+            "language (mười hai tiếng, twelve hours, 十二小时), never digits; captions keep the approved text. "
+            "Use the clip audio for all speech and preserve it in the edit. "
+            "Before composing, run video_transcribe on every completed spoken shot (in parallel, language = the "
+            "spoken language) and compare what was heard with its spoken_line. A homophone or spelling variant is "
+            "fine; a dropped or changed word, number or name is not: reshoot that shot once under a revision key, "
+            "and if it is still wrong keep the closer take and tell the owner which words differ. "
+            "Time readable speech captions from that ASR on the edited timeline, in the requested output language. "
             "Use the exact approved words when they match the recording and keep their natural accents. "
             "Build the final soundtrack from the clips' dialogue and ambience. "
             "Ask video_generate for clean, unscored source clips. Deliver the final attachment."

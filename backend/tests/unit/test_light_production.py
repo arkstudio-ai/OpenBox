@@ -539,6 +539,18 @@ def test_writing_copy_exposes_only_preparation_tools():
     assert set(forms.restrict_guided_tools(tools, session, "prepare")) == {"light_production_form", "footage_analyze"}
 
 
+def test_generated_video_can_hear_its_own_spoken_shots():
+    names = ("video_generate", "video_compose", "image_gen", "footage_analyze", "video_transcribe", "desktop_publish")
+    tools = {name: SimpleNamespace(id=name) for name in names}
+    form = forms.initial_form("video", "Phở Hà Nội", "món phở bò đặc biệt")
+    session = SimpleNamespace(light_entry="video", light_production=form)
+    assert "video_transcribe" in forms.restrict_guided_tools(tools, session, "render")
+    assert "video_transcribe" not in forms.restrict_guided_tools(tools, session, "prepare")
+    prompt = forms.render_prompt("video", form, "light:s:1", [])
+    assert "video_transcribe on every completed spoken shot" in prompt
+    assert "never digits" in prompt
+
+
 def test_older_desktop_database_preserves_its_sessions():
     engine = create_engine("sqlite://")
     with engine.begin() as connection:

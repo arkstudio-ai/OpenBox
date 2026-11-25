@@ -292,7 +292,7 @@ function answer(path: string): Promise<unknown> {
           ]
         : [
             {
-              summary: turn({}),
+              summary: turn({ active_duration_ms: 60_000 }),
               events: [
                 {
                   type: "user",
@@ -678,6 +678,9 @@ describe("会话回放", () => {
     await screen.findByTestId("trajectory-lite-replay")
     expect(screen.getByText("国庆活动预热视频")).toBeTruthy()
     expect(screen.getAllByTestId("replay-turn")).toHaveLength(1)
+    const timing = screen.getByTestId("replay-turn-line").textContent
+    expect(timing).toContain("lite.replay.execution")
+    expect(timing).toContain("lite.replay.took")
     expect(screen.getByTestId("replay-user").textContent).toContain("把刚才那条火锅视频发到抖音")
     expect((await screen.findAllByText("好的")).length).toBeGreaterThan(0)
     expect(screen.getByText("用哪个方案？")).toBeTruthy()

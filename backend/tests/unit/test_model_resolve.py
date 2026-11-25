@@ -67,3 +67,4 @@ def test_product_choice_applies_to_primary_agents_only():
     args = dict(agent_model=custom, message_model=chosen, session_model=custom, config=config)
     assert resolve_step_model(**args, primary=True).model_id == chosen
     assert resolve_step_model(**args).model_id == custom
+    assert resolve_step_model(**args, primary=True, regeneration_model=custom).model_id == custom

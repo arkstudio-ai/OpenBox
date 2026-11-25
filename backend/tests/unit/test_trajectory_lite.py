@@ -55,6 +55,22 @@ def test_failed_run_names_its_reason_and_falls_back_to_the_failed_step():
     without = turns.derive(_base(status="failed", end_seq=9, finished=9) + [
         _record("tool:c1", "tool", 5, status="failed", title="desktop_publish", reason="login_expired", finished=6)])
     assert without["status_reason"] == "login_expired"
+
+
+def test_replay_recovers_timeout_reason_and_excludes_idle_time_between_runs():
+    from agent.stream_deadline import ModelResponseDeadline
+
+    notice = str(ModelResponseDeadline("first_progress"))
+    # Older traces put the public error on the committed message only.
+    data = {"data": {"message": {"error": {"code": "LLM_ERROR", "message": notice}}}}
+    failure = _record("assistant:failure", "assistant", 9, status="failed")
+    first = _record("run:first", "run", 2, started=1, finished=31)
+    second = _record("run:second", "run", 5, started=1000, finished=1030)
+    summary = {"status": "failed", "duration_ms": 1_029_000, "status_reason": None}
+    lite.summarize_execution(summary, [first, second, turns.with_data(failure, data)])
+    assert summary == {"status": "failed", "duration_ms": 1_029_000,
+                       "active_duration_ms": 60_000, "status_reason": notice}
+    assert lite.replay_events([(failure, data)], "agent_main")[0]["status_reason"] == notice
     assistant_failed = turns.derive(_base(status="completed", end_seq=9, finished=9) + [
         _record("assistant:r1", "assistant", 4, status="failed", reason="context overflow")])
     assert (assistant_failed["status"], assistant_failed["status_reason"]) == ("failed", "context overflow")

@@ -80,3 +80,7 @@ def test_per_model_limits_and_reasoning_defaults(monkeypatch):
     assert limits_for("openai/other", None, "chat") == StreamLimits()
     assert limits_for("openai/other", "high", "chat").first_progress == 90
     assert limits_for("openai/other", None, "compaction").total == 600
+    assert limits_for("openai/custom", None, "chat", 350_000) == StreamLimits(120, 60, 900)
+    assert limits_for("openai/other", None, "chat", 350_000) == StreamLimits(90, 60, 180)
+    assert limits_for("openai/other", None, "chat", 50_000) == StreamLimits()
+    assert limits_for("openai/other", None, "title", 350_000) == StreamLimits()

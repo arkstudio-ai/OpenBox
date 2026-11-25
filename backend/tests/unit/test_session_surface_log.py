@@ -118,6 +118,7 @@ async def test_regenerate_archives_complete_branch_before_delete_and_keeps_live_
         user_id=user_id,
         replacement_run_id="run-replacement-1",
         replacement_generation=lease.generation,
+        retry_model="openai/gpt-6.2-sol",
     )
 
     assert observed_before_delete is True
@@ -136,6 +137,10 @@ async def test_regenerate_archives_complete_branch_before_delete_and_keeps_live_
     assert event.anchor_message_id == message_ids[1]
     assert event.replacement_run_id == "run-replacement-1"
     assert event.replacement_generation == lease.generation
+    assert await surface_log.regeneration_model(session_id, user_id, lease.run_id) == {
+        "message_id": message_ids[0], "model": "openai/gpt-6.2-sol",
+    }
+    assert not await surface_log.regeneration_model(session_id, user_id, "a-different-run")
     assert event.hidden_message_ids == message_ids[1:]
     snapshot_messages = event.public_snapshot["messages"]
     assert [message["id"] for message in snapshot_messages] == message_ids[1:]

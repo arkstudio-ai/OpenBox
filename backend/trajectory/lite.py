@@ -396,6 +396,7 @@ async def get_turn(db, trajectory, turn_id: str, *, at: datetime | None = None) 
         enriched.pop("data", None)  # step rows stay summaries; the detail endpoint carries content
         steps.append({**enriched, **classify(enriched, document, row.main_agent_id)})
     summary = turns.payload(row, session_title=session.title if session else None, at=at)
+    summarize_execution(summary, steps)
     summary["credit_breakdown"] = None
     await attach_credits([(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)})], [summary],
                          breakdown_field="credit_breakdown")
@@ -486,7 +487,7 @@ async def _expand(db, trajectory, values: list) -> list:
 
 # -- Session replay (lite plan §15) --
 
-REPLAY_KINDS = ("user", "assistant", "question", "tool", "artifact")
+REPLAY_KINDS = ("user", "assistant", "question", "tool", "artifact", "run")
 #: Characters of one replayed text; longer content stays readable in the turn page and the professional view.
 REPLAY_TEXT_CHARS = 20_000
 
@@ -553,7 +554,8 @@ def replay_events(rows: list[tuple[dict, object]], main_agent_id: str | None) ->
             text = _reply_text(data)
             if text is None and summary.get("status") != "failed":
                 continue
-            events.append({**base, "type": "reply", "text": text, "status_reason": summary.get("status_reason")})
+            reason = turns.with_data(summary, data).get("status_reason")
+            events.append({**base, "type": "reply", "text": text, "status_reason": reason})
         elif kind == "question" and main:
             events.append({**base, "type": "question", "questions": inner.get("questions") or summary.get("preview"),
                            "answers": inner.get("answers")})
@@ -565,6 +567,28 @@ def replay_events(rows: list[tuple[dict, object]], main_agent_id: str | None) ->
             if prompt:
                 events.append({**base, "type": "media_prompt", **prompt})
     return events
+
+
+def summarize_execution(summary: dict, records: list[dict]) -> None:
+    """Use finished run intervals so gaps between regenerations stay out of execution time."""
+    intervals = sorted(
+        (turns.instant(row["started_at"]), turns.instant(row["finished_at"]))
+        for row in records if row.get("kind") == "run" and row.get("started_at") and row.get("finished_at")
+    )
+    if intervals:
+        until = intervals[0][0]
+        active = timedelta()
+        for start, end in intervals:
+            active += max(timedelta(), end - max(until, start))
+            until = max(until, end)
+        summary["active_duration_ms"] = round(active.total_seconds() * 1000)
+    if summary["status"] != "failed" or summary.get("status_reason"):
+        return
+    replies = [row for row in records if row.get("kind") == "assistant"
+               and row.get("purpose") in turns.SPOKEN_PURPOSES]
+    last = max(replies, key=lambda row: turns._seq(row.get("start_seq")), default={})
+    if last.get("status") == "failed":
+        summary["status_reason"] = last.get("status_reason")
 
 
 def _finish_events(events: list[dict]) -> list[dict]:
@@ -608,6 +632,9 @@ async def session_replay(db, trajectory, *, cursor=None, limit=10, at: datetime 
     events = await _expand(db, trajectory, events)
     items = [{"summary": turns.payload(row, session_title=session.title if session else None, at=at),
               "events": _finish_events(turn_events)} for row, turn_events in zip(page, events)]
+    for row, item in zip(page, items):
+        summarize_execution(item["summary"], [turns.with_data(record, data)
+                            for record, data in grouped.get(row.turn_id, [])])
     # The whole session's credits ride in the same lookup: every charge from its first turn until now.
     whole = {"credits": None}
     windows = [(row.turn_id, {"session_id": row.session_id, **_window_dict(row, at)}) for row in page]

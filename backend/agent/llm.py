@@ -1741,6 +1741,7 @@ async def stream_llm(
     billing_kind: str = "chat",
     cache_key: str = "",
     max_output_tokens: int | None = None,
+    prompt_tokens: int = 0,
 ) -> AsyncIterator[dict]:
     """Stream LLM responses using LiteLLM.
 
@@ -1761,7 +1762,7 @@ async def stream_llm(
     await assert_current("request")
     await _assert_dispatch_allowed(ctx)
     from agent.stream_deadline import bounded_stream, limits_for
-    limits = limits_for(model_id, variant, billing_kind)
+    limits = limits_for(model_id, variant, billing_kind, prompt_tokens)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)

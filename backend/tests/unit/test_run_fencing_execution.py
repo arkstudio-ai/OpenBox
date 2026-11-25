@@ -41,6 +41,30 @@ PAST = timedelta(seconds=1)
 OPERATIONS = ("cancel", "invalidate", "finish", "recover", "delete")
 
 
+async def test_regenerated_run_uses_its_selected_model_without_rewriting_the_prompt(state, loop_harness, monkeypatch):
+    from agent.driver import reserve_run
+
+    original_model = "openai/gemini-3.8-flash-tiered"
+    selected_model = "openai/gpt-6.2-sol"
+    prompt = await create_user_message("s1", "Continue editing", model=original_model, user_id="u1")
+    previous = await create_assistant_message("s1", prompt.id, model_id=original_model, user_id="u1")
+    lease = await reserve_run("s1", "u1")
+    await delete_messages_from("s1", previous.id, user_id="u1", replacement_run_id=lease.run_id,
+                               replacement_generation=lease.generation, retry_model=selected_model)
+    requests = []
+
+    async def provider(**kwargs):
+        requests.append(kwargs["model_id"])
+        yield {"type": "text_delta", "text": "Continued editing."}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(loop_harness.processor, "stream_llm", provider)
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", AsyncMock())
+    await loop_harness.loop.run_loop("s1", user_id="u1", lease=lease)
+    assert requests == [selected_model]
+    assert (await read(Message, prompt.id)).model == original_model
+
+
 async def ask_in(session_id: str, *, expires_at=None) -> str:
     """A pending durable question in a session of its own."""
     await add_session(session_id)

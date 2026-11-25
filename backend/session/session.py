@@ -2017,6 +2017,7 @@ async def delete_messages_from(
     user_id: str = "default",
     replacement_run_id: str | None = None,
     replacement_generation: int | None = None,
+    retry_model: str | None = None,
 ) -> str | None:
     """Drop `message_id` and everything after it. Returns the id of the last
     user message that survives, or None if the session has none left.
@@ -2095,6 +2096,7 @@ async def delete_messages_from(
                 ).order_by(MessageORM.created_at, MessageORM.id)
             )).scalars().all())
 
+            surface_event = None
             if doomed:
                 from question import runtime
                 execution = await runtime.execution_locked(db, session_id, user_id)
@@ -2102,7 +2104,7 @@ async def delete_messages_from(
                 from session.agent_event_log import append_surface_remove_locked
                 from session.surface_log import append_surface_change_locked
 
-                await append_surface_change_locked(
+                surface_event = await append_surface_change_locked(
                     db,
                     session_row,
                     kind="regenerate",
@@ -2133,6 +2135,11 @@ async def delete_messages_from(
             )
             last_user = survivor.scalar_one_or_none()
             if last_user is not None and run_fence is not None:
+                if surface_event is not None and retry_model:
+                    surface_event.public_snapshot = {
+                        **surface_event.public_snapshot,
+                        "retry_model": {"message_id": last_user, "model": retry_model},
+                    }
                 from agent.driver import bind_trigger_message_locked
 
                 _, run_id, generation = run_fence

@@ -62,7 +62,7 @@ def tool_id_of(record: dict) -> str:
 
 
 #: Record kinds whose ``data`` a refresh reads: the user's attachments, a tool's id.
-DATA_KINDS = ("user", "tool", "assistant")
+DATA_KINDS = ("user", "tool", "assistant", "artifact")
 #: Model calls that speak to the person. Others (``suggestions``, ``memory``, ``wiki``…) run after or beside the
 #: reply; their output is never what the assistant said.
 SPOKEN_PURPOSES = (None, "chat")
@@ -82,6 +82,17 @@ def with_data(summary: dict, data) -> dict:
             row["tool_id"] = str(tool)[:128]
     if summary.get("kind") == "assistant" and inner.get("purpose"):
         row["purpose"] = str(inner["purpose"])[:64]
+    if summary.get("kind") == "assistant" and summary.get("status") == "failed" and not row.get("status_reason"):
+        message = inner.get("message")
+        error = message.get("error") if isinstance(message, dict) else None
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            from agent.stream_deadline import ModelResponseDeadline
+
+            notice = str(ModelResponseDeadline("first_progress"))
+            if error.get("code") == ModelResponseDeadline.code or error["message"] == notice:
+                row["status_reason"] = notice
+    if summary.get("kind") == "artifact":
+        row["artifact_role"] = inner.get("role")
     return row
 
 

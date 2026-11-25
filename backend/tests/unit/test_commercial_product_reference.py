@@ -73,9 +73,24 @@ def review(ok):
     )
 
 
-def test_real_pixels_of_the_label_rim_and_hole_survive_without_person_or_room():
+@pytest.mark.parametrize("dense", [False, True])
+def test_real_pixels_of_the_label_rim_and_hole_survive_without_person_or_room(dense):
     im = source()
-    mask = ref._mask(im, tracing())
+    outline = tracing()
+    if dense:
+        def densify(corners, count):
+            points = []
+            for i in range(count):
+                edge, step = divmod(i * len(corners), count)
+                start, end = corners[edge], corners[(edge + 1) % len(corners)]
+                points.append([round(a + (b - a) * step / count) for a, b in zip(start, end)])
+            return points
+
+        payload = outline.model_dump()
+        payload["surfaces"][0] = densify(payload["surfaces"][0], 100)
+        payload["remove"][1] = densify(payload["remove"][1], 134)
+        outline = ref.Outline.model_validate(payload)
+    mask = ref._mask(im, outline)
     assert all(mask.getpixel(p) == 255 for p in [(46, 62), (52, 79), (30, 36), (62, 36), (58, 20)])
     assert all(mask.getpixel(p) == 0 for p in [(45, 33), (46, 23), (41, 35), (16, 21), (4, 80), (79, 86)])
     composite = Image.composite(im, Image.new("RGB", im.size, ref.NEUTRAL), mask)

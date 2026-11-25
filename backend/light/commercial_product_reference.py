@@ -30,7 +30,7 @@ READ_ERRORS = {
 }
 Coord = Annotated[int, Field(ge=0, le=1000)]
 Point = Annotated[list[Coord], Field(min_length=2, max_length=2)]
-Polygon = Annotated[list[Point], Field(min_length=3, max_length=72)]
+Polygon = Annotated[list[Point], Field(min_length=3, max_length=160)]
 NEUTRAL = (239, 239, 236)
 
 

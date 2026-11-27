@@ -50,6 +50,18 @@ def quote_analysis(total_seconds: float, *, rates: dict | None = None) -> MediaQ
     })
 
 
+def quote_review_increment(previous_ms: int, added_ms: int) -> MediaQuote:
+    """Only new started minutes across unique reviewed takes of one production."""
+    total = quote_analysis((previous_ms + added_ms) / 1000)
+    cumulative = (previous_ms + added_ms + 59999) // 60000
+    minutes = cumulative - (previous_ms + 59999) // 60000
+    per_minute = Decimal(total.snapshot["per_minute"])
+    return MediaQuote(total.model_id, total.tier, minutes, (per_minute * minutes).quantize(PRECISION), {
+        **total.snapshot, "minutes_billed": minutes, "cumulative_minutes": cumulative,
+        "previous_ms": previous_ms, "added_ms": added_ms,
+    })
+
+
 def quote_compose(duration_sec: float, *, rates: dict | None = None) -> MediaQuote:
     data, footage = _rates(rates)
     seconds = max(0.0, float(duration_sec))

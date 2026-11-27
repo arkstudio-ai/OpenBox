@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 from tool.tool import ToolResult, ToolContext, define_tool
 
+MAX_CONCURRENT_IMAGES = 10
+
 
 class Invocation(BaseModel):
     tool: str
@@ -16,10 +18,10 @@ class BatchArgs(BaseModel):
 
 def image_batch_limit() -> int:
     import os
-    value = int(os.environ.get("IMAGE_BATCH_MAX_CALLS", "5"))
+    value = int(os.environ.get("IMAGE_BATCH_MAX_CALLS", str(MAX_CONCURRENT_IMAGES)))
     if not 1 <= value <= 25:
         raise ValueError("IMAGE_BATCH_MAX_CALLS must be between 1 and 25")
-    return value
+    return min(value, MAX_CONCURRENT_IMAGES)
 
 
 def image_call_count(tool_id: str, args: dict, lookup) -> int:
@@ -189,8 +191,8 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
 BATCH_DESCRIPTION = """\
 Run 1-25 independent tool calls concurrently. Ordering is not guaranteed;
 failures are independent. Unmarked tools run serially.
-Image generation/editing runs serially, saves each result, and shares a limit
-of 5 calls by default (1-4 images each); excess rejects the whole batch before dispatch.
+Independent image generations/edits run concurrently (up to 10 calls per response);
+use returned asset IDs in subsequent calls when a frame depends on another.
 Call memory/task reads directly. No nesting, dependent calls or overlapping mutations.
 `computer` is rejected; use computer(action='batch', ...) for ordered desktop actions."""
 
@@ -200,8 +202,7 @@ def _batch_body_timeout(args: dict, ctx: ToolContext) -> float:
     invocations = args.get("invocations") or []
     if not isinstance(invocations, list) or len(invocations) > 25:
         return 600.0
-    # An outer composite must not cancel a later image merely because its
-    # earlier serial siblings consumed the ordinary single-tool deadline.
+    # Include serial barriers and time spent waiting for provider capacity.
     return 60.0 + sum(tool_body_timeout(
         lookup.get(inv.get("tool")) if lookup is not None and isinstance(inv, dict) else None,
         inv.get("parameters") or {} if isinstance(inv, dict) else {}, ctx,

@@ -235,6 +235,26 @@
     "yesterday": "Yesterday {{time}}"
   },
   "production": {
+    "renderOptions": {
+      "title": "Production settings",
+      "perfect": "Polished video",
+      "off": "Generate each shot once, then assemble the video.",
+      "on": "Review each shot and repair issues with visuals, movement or dialogue.",
+      "confirmTitle": "Enable polished video?",
+      "confirmBody": "The agent reviews every shot and repairs issues with visuals, movement or dialogue.",
+      "impact": "Review and repairs take longer and cost more.",
+      "cancelEnable": "Keep off",
+      "enable": "Enable",
+      "language": "Output language",
+      "auto": "Auto",
+      "follow": "Follow app",
+      "custom": "Enter language",
+      "scope": "Applies to agent replies, copy, on-screen text, captions and voice in this production.",
+      "current": "Current app language",
+      "field": "Language or regional variety",
+      "hint": "E.g. Vietnamese or Brazilian Portuguese",
+      "save": "Save"
+    },
     "moreTemplatesComing": "More templates are on the way",
     "retiredTemplate": "This template has been retired. Choose another template.",
     "settings": "Production settings",
@@ -478,6 +498,16 @@
       }
     },
     "template": {
+      "gallery_wishes": {
+        "title": "Three Wishes in a Gallery",
+        "body": "A 38-second vertical ad. Adapt the gallery, three wishes, and final twist to your product and story.",
+        "model": "Fast · ComfyUI H3 · 720p",
+        "productName": "Product name",
+        "materialRequired": "Go back to Materials and choose one clear product photo.",
+        "copyTitle": "Story and dialogue",
+        "copyHelp": "Describe actions, story changes, and any dialogue to speak verbatim. Use promotion settings for the offer and tagline.",
+        "copyPlaceholder": "For example, the neighboring portrait leans out when the genie announces the price."
+      },
       "product_story": {
         "title": "Cinematic product story",
         "body": "Recreate the 53-second headphone commercial with your product, following its 28 shots, three gesture transitions and final street dance.",
@@ -577,7 +607,7 @@
     "previewUnavailable": "Preview unavailable.",
     "playHeadphoneReference": "Play the original headphone ad",
     "headphoneReferenceTitle": "Original headphone commercial",
-    "playCase": "Play the crawfish remake",
+    "playCase": "Play example",
     "previewMenu": "Preview menu sample",
     "playPreview": "Play",
     "pausePreview": "Pause",

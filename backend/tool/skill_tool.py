@@ -104,6 +104,13 @@ def _host_bundle_note(name: str, path: str) -> list[str]:
     builtin = Path(__file__).resolve().parents[1] / ".openbox" / "skills"
     candidate = Path(path).resolve()
     if candidate.parent == builtin and candidate.name == name:
+        if name == "comfyui-h3":
+            # This adapter and its acceleration graph execute on the backend,
+            # including for existing desktops that predate the H3 bundle.
+            references = candidate / "references"
+            return ["OpenBox runs this workflow on the backend. Use the guide and matching tool parameters below.",
+                    (references / "prompt-writing.md").read_text(encoding="utf-8"),
+                    (references / "api.md").read_text(encoding="utf-8")]
         return [f"The instructions above are the application's current built-in {name} skill.",
                 f"Its bundled runtime files are deployed at /opt/openbox/skills/{name}/ in the sandbox.",
                 "Use the exact documented script/reference paths there. If one is missing, report the missing dependency; do not search other directories."]

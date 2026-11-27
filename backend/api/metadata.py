@@ -212,9 +212,10 @@ def _video_models(config) -> list[dict]:
     single configured default is still returned so the picker always has
     something real to show rather than an empty menu.
     """
+    from tool.video_providers import selectable_video_models
+
     settings = config.video_generation
-    declared = list(settings.models or [])
-    if not declared:
+    if not settings.models:
         return [{
             "id": settings.model,
             "name": settings.model,
@@ -223,7 +224,6 @@ def _video_models(config) -> list[dict]:
             "resolutions": [],
             "max_duration_seconds": None,
         }]
-    allowed = set(settings.allowed_models or [])
     return [
         {
             "id": m.id,
@@ -233,11 +233,7 @@ def _video_models(config) -> list[dict]:
             "resolutions": list(m.resolutions or []),
             "max_duration_seconds": m.max_duration_seconds,
         }
-        for m in declared
-        # An allowed_models whitelist, when set, also governs what the picker
-        # may offer — otherwise the UI would advertise a model the submit path
-        # refuses.
-        if not allowed or m.id in allowed
+        for m in selectable_video_models(settings)
     ]
 
 

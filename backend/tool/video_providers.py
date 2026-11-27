@@ -374,14 +374,18 @@ class VideoRoute:
     base_url: str
     submit_timeout_seconds: int
     status_timeout_seconds: int
-    channel: Literal["ark", "sd2", "task", "runninghub", "dashscope"] = "ark"
+    channel: Literal["ark", "sd2", "task", "runninghub", "dashscope", "comfyui"] = "ark"
     model_type: str = "seedance"
     # "raw" = the new-api quirk: Authorization carries the sk-token verbatim,
     # WITHOUT a "Bearer " prefix.
     auth_scheme: Literal["bearer", "raw"] = "bearer"
     # Only meaningful on the ark channel: TokenSpace contents API vs the
     # BossIP public relay (`/v1/videos` with relay-managed material groups).
-    wire_format: Literal["tokenspace_contents", "bossip_videos", "runninghub_v2", "dashscope_video"] = "tokenspace_contents"
+    wire_format: Literal["tokenspace_contents", "bossip_videos", "runninghub_v2", "dashscope_video", "comfyui_h3"] = "tokenspace_contents"
+    allow_submit: bool = True
+    tls_ca_file: str | None = None
+    comfy_workers: tuple[str, ...] = ()
+    workbench: bool = False
 
 
 def provider_route_fingerprint(route: Any) -> str:
@@ -500,6 +504,21 @@ def declared_model(model: str, config) -> Any | None:
     return None
 
 
+def selectable_video_models(settings) -> list[Any]:
+    declared = settings.models or []
+    allowed = set(settings.allowed_models or [])
+    return [
+        model for model in declared
+        if (not allowed or model.id in allowed)
+        and (model.channel != "runninghub" or getattr(settings, "runninghub_enabled", True))
+    ]
+
+
+def _require_submission_enabled(route: Any) -> None:
+    if not getattr(route, "allow_submit", True):
+        raise VideoRequestError("RunningHub 视频暂时停用，请从当前可用的视频档位中选择。")
+
+
 def _declared_route(entry: Any, config) -> VideoRoute:
     """Build a route from a declared model, so adding one needs no release.
 
@@ -520,6 +539,18 @@ def _declared_route(entry: Any, config) -> VideoRoute:
             f"'{channel}' entry to video_generation.channel_providers"
         )
     provider = config.provider.get(provider_name)
+    if channel == "comfyui":
+        from tool.video_comfyui import configured_endpoint
+
+        endpoint, token = configured_endpoint(provider)
+        return VideoRoute(
+            provider=provider_name, model=entry.id, api_key=token, base_url=endpoint,
+            submit_timeout_seconds=settings.submit_timeout_seconds,
+            status_timeout_seconds=settings.status_timeout_seconds,
+            channel="comfyui", model_type="comfyui_h3", wire_format="comfyui_h3",
+            tls_ca_file=provider.options.get("tls_ca_file"),
+            comfy_workers=tuple(provider.options.get("workers", ())),
+        )
     if not provider or not provider.api_key or not provider.base_url:
         raise RuntimeError(
             f"provider '{provider_name}' needs api_key and base_url for the "
@@ -536,6 +567,7 @@ def _declared_route(entry: Any, config) -> VideoRoute:
         model_type=model_type,
         auth_scheme="bearer" if channel in ("runninghub", "dashscope") else (provider.options or {}).get("auth_scheme", "bearer"),
         wire_format={"runninghub": "runninghub_v2", "dashscope": "dashscope_video"}.get(channel, "tokenspace_contents"),
+        allow_submit=channel != "runninghub" or getattr(settings, "runninghub_enabled", True),
     )
 
 
@@ -736,13 +768,22 @@ def validate_request(
     prompt: str | None = None,
     watermark: bool = False,
 ) -> None:
+    _require_submission_enabled(route)
     channel = getattr(route, "channel", "ark")
+    if channel == "comfyui":
+        from tool.video_comfyui import extended_inputs, validate
+
+        validate(resolution=resolution, ratio=ratio, duration=duration,
+                 input_mimes=input_mimes, roles=roles, generate_audio=generate_audio,
+                 prompt=prompt, watermark=watermark, direct=extended_inputs(route))
     if channel == "runninghub":
         from tool.video_runninghub import validate
         validate(route.model, resolution=resolution, ratio=ratio, duration=duration,
                  input_mimes=input_mimes, roles=roles, generate_audio=generate_audio,
                  prompt=prompt, watermark=watermark)
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
+    if channel == "comfyui":
+        has_video_ref = "reference_video" in roles
     if declared is not None and generate_audio and not getattr(
         declared, "supports_generated_audio", True
     ):
@@ -776,7 +817,7 @@ def validate_request(
             "Declare the model to state its real limits."
         )
 
-    if channel == "runninghub":
+    if channel in ("runninghub", "comfyui"):
         return
     if channel == "dashscope":
         from tool.video_dashscope import validate
@@ -977,6 +1018,8 @@ def build_payload(
     watermark: bool,
     seed: int | None = None,
     declared: Any | None = None,
+    h3_profile: str | None = None,
+    poster_motion_region: list[float] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """(url_path, json_body) for the gateway channels.
 
@@ -989,6 +1032,13 @@ def build_payload(
     The ark channel keeps its historical builder in video_production.py.
     """
     channel = getattr(route, "channel", "ark")
+    if channel == "comfyui":
+        from tool.video_comfyui import build_payload as build_comfyui_payload, extended_inputs
+
+        return build_comfyui_payload(prompt=prompt, refs=refs, resolution=resolution, ratio=ratio,
+                                     duration=duration, generate_audio=generate_audio, watermark=watermark, seed=seed,
+                                     h3_profile=h3_profile, direct=extended_inputs(route),
+                                     poster_motion_region=poster_motion_region)
     if channel == "dashscope":
         from tool.video_dashscope import build_payload as build_dashscope_payload
         return build_dashscope_payload(route, prompt=prompt, refs=refs, resolution=resolution,
@@ -1105,11 +1155,18 @@ def build_payload(
 # ── HTTP + status normalization ─────────────────────────────────────────────
 
 async def submit(route: Any, path: str, body: dict[str, Any], *,
-                 purpose: str = "video_generation") -> dict[str, Any]:
+                 purpose: str = "video_generation", before_post=None) -> dict[str, Any]:
+    _require_submission_enabled(route)
     import httpx
     from agent.trajectory import capture_service_dispatch, capture_http_response
 
     channel = getattr(route, "channel", "ark")
+    if channel == "comfyui":
+        from tool.video_comfyui import submit as submit_comfyui
+
+        if before_post is not None:
+            return await submit_comfyui(route, body, before_post=before_post)
+        return await submit_comfyui(route, body)
     headers = {"Authorization": auth_header(route), "Content-Type": "application/json"}
     if channel == "dashscope":
         headers["X-DashScope-Async"] = "enable"
@@ -1164,6 +1221,10 @@ async def status(route: Any, task_id: str, *, operation: str = "video_status") -
     import httpx
 
     channel = getattr(route, "channel", "ark")
+    if channel == "comfyui":
+        from tool.video_comfyui import status as status_comfyui
+
+        return await status_comfyui(route, task_id)
     path = f"/v1/videos/{task_id}" if channel == "sd2" else f"/v1/video/generations/{task_id}"
     if channel == "dashscope":
         from urllib.parse import quote
@@ -1243,6 +1304,8 @@ def normalize_state(route: Any, data: dict[str, Any]) -> str:
 
 def result_video_url(route: Any, data: dict[str, Any]) -> str:
     channel = getattr(route, "channel", "ark")
+    if channel == "comfyui":
+        return str(data.get("video_url") or "")
     if channel == "dashscope":
         from tool.video_dashscope import output
         return str(output(data).get("video_url") or "")

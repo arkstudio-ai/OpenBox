@@ -572,37 +572,49 @@ async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str |
     else ``charged`` (enforce) or ``shadow``. Returns credits for
     charged/shadow, None otherwise.
     """
+    from db.base import get_db_session
+
+    if billing_mode() == "off" or not workspace_id:
+        return None
+    async with get_db_session() as db:
+        account = await lock_balance(db, workspace_id)
+        return await settle_locked(db, account, key=key, workspace_id=workspace_id, user_id=user_id,
+                                   session_id=session_id, price=price, kind=kind, quantity_known=quantity_known,
+                                   tokens=tokens, default_title=default_title, title=title)
+
+
+async def settle_locked(db, account, *, key: str, workspace_id: str, user_id: str, session_id: str | None,
+                        price: MediaQuote, kind: str, quantity_known: bool, tokens: dict[str, Any],
+                        default_title: str, title: str | None = None) -> Decimal | None:
+    """Record the usage and debit together with the caller's changes under its balance lock."""
     from sqlalchemy import select
 
     from core.identifier import ascending as generate_id
-    from db.base import get_db_session
     from db.models.billing import UsageEvent
     from db.models.session import Session
 
     mode = billing_mode()
-    if mode == "off" or not workspace_id:
+    if mode == "off":
         return None
-    async with get_db_session() as db:
-        account = await lock_balance(db, workspace_id)
-        existing = (await db.execute(select(UsageEvent).where(UsageEvent.idempotency_key == key))).scalar_one_or_none()
-        if existing is not None:
-            return existing.credits
-        session = await db.get(Session, session_id) if session_id else None
-        if not quantity_known:
-            status = "unreported"
-        elif price.credits is None:
-            status = "unpriced"
-        else:
-            status = "charged" if mode == "enforce" else "shadow"
-        event = UsageEvent(
-            id=generate_id("usage"), idempotency_key=key, workspace_id=workspace_id,
-            user_id=user_id, session_id=session_id or "", message_id=None,
-            session_title=title or (session.title if session and session.title else default_title),
-            model_id=price.model_id, kind=kind, tokens=tokens, total_tokens=0,
-            credits=price.credits, cost_credits=price.cost, status=status, pricing=price.snapshot,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(event)
-        if status == "charged":
-            post_ledger(db, account, amount=-price.credits, kind="usage", reference_id=event.id, key=f"usage:{event.id}")
+    existing = (await db.execute(select(UsageEvent).where(UsageEvent.idempotency_key == key))).scalar_one_or_none()
+    if existing is not None:
+        return existing.credits
+    session = await db.get(Session, session_id) if session_id else None
+    if not quantity_known:
+        status = "unreported"
+    elif price.credits is None:
+        status = "unpriced"
+    else:
+        status = "charged" if mode == "enforce" else "shadow"
+    event = UsageEvent(
+        id=generate_id("usage"), idempotency_key=key, workspace_id=workspace_id,
+        user_id=user_id, session_id=session_id or "", message_id=None,
+        session_title=title or (session.title if session and session.title else default_title),
+        model_id=price.model_id, kind=kind, tokens=tokens, total_tokens=0,
+        credits=price.credits, cost_credits=price.cost, status=status, pricing=price.snapshot,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(event)
+    if status == "charged":
+        post_ledger(db, account, amount=-price.credits, kind="usage", reference_id=event.id, key=f"usage:{event.id}")
     return price.credits if status in ("charged", "shadow") else None

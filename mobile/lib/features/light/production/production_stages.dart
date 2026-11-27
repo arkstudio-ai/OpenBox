@@ -71,11 +71,16 @@ class ProductionRemakeCopy extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final t = context.tokens;
     final productReference = task.template == productStory;
+    final gallery = task.template == galleryWishes;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          i18n.t('light:production.referenceTitle'),
+          i18n.t(
+            gallery
+                ? 'light:production.template.gallery_wishes.copyTitle'
+                : 'light:production.referenceTitle',
+          ),
           style: TextStyle(color: t.ink, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 5),
@@ -83,6 +88,8 @@ class ProductionRemakeCopy extends ConsumerWidget {
           i18n.t(
             productReference
                 ? 'light:production.template.product_story.referenceHelp'
+                : gallery
+                ? 'light:production.template.gallery_wishes.copyHelp'
                 : task.wanRemake
                 ? 'light:production.wanReferenceHelp'
                 : 'light:production.referenceHelp',
@@ -96,9 +103,12 @@ class ProductionRemakeCopy extends ConsumerWidget {
           hint: i18n.t(
             productReference
                 ? 'light:production.template.product_story.referencePlaceholder'
+                : gallery
+                ? 'light:production.template.gallery_wishes.copyPlaceholder'
                 : 'light:production.referencePlaceholder',
           ),
           minLines: 3,
+          maxLength: gallery ? 2520 : 2400,
           onChanged: onChanged,
         ),
       ],
@@ -309,10 +319,8 @@ class ProductionResult extends ConsumerWidget {
             constraints: BoxConstraints(maxWidth: aspectRatio > 1 ? 480 : 276),
             child: AspectRatio(
               aspectRatio: aspectRatio,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                key: const Key('production-result-preview'),
-                onTap: () => openProductionMedia(context, media),
+              child: ProductionResultPreviewButton(
+                media: media,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [

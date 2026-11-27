@@ -1,3 +1,4 @@
+import { VideoTemplateStudio } from "./VideoTemplateStudio"
 // Right column: the meta header DEEIX puts above its preview (thumbnail,
 // name, date | type | size, status chip) plus the preview surface itself.
 import { useTranslation } from "react-i18next"
@@ -65,6 +66,7 @@ export function ResourceDetail({ resource, onDelete }: Props) {
             </span>
           </span>
         </div>
+        {resource.kind === "video" && resource.source === "agent" && <VideoTemplateStudio sourceId={resource.id} />}
         <button
           type="button"
           onClick={() => window.open(resource.url, "_blank")}

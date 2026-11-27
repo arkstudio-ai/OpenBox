@@ -24,6 +24,7 @@ WATCH_INTERVAL_SECONDS = 4
 WATCH_LIMIT_SECONDS = 15 * 60
 #: While the agent's own turn runs it may still fetch the cut itself; check again this often.
 BUSY_RECHECK_SECONDS = 5
+BUSY_STATUSES = frozenset({"busy", "retry", "compacting", "queued"})
 _watching: dict[str, asyncio.Task] = {}
 #: Idempotency-key prefixes of compositions whose own driver delivers the result.
 SELF_DELIVERED_PREFIXES = ("first_video_text:", "light_autopilot:")
@@ -107,6 +108,12 @@ async def wake_for(job) -> bool:
         return await _deliver_story(job) if any(f":{version}:" in job.idempotency_key for version in wan_story.VERSIONS) else False
     from video.job_recovery import COMPOSE_FAILED_PROMPT, COMPOSE_RESUME_PROMPT, resume_conversation
     if job.status == "completed":
+        from billing.footage import is_footage_session
+        if await is_footage_session(getattr(job, "session_id", None)):
+            if await _session_busy(job.session_id):
+                return False
+            if await deliver(job):
+                return True
         return await resume_conversation(job, COMPOSE_RESUME_PROMPT)
     if job.status == "failed":
         return await resume_conversation(job, COMPOSE_FAILED_PROMPT)
@@ -154,11 +161,6 @@ async def _watch(job_id: str) -> None:
             job = await db.get(VideoJob, job_id)
         if job is None or job.attached_message_id:
             return
-        from billing.footage import is_footage_session
-        if job.status == "completed" and await is_footage_session(job.session_id):
-            # 你拍我剪: the finished cut goes straight into the chat, no agent turn.
-            if await deliver(job):
-                return
         await wake_for(job)
     except Exception as exc:  # the sweep still covers it
         log.warning(f"compose watcher for {job_id} stopped: {type(exc).__name__}: {exc}")
@@ -171,7 +173,7 @@ async def _session_busy(session_id: str | None) -> bool:
     from db.models.session import Session
     async with get_db_session() as db:
         session = await db.get(Session, session_id)
-    return bool(session is not None and str(getattr(session, "status", "") or "") in ("busy", "retry", "compacting", "queued"))
+    return bool(session is not None and session.status in BUSY_STATUSES)
 
 
 DELIVERED_TEXT = "剪好了，可以保存或者发到抖音；想换个开头、改字幕，直接说。"

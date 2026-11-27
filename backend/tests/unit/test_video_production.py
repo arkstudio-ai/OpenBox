@@ -32,6 +32,31 @@ from tool.video_production import (
 from tool.video_providers import provider_route_fingerprint
 
 
+async def test_typo_in_frame_id_returns_owned_current_candidates_without_binding():
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from tool.tool import ToolContext
+    from tool.video_production import VideoInputRef, _RequestError, _resolve_open_inputs
+
+    ctx = ToolContext(user_id="frame-owner", workspace_id="frame-workspace", session_id="frame-run")
+    stem = "asset_img_0123456789abcdef0123456789abcde"
+    rows = [("1", ctx.user_id, ctx.workspace_id, ctx.session_id, "ready"),
+            ("2", ctx.user_id, ctx.workspace_id, "other-session", "ready"),
+            ("3", "other-user", ctx.workspace_id, ctx.session_id, "ready"),
+            ("4", ctx.user_id, "other-workspace", ctx.session_id, "ready"),
+            ("5", ctx.user_id, ctx.workspace_id, ctx.session_id, "pending")]
+    async with get_db_session() as db:
+        for suffix, user, workspace, session, status in rows:
+            db.add(FileAsset(id=stem + suffix, user_id=user, workspace_id=workspace, session_id=session,
+                             name=f"frame-{suffix}.png", oss_key=f"frames/{suffix}", mime="image/png",
+                             size=1, status=status, source="agent", created_at=datetime.now(timezone.utc)))
+    with pytest.raises(_RequestError) as failed:
+        await _resolve_open_inputs([VideoInputRef(asset_id=stem, role="first_frame")], ctx)
+    hint = str(failed.value)
+    assert stem + "1" in hint and "frame-1.png" in hint
+    assert all(stem + suffix not in hint for suffix in ("2", "3", "4", "5"))
+
+
 @pytest.mark.asyncio
 async def test_dashscope_transcription_submit_poll_and_result(monkeypatch):
     import httpx
@@ -1345,12 +1370,13 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
         # 2026-10-15: the picture-text check behind card 3 — STT cannot see a
         # caption the generation model burnt into the frame.
         "video_analyze",
-        # 2026-09-09: cloud composition (IMS) for cuts that need effects; the
-        # ffmpeg path in the sandbox stays for plain concat + burnt captions.
+        "footage_analyze",
         "video_compose",
         "image_gen",
         "creator_context",
         "share_file",
+        "read",
+        "write",
         "bash",
     }
     assert "video_project" not in text and "video_render" not in text
@@ -1367,11 +1393,11 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
     assert "无字幕" in skill
     assert "actual transcript" in skill
     assert "seed" in skill
-    assert "A timeout is normal, and a paid task is never replaced" in skill
+    assert 'video_generate(action="await_ready"' in skill
+    assert 'video_compose(action="await_ready"' in skill
     assert "polling_paused=true" in skill
 
     # And the posture: advice that can be departed from.
-    assert "not a pipeline" in skill
     assert "it advises, it never" in skill
 
 

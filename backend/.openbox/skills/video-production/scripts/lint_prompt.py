@@ -66,6 +66,7 @@ _STRONG_NO_TEXT = (
     "no text of any kind",
     "no on-screen text",
 )
+_POSTER_TEXT_RULE = "保留原画上的已确认宣传文字，不增加字幕、额外文字或水印"
 
 
 def _first_index(text: str, phrases: tuple[str, ...]) -> int | None:
@@ -135,7 +136,7 @@ PROMPT_LINT_RULES = {
     },
     "no_subtitles": {
         "requirement": (
-            "Forbid every kind of text in the picture — subtitles, titles, watermarks — "
+            "For scenes without planned artwork, forbid unwanted text, subtitles, titles and watermarks "
             "and say captions are added only in post. Put it early, right after the visual "
             "base, not after the spoken line. This lowers the odds; it is not proof: "
             "Seedance 2.0 burnt the spoken line into the frame (with 限时 drawn as 随时) on "
@@ -147,6 +148,10 @@ PROMPT_LINT_RULES = {
             "No text of any kind in the frame — no subtitles, titles or watermarks; "
             "captions are added only in post-production.",
         ],
+    },
+    "poster_artwork_missing": {
+        "requirement": "In a promotional shot, provide the prepared artwork containing the approved copy as a reference image.",
+        "accepted_examples": [_POSTER_TEXT_RULE],
     },
     "no_subtitles_weak": {
         "requirement": (
@@ -375,13 +380,16 @@ def lint_prompt(
         "subtitles: none",
         "captions: none",
     )
+    poster_rule_at = _first_index(prompt, (_POSTER_TEXT_RULE,))
     no_text_at = _first_index(prompt, no_text_phrases)
-    if no_text_at is None:
+    if poster_rule_at is not None and not image_count:
+        fail("poster_artwork_missing", "保留宣传文字需要已制作的原画作为参考图片")
+    if no_text_at is None and poster_rule_at is None:
         fail(
             "no_subtitles",
             "prompt 必须写明画面中不出现任何文字、字幕、标题、水印，字幕只能后期合成",
         )
-    else:
+    elif no_text_at is not None:
         if not contains_any(prompt, _STRONG_NO_TEXT):
             warnings.append(
                 "[no_subtitles_weak] 只写了“无字幕”：建议改为“画面中不出现任何文字、字幕、"

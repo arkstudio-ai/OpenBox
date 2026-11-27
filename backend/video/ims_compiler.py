@@ -192,6 +192,8 @@ def compile_ims(
     if effect_items:
         ims_timeline["EffectTracks"] = [{"EffectTrackItems": effect_items}]
     output = {"MediaURL": out_url, "Width": canvas.width, "Height": canvas.height, "Bitrate": bitrate_kbps}
+    if canvas.fps != 25:
+        output["Video"] = {"Fps": canvas.fps}
     return CompiledJob(
         timeline=ims_timeline,
         output_media_config=output,

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
 from light import first_video
+from video import ready as video_ready
 
 log = create_logger("video.recovery")
 
@@ -181,7 +182,7 @@ async def resume_unattached_completions() -> None:
 
     now = datetime.now(timezone.utc)
     conditions = [
-        VideoJob.kind == "segment", VideoJob.status == "completed",
+        VideoJob.kind.in_(("segment", "compose")), VideoJob.status.in_(("completed", "failed")),
         type_coerce(VideoJob.result_data, JSON)["completion_delivery_pending"].as_boolean().is_(True),
         VideoJob.output_asset_id.isnot(None), VideoJob.attached_message_id.is_(None),
         # First videos are delivered by light/first_video.py, never by waking the agent.
@@ -212,7 +213,13 @@ async def resume_unattached_completions() -> None:
     _completion_scan_after = ((rows[-1].completed_at, rows[-1].id)
                               if len(rows) == MAX_JOBS_PER_SWEEP else None)
     for job in rows:
-        await resume_conversation(job)
+        if job.kind == "compose":
+            from video.compose_recovery import wake_for
+            await wake_for(job)
+        elif job.status == "failed":
+            await resume_conversation(job, SEGMENT_FAILED_PROMPT)
+        else:
+            await resume_conversation(job)
 
 
 async def _recover_job(job) -> bool:
@@ -236,6 +243,8 @@ async def _recover_job(job) -> bool:
     # for anything off the default model — and this sweep exists precisely to
     # rescue jobs nobody else is watching.
     target, settings = vp._configured_target(job.model or None)
+    from tool.comfy_pool import owner
+    target = owner(target, job.request_data)
     mismatch = provider_route_mismatch(job.request_data, target)
     if mismatch:
         # A not-found response from another provider/account says nothing about
@@ -270,7 +279,7 @@ async def _recover_job(job) -> bool:
     from agent.trajectory import service_scope
     ctx = _recovery_context(job)
     async with service_scope(ctx, job=job):
-        data = await vp._provider_status(target, job.provider_task_id)
+        data = await vp._job_provider_status(target, job)
     state = vp._provider_state(data, target)
 
     if state == "completed":
@@ -288,24 +297,27 @@ async def _recover_job(job) -> bool:
         return done
 
     if state in ("failed", "cancelled"):
-        detail = data.get("error")
-        message = detail.get("message") if isinstance(detail, dict) else str(detail or state)
-        await vp._update_job(
-            job.id,
-            status=state,
-            error=str(message)[:1000],
-            completed_at=datetime.now(timezone.utc),
-        )
+        values = vp._provider_failure(target, data, state, job.result_data)
+        if state == "failed" and video_ready.managed(job):
+            values["result_data"] = {**(values.get("result_data") or job.result_data or {}),
+                                     "completion_delivery_pending": True}
+        if not await vp._update_job(job.id, expected_statuses={"queued", "in_progress", "transfer_failed"},
+                                    status=state, **values):
+            return False
         await vp._mark_asset(job.output_asset_id, status="failed")
         log.info(f"Settled stranded video job {job.id} as {state}")
         if first_video.is_first_video_job(job):
             settled = await _load(job.id)
             if settled is not None:
                 await first_video.on_job_settled(settled)
+        elif state == "failed" and video_ready.managed(job):
+            settled = await _load(job.id)
+            if settled:
+                await resume_conversation(settled, SEGMENT_FAILED_PROMPT)
         return True
 
     # Provider still working: refresh status/updated_at so staleness stays honest.
-    await vp._update_job(job.id, status=state, error=None)
+    await vp._update_job(job.id, expected_statuses={"queued", "in_progress"}, status=state, error=None)
     return False
 
 
@@ -317,6 +329,11 @@ RESUME_PROMPT = (
     "内容和这些任务记录为准，不要再向用户索要已经提供过的信息。"
 )
 
+
+SEGMENT_FAILED_PROMPT = "视频任务 {job_id} 生成失败。用 video_generate(action=status, job_id='{job_id}') 取回原因，并处理这个镜头。"
+REVIEW_RESUME_PROMPT = ("系统提示：本次制作已提交的镜头已结束后台验收。用 video_generate(action=status) 查看作业 ID，"
+    "把尚待交付的镜头一起传给 video_generate(action=await_ready, job_ids=[...]) 取回画面、对白和字幕时间，"
+    "继续本次制作。已验收片段复用回执。关联作业 {job_id}。")
 
 COMPOSE_RESUME_PROMPT = (
     "系统提示：合成任务 {job_id} 已在后台完成。用 video_compose(action=\"status\", job_id=\"{job_id}\") 取回成片，"
@@ -334,10 +351,9 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
     The tool tells the model to end its run once a generation outlives the
     inline wait budget, so a job that finishes later has nobody to hand the
     result to: the chat sat there until the person typed something. Persist a
-    next-turn continuation even while its current run is live: that run may
-    be returning its timeout reply instead of fetching the result. The inbox
-    serializes execution and retries wakes; its reserved ``vjob:`` key makes
-    acceptance idempotent per job.
+    next-turn continuation for an unattended result. Background-managed jobs
+    give their active turn first claim. The inbox serializes execution and
+    its reserved ``vjob:`` key makes acceptance idempotent per job.
     """
     session_id = getattr(job, "session_id", None)
     user_id = getattr(job, "user_id", None)
@@ -350,7 +366,17 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
         return False
     try:
         from agent.inbox import accept_inbox_item, wake_inbox_session
+        from video.compose_recovery import _session_busy
 
+        if video_ready.managed(job) and await _session_busy(session_id):
+            # An active agent consumes this receipt in await_ready. The durable
+            # pending flag is swept again if that turn exits before delivery.
+            return False
+        if prompt is RESUME_PROMPT and (getattr(job, "request_data", None) or {}).get("background_review"):
+            from video.shot_review import group_complete
+            if not await group_complete(job):
+                return False
+            prompt = REVIEW_RESUME_PROMPT
         if await _continuation_queued(job):
             # One queued continuation lists every finished shot of the
             # conversation. One per shot made the later turns repeat the
@@ -360,18 +386,21 @@ async def resume_conversation(job, prompt: str = RESUME_PROMPT) -> bool:
         reference = await _resume_reference(job)
         if reference is MOVED_ON:
             # Made for a goal the task has since left: no turn may take it up, yet it is paid for.
-            return await deliver_superseded(job) if prompt is RESUME_PROMPT else False
+            return await deliver_superseded(job) if prompt in (RESUME_PROMPT, REVIEW_RESUME_PROMPT) else False
         if reference is None:
             return False
-        receipt = await accept_inbox_item(
-            session_id=session_id,
-            user_id=user_id,
-            delivery="followup",
-            prompt=prompt.format(job_id=job.id),
-            client_id=await _wake_key(job),
-            system=True,
-            origin_ref=reference,
-        )
+        instruction = prompt.format(job_id=job.id)
+        if prompt == REVIEW_RESUME_PROMPT:
+            group = job.request_data["background_review"]["group"]
+            instruction += f" 当前制作的镜头键为 {group}:shotN，最终合成键为 {group}:final。"
+        request = dict(delivery="followup", prompt=instruction,
+                       client_id=await _wake_key(job), system=True, origin_ref=reference)
+        if video_ready.managed(job):
+            receipt = await _accept_idle_completion(job, request)
+            if receipt is None:
+                return False
+        else:
+            receipt = await accept_inbox_item(session_id=session_id, user_id=user_id, **request)
         if receipt.state == "accepted":
             await wake_inbox_session(session_id, user_id)
         return bool(receipt.created)
@@ -471,20 +500,58 @@ async def deliver_superseded(job) -> bool:
 
 async def _continuation_queued(job) -> bool:
     """Another completion wake will still list this job: queued, or claimed after it finished."""
-    from sqlalchemy import and_, or_, select
-
     from db.base import get_db_session
+    async with get_db_session() as db:
+        return await _covering_wake(db, job)
+
+
+async def _covering_wake(db, job) -> bool:
+    from sqlalchemy import and_, or_, select
     from db.models.agent_inbox import AgentInboxItem
 
     covering = AgentInboxItem.state == "accepted"
     if getattr(job, "completed_at", None) is not None:
         covering = or_(covering, and_(AgentInboxItem.state == "claimed",
                                       AgentInboxItem.claimed_at >= job.completed_at))
+    return await db.scalar(select(AgentInboxItem.id).where(
+        AgentInboxItem.session_id == job.session_id, AgentInboxItem.user_id == job.user_id,
+        AgentInboxItem.client_id.like("vjob:%"), AgentInboxItem.client_id != f"vjob:{job.id}", covering,
+    ).limit(1)) is not None
+
+
+async def _accept_idle_completion(job, request):
+    """Two workers settling adjacent shots must share one actionable wake."""
+    from sqlalchemy import select
+    from agent.inbox import accept_inbox_item_locked
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from session.agent_event_log import prepare_agent_event_write
+    from video.compose_recovery import BUSY_STATUSES
+
     async with get_db_session() as db:
-        return await db.scalar(select(AgentInboxItem.id).where(
-            AgentInboxItem.session_id == job.session_id, AgentInboxItem.user_id == job.user_id,
-            AgentInboxItem.client_id.like("vjob:%"), AgentInboxItem.client_id != f"vjob:{job.id}", covering,
-        ).limit(1)) is not None
+        session = await prepare_agent_event_write(db, session_id=job.session_id, user_id=job.user_id, run_fence=None)
+        current = await db.get(VideoJob, job.id, with_for_update=True)
+        if (session.status in BUSY_STATUSES or not current or current.attached_message_id
+                or not (current.result_data or {}).get("completion_delivery_pending")
+                or await _covering_wake(db, current)):
+            return None
+        scope = ((session.light_production or {}).get("run") or {}).get("job_prefix")
+        reviewed = (current.request_data or {}).get("background_review")
+        if reviewed and reviewed["group"] != scope:
+            current.result_data = {**current.result_data, "completion_delivery_pending": False}
+            return None
+        if current.kind == "segment" and scope and current.idempotency_key.startswith(scope + ":"):
+            delivered = await db.scalar(select(VideoJob.id).where(
+                VideoJob.session_id == session.id, VideoJob.user_id == current.user_id, VideoJob.kind == "compose",
+                VideoJob.idempotency_key == scope + ":final", VideoJob.status == "completed",
+                VideoJob.attached_message_id.is_not(None)).limit(1))
+            if not delivered:
+                request["origin_ref"] = {**(request.get("origin_ref") or {}),
+                                         "entrypoint": "light_video_resume", "job_prefix": scope}
+            if delivered:
+                current.result_data = {**current.result_data, "completion_delivery_pending": False}
+                return None
+        return await accept_inbox_item_locked(db, session, **request)
 
 
 async def _resume_reference(job) -> dict | None:

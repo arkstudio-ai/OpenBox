@@ -1,7 +1,7 @@
 # Cloud composition: the timeline you hand to `video_compose`
 
-`video_compose` renders a cut on Aliyun IMS from a JSON timeline you write. It
-costs money the moment you `submit`, so the order is fixed:
+`video_compose` renders the final JSON timeline on Aliyun IMS. Use this sequence
+for both straight cuts and more elaborate edits:
 
 1. `video_compose(action="schema")` once per session if you have not seen the format.
 2. Build the JSON from the **accepted takes' asset_ids** (from `video_generate`),
@@ -13,10 +13,9 @@ costs money the moment you `submit`, so the order is fixed:
    with each shot's seconds, every caption line with its timing, every banner
    (hook / handle) with its timing, transitions, output size, `duration_sec`,
    without a quote or fee comparison. If this composition scope is still unapproved, use `question` with
-   `可以` / `改字幕或时间` / `换转场或动效` / `改用无特效拼接（ffmpeg）`.
+   `可以` / `改字幕或时间` / `换转场或动效`.
    Submit only within the approved composition scope; reuse an existing approval. Do not add a fee card.
-5. `submit` with a stable `idempotency_key` (`<slug>:compose:v1`); `wait` on the
-   job_id; on `polling_paused=true` end the run and resume later. `credits=` on
+5. `submit` with a stable `idempotency_key` and call `await_ready` on that job_id for the attached cut. `credits=` on
    the completed result is what was actually recorded; report it, and read the
    `billing_mode=` line next to it: only `enforce` means the credits were deducted;
    `shadow` means metered only — say so instead of "已扣".
@@ -52,6 +51,7 @@ costs money the moment you `submit`, so the order is fixed:
 - `fit: cover` crops to fill (default for vertical talking heads); `contain` letterboxes on purpose.
 - Captions: one per spoken phrase, non-overlapping, text = accepted STT words. The tool places them bottom-centre.
 - `texts[]`: banners. `align=center` ignores `x`; `y` is the top edge as a fraction of height.
+- Designed product advertising arrives as a generated take with its artwork and copy already in the video. Use that asset in `shots` and leave its promotional copy out of `texts`, `captions` and `overlays`.
 
 ## Effects you may use without a warning (verified in a real job)
 
@@ -70,7 +70,7 @@ The backend checks the balance and records actual consumption. Do not estimate
 credits or compare plans by cost. Existing approval covers unchanged work;
 new creative scope requires a content decision, not a separate fee card.
 
-## When not to use it
+## Straight cuts
 
-Plain concat with burnt ASS captions and no effects: `$S/build_ass.py` + `$S/compose.sh`
-in the sandbox costs nothing. Offer that as the `改用无特效拼接` option on card 4.
+Use the same IMS timeline. Omit transitions and add captions only where the
+approved edit calls for them.

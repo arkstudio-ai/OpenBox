@@ -125,6 +125,41 @@ def test_small_image_is_inlined_untouched() -> None:
     assert loop._fit_inline_image(data, "image/png") == (data, "image/png")
 
 
+@pytest.mark.asyncio
+async def test_video_render_uses_small_generated_previews_but_explicit_reads_keep_originals(monkeypatch):
+    import base64
+    import hashlib
+    from types import SimpleNamespace
+
+    import httpx
+
+    from agent import loop
+    from core import oss
+
+    data = _noise_png(512)
+    part = {"asset_id": "same", "oss_key": "owned/same.png", "mime_type": "image/png"}
+    generated = loop._image_ref_for_part({**part, "relation": {"kind": "generated_image"}}, "u")
+    source = loop._image_ref_for_part(part, "u")
+    client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, content=data))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client(transport=transport, **kw))
+    monkeypatch.setattr(oss, "get_oss", lambda: SimpleNamespace(presign_get=lambda *a, **kw: "https://asset.test/i"))
+    monkeypatch.setattr(loop, "_IMAGE_CACHE", {})
+    full_uri = "data:image/png;base64," + base64.b64encode(data).decode()
+    sources, manifest, evidence = {}, {}, {}
+    messages = await loop.resolve_images(
+        [{"_images": [generated]}, {"_images": [source]}], compact_generated=True,
+        media_sources=sources, media_inputs=manifest, image_inputs=evidence)
+    preview = messages[0]["_images"][0]
+    pixels = base64.b64decode(preview.split(",", 1)[1])
+    assert preview.startswith("data:image/jpeg;") and len(pixels) <= loop._GENERATED_PREVIEW_BYTES < len(data)
+    assert messages[1]["_images"] == [full_uri] and evidence["same"] == full_uri
+    assert sources[hashlib.sha256(pixels).hexdigest()] == "same"
+    assert preview not in manifest and manifest[full_uri]["oss_key"] == part["oss_key"]
+    regular = await loop.resolve_images([{"_images": [generated]}])
+    assert regular[0]["_images"] == [full_uri]
+
+
 def test_oversized_image_is_recompressed_at_full_resolution(monkeypatch) -> None:
     """Over the provider's per-image cap: lower the JPEG quality, keep the pixels."""
     import io

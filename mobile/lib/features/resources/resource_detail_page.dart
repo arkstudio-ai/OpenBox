@@ -11,6 +11,7 @@ import '../../shared/utils/format.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/resources_api.dart';
 import 'utils/resource_display.dart';
+import 'video_template_author.dart';
 import 'widgets/resource_preview.dart';
 import 'widgets/resource_sheets.dart';
 
@@ -102,6 +103,16 @@ class _ResourceDetailPageState extends ConsumerState<ResourceDetailPage> {
           ),
         ),
         actions: [
+          if (_resource.kind == 'video' && _resource.source == 'agent')
+            IconButton(
+              tooltip: i18n.t('resources:templates.make'),
+              icon: const Icon(Icons.video_library_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => VideoTemplateAuthorPage(source: _resource),
+                ),
+              ),
+            ),
           IconButton(
             icon: Icon(
               Icons.drive_file_rename_outline,

@@ -113,10 +113,12 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
     async def fake_asr(target, url, language):
         assert language == "auto"
         heard.append(url)
-        return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}]}
+        return {"text": "大家好，这里是巷口面馆", "sentences": [{"from_sec": 0.4, "to_sec": 2.6, "text": "大家好"}],
+                "words": [{"from_sec": 0.4, "to_sec": 0.8, "text": "大家"}]}
 
     async def fake_vision(frames, *, duration, orientation, speech, model):
-        assert len(frames) == 5 and all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
+        assert [at for at, _ in frames] == fa._frame_times(duration)
+        assert all("video%2Fsnapshot" in url or "video/snapshot" in url for _, url in frames)
         return {"subject": "门头", "segments": [{"from_sec": 0, "to_sec": 3, "shot": "门头", "usable": True}],
                 "beats": [{"at_sec": 1.2, "what": "招牌亮灯", "why": "成果亮相"}, "not a beat"], "hook": "门头亮灯",
                 "texts": [{"text": "巷口面馆", "where": "门头招牌", "at_sec": 1.2}, {"text": "", "where": "价签"}, "junk"],
@@ -144,7 +146,9 @@ async def test_one_batch_is_one_charge_by_total_minutes(monkeypatch):
     assert len(meta["clips"]) == 5 and meta["total_footage_sec"] == 75 and meta["analysis_credits"] == "2"
     assert len(heard) == 2  # only clips with sound are transcribed
     assert meta["clips"][0]["transcript"] == "大家好，这里是巷口面馆" and meta["clips"][2]["transcript"] is None
-    again = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=list(reversed(ids))), ctx)
+    assert "words" not in meta["clips"][0]
+    again = await fa.execute(fa.FootageAnalyzeArgs(asset_ids=list(reversed(ids)), word_times=True), ctx)
+    assert again.metadata["clips"][-1]["words"][0]["text"] == "大家" and len(heard) == 2
     assert again.metadata["analysis_credits"] == "2"
     async with get_db_session() as db:
         rows = (await db.scalars(select(UsageEvent).where(UsageEvent.session_id == session.id))).all()
@@ -642,3 +646,39 @@ def test_the_footage_skill_uses_what_the_reading_sees_on_screen_and_who_is_in_it
     assert "是从门头读的" in skill and "owner's own words always win" in skill
     assert "face in close-up stays out" in skill
     assert "no `move` and no `speed: 0.5`" in skill
+
+
+async def test_simultaneous_video_probes_share_one_throttled_ims_request(monkeypatch):
+    import asyncio
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from video import media_probe
+    from video.ims_client import ImsError
+
+    user, _, (aid,) = await _owner_with_clips([7], audio=[True])
+    async with get_db_session() as db:
+        row = await db.get(FileAsset, aid)
+        row.meta = {"original": True}
+    started, release = asyncio.Event(), asyncio.Event()
+    attempts = []
+
+    async def probe(key):
+        attempts.append(key)
+        if len(attempts) == 1:
+            started.set()
+            await release.wait()
+            raise ImsError("RequestsTooFrequent", "busy")
+        return {"duration_sec": 7.25}
+
+    monkeypatch.setattr(media_probe, "probe_object", probe)
+    first = asyncio.create_task(media_probe.ensure_meta(aid, user_id=user["id"]))
+    await asyncio.wait_for(started.wait(), 2)
+    second = asyncio.create_task(media_probe.ensure_meta(aid, user_id=user["id"]))
+    await asyncio.sleep(0)
+    first.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert await second == {"duration_sec": 7.25, "original": True}
+    assert (await media_probe.ensure_meta(aid, user_id=user["id"]))["duration_sec"] == 7.25
+    assert len(attempts) == 2

@@ -262,7 +262,18 @@ def test_tool_is_registered_exposed_and_build_only():
 
     assert "video_analyze" in BUILD_ONLY_WORKFLOW_TOOLS and "video_analyze" in AGENTS["build"].tools
     assert "video_analyze" in INTENT_PACKS["video"]
-    assert va.video_analyze_tool.sandbox_required is True
+    from agent.processor import _needs_runtime_preparation
+    tool = va.video_analyze_tool
+    for args, expected in [
+        ({"action": "status", "job_id": "j"}, False),
+        ({"action": "screen_text", "source": "asset:asset_owned"}, False),
+        ({"action": "screen_text", "source": "/workspace/clip.mp4"}, True),
+        ({"action": "analyze", "source": "asset_owned"}, True),
+        ({"action": "analyze", "source": "asset_owned", "transcribe": False}, False),
+    ]:
+        assert _needs_runtime_preparation(tool, args, {}) is expected
+        assert _needs_runtime_preparation(SimpleNamespace(id="batch", sandbox_required=False),
+            {"invocations": [{"tool": tool.id, "parameters": args}]}, {tool.id: tool}) is expected
 
 
 # ── screen_text: the picture-text check behind the video skill's card 3 ─────
@@ -324,6 +335,49 @@ def test_screen_text_parsing_turns_frames_into_seconds_and_drops_invented_frames
         parse_screen_text("no captions, promise", frame_count=6, interval_sec=1)
     with pytest.raises(ValidationError, match="screen_text requires source"):
         VideoAnalyzeArgs(action="screen_text")
+
+
+async def test_screen_text_owned_asset_needs_no_desktop_and_reuses_frames(text_env, monkeypatch):
+    from dataclasses import replace
+    from video import media_probe
+    from tool import footage_analyze
+
+    ctx, aid = await _ctx(None)
+    samples = []
+
+    async def meta(asset_id, *, user_id):
+        assert asset_id == aid and user_id == ctx.user_id
+        return {"duration_sec": 7.25}
+
+    def snapshot(_oss, key, at, *, width, exact):
+        assert key.endswith("/hot.mp4") and exact and width > 0
+        samples.append(at)
+        return f"https://example.org/frame-{len(samples)}.jpg"
+
+    monkeypatch.setattr(media_probe, "ensure_meta", meta)
+    monkeypatch.setattr(footage_analyze, "snapshot_url", snapshot)
+    query = VideoAnalyzeArgs(action="screen_text", source=f"asset:{aid}")
+    refused = await execute(query, replace(ctx, workspace_id="other"))
+    assert refused.title.endswith("refused") and not samples
+    result = await execute(query, ctx)
+    assert result.metadata["status"] == "completed"
+    assert len(samples) == 8 and samples[0] == 0 and samples[-1] == pytest.approx(7.2)
+    again = await execute(query, ctx)
+    assert again.metadata["cached"] and len(samples) == 8
+
+
+async def test_visual_only_review_of_owned_take_skips_desktop_and_second_transcription(env, monkeypatch):
+    from video import media_probe
+    from tool import footage_analyze
+    ctx, aid = await _ctx(None)
+    async def meta(asset_id, *, user_id):
+        assert asset_id == aid and user_id == ctx.user_id
+        return {"duration_sec": 6.8}
+    monkeypatch.setattr(media_probe, "ensure_meta", meta)
+    monkeypatch.setattr(footage_analyze, "snapshot_url", lambda _o, _k, t, **kw: f"https://example.org/{t}.jpg")
+    result = await execute(VideoAnalyzeArgs(source=aid, frames=12, transcribe=False), ctx)
+    assert _kv(result)["status"] == "completed" and _kv(result)["frames_used"] == "12"
+    assert _kv(result)["credits"] == "0.09" and env[1]["transcript"] == ""
 
 
 async def test_screen_text_samples_about_one_frame_per_second_without_audio(text_env):

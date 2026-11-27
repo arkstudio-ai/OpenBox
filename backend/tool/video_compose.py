@@ -29,6 +29,7 @@ from video import ims_client
 from video.ims_compiler import CompiledJob, TimelineCompileError, compile_ims
 from video.music_catalog import MusicSelection
 from video.timeline import Overlay, Shot, Timeline
+from video import ready as video_ready
 
 log = create_logger("tool.video_compose")
 
@@ -40,7 +41,7 @@ _DEFERRED_RECHECK_SECONDS = 60
 
 
 class VideoComposeArgs(BaseModel):
-    action: Literal["schema", "validate", "submit", "replace_music", "status", "wait", "cancel"]
+    action: Literal["schema", "validate", "submit", "replace_music", "status", "await_ready", "wait", "cancel"]
     #: An OpenBox timeline (action="schema" returns the exact format). Shots
     #: reference assets you own by asset_id; oss:// and OSS https URLs are
     #: accepted only when they point at your own objects.
@@ -250,7 +251,7 @@ async def _execute_schema() -> ToolResult:
         "transition_out sits on the shot it leads out of and overlaps the next shot",
         "texts[].align=center ignores x; y is the top edge of the text box",
         "captions render bottom-centred at caption_style.bottom_ratio, one track, non-overlapping",
-        "output is 25fps regardless of source fps",
+        "canvas.fps sets the output frame rate from 1 to 60; defaults to 25",
         f"verified transitions: {sorted(cat.VERIFIED_TRANSITIONS)}; motion-in: {sorted(cat.VERIFIED_MOTION_IN)}; "
         f"motion-out: {sorted(cat.VERIFIED_MOTION_OUT)}; fonts: {sorted(cat.VERIFIED_FONTS)}; "
         f"filters: {sorted(cat.VERIFIED_FILTERS)}; moves: {sorted(cat.VERIFIED_MOVES)}; 花字 styles: {sorted(cat.VERIFIED_COLOR_STYLES)}; "
@@ -311,7 +312,9 @@ async def _prepare_timeline(args: VideoComposeArgs, ctx: ToolContext, oss, *, in
     if args.action == "submit":
         from light import production_music
 
-        preference = await production_music.for_composition(ctx, args.idempotency_key)
+        preference = await production_music.for_composition(
+            ctx, args.idempotency_key, preserve_mixed_audio=None if args.music else timeline,
+        )
         if preference:
             edit = await _resolve_shot_assets(timeline, ctx, oss)
             return await production_music.mix(
@@ -456,6 +459,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext, *, inherited
                                     note=f"{compiled.duration_sec}s {_price.tier}", exclude_job_id=job.id):
             await vp._update_job(job.id, request_data={
                 "timeline": resolved,
+                "submit_run_id": getattr(ctx, "run_id", ""),
                 **music_data,
                 "ims_timeline": compiled.timeline,
                 "output_media_config": compiled.output_media_config,
@@ -500,6 +504,9 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext, *, inherited
         watch(job.id)
         extra.append("delivery=automatic: this cut is watched and attaches itself to the chat when it is done; "
                      "end the turn now with one short line, do not call wait")
+    elif video_ready.managed(job):
+        video_ready.watch(job)
+        extra.append("background=true; await_ready(job_id) returns the finished cut for playback and review.")
     return await _status_result(job, asset, ctx, is_wait=False, args=args, title="Composition submitted",
                                 extra=extra)
 
@@ -581,17 +588,19 @@ async def poll_compose_job(job):
                                            height=int(canvas.get("height") or 1280), duration_sec=duration)
         except Exception as exc:  # billing must never strand a finished video
             log.warning(f"compose {job.id}: settlement failed: {type(exc).__name__}: {exc}")
-        await vp._update_job(job.id, status="completed", completed_at=_now(),
+        await vp._update_job(job.id, expected_statuses={"in_progress"}, status="completed", completed_at=_now(),
                              result_data={"media_url": state.media_url, "duration_sec": state.duration_sec,
                                           "ims_status": state.raw_status,
+                                          "completion_delivery_pending": video_ready.managed(job),
                                           "credits": _credits(credits) if credits is not None else None})
     elif state.status == "failed":
-        await vp._update_job(job.id, status="failed", completed_at=_now(),
+        changed = await vp._update_job(job.id, expected_statuses={"in_progress"}, status="failed", completed_at=_now(),
                              error=f"IMS {state.code or 'Failed'}: {(state.message or '')[:300]}",
-                             result_data={"ims_status": state.raw_status})
-        await vp._mark_asset(job.output_asset_id, status="failed")
+                             result_data={"ims_status": state.raw_status, "completion_delivery_pending": video_ready.managed(job)})
+        if changed:
+            await vp._mark_asset(job.output_asset_id, status="failed")
     else:
-        await vp._update_job(job.id, status="in_progress", result_data={"ims_status": state.raw_status})
+        await vp._update_job(job.id, expected_statuses={"in_progress"}, status="in_progress", result_data={"ims_status": state.raw_status})
     if state.status in ("completed", "failed"):
         await _notify_footage(job, state.status)
     from db.base import get_db_session
@@ -628,6 +637,8 @@ async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: V
 
     workspace_path = None
     attached = False
+    if job.status == "failed":
+        await video_ready.acknowledge_failure(job)
     if job.status == "completed":
         attached = await vp._attach_completed(job, ctx)
         job = await vp._owned_job(job.id, ctx, KIND) or job
@@ -668,6 +679,8 @@ async def _status_result(job, asset, ctx: ToolContext, *, is_wait: bool, args: V
             "instruction=stop this assistant run now and report that the composition is still processing; "
             "do not call video_compose again in this run, do not cancel, do not resubmit; resume this job_id later",
         ])
+    elif still_running and video_ready.managed(job):
+        lines.append("still_running=true; use await_ready once when ready for the finished cut")
     elif still_running:
         lines.extend(["still_running=true", f"next_wait_after_version={version} next_wait_iteration={args.wait_iteration + 1}"])
     metadata: dict[str, Any] = {
@@ -732,13 +745,19 @@ async def execute_compose(args: VideoComposeArgs, ctx: ToolContext, *, inherited
         return await _execute_validate(args, ctx)
     if args.action in {"submit", "replace_music"}:
         return await _execute_submit(args, ctx, inherited_music=inherited_music)
+    if args.action == "await_ready":
+        jobs = await video_ready.wait_for_ready(KIND, [args.job_id], ctx)
+        if isinstance(jobs, ToolResult):
+            return jobs
+        job = jobs[0]
+        from tool import video_production as vp
+        return await _status_result(job, await vp._job_asset(job), ctx, is_wait=False, args=args)
     return await _execute_job_action(args, ctx)
 
 
 VIDEO_COMPOSE_DESCRIPTION = """\
 Compose a finished MP4 from shots you already own — transitions, styled \
-captions, animated banners — rendered in the cloud (Aliyun IMS), not with \
-ffmpeg in the sandbox. Pass an OpenBox timeline (action="schema" gives the \
+captions, animated banners — rendered on Aliyun IMS. Pass an OpenBox timeline (action="schema" gives the \
 exact format and the verified effect names) plus an idempotency_key. Set \
 music={track_id, cut_after, in_sec, volume} with the ID from music_search; \
 only track_id is required. Use action="replace_music" with music and an \
@@ -746,11 +765,7 @@ idempotency_key to preserve all cuts of a completed composition in this chat. \
 job_id may be omitted to use the latest completed cut. Shots \
 reference asset_ids from video_generate or share_file; assets never leave the \
 account. Use action="validate" first: it is free and reports duration and \
-warnings. Then action="submit", and "wait"/"status" on the job_id until \
-completed; the result attaches to the chat and lands in the workspace. On \
-polling_paused=true end the run and resume the same job_id later. Plain \
-concatenation with burnt ASS subtitles can still be done with ffmpeg in the \
-sandbox; use this when the cut needs effects."""
+warnings. Then submit and use await_ready(job_id) once for the finished playable cut."""
 
 video_compose_tool = define_tool(
     "video_compose",
@@ -759,4 +774,5 @@ video_compose_tool = define_tool(
     execute=execute_compose,
     sandbox_required=False,
     parallel_safe=True,
+    body_timeout=video_ready.body_timeout,
 )

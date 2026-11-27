@@ -8,6 +8,7 @@ from video import job_recovery
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 
+
 DUMMY_TARGET = SimpleNamespace(provider="bossip", model="m", api_key="k", base_url="https://api.example")
 RELAY_TARGET = SimpleNamespace(
     provider="bossip",
@@ -721,3 +722,104 @@ async def test_attaching_a_clip_by_asset_marks_its_job_shown_so_later_wakes_do_n
         assert (await db.get(VideoJob, job_id)).attached_message_id == "message_reply"
     listing = await vp.execute_generate(vp.VideoGenerateArgs(action="status"), ctx)
     assert "shown_in_chat=true" in listing.output
+
+
+async def test_await_ready_returns_first_actionable_owned_shot(monkeypatch):
+    import asyncio
+    from tool.tool import ToolContext, ToolResult
+    from tool.video_production import _update_job
+    from video import ready
+
+    ctx = ToolContext(session_id="ready-group", user_id="owner")
+    pending, finished = [await _insert_job(age_seconds=1, session_id=ctx.session_id, user_id=ctx.user_id)
+                         for _ in range(2)]
+    foreign = await _insert_job(age_seconds=1, session_id="other", user_id=ctx.user_id)
+    watching = asyncio.Event()
+    monkeypatch.setattr(ready, "watch", lambda job: watching.set())
+    monkeypatch.setattr(ready, "POLL_SECONDS", 0.01)
+    refused = await ready.wait_for_ready("segment", [pending, foreign], ctx)
+    assert isinstance(refused, ToolResult) and refused.metadata["error"] and not watching.is_set()
+    task = asyncio.create_task(ready.wait_for_ready("segment", [pending, finished, pending], ctx))
+    await asyncio.wait_for(watching.wait(), 1)
+    assert not task.done()
+    await _update_job(finished, status="failed", result_data={"completion_delivery_pending": True})
+    jobs = await asyncio.wait_for(task, 2)
+    assert [job.id for job in jobs] == [finished]
+    await ready.acknowledge_failure(jobs[0])
+    assert (await _fetch(finished)).result_data["completion_delivery_pending"] is False
+    assert (await _fetch(pending)).status == "in_progress"
+
+
+async def test_managed_completion_defers_wake_to_idle_recovery(monkeypatch):
+    from video import compose_recovery
+
+    job = await _fetch(await _insert_job(age_seconds=1, session_id="active-run",
+                                        request_data={"submit_run_id": "r1"}))
+    async def busy(_sid):
+        return True
+
+    inbox_checks = []
+    async def check_inbox(_job):
+        inbox_checks.append(_job.id)
+        return True
+
+    monkeypatch.setattr(compose_recovery, "_session_busy", busy)
+    monkeypatch.setattr(job_recovery, "_continuation_queued", check_inbox)
+    assert not await job_recovery.resume_conversation(job)
+    assert inbox_checks == []
+
+
+@pytest.mark.parametrize("reviewed", [False, True])
+async def test_idle_background_receipts_coalesce_under_session_lock(monkeypatch, reviewed):
+    from agent import inbox
+    from db.base import get_db_session
+    from db.models.agent_inbox import AgentInboxItem
+    from db.models.session import Session
+    from sqlalchemy import select
+
+    uid, sid = "u_coalesce_ready", f"session_coalesce_ready_{uuid.uuid4().hex}"
+    scope = f"light:{sid}:3"
+    data = {"submit_run_id": "r1"}
+    if reviewed:
+        data["background_review"] = {"group": scope}
+    async with get_db_session() as db:
+        db.add(Session(id=sid, user_id=uid, workspace_id="w", project_id="p", agent="build",
+                       status="idle", light_production={"run": {"job_prefix": scope}} if reviewed else {},
+                       created_at=NOW(), updated_at=NOW()))
+    jobs = [await _fetch(await _insert_job(age_seconds=40, session_id=sid, user_id=uid,
+                status="completed", completed_at=NOW(), request_data=data,
+                result_data={"completion_delivery_pending": True})) for _ in range(2)]
+    wakes = []
+    async def wake(session_id, user_id):
+        wakes.append((session_id, user_id))
+    monkeypatch.setattr(inbox, "wake_inbox_session", wake)
+    assert await job_recovery.resume_conversation(jobs[0])
+    async with get_db_session() as db:
+        prompt = await db.scalar(select(AgentInboxItem.prompt).where(AgentInboxItem.session_id == sid))
+    assert (f"{scope}:shotN" in prompt) == reviewed
+    assert (f"{scope}:final" in prompt) == reviewed
+    request = dict(delivery="followup", prompt="another ready shot", system=True,
+                   origin_ref={}, client_id="vjob:" + jobs[1].id)
+    assert await job_recovery._accept_idle_completion(jobs[1], request) is None
+    assert wakes == [(sid, uid)]
+
+
+async def test_delivered_template_cut_consumes_only_its_own_late_receipt():
+    from db.base import get_db_session
+    from db.models.session import Session
+
+    uid, sid, scope = "u_finished_cut", "session_finished_cut", "light:version3"
+    async with get_db_session() as db:
+        db.add(Session(id=sid, user_id=uid, workspace_id="w", project_id="p", status="idle", agent="build",
+                       light_production={"run": {"job_prefix": scope}}, created_at=NOW(), updated_at=NOW()))
+    await _insert_job(age_seconds=2, session_id=sid, user_id=uid, kind="compose", status="completed",
+                      idempotency_key=scope + ":final", attached_message_id="delivered")
+    async def accept(prefix):
+        job = await _fetch(await _insert_job(age_seconds=5, session_id=sid, user_id=uid, status="completed",
+                               idempotency_key=prefix + ":shot1", result_data={"completion_delivery_pending": True}))
+        receipt = await job_recovery._accept_idle_completion(job, dict(delivery="followup", prompt="ready",
+                  client_id="vjob:" + job.id, system=True, origin_ref={}))
+        return receipt, (await _fetch(job.id)).result_data["completion_delivery_pending"]
+    assert await accept(scope) == (None, False)
+    receipt, pending = await accept("another-project")
+    assert receipt.created and pending

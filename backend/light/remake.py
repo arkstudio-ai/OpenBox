@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -340,7 +341,14 @@ async def _legacy_input_download_failed(job: VideoJob) -> bool:
         return False
 
 
-async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
+async def _job(
+    ctx, request, *, kind: str, label: str, run: dict, wait_budget: float | None = None,
+    on_progress: Callable[[str], Awaitable[None]] | None = None,
+) -> str:
+    async def report(state: str) -> None:
+        if on_progress:
+            await on_progress(state)
+
     def stopped(detail, vi, en):
         shot = getattr(request, "shot", None)
         vi_title = f"Cảnh {shot}" if shot else "Video"
@@ -391,6 +399,7 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
             # submit mint a distinct URL even after an immediate upstream failure.
             await asyncio.sleep(1)
         await _check(ctx)
+        await report("validating")
         valid = await execute(request.model_copy(update={"action": "validate"}), ctx)
         if not valid.output.startswith("valid=true"):
             log.warning("remake validation refused session=%s key=%s title=%s", ctx.session_id, attempt_key, valid.title)
@@ -399,20 +408,23 @@ async def _job(ctx, request, *, kind: str, label: str, run: dict) -> str:
                               "The reference frame did not pass validation for filming.")
             raise stopped("未通过制作参数校验。", "Thông số sản xuất chưa hợp lệ.",
                           "The production parameters did not pass validation.")
+        await report("submitting")
         result = await execute(request.model_copy(update={"idempotency_key": attempt_key}), ctx)
         job_id = result.metadata.get("job_id")
         if not job_id:
             log.warning("remake submission refused session=%s key=%s title=%s", ctx.session_id, attempt_key, result.title)
             raise stopped(f"提交失败。{result.output[:220]}", "Chưa nhận được mã yêu cầu từ dịch vụ tạo video.",
                           "The video service did not return a job identifier.")
+        await report("waiting")
         return job_id
 
     if prior:
         job_id = prior.id
         key = prior.idempotency_key
+        await report("resuming")
     else:
         job_id = await submit(key)
-    limit = time.monotonic() + deadline
+    limit = time.monotonic() + (deadline if wait_budget is None else wait_budget)
     while time.monotonic() < limit:
         await _check(ctx)
         result = await execute(args_type(action="wait", job_id=job_id, wait_seconds=15, wait_iteration=1), ctx)

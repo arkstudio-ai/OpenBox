@@ -235,6 +235,34 @@ Future<void> showProductionVideo(
   ),
 );
 
+class ProductionResultPreviewButton extends ConsumerWidget {
+  const ProductionResultPreviewButton({
+    super.key,
+    required this.media,
+    required this.child,
+  });
+
+  final ProductionMedia media;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final label = media.video
+        ? ref.watch(i18nProvider).t('light:production.playPreview')
+        : media.name;
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        key: const Key('production-result-preview'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => openProductionMedia(context, media),
+        child: ExcludeSemantics(child: child),
+      ),
+    );
+  }
+}
+
 Future<void> openProductionMedia(BuildContext context, ProductionMedia media) =>
     showMediaViewer(
       context,

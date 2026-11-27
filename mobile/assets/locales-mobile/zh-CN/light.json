@@ -233,6 +233,26 @@
     "yesterday": "昨天 {{time}}"
   },
   "production": {
+    "renderOptions": {
+      "title": "制作设置",
+      "perfect": "完美成片",
+      "off": "每段生成一次，完成后直接合成。",
+      "on": "逐段检查画面、动作和对白，自动修复问题镜头。",
+      "confirmTitle": "开启完美成片？",
+      "confirmBody": "Agent 会逐段检查画面、动作和对白，并自动修复有问题的镜头。",
+      "impact": "检查和修复会延长制作时间，也会增加费用。",
+      "cancelEnable": "暂不开启",
+      "enable": "确认开启",
+      "language": "产出语言",
+      "auto": "自动",
+      "follow": "跟随 App",
+      "custom": "手动输入",
+      "scope": "用于本次任务的 Agent 回复、文案、画面文字、字幕和配音。",
+      "current": "当前 App 语言",
+      "field": "语言或地区变体",
+      "hint": "例如：越南语、巴西葡萄牙语",
+      "save": "保存"
+    },
     "moreTemplatesComing": "更多模板正在添加中",
     "retiredTemplate": "这个模板已下架，请选择其他模板。",
     "settings": "制作设置",
@@ -476,6 +496,16 @@
       }
     },
     "template": {
+      "gallery_wishes": {
+        "title": "画廊里的三个愿望",
+        "body": "约 38 秒竖屏。画廊神灯、三个愿望和最后反转，按你的商品和剧情重拍。",
+        "model": "快速 · ComfyUI H3 · 720p",
+        "productName": "商品名称",
+        "materialRequired": "请返回素材页选择一张清晰的商品照片。",
+        "copyTitle": "创意与指定台词",
+        "copyHelp": "在这里写动作、剧情和需要逐字照读的台词。价格和口号填在推广重点。",
+        "copyPlaceholder": "例如，灯神说出报价后，隔壁画框的人探出头来。"
+      },
       "product_story": {
         "title": "品牌剧情广告",
         "body": "用你的商品复刻这支 53 秒耳机广告，沿用原片 28 镜、三次同动作转场和最后的街角舞蹈。",
@@ -575,7 +605,7 @@
     "previewUnavailable": "暂时无法预览。",
     "playHeadphoneReference": "播放耳机广告原片",
     "headphoneReferenceTitle": "耳机商业广告 · 原片",
-    "playCase": "播放小龙虾复刻案例",
+    "playCase": "播放案例",
     "previewMenu": "查看菜单样例",
     "playPreview": "播放",
     "pausePreview": "暂停",

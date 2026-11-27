@@ -104,7 +104,10 @@ async def light_mode_fragment(user_id: str | None, session, *, lang: str | None 
         from light.production_outputs import current_result_context
         result_context = await current_result_context(session)
         reference = await production_fragment(session, look_context=look_context)
-        return "\n".join(filter(None, [output_language_line(lang), system_fragment(session), reference, result_context]))
+        from light import video_language
+        language = (video_language.task_direction(session.light_production, lang)
+                    if session.light_entry == "video" else output_language_line(lang))
+        return "\n".join(filter(None, [language, system_fragment(session), reference, result_context]))
     parts = [LIGHT_MODE_TEXT, output_language_line(lang)]
     fragment = entry_fragment(entry_id, lang)
     if fragment:

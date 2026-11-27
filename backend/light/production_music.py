@@ -33,7 +33,7 @@ def preference(form: dict) -> MusicStyle:
     return form.get("music_style") or ("off" if form.get("beat_music") is False else "auto")
 
 
-async def for_composition(ctx, key: str | None) -> tuple[MusicStyle, str] | None:
+async def for_composition(ctx, key: str | None, *, preserve_mixed_audio=None) -> tuple[MusicStyle, str] | None:
     if not ctx.user_id or not key or not key.startswith(f"light:{ctx.session_id}:"):
         return None
     from db.base import get_db_session
@@ -49,6 +49,23 @@ async def for_composition(ctx, key: str | None) -> tuple[MusicStyle, str] | None
         return None
     final = f"{prefix}:final"
     if key == final or key.startswith(final + ":"):
+        if key != final and preserve_mixed_audio is not None:
+            from sqlalchemy import or_, select
+            from db.models.video_job import VideoJob
+            from light.shot_editor import audible_assets
+
+            sources = audible_assets(preserve_mixed_audio)
+            if sources:
+                async with get_db_session() as db:
+                    master = await db.scalar(select(VideoJob.id).where(
+                        VideoJob.session_id == ctx.session_id, VideoJob.user_id == ctx.user_id,
+                        VideoJob.kind == "compose", VideoJob.status == "completed",
+                        or_(VideoJob.idempotency_key == final,
+                            VideoJob.idempotency_key.startswith(final + ":", autoescape=True)),
+                        VideoJob.output_asset_id.in_(sources),
+                    ).limit(1))
+                if master:
+                    return None
         return run["music_style"], run["music_template"]
     return None
 

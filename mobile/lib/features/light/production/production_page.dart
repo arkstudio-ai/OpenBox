@@ -22,6 +22,7 @@ import 'production_examples.dart';
 import 'production_media.dart';
 import 'production_narration.dart';
 import 'production_promotion.dart';
+import 'production_settings.dart';
 import 'production_shot_models.dart';
 import 'production_shots.dart';
 import 'production_stages.dart';
@@ -377,7 +378,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
         final needsCopy = review.remake
             ? !review.remakePrepared
             : !review.kind.imagesOnly && review.script.isEmpty;
-        if (menuNeedsReading || (needsCopy && !review.manualPreparation)) {
+        if (menuNeedsReading ||
+            (needsCopy &&
+                !review.manualPreparation &&
+                review.template != galleryWishes)) {
           await _send('prepare');
         }
       default:
@@ -575,6 +579,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   Widget build(BuildContext context) {
     ref.watch(i18nProvider);
     final task = _task;
+    final productName = task?.productName.trim() ?? '';
+    final title = task?.kind == ProductionKind.video && productName.isNotEmpty
+        ? productName
+        : task?.kind.label(_i18n) ?? _text('history');
     final t = context.tokens;
     return PopScope(
       canPop: !_busy && _pending.isEmpty,
@@ -593,7 +601,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             onPressed: _busy ? null : _back,
           ),
           title: Text(
-            task?.kind.label(_i18n) ?? _text('history'),
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           actions: [
@@ -647,7 +657,25 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                     if (task.status != 'working')
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                        child: _footer(task),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (task.kind == ProductionKind.video &&
+                                task.page == 'review' &&
+                                task.status == 'draft')
+                              ProductionFilmSetting(
+                                enabled:
+                                    _pending['perfect_film'] as bool? ??
+                                    task.perfectFilm,
+                                i18n: _i18n,
+                                onChanged: _busy
+                                    ? null
+                                    : (value) => _stage('perfect_film', value),
+                              ),
+                            _footer(task),
+                          ],
+                        ),
                       ),
                   ],
                 ),
@@ -1263,6 +1291,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
     }
     final menu = task.kind == ProductionKind.menu;
     final brandStory = task.template == productStory;
+    final gallery = task.template == galleryWishes;
     final summary = [
       task.shop,
       if (task.materials.isNotEmpty)
@@ -1270,13 +1299,35 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       productionStyleLabel(_i18n, task),
       if (task.supportsVideoTiers(task.template) && task.videoTier != null)
         "${_text('videoTier.title')} ${task.videoTier!.label(_i18n)}",
+      if (gallery) _text('template.gallery_wishes.model'),
       if (task.supportsMusic)
         "${_text('music.title')} ${task.music.label(_i18n)}",
     ].where((value) => value.isNotEmpty).join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ProductionHeading(_text('review.${task.kind.id}')),
+        if (task.kind == ProductionKind.video)
+          Row(
+            children: [
+              Expanded(child: ProductionHeading(_text('review.video'))),
+              Flexible(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: ProductionLanguageButton(
+                    language:
+                        _pending['output_language'] as String? ??
+                        task.outputLanguage,
+                    i18n: _i18n,
+                    onChanged: _busy
+                        ? null
+                        : (value) => _stage('output_language', value),
+                  ),
+                ),
+              ),
+            ],
+          )
+        else
+          ProductionHeading(_text('review.${task.kind.id}')),
         if (summary.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 12),
@@ -1289,7 +1340,13 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           ProductionMediaStrip(media: task.materials),
           const SizedBox(height: 16),
         ],
-        if (task.kind == ProductionKind.video) ...[
+        if (gallery) ...[
+          _shopField(),
+          if (task.materials.length != 1 || task.materials.single.video)
+            Text(_text('template.gallery_wishes.materialRequired')),
+          const SizedBox(height: 8),
+        ],
+        if (task.kind == ProductionKind.video && !gallery) ...[
           _promotion(task),
           const SizedBox(height: 16),
         ],
@@ -1297,7 +1354,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           Text(_text('template.product_story.materialRequired')),
           const SizedBox(height: 12),
         ],
-        if (brandStory || task.template == 'silk_road') ...[
+        if (task.communityTemplate) _shopField(),
+        if (brandStory ||
+            gallery ||
+            task.communityTemplate ||
+            task.template == 'silk_road') ...[
           TextField(
             key: const Key('production-product-name'),
             controller: _productName,
@@ -1308,6 +1369,8 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               labelText: _text(
                 brandStory
                     ? 'template.product_story.productName'
+                    : gallery || task.communityTemplate
+                    ? 'template.gallery_wishes.productName'
                     : 'productName',
               ),
               hintText: brandStory
@@ -1318,6 +1381,11 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               counterText: '',
             ),
           ),
+        ],
+        if (gallery) ...[
+          const SizedBox(height: 12),
+          _promotion(task),
+          const SizedBox(height: 16),
         ],
         if (menu)
           ProductionDishes(
@@ -1343,7 +1411,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           _originalAudio(task),
           _creativeEffects(task),
         ],
-        if (!menu || task.materials.isNotEmpty) ...[
+        if (!gallery && (!menu || task.materials.isNotEmpty)) ...[
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.center,
@@ -1462,7 +1530,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   ? 'examples.useRemake'
                   : 'examples.useVideoTemplate',
               (_remakes(task)
-                      ? task.kind.templates.contains(
+                      ? task.availableTemplates.contains(
                           _pending['template'] as String? ?? task.template,
                         )
                       : task.referenceExampleId != null)
@@ -1492,6 +1560,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
 
   bool _hasRemakePreview(LightProduction task) =>
       task.remakePrepared &&
+      !_pending.containsKey('output_language') &&
       !_pending.containsKey('reference_copy') &&
       !_pending.containsKey('product_name') &&
       !_pending.containsKey('promotion_brief');
@@ -1501,6 +1570,12 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       : 'template.product_story.redraftStoryboard';
 
   bool _canRender(LightProduction task) => switch (task.kind) {
+    ProductionKind.video when task.template == galleryWishes =>
+      task.galleryWishesAvailable &&
+          task.materials.length == 1 &&
+          task.materials.single.mime.startsWith('image/') &&
+          _shop.text.trim().isNotEmpty &&
+          _productName.text.trim().isNotEmpty,
     ProductionKind.video when task.template == productStory =>
       task.materials.isNotEmpty,
     ProductionKind.video => task.remake || _script.text.trim().isNotEmpty,

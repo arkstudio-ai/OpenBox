@@ -41,7 +41,7 @@ class Canvas(BaseModel):
 
     width: int = Field(default=720, ge=2, le=4096)
     height: int = Field(default=1280, ge=2, le=4096)
-    fps: int = Field(default=24, ge=1, le=60)
+    fps: int = Field(default=25, ge=1, le=60)
 
 
 class Transition(BaseModel):

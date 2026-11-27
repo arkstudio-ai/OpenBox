@@ -210,6 +210,39 @@ async def test_submit_reserves_job_and_asset_then_sends_compiled_request(env):
     assert job.request_data["ims_timeline"]["VideoTracks"] and job.request_data["duration_sec"] == 9.5
 
 
+async def test_partial_recut_keeps_the_master_audio_without_adding_a_second_score(env):
+    from db.base import get_db_session
+    from db.models.session import Session
+    from db.models.video_job import VideoJob
+    from light.production_music import for_composition
+    from video.timeline import Timeline
+
+    ctx, source = await _user_with_asset()
+    ctx.session_id = uuid.uuid4().hex
+    scope = f"light:{ctx.session_id}:2"
+    final = scope + ":final"
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(Session(id=ctx.session_id, user_id=ctx.user_id, workspace_id=ctx.workspace_id,
+                       project_id="project", light_entry="video", created_at=now, updated_at=now,
+                       light_production={"run": {"action": "render", "job_prefix": scope,
+                                                 "music_style": "off", "music_template": ""}}))
+    result = await execute_compose(VideoComposeArgs(action="submit", idempotency_key=final,
+                                                   timeline=_timeline(source)), ctx)
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, result.metadata["job_id"])
+        job.status = "completed"
+        master_id = job.output_asset_id
+        session = await db.get(Session, ctx.session_id)
+        run = session.light_production["run"]
+        session.light_production = {"run": {**run, "music_style": "auto"}}
+    patch = Timeline.model_validate(_timeline(master_id))
+    assert await for_composition(ctx, final + ":edit", preserve_mixed_audio=patch) is None
+    for shot in patch.shots:
+        shot.volume = 0
+    assert await for_composition(ctx, final + ":edit", preserve_mixed_audio=patch) == ("auto", "")
+
+
 async def test_same_idempotency_key_submits_once_and_conflicting_content_is_refused(env):
     oss, ims = env
     ctx, aid = await _user_with_asset()

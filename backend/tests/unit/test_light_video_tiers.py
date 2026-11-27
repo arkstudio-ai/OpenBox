@@ -67,7 +67,7 @@ def test_both_templates_respect_the_chosen_tier(monkeypatch, tier_config, tier, 
             declared=video_providers.declared_model(model, tier_config), roles=roles, prompt=request.prompt,
         )
     if tier == "high":
-        width, height = silk_road.SEEDANCE_FRAME_SIZE
+        width, height = silk_road.frame_size(model)
         assert 0.4 <= width / height <= 2.5
         route = video_providers.resolve_route(model, tier_config)
         payload = video_production._bossip_video_payload(route, {

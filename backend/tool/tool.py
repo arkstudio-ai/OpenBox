@@ -40,6 +40,8 @@ class ToolContext:
     # compaction. In-memory budgets must not reset with every assistant message.
     run_id: str = ""
     run_generation: int = 0
+    guided_video_render: bool = False  # App submission or the same render resumed by the backend
+    production_output_language: str = ""  # Also applies to subsequent edits in this conversation.
     agent_id: str = ""
     # Bound by the loop for attribution, never accepted from tool arguments.
     model_id: str = ""
@@ -185,6 +187,15 @@ class ToolContext:
         return candidate
 
 
+SandboxRequirement = bool | Callable[[dict], bool]
+
+
+def needs_sandbox(requirement: SandboxRequirement, arguments) -> bool:
+    if callable(requirement):
+        return requirement(arguments) if isinstance(arguments, dict) else True
+    return requirement
+
+
 @dataclass
 class ToolInfo:
     """Definition of a tool."""
@@ -193,7 +204,7 @@ class ToolInfo:
     parameters: type[BaseModel]
     execute: Callable[..., Awaitable[ToolResult]]
     # Metadata
-    sandbox_required: bool = True  # Whether this tool needs sandbox access
+    sandbox_required: SandboxRequirement = True
     never_prune: bool = False  # Whether output should never be pruned
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
@@ -226,7 +237,7 @@ def define_tool(
     description: str,
     parameters: type[BaseModel],
     execute: Callable[..., Awaitable[ToolResult]],
-    sandbox_required: bool = True,
+    sandbox_required: SandboxRequirement = True,
     never_prune: bool = False,
     parallel_safe: bool | None = None,
     batch_serial_safe: bool = False,
@@ -245,7 +256,7 @@ def define_tool(
 
     async def wrapped_execute(args: dict, ctx: ToolContext) -> ToolResult:
         ctx = ctx or ToolContext()
-        if sandbox_required and getattr(ctx, "sandbox_error", None):
+        if getattr(ctx, "sandbox_error", None) and needs_sandbox(sandbox_required, args):
             return ToolResult(
                 title="Sandbox unavailable",
                 output=ctx.sandbox_error["detail"],

@@ -19,6 +19,7 @@ from db.models.audit_log import AuditLog
 from db.models.cron import CronJob, CronRun
 from db.models.video_job import VideoJob
 from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
+from db.models.video_template import VideoTemplateEdition
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
 from db.models.catalog_override import CatalogOverride
@@ -78,7 +79,7 @@ __all__ = [
     "User", "UserPreference", "Project", "ProjectBrief", "AssistantBriefing", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
-    "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",
+    "UserSkill", "VideoTemplateEdition", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",
     "Workspace", "WorkspaceMember", "WorkspaceInvitation", "InternalTaskState",
     "CreditBalance", "CreditLedger", "UsageEvent", "PaymentOrder", "PaymentOrderRequest", "BillingSubscription",
     "FleetAlert", "FleetSnapshot", "PoolPurchase",

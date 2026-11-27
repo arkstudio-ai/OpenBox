@@ -71,7 +71,11 @@ class ToolChainTrace extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final (index, part) in turn.toolChain.indexed)
-            _ToolRow(part: part, isLast: index == turn.toolChain.length - 1),
+            _ToolRow(
+              key: ValueKey(part.id),
+              part: part,
+              isLast: index == turn.toolChain.length - 1,
+            ),
         ],
       ),
     );
@@ -79,7 +83,7 @@ class ToolChainTrace extends ConsumerWidget {
 }
 
 class _ToolRow extends ConsumerStatefulWidget {
-  const _ToolRow({required this.part, required this.isLast});
+  const _ToolRow({super.key, required this.part, required this.isLast});
 
   final MessagePart part;
   final bool isLast;
@@ -89,7 +93,10 @@ class _ToolRow extends ConsumerStatefulWidget {
 }
 
 class _ToolRowState extends ConsumerState<_ToolRow> {
-  bool _expanded = false;
+  late bool _expanded = switch (widget.part) {
+    ToolPart(tool: 'light_gallery') => true,
+    _ => false,
+  };
 
   @override
   Widget build(BuildContext context) {

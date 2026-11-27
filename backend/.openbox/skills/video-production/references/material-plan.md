@@ -98,3 +98,21 @@
 换模型不能继承旧模型的补图要求；仍然适用的用户选择和已接受图片可以保留。
 修改共享内部帧时更新两侧片段的 `assets`，重新接受受影响图片并重估这两段；
 其余已完成片段保留。只改准备说明不能代替更新实际请求。
+
+## 示例制作计划
+
+```json
+{
+  "slug": "current-production",
+  "title": "本次短片",
+  "script": "完整讲稿",
+  "model": "<exact selected model>",
+  "resolution": "<selected tier>",
+  "ratio": "9:16",
+  "visual_anchor": "已确认的共同人物与画面约束",
+  "shots": [
+    {"index": 1, "script": "本段逐字台词", "prompt": "本段完整提示词", "planned_seconds": 10,
+     "input_assets": [], "speech": true}
+  ]
+}
+```

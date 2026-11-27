@@ -34,7 +34,7 @@ class ProductionExamples extends ConsumerWidget {
     final request = _examplesProvider(task.kind.id);
     final result = ref.watch(request);
     if (task.kind.imagesOnly || task.kind == ProductionKind.video) {
-      return result.when(
+      final content = result.when(
         data: (rows) => rows.isEmpty
             ? Text(
                 i18n.t(switch (task.kind) {
@@ -62,6 +62,21 @@ class ProductionExamples extends ConsumerWidget {
           icon: const Icon(Icons.refresh),
           label: Text(i18n.t('common:action.retry')),
         ),
+      );
+      if (task.kind != ProductionKind.video) return content;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: i18n.t('resources:templates.refresh'),
+              icon: const Icon(Icons.refresh),
+              onPressed: enabled ? () => ref.invalidate(request) : null,
+            ),
+          ),
+          content,
+        ],
       );
     }
     final rows = result.value ?? const <LightExamplePreview>[];

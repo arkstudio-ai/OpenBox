@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:bossip_mobile/app/light_routes.dart';
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
 import 'package:bossip_mobile/features/chat/state/config_providers.dart';
 import 'package:bossip_mobile/features/light/api/light_api.dart';
@@ -479,6 +480,81 @@ void main() {
     expect(find.descendant(of: row, matching: find.text('舒缓')), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'switching video drafts reloads the selected session before retrying',
+    (tester) async {
+      const oldSession = 'lobster-task';
+      const newSession = 'silk-road-task';
+      const api = '/api/light/productions';
+      final requests = <String>[];
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              requests.add('${request.method} ${request.path}');
+              final silk = request.path.startsWith('$api/$newSession');
+              if (request.method == 'POST') {
+                expect(request.data, containsPair('revision', 24));
+              }
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: {
+                    'session_id': silk ? newSession : oldSession,
+                    'entry_id': 'video',
+                    'status': 'failed',
+                    'page': 'review',
+                    'revision': silk ? 24 : 27,
+                    'template': silk ? 'silk_road' : galleryWishes,
+                    'product_name': silk ? '丝路香囊' : '麻辣小龙虾',
+                  },
+                ),
+              );
+            },
+          ),
+        );
+      final router = GoRouter(
+        initialLocation: Paths.lightProduction(oldSession),
+        routes: lightRoutes(resources: (_) => throw UnimplementedError()),
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+            lightProductionApiProvider.overrideWithValue(
+              LightProductionApi(dio),
+            ),
+          ],
+          child: MaterialApp.router(
+            routerConfig: router,
+            theme: ThemeData(
+              extensions: [
+                BossipTokens.resolve(
+                  BossipThemeName.default_,
+                  Brightness.light,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(requests, ['GET $api/$oldSession']);
+
+      router.go(Paths.lightProduction(newSession));
+      await tester.pumpAndSettle();
+      expect(requests, ['GET $api/$oldSession', 'GET $api/$newSession']);
+      expect(find.text('丝路香囊'), findsOneWidget);
+      expect(find.text('麻辣小龙虾'), findsNothing);
+
+      await tester.tap(find.text('重试制作'));
+      await tester.pumpAndSettle();
+      expect(requests.last, 'POST $api/$newSession/actions');
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'returning from advanced chat refreshes the clip and final version',

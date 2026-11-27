@@ -109,7 +109,8 @@ STREAM_INTERRUPTED_MESSAGE = "模型服务中途断开，自动重试后仍未�
 
 def _needs_runtime_preparation(tool_info, args, lookup) -> bool:
     """Use the frozen tool contract, not the user's wording, to select snapshots."""
-    if getattr(tool_info, "sandbox_required", True) is not False:
+    from tool.tool import needs_sandbox
+    if needs_sandbox(getattr(tool_info, "sandbox_required", True), args):
         return True
     if getattr(tool_info, "id", None) != "batch":
         return False
@@ -120,7 +121,8 @@ def _needs_runtime_preparation(tool_info, args, lookup) -> bool:
         child = lookup.get(item.get("tool")) if isinstance(item, dict) else None
         # Unknown/recursive composite calls retain conservative preparation.
         if (getattr(child, "id", None) == "batch"
-                or getattr(child, "sandbox_required", True) is not False):
+                or needs_sandbox(getattr(child, "sandbox_required", True),
+                                 item.get("parameters") if isinstance(item, dict) else None)):
             return True
     return False
 

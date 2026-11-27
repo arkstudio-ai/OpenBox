@@ -83,7 +83,16 @@ class AnalyzeRefusal(Exception):
 
 # ── source resolution ────────────────────────────────────────────────────────
 
-async def _resolve_source(source: str, ctx: ToolContext) -> tuple[str, str, str]:
+def _needs_sandbox(args: dict) -> bool:
+    if args.get("action") == "status":
+        return False
+    source = args.get("source")
+    owned_asset = isinstance(source, str) and bool(source.strip()) and not source.startswith(("/", "https://", "http://", "oss://"))
+    visual_only = args.get("action") == "screen_text" or args.get("transcribe") is False
+    return not (visual_only and owned_asset)
+
+
+async def _resolve_source(source: str, ctx: ToolContext, *, cloud_asset=False) -> tuple[str, str, str]:
     """Return (kind, ffmpeg_input, digest_seed). kind: url | asset | path."""
     from tool.video_production import _find_owned_asset, _materialize_asset
 
@@ -112,6 +121,10 @@ async def _resolve_source(source: str, ctx: ToolContext) -> tuple[str, str, str]
         raise AnalyzeRefusal(f"{source!r} is not a ready asset owned by you, a workspace path, or a media URL")
     if not row.mime.startswith("video/"):
         raise AnalyzeRefusal(f"asset {source!r} is {row.mime}; only videos can be analysed")
+    if cloud_asset:
+        if ctx.workspace_id and row.workspace_id != ctx.workspace_id:
+            raise AnalyzeRefusal("Choose a ready video in this workspace.")
+        return "asset", row.oss_key, f"asset:{row.id}"
     path = await _materialize_asset(row, ctx)
     return "asset", path, f"asset:{row.id}"
 
@@ -203,6 +216,20 @@ def _screen_text_frames(duration: float) -> int:
     a 30 s Wan shot the 16-frame ceiling (one every ~2 s; a burnt caption stays
     up longer than that), a 4 s shot still gets 6 frames."""
     return max(SCREEN_TEXT_MIN_FRAMES, min(SCREEN_TEXT_MAX_FRAMES, math.ceil(duration)))
+
+
+async def _owned_frames(oss, key: str, seed: str, ctx, cfg, count: int | None):
+    from tool.footage_analyze import snapshot_url
+    from video.media_probe import ensure_meta
+
+    meta = await ensure_meta(seed.removeprefix("asset:"), user_id=ctx.user_id)
+    duration = (meta or {}).get("duration_sec")
+    if not duration or duration > cfg.max_video_seconds:
+        raise AnalyzeRefusal("Video duration is unavailable or exceeds the configured analysis limit.")
+    count = count or _screen_text_frames(duration)
+    interval = (duration - min(0.05, duration / 2)) / (count - 1)
+    frames = [snapshot_url(oss, key, i * interval, width=cfg.frame_width, exact=True) for i in range(count)]
+    return frames, duration, interval
 
 
 async def _content_digest(ctx: ToolContext, path: str) -> str | None:
@@ -406,10 +433,11 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="Video analysis", output="\n".join(_lines(job, (job.result_data or {}).get("analysis"), cached=False)),
                           metadata={"job_id": job.id, "status": job.status})
 
-    if not ctx.sandbox:
-        return ToolResult(title="No sandbox", output="Sampling frames needs the person's cloud desktop (ffmpeg runs there).")
     if args.action == "screen_text":
         return await _execute_screen_text(args, ctx, cfg)
+    cloud_asset = not _needs_sandbox(args.model_dump())
+    if not cloud_asset and not ctx.sandbox:
+        return ToolResult(title="No sandbox", output="Sampling frames needs the person's cloud desktop (ffmpeg runs there).")
     frames_n = args.frames or cfg.frames
     want_audio = cfg.transcribe if args.transcribe is None else args.transcribe
     try:
@@ -419,7 +447,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
             oss = get_oss()
         except OssNotConfigured as exc:
             raise AnalyzeRefusal(f"video_analyze needs the OSS asset bucket: {exc}") from exc
-        kind, ffmpeg_input, seed = await _resolve_source(args.source or "", ctx)
+        kind, ffmpeg_input, seed = await _resolve_source(args.source or "", ctx, cloud_asset=cloud_asset)
     except Exception as exc:
         return ToolResult(title="Analysis refused", output=_public(exc))
 
@@ -443,8 +471,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="Video analysis (cached)", output="\n".join(_lines(job, (job.result_data or {}).get("analysis"), cached=True)),
                           metadata={"job_id": job.id, "status": "completed", "cached": True})
 
-    from sandbox.managed_cache import task_directory
-    workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
+    workdir = None
     try:
         from autopilot import ledger as _autopilot
 
@@ -455,16 +482,23 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         await vp._update_job(job.id, status="failed", error=f"budget stop: {exc}", completed_at=datetime.now(timezone.utc))
         return ToolResult(title="Analysis refused", output=str(exc), metadata={"job_id": job.id, "status": "failed", "budget_stop": True})
     try:
-        await ctx.update_output("Sampling frames in the sandbox…")
-        sampled = await _sample(ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_n,
-                                width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=want_audio)
-        if len(sampled["frames"]) < cfg.min_frames:
-            raise AnalyzeRefusal(
-                f"only {len(sampled['frames'])} frame(s) could be sampled (need ≥{cfg.min_frames}); "
-                f"the analysis was NOT run without pictures. ffmpeg: {sampled['stderr'] or 'no detail'}"
-            )
-        await ctx.update_output("Staging frames for the model…")
-        staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=sampled["frames"], audio=sampled["audio"])
+        if cloud_asset:
+            frames, duration, _ = await _owned_frames(oss, ffmpeg_input, seed, ctx, cfg, frames_n)
+            staged = {"frames": frames, "audio_url": None, "prefix": None}
+        else:
+            from sandbox.managed_cache import task_directory
+            workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
+            await ctx.update_output("Sampling frames in the sandbox…")
+            sampled = await _sample(ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_n,
+                                    width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=want_audio)
+            if len(sampled["frames"]) < cfg.min_frames:
+                raise AnalyzeRefusal(
+                    f"only {len(sampled['frames'])} frame(s) could be sampled (need ≥{cfg.min_frames}); "
+                    f"the analysis was NOT run without pictures. ffmpeg: {sampled['stderr'] or 'no detail'}"
+                )
+            duration = sampled["duration"]
+            await ctx.update_output("Staging frames for the model…")
+            staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=sampled["frames"], audio=sampled["audio"])
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
@@ -483,7 +517,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
 
                 stt_credits = await settle_transcription(
                     job, workspace_id=ctx.workspace_id, model_id=str(transcript.get("model") or "fun-asr"),
-                    duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else sampled["duration"],
+                    duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else duration,
                 )
             except RunRevoked:
                 raise
@@ -492,12 +526,12 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                 transcript = {"error": vp._public_error(exc)}
 
         await ctx.update_output("Reading the frames…")
-        text, usage, llm_credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
+        text, usage, llm_credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=duration,
                                                    transcript=str(transcript.get("text") or ""), timeout=cfg.timeout_seconds)
         analysis = parse_analysis(text).model_dump()
         total = (stt_credits or 0) + (llm_credits or 0)
         result = {
-            "analysis": analysis, "frames_used": len(staged["frames"]), "duration_sec": round(sampled["duration"], 2),
+            "analysis": analysis, "frames_used": len(staged["frames"]), "duration_sec": round(duration, 2),
             "transcript_chars": len(str(transcript.get("text") or "")), "transcript": transcript.get("text"),
             "transcript_error": transcript.get("error"), "usage": usage, "credits": _fmt(total) if total else None,
             "oss_prefix": staged["prefix"],
@@ -515,10 +549,11 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=datetime.now(timezone.utc))
         return ToolResult(title="Analysis failed", output=_public(exc), metadata={"job_id": job.id, "status": "failed"})
     finally:
-        try:
-            await ctx.sandbox.execute(f"rm -rf {shlex.quote(workdir)}", timeout=30)
-        except Exception:
-            pass
+        if workdir:
+            try:
+                await ctx.sandbox.execute(f"rm -rf {shlex.quote(workdir)}", timeout=30)
+            except Exception:
+                pass
 
     job = await vp._owned_job(job.id, ctx, KIND)
     return ToolResult(title=f"Video analysis · {analysis.get('form') or '—'}", output="\n".join(_lines(job, analysis, cached=False)),
@@ -572,7 +607,10 @@ async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) ->
             oss = get_oss()
         except OssNotConfigured as exc:
             raise AnalyzeRefusal(f"video_analyze needs the OSS asset bucket: {exc}") from exc
-        kind, ffmpeg_input, seed = await _resolve_source(args.source or "", ctx)
+        cloud_asset = not _needs_sandbox({"action": args.action, "source": args.source})
+        if not cloud_asset and not ctx.sandbox:
+            raise AnalyzeRefusal("A workspace path or external media URL needs the cloud desktop; an owned video asset can be sampled directly.")
+        kind, ffmpeg_input, seed = await _resolve_source(args.source or "", ctx, cloud_asset=cloud_asset)
         if kind == "path":
             digest = await _content_digest(ctx, ffmpeg_input)
             seed = f"{seed}:md5:{digest}" if digest else f"{seed}:at:{int(datetime.now(timezone.utc).timestamp())}"
@@ -597,8 +635,7 @@ async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) ->
     if not created and job.status == "completed":
         return _screen_text_result(job, cached=True)
 
-    from sandbox.managed_cache import task_directory
-    workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
+    workdir = None
     try:
         from autopilot import ledger as _autopilot
 
@@ -608,35 +645,40 @@ async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) ->
         await vp._update_job(job.id, status="failed", error=f"budget stop: {exc}", completed_at=datetime.now(timezone.utc))
         return ToolResult(title="Screen text check refused", output=str(exc), metadata={"job_id": job.id, "status": "failed", "budget_stop": True})
     try:
-        await ctx.update_output("Sampling frames in the sandbox…")
-        sampled = await _sample(
-            ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_hint or SCREEN_TEXT_MIN_FRAMES,
-            width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=False,
-            frames_from_duration=None if frames_hint else _screen_text_frames,
-        )
         floor = min(cfg.min_frames, SCREEN_TEXT_MIN_FRAMES)
-        if len(sampled["frames"]) < floor:
-            raise AnalyzeRefusal(
-                f"only {len(sampled['frames'])} frame(s) could be sampled (need ≥{floor}); "
-                f"the picture was NOT checked. ffmpeg: {sampled['stderr'] or 'no detail'}"
+        prefix = None
+        if cloud_asset:
+            frames, duration, interval = await _owned_frames(oss, ffmpeg_input, seed, ctx, cfg, args.frames)
+        else:
+            from sandbox.managed_cache import task_directory
+            workdir = await task_directory(ctx, "analyze", job.id, legacy=f"/tmp/obx-analyze/{job.id}")
+            await ctx.update_output("Sampling frames in the sandbox…")
+            sampled = await _sample(
+                ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_hint or SCREEN_TEXT_MIN_FRAMES,
+                width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=False,
+                frames_from_duration=None if frames_hint else _screen_text_frames,
             )
-        await ctx.update_output("Staging frames for the model…")
-        staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=sampled["frames"], audio=False)
-        if len(staged["frames"]) < floor:
-            raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{floor}); the picture was NOT checked")
-
-        media_ctx, _asset_urls, _retained = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=list(staged["frames"]))
-        interval = round(1.0 / sampled["fps"], 2) if sampled["fps"] else 0.0
-        prompt_text = SCREEN_TEXT_PROMPT.format(n=len(staged["frames"]), interval=interval, duration=round(sampled["duration"], 1))
+            if len(sampled["frames"]) < floor:
+                raise AnalyzeRefusal(f"only {len(sampled['frames'])} frame(s) could be sampled (need ≥{floor}); the picture was NOT checked")
+            await ctx.update_output("Staging frames for the model…")
+            staged = await _stage(ctx, oss, workdir=workdir, job_id=job.id, frame_files=sampled["frames"], audio=False)
+            frames, prefix = staged["frames"], staged["prefix"]
+            duration = sampled["duration"]
+            interval = 1.0 / sampled["fps"] if sampled["fps"] else 0.0
+        if len(frames) < floor:
+            raise AnalyzeRefusal(f"only {len(frames)} frame(s) reached OSS (need ≥{floor}); the picture was NOT checked")
+        interval = round(interval, 2)
+        media_ctx, _asset_urls, _retained = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=frames)
+        prompt_text = SCREEN_TEXT_PROMPT.format(n=len(frames), interval=interval, duration=round(duration, 1))
         await ctx.update_output("Reading the frames for text…")
-        text, usage, credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
+        text, usage, credits = await _complete(media_ctx, model=cfg.model, frames=frames, duration=duration,
                                                transcript="", timeout=cfg.timeout_seconds, prompt_text=prompt_text,
                                                purpose="video_screen_text")
-        report = parse_screen_text(text, frame_count=len(staged["frames"]), interval_sec=interval).model_dump()
+        report = parse_screen_text(text, frame_count=len(frames), interval_sec=interval).model_dump()
         result = {
-            "screen_text": report, "frames_used": len(staged["frames"]), "duration_sec": round(sampled["duration"], 2),
+            "screen_text": report, "frames_used": len(frames), "duration_sec": round(duration, 2),
             "interval_sec": interval, "usage": usage, "credits": _fmt(credits) if credits else None,
-            "oss_prefix": staged["prefix"],
+            "oss_prefix": prefix,
         }
         await vp._update_job(job.id, status="completed", error=None, result_data=result,
                              completed_at=datetime.now(timezone.utc), attempt=1)
@@ -650,7 +692,8 @@ async def _execute_screen_text(args: VideoAnalyzeArgs, ctx: ToolContext, cfg) ->
         return ToolResult(title="Screen text check failed", output=_public(exc), metadata={"job_id": job.id, "status": "failed"})
     finally:
         try:
-            await ctx.sandbox.execute(f"rm -rf {shlex.quote(workdir)}", timeout=30)
+            if workdir:
+                await ctx.sandbox.execute(f"rm -rf {shlex.quote(workdir)}", timeout=30)
         except Exception:
             pass
 
@@ -683,9 +726,9 @@ alone. Costs: transcription per minute plus the vision call's tokens \
 appear in the picture (captions, titles, watermarks, logos, text on objects)? \
 It samples about one frame per second (6–16 frames), skips transcription, and \
 returns has_text= plus every text seen with the seconds it appears at, \
-copied verbatim including misspellings. Use it on every generated take before \
-accepting it: a generation model can burn the spoken line into the frame even \
-when the prompt forbids subtitles, and speech-to-text cannot see that. A \
+copied verbatim including misspellings. Owned workspace assets are sampled \
+directly from storage. Use it to resolve uncertain picture text, including accidental \
+subtitles, when the existing visual review is insufficient. A \
 retake written to the same workspace path is checked afresh (cache key \
 includes the file's md5). Cost: one vision call (credits=)."""
 
@@ -694,6 +737,6 @@ video_analyze_tool = define_tool(
     description=VIDEO_ANALYZE_DESCRIPTION,
     parameters=VideoAnalyzeArgs,
     execute=execute,
-    sandbox_required=True,
+    sandbox_required=_needs_sandbox,
     parallel_safe=True,
 )

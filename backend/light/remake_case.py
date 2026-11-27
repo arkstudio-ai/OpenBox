@@ -76,7 +76,7 @@ def title(language):
 
 
 def applies(entry: str | None, form: dict) -> bool:
-    return entry == "video" and form.get("template") in (TEMPLATE, *wan_story.TEMPLATES)
+    return entry == "video" and not form.get("builtin_h3") and not form.get("agent_recipe") and form.get("template") in (TEMPLATE, *wan_story.TEMPLATES)
 
 
 def version_for(form: dict) -> str:
@@ -88,7 +88,9 @@ def tool_for(form: dict) -> str:
 
 
 def job_versions():
-    return (manifest()["version"], PREVIOUS_VERSION, *wan_story.VERSIONS)
+    from tool.video_template import GALLERY_JOB_VERSIONS
+
+    return (manifest()["version"], PREVIOUS_VERSION, *GALLERY_JOB_VERSIONS, *wan_story.VERSIONS)
 
 
 def owns_job(job) -> bool:
@@ -107,6 +109,8 @@ def reference_copy(form: dict) -> str:
 
 def input_fingerprint(form: dict) -> str:
     snapshot = {key: form[key] for key in ("shop", "brief", "asset_ids")}
+    if form.get("output_language"):
+        snapshot["output_language"] = form["output_language"]
     snapshot.update(reference_copy=reference_copy(form), template_version=version_for(form))
     if form.get("template") in {wan_story.SODA_TEMPLATE, silk_road.TEMPLATE, shortcut_plan.TEMPLATE, product_story_plan.TEMPLATE}:
         snapshot["template"] = form["template"]

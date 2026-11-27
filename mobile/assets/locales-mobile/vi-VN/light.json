@@ -233,6 +233,26 @@
     "yesterday": "Hôm qua {{time}}"
   },
   "production": {
+    "renderOptions": {
+      "title": "Cài đặt sản xuất",
+      "perfect": "Hoàn thiện video",
+      "off": "Tạo mỗi cảnh một lần rồi ghép thành video.",
+      "on": "Kiểm tra từng cảnh và sửa lỗi hình ảnh, chuyển động hoặc lời thoại.",
+      "confirmTitle": "Bật chế độ hoàn thiện video?",
+      "confirmBody": "Trợ lý sẽ kiểm tra từng cảnh và tự sửa lỗi hình ảnh, chuyển động hoặc lời thoại.",
+      "impact": "Việc kiểm tra và sửa lỗi sẽ mất thêm thời gian và tăng chi phí.",
+      "cancelEnable": "Giữ tắt",
+      "enable": "Xác nhận bật",
+      "language": "Ngôn ngữ đầu ra",
+      "auto": "Tự động",
+      "follow": "Theo ứng dụng",
+      "custom": "Tự nhập",
+      "scope": "Áp dụng cho phản hồi của trợ lý, kịch bản, chữ trên hình, phụ đề và giọng nói của video này.",
+      "current": "Ngôn ngữ ứng dụng",
+      "field": "Ngôn ngữ hoặc biến thể vùng miền",
+      "hint": "Ví dụ: tiếng Việt, tiếng Bồ Đào Nha (Brazil)",
+      "save": "Lưu"
+    },
     "moreTemplatesComing": "Đang bổ sung thêm mẫu",
     "retiredTemplate": "Mẫu này đã ngừng cung cấp. Hãy chọn mẫu khác.",
     "settings": "Cài đặt sản xuất",
@@ -476,6 +496,16 @@
       }
     },
     "template": {
+      "gallery_wishes": {
+        "title": "Ba điều ước trong phòng tranh",
+        "body": "Quảng cáo dọc khoảng 38 giây. Dựng lại cảnh phòng tranh, ba điều ước và cú bất ngờ cuối theo sản phẩm và câu chuyện của bạn.",
+        "model": "Nhanh · ComfyUI H3 · 720p",
+        "productName": "Tên sản phẩm",
+        "materialRequired": "Quay lại Tư liệu và chọn một ảnh sản phẩm rõ nét.",
+        "copyTitle": "Ý tưởng và lời thoại",
+        "copyHelp": "Ghi hành động, thay đổi cốt truyện và lời thoại cần nói nguyên văn tại đây. Nhập ưu đãi và khẩu hiệu trong phần quảng bá.",
+        "copyPlaceholder": "Ví dụ, nhân vật trong bức tranh bên cạnh ló đầu ra khi Thần đèn báo giá."
+      },
       "product_story": {
         "title": "Quảng cáo kể chuyện",
         "body": "Tạo phim ngang 53 giây từ tư liệu sản phẩm, theo 28 cú máy của quảng cáo tai nghe, ba lần chuyển cảnh bằng cùng một động tác và màn nhảy ở góc phố.",
@@ -575,7 +605,7 @@
     "previewUnavailable": "Không thể xem trước.",
     "playHeadphoneReference": "Phát quảng cáo tai nghe gốc",
     "headphoneReferenceTitle": "Quảng cáo tai nghe gốc",
-    "playCase": "Phát mẫu video tôm hùm đất",
+    "playCase": "Phát video mẫu",
     "previewMenu": "Xem mẫu thực đơn",
     "playPreview": "Phát",
     "pausePreview": "Tạm dừng",

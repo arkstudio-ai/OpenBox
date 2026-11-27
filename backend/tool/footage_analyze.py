@@ -62,7 +62,7 @@ PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一�
 请按画面把这段素材切成可用的片段，并挑出最精彩的瞬间。严格只输出 JSON，不要任何解释：
 {{"subject": "这段主要拍的是什么（≤15字）",
   "segments": [{{"from_sec": 0.0, "to_sec": 2.5, "shot": "画面里正在发生什么（≤20字，写动作和对象，不写形容词）", "kind": "门头|环境|产品特写|服务过程|制作过程|成果展示|前后对比|人物|人群反应|口播|价格|其他", "quality": "好|晃|暗|糊|遮挡", "usable": true, "camera": "静止|手持微晃|横移|推近|拉远|环绕|跟拍", "faces": false}}],
-  "texts": [{{"text": "画面上能一字不差认出来的字，原样抄", "where": "门头招牌|价签|菜单|海报|屏幕|包装|其他", "at_sec": 4.0}}],
+  "texts": [{{"text": "画面上能一字不差认出来的字，原样抄", "where": "对白字幕|门头招牌|价签|菜单|海报|屏幕|包装|其他", "at_sec": 4.0}}],
   "people": {{"count": "0|1|2-3|多", "roles": ["店员|顾客|老板对镜头说话|路人"]}},
   "beats": [{{"at_sec": 4.0, "what": "这一瞬间发生了什么（≤15字）", "why": "为什么抓人：解压|反差|冲击|有食欲|有笑点|关键动作|成果亮相"}}],
   "hook": "最适合当成片第一眼的画面（≤15字），没有就留空",
@@ -71,7 +71,7 @@ PROMPT = """你在帮一家小店老板剪片。下面是他用手机拍的一�
 要求：片段首尾相接覆盖整段素材，按动作或镜头的变化来切，每段 1.5–5 秒，一段只写一件事；from_sec/to_sec 用截帧的秒数估计；
 晃、暗、糊、遮挡的片段 usable=false；beats 给 1–3 个，没有就给空数组；不要编造截帧里看不到的东西。
 camera 写这一段镜头本身怎么动（画面里的人动不算）；faces 只在有清楚可辨的人脸特写时为 true；
-texts 只抄能完全认清的字（店名、价格、菜名、活动），认不清、被遮住的一个字都不要写，没有就给空数组。"""
+texts 原样抄录各时间点读得清的字，包括画面底部已烧入的对白字幕和有变化的广告标题；读不清的字形在对应片段的 shot 中说明。"""
 
 
 class FootageFrame(BaseModel):
@@ -84,6 +84,7 @@ class FootageAnalyzeArgs(BaseModel):
     asset_ids: list[str] | None = Field(default=None, min_length=1, max_length=MAX_CLIPS)
     #: Transcribe clips that have sound (default true).
     transcribe: bool = True
+    word_times: bool = Field(default=False, description="Include available word timings for subtitle alignment in the same clip analysis.")
     #: Instead of analyzing a batch, save exact source frames as image assets.
     frames: list[FootageFrame] | None = Field(default=None, min_length=1, max_length=MAX_CLIPS)
 
@@ -215,7 +216,7 @@ async def read_clip(row, meta: dict, oss, *, transcribe: bool, model: str) -> di
     heard, seen = await asyncio.gather(speech(), picture())
     reading = {
         "v": READING_VERSION, "model": model, "transcript": str(heard.get("text") or "").strip() or None,
-        "sentences": heard.get("sentences") or [], "subject": seen.get("subject"),
+        "sentences": heard.get("sentences") or [], "words": heard.get("words") or [], "subject": seen.get("subject"),
         "speech_checked": meta.get("has_audio") is False or (transcribe and meta.get("has_audio") is True and not heard.get("error")),
         "segments": seen.get("segments") or [], "best": seen.get("best"),
         "beats": [b for b in (seen.get("beats") or []) if isinstance(b, dict)][:3],
@@ -265,7 +266,8 @@ def matches_reading(reading, model: str) -> bool:
     return isinstance(reading, dict) and reading.get("v") == READING_VERSION and reading.get("model") == model
 
 
-async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: bool) -> dict:
+async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: bool, word_times: bool = False,
+               *, precise_duration: bool = False) -> dict:
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from video.media_probe import ensure_meta
@@ -298,10 +300,11 @@ async def _one(index: int, asset_id: str, ctx: ToolContext, oss, transcribe: boo
         reading = await read_clip(row, meta, oss, transcribe=transcribe, model=model)
     return {
         "clip": index + 1, "asset_id": asset_id, "name": row.name,
-        "duration_sec": round(duration, 2), "orientation": meta.get("orientation"),
+        "duration_sec": round(duration, 3 if precise_duration else 2), "orientation": meta.get("orientation"),
         "width": meta.get("width"), "height": meta.get("height"), "codec": meta.get("codec"),
-        "has_audio": bool(meta.get("has_audio")),
+        "has_audio": bool(meta.get("has_audio")), "speech_checked": reading.get("speech_checked", False),
         "transcript": reading.get("transcript"), "sentences": reading.get("sentences") or [],
+        **({"words": reading.get("words") or []} if word_times and transcribe else {}),
         "subject": reading.get("subject"), "segments": reading.get("segments") or [],
         "best": reading.get("best"), "beats": reading.get("beats") or [], "hook": reading.get("hook"),
         "texts": reading.get("texts") or [], "people": reading.get("people") or {},
@@ -319,15 +322,43 @@ async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         return held
     from billing.footage import quote_analysis, settle_analysis
     from core.oss import OssNotConfigured, get_oss
+    from video import shot_review
 
     ids = list(dict.fromkeys(args.asset_ids or ()))
+    reserved = await shot_review.reserved_assets(ctx, ids)
+    covered = await shot_review.owned(ctx, assets=list(reserved)) if reserved else {}
     try:
-        oss = get_oss()
+        oss = get_oss() if len(reserved) < len(ids) else None
     except OssNotConfigured:
         return ToolResult(title="Footage analysis unavailable", output="The asset bucket is not configured.")
     await ctx.update_output(f"Reading {len(ids)} clip(s)…")
-    results = await asyncio.gather(*(_one(i, asset_id, ctx, oss, args.transcribe) for i, asset_id in enumerate(ids)),
-                                   return_exceptions=True)
+    options = {"word_times": True} if args.word_times else {}
+    if any(row.state in shot_review.PENDING for row in covered.values()):
+        deadline = asyncio.get_running_loop().time() + shot_review.LEASE.total_seconds()
+        while any(row.state in shot_review.PENDING for row in covered.values()) and asyncio.get_running_loop().time() < deadline:
+            await ctx.assert_run_current()
+            if ctx.abort.is_set():
+                raise asyncio.CancelledError()
+            await asyncio.sleep(2)
+            refreshed = await shot_review.owned(ctx, assets=list(covered))
+            if set(refreshed) != set(covered):
+                return ToolResult(title="Footage no longer available", output="Recheck the selected assets.", metadata={"error": True})
+            covered = refreshed
+
+    async def clip_at(index, asset_id):
+        if asset_id not in reserved:
+            return await _one(index, asset_id, ctx, oss, args.transcribe, **options)
+        if asset_id not in covered:
+            raise FootageRefusal(f"Use video_generate await_ready with job {reserved[asset_id]} for its background review.")
+        row = covered[asset_id]
+        if row.state != "ready":
+            raise FootageRefusal((row.report or {}).get("error") or "This shot is being reviewed in the background.")
+        clip = {**row.report, "clip": index + 1}
+        if not (args.word_times and args.transcribe):
+            clip.pop("words", None)
+        return clip
+
+    results = await asyncio.gather(*(clip_at(i, asset_id) for i, asset_id in enumerate(ids)), return_exceptions=True)
     clips: list[dict] = []
     refused: list[str] = []
     for result in results:
@@ -349,16 +380,19 @@ async def execute(args: FootageAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                           output=f"the clips add up to {total:.0f}s; the limit is {MAX_TOTAL_SECONDS}s of footage per cut",
                           metadata={"error": True})
 
-    batch = hashlib.sha256("|".join(sorted(c["asset_id"] for c in clips)).encode()).hexdigest()[:16]
-    quote = quote_analysis(total)
-    credits = await settle_analysis(key=f"footage_analyze:{ctx.session_id}:{batch}", workspace_id=ctx.workspace_id,
-                                    user_id=ctx.user_id, session_id=ctx.session_id, total_seconds=total,
-                                    clips=len(clips))
-    charged = credits if credits is not None else quote.credits
-    charged = format(charged.normalize(), "f") if charged is not None else None
+    ordinary = [clip for clip in clips if clip["asset_id"] not in reserved]
+    charged = "0"
+    if ordinary:
+        batch = hashlib.sha256("|".join(sorted(c["asset_id"] for c in ordinary)).encode()).hexdigest()[:16]
+        seconds = sum(clip["duration_sec"] for clip in ordinary)
+        credits = await settle_analysis(key=f"footage_analyze:{ctx.session_id}:{batch}", workspace_id=ctx.workspace_id,
+                                        user_id=ctx.user_id, session_id=ctx.session_id, total_seconds=seconds,
+                                        clips=len(ordinary))
+        charged = format((credits if credits is not None else quote_analysis(seconds).credits).normalize(), "f")
     lines = [
-        f"clips={len(clips)} total_footage_sec={total:.1f} analysis_credits={charged} (already charged; "
-        "tell the owner on the plan card: 已含素材分析费 N 积分)",
+        f"clips={len(clips)} total_footage_sec={total:.1f} analysis_credits={charged}",
+        ("Production shots reuse their background review; analysis_credits covers only other clips in this call."
+         if covered else "On the plan card report the included footage analysis fee: 已含素材分析费 N 积分。"),
         *(f"refused: {item}" for item in refused),
         "clips_json=" + json.dumps(clips, ensure_ascii=False),
     ]
@@ -397,17 +431,23 @@ async def _capture_frames(frames: list[FootageFrame], ctx: ToolContext) -> ToolR
 
     unique_frames = dict.fromkeys((frame.asset_id, round(frame.at_sec * 1000)) for frame in frames)
 
+    video_ids = [key for key, row in sources.items() if row.mime.startswith("video/")]
+    probed = await asyncio.gather(*(ensure_meta(key, user_id=ctx.user_id) for key in video_ids))
+    metadata = dict(zip(video_ids, probed, strict=True))
+
     async def capture(client, source_id, milliseconds):
         source = sources.get(source_id)
         at = milliseconds / 1000
         info = {"source_id": source_id, "at_sec": at}
         if source is None or not source.mime.startswith("video/"):
             return {**info, "error": "Choose a ready video asset in this workspace."}
-        meta = await ensure_meta(source_id, user_id=ctx.user_id)
-        duration = (meta or {}).get("duration_sec")
-        if not duration or at >= duration:
+        meta = metadata.get(source_id) or {}
+        duration = meta.get("duration_sec")
+        if not duration:
+            return {**info, "error": "Video duration is temporarily unavailable. Retry this same timestamp."}
+        if at >= duration:
             return {**info, "error": "Choose a timestamp inside the source video."}
-        width = min((meta or {}).get("width") or 720, 1080)
+        width = min(meta.get("width") or 720, 1080)
         try:
             response = await client.get(snapshot_url(oss, source.oss_key, at, width=width, exact=True))
             response.raise_for_status()
@@ -452,7 +492,11 @@ menus) and who is in the picture. Pass every clip \
 in one call (asset_ids, up to 10, at most 5 minutes in total). It charges the \
 素材分析 fee once for the batch — 1 credit per started minute of footage — and \
 the result says how much (analysis_credits=), which the plan card must show. \
-Calling again with the same clips in this conversation is not charged again. +For an exact usable still, pass frames=[{asset_id, at_sec}] instead of asset_ids. +Captures return owned JPEG asset IDs from the original footage, ready for editing or animation."""
+Set word_times=true when individual spoken-word timings are needed for captions. \
+Calling again with the same clips in this conversation is not charged again. \
+Generated Light shots with a background review reuse their evidence, with minutes pooled per production. \
+For an exact usable still, pass frames=[{asset_id, at_sec}] instead of asset_ids. \
+Captures return owned JPEG asset IDs from the original footage, ready for editing or animation."""
 
 footage_analyze_tool = define_tool(
     "footage_analyze",

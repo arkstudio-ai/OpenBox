@@ -146,6 +146,22 @@ def test_ranked_video_tool_still_cannot_cross_hard_budget():
     assert result.visible_chars <= result.budgets.visible_hard_chars
 
 
+def test_steered_retake_can_load_promised_video_tool_after_other_work():
+    from agent.tool_exposure import portable_plan, step_requested_ids
+
+    catalog = _catalog({"capability_search": 12, "desktop_publish": 14, "video_analyze": 16, "video_generate": 19})
+    historical = frozenset({"desktop_publish", "video_generate"})
+    continued = frozenset({"video_analyze"})
+    requested = step_requested_ids({"video_generate", "skill:comfyui-h3"}, historical, continued)
+    plan = portable_plan(catalog, agent_name="build", revealed_ids=historical, requested_ids=requested)
+    result = apply_exposure_budget(catalog, plan, budgets=_budgets())
+    assert requested == {"video_generate"}
+    assert set(result.plan.direct_ids) == {"capability_search", "video_generate"}
+    assert result.visible_chars <= result.budgets.visible_hard_chars
+    assert step_requested_ids({"skill:comfyui-h3", "revoked"}, historical, continued) == continued
+    assert step_requested_ids({"desktop_publish", "video_generate"}, historical) == historical
+
+
 def test_storyboard_image_tool_survives_use_and_todo_bookkeeping(monkeypatch):
     from agent.agent import AGENTS
     from agent.tool_exposure import ExposureSignals, build_eligible_catalog, continuation_ids, portable_plan

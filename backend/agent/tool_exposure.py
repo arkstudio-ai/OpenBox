@@ -452,6 +452,13 @@ def continuation_ids(parts, materialized_ids: Iterable[str], previous: frozenset
     return used or previous
 
 
+def step_requested_ids(
+    fresh_reveals: Iterable[str], valid_reveals: Iterable[str], continued: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    """Honor the last step's discovery promise before reserving space for previous work."""
+    return frozenset(fresh_reveals).intersection(valid_reveals) or continued
+
+
 def portable_plan(
     catalog: EligibleCatalog,
     *,
@@ -468,9 +475,9 @@ def portable_plan(
     reasons: dict[str, str] = {tool_id: "resident" for tool_id in direct}
 
     # The mobile button has already selected this workflow and fenced out every other tool.
-    if eligible == {"light_wan_story"}:
-        direct.add("light_wan_story")
-        reasons["light_wan_story"] = "resident"
+    if len(eligible) == 1 and eligible <= {"light_wan_story", "light_gallery"}:
+        direct.update(eligible)
+        reasons.update(dict.fromkeys(eligible, "resident"))
 
     # These are logical discovery slots, not workflow capabilities.  Their
     # presence in the eligible catalogue already proves that the AgentDef and

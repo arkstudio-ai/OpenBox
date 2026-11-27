@@ -14,6 +14,7 @@ import 'production_api.dart';
 import 'production_media.dart';
 import 'production_page.dart';
 import 'production_stages.dart';
+import 'production_widgets.dart';
 
 class ProductionStartPage extends ConsumerStatefulWidget {
   const ProductionStartPage({super.key, required this.kind, this.brief});
@@ -257,6 +258,11 @@ class _HistoryTile extends ConsumerWidget {
       task.posterTitle,
       task.productName,
       task.brief,
+      if (task.kind == ProductionKind.video &&
+          task.shop.trim().isEmpty &&
+          (task.referenceExampleId != null ||
+              task.kind.templates.contains(task.template)))
+        productionStyleLabel(i18n, task),
       [task.shop, task.kind.label(i18n)].where((s) => s.isNotEmpty).join(' · '),
     ].firstWhere((value) => value.trim().isNotEmpty);
     final statusColor = switch (task.status) {

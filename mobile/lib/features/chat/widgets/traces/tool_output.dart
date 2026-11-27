@@ -523,24 +523,38 @@ class _GenericOutput extends ConsumerWidget {
         ? part.output as String
         : (part.output == null ? '' : '${part.output}');
     final body = failed ? (part.error ?? output) : output;
+    final gallery = part.tool == 'light_gallery';
+    final request = args.isEmpty
+        ? null
+        : ToolBlock(
+            label: i18n.t('chat:toolDetail.arguments'),
+            child: ToolPre(args),
+          );
+    final t = context.tokens;
+    final result = body.isEmpty
+        ? null
+        : ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result',
+            ),
+            child: gallery
+                ? Text(
+                    body,
+                    style: TextStyle(
+                      fontSize: FontSizes.xs,
+                      height: 1.6,
+                      color: failed ? t.danger : t.n700,
+                    ),
+                  )
+                : ToolDetailText(body, failed: failed),
+          );
 
     return ToolBlocks(
       children: [
         StatusLine(status: part.status),
         if (part.tool == 'douyin_publish' && part.metadata['asset_id'] == null)
           DouyinToolActions(part: part),
-        if (args.isNotEmpty)
-          ToolBlock(
-            label: i18n.t('chat:toolDetail.arguments'),
-            child: ToolPre(args),
-          ),
-        if (body.isNotEmpty)
-          ToolBlock(
-            label: i18n.t(
-              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result',
-            ),
-            child: ToolDetailText(body, failed: failed),
-          ),
+        if (gallery) ...[?result, ?request] else ...[?request, ?result],
       ],
     );
   }

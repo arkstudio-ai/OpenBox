@@ -234,7 +234,7 @@ class VideoModelConfig(BaseModel):
     id: str
     #: Display name; defaults to the id.
     name: str | None = None
-    channel: Literal["ark", "sd2", "task", "runninghub", "dashscope"] = "ark"
+    channel: Literal["ark", "sd2", "task", "runninghub", "dashscope", "comfyui"] = "ark"
     #: Which ``provider`` credential entry pays for it. Empty means the
     #: channel's entry in ``channel_providers``, then ``provider`` above.
     provider: str = ""
@@ -346,6 +346,7 @@ class VideoGenerationConfig(BaseModel):
     # e.g. {"sd2": "newapi", "task": "newapi"}. A missing key disables the
     # channel. The default "provider" above stays the ark-channel fallback.
     channel_providers: dict[str, str] = {}
+    runninghub_enabled: bool = True
     #: Declared, selectable video models. Empty keeps the historical behaviour
     #: where routing is inferred from the model name alone; any entry here wins
     #: over that inference, so a deployment can add a model without a release.
@@ -1342,6 +1343,76 @@ def _apply_env_overrides(data: dict) -> dict:
         overrides = _prefixed_overrides(model, prefix)
         if overrides:
             data[section] = _deep_merge(data.get(section, {}), overrides)
+
+    runninghub_enabled = os.getenv("RUNNINGHUB_VIDEO_ENABLED")
+    if runninghub_enabled is not None:
+        if runninghub_enabled.lower() not in {"true", "false", "1", "0"}:
+            raise ValueError("RUNNINGHUB_VIDEO_ENABLED must be a boolean")
+        data.setdefault("video_generation", {})["runninghub_enabled"] = runninghub_enabled.lower() in {"true", "1"}
+
+    comfy_url, comfy_token = os.getenv("COMFYUI_API_URL"), os.getenv("COMFYUI_API_TOKEN")
+    token_file = os.getenv("COMFYUI_API_TOKEN_FILE")
+    if comfy_url and token_file and not comfy_token:
+        comfy_token = Path(token_file).expanduser().read_text().strip()
+        if not comfy_token:
+            raise ValueError("COMFYUI_API_TOKEN_FILE is empty")
+    pool = {}
+    pool_file = os.getenv("COMFYUI_WORKERS_FILE")
+    if pool_file:
+        workers = json.loads(Path(pool_file).expanduser().read_text())
+        if not isinstance(workers, list) or not workers:
+            raise ValueError("COMFYUI_WORKERS_FILE must contain a nonempty worker list")
+        endpoints = set()
+        for worker in workers:
+            name = "comfyui-worker-" + worker["id"]
+            endpoint = worker["url"].rstrip("/")
+            token = Path(worker["token_file"]).expanduser().read_text().strip()
+            if not token or not worker["id"] or name in pool or endpoint in endpoints:
+                raise ValueError("Each ComfyUI worker requires a token and a unique ID and endpoint")
+            endpoints.add(endpoint)
+            pool[name] = {"base_url": endpoint, "api_key": token,
+                          "options": {"h3_workbench_worker": True, "tls_ca_file": worker.get("ca_file")}}
+    if (comfy_url and comfy_token) or pool:
+        comfy_model = "ComfyUI-MiniMax-H3"
+        video = data.setdefault("video_generation", {})
+        providers = data.setdefault("provider", {})
+        if comfy_url and comfy_token:
+            ca_file = os.getenv("COMFYUI_CA_FILE")
+            providers["comfyui-local"] = {"base_url": comfy_url, "api_key": comfy_token,
+                "options": {"tls_ca_file": str(Path(ca_file).expanduser())} if ca_file else {}}
+        else:
+            first = next(iter(pool.values()))
+            providers["comfyui-local"] = {**first, "options": {"tls_ca_file": first["options"]["tls_ca_file"]}}
+        if pool:
+            providers.update(pool)
+            providers["comfyui-local"]["options"]["workers"] = list(pool)
+        models = video.setdefault("models", [])
+        if not any(model.get("id") == comfy_model for model in models):
+            models.append({
+                "id": comfy_model, "name": "ComfyUI MiniMax H3", "channel": "comfyui",
+                "provider": "comfyui-local", "resolutions": ["480p", "720p", "768p"],
+                "ratios": ["9:16", "16:9"], "duration_range": [2, 15], "max_duration_seconds": 15,
+                "supports_smart_duration": False, "supports_reference_video": True, "supports_reference_audio": True,
+                "supports_first_last_frame": True, "supports_seed": True,
+            })
+        if (os.getenv("COMFYUI_VIDEO_FAST_TIER") or "").lower() in {"true", "1"}:
+            fast_tier = {"tier": "fast", "model": comfy_model, "label": "快速",
+                         "description": "ComfyUI MiniMax H3 · 原生中文", "resolution": "720p"}
+            model_tiers = data.setdefault("model_tiers", {})
+            tiers = model_tiers.get("video", [])
+            model_tiers["video"] = [
+                fast_tier if row.get("tier") == "fast" else row for row in tiers
+            ]
+            if not any(row.get("tier") == "fast" for row in tiers):
+                model_tiers["video"].append(fast_tier)
+            allowed_models = video.get("allowed_models")
+            if allowed_models and comfy_model not in allowed_models:
+                video["allowed_models"] = [*allowed_models, comfy_model]
+            if not video.get("runninghub_enabled", True) and any(
+                row.get("id") == video.get("model") and row.get("channel") == "runninghub"
+                for row in models
+            ):
+                video["model"] = comfy_model
 
     return data
 

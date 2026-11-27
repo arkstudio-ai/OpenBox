@@ -91,12 +91,22 @@ async def start(body: StartBody, current_user: dict = Depends(get_current_user))
 @router.get("/examples")
 async def production_examples(entry_id: production_form.EntryId, current_user: dict = Depends(get_current_user)):
     _scope(current_user)
-    return {"items": await examples.production_previews(entry_id)}
+    items = await examples.production_previews(entry_id)
+    if entry_id == "video":
+        from light.video_templates import catalogue
+        items = await catalogue() + items
+    return {"items": items}
 
 
 @router.get("/examples/{example_id}/preview")
 async def example_preview(example_id: str, current_user: dict = Depends(get_current_user)):
     """Fresh links for one example on the pick card (the card's own links last a week)."""
+    from light import video_templates
+    if example_id.startswith(video_templates.PREFIX):
+        try:
+            return await video_templates.selected_card(example_id)
+        except light_mode.LightError as exc:
+            _raise(exc)
     row = await examples.get_active(example_id)
     shown = examples.preview(row) if row is not None else None
     if shown is None:

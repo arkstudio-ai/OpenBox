@@ -6,6 +6,7 @@ allowed-tools:
   - video_generate
   - video_transcribe
   - video_analyze
+  - footage_analyze
   - video_compose
   - image_gen
   - creator_context
@@ -20,6 +21,8 @@ allowed-tools:
 Bundled scripts run at `/opt/openbox/skills/video-production/scripts/`. Set `S=/opt/openbox/skills/video-production/scripts`. Scripts do not grant permission. Existing lint/check commands are advisory; `prepare.py` validates a whole draft before saving and returns exit 2 with actionable errors when it cannot save it.
 
 Resolve this built-in skill's reference links under `/opt/openbox/skills/video-production/` in the sandbox. A backend-host label from the skill loader describes its instruction source; the documented sandbox paths are where the runtime copy belongs.
+
+App 成片任务遵循本次提交的产出语言与完美成片设置。直接成片跳过生成素材和成片的内容验收、补拍，按确认稿使用 IMS 合成。开启完美成片时才逐镜检查和修复。两种模式均保留传输、解码与合成所需的技术校验。
 
 ## Secretary conversation (BossIP v14)
 
@@ -40,7 +43,7 @@ before spending on video; already accepted pictures do not need another identica
 
 Explain editing by what it does: joining materials, readable captions and appropriate music. Respect
 no-caption/no-music choices. Do not promise professional precision, free voice changes, or one-minute
-turnarounds. Prefer the existing free simple-cut path when sufficient; confirm any new composition scope before
+turnarounds. Use the Aliyun IMS timeline for the final edit; confirm any new composition scope before
 it runs. For revisions, keep unaffected assets and confirm any new image/video/voice work. Delivery
 must include a playable result. Ask naturally about the pace and voice; offer publishing only after
 acceptance, under the person's separate publishing authorization. Account login, private-message
@@ -51,10 +54,10 @@ monitoring, advertising and scheduled reports are separate scopes, not automatic
 1. Confirm the actual script, material use, production scope and final quality only when that decision is unresolved. Reuse an actual user instruction or answered card for the same scope; do not require a fixed number of cards. An upload, recommended option or agent assumption is not a decision. Ask naturally about missing choices or changed scope. A Markdown heading, table, or request for confirmation is not a card. When review is needed, use `question` with the complete current proposal in `review_content`. Keep prompts in the review details, rather than reading them aloud. Do not estimate credits, compare the cost of alternative plans, or request a separate fee confirmation. If `question` is unavailable and a required decision is missing, stop and explain; submit nothing.
 2. A plan, state hash, or successful estimate is not approval. Before the person approves the current production scope, make zero paid video submits. Reuse explicit approval for the same content and scope; do not ask again solely to confirm fees. Separately requested image preparation may happen before that card; accepting images does not approve video spending. Changes to script, segments, materials, model or resolution require review only of the affected production scope.
 3. The person's selected model and resolution are creative premises. Read `person_selected_model` and plan within its limits. Never silently change the model or tier. If none is selected for a paid generation, ask one short question before submitting: the registry default or one alternative, with their supported specifications; skip it if they already chose or said 随便/你定. After a provider failure or a `暂不可用` model, never switch models without asking.
-4. Use supplied material for its confirmed purpose. Distinguish using the whole picture as a frame, directly referencing its person/product/style, and editing/generating new frames from it. Direct reference does not require intermediate image generation. Call `image_gen` only when the person explicitly asks for preparation, within the confirmed image count and scope. Keep only confirmed invariants byte for byte across prompts; scene, action and camera can change as the approved storyboard requires. Purpose-made, accepted images can be first/last frames; never automatically turn a generated video's still into a general character reference.
+4. Use supplied material for its confirmed purpose. Distinguish using the whole picture as a frame, directly referencing its person/product/style, and editing/generating new frames from it. Direct reference does not require intermediate image generation. Call `image_gen` within the authorized production scope, including for artwork in a requested promotional shot. Keep confirmed invariants across prompts. Purpose-made, accepted images can be first/last frames. Use the original source for recurring character references.
 5. **素材外传红线：禁图床 / 网盘；禁 ngrok / serveo / `ssh -R` 隧道；禁对外监听。** If an upload or asset channel returns 401/403, stop and explain; do not route around it.
-6. Delivery means `share_file` for a sandbox-composed file. A successful `video_compose` result already attaches the final file and needs no duplicate share. Until the selected delivery path returns a playable/downloadable result, never say “已交付”. In user-facing text, 不暴露内部 id/路径/工具名; translate errors into plain language.
-7. Two ways to compose, never a third. A plain cut — concat plus burnt ASS captions — is ffmpeg + libass in the sandbox (`$S/build_ass.py` + `$S/compose.sh`). A cut that needs transitions, styled captions with motion, a hook title or a lower third goes through `video_compose` (cloud, Aliyun IMS): `action="schema"` for the timeline format, `action="validate"` (free) before `action="submit"`, then `wait` on the job_id. Shots are the accepted takes' asset_ids; the output attaches to the chat like a generated shot. HyperFrames is retired; never reintroduce it, and never render in the sandbox with Chrome.
+6. Deliver the final video from the playable card returned by `video_compose`. Confirm playback before reporting delivery and explain failures in the user's language.
+7. Render the final approved edit on Aliyun IMS through `video_compose` for cuts, transitions, mixing and requested speech captions. Prepare the artwork for any designed product promotion (such as a mid-roll advert, animated poster, price reveal or brand end card) with `image_gen` before generating the video. Include its copy in the artwork itself.
 
 ## Light mode
 
@@ -67,16 +70,12 @@ When the system prompt says the person is in Light mode (界面模式：Light), 
 ## Workflow
 
 Use `$TMPDIR` for extracted frames, audio and other reproducible intermediates.
-Keep plans, scripts and state in the project. Write completed renders under
-`$OPENBOX_PENDING_ROOT` and then call `share_file`; `compose.sh` uses that
-protected directory by default when the desktop supplies it. Never clear
-`.openbox/pending` yourself. Its upload/recovery service retains interrupted
-outputs until OSS and the resource centre confirm the archive. Asset cache
-paths may disappear after a completed task; fetch the same asset_id again.
+Keep plans and state in the project. Refer to source clips by asset ID in the IMS timeline.
+Asset cache paths may disappear after a completed task; fetch the same asset_id again for inspection.
 
 ### Keep preparation focused
 
-- Use the documented absolute paths directly. Do not list directories, search the filesystem, read script source, or request `--help` before using the commands below. If a required file is missing, report the exact missing dependency as an incomplete skill deployment; do not search `/` or substitute an unrelated file. An incomplete-looking tool result warrants one bounded read of the exact file, not broader exploration.
+- Start with the documented scripts for footage inspection. For an unfamiliar edit, read the IMS timeline schema and effect descriptions.
 - Query models and creator context together when independent. Read the shared material guide below for supplied pictures or frame preparation, and the selected model's extra reference when needed; read prompt recipes when writing prompts and quality/composition guidance when those stages arrive. Use `read` on those exact absolute paths, not shell commands to print files. Do not delay material-use confirmation for later-stage checks.
 - Reuse results within the same production task: selected capabilities, material choices, accepted assets, and the fitted shot plan. Recheck only when their inputs change, a warning needs resolving, or a previous result is unavailable. Model/resolution changes still require fresh capability checks.
 - Use `prepare.py` below to validate and save a complete new draft once. Group later `state.py` updates into one `bash` call and run them sequentially. Briefly name the current work in user terms, such as “整理讲稿与拆段” or “准备整套首尾帧”; do not narrate filesystem operations as production progress.
@@ -144,9 +143,11 @@ The splitter emits `plan_shots_args`. Forty characters is advice, not a universa
 
 Use `person`, `scene`, `outfit`, `prop` to describe creative purposes; see `references/prompt-recipes.md`. Actual tool input roles depend on the selected model. Video anchors are an option only where supported. Number images and videos separately and list which shot receives each. With zero assets and no request to generate pictures, use the exact same textual base in every segment and do not call `image_gen`. Incompatibility requires a disclosed user choice, not an improvised anchor or silent model change.
 
-For Turbo image modes, now prepare the **whole approved scope's** material set using `references/minimax-turbo-frames.md`. For N consecutive shots in one scene, first/last-frame mode normally uses N+1 planned images; adjacent shots share the exact boundary asset. Generate or resolve all needed images, inspect them, show their shot assignments, and obtain acceptance before submitting video. Existing accepted pictures need no repeat card; text-only mode needs no images or image-confirmation card. Record the preparation decision and each shot's structured frame mapping in state. Frame preparation can depend on a common identity image, but video shots must not depend on earlier generated videos to supply their inputs.
+For frame-based modes, plan shared boundaries and independent scene cuts. Generate the authorised independent first frames, last frames and artwork in the same tool response, up to 10 separate `image_gen` calls. If a frame needs a newly created reference, wait only for that reference's asset ID. Check each shot's assigned frames and any required acceptance as they become available. Reuse shared boundaries by ID. See `references/minimax-turbo-frames.md` for Turbo.
 
-Write every prompt in full. Put the exact line after `口播台词：` and end the line there (the same words go to `video_generate` as `spoken_line`; the tool checks they match), use tone not speed, restrain scene decoration, and forbid text in the picture with the full negative form — `画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成` — placed right after the visual base, not after the line (a bare `无字幕` only earns a lint warning; it lowers the odds and proves nothing, so step 7 still looks at the frames). Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
+**Designed promotional shots.** Use the current product asset in `image_gen.input_images` and give `image_gen` the exact approved copy for that shot. This can include the product name, shop or brand, price with currency and unit, slogan, or call to action. Verify each string against the current brief or form, and skip optional fields that are blank. Check the generated artwork at delivery aspect ratio for legibility, spelling and safe margins before filming. Pass its asset ID as `first_frame` or as the first and last frames when the model supports both and the layout should hold. Describe a locked or subtle camera and move the product details, scene lighting, steam or background in areas that leave the letters clear. Sample the actual video at the beginning, middle and end. If lettering changes, adjust the artwork or reduce motion and regenerate the affected shot. Use the approved generated shot directly in IMS, with the promotional text already in its pixels.
+
+Write every prompt in full. Put the exact line after `口播台词：` and end the line there (also pass it to `video_generate` as `spoken_line`), describe tone, and restrain scene decoration. For scenes without planned artwork, put `画面中不出现任何文字、字幕、标题、水印；字幕只能后期合成` right after the visual base. For prepared ad artwork, use `保留原画上的已确认宣传文字，不增加字幕、额外文字或水印` there and specify what can move. Never write `@` in a prompt. H3 native dialogue uses its own tags as documented in the ComfyUI H3 Skill:
 
 ```bash
 python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "<逐字台词>" --anchor "<逐字基底>" --images <N> --videos <N>
@@ -154,23 +155,7 @@ python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "<逐字台词>" --
 
 For a complete new draft, prefer the single preparation call below instead of separate lint/init/set/shot calls. The standalone lint command remains useful for revising a single shot. `镜头跟随` is valid for a deliberate walking shot; mismatched text after `口播台词：` is a warning to fix or disclose; `dialogue_at_sign` never is — remove the `@`. Issues include `accepted_examples`: correct the identified field directly, without reading the validator's source.
 
-Use `write` to save one JSON plan at an absolute path in the current workspace. The following is its shape; use the actual selected model, tier, fitted durations and full accepted script/prompts, never these placeholders as an estimate:
-
-```json
-{
-  "slug": "current-production",
-  "title": "本次短片",
-  "script": "完整讲稿",
-  "model": "<exact selected model>",
-  "resolution": "<selected tier>",
-  "ratio": "9:16",
-  "visual_anchor": "已确认的共同人物与画面约束",
-  "shots": [
-    {"index": 1, "script": "本段逐字台词", "prompt": "本段完整提示词", "planned_seconds": 10,
-     "input_assets": [], "speech": true}
-  ]
-}
-```
+Use `write` to save one JSON plan at an absolute workspace path, using the selected model, tier, fitted durations, full accepted script and prompts. [Plan example](references/material-plan.md#示例制作计划)
 
 For supplied material, include the already resolved `material_plan` object from `references/material-plan.md` and exact `input_assets` entries `{ "asset_id": "<owned asset>", "role": "reference_image" }` (or the confirmed supported frame/video/audio role). Omit `ratio` for image-driven adaptive sizing when appropriate. Set `speech: false` only for a shot without dialogue; do not suppress dialogue checks for a two-person scene. Never put approvals, previous jobs or acceptances into this draft.
 
@@ -188,35 +173,19 @@ Reuse the person's confirmed script, duration, material assignments, model and r
 
 Record the actual production decision with `state.py confirm --kind shots` only after user approval. Successful preparation or validation never records approval on its own. Do not repeat already confirmed content or introduce a fee card before generation.
 
-### 6. Submit together and record immediately
+### 6. Submit each ready shot and review results as they arrive
 
-Submit only the confirmed plan, concurrently: one per shot, `shot=<N>`, `spoken_line=<本段逐字台词>` (the tool refuses a shot in which someone speaks without it and appends the `口播台词：` line itself when the prompt lacks one; a b-roll shot with nobody talking says `no_speech=true`), unique `<slug>:shot<N>:v1`. All in the same response, then poll together. Split first, then generate. On each return immediately record `$S/state.py shot --job`; keep ids in state, not user text.
+Once a shot's inputs, prompt, explicit duration and selected parameters are ready within the confirmed scope, submit it with `shot=<N>`, the exact `spoken_line` or `no_speech=true`, and a stable key for this take. In the same response, dispatch other ready shots and independent image calls. Record each job ID. Serialize writes to the same local `state.py` project file.
 
-Serialize `state.py` writes for the same slug: it updates one JSON file, so concurrent record writes can overwrite each other even though provider jobs run in parallel.
+Continue preparing shots while the backend follows the renders. With `background_review=true`, it batches nearby completions and reads the picture, speech and timings immediately, pooling minutes across the production. When blocked, call `video_generate(action="await_ready", job_ids=[...])` once with all outstanding IDs. Compare each returned `review` with the approved script and artwork; use existing evidence for step 7. Inspect specific gaps or failures separately. Ordinary jobs return raw clips as they finish. On `polling_paused=true` leave the job in background recovery and end the turn. Reuse existing IDs across interruptions.
 
-Before that batch, finish all required materials, prompts, explicit durations and exact parameter validation for its approved scope, and check that the current model/resolution still match the confirmed plan. For every frame mode, all assigned assets must exist and be accepted. Follow `material-plan.md`: continuous frame-based runs may share boundaries; scene cuts use independent pictures, and first-only shots need no invented last frame. Do not launch shot 1 while still preparing shot 2's frames, or serialize shots by extracting each generated video's ending as the next input. Submit within the channel's concurrency limits; an approved sample covers only that sample's scope. Completed shots may enter quality checks while other submitted jobs finish.
-
-A timeout is normal, and a paid task is never replaced. On `polling_paused=true`, end the turn with a human status and later resume the same job; never resubmit or cancel because polling paused.
-
-A true failure's first corrective idea is one unchanged retry. It is another paid shoot: first report affected shot count, seconds, unchanged model/resolution, and the proposed retry scope, and obtain explicit confirmation only if this retry is not already authorized. Only after that retry fails propose a targeted prompt change.
+For a confirmed failed job, diagnose the reported cause before retrying. For a completed take, identify the defect and correct its source or prompt before reshooting that shot. Reuse the authorized scope and retain working takes.
 
 ### 7. Transcribe, look at the frames, compare — card 3
 
-For every current take, two checks, both required — STT hears the words, only the frames show what was drawn:
+Use each shot’s returned `review` for its transcript, timing, pictured action and visible text. For legacy shots with no background review, pass the candidate asset IDs together to `footage_analyze(transcribe=true, word_times=true)`. Use that same evidence for caption timing and the review card. For an ambiguous letter, a newly appearing caption or a specific point in a join, use `video_analyze(action="screen_text", source="<owned asset ID>")` or capture the relevant frame. The screen-text result gives the text, its type, the sampled times and the cost. If inspection is unavailable, mark the unverified item for review.
 
-```bash
-"$S/extract_audio.sh" shot1.mp4 shot1.mp3
-# share audio without attaching the intermediate file, then transcribe it
-python3 "$S/compare_transcript.py" --intended "<逐字台词>" --heard "<实际转写>"
-```
-
-```text
-video_analyze(action="screen_text", source="<absolute workspace path of shot1.mp4>")
-```
-
-`screen_text` samples about 1 fps (6–16 frames), asks the vision model only whether any text appears, and returns `has_text=` with each text verbatim (misspellings included), its kind and the seconds it shows at; `credits=` is what that look cost — disclose it on the card. A retake at the same path is checked afresh. If the tool is refused or unavailable, fall back to `"$S/extract_frames.sh" shot1.mp4 shot1_frames --frames 6` and `view_image` each frame yourself; if neither is possible, the card says `画面文字未检查` and marks the shot `🔴` — never describe an unviewed picture as clean. Why this is not optional: 2026-10-15 (Gaode, crab-voucher) Seedance 2.0 drew the spoken lines into shots 4–5 as captions, with 限时 rendered as 随时, although every prompt said 无字幕; STT scored 97.8%/100% and the cut was delivered as “纯净无字幕”.
-
-Measure actual duration and frame rate. Before card 3 show every playable shot link, complete intended line, complete actual words, planned/actual seconds, actual FPS, similarity, substitutions/omissions, the picture-text result (无文字 / which seconds, which text, which kind, and the misspellings against `口播台词：`) and its cost, and verdict. Include the decision-critical results in the question text itself as well: a voice assistant receives that same card, and hidden tool output is not a user-facing review. Never ask for acceptance with only “转写验收结果是否可以” and no results. Mark `🔴` if similarity is suspect, any substitution exists, `has_text=true` or the picture was not checked, or `abs(actual - planned) > max(2s, planned × 25%)`. A `🔴` for picture text always offers `重拍该段`; when the person chose 不配字幕 a take with text has no silent path to delivery — generated captions cannot be removed or corrected, and with 配字幕 they double up with the burnt ASS.
+For each take compare the actual words, picture text, action, duration and frame rate to the approved shot. Give a playable result and exact time for any defect. Where an ASR character is homophonic with the approved wording, check pronunciation and context and retain the correct spelling in subtitles. Confirm visible brand and offer lettering against the artwork.
 
 For a multi-shot cut, also review each join as described in `references/quality.md`: adjacent actual images, motion, voice and pauses. Shared planned frames constrain endpoints but do not prove a seamless join or a consistent voice. Include join findings in card 3; never report an unobserved visual/audio property as checked.
 
@@ -224,10 +193,9 @@ The person chooses affected shots to regenerate or accept. Before a paid regener
 
 ### 8. Compose, check, deliver
 
-Captions use the accepted actual transcript, never the written line. Two paths:
+Use the accepted actual transcript for requested speech captions. Build the IMS timeline with approved cuts, audio and consistent dimensions. Existing in-frame promotional copy stays in the generated clip. Keep that copy out of IMS `texts` and `overlays`.
 
-- **Plain cut (free):** `$S/build_ass.py`, `$S/compose.sh`, then `python3 "$S/state.py" check --slug <slug> --final final.mp4`. Resolve or explain advisory findings: drift, missing jobs/audio, shot duration deviation, final audio, and final duration versus measured shot sum. Deliver only through `share_file`.
-- **Cut with effects (costs credits):** write the timeline JSON from the accepted takes' asset_ids and the accepted transcript (`references/compose-timeline.md`), `video_compose(action="validate")`, then show shots, captions, banners, transitions, `duration_sec` in the content review and request review only for a new or changed composition scope: `可以` / `改字幕或时间` / `换转场或动效` / `改用无特效拼接（ffmpeg）`. Once that composition scope is approved: `submit` with `<slug>:compose:v1`, `wait` on the job_id, report the returned `credits=` — as 已扣积分 only when the result says `billing_mode=enforce`; with `billing_mode=shadow` call it 统计消耗 and say no credits were deducted. The result is attached by the tool; `share_file` is not needed.
+Use `references/compose-timeline.md` and the tool schema. Validate the timeline, then submit with a stable key within the approved composition scope. Use `video_compose(action="await_ready", job_id=...)` once to receive its attached result. Check timing, readability, audio and final playback. In the result, `billing_mode=enforce` means the displayed credits were deducted, and `billing_mode=shadow` means they were metered only.
 
 ## Invalidation and samples
 
@@ -244,8 +212,8 @@ Captions use the accepted actual transcript, never the written line. Two paths:
 - Words change: always STT; one-character substitutions can keep high similarity and invert meaning.
 - An extra “艾特” before the line: an `@` reached the model. The line belongs after `口播台词：` with no `@` anywhere; fix the prompt before a paid retry, since an unchanged one repeats it.
 - Background changes: anchor it and avoid decorative overload.
-- Text in the picture, wrong or unwanted: the model drew the line itself (2026-10-15, two of five Seedance shots, despite 无字幕 twice). Full negative wording up front lowers the odds; `video_analyze(action="screen_text")` on every take is what catches it; one unchanged paid retry first, then the prompt. Burn accepted STT words later.
-- Captions overflow or joins drift: use `$S/build_ass.py` and `$S/compose.sh`, not an ad-hoc concat.
+- Text in the picture, wrong or unwanted: the model drew the line itself (2026-10-15, two of five Seedance shots, despite 无字幕 twice). Full negative wording up front lowers the odds; `video_analyze(action="screen_text")` on every take is what catches it; inspect the affected reference and correct it before a targeted reshoot. Use the verified wording for requested captions.
+- Captions overflow or joins drift: correct line breaks or real source intervals in the IMS timeline and validate the updated cut.
 - Identity material is rejected: use the product's own authorisation flow; never externalise or bypass it.
 - Selected tier ignores a reference: disclose and offer choices; never continue silently.
 - Project seems missing: read state/workspace; do not recreate paid work.

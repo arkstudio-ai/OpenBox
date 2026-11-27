@@ -31,7 +31,7 @@ from question.question import QuestionSuspended
 from question.runtime import RunRevoked
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
-from video import transfer
+from video import ready as video_ready, transfer
 
 log = create_logger("tool.video_production")
 
@@ -104,7 +104,10 @@ VideoRefRole = Literal[
 class VideoInputRef(BaseModel):
     """One input asset, optionally with the role it plays in the shot."""
 
-    asset_id: str = Field(max_length=512)
+    asset_id: str = Field(max_length=512, description=(
+        "Copy the exact asset ID from the tool result, or use its exact filename when "
+        "unique in this conversation. If validation suggests matches, verify the frame by name."
+    ))
     #: Omitted: inferred from the mime type. Audio must say its role.
     role: VideoRefRole | None = Field(default=None, description=(
         "Use the person's intent, never upload count/order: first_frame animates the starting "
@@ -114,11 +117,13 @@ class VideoInputRef(BaseModel):
 
 
 class VideoGenerateArgs(BaseModel):
-    action: Literal["models", "validate", "submit", "status", "wait", "cancel", "fetch", "attach"]
+    action: Literal["models", "prepare_template", "validate", "submit", "status", "await_ready", "wait", "cancel", "fetch", "attach"]
+    template_id: str | None = Field(default=None, min_length=1, max_length=64)
     job_id: str | None = Field(default=None, max_length=96)
+    job_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=96)]] = Field(
+        default_factory=list, max_length=200, description="await_ready: outstanding shots in this conversation.")
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180, description=(
-        "Stable per take/shot: reuse for retries; use a new key for a requested fresh take, "
-        "even with unchanged prompt/model. Same key always returns the original job."
+        "Stable per take: reuse on retry; change only for a requested fresh take."
     ))
     # ── describe the shot directly ──
     #: Describe the shot. Supplying it means an open generation.
@@ -128,35 +133,37 @@ class VideoGenerateArgs(BaseModel):
         default=None,
         max_length=160,
         description=(
-            "Omit it: the conversation's video model decides. Name another ID from action=models only "
-            "when the person asked for that model in their own words; submit then shows them a switch "
-            "card and waits for their answer. Never pick a different model yourself."
+            "The conversation's video model decides by default. Never pick a different model yourself. "
+            "If the user requests a change, submit their selection to show the switch card."
         ),
     )
     resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
         default=None,
         description=(
-            "Tier supported by action=models. If selected in the composer, omit or repeat exactly; "
-            "the person must update that selection before changing tiers."
+            "Use the composer selection and a resolution supported by models."
         ),
     )
     ratio: str | None = Field(default=None, max_length=16, description=(
-        "Output aspect ratio. RunningHub Turbo text-to-video needs an explicit ratio; "
-        "with image assets omit ratio or use adaptive, since the first frame determines it."
+        "Output aspect ratio. RunningHub Turbo uses adaptive with images and explicit ratio without images."
     ))
     #: Seconds, or -1 to let the model choose.
     duration: int | None = Field(default=None, ge=-1, le=300)
     generate_audio: bool | None = None
+    h3_profile: Literal["standard", "poster"] | None = Field(default=None, description=(
+        "ComfyUI H3 per shot. Use poster for an animated promotional image with approved lettering. "
+        "Omit for standard action or dialogue."
+    ))
+    poster_motion_region: list[float] | None = Field(default=None, min_length=4, max_length=4, description=(
+        "Direct H3 poster only, with identical first and last artwork. Normalized [left, top, width, height] "
+        "selects the part to animate. Keep approved text outside this rectangle. Omit for full-frame movement."
+    ))
     #: The words heard in this shot. Without them a model that generates audio
     #: improvises: wrong words, a closed mouth, lips no dub can match.
     spoken_line: str | None = Field(default=None, max_length=600, description=(
-        "Exactly what is said aloud in this shot, verbatim and nothing else (two speakers: name each). "
-        "Required whenever anyone speaks or narrates; the server appends it as 口播台词：… and keeps audio on. "
-        "Never put @ in a prompt: the model reads it aloud."
+        "Verbatim dialogue for a speaking shot. On ComfyUI H3 use native <d> tags in prompt. Avoid @."
     ))
     no_speech: bool = Field(default=False, description=(
-        "Nobody speaks in this shot; any sound is ambience or music. State it when the prompt mentions "
-        "a person talking or narration yet no words are meant to be heard."
+        "The shot has no spoken words."
     ))
     watermark: bool | None = None
     #: Reuse one seed to hold a look steady across separate shots. 0 means
@@ -169,14 +176,10 @@ class VideoGenerateArgs(BaseModel):
     #: finished second "第 2 段" no matter which shot it actually is.
     shot: int | None = Field(default=None, ge=1, le=200)
     input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8, description=(
-        "Actual asset IDs relevant to this shot. Animate images separately: one first_frame per "
-        "shot, preserving the confirmed scope. Combined subjects/styles: reference_image. RunningHub Turbo: "
-        "no assets for text-to-video, explicit first_frame/last_frame for image-to-video; no generic "
-        "image/video/audio references."
+        "Owned asset IDs with explicit roles. Check models for supported combinations of frames and references."
     ))
     allow_duplicate: bool = Field(default=False, description=(
-        "Allow a requested second take while identical content is still running. "
-        "Requires a new idempotency_key; never bypasses same-key retry protection."
+        "Allow a requested new take before identical work finishes. Requires a new key."
     ))
     #: For action="fetch": the owned asset to deliver to the workspace.
     #: For action="attach": the owned asset to show again on this reply.
@@ -191,6 +194,14 @@ class VideoGenerateArgs(BaseModel):
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "models":
+            return self
+        if self.action == "await_ready":
+            if not (self.job_ids or self.job_id):
+                raise ValueError("await_ready requires outstanding job_ids or one job_id")
+            return self
+        if self.action == "prepare_template":
+            if not self.template_id:
+                raise ValueError("prepare_template requires template_id")
             return self
         if self.action in ("fetch", "attach"):
             if not (self.asset_id or self.job_id):
@@ -700,6 +711,11 @@ async def _create_pending_job(
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
         project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
+        if kind == "segment":
+            from video import shot_review
+            review = await shot_review.policy(db, ctx, idempotency_key)
+            if review:
+                request_data = {**request_data, "background_review": review}
         asset = FileAsset(
             id=asset_id,
             user_id=ctx.user_id,
@@ -817,22 +833,30 @@ async def _owned_job(job_id: str, ctx: ToolContext, kind: str):
         ).scalar_one_or_none()
 
 
-async def _update_job(job_id: str, **values) -> None:
+async def _update_job(job_id: str, *, expected_statuses=None, **values) -> bool:
     from db.base import get_db_session
     from db.models.video_job import VideoJob
 
     values["updated_at"] = datetime.now(timezone.utc)
     async with get_db_session() as db:
         job = await db.scalar(select(VideoJob).where(VideoJob.id == job_id).with_for_update())
-        if job is None:
-            return
+        if job is None or (expected_statuses is not None and job.status not in expected_statuses):
+            return False
         from trajectory.jobs import CONTEXT_KEY, record_job_in_tx
         if "request_data" in values and (job.request_data or {}).get(CONTEXT_KEY):
             values["request_data"] = {**values["request_data"],
                                       CONTEXT_KEY: job.request_data[CONTEXT_KEY]}
+        review = (job.request_data or {}).get("background_review") if (
+            job.kind == "segment" and job.status != "completed" and values.get("status") == "completed") else None
         for key, value in values.items():
             setattr(job, key, value)
+        if review:
+            from video import shot_review
+            shot_review.enqueue(db, job, review)
         await record_job_in_tx(db, job)
+    if review:
+        shot_review.notify()
+    return True
 
 
 def _provider_failure(target, data: dict, state: str, result_data: dict | None) -> dict:
@@ -1110,6 +1134,15 @@ async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any])
         return data
 
 
+async def _job_provider_status(target, job):
+    data = await _provider_status(target, job.provider_task_id)
+    if data.get("comfy_unseen"):
+        at = job.started_at or job.created_at
+        if at and (datetime.now(timezone.utc) - at.replace(tzinfo=at.tzinfo or timezone.utc)).total_seconds() > 120:
+            return {**data, "status": "failed", "error": "执行机队列及历史均没有此编号。请核对服务器记录后决定是否重新提交。"}
+    return data
+
+
 async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[str, Any]:
     import httpx
 
@@ -1331,12 +1364,19 @@ def _provider_video_url(data: dict[str, Any], route: Any = None) -> str:
     return ""
 
 
-async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -> int:
+async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int, *, route=None) -> int:
     import httpx
 
     put_url = oss.presign_put(key, "video/mp4", expires_sec=3600)
     total = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=1800.0), follow_redirects=True) as source:
+    timeout = httpx.Timeout(120.0, read=1800.0)
+    if route is not None:
+        from tool.video_comfyui import client
+
+        source_client = client(route, timeout)
+    else:
+        source_client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+    async with source_client as source:
         async with source.stream("GET", url) as response:
             if response.is_error:
                 raise transfer.TransferError("download", response.status_code,
@@ -1378,6 +1418,8 @@ async def _stop_transfer_in_tx(db, job, now: datetime) -> None:
     job.status, job.error, job.completed_at, job.updated_at = "failed", transfer.LIMIT_MESSAGE, now, now
     job.result_data = {**result_data, "transfer": {
         **transfer.state(result_data), "stopped": True, "reason": "retry_limit", "next_retry_at": None}}
+    if video_ready.managed(job):
+        job.result_data = {**job.result_data, "completion_delivery_pending": True}
     asset = await db.get(FileAsset, job.output_asset_id) if job.output_asset_id else None
     if asset:
         asset.status = "failed"
@@ -1410,7 +1452,13 @@ async def _finalize_segment(
     persist_guard=None,
 ) -> Any:
     source_url = _provider_video_url(data, route)
-    if not source_url.startswith("https://"):
+    private_comfyui = getattr(route, "channel", "") == "comfyui"
+    if private_comfyui:
+        from tool.video_comfyui import owns_output_url
+
+        if not owns_output_url(route, source_url):
+            raise RuntimeError("ComfyUI returned an invalid private output URL")
+    elif not source_url.startswith("https://"):
         raise RuntimeError("provider marked the task completed without a video URL")
     from core.oss import get_oss
     from db.base import get_db_session
@@ -1442,7 +1490,8 @@ async def _finalize_segment(
         if not asset:
             raise RuntimeError("reserved output asset is missing")
         size = await _copy_provider_video_to_oss(
-            source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
+            source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes,
+            **({"route": route} if private_comfyui else {}),
         )
     except Exception as exc:
         if persist_guard is not None:
@@ -1454,7 +1503,8 @@ async def _finalize_segment(
             job.id,
             status="failed" if stopped else "transfer_failed",
             error=transfer.LIMIT_MESSAGE if recovery["reason"] == "retry_limit" else _public_error(exc),
-            result_data={**result_data, "transfer": recovery},
+            result_data={**result_data, "transfer": recovery,
+                         **({"completion_delivery_pending": True} if stopped and video_ready.managed(job) else {})},
             completed_at=failed_at if stopped else None,
         )
         await _mark_asset(job.output_asset_id, status="failed" if stopped else "pending")
@@ -1512,6 +1562,8 @@ def _job_lines(
     retry_after: int | None = 5,
 ) -> list[str]:
     lines = [f"job_id={job.id}", f"status={job.status}", *_reuse_origin_lines(job)]
+    if (getattr(job, "request_data", None) or {}).get("background_review"):
+        lines.append("background_review=true; use await_ready with all outstanding IDs for picture, speech and timings.")
     production_id = getattr(job, "production_id", None)
     segment_id = getattr(job, "segment_id", None)
     if production_id:
@@ -1521,6 +1573,8 @@ def _job_lines(
     character_reference = (job.request_data or {}).get("character_reference_asset_id")
     if character_reference:
         lines.append(f"character_reference_asset_id={character_reference}")
+    if (job.request_data or {}).get("comfy_worker"):
+        lines.append(f"comfy_worker={job.request_data['comfy_worker']}")
     if job.provider_task_id:
         lines.append(f"provider_task_id={job.provider_task_id}")
     if job.sandbox_job_id:
@@ -1732,6 +1786,27 @@ async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]]
 
 # ── open generation: resolving a request that carries its own content ───────
 
+async def _missing_frame_hint(asset_id: str, ctx: ToolContext) -> str:
+    if not asset_id.startswith("asset_img_") or not ctx.session_id:
+        return ""
+    from difflib import get_close_matches
+    from assets.service import owned_ready_query
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+
+    query = (owned_ready_query(ctx.user_id, ctx.workspace_id)
+             .with_only_columns(FileAsset.id, FileAsset.name)
+             .where(FileAsset.session_id == ctx.session_id, FileAsset.mime.like("image/%"))
+             .order_by(FileAsset.created_at.desc()).limit(64))
+    async with get_db_session() as db:
+        names = dict((await db.execute(query)).all())
+    matches = get_close_matches(asset_id, names, n=3, cutoff=0.8)
+    if not matches:
+        return ". Copy the exact asset ID or its filename from this conversation's image_gen result."
+    candidates = [{"filename": names[key], "asset_id": key} for key in matches]
+    return ". Verify the intended frame by name and use its exact filename or ID: " + json.dumps(candidates, ensure_ascii=False)
+
+
 async def _resolve_open_inputs(
     refs: list[Any], ctx: ToolContext
 ) -> tuple[list[Any], list[str]]:
@@ -1744,6 +1819,7 @@ async def _resolve_open_inputs(
         if not row:
             raise _RequestError(
                 f"asset '{ref.asset_id}' is not a ready OSS resource owned by this user"
+                + await _missing_frame_hint(ref.asset_id, ctx)
             )
         kind = _asset_kind(row.mime)
         if kind == "other":
@@ -1818,6 +1894,7 @@ def normalize_spoken_text(value: str) -> str:
 
 def resolve_spoken_line(
     prompt: str, *, spoken_line: str | None, no_speech: bool, generate_audio: bool,
+    native_dialogue: bool = False,
 ) -> tuple[str, str | None]:
     """The prompt the model will see and the line it must say, or a refusal.
 
@@ -1827,6 +1904,19 @@ def resolve_spoken_line(
     silence declaration, is refused before any money moves.
     """
     line = (spoken_line or "").strip()
+    if native_dialogue:
+        from tool.video_comfyui import dialogue
+
+        expected = " ".join(dialogue(prompt))
+        if expected:
+            if no_speech or not generate_audio or "@" in prompt:
+                raise _RequestError("ComfyUI 原生对白需启用音频，不能标为无台词，也不能包含 @。")
+            if line and normalize_spoken_text(line) != normalize_spoken_text(expected):
+                raise _RequestError("spoken_line 必须与 H3 <d> 标签中的对白一致。")
+            return prompt, expected
+        if line or not no_speech:
+            raise _RequestError("使用 <d>[Chinese] 台词</d> 写原生对白，或明确设置 no_speech=true。")
+        return prompt, None
     labelled = _SPOKEN_LABEL.search(prompt)
     labelled_line = labelled.group("line").strip() if labelled else ""
     if line and no_speech:
@@ -1930,6 +2020,10 @@ async def _resolve_open_submission(
             await video_model_card.lock_default(ctx, locked)
         model, resolution = locked.model, locked.resolution
     declared = video_providers.declared_model(model or settings.model, config)
+    if args.h3_profile and getattr(declared, "channel", "") != "comfyui":
+        raise _RequestError("h3_profile is available only for ComfyUI H3.")
+    if args.poster_motion_region is not None and args.h3_profile != "poster":
+        raise _RequestError("poster_motion_region requires h3_profile=poster.")
 
     # A caller that populates every schema field sends the zero value for an
     # optional int it never meant to set. Reading that as a real request makes
@@ -1960,7 +2054,38 @@ async def _resolve_open_submission(
     prompt, spoken_line = resolve_spoken_line(
         args.prompt or "", spoken_line=args.spoken_line, no_speech=args.no_speech,
         generate_audio=bool(generate_audio),
+        native_dialogue=getattr(declared, "channel", "") == "comfyui",
     )
+    run = ((getattr(session_row, "light_production", None) or {}).get("run") or {}) if getattr(ctx, "guided_video_render", False) else {}
+    output_language = getattr(ctx, "production_output_language", "") or run.get("output_language")
+    if output_language:
+        language_value = json.dumps(output_language, ensure_ascii=False)
+        direction = f"Language of all visible copy and any spoken lines: {language_value}. "
+        marker = "integrated_multimodal_description:"
+        if marker in prompt:
+            prompt = prompt.replace(marker, marker + " " + direction, 1)
+        else:
+            prompt = direction + prompt
+    if run.get("perfect_film") is False and args.action == "submit" and run.get("job_prefix"):
+        # One stable slot per shot makes concurrent/resumed direct submissions idempotent.
+        suffix = (args.idempotency_key or "").removeprefix(run["job_prefix"] + ":")
+        match = re.fullmatch(r"shot([1-9]\d*)(?::retry:([1-9]\d*))?", suffix)
+        if (not (args.idempotency_key or "").startswith(run["job_prefix"] + ":") or not match
+                or (args.shot and args.shot != int(match[1]))):
+            raise _RequestError(f"Direct assembly uses {run['job_prefix']}:shotN (N is the shot number). Reuse its existing job.")
+        if match[2]:
+            attempt = int(match[2])
+            previous = run["job_prefix"] + ":shot" + match[1] + (f":retry:{attempt-1}" if attempt > 1 else "")
+            prior = await _existing_job_for_key(ctx, "segment", previous)
+            if not prior or prior.status not in {"failed", "cancelled"}:
+                raise _RequestError("A technical retry requires the preceding shot attempt to have failed. Reuse the existing shot.")
+    h3_profile = None
+    if getattr(declared, "channel", "") == "comfyui":
+        from tool.video_template import effective_h3_profile, verify_third_wish_line
+
+        form = getattr(session_row, "light_production", None)
+        verify_third_wish_line(form, args.shot, prompt)
+        h3_profile = effective_h3_profile(form, args.h3_profile)
     dropped: list[str] = []
     if seed is not None and not getattr(declared, "supports_seed", False):
         # See validate_request: reproducibility is worth less than the shot.
@@ -1985,6 +2110,9 @@ async def _resolve_open_submission(
         "reconciling_existing": False,
         "dropped": dropped,
         "shot": args.shot,
+        **({"output_language": output_language} if output_language else {}),
+        **({"h3_profile": h3_profile} if h3_profile else {}),
+        **({"poster_motion_region": args.poster_motion_region} if args.poster_motion_region is not None else {}),
     }
 
 
@@ -2190,9 +2318,9 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
     """
     settings = config.video_generation
     lines = [f"default_model={settings.model}", ""]
-    from tool.video_providers import effective_reference_support
+    from tool.video_providers import effective_reference_support, selectable_video_models
 
-    for entry in settings.models:
+    for entry in selectable_video_models(settings):
         reference_support = effective_reference_support(entry)
         parts = [f"id={entry.id}"]
         if entry.name:
@@ -2228,6 +2356,23 @@ def _model_capability_lines(config, unavailable: dict[str, dict[str, Any]] | Non
                 "count/order; frames inherit their picture ratio, and the backend pads or compresses a provider-only "
                 "copy when needed; prompt<=2048 characters"
             )
+        if entry.channel == "comfyui":
+            from tool.video_comfyui import direct_endpoint
+
+            provider = config.provider.get(entry.provider or (settings.channel_providers or {}).get("comfyui", ""))
+            if provider and provider.options.get("workers"):
+                parts.append("routing=Short Drama Workbench Hybrid, 10 steps or poster 12; supports first/last frames, visual/audio references and poster_motion_region")
+            elif provider and direct_endpoint(provider.base_url):
+                parts.append("routing=Turbo FL2VA 8 steps for text or optional first_frame/last_frame; "
+                             "Ref2VA 4 steps for reference_image/video/audio, optionally combined with first_frame "
+                             "and last_frame in the same shot; anchors do not consume R2V Picture slots. "
+                             "Gallery templates use Hybrid B25-49 throughout: 10 steps for action, 12 for poster. "
+                             "For identical poster endpoints, poster_motion_region selects the rectangle to animate.")
+            else:
+                parts.append("routing=workbench 10 steps; first_frame plus optional last_frame OR "
+                             "R2V reference_image/video/audio")
+            parts.append("audio needs a visual input, max 3 audio clips; h3_profile=poster for locked artwork "
+                         "(12 steps); load comfyui-h3 for prompt format")
         if entry.channel == "dashscope":
             parts.append("routing=first_frame plus optional last_frame OR reference_image/video/audio; never mix frame roles with reference roles; last_frame requires first_frame; image<=10, video<=5, audio<=5; total reference video/audio duration each<=15s; input+output video duration<=30s; prompt<=20000 characters; output=30fps")
         if entry.channel == "sd2" and not reference_support["video"] and entry.supports_reference_video:
@@ -2256,13 +2401,14 @@ async def _execute_models(ctx: ToolContext) -> ToolResult:
                         "submit keeps it for this conversation. Omit model and resolution to use it.)")
     from assistant.model_choices import business_video_tiers
     from api.metadata import _video_models
-    tiers = business_video_tiers(config, _video_models(config))
+    models = _video_models(config)
+    tiers = business_video_tiers(config, models)
     lines.append("business_video_tiers=" + json.dumps(tiers, ensure_ascii=False))
     lines.append("Use business tier names in conversation; preserve exact models internally. Compare supported specifications and materials only; do not quote credits or add a pricing confirmation.")
     return ToolResult(
         title="Video models",
         output="\n".join(lines),
-        metadata={"models": [entry.id for entry in config.video_generation.models],
+        metadata={"models": [entry["id"] for entry in models],
                   "unavailable_models": sorted(unavailable)},
     )
 
@@ -2287,6 +2433,17 @@ async def _prepare_provider_inputs(target, approved, inputs, roles, ctx, *, save
         from tool.video_runninghub import prepare_frame_assets
 
         return await prepare_frame_assets(inputs, roles, user_id=ctx.user_id, save_copies=save_copies)
+    if getattr(target, "channel", "ark") == "comfyui":
+        from tool.video_comfyui import (
+            REFERENCE_SIZE_ERROR, extended_inputs, reference_size_limit, validate_poster_motion_region,
+        )
+
+        if any(not 0 < row.size <= reference_size_limit(role) for row, role in zip(inputs, roles, strict=True)):
+            raise _RequestError(REFERENCE_SIZE_ERROR)
+        if approved.get("poster_motion_region") is not None:
+            validate_poster_motion_region(approved["poster_motion_region"], approved.get("h3_profile"),
+                                         extended_inputs(target),
+                                         {role: row.oss_key for role, row in zip(roles, inputs, strict=True)})
     return {}
 
 
@@ -2318,6 +2475,8 @@ async def _execute_validate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         *([f"availability={_availability_text(unavailable)}"] if unavailable else []),
         f"resolution={approved['resolution']}  ratio={approved['ratio']}  duration={billed}",
         f"generate_audio={approved['generate_audio']}  watermark={approved['watermark']}",
+        *([f"h3_profile={approved['h3_profile']}"] if approved.get("h3_profile") else []),
+        *([f"poster_motion_region={approved['poster_motion_region']}"] if approved.get("poster_motion_region") else []),
         f"inputs={len(inputs)}" + (f" roles={'/'.join(roles)}" if roles else ""),
         f"seed={approved['seed']}" if approved["seed"] is not None else "seed=unset",
         *(
@@ -2697,8 +2856,52 @@ async def _execute_list(ctx: ToolContext) -> ToolResult:
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
+    if args.action == "prepare_template":
+        from tool.video_template import prepare
+
+        try:
+            from light import video_templates
+            if args.template_id.startswith(video_templates.PREFIX):
+                plan = await video_templates.references(args.template_id, ctx)
+                return ToolResult(title="模板参考素材", output=json.dumps(plan, ensure_ascii=False),
+                                  metadata={"template_id": args.template_id})
+            plan = await prepare(args.template_id, ctx)
+        except Exception as exc:
+            return ToolResult(title="广告模板暂不可用", output=_public_error(exc))
+        return ToolResult(title=plan["name"], output=json.dumps(plan, ensure_ascii=False),
+                          metadata={"template_id": args.template_id, "shots": len(plan["shots"])})
     if args.action == "status" and not args.job_id:
         return await _execute_list(ctx)
+    if args.action == "await_ready":
+        ids = list(dict.fromkeys(args.job_ids + ([args.job_id] if args.job_id else [])))
+        jobs = await video_ready.wait_for_ready("segment", ids, ctx)
+        if isinstance(jobs, ToolResult):
+            return jobs
+        from video import shot_review
+        reviewed_ids = [job.id for job in jobs if (job.request_data or {}).get("background_review") and job.status == "completed"]
+        reviews = await shot_review.owned(ctx, jobs=reviewed_ids) if reviewed_ids else {}
+        receipts = []
+        for job in jobs:
+            receipt = {"job_id": job.id, "shot": (job.request_data or {}).get("shot"), "status": job.status}
+            if job.status == "completed":
+                await _attach_completed(job, ctx)
+                receipt["asset_id"] = job.output_asset_id
+                if job.id in reviews:
+                    review = reviews[job.id]
+                    if review.state == "ready":
+                        receipt["review"] = {k: v for k, v in review.report.items() if k != "clip"}
+                    else:
+                        receipt["review_error"] = (review.report or {}).get("error", "Review unavailable")
+            elif job.status == "submitting":
+                receipt["error"] = "Submission outcome unknown; reconcile this job before any fresh take."
+            else:
+                receipt["error"] = job.error or job.status
+                await video_ready.acknowledge_failure(job)
+            receipts.append(receipt)
+        received = {job.id for job in jobs}
+        batch = {"jobs": receipts, "pending_job_ids": [key for key in ids if key not in received]}
+        return ToolResult(title="Shot results ready for review", output=json.dumps(batch, ensure_ascii=False, separators=(",", ":")),
+                          metadata=batch)
     if args.action == "validate":
         return await _execute_validate(args, ctx)
     if args.action == "fetch":
@@ -2767,13 +2970,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 roles=roles,
                 **({"provider_image_keys": provider_image_keys} if provider_image_keys else {}),
             )
+            if channel == "comfyui":
+                for ref, row in zip(refs, inputs, strict=True):
+                    ref.update(object_key=row.oss_key, mime=row.mime)
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
+            h3_options = {key: approved[key] for key in ("h3_profile", "poster_motion_region")
+                          if approved.get(key) is not None}
             request_data = {
                 "submit_run_id": getattr(ctx, "run_id", ""),
                 "roles": list(roles),
                 # Which shot this is, so the chat can order concurrent results
                 # by script position rather than by whichever finished first.
                 "shot": approved.get("shot"),
+                **({"output_language": approved["output_language"]} if approved.get("output_language") else {}),
                 "seed": seed,
                 "input_asset_ids": [row.id for row in inputs],
                 "provider_wire_format": target.wire_format,
@@ -2785,6 +2994,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "duration": duration,
                 "generate_audio": generate_audio,
                 "watermark": watermark,
+                **h3_options,
             }
             if approved.get("spoken_line"):
                 # What the take must say, for the transcript comparison later.
@@ -2838,6 +3048,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             # different video; neither may collide in reuse.
                             "seed": seed,
                             "roles": list(roles),
+                            **h3_options,
                         },
                     )
             # Same-key reconciliation takes precedence over a different take
@@ -2929,6 +3140,17 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
             from core.config import get_config as _get_config
 
+            pool_prompt = None
+            if getattr(target, "comfy_workers", ()):
+                from tool.comfy_pool import NoAvailableWorker, reserve
+                try:
+                    target, pool_prompt = await reserve(target, job.id)
+                except NoAvailableWorker as exc:
+                    await _update_job(job.id, status="failed", error=str(exc), completed_at=datetime.now(timezone.utc))
+                    await _mark_asset(job.output_asset_id, status="failed")
+                    return ToolResult(title="视频执行机暂不可用", output=str(exc),
+                                      metadata={"job_id": job.id, "status": "failed", "submission_outcome": "not_sent"})
+
             if channel == "ark":
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": prompt},
@@ -2958,11 +3180,24 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     watermark=watermark,
                     seed=seed,
                     declared=video_providers.declared_model(target.model, _get_config()),
+                    **h3_options,
                 )
+
+            if pool_prompt:
+                payload["comfy_prompt_id"] = pool_prompt
+
+            async def record_pool_dispatch(task_id):
+                persisted = await _update_job(job.id, expected_statuses={"submitting", "queued"},
+                                              provider_task_id=task_id, status="queued", attempt=1,
+                                              started_at=datetime.now(timezone.utc))
+                if not persisted:
+                    raise RuntimeError("ComfyUI 作业已变更，停止本次提交。")
 
             async def send_once():
                 if submit_path is None:
                     return await _provider_submit(target, payload)
+                if pool_prompt:
+                    return await video_providers.submit(target, submit_path, payload, before_post=record_pool_dispatch)
                 return await video_providers.submit(target, submit_path, payload)
 
             async def submit_and_persist_provider_identity():
@@ -3039,6 +3274,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 await _mark_asset(job.output_asset_id, status="failed")
                 job = await _owned_job(job.id, ctx, "segment")
             lines = _job_lines(job, asset)
+            if video_ready.managed(job) and job.status not in _SEGMENT_TERMINAL:
+                video_ready.watch(job)
+                if not (job.request_data or {}).get("background_review"):
+                    lines.append("background=true; submit other ready shots and check completed assets. When blocked use await_ready(job_ids=[outstanding IDs]) once.")
             if approved.get("dropped"):
                 # Degrading must stay visible: a caller who asked for a seed
                 # deserves to know it was not honoured, even though the shot
@@ -3181,6 +3420,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         # Controls always resolve from the persisted model. The deployment's
         # current default is not evidence of the route that owns this task.
         target, settings = _configured_target(job.model or None)
+        from tool.comfy_pool import owner
+        target = owner(target, job.request_data)
     except Exception:
         route_block_reason = "provider_route_unavailable"
     if job.provider_task_id and target is not None:
@@ -3294,9 +3535,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     if remaining <= 0:
                         timed_out = True
                         break
-                    data = await asyncio.wait_for(_provider_status(target, job.provider_task_id), timeout=remaining)
+                    data = await asyncio.wait_for(_job_provider_status(target, job), timeout=remaining)
                 else:
-                    data = await _provider_status(target, job.provider_task_id)
+                    data = await _job_provider_status(target, job)
             state = _provider_state(data, target)
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
@@ -3346,6 +3587,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
     asset = await _job_asset(job)
     workspace_path = None
+    if job.status == "failed":
+        await video_ready.acknowledge_failure(job)
     if job.status == "completed":
         attached = await _attach_completed(job, ctx)
         job = await _owned_job(job.id, ctx, "segment")
@@ -3506,7 +3749,11 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 facts = await ensure_meta(source.id, user_id=ctx.user_id)
                 if facts is not None and not facts.get("has_audio"):
                     raise _RequestError(f"video '{args.asset_id}' has no sound track to transcribe.")
-            language = await _speech_language(args.language, ctx.user_id)
+            if (language_name := getattr(ctx, "production_output_language", "")) and not args.language:
+                from light.video_language import recognition_hint
+                language = recognition_hint(language_name)
+            else:
+                language = await _speech_language(args.language, ctx.user_id)
             request_data = {
                 "source_asset_id": source.id,
                 "source_bytes": source.size,
@@ -3655,18 +3902,13 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 # Keep shared rules here and parameter-specific rules on their fields: both
 # are sent on every request, so repeating the workflow inflates the schema.
 VIDEO_GENERATE_DESCRIPTION = """\
-Generate video only through this tool. models lists capabilities; validate checks the exact shot and owned inputs without submitting. \
-Do not estimate credits, compare pricing or request a separate fee confirmation. submit requires prompt and idempotency_key. \
-Anyone speaking or narrating in a shot needs spoken_line (the exact words); a talking shot without it is refused; a shot where nobody speaks says no_speech=true. \
-A shot that will carry a video_compose voiceover shows nobody talking (no_speech=true, generate_audio=false); a presenter seen talking says spoken_line and gets no voiceover. \
-Before paying, clarify ambiguous asset selection or purpose. If a model cannot use requested references, \
-explain and ask for a compatible composer model or explicit intent change; never drop or relabel references to pass validation. \
-Completed output is stored in OSS and delivered to the sandbox when available for ffmpeg editing. \
-fetch re-delivers an owned video to the workspace; attach shows an owned asset card without a sandbox; never write an asset link. \
-status without job_id lists this conversation's jobs, shots and finished assets: use it to recover existing work. \
-For a requested fresh take, submit with a new key; do not attach old footage or call it regenerated. \
-Different jobs may run together; never parallelize mutations of one job. \
-After an ambiguous paid submit, reconcile the same job/key; never replace it."""
+Generate video. models lists capabilities; validate checks the shot and owned inputs without rendering. \
+prepare_template loads a reusable storyboard and its reference frames. Submit a confirmed shot with a stable idempotency_key. \
+Use exact spoken_line or native H3 <d>[Chinese] …</d>; set no_speech=true for shots without speech. \
+Honor the selected model and asset roles. Clarify ambiguous asset intent; do not add a separate fee confirmation. \
+status without job_id recovers chat jobs. Submit each shot as soon as its frames are ready. When blocked, \
+await_ready(job_ids=[all outstanding IDs]) returns background_review shots together with picture, transcript and timings; ordinary shots return as ready. \
+Use a new key for a requested fresh take. fetch materializes an owned video; attach shows its playable card."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
 Transcribe owned audio/video directly using asset_id and idempotency_key. \
@@ -3680,6 +3922,7 @@ video_generate_tool = define_tool(
     execute=execute_generate,
     sandbox_required=False,
     parallel_safe=True,
+    body_timeout=video_ready.body_timeout,
 )
 
 

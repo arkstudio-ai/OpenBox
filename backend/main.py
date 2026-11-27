@@ -317,7 +317,12 @@ async def lifespan(app: FastAPI):
         log.warning(f"Pricing rules unavailable at startup (base rates.json applies): {e}")
     from memory.providers.configured_read import schedule_transport_warmup
     memory_transport_warmup = schedule_transport_warmup(config.memory)
-    yield
+    from video import shot_review
+    shot_review.start()
+    try:
+        yield
+    finally:
+        await shot_review.stop()
     log.info("OpenBox shutting down, cleaning up...")
     if memory_transport_warmup is not None:
         memory_transport_warmup.cancel()
@@ -509,6 +514,8 @@ def create_app() -> FastAPI:
 
     from api.light import router as light_router
     application.include_router(light_router)
+    from api.video_templates import router as video_templates_router
+    application.include_router(video_templates_router)
     from api.stores import router as stores_router
     application.include_router(stores_router)
 

@@ -49,6 +49,7 @@ class ProductionCopyField extends StatelessWidget {
     required this.hint,
     required this.onChanged,
     this.minLines = 5,
+    this.maxLength = 2400,
   });
 
   final TextEditingController controller;
@@ -56,6 +57,7 @@ class ProductionCopyField extends StatelessWidget {
   final String hint;
   final ValueChanged<String> onChanged;
   final int minLines;
+  final int maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +70,7 @@ class ProductionCopyField extends StatelessWidget {
       key: const Key('production-script'),
       controller: controller,
       enabled: enabled,
-      maxLength: 2400,
+      maxLength: maxLength,
       minLines: minLines,
       maxLines: 6,
       onChanged: onChanged,
@@ -165,7 +167,7 @@ class ProductionTemplates extends ConsumerWidget {
     final t = context.tokens;
     return Column(
       children: [
-        for (final template in task.kind.templates)
+        for (final template in task.availableTemplates)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Semantics(
@@ -485,7 +487,10 @@ class _TemplatePreview extends StatelessWidget {
     };
     final fallback = ColoredBox(
       color: t.surface,
-      child: Icon(Icons.restaurant_menu, color: t.ink),
+      child: Icon(
+        template == galleryWishes ? Icons.auto_awesome : Icons.restaurant_menu,
+        color: t.ink,
+      ),
     );
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),

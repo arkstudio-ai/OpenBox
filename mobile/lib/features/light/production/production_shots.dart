@@ -212,10 +212,8 @@ class _MediaPreview extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: ratio >= 1 ? 640 : 244),
         child: AspectRatio(
           aspectRatio: ratio,
-          child: InkWell(
-            key: const Key('production-result-preview'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => openProductionMedia(context, media),
+          child: ProductionResultPreviewButton(
+            media: media,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -913,10 +911,8 @@ class _ProductionShotPageState extends ConsumerState<ProductionShotPage> {
                           _s(i18n, historical ? 'play' : 'playPrevious'),
                         ),
                         trailing: Text('v${widget.version.number}'),
-                        onTap: () => openProductionMedia(
-                          context,
-                          widget.version.media,
-                        ),
+                        onTap: () =>
+                            openProductionMedia(context, widget.version.media),
                       ),
                     ),
                     const SizedBox(height: 19),
@@ -1287,8 +1283,7 @@ class ProductionVersionsPage extends ConsumerWidget {
                           '${shotTitle(i18n, shot)} · v${version.number}',
                   ].join(' / '),
                   icon: Icons.play_circle_outline,
-                  onPressed: () =>
-                      openProductionMedia(context, film.media),
+                  onPressed: () => openProductionMedia(context, film.media),
                 ),
             ],
             const SizedBox(height: 20),

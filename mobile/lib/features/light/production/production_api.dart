@@ -12,6 +12,7 @@ import 'production_shot_models.dart';
 
 const shortcutStory = 'shortcut_story';
 const productStory = 'product_story';
+const galleryWishes = 'gallery_wishes';
 
 enum ProductionKind {
   video('video'),
@@ -30,7 +31,13 @@ enum ProductionKind {
   bool get imagesOnly => this == menu || this == poster;
 
   List<String> get templates => switch (this) {
-    video => [productStory, shortcutStory, 'soda_story', 'silk_road'],
+    video => [
+      galleryWishes,
+      productStory,
+      shortcutStory,
+      'soda_story',
+      'silk_road',
+    ],
     footage => ['documentary', 'quick_cut', 'product'],
     menu || poster => const [],
   };
@@ -174,7 +181,9 @@ class LightProduction {
               ? ProductionMusic.off
               : ProductionMusic.auto),
       remakePrepared = json['remake_prepared'] == true,
+      galleryWishesAvailable = json['gallery_wishes_available'] == true,
       template = asString(json['template']) ?? '',
+      communityTemplate = asMap(json['template_ref']).isNotEmpty,
       referenceExampleId = asString(json['reference_example_id']),
       referenceExampleTitle = asString(json['reference_example_title']) ?? '',
       referenceExampleTitleTranslations = lightTitleTranslations(
@@ -193,6 +202,8 @@ class LightProduction {
       },
       agentRevision = asInt(json['agent_revision']) ?? 0,
       keepOriginal = json['keep_original'] != false,
+      perfectFilm = json['perfect_film'] == true,
+      outputLanguage = asString(json['output_language']) ?? '',
       redoNarration = json['redo_narration'] == true,
       voiceId = asString(json['voice_id']) ?? '',
       creativeEffects = json['creative_effects'] == true,
@@ -228,9 +239,11 @@ class LightProduction {
   final String posterTitle;
   final String referenceCopy;
   final String productName, suggestedProduct;
+  final bool galleryWishesAvailable;
   final ProductionMusic music;
   final bool remakePrepared;
   final String template;
+  final bool communityTemplate;
   final String? referenceExampleId;
   final String referenceExampleTitle;
   final Map<String, String> referenceExampleTitleTranslations;
@@ -243,7 +256,8 @@ class LightProduction {
   final String notes;
   final Map<String, String> promotionBrief;
   final int agentRevision;
-  final bool keepOriginal, redoNarration;
+  final bool keepOriginal, redoNarration, perfectFilm;
+  final String outputLanguage;
   final String voiceId;
   final bool creativeEffects;
   final List<String> assets;
@@ -253,8 +267,13 @@ class LightProduction {
   final Map<String, dynamic>? proposal;
 
   bool get working => status == 'working';
+  List<String> get availableTemplates => [
+    for (final item in kind.templates)
+      if (item != galleryWishes || galleryWishesAvailable) item,
+  ];
   bool supportsVideoTiers(String selectedTemplate) =>
       kind == ProductionKind.video &&
+      selectedTemplate != galleryWishes &&
       selectedTemplate != shortcutStory &&
       selectedTemplate != productStory &&
       (selectedTemplate.isEmpty || kind.templates.contains(selectedTemplate));
@@ -267,10 +286,13 @@ class LightProduction {
   bool get requiresStoryboardPreview =>
       manualPreparation && template != productStory;
   bool get supportsMusic =>
-      kind == ProductionKind.video && template != productStory;
+      kind == ProductionKind.video &&
+      template != productStory &&
+      template != galleryWishes;
   bool get wanRemake => manualPreparation || template == 'wan_story';
   bool get remake =>
-      kind == ProductionKind.video && (wanRemake || template == 'twist');
+      kind == ProductionKind.video &&
+      (wanRemake || template == 'twist' || template == galleryWishes);
 }
 
 class LightProductionApi {

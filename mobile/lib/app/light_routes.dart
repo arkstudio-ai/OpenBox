@@ -108,12 +108,16 @@ List<GoRoute> lightRoutes({required ResourceSlotOf resources}) => [
   ),
   GoRoute(
     path: '${Paths.lightProductionHistory}/:sessionId',
-    builder: (context, state) => ProductionPage(
-      sessionId: state.pathParameters['sessionId']!,
-      initial: state.extra is LightProduction
-          ? state.extra as LightProduction
-          : null,
-    ),
+    builder: (context, state) {
+      final sessionId = state.pathParameters['sessionId']!;
+      return ProductionPage(
+        key: ValueKey(sessionId),
+        sessionId: sessionId,
+        initial: state.extra is LightProduction
+            ? state.extra as LightProduction
+            : null,
+      );
+    },
   ),
   GoRoute(
     path: '/light/s/:sessionId',

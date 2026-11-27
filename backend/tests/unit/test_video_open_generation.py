@@ -233,6 +233,26 @@ def _selected_preferences(monkeypatch, *, model="MiniMax-H3", resolution="720p",
 
 
 @pytest.mark.asyncio
+async def test_advanced_edit_keeps_the_submitted_video_language(monkeypatch):
+    from types import SimpleNamespace
+    from light.video_language import render_output_language
+
+    ctx = _selected_preferences(monkeypatch)
+    session = SimpleNamespace(light_entry="video", light_production={
+        "run": {"action": "render", "output_language": "越南语", "perfect_film": False},
+    })
+    ctx.production_output_language = render_output_language(session)
+    approved = await video_production._resolve_open_submission(
+        VideoGenerateArgs(action="submit", prompt="close-up of the headphones", no_speech=True,
+                          idempotency_key="requested-edit"), ctx,
+    )
+    assert approved["output_language"] == "越南语"
+    assert "越南语" in approved["prompt"]
+    session.light_entry = "footage_edit"
+    assert not render_output_language(session)
+
+
+@pytest.mark.asyncio
 async def test_person_selected_model_is_not_switched_without_a_card(monkeypatch):
     ctx = _selected_preferences(monkeypatch)
     args = VideoGenerateArgs(
@@ -478,7 +498,7 @@ def test_every_declared_model_and_resolution_is_reachable():
     config = core.config.get_config()
 
     failures = []
-    for model in config.video_generation.models:
+    for model in video_providers.selectable_video_models(config.video_generation):
         # Only Wan 3.0 accepts -1 ("you pick"); the rest need a real number, so
         # ask each for something inside its own measured range.
         duration = -1 if model.supports_smart_duration else (model.duration_range or (5, 5))[0]
@@ -488,7 +508,7 @@ def test_every_declared_model_and_resolution_is_reachable():
                     video_providers.resolve_route(model.id, config),
                     resolution=resolution, ratio="9:16", duration=duration,
                     generate_audio=model.supports_generated_audio,
-                    input_mimes=[], declared=model,
+                    input_mimes=[], declared=model, prompt="A still lake in the morning light.",
                 )
             except Exception as exc:
                 failures.append(f"{model.id} @ {resolution}: {exc}")

@@ -19,10 +19,12 @@ import time
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Literal
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.log import create_logger
+from tool.batch import MAX_CONCURRENT_IMAGES
 from tool.tool import ToolContext, ToolResult, define_tool
 
 log = create_logger("tool.image_gen")
@@ -36,6 +38,7 @@ _OUTPUT_FORMATS = {"png", "jpeg", "webp"}
 _OLDER_GPT_IMAGE_SIZES = {"auto", "1024x1024", "1536x1024", "1024x1536"}
 _FLEXIBLE_GPT_IMAGE_MODELS = {"gpt-image-2", "gpt-image-2.6"}
 _IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
+_image_slots: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = WeakKeyDictionary()
 
 
 class ImageGenArgs(BaseModel):
@@ -2338,8 +2341,14 @@ async def execute(args: ImageGenArgs, ctx: ToolContext, *, channel: str | None =
     if held is not None:
         return held
     ctx._image_notification_key = None
+    loop = asyncio.get_running_loop()
+    slots = _image_slots.get(loop)
+    if slots is None:
+        slots = _image_slots[loop] = asyncio.Semaphore(MAX_CONCURRENT_IMAGES)
     try:
-        result = await _execute(args, ctx) if channel is None else await _execute(args, ctx, channel)
+        async with slots:
+            await ctx.assert_run_current()
+            result = await _execute(args, ctx) if channel is None else await _execute(args, ctx, channel)
     except asyncio.CancelledError:
         await _notify_image_failure(ctx)
         raise
@@ -2359,7 +2368,8 @@ def _image_body_timeout(_args: dict, _ctx: ToolContext) -> float:
 IMAGE_GEN_DESCRIPTION = """\
 Generate raster images from text, or edit OSS assets and uploads. An optional PNG
 mask targets the first input. Results are stored, indexed, and attached
-automatically; do not attach them again."""
+automatically. Submit independent frames together (up to 10 calls); wait for the
+source asset ID when a frame uses a newly generated image."""
 
 
 class _ImageEffectReconciler:
@@ -2594,7 +2604,6 @@ image_gen_tool = define_tool(
     parameters=ImageGenArgs,
     execute=execute,
     sandbox_required=False,
-    parallel_safe=False,
-    batch_serial_safe=True,
+    parallel_safe=True,
     body_timeout=_image_body_timeout,
 )

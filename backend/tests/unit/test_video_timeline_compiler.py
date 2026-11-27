@@ -226,6 +226,9 @@ def test_non_oss_assets_are_refused(ref):
 def test_output_media_config_matches_canvas():
     job = compile_ims(_two_shots(), output_url=OUT, bitrate_kbps=3000)
     assert job.output_media_config == {"MediaURL": OUT, "Width": 720, "Height": 1280, "Bitrate": 3000}
+    film = compile_ims(_two_shots(canvas=Canvas(fps=24)), output_url=OUT, bitrate_kbps=3000)
+    assert film.output_media_config == {**job.output_media_config, "Video": {"Fps": 24}}
+    assert film.client_token != job.client_token
 
 
 def test_client_token_is_stable_ascii_and_changes_with_content():

@@ -17,10 +17,11 @@ from db.models.part import Part
 from db.models.question import QuestionCheckpoint
 from db.models.session import Session
 from db.models.video_job import VideoJob
-from light import production_form as forms
-from light import commercial_plan, examples, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
+from light import production_form as forms, video_templates
+from light import commercial_plan, examples, h3_recipes, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
 from light.mode import LightError
 from session.agent_event_log import prepare_agent_event_write
+from tool.video_template import GALLERY_WISHES, GALLERY_WISHES_VERSION
 
 _IN_FLIGHT = {"queued", "submitting", "in_progress", "generating", "finalizing", "transfer_failed"}
 _COMPOSITIONS = {"compose", "render"}
@@ -56,8 +57,12 @@ def _now() -> datetime:
 
 def _form(row: Session) -> dict:
     form = row.light_production or forms.initial_form(row.light_entry, "", "")
-    if row.light_entry == "video" and "voice_id" in form:
-        return {key: value for key, value in form.items() if key != "voice_id"}
+    if row.light_entry == "video":
+        form = forms.promote_legacy_gallery_copy(form)
+        if not form.get("run") and ("perfect_film" not in form or "output_language" not in form):
+            form = {"perfect_film": False, "output_language": "", **form}
+        if "voice_id" in form:
+            return {key: value for key, value in form.items() if key != "voice_id"}
     return form
 
 
@@ -102,8 +107,12 @@ async def _start_form(user_id: str, workspace_id: str, body: forms.StartForm, la
 
 
 async def preview(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
+    from core.config import get_config
+
     form, title, _, chat_tier, tiers = await _start_form(user_id, workspace_id, body, lang, save=False)
     return {**form, "entry_id": body.entry_id, "title": title, "status": "draft", "available_video_tiers": tiers,
+            **({"gallery_wishes_available": video_tiers.comfyui_fast_available(get_config())}
+               if body.entry_id == "video" else {}),
             **({"chat_tier": chat_tier.tier} if chat_tier else {})}
 
 
@@ -125,12 +134,16 @@ def _media_matches(entry: str, mime: str) -> bool:
     return mime.startswith("image/") if entry in forms.IMAGE_ENTRIES else mime.startswith(("image/", "video/"))
 
 
-async def _require_reference(db, entry_id: str, example_id: str) -> None:
+async def _require_reference(db, entry_id: str, example_id: str):
+    if entry_id == "video" and example_id.startswith(video_templates.PREFIX):
+        return await video_templates.resolve(db, example_id)
     if not examples.is_production_reference(await db.get(LightExample, example_id), entry_id):
         raise LightError("LIGHT_PRODUCTION_EXAMPLE_UNAVAILABLE", "This reference example is unavailable.", 409)
 
 
 async def _validate_fields(db, row: Session, changes: dict) -> None:
+    if {"perfect_film", "output_language"} & changes.keys() and row.light_entry != "video":
+        raise LightError("LIGHT_PRODUCTION_STATE", "These settings apply to generated video.", 422)
     if "chat_tier" in changes:
         from core.config import get_config
 
@@ -148,8 +161,13 @@ async def _validate_fields(db, row: Session, changes: dict) -> None:
         if (row.light_entry != "footage_edit"
                 and (row.light_entry != "video" or template not in forms.VIDEO_TIER_TEMPLATES)):
             raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable.", 409)
+        if template in video_tiers.COMFYUI_INCOMPATIBLE_TEMPLATES and changes["video_tier"] not in video_tiers.available_tiers(template=template):
+            raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "The selected video model is unavailable for this template.", 409)
     if "poster_title" in changes and row.light_entry != "poster":
         raise LightError("LIGHT_PRODUCTION_POSTER", "Only posters have a headline field")
+    if (len(changes.get("reference_copy") or "") > forms.REFERENCE_COPY_LIMIT
+            and changes.get("template", _form(row)["template"]) != GALLERY_WISHES):
+        raise LightError("LIGHT_PRODUCTION_COPY", f"Keep the reference copy within {forms.REFERENCE_COPY_LIMIT} characters.", 422)
     if "promotion_brief" in changes and row.light_entry not in {"video", "footage_edit"}:
         raise LightError("LIGHT_PRODUCTION_PROMOTION", "Promotion details are available for video productions.")
     if "redo_narration" in changes and row.light_entry != "footage_edit":
@@ -179,9 +197,15 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
     reference_id = row.light_example_id
     if "reference_example_id" in changes:
         reference_id = changes["reference_example_id"] or None
-    elif "template" in actual:
+    elif "template" in changes:
         reference_id = None
+    if "template" in actual or "video_tier" in actual:
+        form.pop("agent_recipe", None)
     reference_changed = reference_id != row.light_example_id
+    if reference_changed and "template_ref" not in actual:
+        form.pop("agent_recipe", None)
+        form.pop("template_ref", None)
+        form.pop("template_recipe", None)
     if "chat_tier" in changes:
         from core.config import get_config
 
@@ -193,6 +217,9 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
         return
     row.light_example_id = reference_id
     form.update(actual)
+    if "output_language" in actual:
+        form["remake_prepared_for"] = None
+        form.pop("remake_adaptation", None)
     if {"asset_ids", "shop", "template", "keep_original", "promotion_brief"}.intersection(actual):
         form.pop("narration_draft", None)
         form.pop("narration_preview", None)
@@ -269,6 +296,11 @@ def _work_view(row: Session, receipt, jobs: list, output, question: bool) -> dic
     run = form.get("run") or {}
     action = run.get("action")
     active = any(job.status in _IN_FLIGHT for job in jobs)
+    # Deferred media receipts may briefly wake the chat after the guide has
+    # delivered its pinned IMS result. Keep that result playable in the App.
+    if (output and (form.get("template_ref") or form.get("builtin_h3") or form.get("agent_recipe")) and action == "render" and receipt and receipt.state == "settled"
+            and not active and not question and not form.get("proposal")):
+        return {"status": "completed"}
     # A settled director cannot advance a grouped take. Retry rejoins its original provider job.
     if run.get("remake_version") in wan_story.VERSIONS and receipt and receipt.state == "settled":
         active = False
@@ -323,6 +355,43 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
     edited_at = form.get("edited_at")
     since = datetime.fromisoformat(edited_at) if edited_at else _utc(row.created_at)
     run = form.get("run") or {}
+    if (form.get("template_ref") or form.get("builtin_h3") or form.get("agent_recipe")) and run.get("action") == "render":
+        prefix = run["job_prefix"] + ":"
+        completed = [job for job in jobs if job.kind == "compose" and job.status == "completed" and job.output_asset_id]
+        finals = [job.output_asset_id for job in completed if job.idempotency_key == prefix + "final"]
+        # A guided render may correct the soundtrack after its canonical master exists.
+        # Match the original render and visual cut before selecting a newer delivered file.
+        cards = [p for p in files if _utc(p.created_at) >= since
+                 and (p.data.get("relation") or {}).get("role") == "final"]
+        delivered = {p.data.get("asset_id") for p in cards}
+        advanced = {p.data.get("asset_id") for p in cards if p.message_id in advanced_messages}
+        if delivered:
+            segments = {job.output_asset_id for job in jobs if job.kind == "segment" and job.status == "completed"
+                        and job.output_asset_id and (job.idempotency_key or "").startswith(prefix)}
+            master = next((job for job in completed if job.output_asset_id in finals), None)
+            # An owner may patch a finished film by cutting the master around a
+            # replacement shot, including the stills used in that master.
+            allowed = segments.copy()
+            if master:
+                allowed.add(master.output_asset_id)
+                allowed.update(shot_editor.picture_assets(master))
+            candidates = [job for job in completed if job.output_asset_id in finals]
+            for job in sorted(completed, key=lambda j: _utc(j.completed_at or j.updated_at)):
+                if job.output_asset_id in finals or job.output_asset_id not in delivered:
+                    continue
+                if not shot_editor.uses_only_picture_assets(job, allowed):
+                    continue
+                if job.output_asset_id in advanced or (
+                    master and (job.idempotency_key or "").startswith(prefix)
+                    and shot_editor.same_render_cut(master, job)
+                    and _utc(job.completed_at or job.updated_at) > _utc(master.completed_at or master.updated_at)
+                ):
+                    candidates.append(job)
+                    allowed.add(job.output_asset_id)
+            finals = [job.output_asset_id for job in sorted(candidates, key=lambda j: _utc(j.completed_at or j.updated_at),
+                                                            reverse=True)]
+        edits = shot_editor.output_keys(form, jobs, finals) if any(shot_editor.is_edit_job(j) for j in jobs) else []
+        return [j.output_asset_id for j in edits] + finals
     guided_music = row.light_entry == "video" and run.get("music_style") not in {None, "off"}
     needs_render = run.get("action") == "render" and (
         row.light_entry == "footage_edit" or (row.light_entry == "video" and form["template"]) or guided_music
@@ -393,6 +462,8 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
     result = []
     for row in rows:
         form = _form(row)
+        constrained = include_shots and form["template"] in video_tiers.COMFYUI_INCOMPATIBLE_TEMPLATES
+        offered = video_tiers.available_tiers(config, template=form["template"]) if constrained else tiers
         output = next((media[key] for key in output_ids[row.id] if key in media), None)
         jobs = relevant_jobs[row.id]
         guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
@@ -403,27 +474,34 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         chat_tier = _chat_tier(config, model=row.model) or _chat_tier(config, model=config.model)
         reference_fields = {}
         if include_shots and row.light_production and row.light_example_id:
-            reference = await db.get(LightExample, row.light_example_id)
+            pin = form.get("template_ref")
+            reference = None if pin else await db.get(LightExample, row.light_example_id)
             reference_fields = {
                 "reference_example_id": row.light_example_id,
-                "reference_example_title": reference.title if reference else "",
+                "reference_example_title": form["template_recipe"]["title"] if pin else (reference.title if reference else ""),
                 "reference_example_title_translations": examples.title_translations(reference),
             }
         result.append({
             **{key: value for key, value in form.items() if key not in {
-                "run", "edited_at", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
+                "run", "edited_at", "template_recipe", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
                 "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits", "chat_tier",
                 "narration_preview", "narration_draft",
             }},
             **_work_view(row, receipts.get((form.get("run") or {}).get("id")), guide_jobs, output,
                          row.id in questions),
             **({"shot_editor": editor} if editor else {}),
-            **({"available_video_tiers": tiers} if include_shots and row.light_entry in {"video", "footage_edit"} else {}),
+            **({"available_video_tiers": offered} if include_shots and row.light_entry in {"video", "footage_edit"} else {}),
+            **({"video_tier": offered[0] if offered else None}
+               if constrained and form.get("video_tier") and form["video_tier"] not in offered else {}),
+            **({"gallery_wishes_available": video_tiers.comfyui_fast_available(config)}
+               if include_shots and row.light_entry == "video" else {}),
             **({"chat_tier": chat_tier.tier} if include_shots and chat_tier else {}),
             "session_id": row.id, "entry_id": row.light_entry, "title": row.title, "legacy": not row.light_production,
             "updated_at": _utc(row.updated_at).isoformat(), "output": output,
             "materials": [media[key] for key in form["asset_ids"] if key in media],
             **reference_fields,
+            **({"remake_prepared": (form.get("remake_prepared_for") == remake_case.input_fingerprint(form))}
+               if form.get("builtin_h3") or form.get("agent_recipe") else {}),
             **({"reference_copy": remake_case.reference_copy(form),
                 "remake_prepared": form.get("remake_prepared_for") == remake_case.input_fingerprint(form)}
                if remake_case.applies(row.light_entry, form) else {}),
@@ -486,9 +564,22 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
         if reference_id:
-            await _require_reference(db, row.light_entry, reference_id)
+            edition = await _require_reference(db, row.light_entry, reference_id)
+            if edition is not None:
+                changes.update(template_ref=video_templates.ref(edition), template_recipe=edition.manifest)
             if row.light_entry == "video" or row.light_entry in forms.IMAGE_ENTRIES:
                 changes["template"] = ""
+        if row.light_entry == "video" and ("template" in changes or "video_tier" in changes):
+            from core.config import get_config
+
+            selected = changes.get("template", form["template"])
+            tier = changes.get("video_tier", form.get("video_tier") or "fast")
+            if selected in h3_recipes.TEMPLATES and tier == "fast" and video_tiers.workbench_fast_available(get_config()):
+                changes.update(builtin_h3=True, template_recipe=h3_recipes.recipe(selected))
+            elif form.get("builtin_h3"):
+                changes["builtin_h3"] = False
+                if "template_ref" not in changes:
+                    changes["template_recipe"] = {}
         stays_remake = remake_case.applies(row.light_entry, {**form, **changes})
         if stays_remake and "script" in changes:
             # Older Apps wrote the editable value as script.
@@ -523,6 +614,9 @@ async def update_from_agent(ctx, *, revision: int, changes: dict, proposal: str 
         await _validate_fields(db, row, changes)
         if proposal is None:
             _apply(row, changes, from_agent=True)
+            if (form.get("builtin_h3") or form.get("agent_recipe")) and run.get("action") == "prepare" and "script" in changes:
+                current = row.light_production
+                row.light_production = {**current, "remake_prepared_for": remake_case.input_fingerprint(current)}
             # A legitimate answer can leave the text or detected dishes unchanged.
             if row.light_production is form:
                 row.light_production = {**form, "revision": revision + 1, "agent_revision": revision + 1}
@@ -625,6 +719,30 @@ async def begin_remake(ctx, adaptation: remake_case.Adaptation | wan_story.Plan 
         else:
             raise LightError("LIGHT_REMAKE_SCOPE", "This action cannot generate a remake.", 409)
         return row.light_production, run, adaptation
+
+
+async def begin_gallery(ctx, proposed):
+    from tool.light_gallery import Plan, source_plan
+
+    async with get_db_session() as db:
+        row = await _lock(db, ctx.session_id, ctx.user_id, ctx.workspace_id, run_fence=ctx.run_fence)
+        form = _form(row)
+        run = form.get("run") or {}
+        receipt = await db.get(AgentInboxItem, run["id"]) if run.get("id") else None
+        if (row.light_entry != "video" or form.get("template") != GALLERY_WISHES
+                or run.get("action") != "render" or not ctx.run_fence or receipt is None
+                or receipt.state != "claimed" or receipt.run_id != ctx.run_id
+                or receipt.generation != ctx.run_generation):
+            raise LightError("LIGHT_GALLERY_SCOPE", "请在 App 的画廊模板中点生成视频。", 409)
+        if error := run.get("remake_error"):
+            raise LightError("LIGHT_GALLERY_STOPPED", error, 409)
+        if stored := run.get("gallery_plan"):
+            return form, run, Plan.model_validate(stored)
+        source_plan(proposed, form)
+        run = {**run, "gallery_plan": proposed.model_dump()}
+        row.light_production = {**form, "run": run}
+        row.updated_at = _now()
+        return form, run, proposed
 
 
 async def remake_stage(ctx, key: str, stage: str | None = None, *, error: str | None = None, feedback=None) -> None:
@@ -838,10 +956,17 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
         if view["status"] == "completed":
             raise LightError("LIGHT_PRODUCTION_STATE", "Edit the result before generating a new version", 409)
         form = _form(row)
-        if (form.get("template") == shortcut_plan.TEMPLATE
+        if (form.get("template_ref") or form.get("builtin_h3") or form.get("agent_recipe")) and not view["materials"]:
+            raise LightError("LIGHT_PRODUCTION_ASSET", "请先选择本次要宣传的商品素材。")
+        if form.get("template") == GALLERY_WISHES:
+            if len(view["materials"]) != 1 or not view["materials"][0]["mime"].startswith("image/"):
+                raise LightError("LIGHT_PRODUCTION_ASSET", "请选择一张能看清所宣传商品的照片。")
+            if not form.get("product_name", "").strip() or not form.get("shop", "").strip():
+                raise LightError("LIGHT_PRODUCTION_SCRIPT", "请填写商品名和店名或品牌。")
+        if (not form.get("builtin_h3") and form.get("template") == shortcut_plan.TEMPLATE
                 and form.get("remake_prepared_for") != remake_case.input_fingerprint(form)):
             raise LightError("LIGHT_REMAKE_PLAN", "请先确认当前素材与文案生成的分镜。", 409)
-        if (form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
+        if (not form.get("builtin_h3") and form.get("template") == silk_road.TEMPLATE and form.get("video_tier")
                 and not (form.get("remake_adaptation") or {}).get("world")):
             raise LightError("LIGHT_VIDEO_FRAME_PLAN", "Prepare the current storyboard before filming.", 409)
         if row.light_entry == "poster" and not _form(row).get("poster_title", "").strip():
@@ -850,18 +975,33 @@ def _validate_action(row: Session, view: dict, action: str) -> None:
             raise LightError("LIGHT_PRODUCTION_DISHES", "Confirm at least one dish before generating")
         if row.light_entry == "footage_edit" and not view["materials"]:
             raise LightError("LIGHT_PRODUCTION_ASSET", "Select at least one original clip or photo")
-        if row.light_entry == "video" and not remake_case.applies(row.light_entry, view) and not view["script"].strip():
+        if (row.light_entry == "video" and form["template"] != GALLERY_WISHES
+                and not (form.get("template_ref") or form.get("builtin_h3") or form.get("agent_recipe"))
+                and not remake_case.applies(row.light_entry, view) and not view["script"].strip()):
             raise LightError("LIGHT_PRODUCTION_SCRIPT", "Confirm the script before generating")
 
 
 def _select_remake_model(row: Session, form: dict) -> None:
+    from core.config import get_config
+
+    if row.light_entry == "video" and (form["template"] == GALLERY_WISHES or form.get("builtin_h3")):
+        if not video_tiers.comfyui_fast_available(get_config()):
+            raise LightError("LIGHT_REMAKE_MODEL", "该模板需要启用快速档的 ComfyUI MiniMax H3。", 409)
+        row.video_model, row.video_resolution = video_tiers.resolve_tier("fast")
+        return
     if row.light_entry == "video" and form["template"] in forms.VIDEO_TIER_TEMPLATES and form.get("video_tier"):
-        row.video_model, row.video_resolution = video_tiers.resolve_tier(form["video_tier"])
+        tier = form["video_tier"]
+        if form["template"] in video_tiers.COMFYUI_INCOMPATIBLE_TEMPLATES and video_tiers.comfyui_fast_available(get_config()):
+            offered = video_tiers.available_tiers(template=form["template"])
+            if not offered:
+                raise LightError("LIGHT_VIDEO_TIER_UNAVAILABLE", "No compatible video model is available for this template.", 409)
+            if tier not in offered:
+                tier = form["video_tier"] = offered[0]
+        row.video_model, row.video_resolution = video_tiers.resolve_tier(tier)
         return
     exact_remake = remake_case.applies(row.light_entry, form)
     if row.light_entry != "video" or not form["template"] or (row.video_model and not exact_remake):
         return
-    from core.config import get_config
     from tool.video_model_card import default_resolution
 
     config = get_config()
@@ -879,7 +1019,7 @@ def _select_remake_model(row: Session, form: dict) -> None:
     if exact_remake:
         model = next((item for item in config.video_generation.models
                       if item.id == remake_case.MODEL and item.channel == "runninghub"), None)
-        if model is None or remake_case.RESOLUTION not in model.resolutions:
+        if not config.video_generation.runninghub_enabled or model is None or remake_case.RESOLUTION not in model.resolutions:
             raise LightError("LIGHT_REMAKE_MODEL", "This template needs RunningHub MiniMax H3 Turbo at 768p.", 409)
         row.video_model, row.video_resolution = model.id, remake_case.RESOLUTION
         return
@@ -924,7 +1064,10 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
             else:
                 from core.config import get_config
 
-                if row.light_example_id:
+                previous = form.get("run") or {}
+                resuming_edition = (form.get("template_ref") and body.action == "render"
+                                    and previous.get("revision") == form["revision"] and previous.get("action") == "render")
+                if row.light_example_id and not resuming_edition:
                     await _require_reference(db, row.light_entry, row.light_example_id)
                 config = get_config()
                 if config.model_tiers.product_chat and not _chat_tier(config, model=row.model):
@@ -941,10 +1084,24 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     if creative_motion:
                         row.video_model, row.video_resolution = video_tiers.resolve_tier(video_tier)
                 prefix = f"light:{row.id}:{form['revision']}"
+                # A new App render uses the saved mode for all video templates, including older directors.
+                # Keep the model chosen above and use the same authored template as creative input.
+                if (row.light_entry == "video" and not form.get("builtin_h3") and not form.get("template_ref")
+                        and not (previous.get("action") == "render" and previous.get("revision") == form["revision"])
+                        and (remake_case.applies("video", form) or form["template"] == GALLERY_WISHES)
+                        and ("perfect_film" in form or "output_language" in form)):
+                    selected = form["template"]
+                    recipe = (forms.gallery_recipe() if selected == GALLERY_WISHES else
+                              h3_recipes.recipe(selected) if selected in h3_recipes.TEMPLATES else
+                              {"title": selected, "direction": forms.TEMPLATES["video"][selected]})
+                    form = {**form, "agent_recipe": True, "template_recipe": recipe}
                 exact_remake = remake_case.applies(row.light_entry, form)
+                gallery_remake = row.light_entry == "video" and form["template"] == GALLERY_WISHES and not form.get("agent_recipe")
                 version = remake_case.version_for(form) if exact_remake else None
                 if exact_remake:
                     prefix = f"{prefix}:{version}"
+                elif gallery_remake:
+                    prefix = f"{prefix}:{GALLERY_WISHES_VERSION}"
                 prior = form.get("run") or {}
                 preserved = prior.get("remake_adaptation") if prior.get("job_prefix") == prefix else None
                 prepared = form.get("remake_adaptation")
@@ -952,28 +1109,44 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     if form.get("remake_prepared_for") != remake_case.input_fingerprint(form):
                         prepared = None
                 saved_plan = preserved or prepared
+                output_language = video_language.output_name(form, lang)
+                if prior.get("job_prefix") == prefix and prior.get("action") == body.action:
+                    output_language = prior.get("output_language") or output_language
                 existing = [{"id": j.id, "kind": j.kind, "key": j.idempotency_key, "status": j.status,
                              "asset_id": j.output_asset_id} for j in (await db.scalars(select(VideoJob).where(
                                 VideoJob.session_id == row.id, VideoJob.idempotency_key.startswith(prefix + ":"),
                              ))).all()]
-                if exact_remake and body.action == "render":
+                artwork = []
+                if (form.get("template_ref") or form.get("builtin_h3") or form.get("agent_recipe")) and body.action == "render" and prior.get("job_prefix") == prefix:
+                    # Reuse only artwork from this revision in this buyer's session.
+                    created_since = datetime.fromisoformat(form["edited_at"]) if form.get("edited_at") else row.created_at
+                    images = await db.scalars(owned_ready_query(user_id, workspace_id).where(
+                        FileAsset.session_id == row.id, FileAsset.source == "agent", FileAsset.mime.like("image/%"),
+                        FileAsset.transient.is_(False), FileAsset.created_at >= created_since,
+                    ).order_by(FileAsset.created_at.desc()).limit(18))
+                    artwork = [{"asset_id": image.id, "name": image.name} for image in images]
+                if (exact_remake or gallery_remake) and body.action == "render":
                     from tool.tool import ToolContext
                     from tool.video_production import remaining_daily_submits
 
                     existing_shots = {job["key"].removeprefix(prefix + ":").partition(":")[0] for job in existing
                                       if job["kind"] == "segment" and job["key"].startswith(prefix + ":shot")
                                       and job["status"] not in {"failed", "cancelled"}}
-                    total = (wan_story.shot_count({"remake_adaptation": saved_plan})
-                             if version == wan_story.VERSION else len(remake_case.manifest()["shots"]))
-                    if form.get("template") == product_story_plan.TEMPLATE and not saved_plan:
+                    if gallery_remake:
+                        total = len(forms.gallery_recipe()["shots"])
+                    elif form.get("template") == product_story_plan.TEMPLATE and not saved_plan:
                         total = len(commercial_plan.BEATS)
+                    elif version == wan_story.VERSION:
+                        total = wan_story.shot_count({"remake_adaptation": saved_plan})
+                    else:
+                        total = len(remake_case.manifest()["shots"])
                     required = max(0, total - len(existing_shots))
                     remaining = await remaining_daily_submits(ToolContext(user_id=user_id))
                     if remaining is not None and remaining < required:
                         raise LightError("LIGHT_REMAKE_VIDEO_LIMIT",
                                          f"The remake needs {required} video submissions; {remaining} remain in 24 hours.",
                                          429, needed=required, remaining=remaining)
-                reference = remake_case.reference_copy(form) if exact_remake else ""
+                reference = remake_case.reference_copy(form) if exact_remake or form.get("agent_recipe") else ""
                 prompt = forms.prompt_label(row.light_entry, body.action, lang, bool(form["script"]))
                 if reference:
                     prompt += "\n\n" + reference
@@ -990,6 +1163,14 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 row.light_production = {**form, "run": {"id": receipt.id, "action": body.action,
                                         "client_id": body.request_id, "revision": form["revision"], "job_prefix": prefix,
                                         "existing": existing,
+                                        **({"artwork": artwork} if artwork else {}),
+                                        **({"gallery_plan": prior["gallery_plan"]}
+                                           if (form["template"] == GALLERY_WISHES and body.action == "render"
+                                               and prior.get("job_prefix") == prefix and prior.get("gallery_plan"))
+                                           else {}),
+                                        **({"perfect_film": form.get("perfect_film") is True,
+                                            "output_language": output_language}
+                                           if row.light_entry == "video" else {}),
                                         **({"video_language": video_language.for_form(form, lang)}
                                            if row.light_entry in {"video", "footage_edit"} else {}),
                                         **({"artwork_language": forms.artwork_language(form, lang)}
@@ -1015,7 +1196,7 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                     row.light_production = {**row.light_production, "run": {
                         **row.light_production["run"], "remake_version": version, "remake_adaptation": preserved,
                         **({"video_language": saved_plan.get("language", "zh")}
-                           if body.action == "render" and saved_plan else {}),
+                           if body.action == "render" and saved_plan and "output_language" not in form else {}),
                         **({"silk_controls": controls} if controls is not None else {}),
                         **({k: prior[k] for k in ("wan_cuts", "wan_final_key", "wan_review_version", "wan_edit_history", "wan_quality", "wan_coverage", "soda_visual_review", "shot_inputs", "director_decisions", "brand_repairs", "commercial_repairs", "commercial_auto_staging", "commercial_carry_calibration") if k in prior}
                            if version == wan_story.VERSION and prior.get("job_prefix") == prefix else {}),

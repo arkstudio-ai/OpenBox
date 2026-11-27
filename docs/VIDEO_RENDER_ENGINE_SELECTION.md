@@ -11,7 +11,7 @@
 | 问题 | 答案 |
 |---|---|
 | 现在用什么 | IMS 云剪辑（`SubmitMediaProducingJob` + Timeline JSON），agent 不直接写 Timeline，中间加一层**编译器**把已知坑固化掉（§5） |
-| 什么时候切 | IMS 效果做不出产品要的东西（字幕背景框、物理动效、自定义字体动效）、25fps 不可接受、或按分钟计费超过一台渲染机成本时 |
+| 什么时候切 | IMS 效果做不出产品要的东西（字幕背景框、物理动效、自定义字体动效）、或按分钟计费超过一台渲染机成本时 |
 | 切到哪 | Remotion（§6）。已实测：视频重合成并行有效，10s 成片 4s，54s 成片 11s；license 走 Automators 档 |
 | 不切到哪 | CapCut/剪映（无 API、剪映 6.0+ 加密、导出要 UI 自动化）、火山智能创作云（模板驱动，自由度不够）、HyperFrames（视频重合成不能并行，已被 Remotion 的 OffthreadVideo 解掉） |
 | 架构不变量 | **自己持有时间线 JSON**，IMS 和 Remotion 都只是导出器。切引擎不改技能，只换编译器目标 |
@@ -91,7 +91,7 @@
 ### 3.4 阿里云 IMS 云剪辑
 - API：`SubmitMediaProducingJob`（Timeline / ProjectId / TemplateId 三选一）+ `GetMediaProducingJob` 轮询；输出 `oss-object`。CLI：`aliyun plugin install --names aliyun-cli-ice` 后 `aliyun ice submit-media-producing-job`。
 - 开通：控制台开通 IMS + 服务授权（读写 OSS 的服务关联角色）。未开通时 API 返回 403 `User not authorized to operate on the specified resource`，CLI 无开通命令。
-- **实测**：9.5s 成片排队+渲染 22s；5s 单素材 10s；输出固定 **25fps**、h264/aac、yuv420p。花字入出场、字幕动效、下三分之一、fade 转场全部生效。
+- **实测**：9.5s 成片排队+渲染 22s；5s 单素材 10s；默认输出 **25fps**、h264/aac、yuv420p。花字入出场、字幕动效、下三分之一、fade 转场全部生效。
 - Timeline 要点（`docs/timeline-configuration-description`）：
   - VideoTrackClip：`MediaURL`（OSS https 地址）或 `MediaId`；`In/Out`、`TimelineIn/Out` 秒；`X/Y/Width/Height` 支持比例 [0,1) 或像素；`AdaptMode` Contain/Cover/Fill。转场写在**前一个**片段的 `Effects: [{Type:"Transition", SubType, Duration}]`，SubType 有 fade/wiperight/perlin/random 等。
   - SubtitleTrackClip：`Type: "Text"`；`Content`；`Alignment`（TopLeft…BottomRight/Left/Center/Right）；`Font`（AlibabaPuHuiTi、KaiTi 等，或 `FontURL` 自定义）；`FontSize/FontColor/Outline/OutlineColour/BackColour`；`TextWidth` + `AdaptMode: AutoWrap` 换行；`AaiMotionInEffect/AaiMotionOutEffect`（36 种：fade_in、slide_down_in、zoomin_in、typewriter1_in…）+ `AaiMotionIn/Out` 秒；`EffectColorStyle` 花字（CS0001-000001~16、CS0002-000001~16、golden、skyline、neon_green…）。
@@ -200,7 +200,7 @@ IMS SubmitMediaProducingJob  素材 = OSS 上已有资产（不出账号）；�
 2. 文字统一 `Alignment:"TopCenter"` + `X:0` 水平居中，Y 由「离底比例」换算成像素；`TextWidth:0.88`、`AdaptMode:"AutoWrap"`。
 3. 字体白名单（AlibabaPuHuiTi 等）、`AaiMotionInEffect` / `EffectColorStyle` 枚举校验，非法值在编译期报错而不是渲完才发现。
 4. 字幕背景框不可用 → 用 `Outline:3` + `OutlineColour:"#000000"` 兜底；产品若坚持底框，这就是切 Remotion 的第一个触发点。
-5. 输出 25fps 固定；素材入库统一 24 或 25 皆可，对照测试按时间换算。
+5. 时间线用秒表示。按帧编排的模板将原片帧率写入 `canvas.fps`，编译器通过 `OutputMediaConfig.Video.Fps` 指定输出帧率。省略时沿用 25fps。《丝路留香》已实测导出 24fps、1491 帧。见[阿里云剪辑参数](https://help.aliyun.com/zh/ims/developer-reference/clip-composition-parameter-description)。
 6. `ClientToken` = 幂等键；`OutputMediaConfig.MediaURL` 落 `oss://<bucket>/videos/<user>/<slug>/final.mp4`。
 
 ### 5.4 配置（三处，缺一不可）
@@ -245,7 +245,7 @@ IMS 的 OSS 服务授权是账号级的，两个桶都能读写，工具跟着 `
 > 字幕背景框等 IR 扩展、双编译器的同步维护，全部等到 §6.1 触发条件成立时再做，现在不预投。
 
 ### 6.1 触发条件
-任一成立即可启动：产品要字幕底框/自定义动效；25fps 不可接受；IMS 参数语义再出不可规避的 bug；月账单 > 一台渲染机 + license。
+任一成立即可启动：产品要字幕底框/自定义动效；IMS 参数语义再出不可规避的 bug；月账单 > 一台渲染机 + license。
 
 ### 6.2 步骤
 1. **财务确认能付美元 Stripe**（公司外币卡或港币主体）。付不了 → 走 Revideo 或 HyperFrames+预抽帧。

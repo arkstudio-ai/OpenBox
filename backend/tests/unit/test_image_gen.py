@@ -69,10 +69,10 @@ def test_image_gen_is_a_build_only_agent_tool():
     )
 
 
-def test_image_gen_is_registered_and_not_parallel_safe():
+def test_image_gen_accepts_parallel_independent_calls():
     from tool.image_gen import image_gen_tool
 
-    assert image_gen_tool.parallel_safe is False
+    assert image_gen_tool.parallel_safe is True
 
 
 @pytest.mark.asyncio

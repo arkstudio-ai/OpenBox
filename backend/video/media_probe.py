@@ -20,6 +20,7 @@ log = create_logger("video.media_probe")
 POLL_SECONDS = 1.5
 MAX_POLLS = 40
 _tasks: set[asyncio.Task] = set()
+_probes: dict[tuple[str, str], asyncio.Task] = {}
 
 
 def _num(value: Any) -> float | None:
@@ -85,8 +86,19 @@ async def probe_object(oss_key: str) -> dict:
 
 async def ensure_meta(asset_id: str, *, user_id: str) -> dict | None:
     """The asset's media facts, probing (and saving) them when missing; None when it is not a readable video."""
+    key = (user_id, asset_id)
+    task = _probes.get(key)
+    if task is None:
+        task = asyncio.create_task(_ensure_meta(asset_id, user_id))
+        _probes[key] = task
+        task.add_done_callback(lambda done: _probes.pop(key, None) if _probes.get(key) is done else None)
+    return await asyncio.shield(task)
+
+
+async def _ensure_meta(asset_id: str, user_id: str) -> dict | None:
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
+    from video.ims_client import ImsError
     async with get_db_session() as db:
         row = await db.get(FileAsset, asset_id)
         if row is None or row.user_id != user_id or row.is_deleted or not str(row.mime or "").startswith("video/"):
@@ -95,15 +107,23 @@ async def ensure_meta(asset_id: str, *, user_id: str) -> dict | None:
             return row.meta
         key = row.oss_key
     try:
-        meta = await probe_object(key)
+        for attempt in range(3):
+            try:
+                meta = await probe_object(key)
+                break
+            except ImsError as exc:
+                if exc.code != "RequestsTooFrequent" or attempt == 2:
+                    raise
+                await asyncio.sleep(1.5 * (2 ** attempt))
     except Exception as exc:
         log.warning("media probe failed asset=%s error=%s: %s", asset_id, type(exc).__name__, str(exc)[:200])
         return None
     async with get_db_session() as db:
         row = await db.get(FileAsset, asset_id)
-        if row is not None:
-            row.meta = meta
-    return meta
+        if row is None or row.user_id != user_id or row.is_deleted:
+            return None
+        row.meta = {**(row.meta or {}), **meta}
+        return row.meta
 
 
 def probe_in_background(asset_id: str, user_id: str) -> None:

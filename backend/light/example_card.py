@@ -239,7 +239,7 @@ def _facts(row) -> list[str]:
     return lines
 
 
-async def read(row, ctx) -> dict:
+async def read(row, ctx, *, edit_sheet: dict | None = None) -> dict:
     """Have the model look at the piece and the recipe: ``{card, meta}``; raises when it cannot."""
     from agent.llm import reasoning_profile, stream_llm
     from core.config import get_config
@@ -258,11 +258,12 @@ async def read(row, ctx) -> dict:
         lines.append("附图是成品。请写参考卡。")
     else:
         from light import example_edit
-        try:
-            edit = await example_edit.for_output(output)
-        except Exception as exc:  # the card is still worth writing from what can be seen and heard
-            log.warning("light example card: edit sheet not read example=%s error=%s", row.id, type(exc).__name__)
-            edit = None
+        edit = edit_sheet
+        if edit is None:
+            try:
+                edit = await example_edit.for_output(output)
+            except Exception as exc:  # the visible piece is still worth reading
+                log.warning("light example card: edit sheet not read example=%s error=%s", row.id, type(exc).__name__)
         clip = await _clip(output, example_edit.cut_points(edit))
         system, images = VIDEO_SYSTEM, [image for _, image in clip["frames"]]
         lines.insert(0, f"成片：{clip['duration']:.1f} 秒，{ {'portrait': '竖屏', 'landscape': '横屏', 'square': '方形'}.get(clip['orientation'], '方向未知') }")

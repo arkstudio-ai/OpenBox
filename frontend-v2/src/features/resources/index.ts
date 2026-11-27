@@ -1,5 +1,6 @@
 // Public surface of the resource centre — the page, and the data the chat
 // composer's "@" menu renders (wired together in the workspace routes).
+export { VideoTemplateStudio } from "./components/VideoTemplateStudio"
 export { ResourceCenter } from "./components/ResourceCenter"
 export { useResourceMention, type ResourceMention } from "./hooks/useResourceMention"
 export { useResourceProjects } from "./api/resources"

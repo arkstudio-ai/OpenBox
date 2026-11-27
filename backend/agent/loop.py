@@ -51,7 +51,7 @@ from agent.tool_runtime import (
     enforce_serialized_payload_limits,
 )
 from agent.exposure_signals import collect_exposure_signals
-from agent.tool_exposure import continuation_ids, preferred_editor_id
+from agent.tool_exposure import continuation_ids, preferred_editor_id, step_requested_ids
 from agent.prompt_visibility import build_tool_visibility_fragment
 from agent.retry import with_retry, ContextOverflowError, is_context_overflow, is_retryable, retry_delay
 from bus import bus
@@ -1700,7 +1700,7 @@ async def run_loop(
                         agent_name=agent_name,
                         signals=exposure_signals,
                         revealed_ids=revealed_ids,
-                        requested_ids=(fresh_reveals & revealed_ids) | continued_tools,
+                        requested_ids=step_requested_ids(fresh_reveals, revealed_ids, continued_tools),
                         used_tool_ids=used_tool_ids,
                         editor_id=editor_id,
                         synthetic_tools=synthetic_tools,
@@ -1718,6 +1718,8 @@ async def run_loop(
             if last_user.id not in device_locales:
                 device_locales[last_user.id] = await device_locale_for_turn(user_id, last_user)
             device_locale = device_locales[last_user.id]
+            from light.video_language import render_output_language
+
             ctx = ToolContext(
                 session_id=session_id,
                 run_id=run_id,
@@ -1726,6 +1728,8 @@ async def run_loop(
                 run_generation=lease.generation,
                 user_id=user_id,
                 timezone=device_locale.timezone,
+                guided_video_render=guided_action == "render" and session.light_entry == "video",
+                production_output_language=render_output_language(session),
                 workspace_id=session.workspace_id,
                 project_id=session.project_id or "",
                 agent_id=agent_name,
@@ -1818,13 +1822,16 @@ async def run_loop(
                     raise ValueError("stale capability catalogue generation")
                 if any(tool_id not in discovery_ids for tool_id in ids):
                     raise ValueError("capability result is outside the discovery frontier")
+                # A second search in the same step must also fit the first search's promises.
+                promised = step_requested_ids(ctx._capability_revealed_ids.union(ids), discovery_catalog.entries)
                 next_runtime = assemble_tool_runtime(
                     discovery_catalog, mode=exposure_mode, agent_name=agent_name,
                     signals=exposure_signals, revealed_ids=revealed_ids,
-                    requested_ids=ids, editor_id=editor_id, synthetic_tools=synthetic_tools,
+                    requested_ids=promised, used_tool_ids=used_tool_ids, editor_id=editor_id,
+                    synthetic_tools=synthetic_tools,
                     exposure_config=config.tool_exposure,
                 )
-                if not set(ids) <= next_runtime.step_executable_ids:
+                if not promised <= next_runtime.step_executable_ids:
                     raise ValueError("Requested tool schemas cannot fit the next step's definition budget; no tools were revealed. Narrow the capability request.")
                 from session.internal_parts import ToolRevealEvent, commit_tool_reveals
 
@@ -2293,7 +2300,8 @@ async def run_loop(
                 ctx._image_input_uris = {}
                 result = await resolve_images(result, model_id,
                     media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media,
-                    resource_images=ctx._resource_image_inputs, image_inputs=ctx._image_input_uris)
+                    resource_images=ctx._resource_image_inputs, image_inputs=ctx._image_input_uris,
+                    compact_generated=(guided_action == "render" and getattr(session, "light_entry", None) == "video"))
                 if assistant_view is not None and not for_compaction:
                     from assistant.evidence import projection_digest
                     ctx._assistant_context["messages_digest"] = projection_digest(result)
@@ -3134,7 +3142,8 @@ async def run_loop(
                     tool_id = getattr(part, "canonical_tool_id", None) or getattr(part, "tool", None)
                     if tool_id in runtime.step_executable_ids:
                         used_tool_ids.add(tool_id)
-            fresh_reveals = (fresh_reveals | frozenset(ctx._capability_revealed_ids)) - frozenset(
+            # Older searches are still in the persisted reveal set, at ordinary priority.
+            fresh_reveals = frozenset(ctx._capability_revealed_ids).difference(
                 part.tool for part in result.completed_tool_parts if getattr(part, "tool", None)
             )
             # Step finish with snapshot
@@ -4436,10 +4445,12 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
         return None
     # Older parts predate oss_key; their object name did match the basename.
     key = p.get("oss_key") or f"assets/{user_id}/{p['asset_id']}/{str(p.get('path', '')).split('/')[-1]}"
+    relation = p.get("relation")
     return {
         "asset_id": p["asset_id"],
         "key": key,
         "mime": p.get("mime_type") or "image/png",
+        **({"generated": True} if isinstance(relation, dict) and relation.get("kind") == "generated_image" else {}),
     }
 
 
@@ -4450,16 +4461,19 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
 # by a third, and 12 MB of bytes is 16 MB of text.
 _INLINE_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 _INLINE_JPEG_QUALITIES = (90, 80, 70, 60, 50, 40)
+_GENERATED_PREVIEW_BYTES = 384 * 1024
 
 
-def _fit_inline_image(data: bytes, mime: str) -> tuple[bytes, str] | None:
+def _fit_inline_image(data: bytes, mime: str, *, preview: bool = False) -> tuple[bytes, str] | None:
     """Return (bytes, mime) small enough to inline, or None when it cannot be done.
 
     An image already under the limit passes through untouched — screenshots
     stay lossless PNG. A larger one is re-encoded as JPEG at full resolution,
-    stepping the quality down until it fits; pixels are never resized.
+    stepping the quality down until it fits. Automatically attached production
+    previews can be resized. Video tools and explicit image reads use the asset.
     """
-    if len(data) <= _INLINE_IMAGE_MAX_BYTES:
+    limit = _GENERATED_PREVIEW_BYTES if preview else _INLINE_IMAGE_MAX_BYTES
+    if len(data) <= limit:
         return data, mime
     import io
 
@@ -4475,11 +4489,14 @@ def _fit_inline_image(data: bytes, mime: str) -> tuple[bytes, str] | None:
                 image.paste(rgba, mask=rgba.getchannel("A"))
             elif image.mode != "RGB":
                 image = image.convert("RGB")
-            for quality in _INLINE_JPEG_QUALITIES:
-                out = io.BytesIO()
-                image.save(out, format="JPEG", quality=quality, optimize=True)
-                if out.tell() <= _INLINE_IMAGE_MAX_BYTES:
-                    return out.getvalue(), "image/jpeg"
+            for side in ((1280, 768) if preview else (None,)):
+                if side:
+                    image.thumbnail((side, side), Image.Resampling.LANCZOS)
+                for quality in _INLINE_JPEG_QUALITIES:
+                    out = io.BytesIO()
+                    image.save(out, format="JPEG", quality=quality, optimize=True)
+                    if out.tell() <= limit:
+                        return out.getvalue(), "image/jpeg"
     except Exception as e:
         log.warning(f"oversized image could not be re-encoded: {e}")
     return None
@@ -4490,7 +4507,8 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
                          media_sources: dict[str, str] | None = None,
                          media_inputs: dict[str, dict] | None = None,
                          resource_images: dict[str, dict] | None = None,
-                         image_inputs: dict[str, str] | None = None) -> list[dict]:
+                         image_inputs: dict[str, str] | None = None,
+                         compact_generated: bool = False) -> list[dict]:
     """Turn image references into inline base64 data URIs.
 
     Deliberately NOT presigned URLs. Several providers (Vertex-backed Gemini
@@ -4531,38 +4549,43 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
             log.info(f"{model_id} cannot read images; image references replaced with a note")
             return messages
 
+    def cache_key(ref: dict) -> str:
+        asset_id = ref["asset_id"]
+        return f"{asset_id}:production-preview" if compact_generated and ref.get("generated") else asset_id
+
     refs: dict[str, dict] = {}
     for msg in messages:
         for ref in msg.get("_images") or []:
-            if isinstance(ref, dict) and ref["asset_id"] not in _IMAGE_CACHE:
-                refs[ref["asset_id"]] = ref
+            if isinstance(ref, dict) and (key := cache_key(ref)) not in _IMAGE_CACHE:
+                refs[key] = ref
 
     if refs:
         try:
             from core.oss import get_oss
             oss = get_oss()
 
-            async def fetch(ref: dict) -> tuple[str, str | None]:
+            async def fetch(key: str, ref: dict) -> tuple[str, str | None]:
                 try:
                     url = oss.presign_get(ref["key"], expires_sec=300)
                     async with httpx.AsyncClient(timeout=30) as client:
                         resp = await client.get(url)
                     if resp.status_code != 200:
                         log.warning(f"image {ref['asset_id']} fetch: HTTP {resp.status_code}")
-                        return ref["asset_id"], None
-                    fitted = await _asyncio.to_thread(_fit_inline_image, resp.content, ref["mime"])
+                        return key, None
+                    fitted = await _asyncio.to_thread(_fit_inline_image, resp.content, ref["mime"],
+                                                      preview=key != ref["asset_id"])
                     if fitted is None:
                         log.warning(f"image {ref['asset_id']} dropped: {len(resp.content)} bytes "
                                     "and could not be compressed under the inline limit")
-                        return ref["asset_id"], None
+                        return key, None
                     data, mime = fitted
                     encoded = base64.b64encode(data).decode()
-                    return ref["asset_id"], f"data:{mime};base64,{encoded}"
+                    return key, f"data:{mime};base64,{encoded}"
                 except Exception as e:
                     log.warning(f"image {ref['asset_id']} fetch failed: {e}")
-                    return ref["asset_id"], None
+                    return key, None
 
-            for asset_id, uri in await _asyncio.gather(*(fetch(r) for r in refs.values())):
+            for asset_id, uri in await _asyncio.gather(*(fetch(k, r) for k, r in refs.items())):
                 if uri:
                     _IMAGE_CACHE[asset_id] = uri
         except Exception as e:
@@ -4576,30 +4599,34 @@ async def resolve_images(messages: list[dict], model_id: str | None = None, *,
         images = msg.get("_images")
         if not images:
             continue
-        resolved = [
-            _IMAGE_CACHE[ref["asset_id"]]
-            for ref in images
-            if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE
-        ]
-        if image_inputs is not None:
-            image_inputs.update({ref["asset_id"]: _IMAGE_CACHE[ref["asset_id"]]
-                for ref in images if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE})
-        if media_sources is not None or media_inputs is not None or resource_images is not None:
+        resolved = []
+        for ref in images:
+            if not isinstance(ref, dict):
+                continue
+            key = cache_key(ref)
+            uri = _IMAGE_CACHE.get(key)
+            if not uri:
+                continue
+            resolved.append(uri)
+            asset_id = ref["asset_id"]
+            preview = key != asset_id
+            if image_inputs is not None and (not preview or asset_id not in image_inputs):
+                image_inputs[asset_id] = uri
+            if key in captured or (media_sources is None and media_inputs is None and resource_images is None):
+                continue
             import hashlib
-            for ref in images:
-                if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE and ref["asset_id"] not in captured:
-                    uri = _IMAGE_CACHE[ref["asset_id"]]
-                    raw = base64.b64decode(uri.split(",", 1)[1])
-                    digest = hashlib.sha256(raw).hexdigest()
-                    if media_sources is not None:
-                        media_sources[digest] = ref["asset_id"]
-                    if media_inputs is not None:
-                        media_inputs[uri] = {"asset_id": ref["asset_id"], "oss_key": ref["key"],
-                                             "media_type": ref["mime"], "sha256": digest, "size_bytes": len(raw)}
-                    if resource_images is not None:
-                        resource_images[ref["asset_id"]] = {"asset_id": ref["asset_id"],
-                            "sha256": digest, "size_bytes": len(raw)}
-                    captured.add(ref["asset_id"])
+            raw = base64.b64decode(uri.split(",", 1)[1])
+            digest = hashlib.sha256(raw).hexdigest()
+            if media_sources is not None:
+                media_sources[digest] = asset_id
+            # Transformed preview bytes are captured inline and bound to their
+            # source. The original OSS key cannot replay the preview's hash.
+            if media_inputs is not None and not preview:
+                media_inputs[uri] = {"asset_id": asset_id, "oss_key": ref["key"],
+                                     "media_type": ref["mime"], "sha256": digest, "size_bytes": len(raw)}
+            if resource_images is not None and (not preview or asset_id not in resource_images):
+                resource_images[asset_id] = {"asset_id": asset_id, "sha256": digest, "size_bytes": len(raw)}
+            captured.add(key)
         missing = len(images) - len(resolved)
         if resolved:
             msg["_images"] = resolved

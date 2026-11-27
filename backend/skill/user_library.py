@@ -635,42 +635,48 @@ async def publish_personal_skill(
         )
         if row is None:
             raise LookupError("Personal skill not found")
-        now = _now()
-        if _release_differs_from_draft(row):
-            row.published_name = row.name
-            row.published_install_dir = row.install_dir
-            row.published_description = row.description
-            row.published_icon = row.icon
-            row.published_version = (row.published_version or 0) + 1
-            row.published_archive_data = row.archive_data
-            row.published_archive_sha256 = row.archive_sha256
-            row.published_archive_size = row.archive_size
-            row.published_metadata_data = dict(row.metadata_data or {})
-            # published_at dates the release, not the click: a re-submission of
-            # unchanged bytes must not reshuffle the store's ordering.
-            row.published_at = now
+        return await publish_locked_snapshot(session, row, review_required=review_required,
+                                             publisher_is_admin=publisher_is_admin)
 
-        listing = _listing_after_publish(
-            row,
-            review_required=review_required,
-            publisher_is_admin=publisher_is_admin,
-        )
-        if listing != LISTING_DELISTED:
-            # A stale rejection reason next to a "pending" chip reads as a
-            # fresh verdict.  The delist case keeps its note because the row
-            # stays delisted and the author is owed the reason.
-            row.listing_note = None
-        row.listing = listing
-        row.listing_changed_by = user_id
-        # When the queue orders by submission time this is the honest key;
-        # published_at belongs to the release.
-        row.listing_changed_at = now
-        if publisher_is_admin:
-            row.is_official = True
-        row.status = PUBLISHED
-        row.updated_at = now
-        await session.flush()
-        return _snapshot_dict(row)
+
+async def publish_locked_snapshot(session, row: UserSkill, *, review_required: bool, publisher_is_admin: bool):
+    """Publish the locked owner's row in the caller's transaction."""
+    now = _now()
+    if _release_differs_from_draft(row):
+        row.published_name = row.name
+        row.published_install_dir = row.install_dir
+        row.published_description = row.description
+        row.published_icon = row.icon
+        row.published_version = (row.published_version or 0) + 1
+        row.published_archive_data = row.archive_data
+        row.published_archive_sha256 = row.archive_sha256
+        row.published_archive_size = row.archive_size
+        row.published_metadata_data = dict(row.metadata_data or {})
+        # published_at dates the release, not the click: a re-submission of
+        # unchanged bytes must not reshuffle the store's ordering.
+        row.published_at = now
+
+    listing = _listing_after_publish(
+        row,
+        review_required=review_required,
+        publisher_is_admin=publisher_is_admin,
+    )
+    if listing != LISTING_DELISTED:
+        # A stale rejection reason next to a "pending" chip reads as a
+        # fresh verdict.  The delist case keeps its note because the row
+        # stays delisted and the author is owed the reason.
+        row.listing_note = None
+    row.listing = listing
+    row.listing_changed_by = row.owner_id
+    # When the queue orders by submission time this is the honest key;
+    # published_at belongs to the release.
+    row.listing_changed_at = now
+    if publisher_is_admin:
+        row.is_official = True
+    row.status = PUBLISHED
+    row.updated_at = now
+    await session.flush()
+    return _snapshot_dict(row)
 
 
 async def withdraw_personal_skill(
@@ -1580,6 +1586,8 @@ async def delete_owned_skill(
         )
         if row is None:
             return False
+        from db.models.video_template import VideoTemplateEdition
+        await session.execute(delete(VideoTemplateEdition).where(VideoTemplateEdition.skill_id == row.id))
         await session.execute(
             delete(SkillInstall).where(SkillInstall.user_skill_id == row.id)
         )

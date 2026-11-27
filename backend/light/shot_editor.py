@@ -131,6 +131,33 @@ def _timeline(job):
     return (job.request_data or {}).get("timeline") or {}
 
 
+def uses_only_picture_assets(job, assets: set[str]) -> bool:
+    shots = _timeline(job).get("shots") or []
+    return bool(shots) and all(_asset_id(shot.get("asset") or "") in assets for shot in shots)
+
+
+def picture_assets(job) -> set[str]:
+    return {key for shot in _timeline(job).get("shots") or [] if (key := _asset_id(shot.get("asset") or ""))}
+
+
+def audible_assets(timeline) -> set[str]:
+    return {key for track in (*timeline.shots, *timeline.audio, *timeline.overlays)
+            if track.volume > 0 and (key := _asset_id(track.asset or ""))}
+
+
+def same_render_cut(master, revision) -> bool:
+    source, target = master.request_data or {}, revision.request_data or {}
+    if not source.get("submit_run_id") or source["submit_run_id"] != target.get("submit_run_id"):
+        return False
+    def picture_cut(data):
+        timeline = data.get("timeline") or {}
+        return (timeline.get("canvas"), [
+            (_asset_id(shot.get("asset", "")), shot.get("in_sec"), shot.get("duration_sec"), shot.get("speed"))
+            for shot in timeline.get("shots") or []
+        ])
+    return picture_cut(source) == picture_cut(target)
+
+
 def _title_layers(form, base):
     from light.silk_road import TEMPLATE
     from light.silk_road_lettering import CHAPTER_TIMES

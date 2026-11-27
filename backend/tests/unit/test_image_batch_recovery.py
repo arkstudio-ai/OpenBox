@@ -1,4 +1,4 @@
-"""Production regressions: serial paid children, terminal feedback and replay."""
+"""Production regressions for concurrent paid images, terminal feedback and replay."""
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -118,10 +118,7 @@ async def test_cancel_after_send_closes_assets_and_notifies_once_without_replay(
             await lease.release(session_status="idle")
 
 
-async def test_seven_image_children_are_serial_commit_immediately_and_continue_after_failure(fenced_image_env, monkeypatch):
-    # Exercise the historical seven-item regression with an explicit test
-    # override; production defaults to the user's chosen five-call limit.
-    monkeypatch.setenv("IMAGE_BATCH_MAX_CALLS", "10")
+async def test_independent_images_overlap_and_replay_without_new_dispatch(fenced_image_env, monkeypatch):
     user, lease, context = await _seed_image_run("image-batch")
     ctx = context("part-batch")
     ctx._tool_execution_lookup = {"image_gen": image_gen_tool}
@@ -137,19 +134,18 @@ async def test_seven_image_children_are_serial_commit_immediately_and_continue_a
     hooks.authorize_tool = allow
     progress, calls = [], []
     ctx._on_output = lambda text: _append(progress, text)
-    active = 0
+    active = peak = 0
+    two_started = asyncio.Event()
 
     async def provider(_target, args, **kw):
-        nonlocal active
-        assert active == 0
+        nonlocal active, peak
         active += 1
+        peak = max(peak, active)
+        if active >= 2:
+            two_started.set()
         try:
-            if calls:
-                async with get_db_session() as db:
-                    previous = await db.get(Part, calls[-1])
-                    assert previous.data["status"] in {"completed", "error"}
             calls.append(kw["ctx"].part_id)
-            await asyncio.sleep(0.001)
+            await asyncio.wait_for(two_started.wait(), 5)
             if args.prompt == "dessert 2":
                 raise _sdk_status_error(403, "not available")
             return [b"\x89PNG\r\n\x1a\ndessert"]
@@ -162,6 +158,7 @@ async def test_seven_image_children_are_serial_commit_immediately_and_continue_a
     try:
         results = await runtime.execute_batch(invocations)
         assert len(results) == 7 and len(calls) == len(set(calls)) == 7
+        assert 2 <= peak <= 10
         assert sum(bool(r.metadata.get("error")) for r in results) == 1
         assert "6 completed, 1 failed, 0 remaining" in progress[-1]
         async with get_db_session() as db:
@@ -177,12 +174,52 @@ async def _append(items, value):
     items.append(value)
 
 
+async def test_process_caps_concurrent_image_calls_at_ten(monkeypatch):
+    from light import example_gate
+    from tool import image_gen
+    from tool.batch import image_batch_limit, image_batch_rejection
+    from tool.tool import ToolContext, ToolResult
+
+    monkeypatch.delenv("IMAGE_BATCH_MAX_CALLS", raising=False)
+    assert image_batch_limit() == 10 and image_batch_rejection(11) is not None
+    all_slots, release = asyncio.Event(), asyncio.Event()
+    active = peak = 0
+
+    async def open_gate(*args, **kwargs):
+        return None
+
+    async def generate(args, ctx):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if active == 10:
+            all_slots.set()
+        try:
+            await release.wait()
+            return ToolResult(title="Ready", output="", metadata={"asset_id": ctx.part_id})
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(example_gate, "before", open_gate)
+    monkeypatch.setattr(image_gen, "_execute", generate)
+    calls = [asyncio.create_task(execute(ImageGenArgs(prompt=f"frame {i}"),
+             ToolContext(session_id=f"s{i % 2}", part_id=f"call{i}"))) for i in range(12)]
+    try:
+        await asyncio.wait_for(all_slots.wait(), 2)
+        await asyncio.sleep(0)
+        assert active == 10
+    finally:
+        release.set()
+        results = await asyncio.gather(*calls)
+    assert len(results) == 12 and peak == 10
+
+
 def test_composite_deadline_covers_serial_image_budgets():
     from tool.batch import batch_tool
     ctx = SimpleNamespace(_tool_execution_lookup={"image_gen": image_gen_tool})
     one = tool_body_timeout(image_gen_tool, {}, ctx)
     total = tool_body_timeout(batch_tool, {"invocations": [{"tool": "image_gen"}] * 7}, ctx)
-    assert image_gen_tool.parallel_safe is False and image_gen_tool.batch_serial_safe is True
+    assert image_gen_tool.parallel_safe is True
     assert total > 7 * one > 600
 
 

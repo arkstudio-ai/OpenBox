@@ -1,0 +1,8 @@
+# Build context contains the compiled dist/ and scripts/check-frontend-assets.sh.
+ARG FRONTEND_BASE
+FROM ${FRONTEND_BASE}
+COPY dist/ /usr/share/nginx/html/
+COPY scripts/check-frontend-assets.sh /usr/local/bin/check-frontend-assets
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 644 {} + \
+    && chmod 755 /usr/local/bin/check-frontend-assets

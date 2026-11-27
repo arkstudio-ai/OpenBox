@@ -10,6 +10,17 @@ back up first, change one service at a time with `--no-deps`, never a bare `dock
 wait for healthy before the next service, and recreate backend or postgres only while no run holds an
 execution lease.
 
+### Prebuilt frontend releases
+
+For a release built from a Vite `dist/`, put the compiled directory and
+`frontend-v2/scripts/check-frontend-assets.sh` (under `scripts/`) in the build context.
+Use `docker build -f frontend-v2/Dockerfile.dist --build-arg FRONTEND_BASE=<current-frontend-image> -t <new-image> <context>`.
+This restores public file and directory permissions even when the host extracts the release with umask 077.
+
+Start the candidate on a private port and run `docker exec <container> /usr/local/bin/check-frontend-assets`
+before switching traffic. Set the frontend Compose healthcheck to run the same command.
+After activation, open an existing session URL in a browser and verify that the workspace or login screen renders.
+
 ## 1. Topology
 
 ```

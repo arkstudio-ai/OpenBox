@@ -181,6 +181,8 @@ Continue preparing shots while the backend follows the renders. With `background
 
 For a confirmed failed job, diagnose the reported cause before retrying. For a completed take, identify the defect and correct its source or prompt before reshooting that shot. Reuse the authorized scope and retain working takes.
 
+When `video_generate` returns `INSUFFICIENT_CREDITS`, tell the person which shots were blocked and report the required, available and missing credits returned by the tool. Keep completed clips and keep following already submitted jobs. Pause new submissions until the person tops up or agrees to an affordable change to the remaining shots, such as a shorter duration or a lower-cost tier. Use the existing job IDs for work already submitted.
+
 ### 7. Transcribe, look at the frames, compare — card 3
 
 Use each shot’s returned `review` for its transcript, timing, pictured action and visible text. For legacy shots with no background review, pass the candidate asset IDs together to `footage_analyze(transcribe=true, word_times=true)`. Use that same evidence for caption timing and the review card. For an ambiguous letter, a newly appearing caption or a specific point in a join, use `video_analyze(action="screen_text", source="<owned asset ID>")` or capture the relevant frame. The screen-text result gives the text, its type, the sampled times and the cost. If inspection is unavailable, mark the unverified item for review.

@@ -45,7 +45,7 @@ async def test_title_follows_turn_selection_and_matching_provider(
 ):
     message = await create_user_message("s1", "帮我规划新店活动", model=message_model, user_id="u1")
     # A later session preference must not change the model captured at send time.
-    await update_session("s1", user_id="u1", model=session_model)
+    await update_session("s1", user_id="u1", title="", model=session_model)
 
     await loop._ensure_title("s1", message, user_id="u1")
 
@@ -62,6 +62,7 @@ async def test_title_follows_turn_selection_and_matching_provider(
 
 async def test_title_failure_keeps_text_fallback_without_switching_models(state, completion):
     completion.side_effect = RuntimeError("provider unavailable")
+    await update_session("s1", user_id="u1", title="")
     message = await create_user_message(
         "s1", "帮我规划新店活动\n预算一万元", model="chat/selected", user_id="u1",
     )
@@ -140,3 +141,27 @@ async def test_reply_streams_and_finishes_while_title_is_still_pending(
         if not main_task.done():
             main_task.cancel()
         await asyncio.gather(main_task, *title_tasks, return_exceptions=True)
+
+
+async def test_manual_rename_wins_over_pending_automatic_title(state, completion):
+    await update_session("s1", user_id="u1", title="")
+    message = await create_user_message("s1", "活动清单", model="chat/selected", user_id="u1")
+    title_started = asyncio.Event()
+    release_title = asyncio.Event()
+    model_response = completion.return_value
+
+    async def delayed(**_kwargs):
+        title_started.set()
+        await release_title.wait()
+        return model_response
+
+    completion.side_effect = delayed
+    task = asyncio.create_task(loop._ensure_title("s1", message, user_id="u1"))
+    try:
+        await asyncio.wait_for(title_started.wait(), 5)
+        await update_session("s1", user_id="u1", title="周末促销")
+    finally:
+        release_title.set()
+        await asyncio.wait_for(task, 5)
+    assert (await read(Session, "s1")).title == "周末促销"
+    assert not any(event == "session.title" for event, _ in state)

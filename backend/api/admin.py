@@ -1,5 +1,10 @@
 """Read-only administration API."""
-from fastapi import APIRouter, Depends, Query, Request
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+
+from auth.contact import normalize_phone
 from sqlalchemy import func, or_, select
 
 from audit import record
@@ -24,6 +29,41 @@ def _row_dict(row) -> dict:
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}
 
 
+class AccountSearch(BaseModel):
+    kind: Literal["phone", "email"]
+    q: str = Field(min_length=1, max_length=255)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+def _masked_email(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return None
+    name, domain = email.rsplit("@", 1)
+    return f"{name[:1]}••@{domain}"
+
+
+async def _users(stmt, request, admin, offset, limit, *, lookup=None):
+    async with get_db_session() as db:
+        total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+        users = (await db.scalars(stmt.order_by(User.created_at.desc(), User.id).offset(offset).limit(limit))).all()
+        items = [
+            {
+                "id": user.id,
+                "username": user.username,
+                "email": _masked_email(user.email) if lookup else user.email,
+                "role": user.role,
+                "created_at": user.created_at,
+                "default_workspace_id": user.default_workspace_id,
+                **({"phone": f"•••• {user.phone_number[-4:]}" if user.phone_number else None} if lookup else {}),
+            }
+            for user in users
+        ]
+    await record(admin["user_id"], admin.get("workspace_id"), "admin.view_users", "user", None,
+                 {"lookup": lookup or "list", "offset": offset, "limit": limit, "total": total}, request)
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
 @router.get("/users")
 async def list_users(
     request: Request,
@@ -35,30 +75,25 @@ async def list_users(
     stmt = select(User).where(User.is_deleted.is_(False))
     needle = q.strip()
     if needle:
-        stmt = stmt.where(
-            or_(User.username.ilike(f"%{needle}%"), User.email.ilike(f"%{needle}%"))
-        )
-    async with get_db_session() as db:
-        total = (
-            await db.execute(select(func.count()).select_from(stmt.subquery()))
-        ).scalar_one()
-        users = (
-            await db.execute(stmt.order_by(User.created_at.desc()).offset(offset).limit(limit))
-        ).scalars()
-        items = [
-            {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role,
-                "created_at": user.created_at,
-                "default_workspace_id": user.default_workspace_id,
-            }
-            for user in users
-        ]
-    await record(admin["user_id"], admin.get("workspace_id"), "admin.view_users", "user", None,
-                 {"q": q, "offset": offset, "limit": limit}, request)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+        stmt = stmt.where(or_(User.username.icontains(needle, autoescape=True),
+                              User.email.icontains(needle, autoescape=True)))
+    return await _users(stmt, request, admin, offset, limit)
+
+
+@router.post("/users/search")
+async def search_accounts(
+    body: AccountSearch, request: Request, admin: dict = Depends(require_admin),
+):
+    if body.kind == "phone":
+        needle = normalize_phone(body.q)
+        predicate = User.phone_number == needle
+    else:
+        needle = body.q.strip().lower()
+        predicate = func.lower(User.email) == needle
+    if not needle:
+        raise HTTPException(422, detail={"code": "ADMIN_ACCOUNT_QUERY_INVALID"})
+    stmt = select(User).where(User.is_deleted.is_(False), predicate)
+    return await _users(stmt, request, admin, body.offset, body.limit, lookup=body.kind)
 
 
 @router.get("/workspaces/{workspace_id}")
@@ -69,7 +104,6 @@ async def get_workspace_admin(
 ):
     workspace = await _workspace_repo.get(workspace_id)
     if workspace is None:
-        from fastapi import HTTPException
         raise HTTPException(404, detail="Workspace not found")
     result = {**workspace, "members": await _workspace_repo.list_members(workspace_id)}
     await record(admin["user_id"], workspace_id, "admin.view_workspace",

@@ -84,6 +84,13 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
           event.sessionId,
           (s) => s.copyWith(title: asString(event.data['title']) ?? s.title),
         );
+      case 'session.deleted':
+        final id = event.sessionId;
+        if (id != null &&
+            event.data['workspaceId'] ==
+                ref.read(activeWorkspaceProvider).valueOrNull?.currentId) {
+          _removeSessions({id});
+        }
       case 'session.status':
         // Reconnect already fetches the complete list. In particular, an
         // unknown historical/subagent session must not start another fetch.
@@ -125,6 +132,30 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
         .createSession(projectId: projectId, model: model, agent: agent);
     await refresh();
     return session;
+  }
+
+  void _removeSessions(Set<String> ids) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    state = AsyncData(
+      WorkspaceData(
+        projects: current.projects,
+        sessions: current.sessions
+            .where((session) => !ids.contains(session.id))
+            .toList(),
+      ),
+    );
+  }
+
+  Future<({List<String> deleted, List<String> failed})> deleteSessions(
+    List<String> ids,
+  ) async {
+    final scope = ref.read(activeWorkspaceProvider).valueOrNull?.currentId;
+    final result = await ref.read(workspaceApiProvider).deleteSessions(ids);
+    if (scope == ref.read(activeWorkspaceProvider).valueOrNull?.currentId) {
+      _removeSessions(result.deleted.toSet());
+    }
+    return result;
   }
 
   Future<void> deleteSession(String id) async {

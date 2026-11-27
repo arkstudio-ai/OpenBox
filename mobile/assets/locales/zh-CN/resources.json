@@ -9,7 +9,13 @@
     "user": "我上传的",
     "agent": "模型产出"
   },
+  "archive": {
+    "generated": "生成",
+    "unfiled": "未归档的生成"
+  },
   "kind": {
+    "files": "文件",
+    "more": "更多类型",
     "all": "全部类型",
     "image": "图片",
     "video": "视频",

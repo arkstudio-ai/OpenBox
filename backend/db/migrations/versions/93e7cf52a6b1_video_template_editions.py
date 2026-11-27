@@ -3,8 +3,8 @@ from alembic import op
 import sqlalchemy as sa
 from db.base import JSONType
 
-revision = "pt0a6b7c8d9e"
-down_revision = "ps9f5a6b7c8d"
+revision = "93e7cf52a6b1"
+down_revision = "pt0a6b7c8d9e"
 branch_labels = None
 depends_on = None
 

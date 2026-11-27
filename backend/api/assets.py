@@ -226,11 +226,38 @@ def _to_item(row: FileAsset, oss, *, video_thumbnails: bool = False) -> dict:
     return item
 
 
+async def _archive_sessions(db, user_id: str, workspace_id: str, session_ids: set[str]):
+    """Resolve outputs from subagents to the conversation shown in history."""
+    from db.models.session import Session
+    from session.policy import readable_session
+
+    sessions = {}
+    pending = session_ids
+    queried = set()
+    while pending:
+        queried.update(pending)
+        rows = (await db.execute(select(Session.id, Session.title, Session.parent_id).where(
+            Session.id.in_(pending), readable_session(user_id, workspace_id, Session),
+        ))).all()
+        sessions.update((row.id, row) for row in rows)
+        pending = {row.parent_id for row in rows if row.parent_id} - queried
+
+    archives = {}
+    for session_id in session_ids & sessions.keys():
+        session = sessions[session_id]
+        visited = {session_id}
+        while session.parent_id in sessions and session.parent_id not in visited:
+            session = sessions[session.parent_id]
+            visited.add(session.id)
+        archives[session_id] = (session.id, session.title or "")
+    return archives
+
+
 @router.get("")
 async def list_assets(
     project: str = Query("all", description="project id, 'all', or 'none' for unfiled"),
     source: str = Query("all", description="'all' | 'user' | 'agent'"),
-    kind: str = Query("all", description=f"'all' | {' | '.join(KINDS)}"),
+    kind: str = Query("all", description=f"'all' | 'media' (image or video) | {' | '.join(KINDS)}"),
     q: str = "",
     sort: str = Query("created", description="'created' | 'name' | 'size'"),
     limit: int = Query(60, ge=1, le=500),
@@ -263,16 +290,27 @@ async def list_assets(
         "created": FileAsset.created_at.desc(),
     }.get(sort, FileAsset.created_at.desc())
 
+    kinds = {"image", "video"} if kind == "media" else {kind}.intersection(KINDS)
     async with get_db_session() as db:
-        rows = list((await db.execute(stmt.order_by(order).limit(_SCAN_CAP))).scalars())
+        rows = list((await db.execute(stmt.order_by(order, FileAsset.id).limit(_SCAN_CAP))).scalars())
 
-    # Kind is derived from mime+name, so it is filtered here rather than in SQL.
-    if kind in KINDS:
-        rows = [r for r in rows if kind_of(r.mime, r.name) == kind]
+        # Keep the MIME/extension rules in one place, and filter before slicing.
+        if kinds:
+            rows = [row for row in rows if kind_of(row.mime, row.name) in kinds]
+        page = rows[offset : offset + limit]
+        archives = {}
+        if source == "agent":
+            session_ids = {row.session_id for row in page if row.session_id}
+            archives = await _archive_sessions(db, user_id, current_user["workspace_id"], session_ids)
 
-    page = rows[offset : offset + limit]
+    items = []
+    for row in page:
+        item = _to_item(row, oss, video_thumbnails=video_thumbnails)
+        if row.session_id in archives:
+            item["archiveSessionId"], item["sessionTitle"] = archives[row.session_id]
+        items.append(item)
     return {
-        "items": [_to_item(r, oss, video_thumbnails=video_thumbnails) for r in page],
+        "items": items,
         "total": len(rows),
         "hasMore": offset + limit < len(rows),
     }

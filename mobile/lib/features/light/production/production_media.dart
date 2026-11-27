@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/models/resource.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/media_viewer.dart';
+import '../../../shared/widgets/resource_archive_heading.dart';
 import '../../chat/api/assets_api.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
@@ -305,22 +307,33 @@ class ProductionLibrary extends ConsumerStatefulWidget {
     super.key,
     required this.imagesOnly,
     required this.selected,
+    this.limit = 10,
   });
 
   final bool imagesOnly;
   final List<String> selected;
+  final int limit;
 
   @override
   ConsumerState<ProductionLibrary> createState() => _ProductionLibraryState();
 }
 
+enum _LibraryCategory { all, image, video, generated }
+
+class _LibraryPage {
+  final items = <String, Resource>{};
+  int offset = 0;
+  bool loading = false;
+  bool hasMore = true;
+  Object? error;
+}
+
 class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
   late final _selected = widget.selected.toSet();
-  final _media = <ProductionMedia>[];
-  String _kind = 'image';
-  bool _loading = false;
-  bool _hasMore = true;
-  Object? _error;
+  final _pages = {
+    for (final category in _LibraryCategory.values) category: _LibraryPage(),
+  };
+  _LibraryCategory _category = _LibraryCategory.all;
 
   @override
   void initState() {
@@ -328,37 +341,80 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
     _load();
   }
 
-  Future<void> _load({String? kind}) async {
-    if (_loading) return;
+  void _selectCategory(_LibraryCategory category) {
+    if (category == _category) return;
+    setState(() => _category = category);
+    final page = _pages[category]!;
+    if (page.offset == 0 && page.error == null) _load();
+  }
+
+  Future<void> _load() async {
+    final category = _category;
+    final page = _pages[category]!;
+    if (page.loading || !page.hasMore) return;
     setState(() {
-      _loading = true;
-      _error = null;
-      if (kind != null) {
-        _kind = kind;
-        _media.clear();
-        _hasMore = true;
-      }
+      page.loading = true;
+      page.error = null;
     });
     try {
-      final page = await ref
+      final kind = widget.imagesOnly
+          ? 'image'
+          : switch (category) {
+              _LibraryCategory.image => 'image',
+              _LibraryCategory.video => 'video',
+              _ => 'media',
+            };
+      final result = await ref
           .read(lightProductionApiProvider)
-          .library(kind: _kind, offset: _media.length);
-      if (mounted) {
-        setState(() {
-          _media.addAll(page.items.map(ProductionMedia.fromResource));
-          _hasMore = page.hasMore;
-        });
+          .library(
+            kind: kind,
+            offset: page.offset,
+            generated: category == _LibraryCategory.generated,
+          );
+      if (!mounted) return;
+      for (final item in result.items) {
+        // Older servers treat the mixed-media request as an unfiltered list.
+        // Advance using the raw page size and keep other file types out.
+        if (item.kind == 'image' ||
+            (!widget.imagesOnly && item.kind == 'video')) {
+          page.items[item.id] = item;
+        }
       }
+      page.offset += result.items.length;
+      page.hasMore = result.hasMore && result.items.isNotEmpty;
     } catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted) page.error = error;
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => page.loading = false);
     }
   }
+
+  Widget _grid(List<Resource> items) => SliverGrid.builder(
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 3,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+    ),
+    itemCount: items.length,
+    itemBuilder: (context, index) {
+      final asset = items[index];
+      final selected = _selected.contains(asset.id);
+      return _LibraryTile(
+        media: ProductionMedia.fromResource(asset),
+        selected: selected,
+        onToggle: !selected && _selected.length >= widget.limit
+            ? null
+            : () => setState(() {
+                if (!_selected.remove(asset.id)) _selected.add(asset.id);
+              }),
+      );
+    },
+  );
 
   @override
   Widget build(BuildContext context) {
     final i18n = ref.watch(i18nProvider);
+    final page = _pages[_category]!;
     return SafeArea(
       child: FractionallySizedBox(
         heightFactor: .82,
@@ -371,74 +427,70 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
                 i18n.t('light:production.library'),
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              if (!widget.imagesOnly) ...[
-                const SizedBox(height: 12),
-                SegmentedButton<String>(
-                  segments: [
-                    ButtonSegment(
-                      value: 'image',
-                      label: Text(i18n.t('light:production.photos')),
-                    ),
-                    ButtonSegment(
-                      value: 'video',
-                      label: Text(i18n.t('light:production.videos')),
-                    ),
-                  ],
-                  selected: {_kind},
-                  onSelectionChanged: _loading
-                      ? null
-                      : (values) => _load(kind: values.first),
-                ),
-              ],
               const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                children: [
+                  for (final category in _LibraryCategory.values)
+                    if (!widget.imagesOnly ||
+                        category == _LibraryCategory.all ||
+                        category == _LibraryCategory.generated)
+                      ChoiceChip(
+                        key: Key(
+                          'production-library-category-${category.name}',
+                        ),
+                        label: Text(
+                          i18n.t(switch (category) {
+                            _LibraryCategory.all => 'light:production.all',
+                            _LibraryCategory.image => 'light:production.photos',
+                            _LibraryCategory.video => 'light:production.videos',
+                            _LibraryCategory.generated =>
+                              'resources:archive.generated',
+                          }),
+                        ),
+                        showCheckmark: false,
+                        selected: _category == category,
+                        onSelected: (_) => _selectCategory(category),
+                      ),
+                ],
+              ),
+              const SizedBox(height: 8),
               Expanded(
                 child: CustomScrollView(
+                  key: PageStorageKey(_category),
                   slivers: [
-                    SliverGrid.builder(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            mainAxisSpacing: 8,
-                            crossAxisSpacing: 8,
-                          ),
-                      itemCount: _media.length,
-                      itemBuilder: (context, index) {
-                        final media = _media[index];
-                        final selected = _selected.contains(media.id);
-                        return _LibraryTile(
-                          media: media,
-                          selected: selected,
-                          onToggle: !selected && _selected.length >= 10
-                              ? null
-                              : () => setState(() {
-                                  if (!_selected.remove(media.id)) {
-                                    _selected.add(media.id);
-                                  }
-                                }),
-                        );
-                      },
-                    ),
+                    if (_category == _LibraryCategory.generated)
+                      for (final archive in resourceArchives(
+                        page.items.values,
+                      )) ...[
+                        SliverToBoxAdapter(
+                          child: ResourceArchiveHeading(title: archive.title),
+                        ),
+                        _grid(archive.items),
+                      ]
+                    else
+                      _grid(page.items.values.toList()),
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: _error != null
+                        child: page.error != null
                             ? Column(
                                 children: [
-                                  Text(errorText(i18n, _error!)),
+                                  Text(errorText(i18n, page.error!)),
                                   TextButton(
                                     onPressed: _load,
                                     child: Text(i18n.t('common:action.retry')),
                                   ),
                                 ],
                               )
-                            : _loading
+                            : page.loading
                             ? const LinearProgressIndicator()
-                            : _media.isEmpty
+                            : page.items.isEmpty && !page.hasMore
                             ? Text(
                                 i18n.t('light:production.emptyLibrary'),
                                 textAlign: TextAlign.center,
                               )
-                            : _hasMore
+                            : page.hasMore
                             ? TextButton(
                                 onPressed: _load,
                                 child: Text(i18n.t('light:production.more')),
@@ -449,6 +501,14 @@ class _ProductionLibraryState extends ConsumerState<ProductionLibrary> {
                   ],
                 ),
               ),
+              if (_selected.length >= widget.limit)
+                Text(
+                  i18n.t(
+                    'light:production.materialLimit',
+                    vars: {'count': widget.limit},
+                  ),
+                  textAlign: TextAlign.center,
+                ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, _selected.toList()),
                 child: Text(

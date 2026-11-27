@@ -484,17 +484,33 @@ class LightProductionApi {
     options: _mediaWait,
   )).data!;
 
+  Future<List<ProductionDish>> recognizeDishes(
+    LightProduction task,
+    List<String> assets,
+  ) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '$_path/${task.sessionId}/dish-import',
+      data: {'revision': task.revision, 'asset_ids': assets},
+      options: _mediaWait,
+    );
+    return asList(
+      response.data?['dishes'],
+    ).map((item) => ProductionDish.fromJson(asMap(item))).toList();
+  }
+
   Future<ResourcePage> library({
     required String kind,
     required int offset,
+    bool generated = false,
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/api/assets',
       queryParameters: {
         'kind': kind,
         'offset': offset,
+        if (generated) 'source': 'agent',
         'owned_only': true,
-        if (kind == 'video') 'video_thumbnails': true,
+        if (kind != 'image') 'video_thumbnails': true,
       },
     );
     return ResourcePage.fromJson(response.data ?? const {});

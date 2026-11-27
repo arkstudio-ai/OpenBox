@@ -51,6 +51,7 @@ export const paths = {
   // Kept at its original value: links to the fleet page predate the console
   // shell and are still handed around in ops runbooks.
   adminFleet: "/app/admin/fleet",
+  adminAccounts: "/app/admin/accounts",
   adminNotifications: "/app/admin/notifications",
   adminMessages: (tab?: string) => (tab ? `/app/admin/messages/${tab}` : "/app/admin/messages"),
   adminSkills: (tab?: string) => (tab ? `/app/admin/skills/${tab}` : "/app/admin/skills"),
@@ -113,6 +114,7 @@ export const routePatterns = {
   // that route, so what used to be an `/app` child is now just "fleet".
   admin: "admin",
   adminFleet: "fleet",
+  adminAccounts: "accounts",
   adminNotifications: "notifications",
   adminMessages: "messages/:tab?",
   adminSkills: "skills/:tab?",

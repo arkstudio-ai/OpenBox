@@ -80,11 +80,7 @@ class AuthFlow {
           '/api/auth/logto/id-token',
           data: {'id_token': idToken},
         );
-    await _completeAuth(
-      resp.data ?? const {},
-      acceptedLegal: acceptedLegal,
-      registered: register,
-    );
+    await _completeAuth(resp.data ?? const {}, acceptedLegal: acceptedLegal);
   }
 
   /// Best-effort prefs fetch → first-video entry + interface mode → setAuth
@@ -139,13 +135,22 @@ class AuthFlow {
     _ref.read(firstVideoEntryProvider.notifier).state = prefs == null
         ? FirstVideoEntry.settled
         : firstVideoEntryFromPreferences(prefs);
-    final uiMode = prefs == null
-        ? (registered ? UiMode.light : UiMode.pro)
-        : uiModeFromPreferences(prefs);
+    final prefMode = asString(asMap(prefs?['extra'])['ui_mode']);
+    final serverMode = asString(tokenResponse['ui_mode']);
+    final explicitMode = prefMode == 'light' || prefMode == 'pro'
+        ? prefMode
+        : serverMode;
+    final uiMode = explicitMode == 'light' || explicitMode == 'pro'
+        ? uiModeFromWire(explicitMode)
+        : registered
+        ? UiMode.light
+        : _ref.read(uiModeProvider.notifier).cached(user.id);
     // The mode store rebuilds for the new account on setAuth and reads its
     // device cache first, so the cache is primed before and the live state
     // confirmed after.
-    _ref.read(uiModeProvider.notifier).prime(user.id, uiMode);
+    if (uiMode != null) {
+      _ref.read(uiModeProvider.notifier).prime(user.id, uiMode);
+    }
     _ref
         .read(authProvider.notifier)
         .setAuth(
@@ -153,7 +158,10 @@ class AuthFlow {
           user,
           mobileSessionId: asString(tokenResponse['mobile_session_id']),
         );
-    _ref.read(uiModeProvider.notifier).adopt(uiMode);
+    if (uiMode != null &&
+        (registered || explicitMode == 'light' || explicitMode == 'pro')) {
+      _ref.read(uiModeProvider.notifier).adopt(uiMode);
+    }
     if (prefs == null) return;
     try {
       _ref.read(appearanceProvider.notifier).hydrateFromServer(prefs);

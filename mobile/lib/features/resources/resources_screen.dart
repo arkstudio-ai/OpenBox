@@ -7,6 +7,7 @@ import '../../shared/download/native_download.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/resource.dart';
 import '../../shared/utils/error_text.dart';
+import '../../shared/widgets/resource_archive_heading.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/resources_api.dart';
 import 'resource_detail_page.dart';
@@ -269,9 +270,18 @@ class _ResourcesScreenState extends ConsumerState<ResourcesScreen> {
         body: i18n.t('onboarding:m2.resourcesEmpty.body'),
       );
     }
+    final rows = <({Resource? item, String? title})>[
+      if (_query.source == 'agent')
+        for (final archive in resourceArchives(items)) ...[
+          (item: null, title: archive.title),
+          for (final item in archive.items) (item: item, title: null),
+        ]
+      else
+        for (final item in items) (item: item, title: null),
+    ];
     return ListView.separated(
       padding: const EdgeInsets.only(bottom: 12),
-      itemCount: items.length + _uploading.length + 1,
+      itemCount: rows.length + _uploading.length + 1,
       separatorBuilder: (_, _) => Divider(height: 1, indent: 58, color: t.hair),
       itemBuilder: (context, index) {
         if (index < _uploading.length) {
@@ -279,7 +289,7 @@ class _ResourcesScreenState extends ConsumerState<ResourcesScreen> {
           return _UploadRow(name: entry.key, progress: entry.value);
         }
         final offset = index - _uploading.length;
-        if (offset == items.length) {
+        if (offset == rows.length) {
           return _Footer(
             data: data,
             shown: items.length,
@@ -288,7 +298,14 @@ class _ResourcesScreenState extends ConsumerState<ResourcesScreen> {
             ),
           );
         }
-        final resource = items[offset];
+        final row = rows[offset];
+        final resource = row.item;
+        if (resource == null) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ResourceArchiveHeading(title: row.title),
+          );
+        }
         return ResourceRow(
           resource: resource,
           selecting: _selected.isNotEmpty,

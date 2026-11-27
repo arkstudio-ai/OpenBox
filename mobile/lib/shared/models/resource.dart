@@ -36,6 +36,8 @@ class Resource {
     this.thumbnail,
     this.projectId,
     this.sessionId,
+    this.sessionTitle,
+    this.archiveSessionId,
     this.status = 'ready',
     this.createdAt,
   });
@@ -60,6 +62,11 @@ class Resource {
 
   final String? projectId;
   final String? sessionId;
+
+  /// Present for generated assets whose conversation is still readable.
+  /// An empty title identifies a readable conversation that has no name yet.
+  final String? sessionTitle;
+  final String? archiveSessionId;
   final String status;
   final DateTime? createdAt;
 
@@ -77,9 +84,31 @@ class Resource {
     thumbnail: asString(json['thumbnail']),
     projectId: asString(json['projectId']),
     sessionId: asString(json['sessionId']),
+    sessionTitle: asString(json['sessionTitle']),
+    archiveSessionId: asString(json['archiveSessionId']),
     status: asString(json['status']) ?? 'ready',
     createdAt: asDate(json['createdAt']),
   );
+}
+
+/// Group by conversation identity, so equal titles remain separate. Older
+/// items without a readable conversation still have a place in the library.
+Iterable<({String? title, List<Resource> items})> resourceArchives(
+  Iterable<Resource> resources,
+) sync* {
+  final groups = <String?, List<Resource>>{};
+  for (final resource in resources) {
+    final id = resource.sessionTitle == null
+        ? null
+        : resource.archiveSessionId ?? resource.sessionId;
+    (groups[id] ??= []).add(resource);
+  }
+  for (final entry in groups.entries) {
+    yield (
+      title: entry.key == null ? null : entry.value.first.sessionTitle,
+      items: entry.value,
+    );
+  }
 }
 
 class ResourcePage {

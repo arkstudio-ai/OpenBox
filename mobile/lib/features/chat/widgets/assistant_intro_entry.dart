@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -91,8 +93,8 @@ class _AssistantIntroEntryState extends ConsumerState<AssistantIntroEntry> {
     _open = false;
     // Swiping the sheet away or tapping the scrim is the same answer as
     // 以后再说: recorded, so the meeting does not come back by itself.
-    if (mode == 'auto' && !closedByItself) {
-      ref
+    if (mounted && mode == 'auto' && !closedByItself) {
+      await ref
           .read(assistantProfileProvider.notifier)
           .recordIntro({'event': 'dismiss'})
           .catchError((_) {});
@@ -105,7 +107,9 @@ class _AssistantIntroEntryState extends ConsumerState<AssistantIntroEntry> {
     if (!introStartsByItself(profile)) return;
     _autoOpened = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _openMeeting('auto');
+      if (mounted && widget.autoOpen) {
+        unawaited(_openMeeting('auto'));
+      }
     });
   }
 

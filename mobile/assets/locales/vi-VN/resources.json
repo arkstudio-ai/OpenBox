@@ -9,7 +9,13 @@
     "user": "Tôi tải lên",
     "agent": "Do mô hình tạo ra"
   },
+  "archive": {
+    "generated": "Đã tạo",
+    "unfiled": "Nội dung chưa phân loại"
+  },
   "kind": {
+    "files": "Tệp",
+    "more": "Loại khác",
     "all": "Tất cả loại",
     "image": "Hình ảnh",
     "video": "Video",

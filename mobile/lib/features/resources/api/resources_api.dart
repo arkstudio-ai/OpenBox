@@ -118,12 +118,11 @@ final resourcesRevisionProvider = StateProvider<int>((ref) => 0);
 void bumpResources(WidgetRef ref) =>
     ref.read(resourcesRevisionProvider.notifier).state++;
 
-final resourceListProvider = FutureProvider.family<ResourcePage, ResourceQuery>(
-  (ref, query) {
-    ref.watch(resourcesRevisionProvider);
-    return ref.watch(resourcesApiProvider).list(query);
-  },
-);
+final resourceListProvider = FutureProvider.autoDispose
+    .family<ResourcePage, ResourceQuery>((ref, query) {
+      ref.watch(resourcesRevisionProvider);
+      return ref.watch(resourcesApiProvider).list(query);
+    });
 
 final resourceProjectsProvider = FutureProvider<List<(String, String)>>(
   (ref) => ref.watch(resourcesApiProvider).listProjects(),

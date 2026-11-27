@@ -11,7 +11,8 @@ class PgUserRepo:
     async def create(self, *, id: str, username: str, password_hash: str | None,
                      email: str | None = None, role: str = "user",
                      oauth_provider: str | None = None, oauth_id: str | None = None,
-                     avatar_url: str | None = None) -> dict:
+                     avatar_url: str | None = None, ui_mode: str | None = None,
+                     phone_number: str | None = None) -> dict:
         # password_hash is None for federated users (Logto/OIDC) — they never
         # authenticate against the local password path.
         now = datetime.now(timezone.utc)
@@ -22,7 +23,7 @@ class PgUserRepo:
 
         workspace_id = generate_id()
         user = User(id=id, username=username, password_hash=password_hash,
-                    email=email, role=role, oauth_provider=oauth_provider,
+                    email=email, phone_number=phone_number, role=role, oauth_provider=oauth_provider,
                     oauth_id=oauth_id, avatar_url=avatar_url,
                     created_at=now, updated_at=now)
         async with get_db_session() as session:
@@ -67,6 +68,12 @@ class PgUserRepo:
             )
             await session.flush()
             user.default_workspace_id = workspace_id
+            if ui_mode is not None:
+                from db.models.preference import UserPreference
+
+                session.add(UserPreference(
+                    id=generate_id(), user_id=id, extra={"ui_mode": ui_mode},
+                ))
         return {
             "id": id,
             "username": username,
@@ -118,6 +125,13 @@ class PgUserRepo:
                 update(User).where(User.id == user_id).values(**fields)
             )
         return await self.get(user_id)
+
+    async def sync_verified_phone(self, user_id: str, phone_number: str | None) -> None:
+        async with get_db_session() as session:
+            await session.execute(update(User).where(
+                User.id == user_id,
+                User.phone_number.is_distinct_from(phone_number),
+            ).values(phone_number=phone_number))
 
     async def soft_delete(self, user_id: str) -> None:
         now = datetime.now(timezone.utc)

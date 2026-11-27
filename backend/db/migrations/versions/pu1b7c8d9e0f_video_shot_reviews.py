@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from db.base import JSONType
 
 revision = "pu1b7c8d9e0f"
-down_revision = "pt0a6b7c8d9e"
+down_revision = "93e7cf52a6b1"
 branch_labels = None
 depends_on = None
 

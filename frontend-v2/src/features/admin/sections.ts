@@ -10,6 +10,7 @@ export const ADMIN_SECTIONS = [
   "examples",
   "notifications",
   "messages",
+  "accounts",
 ] as const
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
@@ -20,6 +21,7 @@ export type AdminSection = (typeof ADMIN_SECTIONS)[number]
  */
 export const ADMIN_SECTION_PATHS: Record<AdminSection, string> = {
   fleet: paths.adminFleet,
+  accounts: paths.adminAccounts,
   notifications: paths.adminNotifications,
   messages: paths.adminMessages(),
   skills: paths.adminSkills(),

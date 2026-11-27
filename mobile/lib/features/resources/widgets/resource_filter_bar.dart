@@ -10,8 +10,7 @@ import '../utils/resource_display.dart';
 import 'resource_sheets.dart';
 
 /// The web's left rail (project) and toolbar (source / type / sort / select)
-/// folded into two scrollable chip rows — the same two-level "project →
-/// who produced it" narrowing, in the width a phone actually has.
+/// folded into scrollable chip rows. Common media kinds stay one tap away.
 class ResourceFilterBar extends ConsumerWidget {
   const ResourceFilterBar({
     super.key,
@@ -80,7 +79,11 @@ class ResourceFilterBar extends ConsumerWidget {
               // Second level: user input vs model output.
               for (final source in sourceFilters) ...[
                 _Chip(
-                  label: i18n.t(sourceLabelKey(source)),
+                  label: i18n.t(
+                    source == 'agent'
+                        ? 'resources:archive.generated'
+                        : sourceLabelKey(source),
+                  ),
                   icon: sourceIcon(source),
                   active: query.source == source,
                   onTap: () => onQueryChanged(query.copyWith(source: source)),
@@ -92,25 +95,33 @@ class ResourceFilterBar extends ConsumerWidget {
         ),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
           child: Row(
             children: [
+              for (final kind in _quickKinds)
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 6),
+                  child: _Chip(
+                    label: i18n.t(switch (kind) {
+                      'all' => 'resources:kind.all',
+                      'document' => 'resources:kind.files',
+                      _ => kindLabelKey(kind),
+                    }),
+                    icon: kind == 'all'
+                        ? Icons.layers_outlined
+                        : kindIcon(kind),
+                    active: query.kind == kind,
+                    onTap: () => onQueryChanged(query.copyWith(kind: kind)),
+                  ),
+                ),
               _Chip(
-                label: selecting
-                    ? i18n.t('resources:actions.clearSelection')
-                    : i18n.t('resources:actions.selectAll'),
-                icon: selecting ? Icons.deselect : Icons.select_all,
-                active: false,
-                enabled: selecting || canSelect,
-                onTap: selecting ? onClearSelection : onSelectAll,
-              ),
-              const SizedBox(width: 6),
-              _Chip(
-                label: query.kind == 'all'
-                    ? i18n.t('resources:actions.filter')
-                    : i18n.t(kindLabelKey(query.kind)),
+                label: i18n.t(
+                  _quickKinds.contains(query.kind)
+                      ? 'resources:kind.more'
+                      : kindLabelKey(query.kind),
+                ),
                 icon: Icons.filter_alt_outlined,
-                active: query.kind != 'all',
+                active: !_quickKinds.contains(query.kind),
                 trailingCaret: true,
                 onTap: () async {
                   final picked = await showKindSheet(
@@ -122,6 +133,23 @@ class ResourceFilterBar extends ConsumerWidget {
                     onQueryChanged(query.copyWith(kind: picked));
                   }
                 },
+              ),
+            ],
+          ),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+          child: Row(
+            children: [
+              _Chip(
+                label: selecting
+                    ? i18n.t('resources:actions.clearSelection')
+                    : i18n.t('resources:actions.selectAll'),
+                icon: selecting ? Icons.deselect : Icons.select_all,
+                active: false,
+                enabled: selecting || canSelect,
+                onTap: selecting ? onClearSelection : onSelectAll,
               ),
               const SizedBox(width: 6),
               _Chip(
@@ -160,6 +188,8 @@ class ResourceFilterBar extends ConsumerWidget {
     );
   }
 }
+
+const _quickKinds = ['all', 'image', 'video', 'document'];
 
 class _Chip extends StatelessWidget {
   const _Chip({

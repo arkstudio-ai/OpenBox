@@ -40,7 +40,15 @@ async def ui_mode(user_id: str) -> str:
     row = await PgPreferenceRepo().get(user_id)
     extra = (row or {}).get("extra") or {}
     value = extra.get(MODE_KEY) if isinstance(extra, dict) else None
-    return value if value in MODES else DEFAULT_MODE
+    if isinstance(value, str) and value in MODES:
+        return value
+    # The first-video offer exists only on accounts registered through the
+    # onboarding path. It also lets affected signups with a missing mode seed
+    # open Light on their next launch without changing legacy users' defaults.
+    first_video = extra.get("first_video") if isinstance(extra, dict) else None
+    if isinstance(first_video, dict) and first_video.get("status") == "offered":
+        return NEW_USER_MODE
+    return DEFAULT_MODE
 
 
 async def set_ui_mode(user_id: str, mode: str) -> str:

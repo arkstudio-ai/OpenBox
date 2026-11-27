@@ -17,11 +17,16 @@ export function useWorkspaceEvents(surface: "assistant" | "workspace" = "workspa
       void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) })
       void qc.invalidateQueries({ queryKey: ["billing", userId, workspaceId] })
     }
+    const invalidateTitles = () => {
+      invalidate()
+      void qc.invalidateQueries({ queryKey: ["session-search", userId, workspaceId] })
+    }
     const subs = [
       // __connected already refreshes these views. Hydrate stream status
       // without refetching the whole list/balance once per historical chat.
       wsClient.on("session.status", (data) => { if (!data.recovery) invalidate() }),
-      wsClient.on("session.title", invalidate),
+      wsClient.on("session.title", invalidateTitles),
+      wsClient.on("session.deleted", (data) => { if (data.workspaceId === workspaceId) invalidateTitles() }),
       wsClient.on("session.updated", invalidate),
       wsClient.on("__connected", invalidate),
     ]

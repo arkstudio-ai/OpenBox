@@ -89,18 +89,24 @@ class WorkspaceBootstrap extends ConsumerWidget {
             onRetry: () => ref.invalidate(activeWorkspaceProvider),
           );
         }
-        // Cold start: the account's interface mode is fetched once, now that
-        // the authenticated UI is about to mount (the device cache decided
-        // the first paint; a different answer re-routes through the router's
-        // refresh listenable).
+        final mode = ref.watch(uiModeProvider);
         ref.read(uiModeProvider.notifier).ensureLoaded();
+        if (!mode.ready) {
+          return mode.error == null
+              ? const _WorkspaceLoading()
+              : _WorkspaceError(
+                  message: errorText(ref.watch(i18nProvider), mode.error!),
+                  onRetry: ref.read(uiModeProvider.notifier).retry,
+                );
+        }
+
         return DesktopActivationHost(
-              key: ValueKey((auth.userId, data.currentId)),
-              scope: (userId: auth.userId, workspaceId: data.currentId!),
-              workspaceName: data.current?.name ?? '',
-              canManage: data.current?.role.canManage ?? false,
-              child: child,
-            );
+          key: ValueKey((auth.userId, data.currentId)),
+          scope: (userId: auth.userId, workspaceId: data.currentId!),
+          workspaceName: data.current?.name ?? '',
+          canManage: data.current?.role.canManage ?? false,
+          child: child,
+        );
       },
     );
   }

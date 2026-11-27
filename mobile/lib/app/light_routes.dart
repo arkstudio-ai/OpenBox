@@ -22,7 +22,9 @@ import '../features/light/topic_chat_screen.dart';
 import '../features/light/topic_gallery_page.dart';
 import '../features/light/widgets/light_shell.dart';
 import '../features/voice/widgets/voice_call_button.dart';
+import '../features/workspace/widgets/session_drawer.dart';
 import '../shared/api/assistant_profile.dart';
+import '../shared/i18n/i18n.dart';
 import '../shared/router/paths.dart';
 
 typedef ResourceSlotOf = ComposerResourceSlot Function(WidgetRef ref);
@@ -101,6 +103,17 @@ List<GoRoute> lightRoutes({required ResourceSlotOf resources}) => [
         brief: state.uri.queryParameters['brief'],
       );
     },
+  ),
+  GoRoute(
+    path: Paths.lightConversations,
+    builder: (context, state) => Consumer(
+      builder: (context, ref, _) => Scaffold(
+        appBar: AppBar(
+          title: Text(ref.watch(i18nProvider).t('workspace:chatHistory')),
+        ),
+        body: const SessionDrawer(standalone: true),
+      ),
+    ),
   ),
   GoRoute(
     path: Paths.lightProductionHistory,

@@ -968,6 +968,38 @@ void main() {
     },
   );
 
+  testWidgets('pending requests live in My tasks, outside the conversation', (
+    tester,
+  ) async {
+    final api = _RequestsWaiting()
+      ..waiting = [
+        {
+          'id': 'wait-1',
+          'session_id': 'shop',
+          'session_title': 'Weekend',
+          'questions': [
+            {'header': '', 'question': 'Confirm the price?'},
+          ],
+        },
+      ];
+    final f = await _mount(
+      tester,
+      const Column(
+        children: [
+          AssistantTasksButton(scope: scope),
+          Expanded(child: AssistantScreen(scope: scope, embedded: true)),
+        ],
+      ),
+      server: api,
+    );
+    expect(find.byType(AssistantRequests), findsNothing);
+    await tester.tap(find.byKey(const Key('assistant-tasks-button')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AssistantRequests), findsOneWidget);
+    expect(find.text('Confirm the price?'), findsOneWidget);
+    await _unmount(tester, f);
+  });
+
   testWidgets(
     'the attention card lists other conversations\' questions and only failed replies',
     (tester) async {

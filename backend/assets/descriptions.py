@@ -78,12 +78,24 @@ def caption_model(config):
     raise ValueError("image description requires an available vision model")
 
 
+async def image_input(row) -> str:
+    from core.oss import get_oss
+
+    data = bytearray()
+    async with asyncio.timeout(20):
+        async with aclosing(get_oss().get_object_chunks(row.oss_key, timeout=20)) as chunks:
+            async for chunk in chunks:
+                data.extend(chunk)
+                if len(data) > MAX_BYTES:
+                    raise ValueError("image description size limit")
+    return f"data:{row.mime};base64," + base64.b64encode(data).decode()
+
+
 async def caption(row):
     from agent.llm import reasoning_profile, stream_llm
     from assistant.policy import require_membership
     from assistant.service import ensure_main_session
     from core.config import get_config
-    from core.oss import get_oss
     from db.models.session import Session
     from tool.tool import ToolContext
 
@@ -102,17 +114,10 @@ async def caption(row):
     if session is None:
         session = await ensure_main_session(user_id=row.user_id, workspace_id=row.workspace_id)
     ctx = ToolContext(user_id=row.user_id, workspace_id=row.workspace_id, session_id=session.id)
-    data = bytearray()
-    async with asyncio.timeout(20):
-        async with aclosing(get_oss().get_object_chunks(row.oss_key, timeout=20)) as chunks:
-            async for chunk in chunks:
-                data.extend(chunk)
-                if len(data) > MAX_BYTES:
-                    raise ValueError("image description size limit")
-    image = f"data:{row.mime};base64," + base64.b64encode(data).decode()
+    image = await image_input(row)
     pieces, finished = [], False
     started = time.monotonic()
-    log.info("Image description request asset=%s model=%s variant=%s bytes=%s", row.id, model, variant, len(data))
+    log.info("Image description request asset=%s model=%s variant=%s bytes=%s", row.id, model, variant, row.size)
     async with asyncio.timeout(60):
         async with aclosing(stream_llm(None, [
             "为用户上传的图片写一段简短中文素材描述，便于以后通过自然语言找到它。"

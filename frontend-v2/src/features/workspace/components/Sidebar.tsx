@@ -16,6 +16,7 @@ import {
   Search,
   X,
 } from "lucide-react"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import { useInboxUnread } from "@/shared/api/inbox"
 import { cn } from "@/shared/lib/cn"
 import { BrandMark } from "@/shared/ui/BrandMark"
@@ -55,6 +56,7 @@ export function Sidebar({ showCredits = true, assistantUnread }: SidebarProps) {
 
   const projects = useProjectsQuery()
   const sessions = useSessionsQuery()
+  const workspaceId = useWorkspaceStore((state) => state.currentId)
   const inboxUnread = useInboxUnread()
   const createProject = useCreateProject()
   const selectedProject = useWorkspaceUi((s) => s.selectedProject)
@@ -289,7 +291,7 @@ export function Sidebar({ showCredits = true, assistantUnread }: SidebarProps) {
               {searching ? (
                 <SessionSearchResults query={query} sessions={sessions.data ?? []} projects={projects.data ?? []} />
               ) : (
-                <ProjectTree projects={projects.data ?? []} sessions={sessions.data ?? []} />
+                <ProjectTree key={workspaceId} projects={projects.data ?? []} sessions={sessions.data ?? []} />
               )}
             </div>
           </section>

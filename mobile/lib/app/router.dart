@@ -42,7 +42,6 @@ import '../shared/api/auth_store.dart';
 import '../shared/api/first_video_entry.dart';
 import '../shared/api/ui_mode_store.dart';
 import '../shared/i18n/i18n.dart';
-import '../shared/models/ui_mode.dart';
 import '../shared/router/paths.dart';
 import 'admin_route.dart';
 import 'assistant_session_entry.dart';
@@ -61,8 +60,8 @@ class _AuthRefresh extends ChangeNotifier {
     ref.listen<AuthState>(authProvider, (_, _) => notifyListeners());
     // The interface mode decides which home `/app` and the tabs resolve to;
     // a late answer from the server (or the Settings switch) re-routes.
-    ref.listen<UiMode>(
-      uiModeProvider.select((s) => s.mode),
+    ref.listen(
+      uiModeProvider.select((s) => (s.mode, s.ready)),
       (_, _) => notifyListeners(),
     );
     ref.listen<AsyncValue<ActiveWorkspaceState>>(activeWorkspaceProvider, (
@@ -88,6 +87,13 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: refresh,
     redirect: (context, state) async {
       final auth = ref.read(authProvider);
+      if (auth.isAuthenticated && !ref.read(uiModeProvider).ready) {
+        await ref.read(uiModeProvider.notifier).whenLoaded();
+        if (ref.read(authProvider).userId != auth.userId ||
+            !ref.read(uiModeProvider).ready) {
+          return null;
+        }
+      }
       final redirect = authRedirect(
         auth: auth,
         location: state.matchedLocation,

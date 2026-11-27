@@ -13,6 +13,7 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     username: Mapped[str] = mapped_column(String(64), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(16), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[str] = mapped_column(String(16), server_default="user")
@@ -35,6 +36,7 @@ class User(Base):
     __table_args__ = (
         Index("ix_users_username_active", "username", unique=True, postgresql_where=text("is_deleted = false")),
         Index("ix_users_email_active", "email", unique=True, postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
+        Index("ix_users_phone_number", "phone_number"),
         Index("ix_users_oauth", "oauth_provider", "oauth_id", unique=True, postgresql_where=text("oauth_provider IS NOT NULL")),
         # The trajectory metadata sync pages changed rows by this cursor.
         Index("ix_users_updated_id", "updated_at", "id"),

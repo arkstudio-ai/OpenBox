@@ -1,4 +1,24 @@
 {
+  "accounts": {
+    "username": "Account",
+    "phone": "Phone",
+    "email": "Email",
+    "workspace": "Default workspace",
+    "kind": "Search by",
+    "keyword": "Keyword",
+    "phoneHint": "Number with country code",
+    "emailHint": "Full email address",
+    "search": "Search",
+    "reset": "Reset",
+    "empty": "No matching accounts.",
+    "idle": "Enter a phone number or email address.",
+    "failed": "Search failed. Check the format or try again.",
+    "loading": "Looking up accounts",
+    "previous": "Previous",
+    "next": "Next",
+    "range_other": "{{count}} results",
+    "range_one": "{{count}} result"
+  },
   "mobile": {
     "createEntry": "New entry",
     "manageEntry": "Manage",
@@ -54,6 +74,7 @@
     "title": "Admin console"
   },
   "nav": {
+    "accounts": "Account lookup",
     "fleet": "Fleet",
     "skills": "Skills",
     "billing": "Subscriptions",
@@ -64,6 +85,7 @@
     "pricing": "Pricing"
   },
   "section": {
+    "accounts": {"title": "Account lookup", "subtitle": "Find an account by phone number or email."},
     "fleet": {
       "title": "Fleet management",
       "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts."

@@ -412,7 +412,24 @@ async def workspace_in_flight(db, workspace_id: str, *, exclude_job_id: str | No
 
 
 def _credits_text(value: Decimal) -> str:
+    if 0 < value < Decimal("0.01"):
+        return "不到 0.01"
     return format(value.quantize(Decimal("0.01")), "f")
+
+
+class InsufficientMediaCredits(BillingError):
+    def __init__(self, *, step: str, credits: Decimal | None, balance: Decimal, in_flight: Decimal):
+        self.required = credits
+        self.available = max(balance - in_flight, Decimal(0))
+        self.shortfall = max(credits - self.available, Decimal(0)) if credits is not None else None
+        cost = f"预计需 {_credits_text(credits)} 积分，" if credits is not None else ""
+        gap = f"，还差 {_credits_text(self.shortfall)} 积分" if self.shortfall else ""
+        super().__init__(
+            "INSUFFICIENT_CREDITS",
+            f"积分不足：这一步（{step}）{cost}当前余额 {_credits_text(max(balance, Decimal(0)))}，"
+            f"进行中的任务还将扣 {_credits_text(in_flight)}，可用 {_credits_text(self.available)} 积分{gap}。"
+            "本次未提交、未扣费。请补充积分，或调整剩余片段的时长或清晰度。",
+        )
 
 
 _hold_locks: dict[str, asyncio.Lock] = {}
@@ -463,18 +480,10 @@ async def hold_for_submit(session_id: str | None, *, credits: Decimal | None, st
         account = await lock_balance(db, workspace_id)
         from billing.subscriptions import ensure_period_allowance
         await ensure_period_allowance(db, account, datetime.now(timezone.utc))
-        if account.balance <= 0:
-            raise BillingError("INSUFFICIENT_CREDITS", "积分不足，请先充值后继续")
         need = Decimal(credits) if credits is not None and credits > 0 else Decimal(0)
         in_flight = await workspace_in_flight(db, workspace_id, exclude_job_id=exclude_job_id)
-        available = account.balance - in_flight
-        if available < need:
-            raise BillingError(
-                "INSUFFICIENT_CREDITS",
-                f"积分不足：这一步（{step}）预计 {_credits_text(need)} 积分，当前余额 {_credits_text(account.balance)}，"
-                f"进行中的任务还将扣 {_credits_text(in_flight)}，可用 {_credits_text(max(available, Decimal(0)))}。"
-                "未提交、未扣费。请先充值，或减少镜头数/时长/清晰度后再提交。",
-            )
+        if account.balance <= 0 or account.balance - in_flight < need:
+            raise InsufficientMediaCredits(step=step, credits=credits, balance=account.balance, in_flight=in_flight)
         yield
 
 

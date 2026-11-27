@@ -2909,6 +2909,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "attach":
         return await _execute_attach(args, ctx)
     if args.action == "submit":
+        from billing.media import InsufficientMediaCredits, hold_for_submit
+
         accepted_task_id = ""
         rate_limit_retried = False
         try:
@@ -2921,9 +2923,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         try:
             approved = await _resolve_open_submission(args, ctx)
             await _check_submit_budget(ctx)
-            from billing.media import precheck_compose as _precheck_media
-
-            await _precheck_media(ctx.session_id)
             prompt = approved["prompt"]
             resolution = approved["resolution"]
             ratio = approved["ratio"]
@@ -3085,13 +3084,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             # then see this one's quote. An idempotent re-submit was admitted
             # when its row was created and is not charged against the cap again.
             from billing import credit_cap as _credit_cap
-            from billing.media import hold_for_submit as _hold_for_submit
 
             # Same for the workspace balance: generation is charged when the
             # job finishes, so concurrent shots are admitted one at a time
             # against balance minus what is already in flight.
-            async with _hold_for_submit(ctx.session_id, credits=_quote.credits, step="视频生成",
-                                        already_admitted=admitted is not None), \
+            async with hold_for_submit(ctx.session_id, credits=_quote.credits, step="视频生成",
+                                       already_admitted=admitted is not None), \
                     _credit_cap.reserve(ctx.session_id, step="generation", credits=_quote.credits,
                                         note=f"{target.model} {resolution} {duration}s",
                                         already_admitted=admitted is not None):
@@ -3295,6 +3293,25 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "asset_id": asset.id if asset and asset.status == "ready" else None,
                     "workspace_path": workspace_path,
                     "retry_after_seconds": 5,
+                },
+            )
+        except InsufficientMediaCredits as exc:
+            return ToolResult(
+                title="积分不足，视频未提交",
+                output=(
+                    f"{exc.code}: {exc}\n"
+                    "保留已完成的片段和已提交的任务。停止原样重试，只和用户确认剩余片段如何继续，"
+                    "例如补足积分、缩短时长或选择用户同意且余额可覆盖的档位。"
+                ),
+                metadata={
+                    "error": True,
+                    "failure_code": exc.code,
+                    "submission_outcome": "not_sent",
+                    "do_not_resubmit": True,
+                    "shot": approved.get("shot"),
+                    "required_credits": str(exc.required) if exc.required is not None else None,
+                    "available_credits": str(exc.available),
+                    "shortfall_credits": str(exc.shortfall) if exc.shortfall is not None else None,
                 },
             )
         except QuestionSuspended:

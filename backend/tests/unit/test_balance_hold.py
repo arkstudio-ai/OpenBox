@@ -7,12 +7,15 @@ all seven passed, and the balance settled at -254.
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from billing import media
-from billing.service import BillingError
+from billing.service import BillingError, lock_balance
+from billing.subscriptions import ensure_period_allowance
 from core.identifier import ascending
 from db.base import get_db_session
 from db.models.billing import CreditBalance, UsageEvent
@@ -27,12 +30,9 @@ async def _session(balance: str) -> tuple[str, str, str]:
     created = await session_mod.create_session(model="openai/gemini-3.8-flash", agent="build", title="hold",
                                                user_id=uid, workspace_id=wid)
     async with get_db_session() as db:
-        row = await db.get(CreditBalance, wid)
-        now = datetime.now(timezone.utc)
-        if row is None:
-            db.add(CreditBalance(workspace_id=wid, balance=Decimal(balance), updated_at=now))
-        else:
-            row.balance, row.updated_at = Decimal(balance), now
+        row = await lock_balance(db, wid)
+        await ensure_period_allowance(db, row)
+        row.balance = Decimal(balance)
     return created.id, uid, wid
 
 
@@ -108,6 +108,47 @@ async def test_only_enforce_refuses_and_resubmits_are_not_charged_again(monkeypa
         (await db.get(CreditBalance, (await _wid(sid)))).balance = Decimal("60")
     async with media.hold_for_submit(sid, credits=None, step="视频生成"):
         pass
+
+
+@pytest.mark.parametrize(("balance", "available", "shortfall"), [
+    ("3.07", "2.07", "5.63"),
+    ("0", "0", "7.70"),
+])
+async def test_fast_video_reports_credit_shortfall_before_creating_a_job(
+    monkeypatch, default_config, balance, available, shortfall,
+):
+    from tool.tool import ToolContext
+    from tool import video_production as video
+
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    sid, uid, wid = await _session(balance)
+    await _job(sid, uid, "1", status="in_progress")
+    target = SimpleNamespace(model="ComfyUI-MiniMax-H3", channel="comfyui", wire_format="comfyui_h3")
+    settings = SimpleNamespace(provider_input_url_ttl_seconds=60, dedupe=False)
+    monkeypatch.setattr(video, "_configured_target", lambda _: (target, settings))
+    monkeypatch.setattr(video, "_resolve_open_submission", AsyncMock(return_value={
+        "model": target.model, "prompt": "A quiet garden", "resolution": "768p", "ratio": "9:16",
+        "duration": 10, "generate_audio": True, "watermark": False, "input_assets": [], "shot": 2,
+    }))
+    monkeypatch.setattr(video, "_prepare_provider_inputs", AsyncMock(return_value={}))
+    create_job = AsyncMock()
+    monkeypatch.setattr(video, "_create_pending_job", create_job)
+    ctx = ToolContext(user_id=uid, workspace_id=wid, session_id=sid)
+
+    result = await video.execute_generate(video.VideoGenerateArgs(
+        action="submit", prompt="A quiet garden", idempotency_key="fast-credit-test",
+    ), ctx)
+
+    assert result.title == "积分不足，视频未提交", result.output
+    assert result.metadata["failure_code"] == "INSUFFICIENT_CREDITS"
+    assert result.metadata["submission_outcome"] == "not_sent"
+    assert result.metadata["do_not_resubmit"] is True
+    assert result.metadata["shot"] == 2
+    assert Decimal(result.metadata["required_credits"]) == Decimal("7.70")
+    assert Decimal(result.metadata["available_credits"]) == Decimal(available)
+    assert Decimal(result.metadata["shortfall_credits"]) == Decimal(shortfall)
+    assert f"还差 {shortfall} 积分" in result.output
+    create_job.assert_not_called()
 
 
 async def _wid(session_id: str) -> str:

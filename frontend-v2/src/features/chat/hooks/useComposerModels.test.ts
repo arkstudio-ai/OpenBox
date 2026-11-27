@@ -87,6 +87,20 @@ beforeEach(() => {
 })
 
 describe("useComposerModels tiers", () => {
+  it("moves a retired fast pick onto the deployment's replacement on the next send", () => {
+    const fast = { ...CONFIG.model_tiers!.video[0], tier: "fast" as const, model: "ComfyUI-MiniMax-H3",
+      resolutions: ["480p", "720p", "768p"], resolution: "720p", replaces_models: ["MiniMax-H3-Max-Turbo"] }
+    const config = { ...CONFIG, model_tiers: { ...CONFIG.model_tiers!, video: [fast] },
+      video_models: [{ id: fast.model, name: "MiniMax H3", channel: "comfyui", resolutions: fast.resolutions }] }
+    const { result } = renderHook(() => useComposerModels({ config, sessionKey: "legacy",
+      sessionVideoModel: "MiniMax-H3-Max-Turbo", sessionVideoResolution: "2k" }))
+    expect(result.current.tiers.activeVideo).toBe("fast")
+    expect(result.current.video.pending).toBe(fast.model)
+    expect(result.current.video.pendingResolution).toBe("720p")
+    act(() => result.current.tiers.pickVideo("fast", "768p"))
+    expect(result.current.video.pendingResolution).toBe("768p")
+  })
+
   it("carries the fixed product effort on an assistant's old and new selections", () => {
     const tiers = [
       { tier: "standard", model: "openai/gpt-6.2-sol", variant: "xhigh" },

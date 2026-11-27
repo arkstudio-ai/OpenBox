@@ -176,7 +176,12 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     base = {"version": data["version"], "verified_at": data["verified_at"], "kind": GENERATION_KIND}
     model = (model_id or "").rsplit("/", 1)[-1]
     key = f"video-gen:{model}:{resolution or '?'}"
-    table = (data.get("media", {}).get("video-gen") or {}).get(model)
+    tables = data.get("media", {}).get("video-gen") or {}
+    table = tables.get(model)
+    if table is None and model == "ComfyUI-MiniMax-H3" and "MiniMax-H3-Max-Turbo" in tables:
+        previous = tables["MiniMax-H3-Max-Turbo"]
+        table = {k: previous[k] for k in ("per_second", "currency", "verified_at") if k in previous}
+        table["source"] = "Existing MiniMax fast tier retail tariff"
     per = None
     if isinstance(table, dict) and resolution:
         per = (table.get("per_second") or {}).get(resolution)

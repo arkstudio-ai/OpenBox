@@ -382,6 +382,7 @@ export interface ChatTierRow {
  *  may pick inside it, each with its per-second price when the rate table
  *  knows one. */
 export interface VideoTierRow {
+  replaces_models?: string[]
   tier: VideoTier
   model: string
   /** Deployment wording; empty falls back to the UI's high/medium/low. */

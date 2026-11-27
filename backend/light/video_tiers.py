@@ -45,9 +45,16 @@ def _available(model: str, resolution: str, config: OpenBoxConfig) -> bool:
 
 
 def comfyui_fast_available(config: OpenBoxConfig) -> bool:
-    return any(
-        row.tier == "fast" and row.model == COMFYUI_H3 for row in config.model_tiers.video
-    ) and _available(COMFYUI_H3, "720p", config)
+    return _comfy_resolution(config) is not None
+
+
+def _comfy_resolution(config: OpenBoxConfig) -> str | None:
+    for row in config.model_tiers.video:
+        if row.tier == "fast" and row.model == COMFYUI_H3:
+            resolution = row.resolution or config.video_generation.default_resolution
+            if _available(COMFYUI_H3, resolution, config):
+                return resolution
+    return None
 
 
 def workbench_fast_available(config: OpenBoxConfig) -> bool:
@@ -56,8 +63,8 @@ def workbench_fast_available(config: OpenBoxConfig) -> bool:
 
 
 def _choice(tier: VideoTier, config: OpenBoxConfig) -> tuple[str, str]:
-    if tier == "fast" and comfyui_fast_available(config):
-        return COMFYUI_H3, "720p"
+    if tier == "fast" and (resolution := _comfy_resolution(config)):
+        return COMFYUI_H3, resolution
     return ROUTES[tier]
 
 

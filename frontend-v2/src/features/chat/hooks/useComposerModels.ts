@@ -60,6 +60,7 @@ export function useComposerModels({
     fallback: config?.default_model ?? models[0]?.id,
   })
   const video = useVideoModelChoice({
+    videoTiers,
     sessionVideoModel,
     sessionVideoResolution,
     sessionKey,

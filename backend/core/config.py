@@ -1386,18 +1386,24 @@ def _apply_env_overrides(data: dict) -> dict:
         if pool:
             providers.update(pool)
             providers["comfyui-local"]["options"]["workers"] = list(pool)
+        supported = ["480p", "720p", "768p"]
+        resolutions = os.getenv("COMFYUI_VIDEO_RESOLUTIONS", ",".join(supported)).split(",")
+        resolutions = [r.strip() for r in resolutions]
+        default_resolution = os.getenv("COMFYUI_VIDEO_DEFAULT_RESOLUTION", "720p")
+        if not set(resolutions).issubset(supported) or default_resolution not in resolutions:
+            raise ValueError("Invalid ComfyUI video resolutions or default")
         models = video.setdefault("models", [])
         if not any(model.get("id") == comfy_model for model in models):
             models.append({
                 "id": comfy_model, "name": "ComfyUI MiniMax H3", "channel": "comfyui",
-                "provider": "comfyui-local", "resolutions": ["480p", "720p", "768p"],
+                "provider": "comfyui-local", "resolutions": resolutions,
                 "ratios": ["9:16", "16:9"], "duration_range": [2, 15], "max_duration_seconds": 15,
                 "supports_smart_duration": False, "supports_reference_video": True, "supports_reference_audio": True,
                 "supports_first_last_frame": True, "supports_seed": True,
             })
         if (os.getenv("COMFYUI_VIDEO_FAST_TIER") or "").lower() in {"true", "1"}:
-            fast_tier = {"tier": "fast", "model": comfy_model, "label": "快速",
-                         "description": "ComfyUI MiniMax H3 · 原生中文", "resolution": "720p"}
+            fast_tier = {"tier": "fast", "model": comfy_model, "label": "",
+                         "description": "", "resolution": default_resolution, "resolutions": resolutions}
             model_tiers = data.setdefault("model_tiers", {})
             tiers = model_tiers.get("video", [])
             model_tiers["video"] = [
@@ -1413,6 +1419,7 @@ def _apply_env_overrides(data: dict) -> dict:
                 for row in models
             ):
                 video["model"] = comfy_model
+                video["default_resolution"] = default_resolution
 
     return data
 

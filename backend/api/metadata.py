@@ -170,6 +170,9 @@ def _model_tiers(config) -> dict:
             item["prices"] = quote(row.model, {"input": 0, "output": 0}, rates=rates).snapshot.get(
                 "credits_per_million", {})
         chat.append(item)
+    from tool.video_runninghub import MODEL as runninghub_h3
+    from tool.video_comfyui import MODEL as comfyui_h3
+
     offered = {m["id"]: m for m in _video_models(config)}
     video = []
     for row in config.model_tiers.video:
@@ -200,6 +203,8 @@ def _model_tiers(config) -> dict:
             "resolution": default,
             "prices": prices,
             "currency": currency,
+            **({"replaces_models": [runninghub_h3]} if row.tier == "fast" and row.model == comfyui_h3
+               and runninghub_h3 not in offered else {}),
         })
 
     return {"chat": chat, "video": video, **({"product_chat": True} if config.model_tiers.product_chat else {})}

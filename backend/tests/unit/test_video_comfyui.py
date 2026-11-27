@@ -43,6 +43,7 @@ async def test_fast_tier_uses_comfyui_and_paused_runninghub_keeps_existing_route
     tiers = {tier["tier"]: tier for tier in _model_tiers(config)["video"]}
     assert tiers["fast"]["model"] == config.video_generation.model == "ComfyUI-MiniMax-H3"
     assert tiers["fast"]["resolution"] == "720p"
+    assert tiers["fast"]["replaces_models"] == [old_model]
     assert tiers["high"]["model"] == "wan3.0-video"
     assert video_tiers.comfyui_fast_available(config)
     assert "fast" in video_tiers.available_tiers(config)
@@ -662,3 +663,20 @@ def test_reference_video_duration_measures_the_uploaded_silent_picture_track(tmp
         "ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(uploaded),
     ], timeout=10)
     assert streams.strip() == b"video"
+
+def test_pool_uses_deployed_fast_resolution_and_existing_retail_rate(monkeypatch):
+    from billing.media import quote_generation
+    monkeypatch.setenv("COMFYUI_API_URL", "https://example.test/proxy/18189")
+    monkeypatch.setenv("COMFYUI_API_TOKEN", "test-token")
+    monkeypatch.setenv("COMFYUI_VIDEO_FAST_TIER", "true")
+    monkeypatch.setenv("COMFYUI_VIDEO_RESOLUTIONS", "480p,768p")
+    monkeypatch.setenv("COMFYUI_VIDEO_DEFAULT_RESOLUTION", "768p")
+    config = OpenBoxConfig.model_validate(_apply_env_overrides({}))
+    monkeypatch.setattr(video_tiers, "get_config", lambda: config)
+    assert video_tiers.resolve_tier("fast") == (h3.MODEL, "768p")
+    fast = next(v for v in _model_tiers(config)["video"] if v["tier"] == "fast")
+    assert fast["resolutions"] == ["480p", "768p"]
+    for resolution in fast["resolutions"]:
+        pool = quote_generation(h3.MODEL, resolution, 5)
+        assert pool.credits is not None and pool.cost is None
+        assert pool.credits == quote_generation("MiniMax-H3-Max-Turbo", resolution, 5).credits

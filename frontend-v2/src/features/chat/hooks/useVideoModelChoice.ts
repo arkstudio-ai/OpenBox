@@ -10,10 +10,12 @@
 // model it started with, because the backend freezes the choice onto the
 // segment at submission. So this hook never has to ask "is something running?";
 // switching mid-production is always safe.
+import type { VideoTierRow } from "@/shared/types/api"
 import { useEffect } from "react"
 import { useVideoModelChoiceStore, usePickedVideoModel } from "../stores/video-model-choice"
 
 interface Options {
+  videoTiers?: VideoTierRow[]
   /** The video model this conversation last used, from the session record. */
   sessionVideoModel?: string
   /** The resolution chosen with it, likewise from the session record. */
@@ -41,6 +43,7 @@ export function useVideoModelChoice({
   fallback,
   resolutionFallback,
   resolutionsByModel,
+  videoTiers,
 }: Options) {
   const key = sessionKey ?? NEW_SESSION_KEY
   const picked = usePickedVideoModel(key)
@@ -52,21 +55,23 @@ export function useVideoModelChoice({
   // reset would wipe the pick made in whichever chat mounted next.
   useEffect(() => () => clear(key), [key, clear])
 
-  const activeId = picked?.modelId ?? (sessionVideoModel || undefined) ?? fallback
+  const previousId = picked?.modelId ?? (sessionVideoModel || undefined)
+  const replacement = previousId ? videoTiers?.find((row) => row.replaces_models?.includes(previousId)) : undefined
+  const activeId = replacement?.model ?? previousId ?? fallback
   const chosen = picked?.resolution ?? (sessionVideoResolution || undefined) ?? resolutionFallback
   // A resolution belongs to the model it was picked with. Switching model can
   // strand it, and showing a tier the new model does not offer would promise
   // something the backend then refuses.
   const tiers = activeId ? resolutionsByModel?.[activeId] : undefined
   const activeResolution =
-    chosen && (!tiers?.length || tiers.includes(chosen)) ? chosen : tiers?.[0]
+    chosen && (!tiers?.length || tiers.includes(chosen)) ? chosen : replacement?.resolution ?? tiers?.[0]
 
   return {
     activeId,
     activeResolution,
-    /** What to send with the next turn: only an actual pick, never the default. */
-    pending: picked?.modelId,
-    pendingResolution: picked?.resolution,
+    // Send the replacement once so the server also updates the retired session pick.
+    pending: replacement?.model ?? picked?.modelId,
+    pendingResolution: replacement ? activeResolution : picked?.resolution,
     pick: (modelId: string, resolution: string) => pickInStore(key, { modelId, resolution }),
   }
 }

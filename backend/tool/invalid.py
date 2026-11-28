@@ -14,10 +14,14 @@ class InvalidArgs(BaseModel):
     error: str = ""
 
 
-async def execute(args: dict, ctx: ToolContext) -> ToolResult:
-    """Handle calls to non-existent tools."""
-    tool_name = args.get("tool", "unknown")
-    error = args.get("error", "")
+async def execute(args: InvalidArgs, ctx: ToolContext) -> ToolResult:
+    """Handle calls to non-existent tools.
+
+    define_tool validates the arguments first, so ``args`` is an
+    ``InvalidArgs`` instance, not a dict.
+    """
+    tool_name = args.tool or "unknown"
+    error = args.error
     return ToolResult(
         title=f"Tool not found: {tool_name}",
         output=(

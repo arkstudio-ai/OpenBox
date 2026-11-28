@@ -9,8 +9,8 @@ The entry point registers two units into ``agent.extensions.KernelExtensions``:
   snapshots; the document worker finishes removing deleted files' originals.
   It also closes the pooled provider clients at shutdown.
 - ``MemoryPlugin`` is the feature: the prompt sections, the six memory tools
-  and their pre-call check, the extraction, Wiki and Wiki organization
-  workers, the read-transport warm-up and the memory routes.
+  and their pre-call check, extraction-job recovery, the extraction, Wiki and
+  Wiki organization workers, the read-transport warm-up and the memory routes.
 
 Leaving ``MemoryPlugin`` out keeps every cleanup obligation running. What this
 stage does not move stays where it was, unchanged: the per-turn read scope and
@@ -30,8 +30,9 @@ import asyncio
 from core.log import create_logger
 
 log = create_logger("memory.plugin")
-# This line kept the logger it had at its kernel call site.
+# These lines kept the loggers they had at their kernel call sites.
 _loop_log = create_logger("agent.loop")
+_recovery_log = create_logger("agent.recovery_service")
 
 #: Agents whose system prompt carries the memory sections (the build agent and
 #: the plan agent sharing its prompt).
@@ -153,6 +154,31 @@ class MemoryTools:
 
 
 # ---------------------------------------------------------------------------
+# Recovery (agent.extensions.RecoveryHook)
+# ---------------------------------------------------------------------------
+
+
+class ExtractionJobRecovery:
+    """Replay durable completion receipts into extraction jobs (``memory.jobs.recover_extraction_jobs``).
+
+    Receipts survive schedule/commit gaps, so this runs on every recovery pass
+    whether or not a Driver lease expired. Model calls stay in the extraction
+    worker and never hold an Agent execution lease.
+    """
+
+    name = "memory.extraction_jobs"
+
+    async def recover(self) -> int:
+        try:
+            from memory.jobs import recover_extraction_jobs
+
+            return await recover_extraction_jobs(limit=100)
+        except Exception as exc:
+            _recovery_log.warning("Memory scheduling recovery deferred error_type=%s", type(exc).__name__)
+            return 0
+
+
+# ---------------------------------------------------------------------------
 # Plugins
 # ---------------------------------------------------------------------------
 
@@ -216,6 +242,7 @@ class MemoryPlugin:
         for section in (MemoryUseGuidance(), AutomaticSavingGuidance(), UserMemoryContext()):
             registry.add_prompt_section(section)
         registry.add_tool_pack(MemoryTools())
+        registry.add_recovery_hook(ExtractionJobRecovery())
 
     def mount(self, app) -> None:
         """The memory, Wiki and document routes, in the order main.py included them."""

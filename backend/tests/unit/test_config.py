@@ -1,10 +1,14 @@
 """Test new config fields are present and have correct defaults."""
+import io
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from core.config import OpenBoxConfig, ToolExposureConfig, _load_json
+from core.config import OpenBoxConfig, ToolExposureConfig, _find_config_files, _load_json
 
 
 def test_database_config_defaults():
@@ -161,3 +165,54 @@ def test_emergency_eager_requires_the_separate_safety_switch():
 def test_native_wire_ceiling_cannot_be_configured_above_128k():
     with pytest.raises(ValidationError, match="less than or equal to 128000"):
         ToolExposureConfig(native_wire_hard_chars=128_001)
+
+
+# --- the test session reads no private config (tests/conftest.py) ---------------------------------
+
+BACKEND = Path(__file__).resolve().parents[2]
+INLINE = {"OPENBOX_CONFIG", "OPENAGENT_CONFIG", "OPENBOX_CONFIG_CONTENT", "OPENAGENT_CONFIG_CONTENT"}
+
+
+def test_the_test_session_finds_no_config_file_and_no_inline_config(monkeypatch):
+    """Whatever the developer keeps in backend/openbox.json, ~/.config/openbox or the shell."""
+    assert _find_config_files() == []
+    monkeypatch.chdir(BACKEND)  # where a private backend/openbox.json would be found
+    assert _find_config_files() == []
+    assert not INLINE & set(os.environ)
+
+
+def test_discovery_stays_off_even_where_a_private_file_exists(tmp_path, monkeypatch):
+    (tmp_path / "xdg" / "openbox").mkdir(parents=True)
+    (tmp_path / "xdg" / "openbox" / "openbox.json").write_text('{"suggestion_model": "openai/private"}')
+    (tmp_path / "openbox.json").write_text('{"suggestion_model": "openai/private"}')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.chdir(tmp_path)
+    assert _find_config_files() == []
+    explicit = tmp_path / "explicit.json"
+    explicit.write_text("{}")
+    monkeypatch.setenv("OPENBOX_CONFIG", str(explicit))
+    assert _find_config_files() == [explicit]  # a test that points at a file has set it up
+
+
+def test_a_subprocess_started_by_a_test_finds_no_config_file_either():
+    script = "from core.config import _find_config_files; print([str(p) for p in _find_config_files()])"
+    result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().splitlines()[-1] == "[]"
+
+
+def test_dotenv_files_are_not_loaded_into_the_test_process():
+    """main.py and litellm (in its DEV mode) would otherwise load backend/.env on import."""
+    from dotenv import load_dotenv
+    assert os.environ["LITELLM_MODE"] == "PRODUCTION"
+    assert load_dotenv(stream=io.StringIO("OPENBOX_DOTENV_CANARY=1\n")) is False
+    assert "OPENBOX_DOTENV_CANARY" not in os.environ
+
+
+def test_a_test_can_opt_in_to_file_based_config(config_files):
+    import core.config
+    config_files.global_file.write_text('{"suggestion_model": "openai/global", "instructions": ["G.md"]}')
+    config_files.project_file.write_text('{"suggestion_model": "openai/project"}')
+    assert _find_config_files() == [config_files.global_file, config_files.project_file]
+    config = core.config.get_config()
+    assert (config.suggestion_model, config.instructions) == ("openai/project", ["G.md"])

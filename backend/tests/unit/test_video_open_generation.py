@@ -488,14 +488,17 @@ def test_every_declared_model_and_resolution_is_reachable():
     advertised: the sd2 native-resolution rule (a Seedance naming convention)
     was applied to wan3 and MiniMax, which pick resolution as a parameter, and
     a hardcoded "1080p only on doubao-seedance-2-0" predated the registry.
+
+    The registry is the committed example deployment config, not a developer's
+    private openbox.json or .env (which this test once loaded into the process
+    and left cached for the tests after it).
     """
-    from dotenv import load_dotenv
+    from pathlib import Path
 
-    import core.config
+    from core.config import OpenBoxConfig, _load_json
 
-    load_dotenv(".env")
-    core.config._config = None
-    config = core.config.get_config()
+    config = OpenBoxConfig(**_load_json(Path(__file__).parents[2] / "openbox.jsonc.example"))
+    assert video_providers.selectable_video_models(config.video_generation)
 
     failures = []
     for model in video_providers.selectable_video_models(config.video_generation):

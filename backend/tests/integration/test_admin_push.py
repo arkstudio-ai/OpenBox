@@ -1,4 +1,5 @@
 """Real auth, binding fences, concise templates and device receipts."""
+import unicodedata
 from datetime import timedelta
 from uuid import uuid4
 
@@ -116,17 +117,29 @@ async def test_test_uses_normal_foreground_suppression(setup):
     assert fake.sent == []
 
 
-@pytest.mark.parametrize('locale', ['zh-CN', 'en-US'])
+#: Every language any template is written in (zh-CN, en-US, vi-VN): each one must fit the lock screen.
+LOCALES = sorted({lang for rows in TEMPLATES.values() for lang in rows})
+
+
+def test_the_bound_covers_every_template_language():
+    assert {'zh-CN', 'en-US', 'vi-VN'} <= set(LOCALES)
+    assert all(set(rows) == set(LOCALES) for rows in TEMPLATES.values())
+
+
+@pytest.mark.parametrize('locale', LOCALES)
 def test_all_copy_is_short_bounded_and_has_distinct_business_meaning(locale):
     for kind in TEMPLATES:
+        # The bound is in characters (code points): the stored copy must be NFC so that
+        # a Vietnamese letter with its diacritics counts once.
+        assert unicodedata.is_normalized('NFC', ''.join(TEMPLATES[kind][locale])), kind
         title, body = render_template(kind, '超长任务名称\n\t\x00\u202e' * 100, locale)
-        assert len(title) <= 24 and len(body) <= (36 if locale == 'zh-CN' else 80)
+        assert len(title) <= 24 and len(body) <= (36 if locale == 'zh-CN' else 80), (kind, title, body)
         assert '\n' not in body and '\x00' not in body and '\u202e' not in body
         fixed_body = pick(TEMPLATES[kind], language(locale))[1]
         # A name is truncated, never copied whole; fixed copy never carries one.
         if '{name}' in fixed_body: assert '…' in body
         else: assert body == fixed_body
         test_title, test_body = render_test(kind, locale)
-        assert len(test_title) <= 32 and len(test_body) <= 80
+        assert len(test_title) <= 32 and len(test_body) <= 80, (kind, test_title)
     assert render_template('input_required', '任务', locale) != render_template('approval_required', '任务', locale)
     assert render_template('platform_auth_expired', 'douyin', 'zh-CN')[1].startswith('抖音')

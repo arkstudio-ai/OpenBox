@@ -1121,28 +1121,38 @@ _config: OpenBoxConfig | None = None
 # Config file discovery
 # ---------------------------------------------------------------------------
 
+def _discovery_enabled() -> bool:
+    """``OPENBOX_CONFIG_DISCOVERY=off`` skips the global and project files.
+
+    The test session sets it (tests/conftest.py) so that a developer's private
+    ``backend/openbox.json`` or ``~/.config/openbox/openbox.json`` never decides a
+    test; an explicit ``OPENBOX_CONFIG`` path is still read."""
+    return os.environ.get("OPENBOX_CONFIG_DISCOVERY", "").strip().lower() not in {"off", "0", "false", "no"}
+
+
 def _find_config_files() -> list[Path]:
     """Find config files in priority order (later overrides earlier)."""
     candidates: list[Path] = []
 
-    # 1. Global config
-    config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    if _discovery_enabled():
+        # 1. Global config
+        config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 
-    # Prefer openbox, fall back to openagent
-    global_path_new = Path(config_home) / "openbox" / "openbox.json"
-    global_path_old = Path(config_home) / "openagent" / "openagent.json"
-    if global_path_new.exists():
-        candidates.append(global_path_new)
-    elif global_path_old.exists():
-        candidates.append(global_path_old)
+        # Prefer openbox, fall back to openagent
+        global_path_new = Path(config_home) / "openbox" / "openbox.json"
+        global_path_old = Path(config_home) / "openagent" / "openagent.json"
+        if global_path_new.exists():
+            candidates.append(global_path_new)
+        elif global_path_old.exists():
+            candidates.append(global_path_old)
 
-    # 2. Project-level config (current directory)
-    cwd = Path.cwd()
-    for name in ["openbox.json", "openbox.jsonc", "openagent.json", "openagent.jsonc"]:
-        project_path = cwd / name
-        if project_path.exists():
-            candidates.append(project_path)
-            break
+        # 2. Project-level config (current directory)
+        cwd = Path.cwd()
+        for name in ["openbox.json", "openbox.jsonc", "openagent.json", "openagent.jsonc"]:
+            project_path = cwd / name
+            if project_path.exists():
+                candidates.append(project_path)
+                break
 
     # 3. Custom via environment variable (prefer OPENBOX_CONFIG, fall back to OPENAGENT_CONFIG)
     custom = os.environ.get("OPENBOX_CONFIG") or os.environ.get("OPENAGENT_CONFIG")

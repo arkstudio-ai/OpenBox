@@ -405,7 +405,7 @@ async def _call_provider(
     generations endpoint with signed input URLs instead of ``/images/edits``.
     """
     from openai import AsyncOpenAI
-    from agent.trajectory import RequestCapture, context_for_tool, public_value
+    from trajectory.capture import RequestCapture, context_for_tool, public_value
     from question.runtime import assert_current
 
     client_kwargs = {
@@ -568,7 +568,7 @@ async def _runninghub_generate(
     id; the task is never submitted twice.
     """
     from agent.driver import LeaseLostError
-    from agent.trajectory import service_scope
+    from trajectory.capture import service_scope
     from question.runtime import RunRevoked
     from tool import image_runninghub as runninghub
 
@@ -2255,7 +2255,7 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext, channel: str | None = N
         from sqlalchemy import select
         from db.base import get_db_session
         from db.models.billing import UsageEvent
-        from agent.trajectory import capture_billing
+        from trajectory.capture import capture_billing
         async with get_db_session() as db:
             usage_row = await db.scalar(select(UsageEvent).where(
                 UsageEvent.idempotency_key == billing_key,

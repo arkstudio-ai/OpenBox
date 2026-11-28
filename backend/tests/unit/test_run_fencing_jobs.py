@@ -40,7 +40,7 @@ async def asset_status(asset_id: str | None) -> str | None:
 
 async def dispatched(submits: list, body, **capture):
     """Stand in for a provider adapter: the real ones submit inside the dispatch capture."""
-    from agent.trajectory import capture_service_dispatch
+    from trajectory.capture import capture_service_dispatch
     async with capture_service_dispatch(body=body, **capture):
         submits.append(body)
 

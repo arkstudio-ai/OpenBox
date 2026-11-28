@@ -1106,7 +1106,7 @@ def _public_error(exc: Exception) -> str:
 
 async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
     import httpx
-    from agent.trajectory import capture_service_dispatch, capture_http_response
+    from trajectory.capture import capture_service_dispatch, capture_http_response
 
     relay = target.wire_format == "bossip_videos"
     path = "/v1/videos" if relay else "/api/v3/contents/generations/tasks"
@@ -1163,7 +1163,7 @@ async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[st
         )
     response.raise_for_status()
     data = response.json()
-    from agent.trajectory import observe_service_response
+    from trajectory.capture import observe_service_response
     await observe_service_response(data, operation="video_status")
     return data
 
@@ -1184,7 +1184,7 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
             f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
             headers={"Authorization": _auth_header(target.api_key)},
         )
-    from agent.trajectory import observe_service_response
+    from trajectory.capture import observe_service_response
     await observe_service_response({"http_status": response.status_code, "provider_task_id": task_id},
                                    operation="video_cancel")
     if response.status_code not in (200, 204, 404):
@@ -1195,7 +1195,7 @@ async def _dashscope_transcribe(
     target: VideoTranscriptionTarget, audio_url: str, language: str = "zh"
 ) -> dict[str, Any]:
     import httpx
-    from agent.trajectory import capture_service_dispatch, capture_http_response, observe_service_response
+    from trajectory.capture import capture_service_dispatch, capture_http_response, observe_service_response
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
         payload = {"model": target.model, "input": {"file_urls": [audio_url]},
@@ -1298,7 +1298,7 @@ async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str,
         return await _dashscope_transcribe(target, audio_url, language)
 
     import httpx
-    from agent.trajectory import capture_service_dispatch, capture_http_response
+    from trajectory.capture import capture_service_dispatch, capture_http_response
 
     payload = {"model": target.model, "audio_url": audio_url, "response_format": "json"}
     async with capture_service_dispatch(purpose="audio_transcription", provider="openai_url",
@@ -3200,7 +3200,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
 
             async def submit_and_persist_provider_identity():
                 nonlocal accepted_task_id, rate_limit_retried
-                from agent.trajectory import retain_derived_media_inputs, service_scope
+                from trajectory.capture import retain_derived_media_inputs, service_scope
                 retained_media = {}
                 asset_urls = {}
                 for ref, row in zip(refs, inputs):
@@ -3463,7 +3463,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "cancel":
         if job.provider_task_id and job.status != "transfer_failed":
             try:
-                from agent.trajectory import service_scope
+                from trajectory.capture import service_scope
                 async with service_scope(ctx, job=job):
                     await _provider_cancel(target, job.provider_task_id)
             except Exception as exc:
@@ -3545,7 +3545,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 reason=route_block_reason,
             )
         try:
-            from agent.trajectory import service_scope
+            from trajectory.capture import service_scope
             async with service_scope(ctx, job=job):
                 if is_wait:
                     remaining = deadline - asyncio.get_running_loop().time()
@@ -3800,7 +3800,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             audio_url = oss.presign_get(
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
-            from agent.trajectory import service_scope
+            from trajectory.capture import service_scope
             async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
                 transcript = await _provider_transcribe(target, audio_url, language)
             credits = None
@@ -3882,7 +3882,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             audio_url = oss.presign_get(
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
-            from agent.trajectory import service_scope
+            from trajectory.capture import service_scope
             async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
                 transcript = await _provider_transcribe(
                     target, audio_url, (job.request_data or {}).get("language") or "zh")

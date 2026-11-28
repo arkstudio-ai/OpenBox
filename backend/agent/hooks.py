@@ -188,7 +188,7 @@ class ToolHooks:
         provider_call_id = None
         arguments_raw = None
         requested_recorded = getattr(ctx, "_trajectory_requested_part", None) == part_id
-        from agent.trajectory import context_for_tool, public_value, requested_tool_schema
+        from trajectory.capture import context_for_tool, public_value, requested_tool_schema
         from question.runtime import current_run, is_revoked
         from trajectory import bind, record
         from trajectory.tool_output import ToolOutputStream
@@ -289,7 +289,7 @@ class ToolHooks:
         self, tool_id: str, execute_fn: Any, args: dict, ctx: ToolContext,
         *, part_id: str = "", isolate_context: bool = False,
     ) -> PreparedToolExecution:
-        from agent.trajectory import context_for_tool, public_value, requested_tool_schema
+        from trajectory.capture import context_for_tool, public_value, requested_tool_schema
         from trajectory import bind, record
 
         context = await context_for_tool(ctx)
@@ -500,7 +500,7 @@ class ToolHooks:
         try:
             await assert_current("tool", progress=True)
             from trajectory import record
-            from agent.trajectory import public_value
+            from trajectory.capture import public_value
             if not getattr(execute_fn, "_trajectory_validates", False):
                 await record("tool.started", {"tool": tool_id, "effective_arguments": public_value(args),
                              "timing_source": "producer_monotonic"}, context=getattr(ctx, "trace_context", None))

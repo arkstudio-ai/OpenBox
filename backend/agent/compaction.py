@@ -503,7 +503,7 @@ async def process_compaction(
     output_limit = summary_output_tokens(model_id, prefix)
 
     from trajectory import current as current_trace, record as record_trace
-    from agent.trajectory import public_value
+    from trajectory.capture import public_value
     import time
     compaction_id = ascending("compaction")
     compaction_started = time.monotonic()

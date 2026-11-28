@@ -88,7 +88,7 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     async def run_one(inv: Invocation) -> str:
         import copy
         from agent.hooks import ToolHooks
-        from agent.trajectory import context_for_tool, public_value, tool_schema
+        from trajectory.capture import context_for_tool, public_value, tool_schema
         from core.identifier import ascending
         from trajectory import bind, record
         child = copy.copy(ctx)

@@ -22,6 +22,7 @@ from core.identifier import ascending
 from core.log import create_logger
 from agent.timing import provider_chunks
 
+# The historical logger name, kept for operators who filter on it.
 log = create_logger("agent.trajectory")
 
 #: Transport settings and credentials among a provider call's keyword arguments

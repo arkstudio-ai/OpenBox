@@ -69,7 +69,7 @@ async def _file_asset(asset_id: str, *, status: str = "ready", size: int = 12, k
 
 async def test_request_capture_opens_no_transaction_and_records_each_chunk_verbatim(recording_spool,
                                                                                   business_statements):
-    from agent.trajectory import RequestCapture, litellm_chunk_blocks
+    from trajectory.capture import RequestCapture, litellm_chunk_blocks
     ctx = _tool_ctx()
     ctx._trajectory_media_sources = {"a" * 64: "asset_frame"}
     capture = await RequestCapture.start(ctx, purpose="chat", model_id="provider/model", capture_level="adapter_input",
@@ -107,7 +107,7 @@ async def test_request_capture_opens_no_transaction_and_records_each_chunk_verba
 async def test_large_owned_images_are_recorded_without_copying_provider_bytes(recording_spool, business_statements,
                                                                              monkeypatch):
     from agent import loop
-    from agent.trajectory import RequestCapture
+    from trajectory.capture import RequestCapture
     raw = b"image-fixture" * (1024 * 1024)
     encoded = base64.b64encode(raw).decode()
     uri = "data:image/png;base64," + encoded
@@ -144,14 +144,14 @@ async def test_large_owned_images_are_recorded_without_copying_provider_bytes(re
 
 
 def test_media_compaction_keeps_unbound_inputs_verbatim():
-    from agent.trajectory import _compact_inline_media
+    from trajectory.capture import _compact_inline_media
     unknown = {"messages": [{"content": "data:image/png;base64,bm90LW93bmVk"}], "text": "unchanged"}
     assert _compact_inline_media(unknown, {"data:image/png;base64,other": {"asset_id": "a"}}) == unknown
 
 
 async def test_stream_delivery_never_waits_for_the_recorder(recording_spool, monkeypatch):
     import trajectory
-    from agent.trajectory import RequestCapture
+    from trajectory.capture import RequestCapture
     never = asyncio.get_running_loop().create_future()
     monkeypatch.setattr(trajectory, "record_stream", lambda context, event: never)
     capture = await RequestCapture.start(_tool_ctx(), purpose="chat", model_id="provider/model",
@@ -174,7 +174,7 @@ async def _collect(stream):
 
 async def test_owned_media_are_asset_references_without_downloads_or_hidden_assets(state, recording_spool,
                                                                                   monkeypatch):
-    from agent.trajectory import (capture_service_dispatch, register_owned_media_inputs,
+    from trajectory.capture import (capture_service_dispatch, register_owned_media_inputs,
                                   retain_derived_media_inputs, service_scope)
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
     await _file_asset("asset_video", key="assets/u1/asset_video/clip.mp4")

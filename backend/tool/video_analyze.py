@@ -309,7 +309,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     credits = None
     capture = None
     try:
-        from agent.trajectory import RequestCapture, litellm_chunk_blocks
+        from trajectory.capture import RequestCapture, litellm_chunk_blocks
         from video.vision_contract import request_options
         contract = _vision_contract(purpose)
         content[0]["text"] += f"\n调用 {contract['name']} 提交结果；如果不能调用函数，只返回同一结构的 JSON。"
@@ -334,7 +334,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     finally:
         if meter:
             import asyncio
-            from agent.trajectory import capture_billing
+            from trajectory.capture import capture_billing
             async def settle():
                 charged = await meter.finish(usage)
                 await capture_billing(capture.context if capture is not None else None,
@@ -371,7 +371,7 @@ async def _retain_media(ctx: ToolContext, *, kind: str, seed: str, job, media_ur
     """
     import copy
 
-    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from trajectory.capture import register_owned_media_inputs, retain_derived_media_inputs, service_scope
     from trajectory import enabled
 
     media_ctx = copy.copy(ctx)
@@ -502,7 +502,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
-        from agent.trajectory import service_scope
+        from trajectory.capture import service_scope
         media_urls = list(staged["frames"]) + ([staged["audio_url"]] if staged["audio_url"] else [])
         media_ctx, asset_urls, retained_media = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=media_urls)
 

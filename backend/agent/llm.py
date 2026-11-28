@@ -17,7 +17,7 @@ from agent.agent import AgentDef
 from agent.timing import ProviderStream, provider_wait
 from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
-from agent.trajectory import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
+from trajectory.capture import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
 

@@ -382,7 +382,7 @@ async def test_review_cannot_accept_correct_words_from_the_wrong_actor(monkeypat
 
     import litellm
 
-    from agent import trajectory
+    from trajectory import capture as trajectory
     from light import wan_edit
 
     @asynccontextmanager

@@ -92,7 +92,7 @@ async def _rpc(action: str, params: dict[str, str]) -> dict[str, Any]:
     request = open_api_models.OpenApiRequest(query={k: v for k, v in params.items() if v is not None})
     runtime = util_models.RuntimeOptions(read_timeout=30_000, connect_timeout=10_000)
     try:
-        from agent.trajectory import capture_service_dispatch, observe_service_response
+        from trajectory.capture import capture_service_dispatch, observe_service_response
         if action == "SubmitMediaProducingJob":
             async with capture_service_dispatch(purpose="media_composition", provider="aliyun_ims", model="ims",
                     operation=action, body=request.query, profile="media_composition",

@@ -1090,7 +1090,7 @@ async def process_step(
                 if rejected_trace is not None:
                     rejected_trace = rejected_trace.derive(call_id=tool_part.id, part_id=tool_part.id,
                                                           message_id=assistant_info.id)
-                from agent.trajectory import public_value, requested_tool_schema
+                from trajectory.capture import public_value, requested_tool_schema
                 wire_name = tc_event.get("tool", "")
                 schema, schema_source = requested_tool_schema(ctx, wire_name,
                     execution_tools.get(wire_to_canonical.get(wire_name, wire_name)))
@@ -1218,7 +1218,7 @@ async def process_step(
                 )
                 state["tool_part"] = tool_part
                 state["is_new"] = is_new
-                from agent.trajectory import public_value, requested_tool_schema
+                from trajectory.capture import public_value, requested_tool_schema
                 tool_info = execution_tools.get(str(canonical_tool_id))
                 call_trace = getattr(ctx, "trace_context", None)
                 if call_trace is not None:

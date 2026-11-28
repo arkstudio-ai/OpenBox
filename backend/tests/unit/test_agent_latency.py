@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from trajectory import latency
-from agent.trajectory import RequestCapture
+from trajectory.capture import RequestCapture
 
 
 class Clock:

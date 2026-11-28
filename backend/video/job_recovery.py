@@ -276,7 +276,7 @@ async def _recover_job(job) -> bool:
         settled = await vp._stop_exhausted_transfer(job)
         return settled is not None and settled.status == "failed"
 
-    from agent.trajectory import service_scope
+    from trajectory.capture import service_scope
     ctx = _recovery_context(job)
     async with service_scope(ctx, job=job):
         data = await vp._job_provider_status(target, job)

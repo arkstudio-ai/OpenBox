@@ -210,7 +210,7 @@ def sheet(frames):
 async def decide(ctx, evidence, url, asset_id, starts, ends, *, references=None):
     import litellm
     from agent.llm import _get_provider_kwargs
-    from agent.trajectory import capture_service_dispatch, service_scope
+    from trajectory.capture import capture_service_dispatch, service_scope
 
     model = vision_contract.selected_model(getattr(ctx, "model_id", None))
     guide = (

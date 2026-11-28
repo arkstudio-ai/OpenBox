@@ -3,7 +3,7 @@ import json
 
 from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 
-from agent.trajectory import RequestCapture, litellm_chunk_blocks, responses_chunk_blocks
+from trajectory.capture import RequestCapture, litellm_chunk_blocks, responses_chunk_blocks
 from tests.unit.trajectory_producer_support import recording_spool  # noqa: F401
 from tool.tool import ToolContext
 from trajectory import TraceContext

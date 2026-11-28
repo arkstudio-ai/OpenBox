@@ -103,7 +103,7 @@ async def test_job_updates_commit(state, failing_emitter):
 async def test_billing_and_metered_requests_settle(state, failing_emitter, monkeypatch):
     import litellm
     from agent.llm import metered_completion
-    from agent.trajectory import capture_billing
+    from trajectory.capture import capture_billing
     await capture_billing(TraceContext("u1", "s1", request_id="req-1"), SimpleNamespace(event_id="usage-1"),
                           {"input": 1}, "0.01", "chat")
     monkeypatch.setattr("billing.service.UsageMeter.start", AsyncMock(return_value=None))
@@ -116,7 +116,7 @@ async def test_billing_and_metered_requests_settle(state, failing_emitter, monke
 
 async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_emitter, monkeypatch):
     import httpx
-    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from trajectory.capture import register_owned_media_inputs, retain_derived_media_inputs, service_scope
     from db.models.file_asset import FileAsset
     from tool import video_production
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))

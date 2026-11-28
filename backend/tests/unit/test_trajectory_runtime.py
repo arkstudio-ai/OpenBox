@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from agent.trajectory import request_snapshot, responses_chunk_blocks
+from trajectory.capture import request_snapshot, responses_chunk_blocks
 from tool.tool import ToolContext, ToolResult, define_tool
 from trajectory.context import TraceContext
 

@@ -19,11 +19,7 @@ import 'widgets/inbox_item_tile.dart';
 /// a cursor-paged feed, pull to refresh, "mark all read", and taps that mark
 /// the row read before routing through [InboxNavigator].
 class InboxScreen extends ConsumerStatefulWidget {
-  const InboxScreen({
-    super.key,
-    this.initialCategory,
-    this.embedded = false,
-  });
+  const InboxScreen({super.key, this.initialCategory, this.embedded = false});
 
   final String? initialCategory;
 
@@ -202,45 +198,87 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                   action: i18n.t('common:action.retry'),
                   onAction: () => ref.invalidate(inboxFeedProvider(_tab)),
                 ),
-                data: (state) => state.items.isEmpty
-                    ? _Message(text: i18n.t('inbox:empty'))
-                    : ListView.separated(
-                        controller: _scroll,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.only(bottom: 24),
-                        itemCount: state.items.length + (state.hasMore ? 1 : 0),
-                        separatorBuilder: (_, _) =>
-                            Divider(height: 1, color: t.hairSoft),
-                        itemBuilder: (context, index) {
-                          if (index >= state.items.length) {
-                            return _MoreRow(
-                              loading: state.loadingMore,
-                              label: i18n.t('inbox:loadMore'),
-                              onTap: () => ref
-                                  .read(inboxFeedProvider(_tab).notifier)
-                                  .loadMore(),
-                            );
-                          }
-                          final item = state.items[index];
-                          final foreign =
-                              item.workspaceId != null &&
-                              workspaces != null &&
-                              item.workspaceId != workspaces.currentId;
-                          return InboxItemTile(
-                            item: item,
-                            workspaceName: foreign
-                                ? workspaces.items
-                                          .where(
-                                            (w) => w.id == item.workspaceId,
-                                          )
-                                          .map((w) => w.name)
-                                          .firstOrNull ??
-                                      item.workspaceId
-                                : null,
-                            onTap: () => _open(item),
-                          );
-                        },
-                      ),
+                data: (state) {
+                  if (state.items.isEmpty) {
+                    return _Message(text: i18n.t('inbox:empty'));
+                  }
+                  final groups = <List<InboxItem>>[];
+                  final productions = <String, List<InboxItem>>{};
+                  for (final item in state.items) {
+                    final sessionId = item.link?.sessionId;
+                    if (item.productionTitle == null || sessionId == null) {
+                      groups.add([item]);
+                    } else {
+                      productions
+                          .putIfAbsent(sessionId, () {
+                            final group = <InboxItem>[];
+                            groups.add(group);
+                            return group;
+                          })
+                          .add(item);
+                    }
+                  }
+                  return ListView.separated(
+                    controller: _scroll,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.only(bottom: 24),
+                    itemCount: groups.length + (state.hasMore ? 1 : 0),
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, color: t.hairSoft),
+                    itemBuilder: (context, index) {
+                      if (index >= groups.length) {
+                        return _MoreRow(
+                          loading: state.loadingMore,
+                          label: i18n.t('inbox:loadMore'),
+                          onTap: () => ref
+                              .read(inboxFeedProvider(_tab).notifier)
+                              .loadMore(),
+                        );
+                      }
+                      final group = groups[index];
+                      final item = group.first;
+                      final foreign =
+                          item.workspaceId != null &&
+                          workspaces != null &&
+                          item.workspaceId != workspaces.currentId;
+                      final latest = InboxItemTile(
+                        item: item,
+                        displayTitle: item.productionTitle,
+                        hasUnread: group.any((stage) => stage.unread),
+                        workspaceName: foreign
+                            ? workspaces.items
+                                      .where((w) => w.id == item.workspaceId)
+                                      .map((w) => w.name)
+                                      .firstOrNull ??
+                                  item.workspaceId
+                            : null,
+                        onTap: () => _open(item),
+                      );
+                      if (group.length == 1) return latest;
+                      return ExpansionTile(
+                        key: PageStorageKey(
+                          'production-${item.link!.sessionId}',
+                        ),
+                        tilePadding: EdgeInsets.zero,
+                        shape: const Border(),
+                        collapsedShape: const Border(),
+                        title: latest,
+                        children: [
+                          for (final stage in group.skip(1))
+                            Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                start: 16,
+                              ),
+                              child: InboxItemTile(
+                                item: stage,
+                                onTap: () => _open(stage),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ),

@@ -352,6 +352,41 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   Future<void> _goTo(String page) async =>
       _receive(await _api.edit(await _ensureDraft(), {'page': page}));
 
+  Future<void> _prepareReview() async {
+    if (!mounted) return;
+    final review = _task!;
+    final menuNeedsReading =
+        review.kind == ProductionKind.menu &&
+        review.materials.isNotEmpty &&
+        review.dishes.isEmpty;
+    final needsCopy = review.remake
+        ? !review.remakePrepared
+        : !review.kind.imagesOnly && review.script.isEmpty;
+    if (menuNeedsReading ||
+        (needsCopy &&
+            !review.manualPreparation &&
+            review.template != galleryWishes)) {
+      await _send('prepare');
+    }
+  }
+
+  Future<bool> _chooseExample(String id) async {
+    var saved = false;
+    await _perform(() async {
+      final task = _task!;
+      final advance = task.kind == ProductionKind.video && !task.templateTrial;
+      _receive(
+        await _api.edit(task, {
+          'reference_example_id': id,
+          if (advance) 'page': 'review',
+        }),
+      );
+      saved = true;
+      if (advance) await _prepareReview();
+    });
+    return saved;
+  }
+
   Future<void> _next({bool skip = false}) => _perform(() async {
     final task = _task!;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -371,21 +406,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
             if (skip) ...{'template': '', 'reference_example_id': ''},
           }),
         );
-        if (!mounted) return;
-        final review = _task!;
-        final menuNeedsReading =
-            review.kind == ProductionKind.menu &&
-            review.materials.isNotEmpty &&
-            review.dishes.isEmpty;
-        final needsCopy = review.remake
-            ? !review.remakePrepared
-            : !review.kind.imagesOnly && review.script.isEmpty;
-        if (menuNeedsReading ||
-            (needsCopy &&
-                !review.manualPreparation &&
-                review.template != galleryWishes)) {
-          await _send('prepare');
-        }
+        await _prepareReview();
       default:
         await _send(
           task.requiresStoryboardPreview && !task.remakePrepared
@@ -797,11 +818,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               ProductionExamples(
                 task: task,
                 enabled: !_busy,
-                onChoose: (id) => _perform(() async {
-                  _receive(
-                    await _api.edit(_task!, {'reference_example_id': id}),
-                  );
-                }),
+                onChoose: _chooseExample,
               ),
             if (task.kind == ProductionKind.footage &&
                 !task.templateTrial &&
@@ -1608,7 +1625,7 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             primary(
-              'examples.useVideoTemplate',
+              task.templateTrial ? 'examples.useVideoTemplate' : 'next',
               task.referenceExampleId != null ? _next : null,
             ),
             if (!task.templateTrial) secondary('skip', () => _next(skip: true)),

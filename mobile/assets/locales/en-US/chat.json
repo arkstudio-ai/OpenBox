@@ -308,7 +308,7 @@
     "voiceTranscript": "View voice transcript"
   },
   "meta": {
-    "copyReply": "Copy",
+    "copyReply": "Copy full reply",
     "copied": "Copied",
     "likeReply": "Good response",
     "dislikeReply": "Bad response",

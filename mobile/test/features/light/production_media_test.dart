@@ -82,6 +82,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     const id = 'mtb_product_story';
     var selected = '';
+    var edits = 0;
     var readCatalogue = false;
     final draft = <String, dynamic>{
       'session_id': 'draft-catalogue',
@@ -116,10 +117,12 @@ void main() {
               return;
             }
             if (request.method == 'PATCH') {
-              selected =
-                  (request.data as Map<String, dynamic>)['reference_example_id']
-                      as String;
+              edits++;
+              final changes = request.data as Map<String, dynamic>;
+              selected = changes['reference_example_id'] as String;
+              expect(changes['page'], 'review');
               draft.addAll({
+                'page': 'review',
                 'reference_example_id': selected,
                 'reference_example_title': '品牌剧情广告',
                 'template': 'product_story',
@@ -156,6 +159,8 @@ void main() {
     await tester.tap(find.text('使用这个模板').last);
     await tester.pumpAndSettle();
     expect(selected, id);
+    expect(edits, 1);
+    expect(find.text('使用这个模板'), findsNothing);
   });
 
   testWidgets(
@@ -938,6 +943,7 @@ void main() {
           ),
         );
       final loaded = <String>[];
+      var videoSignatures = 0;
       List<String>? confirmed;
       await tester.pumpWidget(
         host(
@@ -960,11 +966,26 @@ void main() {
             ),
             lightAssetUrlProvider.overrideWith((_, id) async {
               loaded.add(id);
-              return id == 'photo' ? original : clip;
+              return original;
+            }),
+            assetUrlProvider.overrideWith((_, id) async {
+              loaded.add(id);
+              if (++videoSignatures == 1) {
+                return AssetUrl(
+                  url: 'https://assets.test/expired.mp4',
+                  refreshAfter: DateTime.utc(2000),
+                );
+              }
+              return AssetUrl(url: clip);
             }),
           ],
         ),
       );
+      final container = ProviderScope.containerOf(
+        tester.element(find.text('打开素材库')),
+      );
+      final old = await container.read(assetUrlProvider('video').future);
+      expect(old.needsRefresh, isTrue);
       await tester.tap(find.text('打开素材库'));
       await tester.pumpAndSettle();
       await tester.tap(
@@ -995,7 +1016,9 @@ void main() {
       );
       await tester.tap(close);
       await tester.pumpAndSettle();
-      expect(loaded, ['photo', 'video']);
+      // Skip the preloaded expired link and refresh once more when native
+      // playback fails in the widget test.
+      expect(loaded, ['video', 'photo', 'video', 'video']);
       await tester.tap(find.text('确认 1 个素材'));
       await tester.pumpAndSettle();
       expect(confirmed, ['photo']);

@@ -198,6 +198,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       (r) => r is AssistantTurnData && r.todo != null,
     );
 
+    VoidCallback? turnActions(AssistantTurnData row) =>
+        busy || readOnly || row.lastReply == null
+        ? null
+        : () => showTurnActions(
+            context,
+            ref,
+            sessionId: sessionId,
+            turn: row,
+            immutableHistory: protected,
+            onRegenerate: (id) => ref
+                .read(chatSessionProvider(sessionId).notifier)
+                .regenerate(id),
+          );
+
     final widgets = <Widget>[
       for (final (index, row) in rows.indexed)
         switch (row) {
@@ -206,22 +220,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ? InterruptionDivider(message: message)
                 : UserBubble(message: message),
           AssistantTurnData() => GestureDetector(
-            onLongPress: busy || readOnly || row.lastReply == null
-                ? null
-                : () => showTurnActions(
-                    context,
-                    ref,
-                    sessionId: sessionId,
-                    turn: row,
-                    immutableHistory: protected,
-                    onRegenerate: (id) => ref
-                        .read(chatSessionProvider(sessionId).notifier)
-                        .regenerate(id),
-                  ),
+            onLongPress: turnActions(row),
             child: AssistantTurn(
               turn: row,
               sessionId: sessionId,
               immutableHistory: protected,
+              onActions: turnActions(row),
               streaming: busy && index == rows.length - 1,
               awaitingInput:
                   index == rows.length - 1 &&

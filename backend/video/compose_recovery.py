@@ -221,5 +221,12 @@ async def deliver(job, *, prompt: str = DELIVERED_PROMPT, text: str = DELIVERED_
     await chat.say(job.session_id, assistant.id, job.user_id,
                    text if attached else "成片已经在上面了。")
     await chat.finish(job.session_id, assistant.id, job.user_id)
+    if attached and entrypoint in {"light_production_delivery", "light_shot_delivery"}:
+        from notifications.events import production_finished
+
+        async with get_db_session() as db:
+            current = await db.get(Session, job.session_id)
+            if current:
+                await production_finished(db, current, delivered_asset_id=job.output_asset_id)
     log.info(f"Delivered composition {job.id} to {job.session_id} without an agent turn")
     return True

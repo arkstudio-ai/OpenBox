@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,14 +8,24 @@ import '../../../shared/models/json.dart';
 
 /// Presigned asset URL for previews (web `useAssetUrl`):
 /// `GET /api/assets/{id}/url` → `{url, mime, name, size}`. Presigned GETs
-/// live an hour; cached entries refresh well inside that (40 min, like web).
+/// live an hour; playback refreshes cached entries after 40 minutes.
 class AssetUrl {
-  const AssetUrl({required this.url, this.mime, this.name, this.size});
+  const AssetUrl({
+    required this.url,
+    this.mime,
+    this.name,
+    this.size,
+    this.refreshAfter,
+  });
 
   final String url;
   final String? mime;
   final String? name;
   final int? size;
+  final DateTime? refreshAfter;
+
+  bool get needsRefresh =>
+      refreshAfter != null && !DateTime.now().isBefore(refreshAfter!);
 }
 
 /// First frame of a video asset for its gallery tile (the web analog is the
@@ -47,9 +56,7 @@ final assetUrlProvider = FutureProvider.family<AssetUrl, String>((
   ref,
   assetId,
 ) async {
-  final link = ref.keepAlive();
-  final expiry = Timer(const Duration(minutes: 40), link.close);
-  ref.onDispose(expiry.cancel);
+  final refreshAfter = DateTime.now().add(const Duration(minutes: 40));
   final resp = await ref
       .watch(apiDioProvider)
       .get<Map<String, dynamic>>('/api/assets/$assetId/url');
@@ -59,5 +66,6 @@ final assetUrlProvider = FutureProvider.family<AssetUrl, String>((
     mime: asString(data['mime']),
     name: asString(data['name']),
     size: asInt(data['size']),
+    refreshAfter: refreshAfter,
   );
 });

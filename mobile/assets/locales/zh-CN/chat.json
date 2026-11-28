@@ -308,7 +308,7 @@
     "voiceTranscript": "查看语音原话"
   },
   "meta": {
-    "copyReply": "复制",
+    "copyReply": "复制整条",
     "copied": "已复制",
     "likeReply": "点赞",
     "dislikeReply": "点踩",

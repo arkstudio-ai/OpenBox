@@ -10,6 +10,7 @@ import '../../../shared/widgets/media_viewer.dart';
 import '../api/assets_api.dart';
 import '../utils/content_origin.dart';
 import 'ai_disclosure.dart';
+import 'asset_video_preview.dart';
 import 'light_chat_scope.dart';
 
 const _visibleByDefault = 6;
@@ -303,7 +304,7 @@ class _AttachmentViewer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
-    final asset = ref.watch(assetUrlProvider(part.assetId!));
+    final video = (part.mimeType ?? '').startsWith('video/');
     final failed = MediaPreviewError(i18n.t('chat:gallery.failed'));
     Widget decorate(Widget child) =>
         AiMediaOverlay(part: part, artifactKind: artifactKind, child: child);
@@ -316,25 +317,25 @@ class _AttachmentViewer extends ConsumerWidget {
       disclosure: isGeneratedMedia(part, artifactKind: artifactKind)
           ? const AiGeneratedLabel(onMedia: true)
           : null,
-      child: asset.when(
-        loading: MediaPreviewLoading.new,
-        error: (_, _) => failed,
-        data: (info) {
-          if (info.url.isEmpty) return failed;
-          return (part.mimeType ?? '').startsWith('video/')
-              ? MediaPreviewVideo(
-                  key: ValueKey(info.url),
-                  source: info.url,
-                  failedText: i18n.t('first_video:result.playFailed'),
-                  decorate: decorate,
-                )
-              : MediaPreviewImage(
-                  url: info.url,
-                  failedText: failed.message,
-                  decorate: decorate,
-                );
-        },
-      ),
+      child: video
+          ? AssetVideoPreview(
+              assetId: part.assetId!,
+              failedText: i18n.t('first_video:result.playFailed'),
+              decorate: decorate,
+            )
+          : ref
+                .watch(assetUrlProvider(part.assetId!))
+                .when(
+                  loading: MediaPreviewLoading.new,
+                  error: (_, _) => failed,
+                  data: (info) => info.url.isEmpty
+                      ? failed
+                      : MediaPreviewImage(
+                          url: info.url,
+                          failedText: failed.message,
+                          decorate: decorate,
+                        ),
+                ),
     );
   }
 }

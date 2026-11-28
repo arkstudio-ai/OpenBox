@@ -2,7 +2,8 @@
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -57,6 +58,10 @@ _pending: dict[str, PendingPermission] = {}
 _approved: dict[str, Ruleset] = {}  # user_id -> rules (per-user isolation)
 _loaded_users: set[str] = set()
 
+
+#: How long an unlinked request waits for its reply. Assistant-linked
+#: requests carry their own durable expiry (assistant.permission_requests).
+PERMISSION_REQUEST_TTL_SECONDS = 300
 
 #: A stored reply outlives any wait for it; its wake-up message may be lost.
 REPLY_TTL_SECONDS = 24 * 60 * 60
@@ -428,6 +433,32 @@ async def _wait_linked(pending):
             pass
 
 
+def _request_seconds_left(request: PermissionRequest) -> float:
+    if request.expires_at is None:
+        return PERMISSION_REQUEST_TTL_SECONDS
+    return (datetime.fromisoformat(request.expires_at) - datetime.now(timezone.utc)).total_seconds()
+
+
+async def _wait_legacy(pending: PendingPermission, redis_client) -> None:
+    """Wait for an unlinked reply until the request expires."""
+    deadline = asyncio.timeout(max(0, _request_seconds_left(pending.request)))
+    try:
+        async with deadline:
+            await _push_waiting(pending.request)
+            if redis_client is not None:
+                try:
+                    await _wait_via_redis(pending.request.id, pending)
+                except Exception as e:
+                    log.warning(f"Redis wait failed, falling back to local: {e}")
+                else:
+                    return
+            await pending.event.wait()
+    except TimeoutError as exc:
+        if not deadline.expired():
+            raise
+        raise PermissionUnavailableError() from exc
+
+
 async def ask(
     session_id: str,
     permission: str,
@@ -447,6 +478,7 @@ async def ask(
     Raises:
         PermissionDeniedError: If denied by rule
         PermissionRejectedError: If rejected by user
+        PermissionUnavailableError: If the request expired
     """
     if input_data is None:
         input_data = {}
@@ -503,6 +535,7 @@ async def ask(
         return
 
     request_id = generate_id()
+    created_at = datetime.now(timezone.utc)
     request = PermissionRequest(
         id=request_id,
         user_id=user_id,
@@ -513,9 +546,11 @@ async def ask(
         always=always or patterns,
         metadata=metadata,
         is_doom_loop=is_doom_loop,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=created_at.isoformat(),
+        expires_at=(created_at + timedelta(seconds=PERMISSION_REQUEST_TTL_SECONDS)).isoformat(),
     )
 
+    # A linked request comes back with the expiry frozen in its durable event.
     from assistant.permission_requests import register
     request = await register(request)
     request_id = request.id
@@ -528,26 +563,21 @@ async def ask(
         try:
             await redis_client.setex(
                 f"perm_req:{request_id}",
-                300,
+                PERMISSION_REQUEST_TTL_SECONDS,
                 json.dumps({**request.model_dump(), "trace_context": trace}),
             )
         except Exception as e:
             log.warning(f"Failed to store permission request in Redis: {e}")
 
     bus.publish(PERMISSION_ASKED, {**request.model_dump(), "userId": user_id})
-    await _push_waiting(request)
 
     try:
         if request.assistant:
+            # The durable decision decides expiry (``fresh``), not a local clock.
+            await _push_waiting(request)
             await _wait_linked(pending)
-        elif redis_client is not None:
-            try:
-                await _wait_via_redis(request_id, pending)
-            except Exception as e:
-                log.warning(f"Redis wait failed, falling back to local: {e}")
-                await pending.event.wait()
         else:
-            await pending.event.wait()
+            await _wait_legacy(pending, redis_client)
     finally:
         if pending.result is None:
             _trace_permission(request, "permission.expired", {
@@ -647,6 +677,11 @@ async def reply(
             from assistant.policy import AssistantError
             raise AssistantError(410, "PERMISSION_GONE", "This legacy permission needs a fresh request")
 
+    # Only unlinked requests reach this point; linked ones were answered by
+    # maybe_reply above or refused as legacy.
+    if _request_seconds_left(request) <= 0:
+        raise KeyError("Permission request expired")
+
     consumed_request = None
     if redis_client is not None and raw_request is not None:
         consumed_request = await _consume_redis_request(
@@ -670,15 +705,16 @@ async def reply(
     except Exception:
         # Persistence failed before acknowledgement. Restore the distributed
         # request so the user may retry rather than silently degrading Always to
-        # a one-shot approval.
-        if redis_client is not None and consumed_request is not None:
+        # a one-shot approval. A restored request keeps its original expiry.
+        ttl = ceil(_request_seconds_left(request))
+        if redis_client is not None and consumed_request is not None and ttl > 0:
             try:
                 await redis_client.setex(
-                    f"perm_req:{request_id}", 300, consumed_request
+                    f"perm_req:{request_id}", ttl, consumed_request
                 )
             except Exception:
                 pass
-        if pending is not None:
+        if pending is not None and ttl > 0:
             _pending[request_id] = pending
         raise
 
@@ -721,10 +757,11 @@ async def reply(
     if pending is None and redis_client is not None and not (
         durable_delivery or published_delivery
     ):
-        if consumed_request is not None:
+        ttl = ceil(_request_seconds_left(request))
+        if consumed_request is not None and ttl > 0:
             try:
                 await redis_client.setex(
-                    f"perm_req:{request_id}", 300, consumed_request
+                    f"perm_req:{request_id}", ttl, consumed_request
                 )
             except Exception:
                 pass

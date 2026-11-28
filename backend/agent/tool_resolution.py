@@ -348,9 +348,10 @@ async def resolve_step_tools(
             # A4/A7: host-local text only. The built-in catalogue comes from
             # the backend checkout, so this step still reads no sandbox
             # directory; the same text is used once the directory is resolved.
-            from tool.skill_tool import portable_skill_description
-
-            description = await portable_skill_description(
+            # The Skill tool supplies the text through its ToolInfo, so the
+            # kernel does not import the tool's package.
+            describe = tools["skill"].deferred_description
+            description = None if describe is None else await describe(
                 list(config_rules) + agent_ruleset(agent_def), workspace_id,
             )
             if description is not None:

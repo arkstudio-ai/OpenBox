@@ -553,6 +553,15 @@ async def _record_skill_loaded(name, content, output_parts, files, host_only, ct
             "status": "completed"}, context=trace)
 
 
+async def _deferred_skill_description(ruleset: list | None, workspace_id: str | None) -> str | None:
+    """``ToolInfo.deferred_description`` of the Skill tool (A4/A7).
+
+    The kernel calls this through the tool definition rather than importing
+    this module; the work is ``portable_skill_description`` further down.
+    """
+    return await portable_skill_description(ruleset, workspace_id)
+
+
 def _skill_tool_for_snapshot(
     registry: "SkillRegistry",
     snapshot: "SkillCatalogSnapshot",
@@ -573,6 +582,7 @@ def _skill_tool_for_snapshot(
         sandbox_required=False,
         never_prune=True,
         supersede_key="skill",
+        deferred_description=_deferred_skill_description,
     )
 
 
@@ -680,6 +690,7 @@ skill_tool = define_tool(
     # same Skill is superseded and may be (agent/compaction.py, A6).
     never_prune=True,
     supersede_key="skill",
+    deferred_description=_deferred_skill_description,
 )
 
 

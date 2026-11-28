@@ -446,3 +446,26 @@ def test_summary_input_keeps_a_reload_note_instead_of_the_body(tuning):
     assert "the alpha skill" in parts["s4"]["output"] and "the beta skill" in parts["b2"]["output"]
     for part_id in ("s0", "s1"):
         assert parts[part_id]["state"]["time"]["compacted"]
+
+
+async def test_summary_view_reads_the_workspace_only_when_the_switch_is_narrowed(tuning, monkeypatch):
+    calls = []
+
+    async def fake_get_session(session_id, user_id=None):
+        calls.append((session_id, user_id))
+        return SimpleNamespace(workspace_id="ws_internal")
+
+    import session.session as session_mod
+    monkeypatch.setattr(session_mod, "get_session", fake_get_session)
+
+    tuning()
+    assert await compaction._stale_skill_workspace("s1", "u1") is None
+    tuning(prune_stale_skill_copies=True)
+    assert await compaction._stale_skill_workspace("s1", "u1") is None
+    assert calls == []
+
+    tuning(prune_stale_skill_copies=True, workspaces=["ws_internal"])
+    assert await compaction._stale_skill_workspace("s1", "u1") == "ws_internal"
+    assert await compaction._stale_skill_switch_for_session("s1", "u1") is True
+    tuning(prune_stale_skill_copies=True, workspaces=["ws_other"])
+    assert await compaction._stale_skill_switch_for_session("s1", "u1") is False

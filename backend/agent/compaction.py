@@ -658,7 +658,11 @@ async def process_compaction(
     # Let the stage summary read them before replacing the covered model view.
     evidence = stage_evidence_text(messages) if stage_summary else ""
     if not stage_summary:
-        messages = prune_tool_outputs_view(messages, aggressive=True)
+        messages = prune_tool_outputs_view(
+            messages,
+            aggressive=True,
+            workspace_id=await _stale_skill_workspace(session_id, user_id),
+        )
     log.info(
         f"Frozen compaction Event range "
         f"{compaction_range.source.start_sequence}..{compaction_range.source.end_sequence} "
@@ -1072,6 +1076,30 @@ def _stale_skill_switch(workspace_id: str | None) -> bool:
         return False
 
 
+async def _stale_skill_workspace(session_id: str, user_id: str | None) -> str | None:
+    """The Session's workspace id when the stale-skill switch needs one, else None.
+
+    The Session is read only when the switch is on and narrowed to a workspace
+    list; otherwise the answer does not depend on the workspace.
+    """
+    try:
+        from core.config import get_config
+
+        tuning = get_config().agent_tuning
+    except Exception:
+        return None
+    if not tuning.prune_stale_skill_copies or not tuning.workspaces:
+        return None
+    try:
+        from session.session import get_session
+
+        session = await get_session(session_id, user_id=user_id or "default")
+    except Exception as exc:
+        log.debug("Prune switch could not read the session (%s)", type(exc).__name__)
+        return None
+    return getattr(session, "workspace_id", None)
+
+
 async def _stale_skill_switch_for_session(session_id: str, user_id: str | None) -> bool:
     """The switch for this Session's workspace, reading the Session only when needed."""
     try:
@@ -1082,17 +1110,7 @@ async def _stale_skill_switch_for_session(session_id: str, user_id: str | None) 
         return False
     if not tuning.prune_stale_skill_copies:
         return False
-    workspace_id = None
-    if tuning.workspaces:
-        try:
-            from session.session import get_session
-
-            session = await get_session(session_id, user_id=user_id or "default")
-        except Exception as exc:
-            log.debug("Prune switch could not read the session (%s)", type(exc).__name__)
-            return False
-        workspace_id = getattr(session, "workspace_id", None)
-    return _stale_skill_switch(workspace_id)
+    return _stale_skill_switch(await _stale_skill_workspace(session_id, user_id))
 
 
 def _tool_prune_policy(tool_name: str) -> tuple[str | None, str | None]:

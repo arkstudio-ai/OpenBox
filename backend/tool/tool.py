@@ -218,6 +218,11 @@ class ToolInfo:
     # the pruner keeps the newest output and may clear older ones, even when
     # ``never_prune`` is set. Same switch as above.
     supersede_key: str | None = None
+    # Optional coroutine ``(ruleset, workspace_id) -> str | None`` giving the
+    # description to show while the tool is deferred in portable mode (the
+    # Skill tool's resident catalogue, A4/A7). The kernel calls it instead of
+    # importing the tool's package; None keeps ``description``.
+    deferred_description: Callable[[list | None, str | None], Awaitable[str | None]] | None = None
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
     # None preserves legacy Batch availability, but runs the tool serially.
@@ -252,6 +257,7 @@ def define_tool(
     sandbox_required: SandboxRequirement = True,
     never_prune: bool = False,
     supersede_key: str | None = None,
+    deferred_description: Callable[[list | None, str | None], Awaitable[str | None]] | None = None,
     parallel_safe: bool | None = None,
     batch_serial_safe: bool = False,
     body_timeout: Callable[[dict, ToolContext], float] | None = None,
@@ -342,6 +348,7 @@ def define_tool(
         sandbox_required=sandbox_required,
         never_prune=never_prune,
         supersede_key=supersede_key,
+        deferred_description=deferred_description,
         parallel_safe=parallel_safe,
         batch_serial_safe=batch_serial_safe,
         body_timeout=body_timeout,

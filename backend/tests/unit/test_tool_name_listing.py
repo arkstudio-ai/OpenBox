@@ -222,8 +222,11 @@ def _sizes(tools, model=QWEN):
             rendered_listing_chars(rows), rendered_listing_chars([(name, "") for name, _hint in rows]))
 
 
-def _exposure(hard: int) -> ToolExposureConfig:
-    return ToolExposureConfig(resident_soft_chars=min(20_000, hard), resident_hard_chars=hard)
+def _exposure(hard: int, active: int | None = None) -> ToolExposureConfig:
+    fields = dict(resident_soft_chars=min(20_000, hard), resident_hard_chars=hard)
+    if active is not None:
+        fields.update(active_soft_chars=min(fields["resident_soft_chars"], active), active_hard_chars=active)
+    return ToolExposureConfig(**fields)
 
 
 def test_resident_measure_is_the_budgeters(build_tools):
@@ -237,6 +240,7 @@ def test_measured_sizes_and_tiers_for_the_build_agent(tuning, build_tools, monke
     tuning(tool_name_listing=True)
     monkeypatch.setattr(V, "_omission_logged", True)
     hard = ToolExposureConfig().resident_hard_chars
+    gate = ToolExposureConfig().active_hard_chars
     for memory in (False, True):
         tools = {**build_tools(), **_memory_pack()} if memory else build_tools()
         resident, full, names = _sizes(tools)
@@ -244,13 +248,15 @@ def test_measured_sizes_and_tiers_for_the_build_agent(tuning, build_tools, monke
         print(f"memory={memory} resident={resident} full={full} names={names} "
               f"tier={'full' if listing and listing[0][1] else 'names' if listing else 'omitted'}")
         assert full <= V.LISTING_MAX_CHARS + 1 and names < full
-        # Never pushed over the hard budget by the listing, whatever the tier.
-        assert not listing or resident + rendered_listing_chars(listing) <= hard
+        # The full listing never crosses 24K; names never cross the 32K gate.
+        assert not listing or resident + rendered_listing_chars(listing) <= (hard if listing[0][1] else gate)
         if resident + full <= hard:
             assert listing == deferred_builtin_listing(tools, agent_name="build", editor_id="edit")
         if resident > hard:
-            # Memory on: the six memory definitions already exceed 24K, so nothing is listed.
-            assert listing == ()
+            # Memory on (production): the six memory definitions already exceed the
+            # 24K warning line, so the listing is names only, still under the 32K gate.
+            assert listing and not any(hint for _name, hint in listing)
+            assert resident + names <= gate
 
 
 def test_full_listing_when_within_the_budget(tuning, build_tools):
@@ -280,14 +286,14 @@ def test_names_only_when_the_full_listing_would_exceed_the_budget(tuning, build_
 def test_omitted_when_even_names_exceed_the_budget_and_warned_once(tuning, build_tools, monkeypatch):
     tools = build_tools()
     resident, _full, names = _sizes(tools)
-    tuning(_exposure(resident + names - 1), tool_name_listing=True)
+    tuning(_exposure(resident + names - 1, active=resident + names - 1), tool_name_listing=True)
     warnings = []
     monkeypatch.setattr(V, "_omission_logged", False)
     monkeypatch.setattr(V.log, "warning", lambda message, *args: warnings.append(message % args))
     for _step in range(3):
         assert tool_name_listing(tools, agent_name="build", model_id=QWEN) == ()
     assert len(warnings) == 1
-    assert f"resident definitions {resident} + names-only listing {names} > resident_hard_chars " \
+    assert f"resident definitions {resident} + names-only listing {names} > active_hard_chars " \
            f"{resident + names - 1}" in warnings[0]
     fragment = build_tool_visibility_fragment(["capability_search"], strategy="portable", deferred_count=3,
                                               listing=())
@@ -529,3 +535,24 @@ async def test_loop_keeps_prompt_tools_and_listing_across_a_narrowed_step(ensure
     listing_chars = len(V._LISTING_HEADER + block) + 1
     assert counted and {chars for chars, _resident in counted} == {listing_chars}
     assert all(resident >= listing_chars for _chars, resident in counted)
+
+
+def test_names_only_above_the_resident_line_while_under_the_visible_gate(tuning, build_tools):
+    # Production shape: resident definitions already past 24K (memory on). The
+    # full listing is refused, names-only is listed as long as the 32K gate holds.
+    tools = build_tools()
+    resident, full, names = _sizes(tools)
+    tuning(_exposure(resident - 1, active=resident + names), tool_name_listing=True)
+    listing = tool_name_listing(tools, agent_name="build", model_id=QWEN)
+    assert listing and not any(hint for _name, hint in listing)
+    tuning(_exposure(resident - 1, active=resident + names - 1), tool_name_listing=True)
+    assert tool_name_listing(tools, agent_name="build", model_id=QWEN) == ()
+
+
+def test_fit_listing_names_limit_is_separate():
+    rows = (("cron", "Schedule a task."),)
+    names = (("cron", ""),)
+    full, short = rendered_listing_chars(rows), rendered_listing_chars(names)
+    assert fit_listing(rows, resident_chars=500, hard_chars=400, names_hard_chars=500 + short) == names
+    assert fit_listing(rows, resident_chars=500, hard_chars=400, names_hard_chars=500 + short - 1) == ()
+    assert fit_listing(rows, resident_chars=100, hard_chars=100 + full, names_hard_chars=50) == rows

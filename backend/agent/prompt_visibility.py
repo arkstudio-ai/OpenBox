@@ -44,12 +44,14 @@ _PORTABLE_POLICY = (
 #   tools never appear and per-step narrowing never changes the text;
 # - only platform-plane built-ins are listed; sandbox MCP tools and the
 #   knowledge loaders (whose text can carry sandbox Skill names) never are;
-# - the listing's characters count against the 24K resident budget, with the
-#   resident definitions of the same static whitelist: when those plus the
-#   full listing exceed ``resident_hard_chars`` the listing drops its
-#   descriptions, and when even the names do not fit it is left out
-#   (fit_listing). The listing never pushes the resident text over the hard
-#   budget by itself.
+# - the listing's characters count against the resident budget, with the
+#   resident definitions of the same static whitelist (fit_listing): the full
+#   listing only while both stay within ``resident_hard_chars`` (24K); else
+#   names only, while both stay within ``active_hard_chars`` (32K, the visible
+#   gate that actually refuses requests). Production has memory on, whose six
+#   definitions already put the resident set near 25K, above the 24K line the
+#   budgeter only warns about; names-only (~0.7K) keeps A3 useful there
+#   without ever crossing the 32K gate. Otherwise the listing is left out.
 
 #: Appended to the error for a call to a tool whose schema is not
 #: materialized. Generic on purpose: the same words for a hidden, a denied
@@ -172,16 +174,22 @@ def fit_listing(
     *,
     resident_chars: int,
     hard_chars: int,
+    names_hard_chars: int | None = None,
 ) -> tuple[tuple[str, str], ...]:
-    """The listing itself, names only, or () -- the first whose text keeps resident + listing <= ``hard_chars``.
+    """The full listing, names only, or ().
 
+    Full while resident + listing <= ``hard_chars``; names only while
+    resident + names <= ``names_hard_chars`` (defaults to ``hard_chars``).
     A resident set already above ``hard_chars`` is the budgeter's to report
-    (``resident_hard`` warning); the listing never adds to it.
+    (``resident_hard`` warning); the full listing never adds to it.
     """
     rows = tuple(listing)
-    for candidate in (rows, _names_only(rows)):
-        if candidate and resident_chars + rendered_listing_chars(candidate) <= hard_chars:
-            return candidate
+    if rows and resident_chars + rendered_listing_chars(rows) <= hard_chars:
+        return rows
+    names = _names_only(rows)
+    limit = hard_chars if names_hard_chars is None else names_hard_chars
+    if names and resident_chars + rendered_listing_chars(names) <= limit:
+        return names
     return ()
 
 
@@ -209,14 +217,17 @@ def tool_name_listing(
     if not rows:
         return ()
     resident_chars = resident_definition_chars(tools, agent_name=agent_name, editor_id=editor_id)
-    hard_chars = (exposure_config or core_config.get_config().tool_exposure).resident_hard_chars
-    fitted = fit_listing(rows, resident_chars=resident_chars, hard_chars=hard_chars)
+    exposure = exposure_config or core_config.get_config().tool_exposure
+    hard_chars = exposure.resident_hard_chars
+    names_hard_chars = max(hard_chars, exposure.active_hard_chars)
+    fitted = fit_listing(rows, resident_chars=resident_chars, hard_chars=hard_chars,
+                         names_hard_chars=names_hard_chars)
     if not fitted and not _omission_logged:
         _omission_logged = True
         log.warning(
             "tool_name_listing omitted: resident definitions %d + names-only listing %d > "
-            "resident_hard_chars %d (agent=%s); logged once per process",
-            resident_chars, rendered_listing_chars(_names_only(rows)), hard_chars, agent_name,
+            "active_hard_chars %d (agent=%s); logged once per process",
+            resident_chars, rendered_listing_chars(_names_only(rows)), names_hard_chars, agent_name,
         )
     return fitted
 

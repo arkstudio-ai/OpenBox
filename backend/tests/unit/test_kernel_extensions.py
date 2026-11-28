@@ -58,6 +58,30 @@ async def test_recovery_hooks_run_in_order_and_one_failure_does_not_stop_the_nex
     assert calls == ["a", "b", "c"]
 
 
+async def test_background_hooks_start_in_order_and_stops_are_named_once():
+    calls = []
+
+    class Plugin:
+        def __init__(self, name, stops):
+            self.name, self.stops = name, stops
+
+        def register(self, registry):
+            return None
+
+        async def start_background(self, app):
+            calls.append(self.name)
+
+        def stop_background(self, app):
+            return dict.fromkeys(self.stops, self.name)
+
+    registry = ext.KernelExtensions().add(Plugin("a", ["x"])).add(Plugin("b", ["y", "z"]))
+    await registry.start_background(None)
+    assert calls == ["a", "b"]
+    assert registry.stop_background(None) == {"x": "a", "y": "b", "z": "b"}
+    with pytest.raises(ValueError):
+        ext.KernelExtensions().add(Plugin("a", ["x"])).add(Plugin("b", ["x"])).stop_background(None)
+
+
 def test_plugin_state_writes_never_reach_the_context_a_copy_came_from():
     parent = ToolContext(session_id="s")
     ext.set_plugin_state(parent, "probe.value", 1)

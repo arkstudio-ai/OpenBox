@@ -132,7 +132,6 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
     from tool.browser_action import browser_action_tool
     from tool.skill_manage import skill_manage_tool
     from tool.creator_context import creator_context_tool
-    from tool.memory_tools import memory_prepare_tool, memory_search_tool, memory_read_sources_tool, memory_read_more_tool, current_task_state_tool, memory_forget_tool
     from tool.assistant_tools import assistant_tools
     from tool.capability_search import capability_search_tool
     from tool.video_production import video_generate_tool, video_transcribe_tool
@@ -157,10 +156,13 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
         video_generate_tool, video_transcribe_tool, video_compose_tool, music_search_tool, video_analyze_tool, footage_analyze_tool, hot_trends_tool, desktop_publish_tool, autopilot_run_tool,
         computer_tool, browser_mode_tool, browser_action_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
-        memory_prepare_tool, memory_search_tool, memory_read_sources_tool, memory_read_more_tool, current_task_state_tool, memory_forget_tool,
         *assistant_tools,
         desktop_takeover_tool,
     ]:
+        register(tool)
+    # Tools of registered plugins' tool packs (agent/extensions.py), after the built-ins.
+    from agent.extensions import pack_tools
+    for tool in pack_tools():
         register(tool)
 
     log.info(f"Registered {len(_tools)} built-in tools")

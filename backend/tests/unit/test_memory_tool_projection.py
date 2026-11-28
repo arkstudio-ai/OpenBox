@@ -21,7 +21,7 @@ from session.agent_event_log import load_canonical_model_surface
 from session.session import create_assistant_message, get_messages, save_part, update_message_info
 from tests.unit.test_memory_pipeline import _finish_turn, pipeline_database  # noqa: F401
 from tests.unit.test_memory_tools import manual_memory, seed_tools, tool_context
-from tool import memory_tools as tools
+from memory import tools
 from tool import batch
 from tool.creator_context import CreatorContextArgs, execute_creator_context
 

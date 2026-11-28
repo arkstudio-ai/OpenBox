@@ -10,7 +10,7 @@ from memory.orchestrator import render_memory_context
 from memory.read_contract import permits
 from tests.unit.test_memory_read_protocol import allowed, context
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
-from tool.memory_tools import MemoryPrepareArgs, execute_memory_prepare
+from memory.tools import MemoryPrepareArgs, execute_memory_prepare
 from tool.tool import ToolContext
 
 
@@ -178,7 +178,7 @@ async def test_preparation_tools_require_explicit_rollout(monkeypatch, enabled, 
     from agent.tool_resolution import resolve_step_tools
     from memory.session_policy import MEMORY_CAPABILITIES
     from tool import registry
-    from tool.memory_tools import memory_prepare_tool
+    from memory.tools import memory_prepare_tool
     from tool.assistant_tools import assistant_tools
     config, value = await deferred(monkeypatch)
     config.lazy_read_planning = enabled

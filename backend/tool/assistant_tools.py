@@ -21,7 +21,7 @@ from assistant.runtime import authorize_assistant_tool
 from core.log import create_logger
 from db.base import get_db_session
 from tool.tool import ToolContext, ToolInfo, ToolResult, define_tool
-from tool.memory_tools import MemoryPrepareArgs, MemorySupplementArgs, PREPARE_DESCRIPTION, memory_read_more_tool
+from memory.tools import MemoryPrepareArgs, MemorySupplementArgs, PREPARE_DESCRIPTION, memory_read_more_tool
 
 log = create_logger("tool.assistant")
 READ_TOOLS = frozenset({"projects.list", "sessions.list", "tasks.get", "tasks.list", "results.read", "history.read",
@@ -564,10 +564,10 @@ def _tool(operation: str, parameters, description: str) -> ToolInfo:
             async with get_db_session() as db:
                 await _authority(db, user_id=ctx.user_id, workspace_id=ctx.workspace_id, main_id=ctx.session_id)
             if operation == "memory.prepare":
-                from tool.memory_tools import execute_memory_prepare
+                from memory.tools import execute_memory_prepare
                 return await execute_memory_prepare(args, ctx)
             if operation == "memory.read_more":
-                from tool.memory_tools import execute_memory_read_more
+                from memory.tools import execute_memory_read_more
                 return await execute_memory_read_more(args, ctx, operation=operation)
             if operation in READ_TOOLS:
                 # V2: the observation is used as read. Later turns see a stub

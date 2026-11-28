@@ -138,27 +138,61 @@ class RecoveryHook(Protocol):
     async def recover(self) -> int: ...
 
 
+#: Where the kernel's project brief sits among plugin prompt sections. A section
+#: whose ``order`` is lower renders after the kernel's static parts and the
+#: account identity, before the brief; the others render after it, at the end.
+PROMPT_ORDER_PROJECT_BRIEF = 500
+
+
+@dataclass(frozen=True, slots=True)
+class PromptRequest:
+    """What a prompt section sees of one system prompt assembly (``agent.loop._build_system_prompt``)."""
+
+    agent_name: str
+    model_id: str
+    user_id: str = ""
+    project_id: str = ""
+    workspace_id: str = ""
+    session_kind: str | None = None
+    # Still decided by the agent loop this round (docs/KERNEL_DSH_COMPARISON_20261128.md 9.1).
+    memory_isolated: bool = False
+    include_user_memory: bool = True
+
+
 class PromptSection(Protocol):
-    """A system prompt section evaluated per session (defined this round, no user yet)."""
+    """A system prompt section rendered per assembly; None or "" adds nothing."""
 
     name: str
     order: int
 
-    async def render(self, session) -> str | None: ...
+    async def render(self, request: PromptRequest) -> str | None: ...
 
 
 class ToolPack(Protocol):
-    """A group of tools with their capability (defined this round, no user yet)."""
+    """A group of tools: registered with the built-ins, narrowed per step, checked before each call."""
 
     name: str
     capability: str | None
 
     def tools(self) -> Mapping[str, Any]: ...
-    def available(self, ctx) -> bool: ...
+
+    def admit(self, tools: dict[str, Any], *, user_id: str | None) -> dict[str, Any]:
+        """The step's resolved tools without the ones this pack does not offer now."""
+
+    async def before_call(self, tool_id: str, args: dict, ctx) -> Any:
+        """A refusal (``ToolResult``) of this call, or None to go on to the permission policy."""
 
 
 class Plugin(Protocol):
-    """A first-party module registered once at startup; ``startup``/``shutdown``/``mount`` are optional."""
+    """A first-party module registered once at startup.
+
+    Optional hooks, each run at a fixed position of the entry point's lifespan:
+    ``mount(app)`` adds routes; ``startup(app)`` runs once the database engine
+    is ready; ``start_background(app)`` runs after the kernel's own background
+    services started; ``stop_background(app)`` returns named stop operations
+    that the entry point runs together with its own; ``shutdown(app)`` runs
+    last, after agent loops drained.
+    """
 
     name: str
 
@@ -416,6 +450,26 @@ class KernelExtensions:
             if start is not None:
                 await start(app)
 
+    async def start_background(self, app) -> None:
+        """Plugins' background workers, after the kernel's own background services started."""
+        for plugin in self.plugins:
+            start = getattr(plugin, "start_background", None)
+            if start is not None:
+                await start(app)
+
+    def stop_background(self, app) -> dict[str, Any]:
+        """Plugins' named stop operations, for the entry point to run alongside its own."""
+        stops: dict[str, Any] = {}
+        for plugin in self.plugins:
+            stop = getattr(plugin, "stop_background", None)
+            if stop is None:
+                continue
+            for name, operation in stop(app).items():
+                if name in stops:
+                    raise ValueError(f"background service {name!r} is registered twice")
+                stops[name] = operation
+        return stops
+
     async def shutdown(self, app) -> None:
         for plugin in reversed(self.plugins):
             stop = getattr(plugin, "shutdown", None)
@@ -461,6 +515,65 @@ async def run_recovery_hooks() -> int:
         except Exception:
             log.exception("Plugin recovery deferred hook=%s", getattr(hook, "name", type(hook).__name__))
     return changed
+
+
+async def render_prompt_sections(request: PromptRequest, *, start: int | None = None,
+                                 stop: int | None = None) -> list[str]:
+    """Registered sections with ``start <= order < stop``, by order then registration.
+
+    A section that fails is skipped and logged; the prompt is still built.
+    """
+    chosen = [(section.order, index, section) for index, section in enumerate(extensions().prompt_sections)
+              if (start is None or section.order >= start) and (stop is None or section.order < stop)]
+    parts = []
+    for _order, _index, section in sorted(chosen, key=lambda item: item[:2]):
+        try:
+            text = await section.render(request)
+        except Exception as exc:
+            log.warning("Prompt section skipped section=%s error_type=%s",
+                        getattr(section, "name", type(section).__name__), type(exc).__name__)
+            continue
+        if text:
+            parts.append(text)
+    return parts
+
+
+def pack_tools() -> list:
+    """The installed packs' tools, in registration order; a pack that cannot list them registers none."""
+    found = []
+    for pack in extensions().tool_packs:
+        try:
+            found.extend(pack.tools().values())
+        except Exception:
+            log.exception("Tool pack not registered pack=%s", pack.name)
+    return found
+
+
+def admit_pack_tools(tools: dict, *, user_id: str | None) -> dict:
+    """A step's resolved tools after every pack withheld what it does not offer now.
+
+    A pack that fails withholds its own tools (fail closed).
+    """
+    for pack in extensions().tool_packs:
+        try:
+            tools = pack.admit(tools, user_id=user_id)
+        except Exception:
+            log.exception("Tool pack withheld after a failure pack=%s", pack.name)
+            try:
+                own = set(pack.tools())
+            except Exception:
+                own = set()
+            tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in own}
+    return tools
+
+
+async def check_before_call(tool_id: str, args: dict, ctx) -> Any:
+    """The first pack refusal of this call, or None. A pack's exception reaches the caller, never allows."""
+    for pack in extensions().tool_packs:
+        refusal = await pack.before_call(tool_id, args, ctx)
+        if refusal is not None:
+            return refusal
+    return None
 
 
 # ---------------------------------------------------------------------------

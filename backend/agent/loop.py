@@ -3979,14 +3979,15 @@ async def _build_system_prompt(
         if section:
             parts.append(section)
 
-    # The shared evidence contract also applies to later tool reads and to
-    # empty prefetch results. It is policy, not a remembered fact.
-    if not memory_isolated and user_id and agent_def.name in ("build", "plan"):
-        from memory.jobs import automatic_saving
-        from memory.presentation import AUTOMATIC_SAVING_GUIDANCE, MEMORY_USE_GUIDANCE
-        parts.append(MEMORY_USE_GUIDANCE)
-        if automatic_saving(user_id):
-            parts.append(AUTOMATIC_SAVING_GUIDANCE)
+    # Plugin sections (agent/extensions.py) ordered below the project brief
+    # render here, after the static parts; the rest render last.
+    from agent.extensions import PROMPT_ORDER_PROJECT_BRIEF, PromptRequest, render_prompt_sections
+    prompt_request = PromptRequest(
+        agent_name=agent_def.name, model_id=model_id, user_id=user_id, project_id=project_id,
+        workspace_id=workspace_id, session_kind=session_kind, memory_isolated=memory_isolated,
+        include_user_memory=include_user_memory,
+    )
+    parts.extend(await render_prompt_sections(prompt_request, stop=PROMPT_ORDER_PROJECT_BRIEF))
 
     # The owner's project brief (project/brief.py): rarely changes, so it sits
     # after the static parts and before per-turn memory.
@@ -3999,20 +4000,9 @@ async def _build_system_prompt(
         except Exception as e:
             log.debug(f"Could not load project brief: {e}")
 
-    # Creator memory (last part: it is the most volatile piece, so keeping it
-    # after the cached prefix preserves the prompt cache when a memory changes).
-    if include_user_memory and user_id and agent_def.name in ("build", "plan"):
-        try:
-            from memory.context import assemble_user_context
-            memory_args = {"user_id": user_id, "project_id": project_id or None}
-            if workspace_id:
-                memory_args["workspace_id"] = workspace_id
-            assembled = await assemble_user_context(**memory_args)
-            if assembled["context"]:
-                parts.append("<user_memory>\n" + assembled["context"] + "\n</user_memory>")
-        except Exception as e:
-            log.debug(f"Could not assemble user memory context: {e}")
-
+    # The most volatile sections come last: keeping them after the cached
+    # prefix preserves the prompt cache when they change.
+    parts.extend(await render_prompt_sections(prompt_request, start=PROMPT_ORDER_PROJECT_BRIEF))
     return parts
 
 

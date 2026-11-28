@@ -52,10 +52,6 @@
     },
     {
      "role": "user",
-     "content": "项目代号是什么？"
-    },
-    {
-     "role": "user",
      "content": {
       "$shared": "d81d326a8227"
      }
@@ -96,6 +92,19 @@
     {
      "role": "assistant",
      "content": "## 摘要\n用户告诉助手项目代号叫青鸟，助手已确认。"
+    },
+    {
+     "role": "user",
+     "content": {
+      "$lines": [
+       "<system-reminder>",
+       "The user sent the following message:",
+       "项目代号是什么？",
+       "",
+       "Please address this message and continue with your tasks.",
+       "</system-reminder>"
+      ]
+     }
     },
     {
      "role": "user",

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from tests.manual.agent_behavior_eval import PAID_GENERATION_TOOLS, Verdict, call, say
+from tests.manual.agent_behavior_eval import PAID_GENERATION_TOOLS, Verdict, call, card_headers, say
 
 CATEGORIES = {
     "files": 5,
@@ -182,12 +182,16 @@ def _fires(schedule: dict, count: int = 21) -> list[datetime]:
     return []
 
 
-def cron_judge(accept: Callable[[datetime], bool], *, days: set[int], words: tuple[str, ...]):
+def cron_judge(accept: Callable[[datetime], bool], *, days: set[int], words: tuple[str, ...],
+               requires: tuple[str, ...] = ()):
     """A new enabled scheduled task whose fire times are exactly the requested ones (Asia/Shanghai).
 
     Every one of the next three weeks' fire times must pass ``accept``, and
     every ISO weekday in ``days`` (1 = Monday) must be covered. The task text
-    must mention one of ``words``.
+    must mention one of ``words``. Every one of ``requires`` (what the run
+    needs to know when it starts in a fresh conversation, such as where its
+    data is) must be in the task text or in a project file the text names (a
+    report script the task runs, say).
     """
     async def judge(view):
         jobs = [job for job in await _cron_jobs(view.env.user_id) if job.enabled]
@@ -207,14 +211,43 @@ def cron_judge(accept: Callable[[datetime], bool], *, days: set[int], words: tup
                 reasons.append(f"{job.name}: never fires on weekdays {sorted(days - covered)}")
             elif not any(word in (job.task_prompt or "") + (job.name or "") for word in words):
                 reasons.append(f"{job.name}: task text does not mention {words}")
+            elif missing := [word for word in requires if word not in _with_named_files(
+                    view.env, (job.task_prompt or "") + (job.name or ""))]:
+                reasons.append(f"{job.name}: neither the task text nor a file it names mentions {missing}")
             else:
                 return Verdict(True, f"{job.name}: {job.schedule}")
         return Verdict(False, "; ".join(reasons))
     return judge
 
 
+def _with_named_files(env, text: str) -> str:
+    """``text`` plus the text of the project files whose names it contains."""
+    named = [path for path in sorted(env.project_dir.rglob("*"))
+             if path.is_file() and path.name in text and path.stat().st_size <= 200_000]
+    return "\n".join([text, *(path.read_text(encoding="utf-8", errors="replace") for path in named)])
+
+
 def _at(days: set[int], hour: int, minute: int = 0):
     return lambda moment: moment.isoweekday() in days and (moment.hour, moment.minute) == (hour, minute)
+
+
+#: The daily takings the weekly report reads: two full weeks (Monday 2026-11-09
+#: to Sunday 2026-11-22) for three stores. Without data in the workspace a
+#: careful agent rightly asks where the figures come from instead of scheduling.
+DAILY_TAKINGS_FILE = "销售/每日流水.csv"
+
+
+def _daily_takings_csv() -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["日期", "门店", "单数", "销售额"])
+    start = datetime(2026, 11, 9)
+    for offset in range(14):
+        day = (start + timedelta(days=offset)).strftime("%Y-%m-%d")
+        for index, store in enumerate(("西湖店", "滨江店", "城西店")):
+            orders = 40 + (offset * 7 + index * 11) % 23 + (15 if offset % 7 >= 5 else 0)
+            writer.writerow([day, store, orders, f"{orders * (21 + index * 2) + offset * 3:.2f}"])
+    return buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +860,8 @@ async def seed_assistant(env, task, model: str) -> None:
     env.project_id = main.project_id or ""
     env.project_slug = "default"
     env.extra.update({"north_star": project["project_id"], "task_id": linked["task_id"]})
-    env.state.update({"linked": linked, "before": await _assistant_counts(owner)})
+    env.state.update({"linked": linked, "before": await _assistant_counts(owner),
+                      "north_star_sessions": await _sessions_in(owner, project["project_id"])})
 
 
 async def _assistant_counts(owner: str) -> list[int]:
@@ -841,6 +875,15 @@ async def _assistant_counts(owner: str) -> list[int]:
                 for table in (Project, Session, AssistantTask)]
 
 
+async def _sessions_in(owner: str, project_id: str) -> int:
+    from sqlalchemy import func, select
+    from db.base import get_db_session
+    from db.models.session import Session
+    async with get_db_session() as db:
+        return await db.scalar(select(func.count()).select_from(Session).where(
+            Session.user_id == owner, Session.project_id == project_id))
+
+
 def _result(part: dict) -> dict:
     try:
         value = json.loads(part.get("output") or "{}")
@@ -850,12 +893,22 @@ def _result(part: dict) -> dict:
 
 
 def assistant_judge(expect: str):
-    """``assistant_placement_eval.py``'s rules for ``followup`` and ``accepted``."""
+    """``assistant_placement_eval.py``'s rules for ``followup`` and ``accepted``.
+
+    ``accepted`` (the user named the project and asked for a new conversation)
+    also requires the new conversation to live in that project. Nothing in the
+    run can wait on the delegated conversation (inbox wakes are off), so a
+    ``tasks.submit`` left ``waiting_input`` is a card the assistant's own call
+    raised: a placement card for a project the user already named, or a
+    task-AI card nobody asked for. Neither is the requested outcome.
+    """
     async def judge(view):
         before, after = view.env.state["before"], await _assistant_counts(view.env.user_id)
         mutations = [part for part in view.tool_parts
                      if part.get("tool") in {"tasks.submit", "tasks.followup", "projects.create"}]
         accepted = [part for part in mutations if _result(part).get("state") == "accepted"]
+        detail = (f"counts {before} -> {after}; calls "
+                  f"{[(part['tool'], _result(part).get('state') or part.get('status')) for part in mutations]}")
         if expect == "followup":
             task_id = view.env.state["linked"]["task_id"]
             passed = before == after and any(part["tool"] == "tasks.followup"
@@ -863,11 +916,16 @@ def assistant_judge(expect: str):
                                              for part in accepted)
         else:
             project = view.env.extra["north_star"]
-            passed = (after[0] == before[0] and after[1] == before[1] + 1
+            placed = await _sessions_in(view.env.user_id, project) - view.env.state["north_star_sessions"]
+            passed = (after[0] == before[0] and after[1] == before[1] + 1 and placed == 1
                       and any(part["tool"] == "tasks.submit" and (part.get("input") or {}).get("project_id") == project
                               for part in accepted))
-        return Verdict(passed, f"counts {before} -> {after}; calls "
-                       f"{[(part['tool'], _result(part).get('state') or part.get('status')) for part in mutations]}")
+            detail += f"; new conversations in North Star {placed}"
+        cards = [header for card in view.pending_questions if card["status"] == "pending"
+                 for header in card_headers(card)]
+        if cards:
+            detail += f"; pending cards {cards}"
+        return Verdict(passed, detail)
     return judge
 
 
@@ -1068,11 +1126,14 @@ TASKS: list[Task] = [
     ),
     Task(
         id="cron_weekly_sales_report", category="schedule",
-        prompt="每周一上午 10 点帮我把上周的销售情况整理成一份周报，发在这个对话里。",
-        judge=cron_judge(_at({1}, 10), days={1}, words=("周报", "销售")),
+        prompt="每周一上午 10 点帮我把上周的销售情况整理成一份周报，发在这个对话里。"
+               f"销售数据在 {DAILY_TAKINGS_FILE}，收银系统每天晚上会把各门店当天的单数和销售额追加进去。",
+        setup=lambda env: env.write(DAILY_TAKINGS_FILE, _daily_takings_csv()),
+        judge=cron_judge(_at({1}, 10), days={1}, words=("周报", "销售"), requires=("每日流水",)),
         fake_script=[
             [call("cron", action="add", name="销售周报", schedule="0 10 * * 1",
-                  task="整理上周的销售情况，写成一份周报发在这个对话里。")],
+                  task=f"读取 {{workdir}}/{DAILY_TAKINGS_FILE}，按门店汇总上周（周一到周日）的单数和销售额，"
+                       "写成一份周报发在这个对话里。")],
             say("每周一上午 10 点会发周报。"),
         ],
     ),

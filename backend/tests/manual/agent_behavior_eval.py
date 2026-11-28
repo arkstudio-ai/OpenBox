@@ -45,6 +45,9 @@ What is replaced, and why (everything else is the shipped code):
 - Inbox wakes are not scheduled, so work the personal assistant hands to
   another conversation is recorded but not executed (as in the placement
   evaluation).
+- ``--model`` is the default chat model and one of the catalogue's
+  ``models``, as a deployment's default is; otherwise the personal assistant
+  cannot hand work to the default task AI and raises a model-choice card.
 - Change snapshots are skipped (``snapshot.track`` returns no snapshot).
 
 Hard limits per run: 30 steps and 200,000 tokens (25.5); the run is stopped
@@ -637,8 +640,14 @@ class EvalOptions:
 
 
 def evaluation_config(options: EvalOptions):
-    """The deployment's config with the evaluated switches applied (a copy; nothing is written)."""
-    from core.config import AgentTuningConfig, MemoryConfig, ProviderConfig, get_config
+    """The deployment's config with the evaluated switches applied (a copy; nothing is written).
+
+    The evaluated model becomes the default chat model and, as the default is
+    in a deployment, one of the offered ones: the personal assistant hands new
+    work to "the user's saved default task AI" only when the catalogue
+    (``models``) offers it, and otherwise stops at a model-choice card.
+    """
+    from core.config import AgentTuningConfig, MemoryConfig, ModelConfig, ProviderConfig, get_config
     config = get_config().model_copy(deep=True)
     if options.fake_model:
         config.provider = {**config.provider, "openai": ProviderConfig(
@@ -647,6 +656,8 @@ def evaluation_config(options: EvalOptions):
         config.models = []
     elif options.model:
         config.model = options.model
+    if config.models and config.model not in {entry.id for entry in config.models}:
+        config.models = [ModelConfig(id=config.model), *config.models]
     config.tool_exposure.mode = options.exposure
     tuning = {name: False for name, info in AgentTuningConfig.model_fields.items() if info.annotation is bool}
     for name in options.tuning:
@@ -743,6 +754,12 @@ class RunView:
 class Verdict:
     passed: bool | None
     detail: str = ""
+
+
+def card_headers(card: dict) -> list[str]:
+    """The headers of one question card (e.g. 任务 AI 模型, 安排这件事)."""
+    return [str(question.get("header") or "") for question in card.get("questions") or []
+            if isinstance(question, dict)]
 
 
 async def _fresh_database(run_dir: Path):
@@ -988,6 +1005,8 @@ async def run_task_once(task, options: EvalOptions, repeat: int, *, upstream=Non
                             "input": json.dumps(part.get("input"), ensure_ascii=False, default=str)[:300],
                             "result": str(part.get("output") or part.get("error") or "")[:300]}
                            for part in parts[:60]],
+            # Cards a tool raised itself (a task-AI or placement card) show up here and nowhere else.
+            "cards": [{"status": card["status"], "headers": card_headers(card)} for card in view.pending_questions[:10]],
             "platform_errors": capture.lines[:20],
         })
         if options.keep_dirs:

@@ -183,8 +183,15 @@ def _fires(schedule: dict, count: int = 21) -> list[datetime]:
 
 
 def cron_judge(accept: Callable[[datetime], bool], *, days: set[int], words: tuple[str, ...],
-               requires: tuple[str, ...] = ()):
+               requires: tuple[str, ...] = (), card_terms: tuple[tuple[str, ...], ...] = ()):
     """A new enabled scheduled task whose fire times are exactly the requested ones (Asia/Shanghai).
+
+    Or, when no task exists yet, the confirmation card the ``scheduled-tasks``
+    Skill asks for before creating one ("创建前用一句话复述……请用户确认"):
+    a pending card that mentions one of ``words``, every one of ``requires``,
+    and one term from each group in ``card_terms`` (the requested days and
+    time in words). Stopping at that card is the designed flow, like the
+    paid-generation card for the merchant tasks.
 
     Every one of the next three weeks' fire times must pass ``accept``, and
     every ISO weekday in ``days`` (1 = Monday) must be covered. The task text
@@ -196,6 +203,16 @@ def cron_judge(accept: Callable[[datetime], bool], *, days: set[int], words: tup
     async def judge(view):
         jobs = [job for job in await _cron_jobs(view.env.user_id) if job.enabled]
         if not jobs:
+            pending = [card for card in view.pending_questions if card["status"] == "pending"]
+            if card_terms and pending:
+                text = _card_text(pending[-1]).replace("\\n", "\n")
+                missing = [group for group in card_terms if not any(term in text for term in group)]
+                if not any(word in text for word in words):
+                    missing.append(words)
+                missing += [(word,) for word in requires if word not in text]
+                if not missing:
+                    return Verdict(True, "confirmation card restates the requested schedule and task")
+                return Verdict(False, f"no scheduled task; the pending card lacks {missing}")
             return Verdict(False, "no enabled scheduled task in the database")
         reasons = []
         for job in jobs:
@@ -1117,7 +1134,8 @@ TASKS: list[Task] = [
     Task(
         id="cron_daily_bad_reviews", category="schedule",
         prompt="每天早上 9 点提醒我看一下前一天的外卖差评，记得逐条回复。",
-        judge=cron_judge(_at(set(range(1, 8)), 9), days=set(range(1, 8)), words=("差评",)),
+        judge=cron_judge(_at(set(range(1, 8)), 9), days=set(range(1, 8)), words=("差评",),
+                         card_terms=(("每天", "每日"), ("9:00", "09:00", "9点", "9 点", "九点"))),
         fake_script=[
             [call("cron", action="add", name="外卖差评提醒", schedule="0 9 * * *",
                   task="提醒我查看前一天的外卖差评，并逐条回复。")],
@@ -1129,7 +1147,8 @@ TASKS: list[Task] = [
         prompt="每周一上午 10 点帮我把上周的销售情况整理成一份周报，发在这个对话里。"
                f"销售数据在 {DAILY_TAKINGS_FILE}，收银系统每天晚上会把各门店当天的单数和销售额追加进去。",
         setup=lambda env: env.write(DAILY_TAKINGS_FILE, _daily_takings_csv()),
-        judge=cron_judge(_at({1}, 10), days={1}, words=("周报", "销售"), requires=("每日流水",)),
+        judge=cron_judge(_at({1}, 10), days={1}, words=("周报", "销售"), requires=("每日流水",),
+                         card_terms=(("周一", "星期一", "礼拜一"), ("10:00", "10点", "10 点", "十点"))),
         fake_script=[
             [call("cron", action="add", name="销售周报", schedule="0 10 * * 1",
                   task=f"读取 {{workdir}}/{DAILY_TAKINGS_FILE}，按门店汇总上周（周一到周日）的单数和销售额，"
@@ -1140,7 +1159,9 @@ TASKS: list[Task] = [
     Task(
         id="cron_workday_supplier_order", category="schedule",
         prompt="工作日下午三点提醒我给供应商下单，周末不用提醒。",
-        judge=cron_judge(_at({1, 2, 3, 4, 5}, 15), days={1, 2, 3, 4, 5}, words=("供应商", "下单")),
+        judge=cron_judge(_at({1, 2, 3, 4, 5}, 15), days={1, 2, 3, 4, 5}, words=("供应商", "下单"),
+                         card_terms=(("工作日", "周一至周五", "周一到周五"),
+                                     ("15:00", "下午3", "下午 3", "下午三点", "三点", "3点"))),
         fake_script=[
             [call("cron", action="add", name="供应商下单提醒", schedule="0 15 * * 1-5", task="提醒我给供应商下单。")],
             say("工作日下午三点提醒你。"),

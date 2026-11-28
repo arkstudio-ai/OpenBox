@@ -206,6 +206,31 @@ async def test_cron_judge_needs_a_job(tmp_path, monkeypatch):
     assert (await BY_ID["cron_daily_bad_reviews"].judge(make_view(make_env(tmp_path)))).passed is False
 
 
+def _confirm_card(text, status="pending"):
+    return {"id": "q1", "status": status, "answers": None, "continuation": {},
+            "questions": [{"question": text, "options": [{"label": "确认创建"}]}]}
+
+
+@pytest.mark.parametrize("task_id,text,passed", [
+    ("cron_daily_bad_reviews", "将创建「外卖差评提醒」：每天 09:00 提醒你查看前一天的外卖差评并逐条回复。确认吗？", True),
+    ("cron_daily_bad_reviews", "将创建「外卖差评提醒」：每周一 09:00 提醒你查看差评。确认吗？", False),
+    ("cron_daily_bad_reviews", "将创建「提醒」：每天 9点 提醒你。确认吗？", False),
+    ("cron_weekly_sales_report", "将创建「销售周报」：每周一 10:00 读取 销售/每日流水.csv 整理上周周报。确认吗？", True),
+    ("cron_weekly_sales_report", "将创建「销售周报」：每周一 10:00 整理上周周报。确认吗？", False),
+    ("cron_workday_supplier_order", "将创建「供应商下单提醒」：工作日 15:00 提醒你给供应商下单。确认吗？", True),
+    ("cron_workday_supplier_order", "将创建「供应商下单提醒」：每天 15:00 提醒你给供应商下单。确认吗？", False),
+])
+async def test_cron_judge_accepts_the_skills_confirmation_card(tmp_path, monkeypatch, task_id, text, passed):
+    async def none(_user_id):
+        return []
+    monkeypatch.setattr(tasks, "_cron_jobs", none)
+    task = BY_ID[task_id]
+    verdict = await task.judge(make_view(make_env(tmp_path, task), cards=[_confirm_card(text)]))
+    assert verdict.passed is passed, verdict.detail
+    answered = await task.judge(make_view(make_env(tmp_path, task), cards=[_confirm_card(text, status="answered")]))
+    assert answered.passed is False
+
+
 # -- merchant judges: the card, its parameters, nothing paid -------------------------
 
 def card(*lines, status="pending"):

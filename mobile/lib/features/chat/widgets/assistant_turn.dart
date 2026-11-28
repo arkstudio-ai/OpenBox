@@ -40,6 +40,7 @@ class AssistantTurn extends ConsumerWidget {
     required this.onDismiss,
     this.retry,
     this.onStop,
+    this.onActions,
     this.todoEditable = false,
     this.awaitingInput = false,
     this.immutableHistory = false,
@@ -62,6 +63,7 @@ class AssistantTurn extends ConsumerWidget {
 
   /// Abort the run — offered by the task card while one is in flight.
   final VoidCallback? onStop;
+  final VoidCallback? onActions;
 
   /// This turn holds the conversation's newest task card, so its card is
   /// the one that may be edited.
@@ -115,6 +117,7 @@ class AssistantTurn extends ConsumerWidget {
         turn.todo != null ||
         turn.hasThinking ||
         content.resultGroups.isNotEmpty;
+    final answer = MarkdownView(content.finalText, streaming: streaming);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -139,9 +142,22 @@ class AssistantTurn extends ConsumerWidget {
             content.hasFinal ||
             content.workEvents.isNotEmpty ||
             content.resultGroups.isNotEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 8, bottom: 6),
-            child: AiGeneratedLabel(),
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const AiGeneratedLabel(),
+                if (onActions != null)
+                  IconButton(
+                    key: const Key('chat-reply-actions'),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.more_horiz),
+                    tooltip: i18n.t('common:action.more'),
+                    onPressed: onActions,
+                  ),
+              ],
+            ),
           ),
         WorkLogTrace(events: content.workEvents, active: preAnswer),
         if (streaming && !hasActivity)
@@ -162,7 +178,10 @@ class AssistantTurn extends ConsumerWidget {
                 ),
               ),
             ),
-          MarkdownView(content.finalText, streaming: streaming),
+          if (streaming || onActions == null)
+            answer
+          else
+            SelectionArea(child: answer),
         ],
         if (content.incomplete && turn.error == null) const _IncompleteNotice(),
         if (turn.error != null && !streaming && immutableHistory)

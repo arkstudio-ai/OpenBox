@@ -87,11 +87,13 @@ class Session(BaseModel):
 
 def _orm_to_session(row: SessionORM) -> Session:
     """Convert a SessionORM row to a Pydantic Session model."""
+    from light.production_title import production_title
+
     return Session(
         id=row.id,
         user_id=row.user_id,
         workspace_id=row.workspace_id,
-        title=row.title or "",
+        title=production_title(row),
         agent=row.agent or "build",
         model=row.model or "",
         variant=getattr(row, "variant", None),
@@ -646,6 +648,7 @@ async def update_session(
     *,
     run_fence: RunFence | None = None,
     only_untitled: bool = False,
+    manual_title: bool = False,
     **kwargs,
 ) -> Session | None:
     """Update session fields."""
@@ -677,6 +680,11 @@ async def update_session(
         await _assert_run_fence(db, run_fence, session_id=session_id, user_id=user_id)
         previous = await db.get(SessionORM, session_id) if setting_keys or protected_keys.intersection(kwargs) else None
         if previous is not None and previous.user_id == user_id:
+            if manual_title and "title" in kwargs:
+                from light.production_title import ENTRIES
+
+                if previous.light_entry in ENTRIES:
+                    kwargs["metadata_"] = {**(previous.metadata_ or {}), "manual_title": True}
             if any(kwargs[key] != getattr(previous, key) for key in protected_keys.intersection(kwargs)):
                 raise ValueError("Session audience and memory policy require their dedicated service")
             if previous.kind == "assistant" and (

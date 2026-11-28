@@ -15,6 +15,8 @@ class InboxItemTile extends ConsumerWidget {
     required this.item,
     required this.onTap,
     this.workspaceName,
+    this.displayTitle,
+    this.hasUnread,
   });
 
   final InboxItem item;
@@ -22,6 +24,8 @@ class InboxItemTile extends ConsumerWidget {
 
   /// Set only when the row's workspace differs from the current one.
   final String? workspaceName;
+  final String? displayTitle;
+  final bool? hasUnread;
 
   static IconData iconFor(InboxItem item) => switch (item.kind) {
     'task_completed' ||
@@ -47,7 +51,7 @@ class InboxItemTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final unread = item.unread;
+    final unread = hasUnread ?? item.unread;
     final failed = item.kind.endsWith('_failed');
     return InkWell(
       key: ValueKey('inbox-${item.id}'),
@@ -79,7 +83,7 @@ class InboxItemTile extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          item.title,
+                          displayTitle ?? item.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

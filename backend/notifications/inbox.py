@@ -44,10 +44,12 @@ def category_for(kind: str) -> str:
     return CATEGORY_FOR_KIND.get(kind, "system")
 
 
-def link_for(kind: str, *, workspace_id=None, session_id=None, action_id=None) -> dict | None:
+def link_for(kind: str, *, workspace_id=None, session_id=None, action_id=None,
+             production: bool = False) -> dict | None:
     """Derive the target a business event should open."""
     if session_id and workspace_id:
-        return {"kind": "session", "workspaceId": workspace_id, "sessionId": session_id}
+        return {"kind": "session", "workspaceId": workspace_id, "sessionId": session_id,
+                **({"production": True} if production else {})}
     if kind.startswith("cron_") and workspace_id:
         return {"kind": "cron", "workspaceId": workspace_id, **({"jobId": action_id} if action_id else {})}
     if kind in {"platform_auth_expired", "publish_done", "publish_failed", "desktop_login_reset",
@@ -97,6 +99,8 @@ def validate_link(link, *, first_party: bool = False) -> dict | None:
         if not (isinstance(link.get("workspaceId"), str) and isinstance(link.get("sessionId"), str)):
             raise ValueError("Session link needs workspaceId and sessionId")
         out.update(workspaceId=link["workspaceId"], sessionId=link["sessionId"])
+        if link.get("production") is True:
+            out["production"] = True
         if link.get("panel") == "desktop":
             out["panel"] = "desktop"
             out["control"] = bool(link.get("control"))

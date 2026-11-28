@@ -173,6 +173,7 @@ Future<GoRouter> _mount(
         '/app/s/:sessionId',
         '/app/auth-center',
         '/app/topics/:slug',
+        '/light/productions/:sessionId',
       ])
         GoRoute(path: path, builder: (_, _) => const SizedBox()),
     ],
@@ -206,6 +207,40 @@ void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     _bundle = await I18nBundle.load();
+  });
+
+  testWidgets('production notices group by task and open the production', (
+    tester,
+  ) async {
+    final server = _Server();
+    const link = {
+      'kind': 'session',
+      'workspaceId': 'home',
+      'sessionId': 'menu',
+      'production': true,
+    };
+    server.pages[''] = [
+      {..._item('ready', link: link), 'productionTitle': '周末特惠菜单'},
+      {
+        ..._item('review', kind: 'approval_required', link: link),
+        'productionTitle': '周末特惠菜单',
+      },
+    ];
+    final router = await _mount(tester, server, light: true);
+    expect(find.text('周末特惠菜单'), findsOneWidget);
+    expect(find.text('Title review'), findsNothing);
+    final group = find.byType(ExpansionTile);
+    await tester.tap(
+      find.descendant(of: group, matching: find.byIcon(Icons.expand_more)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Title review'), findsOneWidget);
+    await tester.tap(find.text('周末特惠菜单'));
+    await tester.pumpAndSettle();
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      '/light/productions/menu',
+    );
   });
 
   testWidgets('an unread failed-turn notice opens its exact admin trace', (

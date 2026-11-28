@@ -22,6 +22,7 @@ class InboxLink {
     this.url,
     this.panel,
     this.control = false,
+    this.production = false,
   });
 
   static InboxLink? fromJson(dynamic json) {
@@ -41,6 +42,7 @@ class InboxLink {
       url: asString(json['url']),
       panel: asString(json['panel']),
       control: asBool(json['control']) ?? false,
+      production: asBool(json['production']) ?? false,
     );
   }
 
@@ -56,6 +58,7 @@ class InboxLink {
   final String? url;
   final String? panel;
   final bool control;
+  final bool production;
 }
 
 class InboxItem {
@@ -71,6 +74,7 @@ class InboxItem {
     this.announcementId,
     this.readAt,
     this.resolvedAt,
+    this.productionTitle,
   });
 
   factory InboxItem.fromJson(Map<String, dynamic> json) => InboxItem(
@@ -85,6 +89,7 @@ class InboxItem {
     readAt: asDate(json['readAt']),
     resolvedAt: asDate(json['resolvedAt']),
     createdAt: asDate(json['createdAt']) ?? DateTime.now(),
+    productionTitle: asString(json['productionTitle']),
   );
 
   final String id;
@@ -98,6 +103,7 @@ class InboxItem {
   final DateTime? readAt;
   final DateTime? resolvedAt;
   final DateTime createdAt;
+  final String? productionTitle;
 
   bool get unread => readAt == null;
 
@@ -113,6 +119,7 @@ class InboxItem {
     readAt: readAt ?? DateTime.now(),
     resolvedAt: resolvedAt,
     createdAt: createdAt,
+    productionTitle: productionTitle,
   );
 }
 

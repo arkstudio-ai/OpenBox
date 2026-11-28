@@ -8,6 +8,7 @@ import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/media_viewer.dart';
 import '../../../shared/widgets/resource_archive_heading.dart';
 import '../../chat/api/assets_api.dart';
+import '../../chat/widgets/asset_video_preview.dart';
 import '../state/light_providers.dart';
 import 'production_api.dart';
 
@@ -271,7 +272,6 @@ Future<void> openProductionMedia(BuildContext context, ProductionMedia media) =>
       (_) => Consumer(
         builder: (context, ref, _) {
           final i18n = ref.watch(i18nProvider);
-          final url = ref.watch(lightAssetUrlProvider(media.id));
           final failed = MediaPreviewError(
             i18n.t('light:production.previewUnavailable'),
           );
@@ -279,24 +279,24 @@ Future<void> openProductionMedia(BuildContext context, ProductionMedia media) =>
             title: media.name,
             assetId: media.id,
             mimeType: media.mime,
-            child: url.when(
-              loading: MediaPreviewLoading.new,
-              error: (_, _) => failed,
-              data: (source) {
-                if (source == null || source.isEmpty) return failed;
-                return media.video
-                    ? MediaPreviewVideo(
-                        key: ValueKey(source),
-                        source: source,
-                        subtitles: media.subtitles,
-                        failedText: i18n.t('first_video:result.playFailed'),
-                      )
-                    : MediaPreviewImage(
-                        url: source,
-                        failedText: failed.message,
-                      );
-              },
-            ),
+            child: media.video
+                ? AssetVideoPreview(
+                    assetId: media.id,
+                    subtitles: media.subtitles,
+                    failedText: i18n.t('first_video:result.playFailed'),
+                  )
+                : ref
+                      .watch(lightAssetUrlProvider(media.id))
+                      .when(
+                        loading: MediaPreviewLoading.new,
+                        error: (_, _) => failed,
+                        data: (source) => source == null || source.isEmpty
+                            ? failed
+                            : MediaPreviewImage(
+                                url: source,
+                                failedText: failed.message,
+                              ),
+                      ),
           );
         },
       ),

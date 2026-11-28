@@ -238,6 +238,7 @@ class MediaPreviewVideo extends ConsumerStatefulWidget {
     this.loop = false,
     this.decorate,
     this.subtitles,
+    this.onPlaybackError,
   });
 
   final String source;
@@ -246,6 +247,7 @@ class MediaPreviewVideo extends ConsumerStatefulWidget {
   final bool loop;
   final Widget Function(Widget video)? decorate;
   final String? subtitles;
+  final ValueChanged<String>? onPlaybackError;
 
   @override
   ConsumerState<MediaPreviewVideo> createState() => _MediaPreviewVideoState();
@@ -262,18 +264,35 @@ class _MediaPreviewVideoState extends ConsumerState<MediaPreviewVideo> {
         );
   late final Future<void> _load;
   bool _playbackFailed = false;
+  bool _reportedError = false;
 
   @override
   void initState() {
     super.initState();
+    if (widget.onPlaybackError != null) _controller.addListener(_checkError);
     _load = _start();
   }
 
   Future<void> _start() async {
-    await _controller.initialize();
-    if (!mounted) return;
-    if (widget.loop) await _controller.setLooping(true);
-    if (mounted) await _controller.play();
+    try {
+      await _controller.initialize();
+      if (!mounted) return;
+      if (widget.loop) await _controller.setLooping(true);
+      if (mounted) await _controller.play();
+    } catch (error) {
+      _reportError(error is PlatformException ? error.code : 'initialize');
+      rethrow;
+    }
+  }
+
+  void _checkError() {
+    if (_controller.value.hasError) _reportError('VideoError');
+  }
+
+  void _reportError(String code) {
+    if (!mounted || _reportedError) return;
+    _reportedError = true;
+    widget.onPlaybackError?.call(code);
   }
 
   Future<void> _toggle() async {
@@ -283,13 +302,17 @@ class _MediaPreviewVideoState extends ConsumerState<MediaPreviewVideo> {
       } else {
         await _controller.play();
       }
-    } catch (_) {
-      if (mounted) setState(() => _playbackFailed = true);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _playbackFailed = true);
+        _reportError(error is PlatformException ? error.code : 'playback');
+      }
     }
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_checkError);
     unawaited(_controller.dispose());
     super.dispose();
   }

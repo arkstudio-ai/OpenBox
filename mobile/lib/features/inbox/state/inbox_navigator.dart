@@ -185,6 +185,8 @@ class InboxNavigator {
               ),
             ),
           );
+        } else if (link.production) {
+          router.go(Paths.lightProduction(link.sessionId!));
         } else if (_read(uiModeProvider).mode == UiMode.light) {
           // Light: the conversation on its topic page, where a result keeps
           // its save / publish / 省心托管 actions (a 托管 run lands here).

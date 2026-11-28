@@ -130,6 +130,61 @@ class SkillsConfig(BaseModel):
     urls: list[str] = []
 
 
+class AgentTuningConfig(BaseModel):
+    """Rollout switches for the prompt, tool-visibility and skill-loading changes.
+
+    Each switch guards one change from docs/KERNEL_DSH_COMPARISON_20261128.md
+    (section 21, table A; section 25.3). All are off by default, so behaviour
+    is unchanged until a switch is turned on. ``workspaces`` narrows every
+    enabled switch to the listed workspace ids (turn changes on for internal
+    workspaces first); an empty list means the whole deployment. Delete a
+    switch, and its old code path, once the change is on everywhere.
+
+    Environment overrides use the ``AGENT_TUNING_`` prefix, for example
+    ``AGENT_TUNING_RELAXED_PROMPT=true`` and
+    ``AGENT_TUNING_WORKSPACES=ws_a,ws_b``.
+    """
+
+    #: A1: drop the one-tool-per-message, line-count, minimise-output and
+    #: ask-first rules from the QWEN and GEMINI prompt variants.
+    relaxed_prompt: bool = False
+    #: A2: drop prompt rules that contradict kernel behaviour (absolute paths
+    #: only; instructions naming tools the model cannot see or fetch).
+    consistent_prompt_rules: bool = False
+    #: A3: list eligible built-in tool names (one line each) in the prompt;
+    #: schemas stay deferred.
+    tool_name_listing: bool = False
+    #: A4: keep a compact built-in Skill catalogue resident in portable mode.
+    resident_skill_catalogue: bool = False
+    #: A5: do not re-inject an unchanged Skill body that is still in context.
+    skill_reload_dedupe: bool = False
+    #: A6: let older copies of the same Skill body be pruned; keep the newest.
+    prune_stale_skill_copies: bool = False
+    #: A7 stage one: tell the model to load a Skill the user names as
+    #: ``@skill:<name>`` before acting.
+    skill_mention_rule: bool = False
+    #: Render the request-accepted time outside the system prompt so the
+    #: system prompt stays byte-identical across turns.
+    accepted_time_outside_system_prompt: bool = False
+    workspaces: list[str] = []
+
+
+def agent_tuning_enabled(name: str, workspace_id: str | None = None) -> bool:
+    """Whether the ``agent_tuning`` switch ``name`` is on for ``workspace_id``.
+
+    An unknown name raises ``KeyError`` so a misspelt switch fails loudly
+    instead of silently staying off.
+    """
+    if name == "workspaces" or name not in AgentTuningConfig.model_fields:
+        raise KeyError(f"unknown agent_tuning switch: {name}")
+    tuning = get_config().agent_tuning
+    if not getattr(tuning, name):
+        return False
+    if not tuning.workspaces:
+        return True
+    return bool(workspace_id) and workspace_id in tuning.workspaces
+
+
 class ToolExposureConfig(BaseModel):
     """Tool schema exposure and discovery budgets.
 
@@ -978,6 +1033,7 @@ class OpenBoxConfig(BaseModel):
     skills: SkillsConfig = SkillsConfig()
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool_exposure: ToolExposureConfig = ToolExposureConfig()
+    agent_tuning: AgentTuningConfig = Field(default_factory=AgentTuningConfig)
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     asset_description: AssetDescriptionConfig = Field(default_factory=AssetDescriptionConfig)
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
@@ -1339,7 +1395,11 @@ def _apply_env_overrides(data: dict) -> dict:
         if allow_emergency is not None:
             exposure["allow_emergency_eager"] = allow_emergency.lower() == "true"
 
-    for section, model, prefix in (("memory", MemoryConfig, "MEMORY_"), ("voice", VoiceConfig, "VOICE_")):
+    for section, model, prefix in (
+        ("memory", MemoryConfig, "MEMORY_"),
+        ("voice", VoiceConfig, "VOICE_"),
+        ("agent_tuning", AgentTuningConfig, "AGENT_TUNING_"),
+    ):
         overrides = _prefixed_overrides(model, prefix)
         if overrides:
             data[section] = _deep_merge(data.get(section, {}), overrides)

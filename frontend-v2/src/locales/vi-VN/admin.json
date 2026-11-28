@@ -79,7 +79,7 @@
     "skills": "Kỹ năng",
     "billing": "Gói đăng ký",
     "trajectories": "Nhật ký thực thi",
-    "examples": "Kho mẫu",
+    "examples": "Thư viện mẫu nội dung",
     "notifications": "Thông báo",
     "messages": "Tin nhắn",
     "pricing": "Giá mô hình"
@@ -103,8 +103,8 @@
       "subtitle": "Theo dõi và phát lại các phiên Agent đã ghi ở mọi không gian làm việc. Dữ liệu chỉ đọc."
     },
     "examples": {
-      "title": "Kho mẫu tham khảo",
-      "subtitle": "Lưu sản phẩm đã duyệt theo tính năng, ngành và loại cửa hàng để AI tham khảo khi tạo sản phẩm mới."
+      "title": "Thư viện mẫu nội dung",
+      "subtitle": "Quản lý danh mục và duyệt tác phẩm gốc cùng bản thử."
     },
     "notifications": {
       "title": "Kiểm thử thông báo",

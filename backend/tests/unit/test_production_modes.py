@@ -43,3 +43,16 @@ def test_tool_access_and_background_worker_follow_confirmed_mode(perfect):
     assert forms.turn_action(task, SimpleNamespace(parts=[recovery])) == "render"
     recovery.origin_ref["job_prefix"] = "light:s:1"
     assert forms.turn_action(task, SimpleNamespace(parts=[recovery])) is None
+
+
+@pytest.mark.parametrize("style", ["auto", "off"])
+def test_video_copy_leaves_export_music_to_the_confirmed_setting(style):
+    form = forms.initial_form("video", "", "")
+    form.update(music_style=style, script="Silent source footage.", run={"music_style": style})
+    prepare = forms.prepare_prompt("video", form)
+    assert f"saved final background music setting is {style}" in prepare
+    assert "do not promise a silent export" in prepare
+
+    render = forms.render_prompt("video", form, "light:s:2", [])
+    assert ("the App's explicit music setting still governs" in render) == (style == "auto")
+    assert ("A complete single shot may be attached directly" in render) == (style == "off")

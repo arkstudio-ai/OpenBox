@@ -204,15 +204,22 @@ def _keywords(words: list[str]) -> list[str]:
     return seen
 
 
-async def _in_use(current, edited) -> list[str]:
+async def _in_use(db, current, edited) -> list[str]:
     """What the edit removes that examples still carry, as ``label（n 条）``."""
-    async with get_db_session() as db:
-        scenes = {(e, s): int(n) for e, s, n in (await db.execute(
-            select(LightExample.entry_id, LightExample.scene, func.count())
-            .where(LightExample.scene.is_not(None)).group_by(LightExample.entry_id, LightExample.scene))).all()}
-        shops = {(i, s): int(n) for i, s, n in (await db.execute(
-            select(LightExample.industry, LightExample.shop_type, func.count())
-            .group_by(LightExample.industry, LightExample.shop_type))).all()}
+    scenes = {(e, s): int(n) for e, s, n in (await db.execute(
+        select(LightExample.entry_id, LightExample.scene, func.count())
+        .where(LightExample.scene.is_not(None)).group_by(LightExample.entry_id, LightExample.scene))).all()}
+    shops = {(i, s): int(n) for i, s, n in (await db.execute(
+        select(LightExample.industry, LightExample.shop_type, func.count())
+        .group_by(LightExample.industry, LightExample.shop_type))).all()}
+    from db.models.media_template import MediaTemplate, MediaTemplateEdition
+    for entry_id, scene, count in (await db.execute(
+        select(MediaTemplate.entry_id, MediaTemplateEdition.scene, func.count())
+        .join(MediaTemplate, MediaTemplate.id == MediaTemplateEdition.template_id)
+        .where(MediaTemplateEdition.scene.is_not(None))
+        .group_by(MediaTemplate.entry_id, MediaTemplateEdition.scene)
+    )).all():
+        scenes[(entry_id, scene)] = scenes.get((entry_id, scene), 0) + count
     held: list[str] = []
     for entry in current.entries:
         kept = set(edited.scene_ids(entry.id))
@@ -239,30 +246,31 @@ async def put_taxonomy(body: TaxonomyIn, request: Request, user=Depends(live_adm
     from pydantic import ValidationError
     from db.models.light_taxonomy import LightTaxonomy
     shipped = taxonomy_mod.base()
-    current = await taxonomy_mod.refresh(force=True)
-    try:
-        scenes = {}
-        for entry_id, items in body.scenes.items():
-            known = set(current.scene_ids(entry_id))
-            scenes[entry_id] = [{"id": _kept(item.id, known), "label": item.label} for item in items]
-        industries = []
-        for item in body.industries:
-            industry_id = _kept(item.id, set(current.industry_ids()))
-            known = set(current.shop_type_ids(industry_id)) | {taxonomy_mod.GENERIC}
-            industries.append({"id": industry_id, "label": item.label, "shop_types": [
-                {"id": _kept(shop.id, known), "label": shop.label, "keywords": _keywords(shop.keywords)}
-                for shop in item.shop_types]})
-        # Entries the edit does not name keep the scenes they have now.
-        scenes = {**{e.id: [s.model_dump() for s in e.scenes] for e in current.entries}, **scenes}
-        custom = taxonomy_mod.Custom.model_validate({"scenes": scenes, "industries": industries})
-        taxonomy_mod.check(shipped, custom)
-    except (ValidationError, taxonomy_mod.TaxonomyInvalid) as exc:
-        message = str(exc) if isinstance(exc, taxonomy_mod.TaxonomyInvalid) else "a name or keyword is not valid"
-        raise HTTPException(422, detail={"code": "TAXONOMY_INVALID", "message": message})
-    held = await _in_use(current, taxonomy_mod.merge(shipped, custom))
-    if held:
-        raise HTTPException(409, detail={"code": "TAXONOMY_IN_USE", "message": "；".join(held[:8])})
     async with get_db_session() as db:
+        await taxonomy_mod.lock_edit(db)
+        current = await taxonomy_mod.for_write(db)
+        try:
+            scenes = {}
+            for entry_id, items in body.scenes.items():
+                known = set(current.scene_ids(entry_id))
+                scenes[entry_id] = [{"id": _kept(item.id, known), "label": item.label} for item in items]
+            industries = []
+            for item in body.industries:
+                industry_id = _kept(item.id, set(current.industry_ids()))
+                known = set(current.shop_type_ids(industry_id)) | {taxonomy_mod.GENERIC}
+                industries.append({"id": industry_id, "label": item.label, "shop_types": [
+                    {"id": _kept(shop.id, known), "label": shop.label, "keywords": _keywords(shop.keywords)}
+                    for shop in item.shop_types]})
+            # Entries the edit does not name keep the scenes they have now.
+            scenes = {**{e.id: [s.model_dump() for s in e.scenes] for e in current.entries}, **scenes}
+            custom = taxonomy_mod.Custom.model_validate({"scenes": scenes, "industries": industries})
+            taxonomy_mod.check(shipped, custom)
+        except (ValidationError, taxonomy_mod.TaxonomyInvalid) as exc:
+            message = str(exc) if isinstance(exc, taxonomy_mod.TaxonomyInvalid) else "a name or keyword is not valid"
+            raise HTTPException(422, detail={"code": "TAXONOMY_INVALID", "message": message})
+        held = await _in_use(db, current, taxonomy_mod.merge(shipped, custom))
+        if held:
+            raise HTTPException(409, detail={"code": "TAXONOMY_IN_USE", "message": "；".join(held[:8])})
         row = await db.get(LightTaxonomy, taxonomy_mod.ROW_ID)
         if row is None:
             row = LightTaxonomy(id=taxonomy_mod.ROW_ID)
@@ -339,10 +347,13 @@ async def prefill_example(body: PrefillIn, user=Depends(live_admin)):
 
 @router.post("", status_code=201)
 async def create_example(body: ExampleIn, request: Request, user=Depends(live_admin)):
+    from db.models.media_template import MediaTemplateImport
     row = LightExample(id=ascending("lex"), created_by=user["user_id"], created_at=examples._now(), use_count=0)
     await _apply(row, body)
     async with get_db_session() as db:
         db.add(row)
+        await db.flush()
+        db.add(MediaTemplateImport(id=row.id, example_id=row.id))
         await db.commit()
         view = examples.public(row)
     await record(user["user_id"], None, "admin.light_example_create", "light_example", row.id,

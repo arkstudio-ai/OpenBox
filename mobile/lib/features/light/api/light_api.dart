@@ -58,14 +58,66 @@ class LightApi {
 
   Future<List<LightExamplePreview>> productionExamples(String entryId) async {
     final resp = await _dio.get<Map<String, dynamic>>(
-      '/api/light/examples',
+      '/api/media-templates',
       queryParameters: {'entry_id': entryId},
     );
     return [
       for (final item in asList(resp.data?['items']))
-        ?LightExamplePreview.fromJson(item),
+        if (item is Map<String, dynamic>)
+          ?LightExamplePreview.fromJson({
+            ...item,
+            for (final field in ['media_url', 'poster_url'])
+              if (item[field] case final String url when url.startsWith('/'))
+                field: resp.realUri.resolve(url).toString(),
+          }),
     ];
   }
+
+  static const _templates = '/api/media-templates';
+
+  Future<List<Map<String, dynamic>>> ownTemplates() async {
+    final data = await _dio.get<Map<String, dynamic>>('$_templates/mine');
+    return asList(
+      data.data?['items'],
+    ).whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<List<Map<String, dynamic>>> templateCategories() async {
+    final data = await _dio.get<Map<String, dynamic>>('$_templates/categories');
+    return asList(
+      data.data?['entries'],
+    ).whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<String> startTemplateTrial(String editionId) async {
+    final data = await _dio.post<Map<String, dynamic>>(
+      '$_templates/$editionId/trial',
+    );
+    return asString(data.data?['session_id']) ??
+        (throw StateError('Missing trial session'));
+  }
+
+  Future<void> confirmTemplateTrial(
+    String editionId,
+    String sessionId,
+    String outputId,
+  ) => _dio.post<void>(
+    '$_templates/$editionId/confirm',
+    data: {'session_id': sessionId, 'output_asset_id': outputId},
+  );
+
+  Future<void> submitTemplate(
+    String editionId,
+    String sessionId,
+    String scene,
+  ) => _dio.post<void>(
+    '$_templates/$editionId/submit',
+    data: {
+      'session_id': sessionId,
+      'scene': scene,
+      'share_finished_preview': true,
+    },
+  );
 
   /// 省心托管 jobs of this workspace.
   Future<List<LightAutopilot>> autopilots() async {

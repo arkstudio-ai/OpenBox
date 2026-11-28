@@ -13,6 +13,7 @@ import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/state/config_providers.dart';
 import '../features/chat/widgets/assistant_tasks.dart';
 import '../features/chat/widgets/assistant_tour.dart';
+import '../features/chat/widgets/composer/composer.dart' show ComposerDraft;
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/first_video/making_page.dart';
@@ -227,7 +228,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             sessionId: sessionId,
             returnToProduction:
                 state.uri.queryParameters['from'] == 'production',
-            child: _ChatRoute(sessionId: sessionId),
+            child: _ChatRoute(
+              sessionId: sessionId,
+              templateAsset: state.uri.queryParameters['templateAsset'],
+              templateEdition: state.uri.queryParameters['reviseTemplate'],
+            ),
           );
         },
       ),
@@ -258,6 +263,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Paths.skills,
+        redirect: (context, state) =>
+            state.uri.queryParameters['section'] == 'media'
+            ? Uri(
+                path: Paths.lightMediaTemplates,
+                queryParameters: {
+                  'template': ?state.uri.queryParameters['template'],
+                },
+              ).toString()
+            : null,
         builder: (context, state) => const SkillsScreen(),
       ),
       ...knowledgeRoutes,
@@ -335,21 +349,41 @@ ComposerResourceSlot composerResourceSlot(WidgetRef ref) =>
     );
 
 class _ChatRoute extends ConsumerWidget {
-  const _ChatRoute({required this.sessionId});
+  const _ChatRoute({
+    required this.sessionId,
+    this.templateAsset,
+    this.templateEdition,
+  });
 
   final String sessionId;
+  final String? templateAsset, templateEdition;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => AssistantSessionEntry(
-    sessionId: sessionId,
-    builder: (_) => RememberChatLocation(
-      location: Paths.chat(sessionId),
-      child: ChatScreen(
-        sessionId: sessionId,
-        resources: composerResourceSlot(ref),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final i18n = ref.watch(i18nProvider);
+    final String? prompt = switch ((templateAsset, templateEdition)) {
+      (_, final String edition) when edition.isNotEmpty => i18n.t(
+        'light:mediaTemplates.revisePrompt',
+        vars: {'id': edition},
       ),
-    ),
-  );
+      (final String asset, _) when asset.isNotEmpty => i18n.t(
+        'light:mediaTemplates.makePrompt',
+        vars: {'id': asset},
+      ),
+      _ => null,
+    };
+    return AssistantSessionEntry(
+      sessionId: sessionId,
+      builder: (_) => RememberChatLocation(
+        location: Paths.chat(sessionId),
+        child: ChatScreen(
+          sessionId: sessionId,
+          resources: composerResourceSlot(ref),
+          draft: prompt == null ? null : ComposerDraft(prompt, prompt.hashCode),
+        ),
+      ),
+    );
+  }
 }
 
 class _AssistantRoute extends ConsumerWidget {

@@ -7,6 +7,7 @@ import { ApiError } from "@/shared/api/http"
 import type { MessageWithParts, PermissionRequest, QuestionRequest, Session, SessionStatus, SuggestionsPart } from "@/shared/types/api"
 import {
   ChatFlow,
+  MediaTemplateComposer,
   Composer,
   ExecutionEffectNotice,
   StopTaskNotice,
@@ -195,6 +196,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
   /** Every message the person sends; `empty` when it is the conversation's first. */
   onSend?: (context: { empty: boolean }) => void
 }) {
+  const { t: templateText } = useTranslation("skills")
   const currentUserId = useAuthStore((state) => state.user?.id)
   useChatEvents(sessionId, chatEventSurface(assistant, realtimeSurface))
   // A voice call's words land here before the assistant gets to them.
@@ -324,6 +326,9 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
     <div className="flex h-full min-h-0 flex-col">
       <TaskRoomBanner session={session.data} />
       <TranscriptArea loading={loading} welcome={extras.welcomeView}>
+        <MediaTemplateComposer.Provider value={assistant || readOnly ? null : (assetId) => {
+          extras.fill(templateText("mediaTemplates.makePrompt", { assetId }))
+        }}>
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy} compact={compact}
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
@@ -332,6 +337,7 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
           hasMore={chatHistory.hasMore}
           loadingOlder={chatHistory.loadingOlder}
           onLoadOlder={chatHistory.loadOlder} />
+        </MediaTemplateComposer.Provider>
       </TranscriptArea>
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
@@ -344,6 +350,19 @@ export function ChatSessionView({ sessionId, assistant = false, sendRequest, wel
           onDismiss={() => useStreamStore.getState().clearRunError(sessionId)}
         />
       )}
+      {!assistant && !readOnly && (searchParams.has("templateAsset") || searchParams.has("reviseTemplate")) &&
+        <div className="mx-auto w-full max-w-190 px-4 py-2">
+          <button type="button" className="text-a700 text-sm underline" onClick={() => {
+            const editionId = searchParams.get("reviseTemplate")
+            const assetId = searchParams.get("templateAsset")
+            extras.fill(editionId ? templateText("mediaTemplates.revisePrompt", { editionId })
+              : templateText("mediaTemplates.makePrompt", { assetId }))
+            const next = new URLSearchParams(searchParams)
+            next.delete("templateAsset")
+            next.delete("reviseTemplate")
+            setSearchParams(next, { replace: true })
+          }}>{templateText(searchParams.has("reviseTemplate") ? "mediaTemplates.revise" : "mediaTemplates.make")}</button>
+        </div>}
       {aside?.({ fill: extras.fill, quiet: extras.quiet })}
       <ComposerAccess readOnly={readOnly}>
         <Composer

@@ -87,6 +87,12 @@ class LightMeScreen extends ConsumerWidget {
         const Key('light-me-conversations'),
       ),
       (
+        'light:mediaTemplates.mine',
+        Icons.collections_outlined,
+        Paths.lightMediaTemplates,
+        const Key('light-me-media-templates'),
+      ),
+      (
         'light:me.resources',
         Icons.folder_open_outlined,
         Paths.resources(),

@@ -293,3 +293,18 @@ async def refresh(*, force: bool = False) -> Taxonomy:
         if _current is None or _current[0] is not shipped:
             return shipped
     return _current[1]
+
+
+async def lock_edit(db) -> None:
+    """Serialize category edits with submissions that reference a category."""
+    from sqlalchemy import text
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 0x4D45444941544158})
+
+
+async def for_write(db) -> Taxonomy:
+    """Read the current classification inside the writer transaction."""
+    from db.models.light_taxonomy import LightTaxonomy
+    row = await db.get(LightTaxonomy, ROW_ID)
+    custom = Custom.model_validate(row.data) if row and isinstance(row.data, dict) else None
+    return merge(base(), custom)

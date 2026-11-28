@@ -70,6 +70,11 @@ function planInWorkspace(link: InboxLink, memberOf: readonly string[]): LinkPlan
       return { action: "navigate", to: paths.cron, workspaceId }
     case "skills":
       return { action: "navigate", to: paths.skills, workspaceId }
+    case "media_templates": {
+      const params = new URLSearchParams({ section: "media", tab: "mine" })
+      if ("jobId" in link && link.jobId) params.set("template", link.jobId)
+      return { action: "navigate", to: `${paths.skills}?${params}`, workspaceId }
+    }
     default: {
       const jobId = "jobId" in link ? link.jobId : undefined
       const to = jobId ? `${paths.authCenter}?job=${encodeURIComponent(jobId)}` : paths.authCenter
@@ -88,6 +93,8 @@ export function planInboxLink(link: InboxLink | null, memberOf: readonly string[
       const slug = "slug" in link ? link.slug : ""
       return SLUG.test(slug) ? { action: "navigate", to: paths.topic(slug) } : { action: "unavailable" }
     }
+    case "admin_media_templates":
+      return { action: "navigate", to: paths.adminExamples("status=pending") }
     case "admin_skills":
       return { action: "navigate", to: paths.adminSkills() }
     case "admin_trajectory_turn": {
@@ -102,6 +109,7 @@ export function planInboxLink(link: InboxLink | null, memberOf: readonly string[
     case "cron":
     case "auth_center":
     case "skills":
+    case "media_templates":
       return planInWorkspace(link, memberOf)
     default:
       return { action: "navigate", to: paths.inbox }

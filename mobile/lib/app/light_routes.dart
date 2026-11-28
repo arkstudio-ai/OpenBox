@@ -15,6 +15,7 @@ import '../features/light/assistant_tab.dart';
 import '../features/light/autopilot_page.dart';
 import '../features/light/home_screen.dart';
 import '../features/light/me_screen.dart';
+import '../features/light/media_templates_page.dart';
 import '../features/light/production/production_api.dart';
 import '../features/light/production/production_history.dart';
 import '../features/light/production/production_page.dart';
@@ -114,6 +115,11 @@ List<GoRoute> lightRoutes({required ResourceSlotOf resources}) => [
         body: const SessionDrawer(standalone: true),
       ),
     ),
+  ),
+  GoRoute(
+    path: Paths.lightMediaTemplates,
+    builder: (context, state) =>
+        MediaTemplatesPage(highlight: state.uri.queryParameters['template']),
   ),
   GoRoute(
     path: Paths.lightProductionHistory,

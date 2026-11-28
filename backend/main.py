@@ -516,6 +516,8 @@ def create_app() -> FastAPI:
     application.include_router(light_router)
     from api.video_templates import router as video_templates_router
     application.include_router(video_templates_router)
+    from api.media_templates import router as media_templates_router
+    application.include_router(media_templates_router)
     from api.stores import router as stores_router
     application.include_router(stores_router)
 

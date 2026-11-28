@@ -116,16 +116,21 @@ async def preview(user_id: str, workspace_id: str, body: forms.StartForm, lang: 
             **({"chat_tier": chat_tier.tier} if chat_tier else {})}
 
 
-async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None) -> dict:
+async def create(user_id: str, workspace_id: str, body: forms.StartForm, lang: str | None, *,
+                 trial: dict | None = None, on_created=None) -> dict:
     from agent.agent import default_agent_name
     from session.session import create_session
 
     form, title, model, chat_tier, _ = await _start_form(user_id, workspace_id, body, lang, save=True)
+    if trial:
+        form.update(media_template=trial, media_template_trial=True)
+        title = trial["title"]
     session = await create_session(
         model=model, variant=chat_tier.variant if chat_tier else None,
         agent=default_agent_name(), title=title, user_id=user_id,
         workspace_id=workspace_id, light_entry=body.entry_id,
         light_production=form,
+        **({"on_created": on_created, "visibility": "private"} if trial else {}),
     )
     return await get(user_id, workspace_id, session.id)
 
@@ -135,6 +140,13 @@ def _media_matches(entry: str, mime: str) -> bool:
 
 
 async def _require_reference(db, entry_id: str, example_id: str):
+    from light import media_templates
+
+    if example_id.startswith(media_templates.PREFIX):
+        return (await media_templates.public_edition(db, entry_id, example_id))[0]
+    if entry_id == "video" and example_id.startswith(media_templates.BUILTIN_PREFIX):
+        media_templates.builtin_card(example_id.removeprefix(media_templates.BUILTIN_PREFIX))
+        return None
     if entry_id == "video" and example_id.startswith(video_templates.PREFIX):
         return await video_templates.resolve(db, example_id)
     if not examples.is_production_reference(await db.get(LightExample, example_id), entry_id):
@@ -142,6 +154,8 @@ async def _require_reference(db, entry_id: str, example_id: str):
 
 
 async def _validate_fields(db, row: Session, changes: dict) -> None:
+    if row.light_production.get("media_template_trial") and {"template", "reference_example_id"} & changes.keys():
+        raise LightError("MEDIA_TEMPLATE_STATE", "试做必须使用已选定的模板版本。", 409)
     if {"perfect_film", "output_language"} & changes.keys() and row.light_entry != "video":
         raise LightError("LIGHT_PRODUCTION_STATE", "These settings apply to generated video.", 422)
     if "chat_tier" in changes:
@@ -202,10 +216,12 @@ def _apply(row: Session, changes: dict, *, from_agent: bool = False) -> None:
     if "template" in actual or "video_tier" in actual:
         form.pop("agent_recipe", None)
     reference_changed = reference_id != row.light_example_id
-    if reference_changed and "template_ref" not in actual:
-        form.pop("agent_recipe", None)
-        form.pop("template_ref", None)
-        form.pop("template_recipe", None)
+    if reference_changed:
+        form.pop("media_template", None)
+        if "template_ref" not in actual:
+            form.pop("agent_recipe", None)
+            form.pop("template_ref", None)
+            form.pop("template_recipe", None)
     if "chat_tier" in changes:
         from core.config import get_config
 
@@ -413,7 +429,7 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
     return list(dict.fromkeys(asset_id for _, asset_id in sorted(results, reverse=True)))
 
 
-async def _views(db, rows: list[Session], *, include_shots: bool = False) -> list[dict]:
+async def _views(db, rows: list[Session], *, include_shots: bool = False, guided_only: bool = False) -> list[dict]:
     if not rows:
         return []
     from core.oss import OssNotConfigured, get_oss
@@ -444,7 +460,12 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         since = datetime.fromisoformat(stamp) if stamp else _utc(row.created_at)
         jobs = [job for job in jobs_by_session[row.id] if job.user_id == row.user_id and _utc(job.created_at) >= since]
         relevant_jobs[row.id] = jobs
-        output_ids[row.id] = _output_candidates(row, jobs, files_by_session[row.id], advanced_messages=advanced_messages)
+        files = files_by_session[row.id]
+        if guided_only:
+            receipt = receipts.get((form.get("run") or {}).get("id"))
+            from light.production_outputs import guided_evidence
+            files, jobs = await guided_evidence(db, receipt, form, files, jobs)
+        output_ids[row.id] = _output_candidates(row, jobs, files, advanced_messages=advanced_messages)
         saved_assets.update(output_ids[row.id])
         saved_assets.update(form.get("asset_ids", ()))
     assets = {a.id: a for a in (await db.scalars(owned_ready_query(rows[0].user_id, rows[0].workspace_id)
@@ -473,19 +494,27 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False) -> lis
         ) if include_shots else None
         chat_tier = _chat_tier(config, model=row.model) or _chat_tier(config, model=config.model)
         reference_fields = {}
-        if include_shots and row.light_production and row.light_example_id:
+        media_pin = form.get("media_template")
+        if include_shots and media_pin:
+            reference_fields = {"reference_example_id": media_pin["id"], "reference_example_title": media_pin["title"]}
+        elif include_shots and row.light_production and row.light_example_id:
+            from light import media_templates
             pin = form.get("template_ref")
-            reference = None if pin else await db.get(LightExample, row.light_example_id)
+            builtin = row.light_example_id.startswith(media_templates.BUILTIN_PREFIX)
+            reference = None if pin or builtin else await db.get(LightExample, row.light_example_id)
+            title = (form["template_recipe"]["title"] if pin else
+                     media_templates.builtin_card(row.light_example_id.removeprefix(media_templates.BUILTIN_PREFIX))["title"]
+                     if builtin else reference.title if reference else "")
             reference_fields = {
                 "reference_example_id": row.light_example_id,
-                "reference_example_title": form["template_recipe"]["title"] if pin else (reference.title if reference else ""),
+                "reference_example_title": title,
                 "reference_example_title_translations": examples.title_translations(reference),
             }
         result.append({
             **{key: value for key, value in form.items() if key not in {
                 "run", "edited_at", "template_recipe", "remake_adaptation", "remake_prepared_for", "shot_edit_request",
                 "shot_frame_drafts", "shot_frame_inputs", "shot_title_edits", "chat_tier",
-                "narration_preview", "narration_draft",
+                "narration_preview", "narration_draft", "media_template",
             }},
             **_work_view(row, receipts.get((form.get("run") or {}).get("id")), guide_jobs, output,
                          row.id in questions),
@@ -563,12 +592,21 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
             changes.pop("promotion_brief")
         reference_id = changes.get("reference_example_id")
         previous_reference = row.light_example_id
-        if reference_id:
-            edition = await _require_reference(db, row.light_entry, reference_id)
-            if edition is not None:
-                changes.update(template_ref=video_templates.ref(edition), template_recipe=edition.manifest)
-            if row.light_entry == "video" or row.light_entry in forms.IMAGE_ENTRIES:
-                changes["template"] = ""
+        if reference_id or "reference_example_id" in changes:
+            from light import media_templates
+
+            if form.get("media_template_trial"):
+                raise LightError("MEDIA_TEMPLATE_STATE", "试做必须使用已选定的模板版本。", 409)
+            if reference_id:
+                edition = await _require_reference(db, row.light_entry, reference_id)
+                if reference_id.startswith(media_templates.PREFIX):
+                    changes.update(media_template=media_templates.pin(edition))
+                elif edition is not None:
+                    changes.update(template_ref=video_templates.ref(edition), template_recipe=edition.manifest)
+                if reference_id.startswith(media_templates.BUILTIN_PREFIX):
+                    changes["template"] = reference_id.removeprefix(media_templates.BUILTIN_PREFIX)
+                elif row.light_entry == "video" or row.light_entry in forms.IMAGE_ENTRIES:
+                    changes["template"] = ""
         if row.light_entry == "video" and ("template" in changes or "video_tier" in changes):
             from core.config import get_config
 
@@ -1067,7 +1105,7 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 previous = form.get("run") or {}
                 resuming_edition = (form.get("template_ref") and body.action == "render"
                                     and previous.get("revision") == form["revision"] and previous.get("action") == "render")
-                if row.light_example_id and not resuming_edition:
+                if row.light_example_id and not resuming_edition and not form.get("media_template"):
                     await _require_reference(db, row.light_entry, row.light_example_id)
                 config = get_config()
                 if config.model_tiers.product_chat and not _chat_tier(config, model=row.model):

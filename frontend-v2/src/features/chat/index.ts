@@ -38,3 +38,5 @@ export { AssistantIntroEntry, INTRO_PARAM } from "./components/AssistantIntroEnt
 export { AssistantNotificationTarget } from "./components/AssistantNotificationTarget"
 export { useSessionQuery } from "./api/message-actions"
 export type { SendRequest } from "./api/messages"
+export { MediaTemplateComposer } from "./lib/media-template-composer"
+export { completeAsset, createAsset, putToOss } from "./api/assets"

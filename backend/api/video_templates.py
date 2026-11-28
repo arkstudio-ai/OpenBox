@@ -1,5 +1,5 @@
 """Professional author's studio and the catalogue used by both OpenBox clients."""
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
@@ -54,19 +54,13 @@ async def analyze(asset_id: str, user=Depends(get_current_user)):
 
 @router.post("/drafts", status_code=201)
 async def save(body: studio.DraftInput, user=Depends(get_current_user)):
-    return await _result(studio.save(*_scope(user), body))
+    _scope(user)
+    raise HTTPException(410, detail={"code": "MEDIA_TEMPLATE_PRO_REQUIRED",
+                                    "message": "请从专业版对话把成品做成模板，再完成精简版试做。"})
 
 
 @router.post("/{edition_id}/publish")
 async def publish(edition_id: str, body: Submission, request: Request, user=Depends(get_current_user)):
-    published = await _result(studio.publish(*_scope(user), edition_id, body.sha256,
-                                admin=user.get("role") == "admin", share_cast=body.share_cast_images))
-    from audit import record
-    await record(*_scope(user), "video_template.publish", "video_template", edition_id, request=request, detail={
-        "edition_id": edition_id, "sha256": body.sha256, "listing": published["status"],
-    })
-    if published["status"] == "pending":
-        from api.metadata import _notify_admins_of_submission
-        await _notify_admins_of_submission({"id": published["catalog_id"].removeprefix("community:"),
-                                           "name": published["title"], "published_version": published["template_ref"]["version"]}, user["user_id"])
-    return published
+    _scope(user)
+    raise HTTPException(410, detail={"code": "MEDIA_TEMPLATE_TRIAL_REQUIRED",
+                                    "message": "请从专业版对话制作新版本，并完成精简版试做后提交。"})

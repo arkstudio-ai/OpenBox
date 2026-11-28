@@ -89,10 +89,13 @@ async def test_author_review_pin_and_cross_workspace_use(monkeypatch):
         public_path = f"/api/video-templates/{eid}/publish"
         assert (await client.post(public_path, json={"sha256": pin["sha256"]})).status_code == 422
         response = await client.post(public_path, json={"sha256": pin["sha256"], "share_finished_preview": True})
-        assert response.status_code == 200
-        assert response.json()["status"] == "pending"
+        assert response.status_code == 410
+        assert response.json()["detail"]["code"] == "MEDIA_TEMPLATE_TRIAL_REQUIRED"
         app.dependency_overrides[get_current_user] = lambda: {"user_id": other[0], "workspace_id": other[1], "role": "user"}
         assert (await client.get(f"/api/video-templates/sources/{aid}")).status_code == 404
+    # Seed a release created before the unified catalogue. Old pinned
+    # recipes and their review snapshots must still resolve.
+    assert (await studio.publish(*owner, eid, pin["sha256"]))["status"] == "pending"
     with pytest.raises(LightError):
         await studio.selected_card(eid)
     await user_library.set_listing(draft["catalog_id"], "listed", actor_user_id=owner[0])

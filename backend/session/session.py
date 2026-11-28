@@ -151,6 +151,7 @@ async def create_session(
     memory_policy: str = "standard",
     light_entry: str | None = None,
     light_production: dict | None = None,
+    on_created=None,
 ) -> Session:
     """Create a new session."""
     if strict_project:
@@ -228,6 +229,9 @@ async def create_session(
         if light_production is not None:
             row.light_production = light_production
         db.add(row)
+        if on_created is not None:
+            await db.flush()
+            await on_created(db, row)
 
         if visibility == "private" and memory_policy == "assistant_isolated":
             from assistant.linking import record_isolation_birth_locked

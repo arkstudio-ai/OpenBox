@@ -73,6 +73,135 @@ void main() {
         ),
       );
 
+  testWidgets('video has one shared catalogue and selects a pinned template', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(430, 900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    const id = 'mtb_product_story';
+    var selected = '';
+    var readCatalogue = false;
+    final draft = <String, dynamic>{
+      'session_id': 'draft-catalogue',
+      'page': 'style',
+      'entry_id': 'video',
+      'revision': 1,
+      'template': '',
+    };
+    final dio = Dio(BaseOptions(baseUrl: 'https://test.invalid'))
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            if (request.path == '/api/media-templates') {
+              readCatalogue = true;
+              expect(request.queryParameters['entry_id'], 'video');
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: {
+                    'items': [
+                      {
+                        'example_id': id,
+                        'title': '品牌剧情广告',
+                        'scene': 'story',
+                        'scene_label': '剧情广告',
+                        'mime': 'video/mp4',
+                      },
+                    ],
+                  },
+                ),
+              );
+              return;
+            }
+            if (request.method == 'PATCH') {
+              selected =
+                  (request.data as Map<String, dynamic>)['reference_example_id']
+                      as String;
+              draft.addAll({
+                'reference_example_id': selected,
+                'reference_example_title': '品牌剧情广告',
+                'template': 'product_story',
+                'revision': 2,
+              });
+            }
+            handler.resolve(Response(requestOptions: request, data: draft));
+          },
+        ),
+      );
+    await tester.pumpWidget(
+      host(
+        ProductionPage(
+          sessionId: 'draft-catalogue',
+          initial: LightProduction.fromJson(draft),
+        ),
+        overrides: [
+          lightProductionApiProvider.overrideWithValue(LightProductionApi(dio)),
+          lightApiProvider.overrideWithValue(LightApi(dio)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(readCatalogue, isTrue);
+    expect(
+      find.byKey(const Key('production-video-template-sections')),
+      findsNothing,
+    );
+    final category = find.byKey(const Key('production-video-category-story'));
+    await tester.tap(category);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('production-example-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('使用这个模板').last);
+    await tester.pumpAndSettle();
+    expect(selected, id);
+  });
+
+  testWidgets(
+    'a private poster trial keeps its approved draft template pinned',
+    (tester) async {
+      final draft = <String, dynamic>{
+        'session_id': 'poster-trial',
+        'entry_id': 'poster',
+        'page': 'review',
+        'revision': 2,
+        'template': '',
+        'media_template_trial': true,
+        'reference_example_id': 'mt_private',
+        'reference_example_title': '夜色活动海报',
+      };
+      final dio = Dio(BaseOptions(baseUrl: 'https://test.invalid'))
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              expect(request.path, isNot('/api/media-templates'));
+              handler.resolve(Response(requestOptions: request, data: draft));
+            },
+          ),
+        );
+      await tester.pumpWidget(
+        host(
+          ProductionPage(
+            sessionId: 'poster-trial',
+            initial: LightProduction.fromJson(draft),
+          ),
+          overrides: [
+            lightProductionApiProvider.overrideWithValue(
+              LightProductionApi(dio),
+            ),
+            lightApiProvider.overrideWithValue(LightApi(dio)),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('夜色活动海报'), findsOneWidget);
+      final summary = find.byKey(const Key('production-change-example'));
+      expect(tester.widget<ListTile>(summary).onTap, isNull);
+    },
+  );
+
   for (final (kind, page) in [('video', 'review'), ('footage_edit', 'style')]) {
     testWidgets('$kind saves its promotion brief from the bottom sheet', (
       tester,
@@ -104,7 +233,7 @@ void main() {
               handler.resolve(
                 Response(
                   requestOptions: request,
-                  data: request.path == '/api/light/examples'
+                  data: request.path == '/api/media-templates'
                       ? {'items': <Object>[]}
                       : saved,
                 ),

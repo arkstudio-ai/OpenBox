@@ -68,6 +68,7 @@ class InboxNavigator {
       case 'cron':
       case 'auth_center':
       case 'skills':
+      case 'media_templates':
         return _openInWorkspace(link, current, kind: kind);
       default:
         return _openInbox();
@@ -197,6 +198,15 @@ class InboxNavigator {
         unawaited(router.push(Paths.authCenter(jobId: link.jobId)));
       case 'skills':
         unawaited(router.push(Paths.skills));
+      case 'media_templates':
+        unawaited(
+          router.push(
+            Uri(
+              path: Paths.lightMediaTemplates,
+              queryParameters: {'template': ?link.jobId},
+            ).toString(),
+          ),
+        );
     }
     return InboxOpen.opened;
   }

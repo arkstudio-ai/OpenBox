@@ -34,7 +34,7 @@ CATEGORY_FOR_KIND = {
 
 #: Navigation targets a client may resolve. Anything else opens the inbox.
 LINK_KINDS = {"session", "assistant_task", "cron", "auth_center", "skills", "admin_skills", "admin_trajectory_turn",
-              "topic", "url", "inbox"}
+              "topic", "url", "inbox", "media_templates", "admin_media_templates"}
 SESSION_RETENTION = timedelta(days=90)
 EXPIRED_RETENTION = timedelta(days=30)
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
@@ -100,7 +100,7 @@ def validate_link(link, *, first_party: bool = False) -> dict | None:
         if link.get("panel") == "desktop":
             out["panel"] = "desktop"
             out["control"] = bool(link.get("control"))
-    elif kind in {"cron", "auth_center", "skills"}:
+    elif kind in {"cron", "auth_center", "skills", "media_templates"}:
         if not isinstance(link.get("workspaceId"), str):
             raise ValueError(f"{kind} link needs workspaceId")
         out["workspaceId"] = link["workspaceId"]

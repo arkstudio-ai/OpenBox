@@ -138,3 +138,21 @@ async def advanced_result_messages(db, rows, files_by_session, receipts):
     return {message.id: message.parent_id for message in assistants
             if accepted.get(message.parent_id) == message.session_id
             and message.user_id == owners[message.session_id].user_id}
+
+
+async def guided_evidence(db, receipt, form, files, jobs):
+    """Return outputs that can be attributed to the current guided render."""
+    if (not receipt or not receipt.message_id or receipt.state != "settled"
+            or receipt.origin != "human" or (receipt.origin_ref or {}).get("entrypoint") != "light_production"
+            or (receipt.origin_ref or {}).get("action") != "render"):
+        return [], []
+    message_ids = list((await db.scalars(select(Message.id).where(
+        Message.session_id == receipt.session_id, Message.user_id == receipt.user_id,
+        Message.role == "assistant", Message.parent_id == receipt.message_id,
+    ))).all())
+    if receipt.result_message_id:
+        message_ids.append(receipt.result_message_id)
+    results = [part for part in files if part.message_id in message_ids]
+    job_prefix = form["run"]["job_prefix"] + ":"
+    return results, [job for job in jobs if job.idempotency_key.startswith(job_prefix)
+                     and not job.idempotency_key.startswith(job_prefix + "edit:")]

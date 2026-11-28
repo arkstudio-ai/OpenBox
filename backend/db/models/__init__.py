@@ -88,3 +88,7 @@ __all__ = [
 ]
 
 from db.models.push import MobilePresence, MobileSession, PushDevice, PushMessage, PushDelivery
+from db.models.media_template import (
+    MediaTemplate, MediaTemplateEdition, MediaTemplateImport, MediaTemplateReview,
+    MediaTemplateSubmission, MediaTemplateTrial,
+)

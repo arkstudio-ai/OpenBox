@@ -5,6 +5,10 @@
 !container/
 !container/dev-browser/
 !container/dev-browser/**
+!mobile/
+!mobile/assets/
+!mobile/assets/light_production/
+!mobile/assets/light_production/**
 **/.env
 **/.env.*
 **/*.p8

@@ -184,6 +184,7 @@ class LightProduction {
       galleryWishesAvailable = json['gallery_wishes_available'] == true,
       template = asString(json['template']) ?? '',
       communityTemplate = asMap(json['template_ref']).isNotEmpty,
+      templateTrial = json['media_template_trial'] == true,
       referenceExampleId = asString(json['reference_example_id']),
       referenceExampleTitle = asString(json['reference_example_title']) ?? '',
       referenceExampleTitleTranslations = lightTitleTranslations(
@@ -244,6 +245,7 @@ class LightProduction {
   final bool remakePrepared;
   final String template;
   final bool communityTemplate;
+  final bool templateTrial;
   final String? referenceExampleId;
   final String referenceExampleTitle;
   final Map<String, String> referenceExampleTitleTranslations;

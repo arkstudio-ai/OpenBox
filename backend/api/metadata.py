@@ -271,21 +271,31 @@ async def list_skills(current_user: dict = Depends(get_current_user), surface: L
     copies when possible, but keep the library row visible when the sandbox is
     offline or restoration fails so downloads do not disappear with compute.
     """
+    from light.video_templates import legacy_skill_names
+
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("workspace_id")
+    template_names = set()
+    try:
+        template_names = await legacy_skill_names(user_id, workspace_id)
+    except RuntimeError:
+        pass
+
+    def app_skill(item: dict) -> bool:
+        return not any(item.get(key) in template_names for key in ("id", "name", "install_dir", "library_id"))
+
     if surface == "assistant":
         # The fixed entry is passive: desktop discovery/restoration below can
         # provision compute and upload packages. Its mention menu needs only
         # durable catalogue metadata, never a live container scan.
         from skill.skill import list_skills as host_skills
         from skill.user_library import list_owned_skills
-        owned = await list_owned_skills(current_user["user_id"], current_user.get("workspace_id"))
+        owned = [item for item in await list_owned_skills(user_id, workspace_id) if app_skill(item)]
         entries = {item.name: {"name": item.name, "description": item.description} for item in await host_skills()}
         entries.update({item["name"]: {"name": item["name"], "description": item.get("description", "")} for item in owned})
         return list(entries.values())
 
     from sandbox.manager import sandbox_manager
-    user_id = current_user["user_id"]
-    workspace_id = current_user.get("workspace_id")
-
     library_available = False
     owned_skills: list[dict] = []
     try:
@@ -295,7 +305,7 @@ async def list_skills(current_user: dict = Depends(get_current_user), surface: L
             list_owned_skills,
         )
 
-        owned_skills = await list_owned_skills(user_id, workspace_id)
+        owned_skills = [item for item in await list_owned_skills(user_id, workspace_id) if app_skill(item)]
         library_available = True
     except (ImportError, RuntimeError):
         # Single-user mode deliberately runs without the central database.
@@ -365,7 +375,7 @@ async def list_skills(current_user: dict = Depends(get_current_user), surface: L
                             container = refreshed
                     except Exception:
                         pass
-                merged.extend(container)
+                merged.extend(item for item in container if app_skill(item))
     except Exception:
         pass
 
@@ -499,6 +509,10 @@ async def publish_skill(
         # installs and manually uploaded archives must never become publishable
         # merely because somebody guessed this endpoint.
         raise HTTPException(status_code=404, detail="Personal skill not found")
+    from light.video_templates import is_legacy_skill
+    if await is_legacy_skill(owned["id"]):
+        raise HTTPException(409, detail={"code": "MEDIA_TEMPLATE_TRIAL_REQUIRED",
+                                         "message": "请先在精简版试做，再提交到媒体模板库审核。"})
     client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
     if not client:
         raise HTTPException(status_code=503, detail="No sandbox available")

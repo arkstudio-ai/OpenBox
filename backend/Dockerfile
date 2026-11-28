@@ -18,6 +18,7 @@ RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirement
     rm /tmp/requirements.txt
 
 COPY backend/ .
+COPY mobile/assets/light_production/ ./assets/media-template-samples/
 # Every desktop-side module: scripts/wuying_bootstrap.py and wuying_deploy_action_server.py
 # push them from /container to desktops (resource gate, file worker, managed cache).
 COPY container/*.py /container/

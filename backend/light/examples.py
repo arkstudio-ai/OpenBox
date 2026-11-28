@@ -309,7 +309,8 @@ async def production_previews(entry_id: str) -> list[dict]:
 async def production_fragment(session, *, look_context=None) -> str:
     """Include only the library example explicitly selected in the production form."""
     example_id = getattr(session, "light_example_id", None)
-    if not example_id or (getattr(session, "light_production", None) or {}).get("template_ref"):
+    form = getattr(session, "light_production", None) or {}
+    if not example_id or form.get("template_ref") or form.get("media_template") or example_id.startswith("mtb_"):
         return ""
     try:
         row = await get_active(example_id)

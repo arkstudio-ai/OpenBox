@@ -422,6 +422,13 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: i18n.t('light:mediaTemplates.mine'),
+            onPressed: () => context.push(Paths.lightMediaTemplates),
+            icon: const Icon(Icons.collections_outlined),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async => bumpSkills(ref),

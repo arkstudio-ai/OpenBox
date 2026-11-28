@@ -17,6 +17,8 @@ export type InboxLink =
   | { kind: "cron"; workspaceId: string; jobId?: string }
   | { kind: "auth_center"; workspaceId: string; jobId?: string }
   | { kind: "skills"; workspaceId: string }
+  | { kind: "media_templates"; workspaceId: string; jobId?: string }
+  | { kind: "admin_media_templates" }
   | { kind: "admin_skills" }
   | { kind: "admin_trajectory_turn"; userId: string; sessionId: string; turnId: string }
   | { kind: "topic"; slug: string }

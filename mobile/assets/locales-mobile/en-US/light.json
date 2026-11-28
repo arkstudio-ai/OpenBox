@@ -1,4 +1,26 @@
 {
+  "mediaTemplates": {
+    "make": "Make a template",
+    "makePrompt": "I approve this result. Use media-template-author to draft a reusable recipe for my review. Finished asset ID: {{id}}.",
+    "revisePrompt": "Use media-template-author to revise template edition {{id}}. Ask what I want to change, then show me the new recipe.",
+    "mine": "My templates",
+    "empty": "Make a template from a finished work in professional chat.",
+    "source": "Source conversation",
+    "resume": "View trial",
+    "try": "Try in guided production",
+    "submit": "Submit for review",
+    "category": "Subcategory",
+    "consent": "I have the rights to share the original and agree to show its preview in the library.",
+    "cancel": "Cancel",
+    "states": {
+      "draft": "Draft",
+      "pending": "In review",
+      "listed": "Published",
+      "rejected": "Rejected",
+      "superseded": "Older version",
+      "withdrawn": "Unlisted"
+    }
+  },
   "followSystemLanguage": "Follow device language",
   "tabs": {
     "home": "Home",
@@ -235,6 +257,7 @@
     "yesterday": "Yesterday {{time}}"
   },
   "production": {
+    "confirmTemplateTrial": "Confirm trial result",
     "renderOptions": {
       "title": "Production settings",
       "perfect": "Polished video",
@@ -332,7 +355,7 @@
       "poster": "Poster templates"
     },
     "styleBody": {
-      "video": "Pick an example or remake a curated reference",
+      "video": "Choose a template and make it with your own materials and copy.",
       "footage_edit": "Choose a pace for your footage.",
       "menu": "Open a category, then choose a menu to use as a reference.",
       "poster": "Choose a category, then pick a poster as your reference."
@@ -486,11 +509,9 @@
       "voiceUnavailable": "Choose an available voice."
     },
     "examples": {
+      "emptyLibrary": "No templates available.",
       "videoLibrary": "Template library",
-      "remakes": "Remake a hit",
-      "remakesHint": "Recreate the rhythm of a curated reference with your own material.",
       "useVideoTemplate": "Use this template",
-      "useRemake": "Use this reference",
       "emptyVideo": "Video templates are on the way.",
       "videoCategories": {
         "dish": "Dish showcase",

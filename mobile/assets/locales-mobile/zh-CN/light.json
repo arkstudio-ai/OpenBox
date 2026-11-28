@@ -1,4 +1,26 @@
 {
+  "mediaTemplates": {
+    "make": "做成模板",
+    "makePrompt": "我确认这个成品。请使用 media-template-author 技能提炼制作说明，先和我确认。成品素材 ID 为 {{id}}。",
+    "revisePrompt": "请使用 media-template-author 技能帮我修订模板版本 {{id}}。先问我想改哪里，再给我看新版制作说明。",
+    "mine": "我的模板",
+    "empty": "请在专业版对话中把满意的作品做成模板。",
+    "source": "原作对话",
+    "resume": "查看试做",
+    "try": "到精简版试做",
+    "submit": "提交审核",
+    "category": "二级分类",
+    "consent": "我有权公开原作，并同意在模板库展示原作样片。",
+    "cancel": "取消",
+    "states": {
+      "draft": "草稿",
+      "pending": "待审核",
+      "listed": "已上架",
+      "rejected": "已驳回",
+      "superseded": "历史版本",
+      "withdrawn": "已下架"
+    }
+  },
   "followSystemLanguage": "跟随手机系统",
   "tabs": {
     "home": "首页",
@@ -233,6 +255,7 @@
     "yesterday": "昨天 {{time}}"
   },
   "production": {
+    "confirmTemplateTrial": "确认试做成品",
     "renderOptions": {
       "title": "制作设置",
       "perfect": "完美成片",
@@ -330,7 +353,7 @@
       "poster": "海报模板"
     },
     "styleBody": {
-      "video": "选个参考样例，或按系统样片的节奏重拍",
+      "video": "选择一个模板，用本次的素材和文案制作。",
       "footage_edit": "选择原片的剪辑节奏",
       "menu": "选一个分类，再挑一张菜单作为参考",
       "poster": "选一个分类，再挑一张海报作为参考"
@@ -484,11 +507,9 @@
       "voiceUnavailable": "请选择一个可用的音色。"
     },
     "examples": {
+      "emptyLibrary": "暂无可用模板。",
       "videoLibrary": "模板库",
-      "remakes": "复刻爆款",
-      "remakesHint": "跟着系统样片的节奏，用你的素材重拍。",
       "useVideoTemplate": "使用这个模板",
-      "useRemake": "使用这个爆款案例",
       "emptyVideo": "视频模板正在添加中。",
       "videoCategories": {
         "dish": "餐品展示",
@@ -750,7 +771,7 @@
       "headline": "海报标题",
       "copy": "宣传内容",
       "signature": "署名",
-      "selectedExample": "已选样例",
+      "selectedExample": "已选模板",
       "changeExample": "更换",
       "titleRequired": "请填写海报标题。"
     }

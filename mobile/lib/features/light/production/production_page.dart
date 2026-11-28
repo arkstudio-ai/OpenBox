@@ -57,7 +57,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
   bool _advancedUpdated = false;
   bool _inAgent = false;
   bool _confirmingAssembly = false;
-  bool? _showRemakes;
 
   bool _redoNarration(LightProduction task) =>
       _pending['redo_narration'] as bool? ?? task.redoNarration;
@@ -792,8 +791,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
               description: _text('styleBody.${task.kind.id}'),
             ),
             const SizedBox(height: 24),
-            if (task.kind == ProductionKind.video) _templateSections(task),
-            if (task.kind != ProductionKind.video || !_remakes(task))
+            if (task.templateTrial)
+              ProductionTag(text: task.referenceTitleFor(_i18n.language))
+            else
               ProductionExamples(
                 task: task,
                 enabled: !_busy,
@@ -803,8 +803,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
                   );
                 }),
               ),
-            if (!task.kind.imagesOnly &&
-                (task.kind != ProductionKind.video || _remakes(task)))
+            if (task.kind == ProductionKind.footage &&
+                !task.templateTrial &&
+                task.referenceExampleId == null)
               ProductionTemplates(
                 task: task,
                 selected: task.referenceExampleId == null
@@ -966,49 +967,6 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       _productionSettings(task),
     ],
   );
-
-  bool _remakes(LightProduction task) => _showRemakes ?? task.remake;
-
-  Widget _templateSections(LightProduction task) {
-    final selected = _remakes(task);
-    final t = context.tokens;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SegmentedButton<bool>(
-          key: const Key('production-video-template-sections'),
-          showSelectedIcon: false,
-          style: ButtonStyle(
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            backgroundColor: WidgetStateProperty.resolveWith(
-              (states) =>
-                  states.contains(WidgetState.selected) ? t.hairSoft : t.card,
-            ),
-            foregroundColor: WidgetStatePropertyAll(t.ink),
-            side: WidgetStatePropertyAll(BorderSide(color: t.hair)),
-          ),
-          segments: [
-            ButtonSegment(
-              value: false,
-              label: Text(_text('examples.videoLibrary')),
-            ),
-            ButtonSegment(value: true, label: Text(_text('examples.remakes'))),
-          ],
-          selected: {selected},
-          onSelectionChanged: _busy
-              ? null
-              : (change) => setState(() => _showRemakes = change.single),
-        ),
-        const SizedBox(height: 12),
-        if (selected) ...[
-          Text(_text('examples.remakesHint'), style: TextStyle(color: t.n800)),
-          const SizedBox(height: 12),
-        ],
-      ],
-    );
-  }
 
   Widget _sourceSpeech(LightProduction task) => SourceSpeechSettings(
     task: task,
@@ -1376,7 +1334,9 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           if (task.referenceExampleId != null) ...[
             ProductionExampleSummary(
               task: task,
-              onChange: _busy ? null : () => _perform(() => _goTo('style')),
+              onChange: _busy || task.templateTrial
+                  ? null
+                  : () => _perform(() => _goTo('style')),
             ),
             const SizedBox(height: 12),
           ],
@@ -1570,6 +1530,28 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
       child: Text(_text(label)),
     );
     return switch (task.status) {
+      'completed' when task.templateTrial && task.output != null => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          primary(
+            'confirmTemplateTrial',
+            () => _perform(() async {
+              await ref
+                  .read(lightApiProvider)
+                  .confirmTemplateTrial(
+                    task.referenceExampleId!,
+                    task.sessionId,
+                    task.output!.id,
+                  );
+              if (mounted) context.pop();
+            }),
+          ),
+          secondary(switch (task.kind) {
+            ProductionKind.poster => 'savePoster',
+            _ => task.output?.video == true ? 'saveVideo' : 'saveMenu',
+          }, _saveOutput),
+        ],
+      ),
       'completed' => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1626,18 +1608,10 @@ class _ProductionPageState extends ConsumerState<ProductionPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             primary(
-              _remakes(task)
-                  ? 'examples.useRemake'
-                  : 'examples.useVideoTemplate',
-              (_remakes(task)
-                      ? task.availableTemplates.contains(
-                          _pending['template'] as String? ?? task.template,
-                        )
-                      : task.referenceExampleId != null)
-                  ? _next
-                  : null,
+              'examples.useVideoTemplate',
+              task.referenceExampleId != null ? _next : null,
             ),
-            secondary('skip', () => _next(skip: true)),
+            if (!task.templateTrial) secondary('skip', () => _next(skip: true)),
           ],
         ),
         'style' when task.kind == ProductionKind.footage => primary(

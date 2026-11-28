@@ -1,4 +1,5 @@
-import { VideoTemplateStudio } from "./VideoTemplateStudio"
+import { Link } from "react-router"
+import { paths } from "@/shared/router/paths"
 // Right column: the meta header DEEIX puts above its preview (thumbnail,
 // name, date | type | size, status chip) plus the preview surface itself.
 import { useTranslation } from "react-i18next"
@@ -19,7 +20,7 @@ interface Props {
 const ACTION = "flex size-7 items-center justify-center rounded-full text-n700 hover:bg-hairsoft"
 
 export function ResourceDetail({ resource, onDelete }: Props) {
-  const { t } = useTranslation("resources")
+  const { t } = useTranslation(["resources", "skills"])
 
   if (!resource) {
     return (
@@ -66,7 +67,10 @@ export function ResourceDetail({ resource, onDelete }: Props) {
             </span>
           </span>
         </div>
-        {resource.kind === "video" && resource.source === "agent" && <VideoTemplateStudio sourceId={resource.id} />}
+        {["video", "image"].includes(resource.kind) && resource.source === "agent" && resource.sessionId &&
+          <Link className="text-a700 text-xs underline underline-offset-2" to={`${paths.chat(resource.sessionId)}?templateAsset=${encodeURIComponent(resource.id)}`}>
+            {t("skills:mediaTemplates.make")}
+          </Link>}
         <button
           type="button"
           onClick={() => window.open(resource.url, "_blank")}

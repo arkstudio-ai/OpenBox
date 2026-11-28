@@ -241,6 +241,8 @@ async def save(user_id, workspace_id, body):
                           created_at=datetime.now(timezone.utc))
         db.add(edition)
         await db.flush()
+        from db.models.media_template import MediaTemplateImport
+        db.add(MediaTemplateImport(id=edition.id, video_edition_id=edition.id))
         return _status(edition, await db.get(UserSkill, edition.skill_id))
 
 
@@ -369,3 +371,20 @@ async def references(edition_id, ctx):
         result["references"][name] = asset
         result.setdefault("cast", []).append({"label": portrait["label"], "asset_id": asset})
     return result
+
+
+async def is_legacy_skill(skill_id: str) -> bool:
+    async with get_db_session() as db:
+        return bool(await db.scalar(select(Edition.id).where(Edition.skill_id == skill_id)))
+
+
+async def legacy_skill_names(user_id: str, workspace_id: str | None) -> set[str]:
+    """Names of the author's imported media packages, including live install keys."""
+    scope = [UserSkill.workspace_id == workspace_id] if workspace_id else []
+    async with get_db_session() as db:
+        rows = (await db.execute(
+            select(UserSkill.id, UserSkill.name, UserSkill.install_dir)
+            .join(Edition, Edition.skill_id == UserSkill.id)
+            .where(UserSkill.owner_id == user_id, *scope)
+        )).all()
+    return {key for row in rows for key in row if key}

@@ -128,6 +128,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_upgrade_desktop_skill_store_columns)
         await connection.run_sync(_upgrade_desktop_trajectory_columns)
         await connection.run_sync(_retire_desktop_trajectory_tables)
+        await connection.run_sync(_import_media_template_links)
         await connection.run_sync(_index_desktop_metadata_sync)
         await connection.run_sync(_upgrade_desktop_message_center_columns)
         await connection.run_sync(_upgrade_desktop_memory_columns)
@@ -341,6 +342,13 @@ def _index_desktop_metadata_sync(connection) -> None:
     for name, table in _METADATA_SYNC_INDEXES:
         if table in tables:
             connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {table} (updated_at, id)")
+
+
+def _import_media_template_links(connection) -> None:
+    for column, table in (("example_id", "light_examples"), ("video_edition_id", "video_template_editions")):
+        connection.exec_driver_sql(
+            f"INSERT OR IGNORE INTO media_template_imports (id, {column}) SELECT id, id FROM {table}"
+        )
 
 
 def _upgrade_desktop_billing_columns(connection) -> None:
@@ -657,6 +665,12 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "questions", "answers", "draft", "draft_revision", "continuation", "applied",
         "created_at", "updated_at", "expires_at", "detached",
     }),
+    "media_templates": frozenset({"id", "owner_id", "workspace_id", "entry_id"}),
+    "media_template_editions": frozenset({"id", "template_id", "source_asset_id", "status", "scene"}),
+    "media_template_trials": frozenset({"session_id", "edition_id", "output_asset_id", "snapshot"}),
+    "media_template_submissions": frozenset({"edition_id", "trial_session_id"}),
+    "media_template_reviews": frozenset({"id", "edition_id", "trial_session_id", "reviewer_id"}),
+    "media_template_imports": frozenset({"id", "example_id", "video_edition_id"}),
     "file_assets": frozenset({"id", "description", "description_updated_at", "description_state",
                              "description_attempts", "description_lease_until"}),
     "desktop_activations": frozenset({

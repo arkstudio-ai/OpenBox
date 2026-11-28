@@ -33,102 +33,57 @@ class ProductionExamples extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final request = _examplesProvider(task.kind.id);
     final result = ref.watch(request);
-    if (task.kind.imagesOnly || task.kind == ProductionKind.video) {
-      final content = result.when(
-        data: (rows) => rows.isEmpty
-            ? Text(
-                i18n.t(switch (task.kind) {
-                  ProductionKind.poster =>
-                    'light:production.examples.emptyPoster',
-                  ProductionKind.video =>
-                    'light:production.examples.emptyVideo',
-                  _ => 'light:production.examples.emptyMenu',
-                }),
-              )
-            : _ExampleCategories(
-                rows: rows,
-                task: task,
-                enabled: enabled,
-                onChoose: onChoose,
+    final content = result.when(
+      data: (rows) {
+        final available = rows
+            .where(
+              (row) =>
+                  !row.exampleId.startsWith('mtb_') ||
+                  task.availableTemplates.contains(row.exampleId.substring(4)),
+            )
+            .toList();
+        if (available.isEmpty) {
+          return Text(i18n.t('light:production.examples.emptyLibrary'));
+        }
+        return _ExampleCategories(
+          rows: available,
+          task: task,
+          enabled: enabled,
+          onChoose: onChoose,
+        );
+      },
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (_, _) => TextButton.icon(
+        onPressed: () => ref.invalidate(request),
+        icon: const Icon(Icons.refresh),
+        label: Text(i18n.t('common:action.retry')),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                i18n.t('light:production.examples.videoLibrary'),
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-        loading: () => const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: CircularProgressIndicator(),
-          ),
-        ),
-        error: (_, _) => TextButton.icon(
-          onPressed: () => ref.invalidate(request),
-          icon: const Icon(Icons.refresh),
-          label: Text(i18n.t('common:action.retry')),
-        ),
-      );
-      if (task.kind != ProductionKind.video) return content;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: IconButton(
+            ),
+            IconButton(
               tooltip: i18n.t('resources:templates.refresh'),
               icon: const Icon(Icons.refresh),
               onPressed: enabled ? () => ref.invalidate(request) : null,
             ),
-          ),
-          content,
-        ],
-      );
-    }
-    final rows = result.value ?? const <LightExamplePreview>[];
-    final selected = task.referenceExampleId != null;
-    if (rows.isEmpty && !selected && !result.hasError) {
-      return const SizedBox.shrink();
-    }
-    final t = context.tokens;
-    final title = i18n.t('light:production.examples.title');
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: selected ? t.hairSoft : t.card,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: selected ? t.a700 : t.hair),
+          ],
         ),
-        child: ListTile(
-          key: const Key('production-example-library'),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          leading: const Icon(Icons.collections_outlined),
-          title: Text(title),
-          subtitle: selected
-              ? Text(task.referenceTitleFor(i18n.language))
-              : result.hasError
-              ? Text(i18n.t('common:action.retry'))
-              : null,
-          trailing: Icon(result.hasError ? Icons.refresh : Icons.chevron_right),
-          onTap: !enabled
-              ? null
-              : result.hasError
-              ? () => ref.invalidate(request)
-              : rows.isEmpty
-              ? null
-              : () async {
-                  final id = await showModalBottomSheet<String>(
-                    context: context,
-                    isScrollControlled: true,
-                    useSafeArea: true,
-                    showDragHandle: true,
-                    builder: (_) => _ExamplePicker(
-                      title: title,
-                      rows: rows,
-                      selected: task.referenceExampleId,
-                    ),
-                  );
-                  if (id != null && context.mounted) onChoose(id);
-                },
-        ),
-      ),
+        content,
+      ],
     );
   }
 }
@@ -146,7 +101,9 @@ class ProductionExampleSummary extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
-    final rows = ref.watch(_examplesProvider(task.kind.id)).value;
+    final rows = task.templateTrial
+        ? null
+        : ref.watch(_examplesProvider(task.kind.id)).value;
     final example = rows
         ?.where((row) => row.exampleId == task.referenceExampleId)
         .firstOrNull;
@@ -160,7 +117,9 @@ class ProductionExampleSummary extends ConsumerWidget {
             : _ExamplePreview(row: example),
         title: Text(task.referenceTitleFor(i18n.language)),
         subtitle: Text(i18n.t('light:production.poster.selectedExample')),
-        trailing: Text(i18n.t('light:production.poster.changeExample')),
+        trailing: onChange == null
+            ? null
+            : Text(i18n.t('light:production.poster.changeExample')),
         onTap: onChange,
       ),
     );
@@ -188,7 +147,8 @@ class _ExampleCategories extends ConsumerWidget {
     final categories = switch (task.kind) {
       ProductionKind.poster => 'posterCategories',
       ProductionKind.video => 'videoCategories',
-      _ => 'menuCategories',
+      ProductionKind.menu => 'menuCategories',
+      ProductionKind.footage => 'footageCategories',
     };
     final path = 'production.examples.$categories.$scene';
     final shippedLabel = i18n.bundle.lookup('zh-CN', 'light', path);
@@ -219,8 +179,7 @@ class _ExampleCategories extends ConsumerWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 12.0;
-            final width =
-                task.kind != ProductionKind.video && constraints.maxWidth >= 300
+            final width = task.kind.imagesOnly && constraints.maxWidth >= 300
                 ? (constraints.maxWidth - spacing) / 2
                 : constraints.maxWidth;
             return Wrap(
@@ -480,37 +439,6 @@ class _VideoCategoryPageState extends ConsumerState<_VideoCategoryPage> {
       ),
     );
   }
-}
-
-class _ExamplePicker extends StatelessWidget {
-  const _ExamplePicker({
-    required this.title,
-    required this.rows,
-    required this.selected,
-  });
-
-  final String title;
-  final List<LightExamplePreview> rows;
-  final String? selected;
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * .67,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Text(title, style: Theme.of(context).textTheme.titleLarge),
-          ),
-          Expanded(
-            child: _ExampleList(rows: rows, selected: selected),
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 class _ExampleList extends ConsumerWidget {

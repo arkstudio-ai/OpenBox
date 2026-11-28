@@ -385,6 +385,15 @@ async def list_store(
     }
 
 
+async def _check_media_listing(catalog_id: str, listing: str):
+    from light.video_templates import is_legacy_skill
+
+    if (listing == user_library.LISTING_LISTED and _is_community(catalog_id)
+            and await is_legacy_skill(catalog_id.split(":", 1)[1])):
+        raise HTTPException(409, detail={"code": "MEDIA_TEMPLATE_TRIAL_REQUIRED",
+                                         "message": "媒体模板需要在精简版试做后提交到媒体模板库审核。"})
+
+
 @router.post("/store/{catalog_id}/listing")
 async def set_listing(
     catalog_id: str,
@@ -393,6 +402,7 @@ async def set_listing(
     admin: dict = Depends(require_admin),
 ):
     """Put an entry on or off the shelf, or resolve a submission."""
+    await _check_media_listing(catalog_id, body.listing)
     note = _note(
         body.note,
         required=body.listing in (
@@ -665,6 +675,7 @@ async def approve_submission(
     admin: dict = Depends(require_admin),
 ):
     """Approve a submission: it goes on the shelf and the author is told."""
+    await _check_media_listing(catalog_id, user_library.LISTING_LISTED)
     if not _is_community(catalog_id):
         raise HTTPException(404, detail="Only a submission can be approved")
     try:

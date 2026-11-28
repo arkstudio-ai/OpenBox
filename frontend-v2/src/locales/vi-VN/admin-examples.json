@@ -138,6 +138,8 @@
     "full": "Nội dung",
     "fullHint": "Chỉ ghi bố cục, nhịp điệu, phong cách và cách viết. Không đưa tên cửa hàng, tên món hay giá vào thẻ. Nội dung sửa thủ công sẽ không bị ghi đè.",
     "frames": "{{count}} khung hình",
+    "edit": "Bảng dựng ({{count}} dòng về phông chữ, chuyển cảnh, hiệu ứng và nhạc thực tế)",
+    "noEdit": "Video này chưa có lịch sử dựng. Thẻ tham khảo dựa trên hình ảnh và âm thanh.",
     "heard": "Có lời nói",
     "silent": "Không có lời nói",
     "state": {

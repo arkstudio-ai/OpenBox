@@ -1,4 +1,26 @@
 {
+  "mediaTemplates": {
+    "make": "Tạo thành mẫu",
+    "makePrompt": "Tôi xác nhận thành phẩm này. Dùng media-template-author để soạn hướng dẫn cho tôi duyệt. Mã tệp thành phẩm: {{id}}.",
+    "revisePrompt": "Dùng media-template-author để sửa phiên bản mẫu {{id}}. Hỏi tôi muốn sửa gì và cho tôi xem hướng dẫn mới.",
+    "mine": "Mẫu của tôi",
+    "empty": "Tạo mẫu từ tác phẩm hoàn chỉnh trong hội thoại chuyên nghiệp.",
+    "source": "Hội thoại gốc",
+    "resume": "Xem bản thử",
+    "try": "Chạy thử có hướng dẫn",
+    "submit": "Gửi duyệt",
+    "category": "Danh mục phụ",
+    "consent": "Tôi có quyền công bố tác phẩm gốc và đồng ý hiển thị bản xem trước trong thư viện.",
+    "cancel": "Hủy",
+    "states": {
+      "draft": "Bản nháp",
+      "pending": "Chờ duyệt",
+      "listed": "Đã đăng",
+      "rejected": "Bị từ chối",
+      "superseded": "Phiên bản cũ",
+      "withdrawn": "Đã gỡ"
+    }
+  },
   "followSystemLanguage": "Theo ngôn ngữ thiết bị",
   "tabs": {
     "home": "Trang chủ",
@@ -233,6 +255,7 @@
     "yesterday": "Hôm qua {{time}}"
   },
   "production": {
+    "confirmTemplateTrial": "Xác nhận thành phẩm thử",
     "renderOptions": {
       "title": "Cài đặt sản xuất",
       "perfect": "Hoàn thiện video",
@@ -330,7 +353,7 @@
       "poster": "Mẫu áp phích"
     },
     "styleBody": {
-      "video": "Chọn mẫu hoặc tái tạo theo video tham chiếu",
+      "video": "Chọn mẫu và dùng tư liệu, lời của bạn để sản xuất.",
       "footage_edit": "Chọn nhịp dựng cho cảnh quay của bạn.",
       "menu": "Mở một danh mục, rồi chọn thực đơn mẫu để tham khảo.",
       "poster": "Chọn danh mục, sau đó chọn một áp phích tham khảo."
@@ -484,11 +507,9 @@
       "voiceUnavailable": "Hãy chọn giọng đang có sẵn."
     },
     "examples": {
+      "emptyLibrary": "Chưa có mẫu nào.",
       "videoLibrary": "Thư viện mẫu",
-      "remakes": "Tái tạo video nổi bật",
-      "remakesHint": "Dùng tư liệu của bạn để tái tạo nhịp của mẫu tuyển chọn.",
       "useVideoTemplate": "Dùng mẫu này",
-      "useRemake": "Dùng mẫu tham chiếu này",
       "emptyVideo": "Mẫu video đang được bổ sung.",
       "videoCategories": {
         "dish": "Giới thiệu món",

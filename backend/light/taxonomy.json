@@ -2,6 +2,7 @@
   "version": "2026-11-15.2",
   "entries": [
     { "id": "video", "label": "做一条视频", "media": "video", "scenes": [
+        {"id": "story", "label": "剧情广告"},
       { "id": "dish", "label": "餐品展示" },
       { "id": "shop", "label": "店内环境" },
       { "id": "visit", "label": "探店" }

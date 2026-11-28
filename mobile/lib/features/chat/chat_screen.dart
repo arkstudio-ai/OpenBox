@@ -69,6 +69,7 @@ class ChatScreen extends ConsumerStatefulWidget {
     required this.sessionId,
     this.resources,
     this.inputBuilder,
+    this.draft,
     this.light = false,
     this.lightResultActions,
   });
@@ -82,6 +83,7 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// Light 模式 (docs `LIGHT_MODE_PLAN.md` §4.4): a topic page supplies its
   /// own input bar in place of the composer, fed what the composer would be.
   final ChatInputBuilder? inputBuilder;
+  final ComposerDraft? draft;
 
   /// Light skin for the transcript itself: tool traces fold to one line and
   /// tagged question cards use big chips (see [LightChatScope]).
@@ -420,6 +422,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               busy: busy,
               resources: resources,
               historyController: _historyController,
+              draft: widget.draft,
               suggestions: latestSuggestions(
                 rows,
                 status,

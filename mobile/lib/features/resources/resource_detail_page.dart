@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/download/native_download.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/resource.dart';
+import '../../shared/router/paths.dart';
 import '../../shared/utils/error_text.dart';
 import '../../shared/utils/format.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/resources_api.dart';
 import 'utils/resource_display.dart';
-import 'video_template_author.dart';
 import 'widgets/resource_preview.dart';
 import 'widgets/resource_sheets.dart';
 
@@ -103,14 +104,17 @@ class _ResourceDetailPageState extends ConsumerState<ResourceDetailPage> {
           ),
         ),
         actions: [
-          if (_resource.kind == 'video' && _resource.source == 'agent')
+          if (['video', 'image'].contains(_resource.kind) &&
+              _resource.source == 'agent' &&
+              _resource.sessionId != null)
             IconButton(
-              tooltip: i18n.t('resources:templates.make'),
+              tooltip: i18n.t('light:mediaTemplates.make'),
               icon: const Icon(Icons.video_library_outlined),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => VideoTemplateAuthorPage(source: _resource),
-                ),
+              onPressed: () => context.push(
+                Uri(
+                  path: Paths.chat(_resource.sessionId!),
+                  queryParameters: {'templateAsset': _resource.id},
+                ).toString(),
               ),
             ),
           IconButton(

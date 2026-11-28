@@ -86,6 +86,7 @@ abstract final class Paths {
   static String lightChat(String sessionId) => '/light/s/$sessionId';
 
   static const String lightConversations = '/light/conversations';
+  static const String lightMediaTemplates = '/light/media-templates';
   static const String lightProductionHistory = '/light/productions';
   static String lightProduction(String sessionId) =>
       '$lightProductionHistory/${Uri.encodeComponent(sessionId)}';

@@ -1,4 +1,4 @@
-import { useId, useState } from "react"
+import { useContext, useId, useState } from "react"
 import {
   CheckCircle2,
   ChevronDown,
@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { ArtifactGroup } from "../lib/content-view"
+import { MediaTemplateComposer } from "../lib/media-template-composer"
 import { isFinalVideoArtifact } from "../lib/video-delivery"
 import { isAudioPart, isGalleryMedia, isVideoPart } from "../lib/media"
 import { AudioPreview } from "./AudioPreview"
@@ -88,7 +89,10 @@ function ArtifactCard({
   segmentNumber?: number
 }) {
   const { t } = useTranslation("chat")
+  const { t: templateText } = useTranslation("skills")
+  const makeTemplate = useContext(MediaTemplateComposer)
   const media = group.parts.filter(isGalleryMedia)
+  const reusable = group.artifactKind === "video_final" || group.artifactKind === "generated_image"
   const audio = group.parts.filter((part) => isAudioPart(part) && Boolean(part.asset_id))
   const files = group.parts.filter(
     (part) => !isGalleryMedia(part) && !(isAudioPart(part) && Boolean(part.asset_id)),
@@ -139,6 +143,12 @@ function ArtifactCard({
         hero={hero || group.artifactKind === "video_final"}
         compact={!hero}
       />
+      {reusable && makeTemplate && media.filter((part) => part.asset_id).map((part) => (
+        <button type="button" key={part.id} className="text-a700 mt-2 me-3 text-xs underline underline-offset-2"
+          onClick={() => makeTemplate(part.asset_id!)}>
+          {templateText("mediaTemplates.make")}{media.length > 1 ? ` · ${part.path.split('/').pop() || part.asset_id}` : ""}
+        </button>
+      ))}
       {audio.length > 0 ? (
         <div className="space-y-2">
           {audio.map((part) => (

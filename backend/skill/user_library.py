@@ -777,6 +777,8 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
     Only what :func:`store_visible` admits, ordered the way the store reads:
     featured first, then what people actually install, then newest.
     """
+    from db.models.video_template import VideoTemplateEdition
+
     counts = _install_counts()
     installs = func.coalesce(counts.c.installs, 0).label("installs")
     async with get_db_session() as session:
@@ -788,6 +790,7 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
                 .options(load_only(*_CATALOG_COLUMNS))
                 .where(
                     store_visible(),
+                    ~select(VideoTemplateEdition.id).where(VideoTemplateEdition.skill_id == UserSkill.id).exists(),
                     User.is_active.is_(True),
                     User.is_deleted.is_(False),
                 )
@@ -895,8 +898,10 @@ async def list_all_store_entries(
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
 
+    from db.models.video_template import VideoTemplateEdition
     from skill.catalog_admin import apply_metadata, not_deleted, overlays
     filters = [
+        ~select(VideoTemplateEdition.id).where(VideoTemplateEdition.skill_id == UserSkill.id).exists(),
         not_deleted(_community_key()),
         # "Has been submitted at least once", asked without naming the blob.
         UserSkill.published_version.is_not(None),

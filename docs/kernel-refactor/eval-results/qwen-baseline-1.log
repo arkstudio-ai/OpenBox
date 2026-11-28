@@ -1,0 +1,120 @@
+2026-11-28 21:23:07,062 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 21:23:07,063 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 21:23:18,923 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 5728.6, "first_progress_ms": 4615.4, "phase_ms": {"connect": 0.4, "proxy_connect": 0.3, "tls": 2120.6, "send": 0.3, "upstream_headers": 2042.8, "stream_read": 1365.1}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 21:23:21,724 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 2670.7, "first_progress_ms": 2081.6, "phase_ms": {"send": 0.2, "upstream_headers": 2077.1, "stream_read": 585.5}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+2026-11-28 21:23:29,581 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 7760.1, "first_progress_ms": 4017.9, "phase_ms": {"connect": 0.4, "proxy_connect": 0.2, "tls": 2545.5, "send": 0.2, "upstream_headers": 1449.3, "stream_read": 3752.9}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 21:23:33,705 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 3994.0, "first_progress_ms": 1667.6, "phase_ms": {"send": 0.2, "upstream_headers": 1644.4, "stream_read": 2340.7}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+{"task": "files_sales_summary", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 35681}
+{"task": "files_sales_summary", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 45109}
+{"task": "files_sales_summary", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 26120}
+{"task": "files_price_list_edit", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 52766}
+{"task": "files_price_list_edit", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 43548}
+{"task": "files_price_list_edit", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 34417}
+{"task": "files_meeting_todos", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36037}
+{"task": "files_meeting_todos", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36264}
+{"task": "files_meeting_todos", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 35969}
+{"task": "files_members_export", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 37922}
+{"task": "files_members_export", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28632}
+{"task": "files_members_export", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28768}
+{"task": "files_rename_photos", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 47825}
+{"task": "files_rename_photos", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 35952}
+{"task": "files_rename_photos", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 47649}
+{"task": "code_fix_pricing", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 61350}
+{"task": "code_fix_pricing", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 44402}
+{"task": "code_fix_pricing", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 8, "tokens": 73205}
+{"task": "code_todo_done_command", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 11, "tokens": 105999}
+{"task": "code_todo_done_command", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 12, "tokens": 122665}
+{"task": "code_todo_done_command", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 68108}
+{"task": "code_parse_orders", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 56801}
+{"task": "code_parse_orders", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 58456}
+{"task": "code_parse_orders", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 58440}
+{"task": "code_fix_booking_slots", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 10, "tokens": 92463}
+{"task": "code_fix_booking_slots", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 53971}
+{"task": "code_fix_booking_slots", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 9, "tokens": 83902}
+{"task": "research_ecommerce_law", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 22081}
+{"task": "research_ecommerce_law", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 22204}
+{"task": "research_ecommerce_law", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 22068}
+{"task": "research_python_313", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 32889}
+{"task": "research_python_313", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 66621}
+{"task": "research_python_313", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 54508}
+{"task": "research_hangzhou_min_wage", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 53295}
+{"task": "research_hangzhou_min_wage", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 54952}
+{"task": "research_hangzhou_min_wage", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 51989}
+{"task": "research_douyin_food_qualification", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 82027}
+{"task": "research_douyin_food_qualification", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 8, "tokens": 206886}
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+{"task": "research_douyin_food_qualification", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 50134}
+2026-11-28 21:40:54,734 [openbox.cron.service] INFO Created cron job cron_01M8H66BACG7VKT5W0PW5P5S7G (每日外卖差评提醒) for project 01M8H666827ZAV531ZDA2KCPN3
+{"task": "cron_daily_bad_reviews", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17847}
+{"task": "cron_daily_bad_reviews", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17982}
+{"task": "cron_daily_bad_reviews", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18070}
+{"task": "cron_weekly_sales_report", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18152}
+{"task": "cron_weekly_sales_report", "repeat": 2, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18215}
+{"task": "cron_weekly_sales_report", "repeat": 3, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18180}
+{"task": "cron_workday_supplier_order", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17831}
+{"task": "cron_workday_supplier_order", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17719}
+{"task": "cron_workday_supplier_order", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17840}
+2026-11-28 21:43:16,557 [openbox.sandbox.wuying] ERROR WUYING maps every authenticated user to one physical desktop; owner/workspace labels are routing metadata, not a tenant security boundary. Use this provider only for trusted development or place each tenant behind an independently isolated desktop/container.
+2026-11-28 21:43:16,557 [openbox.sandbox.wuying] INFO WUYING sandbox provider -> http://127.0.0.1:18002 (desktop ecd-4y9s9igraz7hc58ea)
+{"task": "merchant_menu_review", "repeat": 1, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 16, "tokens": 214592}
+{"task": "merchant_menu_review", "repeat": 2, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 10, "tokens": 115578}
+{"task": "merchant_menu_review", "repeat": 3, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 15, "tokens": 200027}
+{"task": "merchant_menu_light", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 45850}
+{"task": "merchant_menu_light", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 45845}
+{"task": "merchant_menu_light", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 45608}
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+{"task": "merchant_video_light", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 70080}
+{"task": "merchant_video_light", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 70130}
+{"task": "merchant_video_light", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 69928}
+{"task": "merchant_poster_groupbuy", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 55039}
+{"task": "merchant_poster_groupbuy", "repeat": 2, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 16, "tokens": 209845}
+2026-11-28 21:56:55,647 [openbox.sandbox.diag] WARNING browser failure diag=dev_01M8H73NPYEV49NPV9SKJRYJ4T key=session_7YBQERYX6HQ61A6GE3TE4EBM51 reason=BrowserRuntimeUnavailable lights={'chrome': 'down', 'relay': 'down', 'runtime': 'unknown', 'unit': 'unknown', 'x': 'down'} findings=['no OpenBox Chrome process and :9333 not answering', 'obx-x cannot reach an X session: obx-x: not found'] note= error=BrowserRuntimeUnavailable: Browser runtime repair failed; desktop cannot be marked ready. Installer exited 1: Browser runtime repair requires a root action server on Wuying. Full log: /opt/openbox/backups/browser-runtime-*/npm-install.log on the desktop.
+{"task": "merchant_poster_groupbuy", "repeat": 3, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 15, "tokens": 202853}
+{"task": "assistant_followup_budget", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 121120}
+{"task": "assistant_followup_budget", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 89806}
+{"task": "assistant_followup_budget", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 89882}
+{"task": "assistant_new_conversation", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 29907}
+{"task": "assistant_new_conversation", "repeat": 2, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 29958}
+{"task": "assistant_new_conversation", "repeat": 3, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 29861}
+{"task": "skill_mention_poster", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 40137}
+{"task": "skill_mention_poster", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 38921}
+{"task": "skill_mention_poster", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 40213}
+{"task": "skill_mention_scheduled_tasks", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28008}
+{"task": "skill_mention_scheduled_tasks", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28281}
+{"task": "skill_mention_scheduled_tasks", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28466}
+model=openai/qwen3.8-flash exposure=portable tuning=- fake=False label=baseline-1
+task                                 done  steps calls/st  ask csrch skill+  bad  out_tok   tot_tok    secs
+-----------------------------------------------------------------------------------------------------------
+files_sales_summary                   3/3    4.0     0.75  0.0   0.0    0.0    0      651     35637    17.0
+files_price_list_edit                 3/3    5.0     0.80  0.0   0.0    0.0    0      581     43577    16.3
+files_meeting_todos                   3/3    4.0     1.08  0.0   0.0    0.0    0      890     36090    20.2
+files_members_export                  3/3    3.3     0.70  0.0   0.0    0.0    0      541     31774    15.0
+files_rename_photos                   3/3    3.7     0.82  0.0   0.0    0.0    0      467     43809    14.2
+code_fix_pricing                      3/3    6.7     0.90  0.0   0.0    0.0    0      944     59652    23.6
+code_todo_done_command                3/3   10.0     1.00  0.0   0.0    0.0    0     1349     98924    42.0
+code_parse_orders                     3/3    6.0     1.06  0.0   0.0    0.0    0     2639     57899    42.8
+code_fix_booking_slots                3/3    8.3     0.92  0.0   0.0    0.0    0     1892     76779    42.0
+research_ecommerce_law              human    2.0     0.50  0.0   0.0    0.0    0      584     22118    15.2
+research_python_313                 human    4.0     0.92  0.0   1.0    0.0    0      803     51339    20.7
+research_hangzhou_min_wage          human    3.0     1.22  0.0   0.0    0.0    0      853     53412    23.2
+research_douyin_food_qualification  human    5.7     1.41  0.0   1.0    0.0    0     2363    113016    57.3
+cron_daily_bad_reviews                3/3    2.0     0.50  0.0   0.0    0.0    0      431     17966    12.0
+cron_weekly_sales_report              0/3    2.0     1.33  1.0   0.0    0.0    0      670     18182    10.4
+cron_workday_supplier_order           3/3    2.0     0.50  0.0   0.0    0.0    0      301     17797     7.0
+merchant_menu_review                  0/3   13.7     1.00  0.0   1.3    0.0    0     6935    176732   149.7
+merchant_menu_light                   3/3    4.0     1.00  1.0   1.0    0.0    0      763     45768    19.1
+merchant_video_light                  3/3    5.0     1.00  2.0   1.0    0.0    0      730     70046    24.6
+merchant_poster_groupbuy              1/3   12.0     1.03  0.3   0.7    0.0    0     5060    155912    99.2
+assistant_followup_budget             3/3    3.3     0.70  0.0   0.0    0.0    0      868    100269    17.8
+assistant_new_conversation            0/3    1.0     1.00  0.0   0.0    0.0    0      646     29909     9.8
+skill_mention_poster                  3/3    4.0     1.00  1.0   1.0    0.0    0      517     39757    14.2
+skill_mention_scheduled_tasks         3/3    3.0     0.67  0.0   0.0    0.0    0      752     28252    12.8
+-----------------------------------------------------------------------------------------------------------
+runs=72 completed=49/60 (82%) pending_human=12 steps+questions/run=5.12 calls/step=0.95 malformed=0 tokens/run=59359 limit_hits=4 errors=0 platform_errors=6
+results: /Volumes/fanxiang/workspace2/OpenBox/docs/kernel-refactor/eval-results/qwen-baseline-1.json

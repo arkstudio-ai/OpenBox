@@ -1,0 +1,29 @@
+2026-11-28 22:58:29,058 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 22:58:29,059 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 22:58:44,715 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 10099.8, "first_progress_ms": 8204.8, "phase_ms": {"connect": 0.5, "proxy_connect": 0.3, "tls": 2053.9, "send": 0.4, "upstream_headers": 5974.4, "stream_read": 1877.8}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 22:58:44,760 [openbox.cron.service] INFO Created cron job cron_01M8HAMVWP0MAE6QJ3WN1YXW0E (每日外卖差评提醒) for project 01M8HAMDF930Q0QWP4MZCBNW14
+2026-11-28 22:58:52,659 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 7844.0, "first_progress_ms": 4135.9, "phase_ms": {"send": 0.2, "upstream_headers": 4111.0, "stream_read": 3715.9}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+{"task": "cron_daily_bad_reviews", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17989}
+{"task": "cron_daily_bad_reviews", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17932}
+{"task": "cron_daily_bad_reviews", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17909}
+{"task": "cron_weekly_sales_report", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 40074}
+2026-11-28 23:00:51,966 [openbox.sandbox.wuying] ERROR WUYING maps every authenticated user to one physical desktop; owner/workspace labels are routing metadata, not a tenant security boundary. Use this provider only for trusted development or place each tenant behind an independently isolated desktop/container.
+2026-11-28 23:00:51,966 [openbox.sandbox.wuying] INFO WUYING sandbox provider -> http://127.0.0.1:18002 (desktop ecd-4y9s9igraz7hc58ea)
+{"task": "cron_weekly_sales_report", "repeat": 2, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 17, "tokens": 212696}
+{"task": "cron_weekly_sales_report", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 30230}
+{"task": "cron_workday_supplier_order", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17708}
+{"task": "cron_workday_supplier_order", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17728}
+{"task": "cron_workday_supplier_order", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17793}
+{"task": "assistant_new_conversation", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 60462}
+{"task": "assistant_new_conversation", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 60119}
+{"task": "assistant_new_conversation", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 60835}
+model=openai/qwen3.8-flash exposure=portable tuning=- fake=False label=baseline-1-rerun
+task                                 done  steps calls/st  ask csrch skill+  bad  out_tok   tot_tok    secs
+-----------------------------------------------------------------------------------------------------------
+cron_daily_bad_reviews                3/3    2.0     0.50  0.0   0.0    0.0    0      412     17943    18.8
+cron_weekly_sales_report              2/3    8.0     1.00  0.0   0.0    0.0    0     3124     94333    83.9
+cron_workday_supplier_order           3/3    2.0     0.50  0.0   0.0    0.0    0      266     17743    15.1
+assistant_new_conversation            3/3    2.0     0.50  0.0   0.0    0.0    0      934     60472    37.8
+-----------------------------------------------------------------------------------------------------------
+runs=12 completed=11/12 (92%) pending_human=0 steps+questions/run=3.50 calls/step=0.79 malformed=0 tokens/run=47623 limit_hits=1 errors=0 platform_errors=1
+results: /Volumes/fanxiang/workspace2/OpenBox/docs/kernel-refactor/eval-results/rerun-baseline-1.json

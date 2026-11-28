@@ -44,8 +44,8 @@ from tests.unit.test_durable_questions import state  # noqa: F401  (migration-ba
 BUDGET = {
     ("baseline", "text"): (236, 66),
     ("baseline", "tool"): (374, 109),
-    ("production", "text"): (279, 74),
-    ("production", "tool"): (422, 118),
+    ("production", "text"): (275, 74),
+    ("production", "tool"): (414, 118),
 }
 # Turns run before the measured one; the counts do not grow with history.
 WARMUP_TURNS = 2

@@ -118,6 +118,93 @@ async def test_undecodable_frame_fails_before_upload(monkeypatch, source):
     oss.put_object.assert_not_awaited()
 
 
+# From the production base c1185d18 (docs/kernel-refactor/production-alignment.md).
+def _frame(size):
+    data = BytesIO()
+    Image.new('RGB', size).save(data, format='PNG')
+    return data.getvalue()
+
+
+@pytest.mark.parametrize('mime', ['video/mp4', 'audio/mpeg'])
+def test_other_media_cannot_be_used_as_frames(route, mime):
+    with pytest.raises(providers.VideoRequestError, match='needs an image'):
+        providers.validate_request(route, resolution='768p', ratio='adaptive', duration=5,
+                                   generate_audio=True, input_mimes=[mime])
+
+
+@pytest.mark.parametrize('action,role,source_size', [
+    ('validate', 'first_frame', (1536, 608)),
+    ('validate', 'last_frame', (100, 251)),
+    ('submit', 'first_frame', (1536, 608)),
+    ('submit', 'last_frame', (100, 251)),
+])
+async def test_wide_and_tall_frames_are_prepared_without_restricting_user_images(config, route, monkeypatch, action, role, source_size):
+    from unittest.mock import Mock
+    from tool.tool import ToolContext
+
+    data = {key: _frame(source_size if key == role else (100, 250)) for key in ('first_frame', 'last_frame')}
+    async def owned(asset_id, _ctx):
+        return SimpleNamespace(id=asset_id, mime='image/png', oss_key=asset_id, size=len(data[asset_id]))
+
+    monkeypatch.setattr(vp, '_find_owned_asset', owned)
+    monkeypatch.setattr(vp, '_session_video_model_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(vp, '_session_video_resolution', AsyncMock(return_value=None))
+    monkeypatch.setattr(vp, '_daily_submit_count', AsyncMock(return_value=0))
+    monkeypatch.setattr(vp, '_configured_target', lambda _model: (route, config.video_generation))
+    monkeypatch.setattr(vp, '_check_submit_budget', AsyncMock())
+    monkeypatch.setattr(vp, '_run_rejected_submission', AsyncMock(return_value=None))
+    monkeypatch.setattr('billing.media.precheck_compose', AsyncMock())
+    monkeypatch.setattr('billing.partner.quote_generation_for_session',
+                        AsyncMock(return_value=SimpleNamespace(credits=1, snapshot={})))
+    reserve = Mock()
+    monkeypatch.setattr('autopilot.ledger.guard_paid_step', reserve)
+    copy = AsyncMock()
+    oss = SimpleNamespace(get_object=AsyncMock(side_effect=lambda key, **_: data[key]), put_object=copy)
+    monkeypatch.setattr('core.oss.get_oss', lambda: oss)
+    refs = Mock(side_effect=vp._RequestError('stop after preparing the provider inputs'))
+    monkeypatch.setattr(vp, '_presigned_provider_refs', refs)
+    submit = AsyncMock()
+    monkeypatch.setattr(providers, 'submit', submit)
+    args = vp.VideoGenerateArgs(action=action, idempotency_key='frame-preflight', prompt='按指定首尾帧生成', ratio='adaptive', input_assets=[
+        {'asset_id': key, 'role': key} for key in data
+    ])
+
+    result = await vp.execute_generate(args, ToolContext(user_id='u', session_id='s'))
+    if action == 'validate':
+        assert result.metadata['valid'] is True, result.output
+        copy.assert_not_awaited()
+        reserve.assert_not_called()
+    else:
+        assert 'stop after preparing' in result.output
+        copy.assert_awaited_once()
+        key, adapted = copy.await_args.args
+        assert key.startswith(f'analysis/u/runninghub-frames/{role}-')
+        assert refs.call_args.kwargs['provider_image_keys'] == {role: key}
+        with Image.open(BytesIO(adapted)) as frame:
+            assert 0.4 <= frame.width / frame.height <= 2.5
+            assert frame.width >= source_size[0] and frame.height >= source_size[1]
+        reserve.assert_called_once()
+    submit.assert_not_awaited()
+
+
+def test_preparation_compresses_large_files_and_preserves_edges(monkeypatch):
+    from tool import video_runninghub
+
+    image = Image.new('RGB', (150, 50), 'white')
+    image.paste('green', (0, 0, 16, 50))
+    image.paste('red', (134, 0, 150, 50))
+    source = BytesIO()
+    image.save(source, format='PNG')
+    original = source.getvalue() + b'0' * 2000
+    monkeypatch.setattr(video_runninghub, 'MAX_FRAME_BYTES', 1500)
+    derived = video_runninghub._adapt_frame(original)
+    assert len(derived) <= 1500
+    with Image.open(BytesIO(derived)) as frame:
+        assert frame.size == (150, 60)
+        assert frame.getpixel((4, 30))[1] > 80
+        assert frame.getpixel((145, 30))[0] > 200
+
+
 @pytest.mark.parametrize('images,ratio', [(False, '9:16'), (True, 'adaptive')])
 async def test_default_selection_and_image_ratio_follow_conversation_inputs(config, monkeypatch, images, ratio):
     monkeypatch.setattr(vp, '_session_video_model_id', AsyncMock(return_value=None))
@@ -185,6 +272,27 @@ async def test_query_auth_error_is_not_terminal_task_failure(route, monkeypatch)
     with pytest.raises(providers.VideoRequestError) as exc:
         await providers.status(route, 'task-one')
     assert 'SECRET' not in str(exc.value)
+
+
+@pytest.mark.parametrize("state,reason,retryable", [
+    ("FAILED", "Failed to download input media. https://example.com/?Signature=SECRET", True),
+    ("FAILED", "输入素材下载失败，请确认链接可公网访问后重试", True),
+    ("FAILED", "First-frame aspect ratio invalid", False),
+    ("RUNNING", "Failed to download input media", False),
+])
+def test_runninghub_preserves_a_safe_retry_reason_only_for_terminal_input_download_failures(
+    route, state, reason, retryable,
+):
+    from tool.video_runninghub import INPUT_DOWNLOAD_FAILED
+
+    data = {"taskId": "task-one", "status": state, "errorCode": "1007", "errorMessage": reason}
+    failure = vp._provider_failure(route, data, "failed", {"usage": {"units": 1}})
+    assert "SECRET" not in failure["error"]
+    if retryable:
+        assert failure["result_data"] == {"usage": {"units": 1}, "failure_code": INPUT_DOWNLOAD_FAILED}
+        assert "下载" in failure["error"]
+    else:
+        assert "result_data" not in failure
 
 
 @pytest.mark.parametrize('data,expected', [

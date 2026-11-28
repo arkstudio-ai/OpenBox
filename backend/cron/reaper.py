@@ -154,22 +154,25 @@ async def _sweep_old_runs() -> None:
 async def _sweep_workspace() -> None:
     """Bin directories for deleted projects, and empty stale trash.
 
-    Runs against whichever sandbox is up. Directories the database has never
-    heard of are left alone and only logged — an unrecognised directory is far
-    more likely to be something worth keeping than something worth deleting.
+    Runs only when this process holds exactly one sandbox and knows which
+    workspace's desktop it is; its directories are compared with that
+    workspace's projects alone. Directories the database has never heard of
+    are left alone and only logged — an unrecognised directory is far more
+    likely to be something worth keeping than something worth deleting.
     """
     from project.reclaim import reclaim
 
     try:
         from sandbox import sandbox_manager
-        client = await sandbox_manager.get_only_client()
+        runtime = await sandbox_manager.get_only_runtime()
     except Exception as e:
         log.debug(f"No sandbox for workspace sweep: {e}")
         return
-    if client is None:
+    if runtime is None:
         return
+    workspace_id, client = runtime
 
-    result = await reclaim(client)
+    result = await reclaim(client, workspace_id=workspace_id)
     if result.get("binned") or result.get("purged"):
         log.info(
             f"Workspace sweep: binned {len(result['binned'])}, "

@@ -9,6 +9,9 @@ from pydantic import ValidationError
 from light import reference_film as film
 from light import wan_story
 from light.reference_plan import ShotPlan
+from tool.tool import ToolContext, ToolResult
+from tool.video_production import VideoGenerateArgs
+from tool.video_runninghub import INPUT_DOWNLOAD_FAILED
 
 
 def plan_data(count=8):
@@ -46,6 +49,96 @@ def test_short_shot_plan_is_variable_and_cannot_be_only_an_end_card():
     bad["shots"][-1]["line"] = "片尾文字"
     with pytest.raises(ValidationError):
         ShotPlan.model_validate(bad)
+
+
+@pytest.mark.parametrize("error,replacement_count", [
+    ({"failure_code": INPUT_DOWNLOAD_FAILED}, 1),
+    ({"failure_code": INPUT_DOWNLOAD_FAILED, "ambiguous_submit": True}, 0),
+    ({"failure_code": "runninghub_1007"}, 0),
+])
+async def test_remake_refreshes_only_a_confirmed_download_failure(monkeypatch, error, replacement_count):
+    from light import remake
+
+    # A real context: a segment job copies it with dataclasses.replace.
+    ctx = ToolContext(user_id="u", session_id="session")
+    request = VideoGenerateArgs(action="submit", idempotency_key="original:shot3", shot=3, prompt="拍摄夜间吧台",
+                                input_assets=[{"asset_id": "first", "role": "first_frame"},
+                                              {"asset_id": "last", "role": "last_frame"}])
+    run = {"id": "inbox-test-remake", "existing": []}
+    submitted = []
+
+    async def execute(args, ctx):
+        if args.action == "validate":
+            return ToolResult(title="preview", output="valid=true")
+        if args.action == "submit":
+            submitted.append(args)
+            return ToolResult(title="accepted", output="", metadata={"job_id": f"job{len(submitted)}"})
+        return ToolResult(title="status", output="", metadata={"status": "failed", **error})
+
+    monkeypatch.setattr(remake, "_existing_job", AsyncMock(return_value=None))
+    monkeypatch.setattr(remake, "_check", AsyncMock())
+    monkeypatch.setattr(remake.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(remake.video_production, "execute_generate", execute)
+
+    with pytest.raises(remake.RemakeStopped, match="仍下载失败" if replacement_count else "进度已保留"):
+        await remake._job(ctx, request, kind="segment", label="参考段 3", run=run)
+
+    assert len(submitted) == 1 + replacement_count
+    if replacement_count:
+        replacement_key = f"original:shot3:retry:media:{remake._digest(run['id'])[:12]}"
+        assert submitted[1] == request.model_copy(update={"idempotency_key": replacement_key})
+
+
+async def test_remake_resume_does_not_retry_a_failed_refresh_in_the_same_run(monkeypatch):
+    from light import remake
+
+    run = {"id": "inbox-test-remake", "existing": []}
+    key = "original:shot3"
+    attempted = SimpleNamespace(id="retry", status="failed", provider_task_id="task",
+                                idempotency_key=f"{key}:retry:media:{remake._digest(run['id'])[:12]}",
+                                result_data={"failure_code": INPUT_DOWNLOAD_FAILED})
+    monkeypatch.setattr(remake, "_existing_job", AsyncMock(return_value=attempted))
+    execute = AsyncMock()
+    monkeypatch.setattr(remake.video_production, "execute_generate", execute)
+    with pytest.raises(remake.RemakeStopped, match="仍下载失败"):
+        await remake._job(ToolContext(user_id="u", session_id="session"),
+                          VideoGenerateArgs(action="submit", idempotency_key=key, prompt="拍摄夜间吧台"),
+                          kind="segment", label="参考段 3", run=run)
+    execute.assert_not_awaited()
+
+
+async def test_remake_retrieves_the_raw_failure_when_resuming_an_old_1007_job(monkeypatch):
+    from light import remake
+    from tool import video_providers
+
+    run = {"id": "new-turn", "existing": [{"id": "old-job"}]}
+    prior = SimpleNamespace(
+        id="old-job", model="MiniMax-H3-Max-Turbo", status="failed", provider_task_id="task-original",
+        idempotency_key="original:shot3", error="RunningHub 视频参数校验失败（1007），请检查输入。",
+        result_data={}, request_data={},
+    )
+    route = SimpleNamespace(channel="runninghub")
+    check_status = AsyncMock(return_value={"status": "FAILED", "errorCode": "1007",
+                                          "errorMessage": "Failed to download input media"})
+    submit = AsyncMock(side_effect=[
+        ToolResult(title="preview", output="valid=true"),
+        ToolResult(title="accepted", output="", metadata={"job_id": "replacement"}),
+        ToolResult(title="status", output="", metadata={"status": "completed", "asset_id": "recovered-shot"}),
+    ])
+    monkeypatch.setattr(remake, "_existing_job", AsyncMock(return_value=prior))
+    monkeypatch.setattr(remake, "_check", AsyncMock())
+    monkeypatch.setattr(remake.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(remake.video_production, "_configured_target", lambda _model: (route, None))
+    monkeypatch.setattr(video_providers, "provider_route_mismatch", lambda _data, _route: None)
+    monkeypatch.setattr(remake.video_production, "_provider_status", check_status)
+    monkeypatch.setattr(remake.video_production, "execute_generate", submit)
+
+    request = VideoGenerateArgs(action="submit", idempotency_key=prior.idempotency_key, shot=3, prompt="拍摄夜间吧台")
+    ctx = ToolContext(user_id="u", session_id="session")
+    assert await remake._job(ctx, request, kind="segment", label="参考段 3", run=run) == "recovered-shot"
+    check_status.assert_awaited_once_with(route, "task-original")
+    assert [call.args[0].action for call in submit.await_args_list] == ["validate", "submit", "wait"]
+    assert submit.await_args_list[1].args[0].idempotency_key.startswith("original:shot3:retry:media:")
 
 
 async def test_shots_overlap_keep_scene_references_and_resume_out_of_order(monkeypatch):

@@ -66,18 +66,50 @@ def requested_schema(message) -> dict | None:
     return None
 
 
+def _validator(schema: dict) -> dict | None:
+    """The caller's schema in the subtask path's canonical, bounded form.
+
+    None when the schema is outside those bounds (not an object schema with
+    properties, too large, or not valid JSON Schema): the answer is then
+    captured unvalidated, as before, rather than made impossible to give.
+    """
+    from agent.subagent_composition import SubagentCompositionError, validate_output_schema
+
+    try:
+        return validate_output_schema(schema)
+    except SubagentCompositionError as exc:
+        log.warning("Structured output schema not validated: %s", exc)
+        return None
+
+
 def create_structured_output_tool(schema: dict, on_success: Callable[[Any], None]) -> ToolInfo:
     """A tool whose parameters are the caller's schema.
 
-    Arguments are already validated against the schema by the time execute()
-    runs, so capturing them is the whole job.
+    define_tool only checks the arguments against a pass-through model, so
+    execute() validates them against the caller's schema with the subtask
+    path's validator. A violation goes back to the model as a tool error and
+    nothing is captured; a valid answer is captured.
     """
     # $schema is a document-level annotation; providers reject it inside a
     # tool's parameter schema.
     advertised = {k: v for k, v in schema.items() if k != "$schema"}
+    canonical = _validator(advertised)
 
     async def execute(args, ctx) -> ToolResult:
         payload = args.model_dump() if hasattr(args, "model_dump") else args
+        if canonical is not None:
+            from agent.subagent_composition import SubagentCompositionError, validate_structured_result
+
+            try:
+                payload = validate_structured_result(canonical, payload)
+            except SubagentCompositionError as exc:
+                reason = str(exc).removeprefix("subagent ")
+                return ToolResult(
+                    title="Structured Output rejected",
+                    output=(f"The arguments do not match the requested schema: {reason}. "
+                            f"Call {TOOL_NAME} again with arguments that match the schema."),
+                    metadata={"structured": False, "error": True},
+                )
         on_success(payload)
         return ToolResult(
             title="Structured Output",

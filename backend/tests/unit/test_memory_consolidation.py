@@ -116,24 +116,28 @@ async def test_core_block_prefers_recently_recalled_memories_within_a_tier():
     project = f"prj-{uuid4().hex[:8]}"
     user, workspace = await owner(project)
     now = datetime.now(timezone.utc)
-    ids = {name: await note(user, workspace, project, f"记忆 {name}。", age_minutes=age)
+    # The core is personal: project-scoped notes stay searchable but never enter it.
+    ids = {name: await note(user, workspace, None, f"记忆 {name}。", age_minutes=age)
            for name, age in (("hit_yesterday", 50), ("hit_now", 40), ("hit_now_often", 30),
                              ("stale_hits", 1), ("never_hit", 20), ("verified", 60))}
+    project_note = await note(user, workspace, project, "记忆 project。", age_minutes=0)
     hits = {"hit_yesterday": (now - timedelta(days=1), 1), "hit_now": (now - timedelta(hours=1), 1),
-            "hit_now_often": (now - timedelta(hours=1), 5), "stale_hits": (now - timedelta(days=60), 100),
-            "verified": (now - timedelta(minutes=5), 9)}
+            "hit_now_often": (now - timedelta(hours=1), 5), "stale_hits": (now - timedelta(days=60), 100)}
     async with get_db_session() as db:
         for name, (last_hit_at, hit_count) in hits.items():
             row = await db.get(UserMemory, ids[name])
             row.last_hit_at, row.hit_count = last_hit_at, hit_count
-        # A recently recalled memory of a lower tier never jumps a higher one.
+        # A higher tier precedes every note, however recently the notes were
+        # recalled: usage only breaks ties within one tier. This one is the
+        # oldest and never recalled, so usage alone would rank it last.
         verified = await db.get(UserMemory, ids["verified"])
         verified.owner, verified.type = "SYSTEM_VERIFIED", "PREFERENCE"
     async with get_db_session() as db:
         scope = await resolve_access_scope(db, user_id=user, workspace_id=workspace, project_id=project)
         ranked = await core_memory_candidates(db, scope)
+    assert project_note not in ranked
     names = {memory_id: name for name, memory_id in ids.items()}
     assert [names[memory_id] for memory_id in ranked] == [
+        "verified",
         "hit_now_often", "hit_now", "hit_yesterday",  # recalled within the window: latest, then most often
-        "stale_hits", "never_hit",                     # the rest by how recently they changed
-        "verified"]
+        "stale_hits", "never_hit"]                     # the rest by how recently they changed

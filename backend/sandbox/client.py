@@ -288,7 +288,7 @@ class _MeasuredResponseStream(httpx.AsyncByteStream):
         self.stream = stream
 
     async def __aiter__(self):
-        from agent.latency import network_wait
+        from agent.timing import network_wait
         iterator = aiter(self.stream)
         while True:
             try:
@@ -299,7 +299,7 @@ class _MeasuredResponseStream(httpx.AsyncByteStream):
             yield chunk
 
     async def aclose(self):
-        from agent.latency import network_wait
+        from agent.timing import network_wait
         with network_wait():
             await self.stream.aclose()
 
@@ -312,7 +312,7 @@ class _BorrowedTransport(httpx.AsyncBaseTransport):
         self.close_owned = close_owned
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        from agent.latency import network_wait
+        from agent.timing import network_wait
         with network_wait():
             response = await self.transport.handle_async_request(request)
         response.stream = _MeasuredResponseStream(response.stream)

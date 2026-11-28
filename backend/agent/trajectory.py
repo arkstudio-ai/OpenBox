@@ -20,7 +20,7 @@ from typing import Any
 
 from core.identifier import ascending
 from core.log import create_logger
-from agent.latency import provider_chunks
+from agent.timing import provider_chunks
 
 log = create_logger("agent.trajectory")
 

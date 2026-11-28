@@ -6,20 +6,25 @@ observed runtime HTTP IO; authorization, parsing, SQL and retry backoff remain
 internal. Overlapping external waits count once. Other tool/service IO is not
 instrumented here; these are wall-clock measurements, not CPU time. Queue time
 before run_loop and browser/playback latency are outside this measurement.
+
+``RunTiming`` is the timer behind the kernel's timing interface
+(``agent.timing``); ``TrajectoryTiming`` is the port the trajectory plugin
+registers. The free functions are the kernel's, re-exported for callers of the
+former ``agent.latency``.
 """
-import asyncio
 import time
 import json
 from contextlib import contextmanager
-from contextvars import ContextVar, copy_context
-from functools import wraps
-from weakref import WeakKeyDictionary
 
 from core.log import create_logger
+from core.timing import attach_sql_timing, current, network_wait, provider_wait, span  # noqa: F401
+from agent.timing import (  # noqa: F401
+    ProviderStream, _dependencies, await_dependency, bind_run, create_dependency_task, measured_run,
+    measured_span, phase, provider_chunks,
+)
 
+# The historical logger name: operators grep for "agent latency" lines under it.
 log = create_logger("agent.latency")
-current: ContextVar["RunTiming | None"] = ContextVar("run_latency", default=None)
-_dependencies = WeakKeyDictionary()
 
 
 class RunTiming:
@@ -177,168 +182,39 @@ class RunTiming:
         return {"total_ms": total * 1000, "provider_wait_ms": provider * 1000,
                 "application_ms": (total - provider) * 1000}
 
-
-@contextmanager
-def provider_wait():
-    timing = current.get()
-    if timing is None:
-        yield
-    else:
-        with timing.provider_wait():
-            yield
-
-
-@contextmanager
-def network_wait():
-    """Remote runtime HTTP IO only, excluding authorization and consumers."""
-    timing = current.get()
-    if timing is None:
-        yield
-    else:
-        with timing.network_wait():
-            yield
-
-
-def phase(name):
-    """Switch the run's exclusive phase; only the run-loop owner calls this."""
-    timing = current.get()
-    if timing is not None:
-        timing.switch_phase(name)
-
-
-def bind_run(run_id):
-    timing = current.get()
-    if timing is not None:
-        timing.run_id = run_id
-
-
-def measured_span(name):
-    """Nested diagnostic span, separate from the additive run phases."""
-    def decorate(function):
-        @wraps(function)
-        async def wrapped(*args, **kwargs):
-            timing = current.get()
-            if timing is None:
-                return await function(*args, **kwargs)
-            start = timing._elapsed()
-            try:
-                return await function(*args, **kwargs)
-            finally:
-                timing._add(timing.spans, name, start, timing._elapsed())
-        return wrapped
-    return decorate
-
-
-@contextmanager
-def span(name):
-    """Measure a bounded block using the same union-of-waits clock as decorators."""
-    timing = current.get()
-    start = timing._elapsed() if timing else None
-    try:
-        yield
-    finally:
-        if timing:
-            timing._add(timing.spans, name, start, timing._elapsed())
-
-
-def create_dependency_task(coroutine, *, name=None):
-    """Isolate speculative work's timing until a run actually waits for it."""
-    parent = current.get()
-    timing = RunTiming(parent.clock if parent else time.monotonic)
-    context = copy_context()
-    context.run(current.set, timing)
-    task = asyncio.create_task(coroutine, name=name, context=context)
-    _dependencies[task] = timing
-    return task
-
-
-async def await_dependency(task):
-    parent, dependency = current.get(), _dependencies.get(task)
-    if parent is None or dependency is None or dependency is parent:
-        return await task
-    with span("memory.prefetch_wait"), dependency.forward_waits_to(parent):
-        return await task
-
-
-async def provider_chunks(stream):
-    iterator = aiter(stream)
-    while True:
+    @contextmanager
+    def span(self, name):
+        """Measure a bounded block using the same union-of-waits clock as decorators."""
+        start = self._elapsed()
         try:
-            with provider_wait():
-                chunk = await anext(iterator)
-        except StopAsyncIteration:
-            return
-        # The consumer can do slow SQL writes here. They are application time.
-        yield chunk
-
-
-class ProviderStream:
-    """Time HTTP stream enter/exit, without timing the consumer inside it."""
-    def __init__(self, manager):
-        self.manager = manager
-
-    async def __aenter__(self):
-        with provider_wait():
-            return await self.manager.__aenter__()
-
-    async def __aexit__(self, *args):
-        with provider_wait():
-            return await self.manager.__aexit__(*args)
-
-
-def measured_run(function):
-    @wraps(function)
-    async def run(session_id, *args, **kwargs):
-        timing = RunTiming()
-        token = current.set(timing)
-        try:
-            return await function(session_id, *args, **kwargs)
+            yield
         finally:
-            ended = timing.clock()
-            values = timing.snapshot(ended)
-            breakdown = timing.breakdown(ended)
-            network = timing.network_snapshot(ended)
-            current.reset(token)
-            lease = kwargs.get("lease")
-            log.info("agent latency session=%s run=%s total_ms=%.1f provider_wait_ms=%.1f application_ms=%.1f",
-                     session_id, timing.run_id or getattr(lease, "run_id", None), values["total_ms"],
-                     values["provider_wait_ms"], values["application_ms"])
-            log.info("agent latency breakdown session=%s run=%s phases=%s spans=%s",
-                     session_id, timing.run_id or getattr(lease, "run_id", None),
-                     json.dumps(breakdown), json.dumps(timing.spans))
-            log.info("agent internal latency session=%s run=%s measurements=%s",
-                     session_id, timing.run_id or getattr(lease, "run_id", None),
-                     json.dumps({key: round(value, 1) for key, value in network.items()}))
-            log.info("agent sql latency session=%s run=%s phases=%s",
-                     session_id, timing.run_id or getattr(lease, "run_id", None),
-                     json.dumps({phase: {key: round(value, 1) for key, value in stats.items()}
-                                 for phase, stats in timing.sql.items()}))
-    return run
+            self._add(self.spans, name, start, self._elapsed())
 
 
-def attach_sql_timing(engine):
-    """Observe database waits within a run without changing transaction behavior."""
-    from sqlalchemy import event
+class TrajectoryTiming:
+    """The timing port: one RunTiming per run and per speculative dependency, logged when the run ends."""
 
-    def before(conn, cursor, statement, parameters, context, executemany):
-        timing = current.get()
-        if timing is not None:
-            context._run_sql_timing = (timing, timing.phase, timing.clock())
+    def start_run(self):
+        return RunTiming()
 
-    def finish(context):
-        sample = getattr(context, "_run_sql_timing", None)
-        if sample is not None:
-            context._run_sql_timing = None
-            timing, phase, started = sample
-            timing.record_sql(phase, started)
+    def start_dependency(self, parent):
+        return RunTiming(parent.clock if parent else time.monotonic)
 
-    def after(conn, cursor, statement, parameters, context, executemany):
-        finish(context)
-
-    def error(context):
-        if context.execution_context is not None:
-            finish(context.execution_context)
-
-    event.listen(engine.sync_engine, "before_cursor_execute", before)
-    event.listen(engine.sync_engine, "after_cursor_execute", after)
-    event.listen(engine.sync_engine, "handle_error", error)
+    def finish_run(self, timing, *, session_id, run_id, ended):
+        values = timing.snapshot(ended)
+        breakdown = timing.breakdown(ended)
+        network = timing.network_snapshot(ended)
+        log.info("agent latency session=%s run=%s total_ms=%.1f provider_wait_ms=%.1f application_ms=%.1f",
+                 session_id, run_id, values["total_ms"],
+                 values["provider_wait_ms"], values["application_ms"])
+        log.info("agent latency breakdown session=%s run=%s phases=%s spans=%s",
+                 session_id, run_id,
+                 json.dumps(breakdown), json.dumps(timing.spans))
+        log.info("agent internal latency session=%s run=%s measurements=%s",
+                 session_id, run_id,
+                 json.dumps({key: round(value, 1) for key, value in network.items()}))
+        log.info("agent sql latency session=%s run=%s phases=%s",
+                 session_id, run_id,
+                 json.dumps({phase: {key: round(value, 1) for key, value in stats.items()}
+                             for phase, stats in timing.sql.items()}))

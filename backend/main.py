@@ -86,7 +86,8 @@ def _build_kernel_extensions(config):
     through ``agent.extensions.extensions()``.
     """
     from agent.extensions import KernelExtensions
-    return KernelExtensions()
+    from trajectory.plugin import TrajectoryPlugin
+    return KernelExtensions().add(TrajectoryPlugin())
 
 
 def _trajectory_worker_mode(config) -> str:

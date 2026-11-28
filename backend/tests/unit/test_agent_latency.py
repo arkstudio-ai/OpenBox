@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from agent import latency
+from trajectory import latency
 from agent.trajectory import RequestCapture
 
 

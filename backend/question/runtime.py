@@ -285,7 +285,7 @@ async def assert_current(boundary: str, *, progress: bool = False) -> None:
 
 async def run_auxiliary(ticket: RunTicket, purpose: str, work):
     """Await work that may outlive its run but never its turn (title, suggestions)."""
-    from agent.latency import current as current_timing
+    from agent.timing import current as current_timing
     # create_task copies ContextVars. This work is never awaited by the
     # foreground reply, so its model wait is not on that reply's critical
     # path and must not erase concurrent SQL/CPU time from its latency.

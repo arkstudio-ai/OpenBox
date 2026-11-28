@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
-from agent.latency import ProviderStream, provider_wait
+from agent.timing import ProviderStream, provider_wait
 from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
 from agent.trajectory import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value

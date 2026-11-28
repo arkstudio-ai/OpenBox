@@ -23,7 +23,7 @@ from agent.compaction import (
 )
 from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
-from agent.latency import (
+from agent.timing import (
     measured_run, measured_span as latency_measured_span, phase as latency_phase,
     bind_run as bind_latency_run, span as latency_span,
 )
@@ -1149,7 +1149,7 @@ async def run_loop(
             # A woken run may have started exactly this recall when it claimed the input.
             task = recall_ahead.adopt(session_id, user_message.id, inputs)
             if task is None:
-                from agent.latency import create_dependency_task
+                from agent.timing import create_dependency_task
                 task = create_dependency_task(recall_ahead.recall(
                     inputs, session_id=session_id, turn_id=user_message.id, config=config.memory))
                 # A turn that ends before using it must not leave an unread failure.
@@ -1885,7 +1885,7 @@ async def run_loop(
                     if first_recall:
                         prefetch = memory_prefetches.pop(last_user.id, None)
                         if prefetch is not None:
-                            from agent.latency import await_dependency
+                            from agent.timing import await_dependency
                             memory_turn_contexts[last_user.id] = await await_dependency(prefetch)
                         else:
                             from agent import recall_ahead

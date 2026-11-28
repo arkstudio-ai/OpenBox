@@ -732,14 +732,11 @@ class ToolHooks:
             except AssistantError as exc:
                 return ToolResult(title="Assistant action unavailable", output=str(exc),
                                   metadata={"blocked": True, "error_code": exc.code})
-        from memory.session_policy import MEMORY_CAPABILITIES, require_context_memory
-        if tool_id in MEMORY_CAPABILITIES and ctx is not None:
-            from memory.policy import MemoryAccessDenied
-            try:
-                await require_context_memory(ctx)
-            except MemoryAccessDenied:
-                return ToolResult(title="Memory unavailable", output="Memory is unavailable for this Session.",
-                                  metadata={"blocked": True, "error_code": "memory_scope_unavailable"})
+        # Registered tool packs check their own capabilities first (agent/extensions.py).
+        from agent.extensions import check_before_call
+        refusal = await check_before_call(tool_id, args, ctx)
+        if refusal is not None:
+            return refusal
         try:
             checks = self._permission_checks(tool_id, args)
         except ValueError as exc:

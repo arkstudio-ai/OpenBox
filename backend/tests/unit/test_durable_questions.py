@@ -386,7 +386,7 @@ async def test_forget_card_changes_nothing_unless_confirmed_on_the_shown_memory(
 @pytest.mark.parametrize("decision", ["忘记", "保留", None])
 async def test_forget_tool_asks_on_a_card_and_refuses_unknown_memories(state, decision):
     from memory import service as memories
-    from tool.memory_tools import MemoryForgetArgs, execute_memory_forget
+    from memory.tools import MemoryForgetArgs, execute_memory_forget
     from tool.tool import ToolContext
     note = await memories.create_note(user_id="u1", workspace_id="w1", project_id="p1", summary="用户对菠萝过敏。")
     ctx = ToolContext(user_id="u1", workspace_id="w1", project_id="p1", session_id="s1", message_id="m-p9", part_id="p9")

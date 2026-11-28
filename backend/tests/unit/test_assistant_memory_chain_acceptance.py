@@ -42,8 +42,8 @@ from tests.unit.test_assistant_foundation import accounts, assistant_database  #
 from tool.assistant_tools import assistant_tools
 from tool.batch import batch_tool
 from tool.creator_context import creator_context_tool
-from tool.memory_tools import (current_task_state_tool, memory_forget_tool, memory_prepare_tool,
-                               memory_read_more_tool, memory_read_sources_tool, memory_search_tool)
+from memory.tools import (current_task_state_tool, memory_forget_tool, memory_prepare_tool,
+                          memory_read_more_tool, memory_read_sources_tool, memory_search_tool)
 from tool.plan import plan_enter_tool
 from tool.task import task_tool
 

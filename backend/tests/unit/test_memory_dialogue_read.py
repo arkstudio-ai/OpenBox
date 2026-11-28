@@ -15,7 +15,7 @@ from memory.providers.common import MemoryProviderError
 from memory.read_contract import permits
 from tests.unit.test_assistant_foundation import assistant_database  # noqa: F401
 from tests.unit.test_memory_lazy_read import deferred, preparation_args
-from tool.memory_tools import MemoryPrepareArgs, execute_memory_prepare
+from memory.tools import MemoryPrepareArgs, execute_memory_prepare
 from tool.tool import ToolContext
 
 

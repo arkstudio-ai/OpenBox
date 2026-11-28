@@ -14,7 +14,7 @@ from memory.session_policy import memory_extraction_eligible, require_context_me
 from session.session import create_session
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
 from tool.creator_context import CreatorContextArgs, execute_creator_context
-from tool.memory_tools import _access
+from memory.tools import _access
 from tool.tool import ToolContext
 
 

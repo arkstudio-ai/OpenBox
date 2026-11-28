@@ -8,14 +8,20 @@ The entry point registers two units into ``agent.extensions.KernelExtensions``:
   reconciles pending deletions, expires memories and purges expired debug
   snapshots; the document worker finishes removing deleted files' originals.
   It also closes the pooled provider clients at shutdown.
-- ``MemoryPlugin`` is the feature: the extraction, Wiki and Wiki organization
+- ``MemoryPlugin`` is the feature: the prompt sections, the six memory tools
+  and their pre-call check, the extraction, Wiki and Wiki organization
   workers, the read-transport warm-up and the memory routes.
 
-Leaving ``MemoryPlugin`` out keeps every cleanup obligation running.
+Leaving ``MemoryPlugin`` out keeps every cleanup obligation running. What this
+stage does not move stays where it was, unchanged: the per-turn read scope and
+history cut, the ephemeral recall injection, settlement-time registration,
+proposal confirmation, ``strip_memory_text`` and the nested-read refusal in
+Batch, and the ``memory_policy`` isolation checks.
 
-Every method resolves the memory function when it is called, as the entry
-point's call sites did, so the same function runs with the same arguments in
-the same order (and a test that patches the function still reaches it).
+Every method resolves the memory function when it is called, as the kernel's
+and the entry point's call sites did, so the same function runs with the same
+arguments in the same order (and a test that patches the function still
+reaches it).
 """
 from __future__ import annotations
 
@@ -24,6 +30,131 @@ import asyncio
 from core.log import create_logger
 
 log = create_logger("memory.plugin")
+# This line kept the logger it had at its kernel call site.
+_loop_log = create_logger("agent.loop")
+
+#: Agents whose system prompt carries the memory sections (the build agent and
+#: the plan agent sharing its prompt).
+PROMPT_AGENTS = frozenset({"build", "plan"})
+
+
+# ---------------------------------------------------------------------------
+# Prompt sections (agent.extensions.PromptSection)
+# ---------------------------------------------------------------------------
+
+
+class MemoryUseGuidance:
+    """The shared evidence contract: policy, not a remembered fact.
+
+    It also applies to later tool reads and to empty prefetch results, so it
+    renders whenever the session may use memory at all.
+    """
+
+    name = "memory.use_guidance"
+    order = 400  # after the account identity, before the project brief
+
+    async def render(self, request) -> str | None:
+        if request.memory_isolated or not request.user_id or request.agent_name not in PROMPT_AGENTS:
+            return None
+        from memory.presentation import MEMORY_USE_GUIDANCE
+        return MEMORY_USE_GUIDANCE
+
+
+class AutomaticSavingGuidance:
+    """Saving happens after every turn; a model "remember" call adds nothing."""
+
+    name = "memory.automatic_saving"
+    order = 410
+
+    async def render(self, request) -> str | None:
+        if request.memory_isolated or not request.user_id or request.agent_name not in PROMPT_AGENTS:
+            return None
+        from memory.jobs import automatic_saving
+        if not automatic_saving(request.user_id):
+            return None
+        from memory.presentation import AUTOMATIC_SAVING_GUIDANCE
+        return AUTOMATIC_SAVING_GUIDANCE
+
+
+class UserMemoryContext:
+    """Creator memory, the last part: the most volatile piece stays after the cached prefix.
+
+    Only the legacy path renders it (the loop sets ``include_user_memory`` when
+    per-turn recall is off); recall itself rides on the newest user message
+    and is not a prompt section.
+    """
+
+    name = "memory.user_context"
+    order = 900  # after the project brief
+
+    async def render(self, request) -> str | None:
+        if not (request.include_user_memory and request.user_id and request.agent_name in PROMPT_AGENTS):
+            return None
+        try:
+            from memory.context import assemble_user_context
+            memory_args = {"user_id": request.user_id, "project_id": request.project_id or None}
+            if request.workspace_id:
+                memory_args["workspace_id"] = request.workspace_id
+            assembled = await assemble_user_context(**memory_args)
+            if assembled["context"]:
+                return "<user_memory>\n" + assembled["context"] + "\n</user_memory>"
+        except Exception as e:
+            _loop_log.debug(f"Could not assemble user memory context: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Tool pack (agent.extensions.ToolPack)
+# ---------------------------------------------------------------------------
+
+
+class MemoryTools:
+    """The six memory tools, which of them a step may use, and the memory pre-call check."""
+
+    name = "memory"
+    capability = "memory"
+
+    def tools(self):
+        from memory import tools as memory_tools
+        return {tool.id: tool for tool in (
+            memory_tools.memory_prepare_tool, memory_tools.memory_search_tool,
+            memory_tools.memory_read_sources_tool, memory_tools.memory_read_more_tool,
+            memory_tools.current_task_state_tool, memory_tools.memory_forget_tool,
+        )}
+
+    def admit(self, tools, *, user_id):
+        """Withhold the memory tools (the assistant's two memory reads included) the flags turn off."""
+        from memory.tools import (MEMORY_ASSISTANT_TOOL_IDS, MEMORY_PREPARE_TOOL_IDS, MEMORY_TOOL_IDS,
+                                  MEMORY_WRITE_TOOL_IDS)
+        memory_tool_ids = MEMORY_TOOL_IDS | MEMORY_WRITE_TOOL_IDS | MEMORY_PREPARE_TOOL_IDS | MEMORY_ASSISTANT_TOOL_IDS
+        if memory_tool_ids.intersection(tools):
+            from core.config import get_config
+
+            memory_config = getattr(get_config(), "memory", None)
+            if not memory_config or not memory_config.enabled("retrieval_v2", user_id):
+                tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in memory_tool_ids}
+            elif not (memory_config.enabled("semantic_recall", user_id)
+                      and getattr(memory_config, "lazy_read_planning", False)):
+                tools = {tool_id: tool for tool_id, tool in tools.items() if tool_id not in MEMORY_PREPARE_TOOL_IDS}
+        return tools
+
+    async def before_call(self, tool_id, args, ctx):
+        """Memory capabilities run only in a session the persistent isolation policy admits."""
+        from memory.session_policy import MEMORY_CAPABILITIES, require_context_memory
+        if tool_id in MEMORY_CAPABILITIES and ctx is not None:
+            from memory.policy import MemoryAccessDenied
+            try:
+                await require_context_memory(ctx)
+            except MemoryAccessDenied:
+                from tool.tool import ToolResult
+                return ToolResult(title="Memory unavailable", output="Memory is unavailable for this Session.",
+                                  metadata={"blocked": True, "error_code": "memory_scope_unavailable"})
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
 
 
 async def _cancel(task) -> None:
@@ -82,7 +213,9 @@ class MemoryPlugin:
         self._started = False
 
     def register(self, registry) -> None:
-        return None
+        for section in (MemoryUseGuidance(), AutomaticSavingGuidance(), UserMemoryContext()):
+            registry.add_prompt_section(section)
+        registry.add_tool_pack(MemoryTools())
 
     def mount(self, app) -> None:
         """The memory, Wiki and document routes, in the order main.py included them."""

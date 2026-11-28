@@ -4,8 +4,19 @@ from __future__ import annotations
 import re
 from typing import Iterable, Mapping
 
-from agent.tool_exposure import AGENT_RESIDENT_IDS, _infer_identity, preferred_editor_id
+from agent.tool_exposure import (
+    AGENT_RESIDENT_IDS,
+    _infer_identity,
+    build_eligible_catalog,
+    portable_plan,
+    preferred_editor_id,
+)
+from agent.tool_exposure_budget import apply_exposure_budget
+from core import config as core_config
 from core.config import agent_tuning_enabled
+from core.log import create_logger
+
+log = create_logger("agent.prompt_visibility")
 
 
 _PORTABLE_POLICY = (
@@ -33,7 +44,12 @@ _PORTABLE_POLICY = (
 #   tools never appear and per-step narrowing never changes the text;
 # - only platform-plane built-ins are listed; sandbox MCP tools and the
 #   knowledge loaders (whose text can carry sandbox Skill names) never are;
-# - the listing's characters count against the 24K resident budget.
+# - the listing's characters count against the 24K resident budget, with the
+#   resident definitions of the same static whitelist: when those plus the
+#   full listing exceed ``resident_hard_chars`` the listing drops its
+#   descriptions, and when even the names do not fit it is left out
+#   (fit_listing). The listing never pushes the resident text over the hard
+#   budget by itself.
 
 #: Appended to the error for a call to a tool whose schema is not
 #: materialized. Generic on purpose: the same words for a hidden, a denied
@@ -65,6 +81,10 @@ LISTING_HINT_CHARS = 120
 #: text stays stable). Today's build listing is far below it.
 LISTING_MAX_CHARS = 6_000
 
+#: Set once a listing has been left out for the budget, so the warning is
+#: logged once per process rather than on every step.
+_omission_logged = False
+
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)(?<!\betc)(?<!\bvs)[.!?](?=\s|$)|[。！？]")
 
@@ -87,6 +107,12 @@ def _one_line(tool) -> str:
     return text[:cut if cut > 0 else LISTING_HINT_CHARS - 1].rstrip(",;: ") + "…"
 
 
+def _direct_ids(agent_name: str, editor_id: str | None) -> frozenset[str]:
+    """Ids portable_plan always materializes for ``agent_name``: its residents, the slots, the editor."""
+    direct = AGENT_RESIDENT_IDS.get(agent_name, frozenset()) | _ALWAYS_DIRECT_IDS
+    return direct | {editor_id} if editor_id else direct
+
+
 def deferred_builtin_listing(
     tools: Mapping[str, object],
     *,
@@ -103,9 +129,7 @@ def deferred_builtin_listing(
     """
     if "capability_search" not in tools:
         return ()
-    direct = AGENT_RESIDENT_IDS.get(agent_name, frozenset()) | _ALWAYS_DIRECT_IDS
-    if editor_id:
-        direct = direct | {editor_id}
+    direct = _direct_ids(agent_name, editor_id)
     rows = []
     for name, tool in tools.items():
         canonical, provider_name, source, plane = _infer_identity(name, tool)
@@ -117,19 +141,84 @@ def deferred_builtin_listing(
     return tuple(sorted(rows))
 
 
+def resident_definition_chars(
+    tools: Mapping[str, object],
+    *,
+    agent_name: str,
+    editor_id: str | None,
+) -> int:
+    """``resident_chars`` of the exposure budgeter for the resident definitions in ``tools``.
+
+    ``tools`` is the static whitelist the listing is built from, so the
+    result, and the listing chosen with it, does not change with one step's
+    narrowing. Only the definitions portable_plan always materializes are
+    serialized, measured exactly as the budgeter measures them.
+    """
+    direct = _direct_ids(agent_name, editor_id)
+    resident = {name: tool for name, tool in tools.items() if _infer_identity(name, tool)[0] in direct}
+    if not resident:
+        return 0
+    catalog = build_eligible_catalog(resident)
+    plan = portable_plan(catalog, agent_name=agent_name, editor_id=editor_id)
+    return apply_exposure_budget(catalog, plan).resident_chars
+
+
+def _names_only(rows: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+    return tuple((name, "") for name, _hint in rows)
+
+
+def fit_listing(
+    listing: Iterable[tuple[str, str]],
+    *,
+    resident_chars: int,
+    hard_chars: int,
+) -> tuple[tuple[str, str], ...]:
+    """The listing itself, names only, or () -- the first whose text keeps resident + listing <= ``hard_chars``.
+
+    A resident set already above ``hard_chars`` is the budgeter's to report
+    (``resident_hard`` warning); the listing never adds to it.
+    """
+    rows = tuple(listing)
+    for candidate in (rows, _names_only(rows)):
+        if candidate and resident_chars + rendered_listing_chars(candidate) <= hard_chars:
+            return candidate
+    return ()
+
+
 def tool_name_listing(
     tools: Mapping[str, object],
     *,
     agent_name: str,
     model_id: str,
     workspace_id: str | None = None,
+    exposure_config=None,
 ) -> tuple[tuple[str, str], ...]:
-    """The A3 listing for ``tools``, or () when ``tool_name_listing`` is off."""
+    """The A3 listing for ``tools`` fitted to the resident budget; () when ``tool_name_listing`` is off.
+
+    Rows with an empty purpose are the names-only form. When even the names
+    do not fit beside the resident definitions, nothing is listed and a
+    warning with the measured sizes is logged once per process.
+    ``exposure_config`` is the ``ToolExposureConfig`` the step is budgeted
+    with (default: the loaded config's).
+    """
+    global _omission_logged
     if not agent_tuning_enabled("tool_name_listing", workspace_id):
         return ()
-    return deferred_builtin_listing(
-        tools, agent_name=agent_name, editor_id=preferred_editor_id(model_id, tools),
-    )
+    editor_id = preferred_editor_id(model_id, tools)
+    rows = deferred_builtin_listing(tools, agent_name=agent_name, editor_id=editor_id)
+    if not rows:
+        return ()
+    resident_chars = resident_definition_chars(tools, agent_name=agent_name, editor_id=editor_id)
+    hard_chars = (exposure_config or core_config.get_config().tool_exposure).resident_hard_chars
+    fitted = fit_listing(rows, resident_chars=resident_chars, hard_chars=hard_chars)
+    if not fitted and not _omission_logged:
+        _omission_logged = True
+        log.warning(
+            "tool_name_listing omitted: resident definitions %d + names-only listing %d > "
+            "resident_hard_chars %d (agent=%s); logged once per process",
+            resident_chars, rendered_listing_chars(_names_only(rows)), hard_chars, agent_name,
+        )
+    return fitted
 
 
 def render_tool_listing(listing: Iterable[tuple[str, str]]) -> list[str]:
@@ -141,6 +230,12 @@ def render_tool_listing(listing: Iterable[tuple[str, str]]) -> list[str]:
     if len("\n".join(lines)) > LISTING_MAX_CHARS:
         lines = [_LISTING_HEADER, *(f"- {name}" for name, _hint in rows)]
     return lines
+
+
+def rendered_listing_chars(listing: Iterable[tuple[str, str]]) -> int:
+    """Characters the listing adds to the visibility fragment: its lines and one separator."""
+    lines = render_tool_listing(listing)
+    return len("\n".join(lines)) + 1 if lines else 0
 
 
 def build_tool_visibility_fragment(

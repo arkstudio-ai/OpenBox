@@ -20,13 +20,16 @@ from agent.prompt_visibility import (
     UNMATERIALIZED_TOOL_HINT,
     build_tool_visibility_fragment,
     deferred_builtin_listing,
+    fit_listing,
     render_tool_listing,
+    rendered_listing_chars,
+    resident_definition_chars,
     tool_name_listing,
 )
 from agent.tool_exposure import build_eligible_catalog, portable_plan
-from agent.tool_exposure_budget import ExposureBudgets, apply_exposure_budget
+from agent.tool_exposure_budget import apply_exposure_budget
 from agent.tool_resolution import strip_denied
-from core.config import AgentTuningConfig, OpenBoxConfig
+from core.config import AgentTuningConfig, OpenBoxConfig, ToolExposureConfig
 from light.production_form import restrict_guided_tools
 from permission.permission import Rule
 from tool import registry
@@ -40,8 +43,8 @@ MEMORY_IDS = {"memory_prepare", "memory_search", "memory_read_sources", "memory_
 
 @pytest.fixture
 def tuning(monkeypatch):
-    def install(**fields):
-        cfg = OpenBoxConfig(agent_tuning=AgentTuningConfig(**fields))
+    def install(exposure=None, **fields):
+        cfg = OpenBoxConfig(agent_tuning=AgentTuningConfig(**fields), tool_exposure=exposure or ToolExposureConfig())
         monkeypatch.setattr(config_mod, "_config", cfg)
         return cfg
 
@@ -199,20 +202,126 @@ def test_listing_does_not_change_with_a_narrowed_step(build_tools):
     assert ordinary == narrowed
 
 
-def test_listing_fits_the_resident_budget(build_tools):
-    budgets = ExposureBudgets()
-    for memory in (False, True):
-        tools = build_tools(memory=memory)
-        listing = deferred_builtin_listing(tools, agent_name="build", editor_id="edit")
-        listing_chars = len("\n".join(render_tool_listing(listing))) + 1
+# --- the resident budget -----------------------------------------------------
+
+QWEN = "openai/qwen3.8-max"
+
+
+def _memory_pack():
+    """The six memory tools the memory plugin's tool pack adds in production."""
+    from memory.plugin import MemoryTools
+
+    return MemoryTools().tools()
+
+
+def _sizes(tools, model=QWEN):
+    """(resident definitions, full listing, names-only listing) in characters, as the budget counts them."""
+    editor = V.preferred_editor_id(model, tools)
+    rows = deferred_builtin_listing(tools, agent_name="build", editor_id=editor)
+    return (resident_definition_chars(tools, agent_name="build", editor_id=editor),
+            rendered_listing_chars(rows), rendered_listing_chars([(name, "") for name, _hint in rows]))
+
+
+def _exposure(hard: int) -> ToolExposureConfig:
+    return ToolExposureConfig(resident_soft_chars=min(20_000, hard), resident_hard_chars=hard)
+
+
+def test_resident_measure_is_the_budgeters(build_tools):
+    for tools in (build_tools(), {**build_tools(), **_memory_pack()}):
         catalog = build_eligible_catalog(tools)
-        resident = apply_exposure_budget(catalog, portable_plan(catalog, agent_name="build", editor_id="edit"))
-        print(f"memory={memory} listed={len(listing)} listing_chars={listing_chars} "
-              f"resident_chars={resident.resident_chars} total={resident.resident_chars + listing_chars}")
-        assert listing_chars <= V.LISTING_MAX_CHARS
-        if not memory:
-            # The default deployment: resident definitions plus the listing stay under 24K.
-            assert resident.resident_chars + listing_chars <= budgets.resident_hard_chars
+        budgeted = apply_exposure_budget(catalog, portable_plan(catalog, agent_name="build", editor_id="edit"))
+        assert resident_definition_chars(tools, agent_name="build", editor_id="edit") == budgeted.resident_chars
+
+
+def test_measured_sizes_and_tiers_for_the_build_agent(tuning, build_tools, monkeypatch):
+    tuning(tool_name_listing=True)
+    monkeypatch.setattr(V, "_omission_logged", True)
+    hard = ToolExposureConfig().resident_hard_chars
+    for memory in (False, True):
+        tools = {**build_tools(), **_memory_pack()} if memory else build_tools()
+        resident, full, names = _sizes(tools)
+        listing = tool_name_listing(tools, agent_name="build", model_id=QWEN)
+        print(f"memory={memory} resident={resident} full={full} names={names} "
+              f"tier={'full' if listing and listing[0][1] else 'names' if listing else 'omitted'}")
+        assert full <= V.LISTING_MAX_CHARS + 1 and names < full
+        # Never pushed over the hard budget by the listing, whatever the tier.
+        assert not listing or resident + rendered_listing_chars(listing) <= hard
+        if resident + full <= hard:
+            assert listing == deferred_builtin_listing(tools, agent_name="build", editor_id="edit")
+        if resident > hard:
+            # Memory on: the six memory definitions already exceed 24K, so nothing is listed.
+            assert listing == ()
+
+
+def test_full_listing_when_within_the_budget(tuning, build_tools):
+    tools = build_tools()
+    resident, full, _names = _sizes(tools)
+    tuning(_exposure(resident + full), tool_name_listing=True)
+    listing = tool_name_listing(tools, agent_name="build", model_id=QWEN)
+    assert listing == deferred_builtin_listing(tools, agent_name="build", editor_id="edit")
+    assert all(hint for _name, hint in listing)
+    assert "- web_search: " in build_tool_visibility_fragment(["capability_search"], strategy="portable",
+                                                              deferred_count=3, listing=listing)
+
+
+def test_names_only_when_the_full_listing_would_exceed_the_budget(tuning, build_tools):
+    tools = build_tools()
+    resident, full, names = _sizes(tools)
+    for hard in (resident + full - 1, resident + names):
+        tuning(_exposure(hard), tool_name_listing=True)
+        listing = tool_name_listing(tools, agent_name="build", model_id=QWEN)
+        full_rows = deferred_builtin_listing(tools, agent_name="build", editor_id="edit")
+        assert listing == tuple((name, "") for name, _hint in full_rows)
+        lines = render_tool_listing(listing)
+        assert lines[1:] == [f"- {name}" for name, _hint in full_rows]
+        assert resident + rendered_listing_chars(listing) <= hard
+
+
+def test_omitted_when_even_names_exceed_the_budget_and_warned_once(tuning, build_tools, monkeypatch):
+    tools = build_tools()
+    resident, _full, names = _sizes(tools)
+    tuning(_exposure(resident + names - 1), tool_name_listing=True)
+    warnings = []
+    monkeypatch.setattr(V, "_omission_logged", False)
+    monkeypatch.setattr(V.log, "warning", lambda message, *args: warnings.append(message % args))
+    for _step in range(3):
+        assert tool_name_listing(tools, agent_name="build", model_id=QWEN) == ()
+    assert len(warnings) == 1
+    assert f"resident definitions {resident} + names-only listing {names} > resident_hard_chars " \
+           f"{resident + names - 1}" in warnings[0]
+    fragment = build_tool_visibility_fragment(["capability_search"], strategy="portable", deferred_count=3,
+                                              listing=())
+    assert fragment == build_tool_visibility_fragment(["capability_search"], strategy="portable", deferred_count=3)
+
+
+def test_fit_listing_tiers():
+    rows = (("cron", "Schedule a task."), ("web_search", "Search the web."))
+    names = (("cron", ""), ("web_search", ""))
+    full, short = rendered_listing_chars(rows), rendered_listing_chars(names)
+    assert fit_listing(rows, resident_chars=100, hard_chars=100 + full) == rows
+    assert fit_listing(rows, resident_chars=100, hard_chars=100 + full - 1) == names
+    assert fit_listing(rows, resident_chars=100, hard_chars=100 + short) == names
+    assert fit_listing(rows, resident_chars=100, hard_chars=100 + short - 1) == ()
+    # A resident set already over the budget gets no listing at all.
+    assert fit_listing(rows, resident_chars=200, hard_chars=150) == ()
+    assert fit_listing((), resident_chars=0, hard_chars=10_000) == ()
+
+
+def test_budgeted_listing_does_not_change_with_a_narrowed_step(tuning, build_tools):
+    """The tier comes from the static whitelist; a narrowed step's own set is never measured."""
+    tools = build_tools()
+    resident, _full, names = _sizes(tools)
+    tuning(_exposure(resident + names), tool_name_listing=True)
+    listing = tool_name_listing(tools, agent_name="build", model_id=QWEN)
+    assert listing and not any(hint for _name, hint in listing)
+    # The same session, one step later, after a repair narrowing: same static input, same text.
+    assert tool_name_listing(dict(tools), agent_name="build", model_id=QWEN) == listing
+    ordinary = build_tool_visibility_fragment(
+        ["bash", "read", "write", "glob", "grep", "edit", "task", "question", "skill", "skill_search",
+         "capability_search"], strategy="portable", deferred_count=32, listing=listing)
+    narrowed = build_tool_visibility_fragment(["bash", "read", "capability_search"], strategy="portable",
+                                              deferred_count=2, listing=listing)
+    assert ordinary == narrowed
 
 
 def test_an_oversized_listing_falls_back_to_names(monkeypatch, build_tools):
@@ -228,9 +337,14 @@ def test_assembled_prompt_with_listing_names_only_eligible_tools(tuning, build_t
 
     tuning(tool_name_listing=True)
     known = set(registry._tools)
-    for rules in ((), [Rule(permission="computer", pattern="*", action="deny")]):
-        tools = build_tools(rules, memory=True)
+    deny_computer = [Rule(permission="computer", pattern="*", action="deny")]
+    # When the memory pack is registered its tools take the resident set past 24K and nothing
+    # is listed; the cases without memory exercise the listing itself.
+    for rules, memory in (((), False), (deny_computer, False), ((), True), (deny_computer, True)):
+        tools = build_tools(rules, memory=memory)
         listing = tool_name_listing(tools, agent_name="build", model_id="openai/qwen3.8-max")
+        if not memory:
+            assert listing
         text = compose_system_prompt("openai/qwen3.8-max", relaxed=True, consistent=True, tool_ids=frozenset(tools))
         text += "\n" + build_tool_visibility_fragment(["bash", "read", "capability_search"], strategy="portable",
                                                       deferred_count=10, listing=listing)
@@ -329,7 +443,8 @@ async def test_error_adds_nothing_when_capability_search_is_not_callable(tuning,
 
 # --- the real loop: one listing across a narrowed step ------------------------
 
-async def test_loop_keeps_prompt_tools_and_listing_across_a_narrowed_step(ensure_test_db, monkeypatch):
+@pytest.mark.parametrize("tier", ["full", "names"])
+async def test_loop_keeps_prompt_tools_and_listing_across_a_narrowed_step(ensure_test_db, monkeypatch, tier):
     import assistant.review_repair as repair
     from agent import loop
     from agent.processor import StepOutcome, StepResult
@@ -356,6 +471,21 @@ async def test_loop_keeps_prompt_tools_and_listing_across_a_narrowed_step(ensure
     registry.register_builtin_tools(load_custom=False)
     tools = {name: tool for name, tool in registry.get_tools_for_agent(AGENTS["build"].tools).items()
              if name not in MEMORY_IDS}
+    if tier == "names":
+        # Room for the names (about 0.7K) but not the descriptions (about 3K).
+        resident = resident_definition_chars(tools, agent_name="build",
+                                             editor_id=V.preferred_editor_id(config.model, tools))
+        config.tool_exposure.resident_soft_chars = min(20_000, resident + 1_500)
+        config.tool_exposure.resident_hard_chars = resident + 1_500
+    counted = []
+    real_assemble = loop.assemble_tool_runtime
+
+    def assemble(*args, **kwargs):
+        runtime = real_assemble(*args, **kwargs)
+        counted.append((kwargs.get("resident_prompt_chars"), runtime.budget_result.resident_chars))
+        return runtime
+
+    monkeypatch.setattr(loop, "assemble_tool_runtime", assemble)
 
     async def resolve(*_args, **_kwargs):
         return ResolvedStepTools(dict(tools), "available")
@@ -389,5 +519,13 @@ async def test_loop_keeps_prompt_tools_and_listing_across_a_narrowed_step(ensure
     assert prompt_tool_ids[0] == prompt_tool_ids[1]
     assert {"cron", "web_search", "video_generate"} <= prompt_tool_ids[0]
     assert "light_wan_story" not in prompt_tool_ids[0]
-    assert "- cron: " in first["visibility"]
+    if tier == "full":
+        assert "- cron: " in first["visibility"]
+    else:
+        assert "\n- cron\n" in first["visibility"] and "- cron: " not in first["visibility"]
     assert first["visibility"] == narrowed["visibility"]
+    # The listing is measured with the resident definitions, at the same size in every step.
+    block = first["visibility"].split(V._LISTING_HEADER, 1)[1].removesuffix("\n</tool_visibility>")
+    listing_chars = len(V._LISTING_HEADER + block) + 1
+    assert counted and {chars for chars, _resident in counted} == {listing_chars}
+    assert all(resident >= listing_chars for _chars, resident in counted)

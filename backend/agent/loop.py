@@ -1632,6 +1632,15 @@ async def run_loop(
             if isolated_memory:
                 prompt_tools = {name: tool for name, tool in prompt_tools.items()
                                 if name not in MEMORY_CAPABILITIES and tool.id not in MEMORY_CAPABILITIES}
+            # A3 is fitted to the resident budget from prompt_tools, and its
+            # rendered size is measured with the resident definitions in the
+            # modes whose visibility fragment shows it (portable strategy).
+            from agent.prompt_visibility import rendered_listing_chars, tool_name_listing
+            tool_listing = tool_name_listing(prompt_tools, agent_name=agent_name, model_id=model_id,
+                                             workspace_id=session.workspace_id,
+                                             exposure_config=config.tool_exposure)
+            listing_chars = (rendered_listing_chars(tool_listing)
+                             if exposure_mode in {"portable", "native_auto"} else 0)
             sandbox_catalogue_availability = (
                 resolved_step_tools.catalogue_availability
             )
@@ -1680,6 +1689,7 @@ async def run_loop(
                     editor_id=editor_id,
                     synthetic_tools=synthetic_tools,
                     exposure_config=config.tool_exposure,
+                    resident_prompt_chars=listing_chars,
                 )
             revealed_ids: frozenset[str] = frozenset()
             if exposure_mode in {"portable", "native_auto"} and not resolved_step_tools.deferred:
@@ -1719,6 +1729,7 @@ async def run_loop(
                         editor_id=editor_id,
                         synthetic_tools=synthetic_tools,
                         exposure_config=config.tool_exposure,
+                        resident_prompt_chars=listing_chars,
                     )
             if (
                 runtime.budget_result is not None
@@ -2031,13 +2042,11 @@ async def run_loop(
                     + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools."
                     + " Cloud tools that need no desktop (video_generate, video_compose, image_gen, question)"
                     " still work: use them when the task only needs them.")
-            from agent.prompt_visibility import tool_name_listing
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
                 strategy=runtime.provider_plan.strategy,
                 deferred_count=len(runtime.provider_plan.deferred_ids),
-                listing=tool_name_listing(prompt_tools, agent_name=agent_name, model_id=model_id,
-                                          workspace_id=session.workspace_id),
+                listing=tool_listing,
             ))
             if output_schema:
                 system.append(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

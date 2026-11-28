@@ -115,7 +115,7 @@
     "tail_start_id": null,
     "source_event_start": 1,
     "source_event_end": 25,
-    "source_event_digest": "<sha#5>",
+    "source_event_digest": "<source_event_digest#1>",
     "covered_message_ids": [
      "<message#1>",
      "<message#2>",

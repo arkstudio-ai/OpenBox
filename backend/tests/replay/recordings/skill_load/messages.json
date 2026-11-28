@@ -46,6 +46,7 @@
     "duration": null,
     "metadata": {
      "duration": "<n>",
+     "skill_sha256": "<skill_sha256#1>",
      "truncated": false
     },
     "state": null

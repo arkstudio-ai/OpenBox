@@ -51,9 +51,9 @@ only to values that differ between two runs of the same code):
 
 - generated ids: ``<prefix>_<ULID>`` -> ``<prefix#n>``, a bare ULID -> ``<ulid#n>``,
   32-hex run ids -> ``<hex#n>``, and in events and messages 64-hex digests ->
-  ``<sha#n>`` (they hash ids and times; the request's ``prompt_cache_key`` hashes
-  fixed ids and stays verbatim); ``n`` counts first appearances within the case,
-  so equal ids stay equal;
+  ``<field#n>`` (``<sha#n>`` inside a longer string; they hash ids and times; the
+  request's ``prompt_cache_key`` hashes fixed ids and stays verbatim); ``n``
+  counts first appearances within the case, so equal ids stay equal;
 - ISO timestamps -> ``<time>``; wall-clock durations (``VOLATILE_NUMBERS``) -> ``<n>``;
 - the case's working directory -> ``<workdir>``;
 - non-JSON values in a request body (``httpx.Timeout``) -> their ``repr``.
@@ -514,7 +514,10 @@ class Normaliser:
             table[raw] = f"<{kind}#{len(table) + 1}>"
         return table[raw]
 
-    def text(self, value: str, *, digests: bool = True) -> str:
+    def text(self, value: str, *, digests: bool = True, key: str | None = None) -> str:
+        if digests and key and _HEX64.fullmatch(value):
+            # A digest field numbers on its own, so a new digest elsewhere does not renumber it.
+            return self._placeholder(key, value)
         for root in self._roots:
             value = value.replace(root, "<workdir>")
         value = _ISO_TIME.sub("<time>", value)
@@ -529,7 +532,7 @@ class Normaliser:
         if isinstance(value, (list, tuple)):
             return [self.value(v, digests=digests) for v in value]
         if isinstance(value, str):
-            return self.text(value, digests=digests)
+            return self.text(value, digests=digests, key=key)
         if key in VOLATILE_NUMBERS and isinstance(value, (int, float)) and not isinstance(value, bool):
             return "<n>"
         if value is None or isinstance(value, (bool, int, float)):

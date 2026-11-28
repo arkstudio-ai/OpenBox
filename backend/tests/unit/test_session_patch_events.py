@@ -15,7 +15,8 @@ class _Saved(SimpleNamespace):
 
 
 def _owned(monkeypatch, saved: _Saved) -> list:
-    current = SimpleNamespace(id=saved.id, model=saved.model, variant=None, kind="normal")
+    current = SimpleNamespace(id=saved.id, model=saved.model, variant=None, kind="normal",
+                              light_entry=None)  # the real Session carries it; the API reads it for manual titles
     monkeypatch.setattr("api.sessions._require_session_owned", AsyncMock(return_value=current))
     monkeypatch.setattr("api.sessions.session_mod.update_session", AsyncMock(return_value=saved))
     published = []

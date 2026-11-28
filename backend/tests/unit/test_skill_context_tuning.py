@@ -395,6 +395,41 @@ async def test_switch_follows_the_sessions_workspace(tuning, monkeypatch):
     assert await _prune(monkeypatch, _history()) == {"s0", "s1"}
 
 
+VIDEO_SKILL = Path(__file__).resolve().parents[2] / ".openbox/skills/video-production"
+
+
+def test_video_skill_core_stays_small_and_routes_to_its_detail():
+    text = (VIDEO_SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert len(text.encode("utf-8")) <= 10_000
+    for name in ("workflow-plan.md", "workflow-produce.md"):
+        assert f"references/{name}" in text
+        assert (VIDEO_SKILL / "references" / name).is_file()
+    # A desktop synced before the split has neither file but a full SKILL.md.
+    assert "read `/opt/openbox/skills/video-production/SKILL.md` instead" in text
+    headings = "\n".join(
+        (VIDEO_SKILL / "references" / name).read_text(encoding="utf-8")
+        for name in ("workflow-plan.md", "workflow-produce.md")
+    )
+    for step in ("## Secretary conversation", "### Keep preparation focused",
+                 *(f"### {index}. " for index in range(9)),
+                 "## Invalidation and samples", "## What actually goes wrong"):
+        assert step in headings, step
+
+
+def test_manual_desktop_release_lists_every_file_the_skill_reads():
+    import re
+
+    doc = Path(__file__).resolve().parents[3] / "docs/WUYING_SANDBOX.md"
+    if not doc.is_file():
+        pytest.skip("repository docs are not part of this checkout")
+    match = re.search(r"names = \((.*?)\n\)", doc.read_text(encoding="utf-8"), re.S)
+    listed = set(re.findall(r'"([^"]+)"', match.group(1)))
+    text = (VIDEO_SKILL / "SKILL.md").read_text(encoding="utf-8")
+    referenced = set(re.findall(r"references/[\w.-]+\.md", text))
+    assert referenced <= listed
+    assert all((VIDEO_SKILL / name).is_file() for name in listed)
+
+
 def test_summary_input_keeps_a_reload_note_instead_of_the_body(tuning):
     off = compaction.prune_tool_outputs_view(_history(), aggressive=True)
     assert all(len(part["output"]) > 100 for message in off for part in message.parts

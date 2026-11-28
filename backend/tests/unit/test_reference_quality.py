@@ -15,7 +15,8 @@ from tool.tool import ToolContext
 @pytest.mark.parametrize("tier", ["standard", "creative", "deep", "fast"])
 async def test_visual_schema_retry_uses_the_selected_model_and_keeps_the_original_request(monkeypatch, tier):
     import litellm
-    from agent import llm, trajectory
+    from agent import llm
+    from trajectory import capture as trajectory
     from core import config
 
     @asynccontextmanager

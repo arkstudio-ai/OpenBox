@@ -4,6 +4,7 @@ After edit/write operations, this module attempts to run the project's
 configured formatter (prettier, black, gofmt, etc.) on the modified file.
 """
 import os
+import shlex
 
 from core.log import create_logger
 
@@ -49,16 +50,18 @@ async def auto_format(sandbox, file_path: str) -> str | None:
         return None
 
     for cmd_template in candidates:
-        cmd = [c.replace("{file}", file_path) for c in cmd_template]
+        # Substitute per argument and quote for the sandbox shell: the path
+        # comes from the model and may hold spaces or shell metacharacters.
+        cmd = [file_path if c == "{file}" else c for c in cmd_template]
         formatter_name = cmd[0]
 
         # Check if formatter is installed
-        check = await sandbox.execute(f"which {formatter_name} 2>/dev/null", timeout=5)
+        check = await sandbox.execute(f"which {shlex.quote(formatter_name)} 2>/dev/null", timeout=5)
         if check.exit_code != 0:
             continue
 
         # Run formatter
-        result = await sandbox.execute(" ".join(cmd), timeout=30)
+        result = await sandbox.execute(shlex.join(cmd), timeout=30)
         if result.exit_code == 0:
             log.debug(f"Formatted {file_path} with {formatter_name}")
             return formatter_name

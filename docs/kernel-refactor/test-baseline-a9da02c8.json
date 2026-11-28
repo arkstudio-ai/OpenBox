@@ -1,0 +1,6719 @@
+{
+ "meta": {
+  "commit": "a9da02c8d436b5d23e6bef8ce097e0325e253beb",
+  "branch": "kernel-refactor/round1",
+  "run_date": "2026-11-28",
+  "run_started": "2026-11-28T19:23:55+08:00",
+  "run_finished": "2026-11-28T19:37:21+08:00",
+  "wall_seconds": 806,
+  "wall_note": "3 batches in parallel, each running its files one after another; sum of per-file wall time is the sequential-equivalent",
+  "sum_file_wall_seconds": 2284.9,
+  "sum_pytest_seconds": 1947.7,
+  "python": "3.12.9",
+  "pytest": "9.0.2",
+  "pytest_asyncio": "1.3.0",
+  "litellm": "1.81.11",
+  "sqlalchemy": "2.0.47",
+  "platform": "macOS 26.5.2 arm64, 10 CPUs",
+  "interpreter": "/Volumes/fanxiang/workspace2/OpenBox/backend/.venv/bin/python (shared venv; imports resolve to the worktree)",
+  "command": "cd backend && timeout -k 15 600 python -m pytest -c pyproject.toml --rootdir . <file> -q -p no:cacheprovider -rfE --junitxml=<xml>",
+  "environment": {
+   "TRAJECTORY_RECORDING_ENABLED": "false",
+   "LITELLM_MODE": "PRODUCTION (stops litellm from loading the main checkout's backend/.env through find_dotenv)",
+   "LITELLM_LOCAL_MODEL_COST_MAP": "True (same as main.py)",
+   "PYTHONPATH": "<worktree>/backend",
+   "private_config": "none: no backend/.env, no backend/openbox.json, no ~/.config/openbox/openbox.json",
+   "services": "no Docker daemon, no PostgreSQL, no Redis; database is the tests' SQLite"
+  },
+  "selection": {
+   "rule": "test_*.py under backend/tests except manual/, with any Import/ImportFrom (anywhere in the file) or importlib.import_module string of agent, session, question, permission, command, snapshot, or tool.{tool,registry,truncation,argument_repair,invalid,batch,capability_search,platform_plugins,plugin_lifecycle,sensitive_paths,filetime}",
+   "test_files_scanned": 712,
+   "selected": 359
+  },
+  "per_file_timeout_seconds": 600,
+  "timeouts": 0,
+  "totals": {
+   "tests": 5038,
+   "passed": 4909,
+   "failures": 86,
+   "errors": 4,
+   "skipped": 39
+  },
+  "files_passing": 316,
+  "files_failing": 43,
+  "failing_by_class": {
+   "real": 38,
+   "environment": 5,
+   "flaky": 0
+  },
+  "rerun": "each failing file run once more, alone and sequentially, 2026-11-28 19:37:50-19:41:25; all 43 failed with the same tests"
+ },
+ "files": [
+  {
+   "file": "tests/integration/test_billing_postgres.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.12,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 5,
+   "tests": 5,
+   "pytest_seconds": 0.42,
+   "status": "pass"
+  },
+  {
+   "file": "tests/integration/test_message_center.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 13.67,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 12.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/integration/test_mobile_notification_events.py",
+   "kernel_imports": [
+    "permission",
+    "question"
+   ],
+   "wall_seconds": 24.84,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 23.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/integration/test_trajectory_pipeline_e2e.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 5.38,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 3,
+   "tests": 5,
+   "pytest_seconds": 3.85,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.integration.test_trajectory_pipeline_e2e::test_business_facts_reach_the_admin_api_and_socket_until_the_session_is_deleted[sqlite]",
+    "kind": "failure",
+    "message": "assert None is not None"
+   },
+   "failing_tests": [
+    "tests.integration.test_trajectory_pipeline_e2e::test_business_facts_reach_the_admin_api_and_socket_until_the_session_is_deleted[sqlite]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 5.08,
+    "passed": 1,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 3
+   },
+   "classification": "real",
+   "reason": "脚本化 provider 的流没有结束标记，llm.py 现在判为传输中断，回合失败，后面断言拿到 None",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/integration/test_voice_ws.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 25.9,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 24.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_abort_race.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 0.96,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.39,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_driver.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 3.82,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 3.12,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_event_log.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.35,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.68,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_inbox.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.16,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 1.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_latency.py",
+   "kernel_imports": [
+    "agent",
+    "question"
+   ],
+   "wall_seconds": 1.01,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 0.43,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_loop_retry.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.12,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 0.51,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_loop_settle.py",
+   "kernel_imports": [
+    "agent",
+    "question"
+   ],
+   "wall_seconds": 1.15,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_loop_terminal_steps.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.4,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 1.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_main_integration.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 4.04,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 3.02,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_modes.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.1,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 17,
+   "pytest_seconds": 0.51,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_preparation.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.capability_search",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.84,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 2.07,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.15,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 1.35,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_recovery_service.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.64,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.9,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_agent_registry.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.07,
+   "timed_out": false,
+   "passed": 32,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 32,
+   "pytest_seconds": 0.55,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_asset_delivery.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.33,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 0.6,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_asset_descriptions.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 6.83,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 5.98,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_asset_download.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 4.44,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 3.73,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_asset_list_thumbnails.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.45,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 0.7,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_api.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 10.11,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 18,
+   "pytest_seconds": 9.09,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_assets.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 12.62,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 11.56,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_attachment_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 10.15,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 9.03,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_authority_queries.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 5.87,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 12,
+   "pytest_seconds": 4.8,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_bound_card_projection.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 15.51,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 14.4,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_briefing.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 4.15,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 3.27,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_budget.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 17.3,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 16.33,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_commands.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 6.67,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 5.79,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_compaction.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 6.98,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 5.83,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_confirmations.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 5.59,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 4.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_continuation.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 13.57,
+   "timed_out": false,
+   "passed": 22,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 22,
+   "pytest_seconds": 12.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_continuation_roundtrip.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.26,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.4,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_continuation_roundtrip::test_retained_human_authority_coordinates_two_original_task_runs",
+    "kind": "failure",
+    "message": "agent.driver.DriverRecoveryRequiredError: session session_7YBQF1J7KM7DF81WXA7Q1WETG8 is already running"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_continuation_roundtrip::test_retained_human_authority_coordinates_two_original_task_runs"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.11,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_control.py",
+   "kernel_imports": [
+    "agent",
+    "command",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 18.56,
+   "timed_out": false,
+   "passed": 30,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 30,
+   "pytest_seconds": 17.0,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_cross_day_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.68,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.76,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_cross_day_acceptance::test_reverse_project_results_restore_after_49_hours_and_continue_original_session",
+    "kind": "failure",
+    "message": "assert (None is not None)"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_cross_day_acceptance::test_reverse_project_results_restore_after_49_hours_and_continue_original_session"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.43,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_decision_roundtrip.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.16,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.37,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_decision_roundtrip::test_real_provider_reads_human_source_proposes_and_commits_a_correction",
+    "kind": "failure",
+    "message": "assert 0 == 3"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_decision_roundtrip::test_real_provider_reads_human_source_proposes_and_commits_a_correction"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.1,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_decisions.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 9.6,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 8.64,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_delete_tools.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 5.89,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 4.99,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_events.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 6.98,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 14,
+   "pytest_seconds": 6.08,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_execution_access.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 4.05,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 2.97,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_feedback_scenarios.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 6.32,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 5.44,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_fold_warmup.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 2.43,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 1.73,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_follow_through.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.argument_repair"
+   ],
+   "wall_seconds": 21.26,
+   "timed_out": false,
+   "passed": 37,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 37,
+   "pytest_seconds": 20.2,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_foundation.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.52,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 3.7,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_foundation::test_read_audiences_cover_lists_counts_details_history_and_write_existence",
+    "kind": "failure",
+    "message": "TypeError: 'Session' object is not subscriptable"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_foundation::test_read_audiences_cover_lists_counts_details_history_and_write_existence"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 4.38,
+    "passed": 8,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "TypeError: 'Session' object is not subscriptable，测试按旧返回形状取值",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_history_authority.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.66,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 0,
+   "errors": 4,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 3.84,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_history_authority::test_history_page_is_returned_as_stored_with_one_timing_read",
+    "kind": "error",
+    "message": "failed on setup with \"AssertionError: {\"error\": \"ASSISTANT_DUPLICATE_TASK\", \"message\": \"A task for this work already exists in this conversation: 「Derived task」 (running/completed, task_id 01M8GYE684136VHB3RPNNWYSR9). Continue it instead of creating another: tasks.get, then tasks.followup while it r"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_history_authority::test_history_page_is_returned_as_stored_with_one_timing_read",
+    "tests.unit.test_assistant_history_authority::test_authority_is_one_current_read_per_call_inside_a_snapshot",
+    "tests.unit.test_assistant_history_authority::test_next_authority_read_rejects_external_revocation[membership]",
+    "tests.unit.test_assistant_history_authority::test_next_authority_read_rejects_external_revocation[main]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 4.65,
+    "passed": 0,
+    "failures": 0,
+    "errors": 4,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "夹具建任务时被 ASSISTANT_DUPLICATE_TASK 拒绝（4 个 setup error）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_input_settlement_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.27,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.37,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_knowledge.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 19.34,
+   "timed_out": false,
+   "passed": 38,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 39,
+   "pytest_seconds": 18.09,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_knowledge_read.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 14.65,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 13.33,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_linking.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 12.28,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 11.04,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_chain_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.batch"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 3.07,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 2,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 1.99,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_memory_chain_acceptance::test_task_plan_child_and_managed_cron_keep_memory_isolation[legacy-context]",
+    "kind": "failure",
+    "message": "assert 0 == 3"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_memory_chain_acceptance::test_task_plan_child_and_managed_cron_keep_memory_isolation[legacy-context]",
+    "tests.unit.test_assistant_memory_chain_acceptance::test_task_plan_child_and_managed_cron_keep_memory_isolation[v2-prefetch]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.37,
+    "passed": 0,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_documents.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 13.14,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 11.89,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_memory_documents::test_uploaded_hybrid_candidates_preserve_personal_owned_scope_and_ordinary_retrieval",
+    "kind": "failure",
+    "message": "assert 1 == 0"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_memory_documents::test_uploaded_hybrid_candidates_preserve_personal_owned_scope_and_ordinary_retrieval"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 11.46,
+    "passed": 19,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "假嵌入接口断言不应被调用，现在走了一次稠密检索",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_extraction.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 4.93,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 4.05,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_isolation.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 3.18,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 2.34,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_reads.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 26.71,
+   "timed_out": false,
+   "passed": 45,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 45,
+   "pytest_seconds": 25.16,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_source_policy.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 7.11,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 6.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_memory_v2.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 17.97,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 13,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 27,
+   "pytest_seconds": 16.43,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_memory_v2::test_remember_needs_a_quote_of_the_users_own_message_in_this_conversation",
+    "kind": "failure",
+    "message": "memory.providers.common.MemoryProviderError: wiki_provider_not_configured"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_memory_v2::test_remember_needs_a_quote_of_the_users_own_message_in_this_conversation",
+    "tests.unit.test_assistant_memory_v2::test_ordinary_preference_is_a_confirmed_personal_memory_recalled_from_any_project",
+    "tests.unit.test_assistant_memory_v2::test_project_memory_stays_inside_its_project",
+    "tests.unit.test_assistant_memory_v2::test_fact_key_keeps_one_fact_per_key",
+    "tests.unit.test_assistant_memory_v2::test_soft_sensitive_fact_waits_for_the_users_card[\\u8bb0\\u4f4f-status0]",
+    "tests.unit.test_assistant_memory_v2::test_soft_sensitive_fact_waits_for_the_users_card[\\u4e0d\\u7528\\u8bb0-status1]",
+    "tests.unit.test_assistant_memory_v2::test_the_turn_resumed_after_a_card_still_sees_the_cards_tool_call_and_answer",
+    "tests.unit.test_assistant_memory_v2::test_a_declined_fact_is_not_proposed_again_and_that_is_not_an_error",
+    "tests.unit.test_assistant_memory_v2::test_update_and_forget_need_the_users_words_and_forgetting_is_not_retroactive",
+    "tests.unit.test_assistant_memory_v2::test_update_of_a_forgotten_or_unknown_memory_is_unavailable",
+    "tests.unit.test_assistant_memory_v2::test_brief_read_is_used_only_by_its_run_while_the_memory_receipt_is_not_a_read",
+    "tests.unit.test_assistant_memory_v2::test_assistant_turn_memory_context_also_covers_owned_projects",
+    "tests.unit.test_assistant_memory_v2::test_memory_tool_receipt_is_kept_on_the_persisted_call"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 15.13,
+    "passed": 14,
+    "failures": 13,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "environment",
+   "reason": "remember 的取证模型要 provider 的 api_key/api_base（wiki_provider_not_configured）；测试没有替换这个模型，配了密钥时会真的请求 provider",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_mixed_queue_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 3.0,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.6,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_mixed_queue_acceptance::test_busy_mixed_queue_keeps_fair_read_only_report_retries",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'delivery_state'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_mixed_queue_acceptance::test_busy_mixed_queue_keeps_fair_read_only_report_retries"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.18,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_monitor_snapshot.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 7.95,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 9,
+   "pytest_seconds": 6.88,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_native_ticket.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 8.57,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 17,
+   "pytest_seconds": 7.51,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_notifications.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 8.9,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 7.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_observation_replay.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 22.32,
+   "timed_out": false,
+   "passed": 32,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 32,
+   "pytest_seconds": 20.95,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_pending.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 6.26,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 5.06,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_permissions.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 18.75,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 25,
+   "pytest_seconds": 17.19,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_placement.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 12.58,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 11.33,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_plan_preparation.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 8.58,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 7.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_plans.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 23.93,
+   "timed_out": false,
+   "passed": 28,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 28,
+   "pytest_seconds": 22.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_private_runtime.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 11.1,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 9.76,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_private_runtime::test_delegated_real_loop_runs_with_the_shared_sandbox",
+    "kind": "failure",
+    "message": "AssertionError: assert (1 == 1 and [('01M8GYHT7WE6NEJ69FM3W6V23V', 'default')] and '/execute' in [])"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_private_runtime::test_delegated_real_loop_runs_with_the_shared_sandbox"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 6.52,
+    "passed": 11,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "委派会话的真实循环没有向桩沙箱发 /execute；WUYING_API_KEY 为空只打警告，不改变行为，根因未查",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_profile.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 14.88,
+   "timed_out": false,
+   "passed": 28,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 28,
+   "pytest_seconds": 13.83,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_projection_voice.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 10.86,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 9.8,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_public_events.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 4.07,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 2.92,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_public_history.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 4.1,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 2.72,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_queue.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 5.06,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 3.79,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_reads.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.88,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 5.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_recovery_scanner_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 3.28,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 2,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 2.22,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_recovery_scanner_acceptance::test_new_recovery_service_delivers_and_drives_report_after_lost_wake[initial_result]",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'delivery_state'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_recovery_scanner_acceptance::test_new_recovery_service_delivers_and_drives_report_after_lost_wake[initial_result]",
+    "tests.unit.test_assistant_recovery_scanner_acceptance::test_new_recovery_service_delivers_and_drives_report_after_lost_wake[failed_report]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.63,
+    "passed": 0,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_remote_resource.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 3.2,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 2.25,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_binding_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.26,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 3,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 3.23,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_report_binding_acceptance::test_two_real_results_and_a_model_named_other_id_process_only_the_bound_result",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'id'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_report_binding_acceptance::test_two_real_results_and_a_model_named_other_id_process_only_the_bound_result",
+    "tests.unit.test_assistant_report_binding_acceptance::test_first_and_retry_preserve_complex_original_scope_and_exact_report_reference[first_success]",
+    "tests.unit.test_assistant_report_binding_acceptance::test_first_and_retry_preserve_complex_original_scope_and_exact_report_reference[retry_after_consumed_failure]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.73,
+    "passed": 0,
+    "failures": 3,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_injection_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.batch"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 3.68,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 2,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 2.68,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_report_injection_acceptance::test_untrusted_result_provider_bypasses_are_denied_and_execution_is_unchanged[first-report]",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'outcome'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_report_injection_acceptance::test_untrusted_result_provider_bypasses_are_denied_and_execution_is_unchanged[first-report]",
+    "tests.unit.test_assistant_report_injection_acceptance::test_untrusted_result_provider_bypasses_are_denied_and_execution_is_unchanged[retry-after-injection]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.4,
+    "passed": 0,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_recovery_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.73,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 4,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 3.72,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_report_recovery_acceptance::test_report_recovery_and_delayed_worker_preserve_one_execution[provider_error]",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'delivery_state'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_report_recovery_acceptance::test_report_recovery_and_delayed_worker_preserve_one_execution[provider_error]",
+    "tests.unit.test_assistant_report_recovery_acceptance::test_report_recovery_and_delayed_worker_preserve_one_execution[system_abort]",
+    "tests.unit.test_assistant_report_recovery_acceptance::test_report_recovery_and_delayed_worker_preserve_one_execution[settled_before_finalization]",
+    "tests.unit.test_assistant_report_recovery_acceptance::test_report_recovery_and_delayed_worker_preserve_one_execution[settled_abort]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 3.14,
+    "passed": 0,
+    "failures": 4,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_stop_acceptance.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.16,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 3,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 2.98,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_report_stop_acceptance::test_http_report_stop_and_manual_retry_survive_recovery[queued_stop]",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'id'"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_report_stop_acceptance::test_http_report_stop_and_manual_retry_survive_recovery[queued_stop]",
+    "tests.unit.test_assistant_report_stop_acceptance::test_http_report_stop_and_manual_retry_survive_recovery[running_stop]",
+    "tests.unit.test_assistant_report_stop_acceptance::test_http_report_stop_and_manual_retry_survive_recovery[retry_exhaustion]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 3.13,
+    "passed": 0,
+    "failures": 3,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_stop_crash.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 4.81,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 3.74,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_stop_fence.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 4.58,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 3.72,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_report_stop_settlement.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 6.29,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 5.26,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_reporting.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 7.47,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 6.28,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_request_answers.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 9.96,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 8.86,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_request_receipt_acceptance.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 11.58,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 10.42,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_request_reply.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 7.19,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 6.02,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_request_tools.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 28.3,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 29,
+   "pytest_seconds": 27.22,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_requests.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 23.29,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 21.91,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_requests_v2.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 7.19,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 6.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_commands.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 19.59,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 18.27,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_control.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 14.5,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 13.24,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_gateway.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 12.99,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 11.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_observations.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 25.86,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 24.31,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_resource_observations::test_catalogue_refresh_at_a_real_step_boundary_keeps_the_screenshot_actionable",
+    "kind": "failure",
+    "message": "ValueError: not enough values to unpack (expected 2, got 1)"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_resource_observations::test_catalogue_refresh_at_a_real_step_boundary_keeps_the_screenshot_actionable"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 13.18,
+    "passed": 23,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "ValueError: not enough values to unpack（返回值形状变了）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_preparation.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.batch",
+    "tool.tool"
+   ],
+   "wall_seconds": 25.5,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 24.0,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_resource_transition.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 11.59,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 10.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_result_media.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 7.45,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 6.52,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_results.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 18.42,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 17.44,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_revisions.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 25.08,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 23.91,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_rolling_history.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 6.58,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 4,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 5.61,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_rolling_history::test_old_history_rolls_into_a_summary_after_the_answer",
+    "kind": "failure",
+    "message": "AssertionError: assert ('claimed', None) == ('settled', 'succeeded')"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_rolling_history::test_old_history_rolls_into_a_summary_after_the_answer",
+    "tests.unit.test_assistant_rolling_history::test_a_failed_summary_leaves_the_answer_and_the_next_turn_intact",
+    "tests.unit.test_assistant_rolling_history::test_decision_notes_keep_accumulating_without_breaking_turns",
+    "tests.unit.test_assistant_rolling_history::test_stopping_or_breaking_the_summary_never_changes_the_answered_turn"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 3.3,
+    "passed": 0,
+    "failures": 4,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_roundtrip.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.47,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.48,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_roundtrip::test_private_task_submission_execution_and_read_only_report_roundtrip",
+    "kind": "failure",
+    "message": "agent.driver.DriverRecoveryRequiredError: session session_7YBQF1ABC0FFGJP1ST76Q6PSTS is already running"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_roundtrip::test_private_task_submission_execution_and_read_only_report_roundtrip"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.03,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 ResolvedStepTools.deferred（ebe2278c，10-26 起读取），主循环报错后断言落空",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_runtime.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 4.08,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 3.06,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_runtime_resource.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 27.04,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 25.71,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_runtime_snapshot.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 11.3,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 11,
+   "pytest_seconds": 10.32,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_sandbox_tool_scope.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.batch",
+    "tool.tool"
+   ],
+   "wall_seconds": 26.71,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 25.12,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_schedule_commands.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 18.62,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 17.44,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_assistant_schedule_commands::test_legacy_recovery_retention_and_warmup_leave_private_runs_alone",
+    "kind": "failure",
+    "message": "docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))"
+   },
+   "failing_tests": [
+    "tests.unit.test_assistant_schedule_commands::test_legacy_recovery_retention_and_warmup_leave_private_runs_alone"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 9.54,
+    "passed": 18,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "environment",
+   "reason": "需要本机 Docker 守护进程（docker.errors.DockerException）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_assistant_schedules.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 19.45,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 18.15,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_scheduling.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 19.17,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 20,
+   "pytest_seconds": 17.51,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_send_replay.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 10.79,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 9.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_session_control.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 17.79,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 16.64,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_session_observation.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 4.56,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 2,
+   "tests": 4,
+   "pytest_seconds": 3.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_sessions_v2.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 26.51,
+   "timed_out": false,
+   "passed": 26,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 25.35,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_steering.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 15.3,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 13.85,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_stop_followup.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 12.72,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 11.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_submission_receipts.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 5.8,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 4.88,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_task_context.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 9.79,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 8.9,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_trace_authority.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 9.95,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 9.15,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_unread.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 9.15,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 1,
+   "tests": 7,
+   "pytest_seconds": 8.2,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_assistant_work_context.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 4.62,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 3.63,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_attachment_retry.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 5.45,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 4.58,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_automatic_compaction.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 27.19,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 25.96,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_automatic_compaction::test_abort_api_stops_compaction_and_next_input_can_run",
+    "kind": "failure",
+    "message": "TimeoutError"
+   },
+   "failing_tests": [
+    "tests.unit.test_automatic_compaction::test_abort_api_stops_compaction_and_next_input_can_run"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 15.84,
+    "passed": 25,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "test_abort_api_stops_compaction... 在测试自己的时限内超时（TimeoutError），重跑一样",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_automatic_knowledge.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 22.35,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 21,
+   "pytest_seconds": 21.39,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_automatic_knowledge::test_conversation_admission_is_automatic_only_for_verified_statements[False]",
+    "kind": "failure",
+    "message": "AttributeError: 'NoneType' object has no attribute 'status'"
+   },
+   "failing_tests": [
+    "tests.unit.test_automatic_knowledge::test_conversation_admission_is_automatic_only_for_verified_statements[False]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 10.46,
+    "passed": 20,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "自动知识准入的记录没有生成（NoneType.status）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_autopilot_enforcement.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.2,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.57,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_autopilot_enforcement::test_cron_tool_defaults_to_shanghai",
+    "kind": "failure",
+    "message": "AssertionError: assert None == 'Asia/Shanghai'"
+   },
+   "failing_tests": [
+    "tests.unit.test_autopilot_enforcement::test_cron_tool_defaults_to_shanghai"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.15,
+    "passed": 6,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "CronToolArgs.timezone 默认值改成 None（执行时再取用户时区），测试仍期待 Asia/Shanghai",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_autopilot_run.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.3,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_autopilot_template.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.3,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_balance_hold.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.04,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 1.06,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_bash_idle_judgment.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.56,
+   "timed_out": false,
+   "passed": 28,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 28,
+   "pytest_seconds": 0.69,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_batch_parallel_safety.py",
+   "kernel_imports": [
+    "tool.batch",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.14,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_billing.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 3.18,
+   "timed_out": false,
+   "passed": 43,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 43,
+   "pytest_seconds": 1.52,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_bossip_feedback.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.7,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.92,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_browser_action.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "session",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 33.28,
+   "timed_out": false,
+   "passed": 26,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 32.01,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_browser_pref_default.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.15,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 0.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_browser_skill_guidance.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_caching.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.25,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 1.2,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_call_id_compat.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.34,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 0.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_canonical_model_surface.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.77,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 1.09,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_canonical_surface_latency.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 4.85,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 4.0,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_capability_search.py",
+   "kernel_imports": [
+    "agent",
+    "tool.capability_search",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.13,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 0.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_card_admission.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 12.19,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 11.03,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_card_pipeline.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 5.81,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 4.87,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_chat_identity.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 11.78,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 10.74,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_commercial_calibration.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.69,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 0.88,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_commercial_film.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 2.67,
+   "timed_out": false,
+   "passed": 116,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 116,
+   "pytest_seconds": 1.88,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_commercial_plan.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.88,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 1.04,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_commercial_product_reference.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.59,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 1.63,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_compaction_select.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_compaction_stream_completion.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.08,
+   "timed_out": false,
+   "passed": 21,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 21,
+   "pytest_seconds": 1.22,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_computer_batch.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.41,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.66,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_computer_metadata.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.17,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 0.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_computer_open_browser.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.2,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_context_budget.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 12.26,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 7,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 10.9,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_context_budget::test_pruning_remeasures_and_avoids_a_summary_call",
+    "kind": "failure",
+    "message": "assert 0 == 1"
+   },
+   "failing_tests": [
+    "tests.unit.test_context_budget::test_pruning_remeasures_and_avoids_a_summary_call",
+    "tests.unit.test_context_budget::test_tool_output_crosses_the_budget_inside_the_same_run[first-turn-api]",
+    "tests.unit.test_context_budget::test_tool_output_crosses_the_budget_inside_the_same_run[first-turn-direct-run]",
+    "tests.unit.test_context_budget::test_tool_output_crosses_the_budget_inside_the_same_run[existing-history-api]",
+    "tests.unit.test_context_budget::test_tool_output_crosses_the_budget_inside_the_same_run[existing-history-direct-run]",
+    "tests.unit.test_context_budget::test_remeasure_after_summary_retries_with_a_bound[second-summary-fits]",
+    "tests.unit.test_context_budget::test_remeasure_after_summary_retries_with_a_bound[bounded-stop]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 8.98,
+    "passed": 11,
+    "failures": 7,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "剪枝和摘要的顺序与预期不同（['tool','model'] vs ['summary','model']），7 个失败",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_context_stall.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.52,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 1.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_creator_context_tool.py",
+   "kernel_imports": [
+    "question",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.24,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 1.34,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_credit_cap.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.67,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.9,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_cron_executor.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.4,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 4,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 0.68,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_cron_executor::test_cancellation_closes_the_run_record",
+    "kind": "failure",
+    "message": "Failed: DID NOT RAISE <class 'asyncio.exceptions.CancelledError'>"
+   },
+   "failing_tests": [
+    "tests.unit.test_cron_executor::test_cancellation_closes_the_run_record",
+    "tests.unit.test_cron_executor::test_silent_run_records_tokens_but_never_injects",
+    "tests.unit.test_cron_executor::test_page_created_job_never_injects",
+    "tests.unit.test_cron_executor::test_successful_run_injects_and_records"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.12,
+    "passed": 7,
+    "failures": 4,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "environment",
+   "reason": "定时任务执行走到 Docker 沙箱，本机没有 Docker；测试的桩没盖住这一步",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_cron_injector.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.31,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_cron_project.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.21,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_cron_retention.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.36,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_cron_service.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.12,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_cron_validation.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.28,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.56,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_deferred_tools.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.capability_search",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.82,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.98,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_deletion_boundary.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.27,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 6,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.6,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/gemini-3.8-flash]",
+    "kind": "failure",
+    "message": "assert False"
+   },
+   "failing_tests": [
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/gemini-3.8-flash]",
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/gpt-5.6-luna]",
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[anthropic/claude]",
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/qwen3.8-max]",
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/trinity]",
+    "tests.unit.test_deletion_boundary::test_deletion_boundary_is_loaded_for_each_model[openai/gpt-4]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.06,
+    "passed": 0,
+    "failures": 6,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "environment",
+   "reason": "要靠 backend/openbox.json 的 instructions 把 AGENTS.md 放进提示词；默认配置是空列表，干净检出里没有这个私有文件",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_desktop_activation.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 5.64,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 4.36,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_desktop_capture_identity.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.24,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.55,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_desktop_login_tool.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.65,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.92,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_desktop_publish.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 3.08,
+   "timed_out": false,
+   "passed": 38,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 38,
+   "pytest_seconds": 2.22,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_desktop_takeover_tool.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.64,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.92,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_desktop_tool_client_scope.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 8.78,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 7.85,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_dispatch_freshness.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.03,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 5.21,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_douyin_publish_tool.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.02,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 1.2,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_durable_question_failures.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 35.33,
+   "timed_out": false,
+   "passed": 44,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 44,
+   "pytest_seconds": 34.15,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_durable_questions.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 39.48,
+   "timed_out": false,
+   "passed": 42,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 42,
+   "pytest_seconds": 38.24,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_e_feedback_20261113.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 25.23,
+   "timed_out": false,
+   "passed": 32,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 33,
+   "pytest_seconds": 24.31,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_e_feedback_20261113::test_the_assistant_is_told_what_the_light_clip_cannot_do",
+    "kind": "failure",
+    "message": "AssertionError: assert '不要选 light_video' in '规则：1. 做视频、做菜单、做海报、剪自己拍的素材这几类活，在文字对话里默认引导老板去首页对应入口，并给出直达链接（首页可选素材、样片和制作风格）；老板明确说「你直接做」「不用去首页」，或者说要新建一个对话、新开一个任务去做，就用 t... Light 入口的活：帮手用的是页面上已选好的那款，电话和对话里都换不了，如实说一句「用页面上选好的那款做」就派活或确认，不把模型要求当成改方案的理由转给帮手，也不为此再问老板。目录有变动时可用 light.entries 工具核对。'"
+   },
+   "failing_tests": [
+    "tests.unit.test_e_feedback_20261113::test_the_assistant_is_told_what_the_light_clip_cannot_do"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 11.43,
+    "passed": 32,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "提示词文字改了，'不要选 light_video' 不在其中",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_effect_ledger.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.73,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 5.97,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_event_fold.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 5.11,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 4.35,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_event_fold::test_a_long_session_reads_only_new_events_and_rejects_a_changed_prefix",
+    "kind": "failure",
+    "message": "AssertionError: assert (2 == 1)"
+   },
+   "failing_tests": [
+    "tests.unit.test_event_fold::test_a_long_session_reads_only_new_events_and_rejects_a_changed_prefix"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.54,
+    "passed": 3,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "长会话增量读多了一条 SQL（2 == 1）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_event_range_compaction_fork.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.07,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 1.39,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_exposure_signals.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.15,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 0.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_filter_compacted.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.19,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_first_video.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.77,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 1.02,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_followup_review_baseline.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.74,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 5.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_footage_edit.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 4.17,
+   "timed_out": false,
+   "passed": 31,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 31,
+   "pytest_seconds": 3.44,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_full_history.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.9,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 1.93,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_gateway.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 3.12,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 2.0,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_history_question_memory.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 2.22,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 1.29,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_hot_trends.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.35,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_image_batch_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "tool.batch",
+    "tool.tool"
+   ],
+   "wall_seconds": 11.18,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 10.16,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_image_gen.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.48,
+   "timed_out": false,
+   "passed": 37,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 37,
+   "pytest_seconds": 1.56,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_image_runninghub.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.98,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 1.93,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_image_to_pdf.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.99,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 1.22,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_image_volcengine.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.8,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.96,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_interaction_reply_events.py",
+   "kernel_imports": [
+    "permission",
+    "question"
+   ],
+   "wall_seconds": 8.31,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 3.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_light_assistant_awareness.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 13.18,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 12.26,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_light_autopilot.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.98,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 1.02,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_light_example_pick.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 21.99,
+   "timed_out": false,
+   "passed": 30,
+   "failures": 3,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 33,
+   "pytest_seconds": 20.61,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_light_example_pick::test_taxonomy_names_the_scenes_of_the_three_entries",
+    "kind": "failure",
+    "message": "AssertionError: assert (['story', 'di...hop', 'visit'] == ['dish', 'shop', 'visit']"
+   },
+   "failing_tests": [
+    "tests.unit.test_light_example_pick::test_taxonomy_names_the_scenes_of_the_three_entries",
+    "tests.unit.test_light_example_pick::test_entries_skills_and_the_registry_carry_the_example_step",
+    "tests.unit.test_light_example_pick::test_console_takes_a_scene_filters_by_it_and_counts_the_cells"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 14.29,
+    "passed": 30,
+    "failures": 3,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "场景分类里还有 story，测试期待 dish/shop/visit（b18b3a47 下线了 story 模板）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_light_examples.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.74,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 1.01,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_light_i18n.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.84,
+   "timed_out": false,
+   "passed": 31,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 31,
+   "pytest_seconds": 0.96,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_light_mode.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.95,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 1.1,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_light_mode::test_prompt_fragment_names_the_shop_from_the_first_video_form",
+    "kind": "failure",
+    "message": "AssertionError: assert '店名' not in '界面模式：Light（...用，不要因此跳过这一步。'"
+   },
+   "failing_tests": [
+    "tests.unit.test_light_mode::test_prompt_fragment_names_the_shop_from_the_first_video_form"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.74,
+    "passed": 12,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "Light 提示词片段里出现了测试禁止的“店名”",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_light_production.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 3.72,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 29,
+   "pytest_seconds": 2.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_live_reveals.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.02,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.41,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_llm_schema.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.74,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 1.66,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_llm_schema::test_permanent_media_tool_schemas_fit_the_request_budget",
+    "kind": "failure",
+    "message": "AssertionError: assert {'attach', 'a...emplate', ...} == {'attach', 'c...'submit', ...}"
+   },
+   "failing_tests": [
+    "tests.unit.test_llm_schema::test_permanent_media_tool_schemas_fit_the_request_budget"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.62,
+    "passed": 5,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "媒体工具集合多了 prepare_template（b39556a2）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_llm_schema_recursive_refs.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.32,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_llm_stream_integrity.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.56,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 1.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_llm_tool_search_anthropic.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.25,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_llm_tool_search_responses.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.31,
+   "timed_out": false,
+   "passed": 26,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_long_history_context.py",
+   "kernel_imports": [
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 8.04,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 7.07,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_loop_inputs.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.37,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 0.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_loop_termination.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 29,
+   "pytest_seconds": 0.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_main_context_parity.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 4.07,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 3.16,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_main_feature_parity.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.batch",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.5,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 5.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_main_skill_parity.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.78,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.74,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_main_trajectory_lifecycle.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.registry"
+   ],
+   "wall_seconds": 15.55,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 17,
+   "pytest_seconds": 13.85,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_mcp_security.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.capability_search",
+    "tool.tool",
+    "tool.truncation"
+   ],
+   "wall_seconds": 1.62,
+   "timed_out": false,
+   "passed": 40,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 40,
+   "pytest_seconds": 0.83,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_media_template_library.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 5.11,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 4.19,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_branch_removal.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 4.43,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 3.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_configured_read.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.41,
+   "timed_out": false,
+   "passed": 104,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 104,
+   "pytest_seconds": 0.7,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_consumer_quality.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 8.9,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 2,
+   "tests": 11,
+   "pytest_seconds": 8.0,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_memory_consumer_quality::test_model_view_keeps_tool_and_project_references_but_never_tenant_identities",
+    "kind": "failure",
+    "message": "AssertionError: assert [{'authority'...ion': 1, ...}] == [{'id': 'chun..., ...}], ...}]"
+   },
+   "failing_tests": [
+    "tests.unit.test_memory_consumer_quality::test_model_view_keeps_tool_and_project_references_but_never_tenant_identities"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 7.29,
+    "passed": 8,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 2
+   },
+   "classification": "real",
+   "reason": "模型视图的条目形状变了（多了 authority 等字段）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_memory_current_assets.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 15.15,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 13.88,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_debug_api.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 8.06,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 16,
+   "tests": 32,
+   "pytest_seconds": 7.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_dialogue_read.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 11.57,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 10.68,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_jev_read_acceptance.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 13.37,
+   "timed_out": false,
+   "passed": 27,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 27,
+   "pytest_seconds": 12.28,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_lazy_read.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.42,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 5.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_personalization.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 12.32,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 2,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 11.49,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_memory_personalization::test_style_feedback_and_a_plan_are_learned_with_their_kind_and_end",
+    "kind": "failure",
+    "message": "AssertionError: assert 'RETRY' == 'SUCCEEDED'"
+   },
+   "failing_tests": [
+    "tests.unit.test_memory_personalization::test_style_feedback_and_a_plan_are_learned_with_their_kind_and_end",
+    "tests.unit.test_memory_personalization::test_extracted_language_updates_shared_setting_without_duplicate_memory"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 5.65,
+    "passed": 10,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "抽取任务停在 RETRY，期待 SUCCEEDED",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_memory_pipeline.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 17.39,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 2,
+   "tests": 31,
+   "pytest_seconds": 16.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_provider_rechecks.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 9.49,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 8.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_resume_read.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 9.28,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 8.34,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_router_context.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.51,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_source_time.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 11.03,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 9.96,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_tool_projection.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.batch",
+    "tool.tool"
+   ],
+   "wall_seconds": 34.44,
+   "timed_out": false,
+   "passed": 40,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 40,
+   "pytest_seconds": 33.44,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_tools.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 7.38,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 6.6,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_memory_write_protocol.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 8.03,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 7.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_message_history.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.46,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 0.72,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_mobile_device_locale.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 6.15,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 5.3,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_model_capabilities.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.47,
+   "timed_out": false,
+   "passed": 27,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 27,
+   "pytest_seconds": 0.73,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_model_resolve.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.1,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_model_tiers.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.45,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 0.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_ordered_tool_scheduler.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.29,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 0.58,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_partner_billing.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.8,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.98,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_permission_cross_worker.py",
+   "kernel_imports": [
+    "permission"
+   ],
+   "wall_seconds": 1.45,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_permission_monotonic.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.batch",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.66,
+   "timed_out": false,
+   "passed": 26,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 0.89,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_permission_patterns.py",
+   "kernel_imports": [
+    "agent",
+    "permission"
+   ],
+   "wall_seconds": 1.17,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_plan_enter_question.py",
+   "kernel_imports": [
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.55,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_plan_quote.py",
+   "kernel_imports": [
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.81,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.98,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_platform_plugin_lifecycle.py",
+   "kernel_imports": [
+    "tool.platform_plugins",
+    "tool.plugin_lifecycle",
+    "tool.registry"
+   ],
+   "wall_seconds": 3.28,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 2.39,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_platform_plugins.py",
+   "kernel_imports": [
+    "tool.platform_plugins",
+    "tool.registry"
+   ],
+   "wall_seconds": 1.4,
+   "timed_out": false,
+   "passed": 32,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 32,
+   "pytest_seconds": 0.69,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_pricing_minimax_m31.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.14,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_private_session_read_routes.py",
+   "kernel_imports": [
+    "session",
+    "snapshot"
+   ],
+   "wall_seconds": 6.72,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 5.74,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_processor_outcomes.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.45,
+   "timed_out": false,
+   "passed": 35,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 36,
+   "pytest_seconds": 0.74,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_processor_outcomes::test_empty_stream_still_returns_a_result",
+    "kind": "failure",
+    "message": "AssertionError: assert <StepOutcome.RETRY: 'retry'> is <StepOutcome.CONTINUE: 'continue'>"
+   },
+   "failing_tests": [
+    "tests.unit.test_processor_outcomes::test_empty_stream_still_returns_a_result"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.24,
+    "passed": 35,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "空流现在返回 RETRY，测试仍按 CONTINUE 断言",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_processor_tool_concurrency.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.35,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 0.7,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_product_story.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.59,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 0.84,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_production_outputs.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.48,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_project_brief.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.64,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.89,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_prompt_singleflight.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.85,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.97,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_prompt_visibility.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.12,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_provider_params.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.25,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 1.31,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_prune_tail.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.17,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_question_attachments.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 8.18,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 7.09,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_read_binary_guard.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.13,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_recall_ahead.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.01,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.4,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_reference_film.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 3.0,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 1.76,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_reference_quality.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.63,
+   "timed_out": false,
+   "passed": 24,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 24,
+   "pytest_seconds": 1.58,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_removed_skill_runtime.py",
+   "kernel_imports": [
+    "tool.registry"
+   ],
+   "wall_seconds": 3.73,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 2.33,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_retry_backoff.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.34,
+   "timed_out": false,
+   "passed": 37,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 37,
+   "pytest_seconds": 0.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_review_repair.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.29,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.61,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_revision_review_guard.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 15.1,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 13.99,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_api.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 6.64,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 5.75,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_boundaries.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.batch",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 5.92,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 4.61,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_delegation.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 7.91,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 7.04,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_execution.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 25.54,
+   "timed_out": false,
+   "passed": 22,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 22,
+   "pytest_seconds": 24.31,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_jobs.py",
+   "kernel_imports": [
+    "agent",
+    "question"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.01,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 1.27,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_run_fencing_jobs::test_refused_transcription_submit_does_not_stay_transcribing",
+    "kind": "failure",
+    "message": "Failed: DID NOT RAISE <class 'question.runtime.RunRevoked'>"
+   },
+   "failing_tests": [
+    "tests.unit.test_run_fencing_jobs::test_refused_transcription_submit_does_not_stay_transcribing"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.38,
+    "passed": 2,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "被拒的转写提交没有抛 RunRevoked",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_run_fencing_writes.py",
+   "kernel_imports": [
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 13.4,
+   "timed_out": false,
+   "passed": 30,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 30,
+   "pytest_seconds": 12.32,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_runtime_instruction_scope.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.34,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 0.45,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_sandbox_connection_pool.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.49,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.82,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_sandbox_search.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 2.08,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 1.05,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_sandbox_stream_integrity.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.14,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.47,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_session_list_serialization.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.39,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 0.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_session_search.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 3.6,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 2.82,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_session_surface_log.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 1.4,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_session_title.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 11.55,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 10.3,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_session_token_accumulation.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.21,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_share_file.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.31,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.61,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_skill_execute.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.36,
+   "timed_out": false,
+   "passed": 15,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 15,
+   "pytest_seconds": 0.61,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_skill_listing.py",
+   "kernel_imports": [
+    "agent",
+    "permission"
+   ],
+   "wall_seconds": 1.21,
+   "timed_out": false,
+   "passed": 20,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_skill_manage.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.13,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.49,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_skill_provider_lifecycle.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.32,
+   "timed_out": false,
+   "passed": 25,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 25,
+   "pytest_seconds": 0.58,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_skill_search.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.batch",
+    "tool.capability_search",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.39,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 0.69,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_skill_search::test_skill_mcp_and_capability_search_share_one_step_budget",
+    "kind": "failure",
+    "message": "AttributeError: type object 'EmptyParams' has no attribute 'model_config'"
+   },
+   "failing_tests": [
+    "tests.unit.test_skill_search::test_skill_mcp_and_capability_search_share_one_step_budget"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.06,
+    "passed": 7,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "EmptyParams 没有 model_config（参数模型的写法变了）",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_skill_tool_activation.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.2,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 1.31,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_snapshot_round_trips.py",
+   "kernel_imports": [
+    "snapshot"
+   ],
+   "wall_seconds": 1.45,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.74,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_socket_access.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 12.62,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 29,
+   "pytest_seconds": 11.67,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_sse_transport.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.7,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 1.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_step_start_transaction.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 2.32,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 1.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_stream_deadline.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.28,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_stream_interruption_replay.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.09,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.5,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_structured_output.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.18,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 0.53,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subagent_authority.py",
+   "kernel_imports": [
+    "agent",
+    "permission"
+   ],
+   "wall_seconds": 1.23,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.5,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subagent_composition.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.19,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 0.56,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subagent_migration.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.07,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 1.07,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subagent_project.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 0.56,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subagent_runtime.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.88,
+   "timed_out": false,
+   "passed": 30,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 30,
+   "pytest_seconds": 2.16,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_subscription_plans.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 2.16,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 1.32,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_suggestions.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 3.64,
+   "timed_out": false,
+   "passed": 51,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 51,
+   "pytest_seconds": 2.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_sync_prompt_response.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.26,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_system_prompt_memory.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.31,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_task_durable.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.35,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_task_handoff.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.truncation"
+   ],
+   "wall_seconds": 9.19,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 17,
+   "pytest_seconds": 8.36,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_task_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.47,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.73,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_todo_edits.py",
+   "kernel_imports": [
+    "agent",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.58,
+   "timed_out": false,
+   "passed": 29,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 29,
+   "pytest_seconds": 0.54,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_todo_merge.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.16,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 0.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_description_budgets.py",
+   "kernel_imports": [
+    "agent",
+    "tool.batch"
+   ],
+   "wall_seconds": 1.42,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 0.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_exposure.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.07,
+   "timed_out": false,
+   "passed": 21,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 21,
+   "pytest_seconds": 0.47,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_exposure_budget.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry"
+   ],
+   "wall_seconds": 1.58,
+   "timed_out": false,
+   "passed": 28,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 28,
+   "pytest_seconds": 0.94,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_exposure_state.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.92,
+   "timed_out": false,
+   "passed": 21,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 21,
+   "pytest_seconds": 1.05,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_part_identity.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.16,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 0.5,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_part_runtime_binding.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.18,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.58,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_payload.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.36,
+   "timed_out": false,
+   "passed": 5,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_payload_encoding.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 1.37,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 0.52,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_runtime.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.06,
+   "timed_out": false,
+   "passed": 17,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 17,
+   "pytest_seconds": 0.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_runtime_loop.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "session",
+    "tool.batch",
+    "tool.capability_search",
+    "tool.registry",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.06,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 1.13,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_tool_schema_cache.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.09,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 0.46,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_business_isolation.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 3.29,
+   "timed_out": false,
+   "passed": 0,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 1,
+   "pytest_seconds": 2.2,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_trajectory_business_isolation::test_business_flows_with_recording_on_never_touch_trajectory_tables",
+    "kind": "failure",
+    "message": "assert None is not None"
+   },
+   "failing_tests": [
+    "tests.unit.test_trajectory_business_isolation::test_business_flows_with_recording_on_never_touch_trajectory_tables"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.97,
+    "passed": 0,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "同上：脚本化流缺结束标记，被判为传输中断",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_trajectory_lite.py",
+   "kernel_imports": [
+    "agent",
+    "tool.registry"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 4.08,
+   "timed_out": false,
+   "passed": 32,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 33,
+   "pytest_seconds": 3.14,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_trajectory_lite::test_every_registered_tool_has_a_label",
+    "kind": "failure",
+    "message": "AssertionError: add these tools to trajectory/lite_labels.json: ['light_gallery', 'light_production_form', 'light_remake', 'light_wan_story', 'media_template', 'music_search']"
+   },
+   "failing_tests": [
+    "tests.unit.test_trajectory_lite::test_every_registered_tool_has_a_label"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 2.8,
+    "passed": 32,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "lite_labels.json 缺 6 个新工具的标签",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_trajectory_meta_sync.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 7.3,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 6.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_producers_capture.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 6.18,
+   "timed_out": false,
+   "passed": 16,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 16,
+   "pytest_seconds": 4.96,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_producers_delegation.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 2.46,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 1.61,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_trajectory_producers_delegation::test_a_subagent_spawn_records_its_lifecycle_under_the_parent_trajectory",
+    "kind": "failure",
+    "message": "agent.subagent_composition.SubagentCompositionError: provider binding for model 'anthropic/claude-sonnet-4-20250514' is not ready: provider_missing"
+   },
+   "failing_tests": [
+    "tests.unit.test_trajectory_producers_delegation::test_a_subagent_spawn_records_its_lifecycle_under_the_parent_trajectory"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.82,
+    "passed": 1,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "environment",
+   "reason": "子代理要 anthropic provider 的绑定（provider_missing），干净配置里没有",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_trajectory_producers_fail_open.py",
+   "kernel_imports": [
+    "agent",
+    "permission",
+    "question",
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 7.91,
+   "timed_out": false,
+   "passed": 14,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 14,
+   "pytest_seconds": 6.82,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_producers_permission.py",
+   "kernel_imports": [
+    "permission"
+   ],
+   "wall_seconds": 1.33,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 0.57,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_producers_session.py",
+   "kernel_imports": [
+    "question",
+    "session"
+   ],
+   "wall_seconds": 15.21,
+   "timed_out": false,
+   "passed": 27,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 27,
+   "pytest_seconds": 14.14,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_runtime.py",
+   "kernel_imports": [
+    "agent",
+    "tool.batch",
+    "tool.registry",
+    "tool.tool",
+    "tool.truncation"
+   ],
+   "wall_seconds": 5.01,
+   "timed_out": false,
+   "passed": 13,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 13,
+   "pytest_seconds": 3.82,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_trajectory_stream_capture.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.84,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 1.0,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_turn_abort.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 3.54,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 2.71,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_turn_anchor_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 2.25,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 1.5,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_user_id_discipline.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 0.91,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 0.4,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_v1_routes.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 2.62,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 1.7,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_analyze.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.64,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 0.86,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_comfyui.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.7,
+   "timed_out": false,
+   "passed": 43,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 43,
+   "pytest_seconds": 1.08,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_completion_delivery.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 12.56,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 20,
+   "pytest_seconds": 11.28,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_video_completion_delivery::test_completion_scan_only_retries_undelivered_video[failed]",
+    "kind": "failure",
+    "message": "assert [<db.models.a... 0x1109c5070>] == []"
+   },
+   "failing_tests": [
+    "tests.unit.test_video_completion_delivery::test_completion_scan_only_retries_undelivered_video[failed]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 9.47,
+    "passed": 19,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "完成扫描对已失败的视频仍留下一条待投递的收件项",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_video_compose.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.2,
+   "timed_out": false,
+   "passed": 26,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 26,
+   "pytest_seconds": 1.29,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_fresh_generation.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.23,
+   "timed_out": false,
+   "passed": 11,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 11,
+   "pytest_seconds": 0.65,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_job_recovery.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 1.93,
+   "timed_out": false,
+   "passed": 30,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 30,
+   "pytest_seconds": 1.09,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_production.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.67,
+   "timed_out": false,
+   "passed": 38,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 38,
+   "pytest_seconds": 0.84,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_production_audience.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 1.87,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 1.23,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_resume_and_card_deadline.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.51,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 5,
+   "pytest_seconds": 0.75,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_video_resume_and_card_deadline::test_card_deadline_comes_from_the_session_key_policy",
+    "kind": "failure",
+    "message": "AttributeError: 'types.SimpleNamespace' object has no attribute 'run_id'"
+   },
+   "failing_tests": [
+    "tests.unit.test_video_resume_and_card_deadline::test_card_deadline_comes_from_the_session_key_policy"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.25,
+    "passed": 4,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "测试替身 SimpleNamespace 缺 run_id",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_video_runninghub.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.69,
+   "timed_out": false,
+   "passed": 43,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 43,
+   "pytest_seconds": 0.8,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_shot_review.py",
+   "kernel_imports": [
+    "session",
+    "tool.tool"
+   ],
+   "wall_seconds": 2.12,
+   "timed_out": false,
+   "passed": 6,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 6,
+   "pytest_seconds": 1.48,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_submit_regression.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 1.79,
+   "timed_out": false,
+   "passed": 59,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 59,
+   "pytest_seconds": 1.07,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_video_template_editions.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 2.21,
+   "timed_out": false,
+   "passed": 8,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 8,
+   "pytest_seconds": 1.2,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_assistant_link.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 8.3,
+   "timed_out": false,
+   "passed": 18,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 18,
+   "pytest_seconds": 7.52,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_consistency_sql.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 9.57,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 3,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 7.05,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_voice_consistency_sql::test_real_question_continuation_is_observed_twice_but_spoken_once[follow_first]",
+    "kind": "failure",
+    "message": "KeyError: 'suspended'"
+   },
+   "failing_tests": [
+    "tests.unit.test_voice_consistency_sql::test_real_question_continuation_is_observed_twice_but_spoken_once[follow_first]",
+    "tests.unit.test_voice_consistency_sql::test_real_question_continuation_is_observed_twice_but_spoken_once[report_first]",
+    "tests.unit.test_voice_consistency_sql::test_real_question_continuation_is_observed_twice_but_spoken_once[both_waiting]"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 6.77,
+    "passed": 9,
+    "failures": 3,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "结果里没有 'suspended' 键（KeyError），3 个失败",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_voice_decision_receipts.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 7.99,
+   "timed_out": false,
+   "passed": 9,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 9,
+   "pytest_seconds": 6.93,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_decisions.py",
+   "kernel_imports": [
+    "question"
+   ],
+   "wall_seconds": 3.44,
+   "timed_out": false,
+   "passed": 4,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 4,
+   "pytest_seconds": 2.59,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_memory_refresh.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 8.01,
+   "timed_out": false,
+   "passed": 19,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 19,
+   "pytest_seconds": 7.1,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_messages.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 9.73,
+   "timed_out": false,
+   "passed": 12,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 12,
+   "pytest_seconds": 8.77,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_video_workflow.py",
+   "kernel_imports": [
+    "agent",
+    "question",
+    "session"
+   ],
+   "wall_seconds": 17.83,
+   "timed_out": false,
+   "passed": 39,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 39,
+   "pytest_seconds": 16.79,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_view_context.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "wall_seconds": 9.53,
+   "timed_out": false,
+   "passed": 23,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 23,
+   "pytest_seconds": 8.62,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_voice_work.py",
+   "kernel_imports": [
+    "agent",
+    "session"
+   ],
+   "wall_seconds": 9.73,
+   "timed_out": false,
+   "passed": 10,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 10,
+   "pytest_seconds": 8.31,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_web_search.py",
+   "kernel_imports": [
+    "tool.tool"
+   ],
+   "wall_seconds": 0.89,
+   "timed_out": false,
+   "passed": 2,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 0.4,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_workspace_access.py",
+   "kernel_imports": [
+    "session"
+   ],
+   "exit_code": 1,
+   "wall_seconds": 1.56,
+   "timed_out": false,
+   "passed": 1,
+   "failures": 1,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 2,
+   "pytest_seconds": 0.77,
+   "status": "fail",
+   "first_failure": {
+    "test": "tests.unit.test_workspace_access::test_default_selection_forbidden_selection_and_read_only_invitation",
+    "kind": "failure",
+    "message": "TypeError: 'Session' object is not subscriptable"
+   },
+   "failing_tests": [
+    "tests.unit.test_workspace_access::test_default_selection_forbidden_selection_and_read_only_invitation"
+   ],
+   "rerun": {
+    "exit_code": 1,
+    "wall_seconds": 1.24,
+    "passed": 1,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+   },
+   "classification": "real",
+   "reason": "同上：'Session' object is not subscriptable",
+   "flaky_check": "same_failures_on_rerun"
+  },
+  {
+   "file": "tests/unit/test_ws_recovery.py",
+   "kernel_imports": [
+    "agent"
+   ],
+   "wall_seconds": 2.36,
+   "timed_out": false,
+   "passed": 3,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 3,
+   "pytest_seconds": 1.38,
+   "status": "pass"
+  },
+  {
+   "file": "tests/unit/test_wuying_session_tunnel.py",
+   "kernel_imports": [
+    "agent",
+    "tool.tool"
+   ],
+   "wall_seconds": 4.25,
+   "timed_out": false,
+   "passed": 7,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 0,
+   "tests": 7,
+   "pytest_seconds": 3.65,
+   "status": "pass"
+  }
+ ]
+}

@@ -7,6 +7,7 @@ import httpx
 
 from sandbox.manager import SandboxManager, SandboxInfo, _map_key
 from sandbox.client import SandboxClient, USER_SCOPE_HEADER, user_scope_for
+from sandbox.provider import SandboxProvider
 
 
 @pytest.fixture
@@ -15,6 +16,11 @@ def manager(monkeypatch):
         return user_id
 
     monkeypatch.setattr("sandbox.ownership.owner_for_session", legacy_owner)
+    # acquire() reads the provider's capabilities. Without a stub the lazy
+    # proxy builds the configured provider, which for Docker needs a daemon.
+    # Tests that exercise provider calls patch in their own.
+    monkeypatch.setattr("sandbox.provider", MagicMock(
+        spec=SandboxProvider, owns_containers=True, routes_per_user=False))
     return SandboxManager()
 
 

@@ -271,6 +271,15 @@ def test_state_records_shots_without_ordering_them(tmp_path):
     assert data["title"] == "t"
 
 
+def _skill_docs():
+    """SKILL.md plus the workflow files that hold its step detail since the
+    2026-11-28 split (688d621b): steps 0–3 and 4–8."""
+    return "\n".join(
+        (SCRIPTS.parent / name).read_text(encoding="utf-8")
+        for name in ("SKILL.md", "references/workflow-plan.md", "references/workflow-produce.md")
+    )
+
+
 def test_skill_points_at_the_sandbox_path_not_a_relative_one():
     """The scripts run where bash runs, which is not where SKILL.md is served.
 
@@ -279,10 +288,17 @@ def test_skill_points_at_the_sandbox_path_not_a_relative_one():
     every invocation would fail with "no such file".
     """
     text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    docs = _skill_docs()
+    quality = (SCRIPTS.parent / "references/quality.md").read_text(encoding="utf-8")
 
     assert "S=/opt/openbox/skills/video-production/scripts" in text
-    for name in ("lint_prompt.py", "compare_transcript.py", "build_ass.py", "compose.sh"):
+    for name in ("state.py", "split_script.py", "plan_shots.py"):
         assert f"$S/{name}" in text, name
+    assert "$S/lint_prompt.py" in docs
+    # Card 3's local-file checks. build_ass.py + compose.sh are no longer
+    # taught: 7c8fa116 retired the sandbox ffmpeg cut, every edit is IMS.
+    for name in ("extract_audio.sh", "compare_transcript.py", "extract_frames.sh"):
+        assert f"$S/{name}" in quality, name
 
     # The references are read in the sandbox too, so a relative path there
     # fails exactly the same way.
@@ -294,10 +310,17 @@ def test_skill_points_at_the_sandbox_path_not_a_relative_one():
 
 def test_the_skill_shows_the_flags_each_script_actually_takes():
     """A usage-error round trip is avoidable: argparse needs the flag names."""
-    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    docs = _skill_docs()
+    quality = (SCRIPTS.parent / "references/quality.md").read_text(encoding="utf-8")
 
-    assert "--intended" in text and "--heard" in text
-    assert "--prompt-file" in text and "--anchor" in text
+    for shown_in, script, flags in (
+        (docs, "lint_prompt.py", ("--prompt-file", "--anchor")),
+        (quality, "compare_transcript.py", ("--intended", "--heard")),
+    ):
+        source = (SCRIPTS / script).read_text(encoding="utf-8")
+        for flag in flags:
+            assert flag in shown_in, (script, flag)
+            assert f'add_argument("{flag}"' in source, (script, flag)
 
 
 def test_the_skill_says_to_fan_out_shots_rather_than_walk_them():
@@ -308,8 +331,15 @@ def test_the_skill_says_to_fan_out_shots_rather_than_walk_them():
     splitting — a duplicate of shot 1, paid for twice over.
     """
     flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+    produce = " ".join(
+        (SCRIPTS.parent / "references/workflow-produce.md").read_text(encoding="utf-8").split()
+    )
 
-    assert "All in the same response" in flowed
+    # 7c8fa116: each shot goes out once it is ready, alongside the others
+    # that are, and the agent then waits on all of them at once.
+    assert "other ready shots in the same response" in flowed
+    assert "In the same response, dispatch other ready shots" in produce
+    assert "once with all outstanding IDs" in flowed
     assert "Split first, then generate" in flowed
     # Concurrent shots finish out of order, so each needs its own number.
     assert "`shot=<N>`" in flowed
@@ -563,19 +593,29 @@ def test_the_skill_looks_at_every_takes_frames_before_card_3():
     text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
     flowed = " ".join(text.split())
     frontmatter = text.split("---", 2)[1]
+    produce = " ".join(
+        (SCRIPTS.parent / "references/workflow-produce.md").read_text(encoding="utf-8").split()
+    )
     quality = (SCRIPTS.parent / "references/quality.md").read_text(encoding="utf-8")
     recipes = (SCRIPTS.parent / "references/prompt-recipes.md").read_text(encoding="utf-8")
 
     assert "  - video_analyze\n" in frontmatter
     assert 'video_analyze(action="screen_text"' in text
-    assert "$S/extract_frames.sh" in text
-    assert "画面文字未检查" in text and "never describe an unviewed picture as clean" in flowed
-    assert "`has_text=true` or the picture was not checked" in flowed
-    assert "重拍该段" in text and "不配字幕 a take with text has no silent path" in flowed
-    assert "disclose it on the card" in flowed
+    # 7c8fa116: card 3 starts from the backend's background `review`; the
+    # screen-text fallback and the verdict rules live in quality.md, where
+    # step 7 sends the agent.
+    assert "picture text" in flowed and "references/quality.md" in text
+    assert '"$S/extract_frames.sh"' in quality
+    assert "画面文字未检查" in quality and "永远不能把没看过的画面说成“纯净无字幕”" in quality
+    assert "If inspection is unavailable, mark the unverified item for review" in produce
+    assert "**画面文字 suspect**：存在意外文字" in quality and "或画面文字未检查" in quality
+    assert "重拍该段" in quality and "用户选了“不配字幕”时尤其不能静默交付" in quality
+    assert "要在 card 3 里披露" in quality and "the sampled times and the cost" in produce
     # the stronger prompt wording is advice; the frames are the check
-    assert "画面中不出现任何文字、字幕、标题、水印" in text
-    assert "lowers the odds and proves nothing" in flowed
+    assert "画面中不出现任何文字、字幕、标题、水印" in produce
+    assert "Full negative wording up front lowers the odds" in flowed
+    assert '`video_analyze(action="screen_text")` on every take is what catches it' in flowed
+    assert "prompt 里的否定只能降概率，看画面才是验收" in quality
 
     assert "2026-10-15" in quality and "限时" in quality and "随时" in quality
     assert "画面文字检查（每个 take 必做）" in quality

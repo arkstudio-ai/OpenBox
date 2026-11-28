@@ -417,14 +417,28 @@ def test_shot_accept_records_reason(tmp_path):
 def test_skill_contains_all_u1_to_u9_user_experience_contracts():
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     flowed = " ".join(text.split())
+    # Step detail moved to the workflow files in the 2026-11-28 split (688d621b).
+    docs = "\n".join(
+        (SKILL / name).read_text(encoding="utf-8")
+        for name in ("SKILL.md", "references/workflow-plan.md", "references/workflow-produce.md")
+    )
+    docs_flowed = " ".join(docs.split())
+    quality = (SKILL / "references/quality.md").read_text(encoding="utf-8")
 
-    assert "短到约 30 秒" in text and "长到 60–75 秒" in text
+    assert "短到约 30 秒" in docs and "长到 60–75 秒" in docs
     assert "every line and complete prompt" in flowed
     assert "Before the person approves the current production scope, make zero paid video submits" in flowed
-    assert "Call `image_gen` only when the person explicitly asks" in flowed
-    assert "受影响段" in text and "原制作确认需按变更范围复核" in (SCRIPTS / "state.py").read_text()
-    assert "max(2s, planned × 25%)" in text
-    assert "Delivery means `share_file`" in text
+    # U3 since 7c8fa116: image_gen also draws a requested promotional shot's
+    # artwork, but never an anchor nobody asked for.
+    assert "Call `image_gen` within the authorized production scope" in flowed
+    assert ("With zero assets and no request to generate pictures, use the exact same "
+            "textual base in every segment and do not call `image_gen`") in docs_flowed
+    assert "受影响段" in docs and "原制作确认需按变更范围复核" in (SCRIPTS / "state.py").read_text()
+    assert "max(2s, planned × 25%)" in quality
+    assert "max(2.0, planned * 0.25)" in (SCRIPTS / "state.py").read_text()
+    # U6 since 7c8fa116: every cut is IMS, and its result card is the delivery.
+    assert "Deliver the final video from the playable card returned by `video_compose`" in flowed
+    assert "Confirm playback before reporting delivery" in flowed
     assert "禁图床 / 网盘" in text and "ssh -R" in text and "禁对外监听" in text
     assert "401/403" in text and "stop and explain" in flowed
     assert "HyperFrames is retired; never reintroduce it" in flowed

@@ -3,6 +3,7 @@ import asyncio
 import re
 from contextlib import suppress
 
+import httpx
 from sqlalchemy import select
 
 from agent import effect_ledger as effects
@@ -24,6 +25,19 @@ class RuntimePreparationUncertain(effects.EffectNotDispatchableError):
         super().__init__(message)
         if user_message:
             self.user_message = user_message
+
+
+class DesktopLowSpace(effects.EffectNotDispatchableError):
+    """The Action Server refused to start a preparation for lack of disk space.
+
+    The refusal is a complete answer given before any work, so the effect is
+    settled as failed with this code instead of being left uncertain.
+    """
+    code = "DESKTOP_LOW_SPACE"
+    user_message = "云电脑磁盘空间不足。释放空间或扩容后，请点「重新生成」。"
+
+    def __init__(self):
+        super().__init__("Cloud desktop rejected preparation due to insufficient disk space")
 
 
 def runtime_read_lease(sandbox):
@@ -138,6 +152,28 @@ async def runtime_context(sandbox, lease):
     return run, resource, context["journal_id"], project_id, event_id
 
 
+def _action_error_detail(exc, status):
+    """The ``detail`` code of an Action Server error response with ``status``."""
+    if not isinstance(exc, httpx.HTTPStatusError) or exc.response is None or exc.response.status_code != status:
+        return None
+    try:
+        body = exc.response.json()
+    except Exception:
+        # This runs inside the preparation's failure handler: an unreadable
+        # body must leave the original error and its uncertainty in place.
+        return None
+    return body.get("detail") if isinstance(body, dict) else None
+
+
+def _rejected_for_low_space(stage, exc):
+    # Both endpoints check capacity before allocating the cache task or
+    # spawning the directory command. Compound preparations can still have
+    # side effects before the rejection and must retain their uncertainty.
+    path = {"project_directory": "/execute", "cache_admit": "/cache/admit"}.get(stage)
+    return (path is not None and _action_error_detail(exc, 507) == DesktopLowSpace.code
+            and exc.request.method == "POST" and exc.request.url.path == path)
+
+
 def definitive_rejection(stage, exc):
     """A complete desktop answer that settles a preparation stage without work.
 
@@ -148,19 +184,9 @@ def definitive_rejection(stage, exc):
     so the stage succeeded with ``released=False`` instead of parking the
     effect in manual review every text-only turn.
     """
-    import httpx
-    if stage != "cache_release" or not isinstance(exc, httpx.HTTPStatusError):
-        return None
-    response = exc.response
-    if response is None or response.status_code != 409:
-        return None
-    try:
-        detail = response.json().get("detail")
-    except Exception:
-        return None
-    if detail != "CACHE_TASK_FENCE_CHANGED":
-        return None
-    return {"released": False, "reason": detail}
+    if stage == "cache_release" and _action_error_detail(exc, 409) == "CACHE_TASK_FENCE_CHANGED":
+        return {"released": False, "reason": "CACHE_TASK_FENCE_CHANGED"}
+    return None
 
 
 async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None, payload, operation,
@@ -211,6 +237,8 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
         if set(receipt) != {"result", "remote_exclusivity_verified"} or receipt["remote_exclusivity_verified"] is not False:
             raise effects.EffectNotDispatchableError("Runtime preparation receipt is unavailable")
         return receipt["result"]
+    if snapshot.state == "failed" and snapshot.provider_receipt == {"code": DesktopLowSpace.code}:
+        raise DesktopLowSpace()
     if snapshot.state != "prepared":
         raise RuntimePreparationUncertain("Runtime preparation already crossed its send boundary",
             user_message="这一步准备操作已经发出过、还没有确认结果，不会重复发送。请等几秒再点「重新生成」。")
@@ -237,6 +265,10 @@ async def run_runtime_operation(sandbox, *, session_id, user_id, stage, key=None
         return result
     except BaseException as exc:
         bound.closed = True
+        if bound.dispatched == 1 and not bound.active_clients and _rejected_for_low_space(stage, exc):
+            await effects.settle_effect(claim, state="failed", error=DesktopLowSpace.code,
+                receipt={"code": DesktopLowSpace.code})
+            raise DesktopLowSpace() from exc
         definitive = definitive_rejection(stage, exc)
         if definitive is not None and not bound.active_clients:
             receipt = {"result": definitive, "remote_exclusivity_verified": False}

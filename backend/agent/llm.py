@@ -1200,8 +1200,6 @@ async def _stream_responses_api(
     This function calls the Responses API endpoint directly via httpx,
     parsing the SSE event stream into our standard event format.
     """
-    import httpx
-
     provider_kwargs = _get_provider_kwargs(model_id)
     api_key = provider_kwargs.get("api_key", "")
     api_base = provider_kwargs.get("api_base", "")
@@ -1364,9 +1362,14 @@ async def _stream_responses_api(
         await _assert_dispatch_allowed(trace_ctx)
         from agent.stream_deadline import limits_for
         progress_limits = limits_for(model_id, variant, purpose)
-        async with httpx.AsyncClient(timeout=request_timeout(
-                read_seconds=max(progress_limits.first_progress, progress_limits.idle))) as client:
-            async with ProviderStream(client.stream("POST", url, headers=headers, json=payload)) as resp:
+        # One pooled client per event loop (agent.gateway); the response, not
+        # the client, is closed when this request ends or is cancelled.
+        from contextlib import nullcontext
+        from agent.gateway import responses_client
+        timeout = request_timeout(read_seconds=max(progress_limits.first_progress, progress_limits.idle))
+        async with nullcontext(responses_client()) as client:
+            async with ProviderStream(client.stream("POST", url, headers=headers, json=payload,
+                                                    timeout=timeout)) as resp:
                 if resp.status_code != 200:
                     with provider_wait():
                         body = await resp.aread()

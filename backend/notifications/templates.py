@@ -64,11 +64,11 @@ TEMPLATES = {
         'vi-VN': ('Đăng thất bại', '“{name}” đăng không thành công, hãy kiểm tra.')},
     'first_video_ready': {
         'zh-CN': ('你的第一条视频做好了', '15 秒竖屏短片已出片，点开看看，还能一键发到抖音。'),
-        'en-US': ('Your first video is ready', 'The 15-second vertical clip is done. Open it, then post it to Douyin in one tap.'),
+        'en-US': ('First video is ready', 'The 15-second vertical clip is done. Open it, then post it to Douyin in one tap.'),
         'vi-VN': ('Video đầu tiên của bạn đã xong', 'Clip dọc 15 giây đã hoàn thành. Mở xem và đăng lên Douyin chỉ với một chạm.')},
     'first_video_failed': {
         'zh-CN': ('第一条视频没做成', '这次生成没有成功，点开看看怎么办。'),
-        'en-US': ('Your first video did not finish', 'Generation did not succeed. Open the chat to continue.'),
+        'en-US': ('First video not finished', 'Generation did not succeed. Open the chat to continue.'),
         'vi-VN': ('Video đầu tiên chưa làm được', 'Lần tạo này không thành công. Mở cuộc trò chuyện để tiếp tục.')},
     'footage_edit_ready': {
         'zh-CN': ('你拍我剪：成片好了', '你拍的素材剪好了，点开看看，可以保存或发到抖音。'),
@@ -80,7 +80,7 @@ TEMPLATES = {
         'vi-VN': ('Bạn quay tôi dựng: chưa dựng được', 'Lần ghép này không thành công. Mở cuộc trò chuyện để tiếp tục.')},
     'trajectory_turn_failed': {
         'zh-CN': ('有一轮对话失败', '{name}，点开看哪一步出了问题。'),
-        'en-US': ('A conversation turn failed', '{name}. See which step broke.'),
+        'en-US': ('Conversation turn failed', '{name}. See which step broke.'),
         'vi-VN': ('Một lượt trò chuyện thất bại', '{name}. Xem bước nào gặp lỗi.')},
 }
 PLATFORMS = {

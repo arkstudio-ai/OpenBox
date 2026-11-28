@@ -34,7 +34,8 @@ def test_projection_preserves_claim_without_inventing_subjects(statement):
 
 async def test_background_search_and_refresh_keep_same_authoritative_metadata(runtime_env):
     scope, config, _, _ = runtime_env
-    row = await service.create_note(**identity(scope), project_id=scope["p1"],
+    # A personal note: project-scoped notes are searchable but stay out of the core.
+    row = await service.create_note(**identity(scope), project_id=None,
                                     summary="林悦只负责云杉项目；银杏项目负责人尚未确定。")
     async with get_db_session() as db:
         access = await resolve_access_scope(db, **identity(scope), project_id=scope["p1"])

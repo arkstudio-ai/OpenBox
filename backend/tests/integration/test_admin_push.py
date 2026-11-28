@@ -10,7 +10,7 @@ from db.base import get_db_session
 from db.models.push import PushDelivery
 from db.models.user import User
 from notifications.runtime import PushWorker
-from notifications.templates import TEMPLATES, render_template, test_template as render_test
+from notifications.templates import TEMPLATES, language, pick, render_template, test_template as render_test
 from tests.integration.test_mobile_push_api import setup, login, bind, make_due_in_background  # noqa: F401
 
 
@@ -35,7 +35,7 @@ async def test_admin_web_and_mobile_share_only_the_current_phone(setup, platform
     assert before.status_code == 200, before.text
     data = before.json()
     assert data['device']['ready'] and data['device']['platform'] == platform
-    assert len(data['templates']) == 10
+    assert [template['id'] for template in data['templates']] == list(TEMPLATES)
     assert 'token' not in data['device'] and 'tokenHash' not in data['device']
     assert data['presence']['pushAllowed'] is False
     request_id = str(uuid4())
@@ -122,7 +122,10 @@ def test_all_copy_is_short_bounded_and_has_distinct_business_meaning(locale):
         title, body = render_template(kind, '超长任务名称\n\t\x00\u202e' * 100, locale)
         assert len(title) <= 24 and len(body) <= (36 if locale == 'zh-CN' else 80)
         assert '\n' not in body and '\x00' not in body and '\u202e' not in body
-        if kind != 'system_test': assert '…' in body
+        fixed_body = pick(TEMPLATES[kind], language(locale))[1]
+        # A name is truncated, never copied whole; fixed copy never carries one.
+        if '{name}' in fixed_body: assert '…' in body
+        else: assert body == fixed_body
         test_title, test_body = render_test(kind, locale)
         assert len(test_title) <= 32 and len(test_body) <= 80
     assert render_template('input_required', '任务', locale) != render_template('approval_required', '任务', locale)

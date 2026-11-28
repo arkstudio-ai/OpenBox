@@ -257,9 +257,17 @@ async def test_cloud_repair_composite_stops_after_inflight_command_returns(targe
 
 @pytest.fixture
 def cloud_boundary(target, monkeypatch):
-    """Keep real lifecycle/install/verify; replace only ECD command delivery."""
-    from sandbox import wuying_ecd, wuying_desktop_service
+    """Keep real lifecycle/install/verify; replace only ECD command delivery.
+
+    Install first runs its real guest prerequisites through this delivery: the
+    stream receipt probe (answered as an already patched guest, so nothing is
+    published) and the built-in video skill publication (accepted without
+    executing it). They are recorded as "stream" and "skill".
+    """
+    from scripts import wuying_patch_stream_output as stream_patch
+    from sandbox import skill_runtime, wuying_ecd, wuying_desktop_service
     calls = []
+    skill_commands = frozenset(skill_runtime.video_skill_commands())
     target.config.wuying_channel = "ssh"
     target.config.wuying_relay_host = "fixture-relay.invalid"
     target.config.wuying_relay_user = "fixture"
@@ -268,9 +276,16 @@ def cloud_boundary(target, monkeypatch):
     monkeypatch.setattr(wuying_desktop_service, "get_config", lambda: target.config)
 
     async def command(desktop_id, script, timeout=300):
-        calls.append("stop" if script == "systemctl disable --now openbox-tunnel" else "command")
-        if calls[-1] == "stop":
+        if script == "systemctl disable --now openbox-tunnel":
+            calls.append("stop")
             raise RuntimeError("fixture cloud stop unavailable")
+        if stream_patch.REMOTE in script and "before==after" in script:
+            calls.append("stream")
+            return json.dumps({"sha256": "0" * 64, "current": True})
+        if script in skill_commands:
+            calls.append("skill")
+            return "fixture skill command accepted"
+        calls.append("command")
         if script.endswith(" --check"):
             return json.dumps({"version": browser_runtime.RUNTIME_VERSION, "ready": True})
         assert "OPENBOX_PUBKEY=" in script
@@ -393,7 +408,7 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
     The real next status/resync reinstalls and verifies that same row. Cloud
     delivery is a local fixture; this does not prove a physical guest repair.
     """
-    from sandbox import entitlement, wuying_desktop_service
+    from sandbox import entitlement, skill_runtime, wuying_desktop_service
     monkeypatch.setattr(entitlement, "subscription_sandbox_enabled", lambda: False)
     monkeypatch.setattr(wuying_desktop_service, "get_config", lambda: target.config)
     initial = "creating" if flow == "create" else "starting"
@@ -415,6 +430,10 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
     assert "fixture install delivery failed" in pending["channel_error"]
     monkeypatch.setattr(channel, "run_desktop_command", command)
     calls_before_status = list(cloud_boundary)
+    # Status describes the desktop, then reinstalls: stream probe, runtime
+    # check, built-in skill publication and the channel install itself.
+    reinstall = ["describe", "stream", "command",
+                 *["skill"] * len(skill_runtime.video_skill_commands()), "command"]
     service = wuying_desktop_service.WuyingDesktopService()
     remote.pause, remote.browser_bad = "alive1", True
     remote.release.clear()
@@ -425,7 +444,7 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
         await asyncio.wait_for(remote.reached.wait(), 4)
         assert response["desktopId"] == target.record["desktop_id"]
         assert response["state"] == "starting" and response["channel"]["state"] == "down"
-        assert cloud_boundary == calls_before_status + ["describe", "command", "command"]
+        assert cloud_boundary == calls_before_status + reinstall
         remote.release.set()
         await asyncio.wait_for(recovery, 4)
         current = await cloud_desktop_repo.get_for_workspace(target.workspace)
@@ -434,7 +453,7 @@ async def test_partial_install_failure_resumes_same_desktop_through_status(
         assert current["status"] == "starting" and current["tunnel_state"] == "down"
         assert "did not pass readiness" in current["channel_error"]
         assert service._payload(current)["channel"]["error"] == current["channel_error"]
-        assert cloud_boundary == calls_before_status + ["describe", "command", "command"]
+        assert cloud_boundary == calls_before_status + reinstall
     finally:
         remote.release.set()
         if recovery is not None:

@@ -158,7 +158,15 @@ class ToolPack(Protocol):
 
 
 class Plugin(Protocol):
-    """A first-party module registered once at startup; ``startup``/``shutdown``/``mount`` are optional."""
+    """A first-party module registered once at startup.
+
+    Optional hooks, each run at a fixed position of the entry point's lifespan:
+    ``mount(app)`` adds routes; ``startup(app)`` runs once the database engine
+    is ready; ``start_background(app)`` runs after the kernel's own background
+    services started; ``stop_background(app)`` returns named stop operations
+    that the entry point runs together with its own; ``shutdown(app)`` runs
+    last, after agent loops drained.
+    """
 
     name: str
 
@@ -415,6 +423,26 @@ class KernelExtensions:
             start = getattr(plugin, "startup", None)
             if start is not None:
                 await start(app)
+
+    async def start_background(self, app) -> None:
+        """Plugins' background workers, after the kernel's own background services started."""
+        for plugin in self.plugins:
+            start = getattr(plugin, "start_background", None)
+            if start is not None:
+                await start(app)
+
+    def stop_background(self, app) -> dict[str, Any]:
+        """Plugins' named stop operations, for the entry point to run alongside its own."""
+        stops: dict[str, Any] = {}
+        for plugin in self.plugins:
+            stop = getattr(plugin, "stop_background", None)
+            if stop is None:
+                continue
+            for name, operation in stop(app).items():
+                if name in stops:
+                    raise ValueError(f"background service {name!r} is registered twice")
+                stops[name] = operation
+        return stops
 
     async def shutdown(self, app) -> None:
         for plugin in reversed(self.plugins):

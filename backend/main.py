@@ -86,9 +86,11 @@ def _build_kernel_extensions(config):
     through ``agent.extensions.extensions()``.
     """
     from agent.extensions import KernelExtensions
-    from memory.plugin import MemoryPlugin
+    from memory.plugin import MemoryCleanup, MemoryPlugin
     from trajectory.plugin import TrajectoryPlugin
-    return KernelExtensions().add(TrajectoryPlugin()).add(MemoryPlugin())
+    # MemoryCleanup carries deletion and retention work that must keep running
+    # even when the MemoryPlugin feature is left out (memory/plugin.py).
+    return KernelExtensions().add(TrajectoryPlugin()).add(MemoryCleanup()).add(MemoryPlugin())
 
 
 async def _stop_background_services(**services) -> None:
@@ -224,21 +226,8 @@ async def lifespan(app: FastAPI):
     from tool.registry import platform_plugin_watcher
     await platform_plugin_watcher.start(interval_seconds=5.0)
 
-    from memory.extraction import MemoryExtractionWorker
-    from memory.outbox import MemoryIndexWorker
-    from memory.wiki.worker import MemoryWikiWorker
-    from memory.wiki.organization_worker import WikiOrganizationWorker
-    from memory.documents.worker import MemoryDocumentWorker
-    memory_extraction_worker = MemoryExtractionWorker()
-    memory_index_worker = MemoryIndexWorker(config.memory)
-    memory_wiki_worker = MemoryWikiWorker(config.memory)
-    wiki_organization_worker = WikiOrganizationWorker(config.memory)
-    memory_document_worker = MemoryDocumentWorker(config.memory)
-    await memory_extraction_worker.start()
-    memory_index_worker.start()
-    memory_wiki_worker.start()
-    wiki_organization_worker.start()
-    memory_document_worker.start()
+    # Plugins' background workers start after the kernel's own services.
+    await kernel_extensions.start_background(app)
     from assets.descriptions import DescriptionWorker
     asset_description_worker = DescriptionWorker()
     asset_description_worker.start()
@@ -260,8 +249,6 @@ async def lifespan(app: FastAPI):
         await pricing_rules.start()
     except Exception as e:
         log.warning(f"Pricing rules unavailable at startup (base rates.json applies): {e}")
-    from memory.providers.configured_read import schedule_transport_warmup
-    memory_transport_warmup = schedule_transport_warmup(config.memory)
     from video import shot_review
     shot_review.start()
     try:
@@ -269,8 +256,6 @@ async def lifespan(app: FastAPI):
     finally:
         await shot_review.stop()
     log.info("OpenBox shutting down, cleaning up...")
-    if memory_transport_warmup is not None:
-        memory_transport_warmup.cancel()
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
         from sandbox.wuying_desktop_service import wuying_desktop_service
         wuying_desktop_service.stop_patrol()
@@ -284,18 +269,10 @@ async def lifespan(app: FastAPI):
         plugins=platform_plugin_watcher.stop(),
         pricing=pricing_rules.stop(),
         fold_warmup=stop_fold_warmup(),
-        transport_warmup=asyncio.gather(
-            *([memory_transport_warmup] if memory_transport_warmup is not None else []),
-            return_exceptions=True,
-        ),
-        wiki=memory_wiki_worker.stop(),
-        wiki_organization=wiki_organization_worker.stop(),
-        documents=memory_document_worker.stop(),
         asset_descriptions=asset_description_worker.stop(),
-        memory_index=memory_index_worker.stop(),
-        memory_extraction=memory_extraction_worker.stop(),
         inbox_janitor=inbox_janitor.stop(),
         push=push_worker.stop(),
+        **kernel_extensions.stop_background(app),
     )
 
     # Abort active agent loops
@@ -316,10 +293,6 @@ async def lifespan(app: FastAPI):
     # Execution leases recover interrupted runs. Never mark every busy
     # session as failed here: other workers may still be executing them.
 
-    # Workers and agent loops may still own pooled memory requests until
-    # they have drained; closing the pool first can strand their shutdown.
-    from memory.providers.common import close_shared_clients
-    await close_shared_clients()
     from agent.gateway import close_clients
     await close_clients()
 
@@ -434,27 +407,6 @@ def create_app() -> FastAPI:
     from api.assistant_appearance import router as assistant_appearance_router
     application.include_router(assistant_appearance_router)
 
-    from api.memory_search import router as memory_search_router
-    from api.memory_debug import router as memory_debug_router
-    from api.memory_backfill import router as memory_backfill_router
-    from memory.wiki.api import router as memory_wiki_router
-    from memory.wiki.organization_api import router as wiki_organization_router
-    from memory.wiki.exchange_api import router as wiki_exchange_router
-    from memory.wiki.workflow_api import router as wiki_workflow_router
-    application.include_router(memory_search_router)
-    from memory.experience_api import router as memory_experience_router
-    application.include_router(memory_experience_router)
-    application.include_router(memory_debug_router)
-    application.include_router(memory_backfill_router)
-    application.include_router(memory_wiki_router)
-    from memory.documents.api import router as memory_documents_router
-    application.include_router(memory_documents_router)
-    application.include_router(wiki_organization_router)
-    application.include_router(wiki_exchange_router)
-    application.include_router(wiki_workflow_router)
-    from api.memories import router as memories_router
-    application.include_router(memories_router)
-
     from api.video_productions import router as video_productions_router
     application.include_router(video_productions_router)
 
@@ -484,7 +436,8 @@ def create_app() -> FastAPI:
     application.include_router(admin_billing_router)
     application.include_router(admin_pricing_router)
     application.include_router(admin_partners_router)
-    # Plugin routes (the embedded admin trajectory API) keep this position in the route order.
+    # Plugin routes mount here, in registration order (the embedded admin
+    # trajectory API first); none of them overlaps a route included above.
     application.state.kernel_extensions.mount(application)
 
     from api.billing import router as billing_router

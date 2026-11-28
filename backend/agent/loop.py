@@ -1131,6 +1131,7 @@ async def run_loop(
         config = get_config()
         memory_turn_contexts = {}
         device_locales: dict[str, DeviceLocale] = {}
+        inbox_accepted_at: dict[str, datetime | None] = {}  # Inbox id -> accepted_at, for this run
 
         def _memory_flags():
             from memory.session_policy import memory_isolated
@@ -2258,6 +2259,11 @@ async def run_loop(
                         message_id: build_openai_native_replay_sequence(records)
                         for message_id, records in grouped_replay.items()
                     }
+                accepted_times = None
+                if not for_compaction and _accepted_time_outside_system_prompt(session.workspace_id):
+                    accepted_times = await _accepted_time_prefixes(
+                        projected_messages, user_id=user_id,
+                        timezone_name=device_locale.timezone, accepted_at=inbox_accepted_at)
                 result = _to_llm_messages(
                     projected_messages,
                     user_id=user_id,
@@ -2265,6 +2271,7 @@ async def run_loop(
                     provider_replay_by_message=provider_replay_by_message,
                     memory_projection_verified=True,
                     assistant_projection_verified=assistant_view is not None,
+                    user_prefixes=accepted_times,
                 )
                 # Before any reminder, so the recall block keeps one position
                 # while this turn's steps add messages after it. Compaction
@@ -3734,6 +3741,81 @@ async def run_loop(
                     )
 
 
+def _accepted_time_outside_system_prompt(workspace_id: str | None) -> bool:
+    """The agent_tuning switch; a config without agent_tuning keeps it off."""
+    from core.config import agent_tuning_enabled
+    try:
+        return agent_tuning_enabled("accepted_time_outside_system_prompt", workspace_id or None)
+    except AttributeError:
+        return False
+
+
+#: Text origins that are a user's request (as in core.device_locale.for_turn).
+_REQUEST_ORIGINS = frozenset({"human", "assistant_delegation"})
+
+
+async def _accepted_time_prefixes(
+    messages: Sequence[MessageWithParts],
+    *,
+    user_id: str,
+    timezone_name: str | None,
+    accepted_at: dict[str, datetime | None],
+) -> dict[str, str]:
+    """Each user request's local accepted time, keyed by message id.
+
+    Rendered into the request only, never stored, and only from stored
+    values, so an earlier message renders the same bytes on every turn.
+    The time is the Inbox item's ``accepted_at`` (the message's
+    ``created_at`` is when the item was claimed, later when it queued),
+    falling back to ``created_at`` for input that did not come through the
+    Inbox. The time zone is the one frozen on that input, else the turn's.
+    ``accepted_at`` caches Inbox lookups (inbox id -> time) for the run.
+    """
+    from zoneinfo import ZoneInfo
+
+    requests: list[tuple[str, str, str | None, str]] = []
+    for message in messages:
+        role = message.role if isinstance(message.role, str) else message.role.value
+        if role != "user":
+            continue
+        for part in message.parts or ():
+            get = part.get if isinstance(part, dict) else lambda key, part=part: getattr(part, key, None)
+            if get("type") != "text" or get("origin") not in _REQUEST_ORIGINS or get("ignored"):
+                continue
+            reference = get("origin_ref") or {}
+            frozen = DeviceLocale.from_origin(reference)
+            zone = (frozen.timezone if frozen else None) or timezone_name
+            if zone:
+                inbox_id = reference.get("inbox_id")
+                requests.append((message.id, zone, inbox_id if isinstance(inbox_id, str) else None,
+                                 message.created_at or ""))
+            break
+    missing = sorted({inbox_id for _, _, inbox_id, _ in requests if inbox_id and inbox_id not in accepted_at})
+    if missing:
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.agent_inbox import AgentInboxItem
+        async with get_db_session() as db:
+            rows = (await db.execute(select(AgentInboxItem.id, AgentInboxItem.accepted_at).where(
+                AgentInboxItem.id.in_(missing), AgentInboxItem.user_id == user_id))).all()
+        found = dict(rows)
+        for inbox_id in missing:
+            accepted_at[inbox_id] = found.get(inbox_id)
+    prefixes: dict[str, str] = {}
+    for message_id, zone, inbox_id, created_at in requests:
+        when = accepted_at.get(inbox_id) if inbox_id else None
+        if when is None:
+            try:
+                when = datetime.fromisoformat(created_at)
+            except ValueError:
+                continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        local = when.astimezone(ZoneInfo(zone)).isoformat(timespec="minutes")
+        prefixes[message_id] = f"[Local time when this user request was accepted: {local}]"
+    return prefixes
+
+
 @latency_measured_span("context.system_prompt")
 async def _build_system_prompt(
     agent_def: AgentDef,
@@ -3765,7 +3847,9 @@ async def _build_system_prompt(
     calendar = f"Today's date: {local_now.date().isoformat()}"
     if locale.timezone:
         calendar += f"\nUser's time zone: {locale.timezone}."
-        if turn_started_at:
+        if _accepted_time_outside_system_prompt(workspace_id):
+            pass  # Each user request carries its own accepted time (_accepted_time_prefixes).
+        elif turn_started_at:
             try:
                 started = datetime.fromisoformat(turn_started_at)
             except ValueError:
@@ -4056,8 +4140,12 @@ def _to_llm_messages(
     provider_replay_by_message: Mapping[str, list[dict]] | None = None,
     memory_projection_verified: bool = False,
     assistant_projection_verified: bool = False,
+    user_prefixes: Mapping[str, str] | None = None,
 ) -> list[dict]:
     """Convert internal messages to LLM API format.
+
+    ``user_prefixes`` (message id -> text) is put ahead of that user
+    message's content in the request only, e.g. its accepted time.
 
     For assistant messages with tool calls, produces proper function-calling format:
     1. assistant message with tool_calls array
@@ -4158,6 +4246,8 @@ def _to_llm_messages(
                 )
             if text_parts or image_urls:
                 user_msg = {"role": "user", "content": "\n\n".join(text_parts) or "(image attached)"}
+                if user_prefixes and user_prefixes.get(msg.id):
+                    user_msg["content"] = f"{user_prefixes[msg.id]}\n\n{user_msg['content']}"
                 if image_urls:
                     # Kept out of `content` so reminder/caching/token passes
                     # stay on plain strings; resolve_images fetches the bytes

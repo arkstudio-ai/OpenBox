@@ -72,9 +72,11 @@ async def test_cost_stage_summary_preserves_reported_source_and_keeps_work_runni
     monkeypatch.setattr(long_chat.processor, "stream_llm", provider)
     monkeypatch.setattr(long_chat.loop, "collect_exposure_signals", collect_signals)
     await _send(long_chat, "Continue using the original material.")
-    assert [kind for kind, _ in calls] == ["summary", "model"]
+    # A summary cut at the output limit is asked for once more, then dropped.
+    assert [kind for kind, _ in calls] == ["summary"] * (1 if complete else 2) + ["model"]
     assert "Keep an evidence ledger" in calls[0][1][-1]["content"]
-    continuation = "\n".join(str(message.get("content", "")) for message in calls[1][1])
+    assert all("Keep an evidence ledger" in data[-1]["content"] for kind, data in calls if kind == "summary")
+    continuation = "\n".join(str(message.get("content", "")) for message in calls[-1][1])
     assert citation in continuation
     assert (compaction.STAGE_EVIDENCE_HEADING in continuation) is complete
     assert observed_intents == ["Continue using the original material."] * 3

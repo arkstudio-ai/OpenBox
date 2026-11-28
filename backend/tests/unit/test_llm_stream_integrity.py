@@ -43,6 +43,12 @@ async def test_wire_completion_is_required_for_a_full_filename(monkeypatch, fini
             )]
     assert wrappers[0].received_finish_reason == finish
     text = "".join(e["text"] for e in events if e["type"] == "text_delta")
+    if finish == "length" and purpose == "chat":
+        # A chat reply cut at the output limit is kept, visibly marked.
+        assert text == "VID_20261019_0716.mp4" + llm.TRUNCATED_REPLY_NOTE
+        assert events[-1] == {"type": "finish", "reason": "stop", "truncated": True,
+                              "usage": events[-1]["usage"]}
+        return
     assert text == ("VID_2026" if finish is None else "VID_20261019_0716.mp4")
     assert events[-1]["type"] == ("finish" if finish == "stop" else "error")
     if finish != "stop":

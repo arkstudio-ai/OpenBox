@@ -240,7 +240,8 @@ async def test_failed_chunk_never_replaces_original_history(state, monkeypatch, 
     assert await compaction.process_compaction(
         "s1", await get_messages("s1", user_id="u1"), "test/main", auto=False, user_id="u1",
     ) == "stop"
-    assert calls == ["compaction_chunk"]
+    # A chunk cut at the output limit is asked for once more, shorter.
+    assert calls == ["compaction_chunk"] * (2 if failure == "truncated" else 1)
     surface = await load_canonical_model_surface("s1", user_id="u1", repair_tail=False)
     assert set(ids) <= {message.id for message in surface.messages}
     assert not any(message.summary and message.finish for message in surface.messages)

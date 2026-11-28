@@ -35,9 +35,16 @@ async def test_litellm_summary_requires_a_normal_terminal_chunk(monkeypatch, pur
     )]
     assert any(event["type"] == "text_delta" for event in events)
     assert any(event["type"] == "usage" for event in events)
+    if reason == "length" and purpose == "chat":
+        # A chat reply cut at the output limit is kept and marked; a summary is not.
+        assert events[-1]["type"] == "finish" and events[-1]["truncated"] is True
+        return
     assert events[-1]["type"] == ("finish" if reason == "stop" else "error")
     if reason != "stop":
         assert not any(event["type"] == "finish" for event in events)
+    # An output-limit stop is typed so compaction can ask for a shorter summary.
+    assert isinstance(events[-1].get("error"), llm.OutputLimitReached) == (
+        reason == "length" and purpose != "chat")
 
 
 @pytest.mark.parametrize("purpose", ["chat", "compaction", "compaction_chunk"])
@@ -64,3 +71,5 @@ async def test_responses_summary_requires_a_completed_event(monkeypatch, purpose
     assert events[-1]["type"] == ("finish" if terminal == "response.completed" else "error")
     if terminal != "response.completed":
         assert not any(event["type"] == "finish" for event in events)
+    # An output-limit stop is typed so compaction can ask for a shorter summary.
+    assert isinstance(events[-1].get("error"), llm.OutputLimitReached) == (terminal == "response.incomplete")

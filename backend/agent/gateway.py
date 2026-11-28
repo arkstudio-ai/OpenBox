@@ -24,6 +24,7 @@ CAPTION_FIRST_PROGRESS_SECONDS = 30.0
 IDLE_PROGRESS_SECONDS = 60.0
 _current = ContextVar("gateway_observation", default=None)
 _clients = weakref.WeakKeyDictionary()
+_responses_clients = weakref.WeakKeyDictionary()
 
 
 class GatewayTimeout(ModelResponseDeadline):
@@ -189,7 +190,28 @@ async def close_stream(stream):
             await result
 
 
+def responses_client():
+    """The Responses adapter's HTTP pool for the running event loop.
+
+    It replaces a client per request, so it keeps that client's behaviour:
+    no cap on concurrent connections, and timeouts passed per request.
+    Completed SSE bodies are drained (as for the SDK pool) so the
+    connection goes back to the pool; a cancelled or unfinished stream
+    closes its connection instead. ``close_clients`` closes it on shutdown.
+    """
+    from agent.sse_transport import preserve_completed_sse
+    loop = asyncio.get_running_loop()
+    client = _responses_clients.get(loop)
+    if client is None or getattr(client, "is_closed", False):
+        client = _responses_clients[loop] = httpx.AsyncClient(
+            event_hooks={"response": [preserve_completed_sse]},
+            limits=httpx.Limits(max_connections=None, max_keepalive_connections=20, keepalive_expiry=30))
+    return client
+
+
 async def close_clients():
-    client = _clients.pop(asyncio.get_running_loop(), None)
-    if client is not None:
-        await client.aclose()
+    loop = asyncio.get_running_loop()
+    for clients in (_clients, _responses_clients):
+        client = clients.pop(loop, None)
+        if client is not None and getattr(client, "aclose", None) is not None:
+            await client.aclose()

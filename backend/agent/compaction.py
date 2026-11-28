@@ -349,6 +349,31 @@ async def _summary_stream(*, abort: asyncio.Event | None = None, provenance=None
             raise CompactionInterrupted()
 
 
+def _reached_output_limit(event: dict) -> bool:
+    """Whether a summary stream stopped because it hit its output limit."""
+    from agent.llm import OutputLimitReached
+
+    if event["type"] == "finish":
+        return event.get("reason") == "length"
+    return event["type"] == "error" and isinstance(event.get("error"), OutputLimitReached)
+
+
+def _shorter_summary_request(messages: list[dict], output_limit: int) -> list[dict]:
+    """The same summary request, asking for a shorter answer after a cut one.
+
+    A summary cut at the limit loses the template's later sections, so it is
+    not used; repeating the identical request would most likely be cut again.
+    Only the final instruction changes, so the provider can reuse the prefix.
+    """
+    prompt = messages[-1]["content"]
+    return messages[:-1] + [{"role": "user", "content": (
+        f"{prompt}\n\nYour previous summary was cut off at the {output_limit}-token output limit. "
+        f"Write it again with every section of the template but far more concisely, in at most "
+        f"about {output_limit // 2} tokens. Keep exact identifiers, constraints and the pending "
+        "plan; drop narrative and repeated detail."
+    )}]
+
+
 def _compaction_input_tokens(messages: list[dict]) -> int:
     return count_payload(messages)
 
@@ -428,36 +453,52 @@ async def _chunked_summarize(
     # Summarize each chunk independently
     from tool.tool import ToolContext
 
+    from contextlib import aclosing
+
     summaries = []
     for i, chunk_msgs in enumerate(chunks):
         summary_text = ""
         finished = False
         try:
-            ctx = ToolContext(session_id=session_id, user_id=user_id)
-            ctx._native_tool_plan = prefix.native_plan
-            async for event in _summary_stream(
-                abort=abort,
-                provenance=provenance,
-                agent_def=None,
-                system=prefix.system,
-                messages=chunk_msgs,
-                tools=prefix.tools,
-                model_id=model_id,
-                ctx=ctx,
-                billing_kind="compaction_chunk",
-                variant=prefix.variant,
-                cache_key=prefix.cache_key,
-                max_output_tokens=output_limit,
-                tool_choice="none",
-            ):
-                if event["type"] == "text_delta":
-                    summary_text += event.get("text", "")
-                elif event["type"] == "error":
-                    raise CompactionPreparationError(f"Chunk {i + 1} provider failed")
-                elif event["type"] == "finish":
-                    if event.get("reason") in {"length", "content_filter", "error"}:
-                        raise CompactionPreparationError(f"Chunk {i + 1} summary was incomplete")
-                    finished = True
+            request_msgs = chunk_msgs
+            for attempt in range(2):
+                summary_text, finished, cut = "", False, False
+                ctx = ToolContext(session_id=session_id, user_id=user_id)
+                ctx._native_tool_plan = prefix.native_plan
+                async with aclosing(_summary_stream(
+                    abort=abort,
+                    provenance=provenance,
+                    agent_def=None,
+                    system=prefix.system,
+                    messages=request_msgs,
+                    tools=prefix.tools,
+                    model_id=model_id,
+                    ctx=ctx,
+                    billing_kind="compaction_chunk",
+                    variant=prefix.variant,
+                    cache_key=prefix.cache_key,
+                    max_output_tokens=output_limit,
+                    tool_choice="none",
+                )) as events:
+                    async for event in events:
+                        if event["type"] == "text_delta":
+                            summary_text += event.get("text", "")
+                        elif _reached_output_limit(event):
+                            cut = True
+                            break
+                        elif event["type"] == "error":
+                            raise CompactionPreparationError(f"Chunk {i + 1} provider failed")
+                        elif event["type"] == "finish":
+                            if event.get("reason") in {"content_filter", "error"}:
+                                raise CompactionPreparationError(f"Chunk {i + 1} summary was incomplete")
+                            finished = True
+                if not cut:
+                    break
+                if attempt:
+                    raise CompactionPreparationError(f"Chunk {i + 1} summary reached the output limit twice")
+                log.warning(f"Chunk {i + 1} summary reached the {output_limit}-token output limit; "
+                            "asking once for a shorter one")
+                request_msgs = _shorter_summary_request(chunk_msgs, output_limit)
         except Exception as e:
             from question.runtime import RunRevoked
             from agent.driver import LeaseLostError
@@ -704,46 +745,70 @@ async def process_compaction(
                            max_output_tokens=output_limit).input_tokens > safe_limit:
             raise CompactionPreparationError("Combined summaries and request prefix exceed the input budget")
         mark("request_sent")
-        async for event in _summary_stream(
-            abort=abort,
-            provenance=provenance,
-            agent_def=None,
-            system=prefix.system,
-            messages=compaction_messages,
-            tools=prefix.tools,
-            model_id=model_id,
-            ctx=ctx,
-            billing_kind="compaction",
-            variant=prefix.variant,
-            cache_key=prefix.cache_key,
-            max_output_tokens=output_limit,
-            tool_choice="none",
-        ):
-            if event["type"] == "text_delta":
-                if not summary_text:
-                    mark("first_text")
-                summary_text += event["text"]
-                # Stream to frontend in real-time
-                delta_payload = {
-                    "userId": user_id,
-                    "sessionId": session_id,
-                    "messageId": assistant.id,
-                    "partId": text_part_id,
-                    "text": event["text"],
-                }
-                if run_fence is not None:
-                    delta_payload["generation"] = run_fence[2]
-                bus.publish(MESSAGE_TEXT_DELTA, delta_payload)
-            elif event["type"] == "finish":
-                stream_usage = event.get("usage", {})
-                if event.get("reason") in {"length", "content_filter", "error"}:
-                    llm_error = True
-                    break
-                finished = True
-            elif event["type"] == "error":
-                log.error(f"Compaction LLM error: {event['error']}")
+        from contextlib import aclosing
+        request_messages = compaction_messages
+        for attempt in range(2):
+            summary_text, cut = "", False
+            async with aclosing(_summary_stream(
+                abort=abort,
+                provenance=provenance,
+                agent_def=None,
+                system=prefix.system,
+                messages=request_messages,
+                tools=prefix.tools,
+                model_id=model_id,
+                ctx=ctx,
+                billing_kind="compaction",
+                variant=prefix.variant,
+                cache_key=prefix.cache_key,
+                max_output_tokens=output_limit,
+                tool_choice="none",
+            )) as events:
+                async for event in events:
+                    if event["type"] == "text_delta":
+                        if not summary_text and not attempt:
+                            mark("first_text")
+                        summary_text += event["text"]
+                        # Stream to frontend in real-time
+                        delta_payload = {
+                            "userId": user_id,
+                            "sessionId": session_id,
+                            "messageId": assistant.id,
+                            "partId": text_part_id,
+                            "text": event["text"],
+                        }
+                        if run_fence is not None:
+                            delta_payload["generation"] = run_fence[2]
+                        bus.publish(MESSAGE_TEXT_DELTA, delta_payload)
+                    elif _reached_output_limit(event):
+                        stream_usage = event.get("usage") or stream_usage
+                        cut = True
+                        break
+                    elif event["type"] == "finish":
+                        stream_usage = event.get("usage", {})
+                        if event.get("reason") in {"content_filter", "error"}:
+                            llm_error = True
+                            break
+                        finished = True
+                    elif event["type"] == "error":
+                        log.error(f"Compaction LLM error: {event['error']}")
+                        llm_error = True
+                        break
+            if not cut:
+                break
+            # A summary cut at the output limit is not used. Ask once more for
+            # a shorter one; a second cut fails as before.
+            retry_messages = _shorter_summary_request(compaction_messages, output_limit)
+            if attempt or (await asyncio.to_thread(
+                    measure_request, model_id, retry_messages, prefix,
+                    max_output_tokens=output_limit)).input_tokens > safe_limit:
                 llm_error = True
                 break
+            log.warning(f"Compaction summary for session {session_id} reached the {output_limit}-token "
+                        "output limit; asking once for a shorter one")
+            request_messages = retry_messages
+            text_part.text = ""
+            await save_part(text_part, user_id=user_id, run_fence=run_fence)
     except BaseException as e:
         from question.runtime import RunRevoked
         from agent.driver import LeaseLostError

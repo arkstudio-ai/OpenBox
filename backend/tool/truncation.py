@@ -1,8 +1,9 @@
 """Output truncation for tool results.
 
-Truncates tool output to MAX_LINES/MAX_BYTES, saves full output
-to a temp file, and includes a hint for the LLM to access it.
-Includes periodic cleanup of old truncated output files.
+Truncates tool output to MAX_LINES/MAX_BYTES, keeping the beginning and the
+end, and saves the full output to a file on the backend host for operators.
+The model is not told about that file: its file tools run in the sandbox and
+cannot reach the backend host. Includes periodic cleanup of old files.
 """
 import asyncio
 import os
@@ -41,88 +42,140 @@ class TruncateResult:
     output_path: str | None = None
 
 
+# Share of the line and byte budget kept from the end of the output when both
+# ends are kept. The end usually carries the result (errors, exit status,
+# totals); the beginning carries the context that explains it.
+TAIL_SHARE = 0.2
+
+# The full output is stored on the backend host, which the model's file tools
+# (they run in the sandbox) cannot reach, so the note only suggests things the
+# model can do itself.
+OMITTED_NOTE = (
+    "[... {lines} lines ({bytes} bytes) omitted from the middle of this output. "
+    "The omitted part is not available to you; if you need it, run the tool "
+    "again with narrower output (filter it, or select a range with "
+    "offset/limit, head, tail or sed -n). ...]"
+)
+
+
+def _char_end_within_bytes(text: str, max_bytes: int) -> int:
+    """Largest character index whose UTF-8 prefix fits in ``max_bytes``."""
+    if max_bytes <= 0:
+        return 0
+    prefix = text[:max_bytes].encode("utf-8")[:max_bytes]
+    return len(prefix.decode("utf-8", errors="ignore"))
+
+
+def _char_start_within_bytes(text: str, max_bytes: int) -> int:
+    """Smallest character index whose UTF-8 suffix fits in ``max_bytes``."""
+    if max_bytes <= 0:
+        return len(text)
+    suffix = text[-max_bytes:].encode("utf-8")
+    if len(suffix) > max_bytes:
+        suffix = suffix[-max_bytes:]
+    return len(text) - len(suffix.decode("utf-8", errors="ignore"))
+
+
+def _head_end(text: str, max_lines: int, max_bytes: int) -> int:
+    """End (exclusive) of the head kept within the line and byte budgets."""
+    if max_lines <= 0 or max_bytes <= 0:
+        return 0
+    line_end = -1
+    for _ in range(max_lines):
+        line_end = text.find("\n", line_end + 1)
+        if line_end == -1:
+            line_end = len(text)
+            break
+    end = min(line_end, _char_end_within_bytes(text, max_bytes))
+    if end < line_end:
+        # Cut by bytes: end on a line boundary unless no whole line fits.
+        boundary = text.rfind("\n", 0, end)
+        if boundary > 0:
+            end = boundary
+    return end
+
+
+def _tail_start(text: str, max_lines: int, max_bytes: int, floor: int) -> int:
+    """Start of the tail kept within the budgets, never before ``floor``."""
+    if max_lines <= 0 or max_bytes <= 0:
+        return len(text)
+    line_start = len(text)
+    newline = len(text)
+    for _ in range(max_lines):
+        newline = text.rfind("\n", floor, newline)
+        if newline == -1:
+            line_start = floor
+            break
+        line_start = newline + 1
+    start = max(line_start, _char_start_within_bytes(text, max_bytes), floor)
+    if start > line_start:
+        # Cut by bytes: start on a line boundary unless no whole line fits.
+        boundary = text.find("\n", start)
+        if boundary != -1 and boundary + 1 < len(text):
+            start = boundary + 1
+    return start
+
+
+def _save_full_output(text: str) -> str | None:
+    try:
+        from core.identifier import ascending
+        filepath = os.path.join(_get_data_dir(), ascending("tool"))
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(text)
+        return filepath
+    except Exception as e:
+        log.warning(f"Failed to save truncated output: {e}")
+        return None
+
+
 async def truncate_output(
     text: str,
     max_lines: int = MAX_LINES,
     max_bytes: int = MAX_BYTES,
-    direction: str = "head",
-    has_task_tool: bool = False,
+    direction: str = "both",
 ) -> TruncateResult:
     """Truncate tool output to stay within limits.
 
-    If truncated, saves full output to a temp file and includes
-    a hint for the LLM on how to access it.
+    ``direction`` is ``"both"`` (keep the beginning and the end, the default),
+    ``"head"`` or ``"tail"``. The full output is still saved on the backend
+    host, but the model is not pointed at it: none of its tools can read
+    that location.
     """
     if not text:
         return TruncateResult(content="", truncated=False)
 
-    lines = text.split("\n")
+    total_lines = text.count("\n") + 1
     total_bytes = len(text.encode("utf-8"))
 
     # Check if within limits
-    if len(lines) <= max_lines and total_bytes <= max_bytes:
+    if total_lines <= max_lines and total_bytes <= max_bytes:
         return TruncateResult(content=text, truncated=False)
 
-    # Truncate
-    out = []
-    bytes_count = 0
-    hit_bytes = False
-
     if direction == "head":
-        for i, line in enumerate(lines):
-            if i >= max_lines:
-                break
-            size = len(line.encode("utf-8")) + (1 if i > 0 else 0)
-            if bytes_count + size > max_bytes:
-                hit_bytes = True
-                break
-            out.append(line)
-            bytes_count += size
-    else:  # tail
-        for i in range(len(lines) - 1, -1, -1):
-            line = lines[i]
-            size = len(line.encode("utf-8")) + 1
-            if bytes_count + size > max_bytes:
-                hit_bytes = True
-                break
-            if len(out) >= max_lines:
-                break
-            out.insert(0, line)
-            bytes_count += size
-
-    # Save full output to temp file
-    output_path = None
-    try:
-        from core.identifier import ascending
-        data_dir = _get_data_dir()
-        filename = ascending("tool")
-        filepath = os.path.join(data_dir, filename)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(text)
-        output_path = filepath
-    except Exception as e:
-        log.warning(f"Failed to save truncated output: {e}")
-
-    # Build hint
-    if has_task_tool:
-        hint = (
-            "Use the Task tool to have the explore agent process this file "
-            "with Grep and Read to find the specific content you need."
-        )
+        tail_lines = tail_bytes = 0
+    elif direction == "tail":
+        tail_lines, tail_bytes = max_lines, max_bytes
     else:
-        hint = "Use Grep to search the full content or Read with offset/limit to see more."
+        tail_lines = int(max_lines * TAIL_SHARE)
+        tail_bytes = int(max_bytes * TAIL_SHARE)
+    head_end = _head_end(text, max_lines - tail_lines, max_bytes - tail_bytes)
+    tail_start = _tail_start(text, tail_lines, tail_bytes, head_end)
+    head = text[:head_end]
+    tail = text[tail_start:]
+    if tail.startswith("\n"):
+        tail = tail[1:]
 
-    if output_path:
-        hint = f"Full output saved to: {output_path}\n{hint}"
-
-    removed = total_bytes - bytes_count if hit_bytes else len(lines) - len(out)
-    unit = "bytes" if hit_bytes else "lines"
-    preview = "\n".join(out)
+    kept_lines = (head.count("\n") + 1 if head else 0) + (tail.count("\n") + 1 if tail else 0)
+    note = OMITTED_NOTE.format(
+        lines=max(total_lines - kept_lines, 0),
+        bytes=total_bytes - len(head.encode("utf-8")) - len(tail.encode("utf-8")),
+    )
+    content = "\n\n".join(part for part in (head, note, tail) if part)
 
     return TruncateResult(
-        content=f"{preview}\n\n...{removed} {unit} truncated...\n\n{hint}",
+        content=content,
         truncated=True,
-        output_path=output_path,
+        output_path=_save_full_output(text),
     )
 
 

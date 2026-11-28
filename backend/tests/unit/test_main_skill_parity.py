@@ -117,7 +117,8 @@ async def test_scoped_skill_load_preserves_trajectory_event(skill_environment, m
     record = AsyncMock()
     monkeypatch.setattr("trajectory.record", record)
     definitions, context = await resolve(Catalogue(), skill_environment)
-    context.trace_context = object()
+    from trajectory.capture import call_state, set_call_state
+    set_call_state(context, "context", object())
     result = await definitions["skill"].execute(SkillArgs(skill="demo"), context)
     loaded = [call for call in record.await_args_list if call.args[0] == "skill.loaded"]
     assert len(loaded) == 1
@@ -126,4 +127,4 @@ async def test_scoped_skill_load_preserves_trajectory_event(skill_environment, m
     assert payload["content"] == "REMOTE WORKFLOW"
     assert payload["effective_content"] == result.output
     assert payload["source"] == "sandbox"
-    assert loaded[0].kwargs["context"] is context.trace_context
+    assert loaded[0].kwargs["context"] is call_state(context, "context")

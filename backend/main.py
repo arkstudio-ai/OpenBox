@@ -79,73 +79,18 @@ async def _cleanup_infrastructure(config):
         log.warning(f"Error closing cache: {e}")
 
 
-def _trajectory_worker_mode(config) -> str:
-    """TRAJECTORY_WORKER_MODE: external (default with JWT_SECRET), embedded (default without) or off.
+def _build_kernel_extensions(config):
+    """The kernel's plugins for this process (docs/kernel-refactor/plugin-interfaces.md).
 
-    Off runs no emitter, metadata sync or worker in this process.
+    Built once per app and installed by the lifespan; the kernel reaches it
+    through ``agent.extensions.extensions()``.
     """
-    default = "external" if config.jwt_secret else "embedded"
-    raw = (os.getenv("TRAJECTORY_WORKER_MODE") or "").strip().lower()
-    if not raw:
-        return default
-    if raw in {"external", "embedded", "off"}:
-        return raw
-    log.warning(f"Invalid TRAJECTORY_WORKER_MODE={raw!r}; using {default!r}")
-    return default
-
-
-async def _start_trajectory(app: FastAPI, mode: str) -> None:
-    """Start the spool emitter, metadata sync and, in embedded mode, the in-process worker.
-
-    Recording is fail-open: none of them can keep the business app from starting.
-    """
-    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled
-    log.info(
-        "Trajectory monitoring: recording=%s admin_read=%s worker=%s",
-        trajectory_recording_enabled(),
-        admin_enabled(),
-        mode,
-    )
-    if mode == "off":
-        return
-    # The first get_emitter() creates the spool directory and the writer
-    # thread; that file I/O belongs here, never on a request path.
-    from trajectory.emitter import get_emitter
-    get_emitter()
-    try:
-        from trajectory.meta_sync import start_meta_sync
-        start_meta_sync()
-    except Exception as e:
-        log.warning(f"Trajectory metadata sync did not start: {type(e).__name__}")
-    if mode == "embedded":
-        try:
-            from trajectory.worker.embedded import start_embedded_worker
-            await start_embedded_worker(app)
-        except Exception as e:
-            log.warning(f"Embedded trajectory worker did not start: {type(e).__name__}: {e}")
-
-
-async def _shutdown_trajectory(mode: str) -> None:
-    """Stop metadata sync, flush and close the emitter, then stop the embedded worker."""
-    try:
-        from trajectory.meta_sync import stop_meta_sync
-        await stop_meta_sync()
-    except Exception as e:
-        log.warning(f"Error stopping trajectory metadata sync: {type(e).__name__}")
-    try:
-        from trajectory.emitter import get_emitter
-        emitter = get_emitter()
-        if emitter is not None:
-            # close(5.0) joins the writer thread; keep the loop free meanwhile.
-            await asyncio.to_thread(emitter.close, 5.0)
-    except Exception as e:
-        log.warning(f"Error closing trajectory emitter: {type(e).__name__}")
-    if mode == "embedded":
-        try:
-            from trajectory.worker.embedded import stop_embedded_worker
-            await stop_embedded_worker()
-        except Exception as e:
-            log.warning(f"Error stopping embedded trajectory worker: {type(e).__name__}")
+    from agent.extensions import KernelExtensions
+    from memory.plugin import MemoryCleanup, MemoryPlugin
+    from trajectory.plugin import TrajectoryPlugin
+    # MemoryCleanup carries deletion and retention work that must keep running
+    # even when the MemoryPlugin feature is left out (memory/plugin.py).
+    return KernelExtensions().add(TrajectoryPlugin()).add(MemoryCleanup()).add(MemoryPlugin())
 
 
 async def _stop_background_services(**services) -> None:
@@ -171,6 +116,9 @@ async def _stop_background_services(**services) -> None:
 async def lifespan(app: FastAPI):
     from core.config import get_config
     config = get_config()
+    from agent.extensions import install as install_kernel_extensions
+    kernel_extensions = getattr(app.state, "kernel_extensions", None) or _build_kernel_extensions(config)
+    previous_kernel_extensions = install_kernel_extensions(kernel_extensions)
 
     # LiteLLM's first import is expensive and may fetch its price map. Do it
     # before accepting requests, off the event loop, using the same local-map
@@ -199,8 +147,7 @@ async def lifespan(app: FastAPI):
     from db.base import ensure_engine
 
     await ensure_engine(config)
-    trajectory_mode = getattr(app.state, "trajectory_worker_mode", None) or _trajectory_worker_mode(config)
-    await _start_trajectory(app, trajectory_mode)
+    await kernel_extensions.startup(app)
 
     # Rebuild process-local routing from the real execution plane. Provider
     # resources can outlive one web process; deleting them on startup would
@@ -279,21 +226,8 @@ async def lifespan(app: FastAPI):
     from tool.registry import platform_plugin_watcher
     await platform_plugin_watcher.start(interval_seconds=5.0)
 
-    from memory.extraction import MemoryExtractionWorker
-    from memory.outbox import MemoryIndexWorker
-    from memory.wiki.worker import MemoryWikiWorker
-    from memory.wiki.organization_worker import WikiOrganizationWorker
-    from memory.documents.worker import MemoryDocumentWorker
-    memory_extraction_worker = MemoryExtractionWorker()
-    memory_index_worker = MemoryIndexWorker(config.memory)
-    memory_wiki_worker = MemoryWikiWorker(config.memory)
-    wiki_organization_worker = WikiOrganizationWorker(config.memory)
-    memory_document_worker = MemoryDocumentWorker(config.memory)
-    await memory_extraction_worker.start()
-    memory_index_worker.start()
-    memory_wiki_worker.start()
-    wiki_organization_worker.start()
-    memory_document_worker.start()
+    # Plugins' background workers start after the kernel's own services.
+    await kernel_extensions.start_background(app)
     from assets.descriptions import DescriptionWorker
     asset_description_worker = DescriptionWorker()
     asset_description_worker.start()
@@ -315,8 +249,6 @@ async def lifespan(app: FastAPI):
         await pricing_rules.start()
     except Exception as e:
         log.warning(f"Pricing rules unavailable at startup (base rates.json applies): {e}")
-    from memory.providers.configured_read import schedule_transport_warmup
-    memory_transport_warmup = schedule_transport_warmup(config.memory)
     from video import shot_review
     shot_review.start()
     try:
@@ -324,8 +256,6 @@ async def lifespan(app: FastAPI):
     finally:
         await shot_review.stop()
     log.info("OpenBox shutting down, cleaning up...")
-    if memory_transport_warmup is not None:
-        memory_transport_warmup.cancel()
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
         from sandbox.wuying_desktop_service import wuying_desktop_service
         wuying_desktop_service.stop_patrol()
@@ -339,18 +269,10 @@ async def lifespan(app: FastAPI):
         plugins=platform_plugin_watcher.stop(),
         pricing=pricing_rules.stop(),
         fold_warmup=stop_fold_warmup(),
-        transport_warmup=asyncio.gather(
-            *([memory_transport_warmup] if memory_transport_warmup is not None else []),
-            return_exceptions=True,
-        ),
-        wiki=memory_wiki_worker.stop(),
-        wiki_organization=wiki_organization_worker.stop(),
-        documents=memory_document_worker.stop(),
         asset_descriptions=asset_description_worker.stop(),
-        memory_index=memory_index_worker.stop(),
-        memory_extraction=memory_extraction_worker.stop(),
         inbox_janitor=inbox_janitor.stop(),
         push=push_worker.stop(),
+        **kernel_extensions.stop_background(app),
     )
 
     # Abort active agent loops
@@ -371,10 +293,6 @@ async def lifespan(app: FastAPI):
     # Execution leases recover interrupted runs. Never mark every busy
     # session as failed here: other workers may still be executing them.
 
-    # Workers and agent loops may still own pooled memory requests until
-    # they have drained; closing the pool first can strand their shutdown.
-    from memory.providers.common import close_shared_clients
-    await close_shared_clients()
     from agent.gateway import close_clients
     await close_clients()
 
@@ -395,9 +313,12 @@ async def lifespan(app: FastAPI):
         # owner deletion and the database-guarded idle reaper own cleanup.
     finally:
         try:
-            await _shutdown_trajectory(trajectory_mode)
+            await kernel_extensions.shutdown(app)
         finally:
-            await _cleanup_infrastructure(config)
+            try:
+                await _cleanup_infrastructure(config)
+            finally:
+                install_kernel_extensions(previous_kernel_extensions)
 
 
 def create_app() -> FastAPI:
@@ -410,6 +331,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    application.state.kernel_extensions = _build_kernel_extensions(config)
 
     from sandbox.entitlement import SandboxSubscriptionRequired
     from fastapi.responses import JSONResponse
@@ -485,27 +407,6 @@ def create_app() -> FastAPI:
     from api.assistant_appearance import router as assistant_appearance_router
     application.include_router(assistant_appearance_router)
 
-    from api.memory_search import router as memory_search_router
-    from api.memory_debug import router as memory_debug_router
-    from api.memory_backfill import router as memory_backfill_router
-    from memory.wiki.api import router as memory_wiki_router
-    from memory.wiki.organization_api import router as wiki_organization_router
-    from memory.wiki.exchange_api import router as wiki_exchange_router
-    from memory.wiki.workflow_api import router as wiki_workflow_router
-    application.include_router(memory_search_router)
-    from memory.experience_api import router as memory_experience_router
-    application.include_router(memory_experience_router)
-    application.include_router(memory_debug_router)
-    application.include_router(memory_backfill_router)
-    application.include_router(memory_wiki_router)
-    from memory.documents.api import router as memory_documents_router
-    application.include_router(memory_documents_router)
-    application.include_router(wiki_organization_router)
-    application.include_router(wiki_exchange_router)
-    application.include_router(wiki_workflow_router)
-    from api.memories import router as memories_router
-    application.include_router(memories_router)
-
     from api.video_productions import router as video_productions_router
     application.include_router(video_productions_router)
 
@@ -535,17 +436,9 @@ def create_app() -> FastAPI:
     application.include_router(admin_billing_router)
     application.include_router(admin_pricing_router)
     application.include_router(admin_partners_router)
-    application.state.trajectory_worker_mode = _trajectory_worker_mode(config)
-    if application.state.trajectory_worker_mode == "embedded":
-        # Otherwise the trajectory worker serves the admin trajectory API and
-        # socket, and nothing here may import the worker or the trace store.
-        try:
-            from trajectory.worker.embedded import mount_admin_routers
-            mount_admin_routers(application)
-        except Exception as e:
-            # Trajectory administration is fail-open like recording: it never
-            # keeps the business app from being built.
-            log.warning(f"Admin trajectory routes are unavailable: {type(e).__name__}: {e}")
+    # Plugin routes mount here, in registration order (the embedded admin
+    # trajectory API first); none of them overlaps a route included above.
+    application.state.kernel_extensions.mount(application)
 
     from api.billing import router as billing_router
     application.include_router(billing_router)

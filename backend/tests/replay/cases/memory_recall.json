@@ -1,0 +1,13 @@
+{
+ "description": "Long-term memory with the flags production runs with (semantic_recall off), offline: the JEV router is stubbed to answer retrieve and the user has no stored memories, so no embedding or rerank call is made. Two text turns.",
+ "config": {
+  "memory": {"v2_write": true, "auto_extract": true, "index_sync": true, "retrieval_v2": true,
+             "route_jev": true, "rerank": true, "wiki": true, "backfill": true, "semantic_recall": false}
+ },
+ "turns": [
+  {"user": "我平时喜欢喝什么？",
+   "replies": [{"text": "我这里还没有你的饮品偏好记录，可以告诉我。"}]},
+  {"user": "我喜欢喝乌龙茶。",
+   "replies": [{"text": "记住了，你喜欢乌龙茶。"}]}
+ ]
+}

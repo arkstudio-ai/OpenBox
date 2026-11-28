@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from agent.trajectory import request_snapshot, responses_chunk_blocks
+from agent.recording import retain_full_output
+from trajectory.capture import call_state, request_snapshot, responses_chunk_blocks, set_call_state
 from tool.tool import ToolContext, ToolResult, define_tool
 from trajectory.context import TraceContext
 
@@ -28,9 +29,10 @@ def recorded(monkeypatch):
 
 
 def context():
-    return ToolContext(session_id="session", user_id="owner", message_id="message",
-        trace_context=TraceContext(user_id="owner", session_id="session", turn_id="turn",
-                                   run_id="run", step_id="step", agent_id="agent"))
+    ctx = ToolContext(session_id="session", user_id="owner", message_id="message")
+    set_call_state(ctx, "context", TraceContext(user_id="owner", session_id="session", turn_id="turn",
+                                                run_id="run", step_id="step", agent_id="agent"))
+    return ctx
 
 
 def allowing_hooks():
@@ -157,10 +159,10 @@ async def test_custom_executor_full_output_slot_is_cleared_between_calls(recorde
     hooks.authorize_tool = allow
     ctx = context()
     async def first(args, executing):
-        executing._trajectory_full_tool_output = "complete internally truncated output"
+        retain_full_output(executing, "complete internally truncated output")
         return ToolResult(output="model preview")
     async def second(args, executing):
-        assert executing._trajectory_full_tool_output is None
+        assert call_state(executing, "full_output") is None
         return ToolResult(output="second result")
     await hooks.wrap_execute("custom", first, {}, ctx, part_id="first")
     await hooks.wrap_execute("custom", second, {}, ctx, part_id="second")
@@ -335,7 +337,7 @@ async def test_bash_without_an_output_callback_records_each_chunk_once(monkeypat
             yield 0
     ctx = context()
     ctx.sandbox = Sandbox()
-    ctx.trace_context = ctx.trace_context.derive(call_id="call")
+    set_call_state(ctx, "context", call_state(ctx, "context").derive(call_id="call"))
     result = await bash_tool.execute({"command": "cat big.log"}, ctx)
 
     full = "".join(chunks)
@@ -370,20 +372,20 @@ async def test_parallel_batch_keeps_parent_and_sibling_contexts_separate(monkeyp
     seen = []
     async def execute(args, ctx):
         await asyncio.sleep(0)
-        seen.append((args.label, ctx.part_id, ctx.trace_context))
+        seen.append((args.label, ctx.part_id, call_state(ctx, "context")))
         await ctx.update_output(args.label)
         return ToolResult(output=args.label)
     tool = define_tool("example", description="Example", parameters=Args, execute=execute, sandbox_required=False)
     monkeypatch.setitem(registry._tools, "example", tool)
     ctx = context()
-    ctx.trace_context = ctx.trace_context.derive(call_id="parent")
+    set_call_state(ctx, "context", call_state(ctx, "context").derive(call_id="parent"))
     ctx.available_tools = frozenset({"batch", "example"})
 
     async def allow(*args):
         return None
     ctx._authorize_tool = allow
     await batch(BatchArgs(invocations=[Invocation(tool="example", parameters={"label": label}) for label in ("a", "b")]), ctx)
-    assert ctx.trace_context.call_id == "parent"
+    assert call_state(ctx, "context").call_id == "parent"
     assert ctx.part_id == ""
     assert len({part_id for _, part_id, _ in seen}) == 2
     assert {trace.parent_call_id for _, _, trace in seen} == {"parent"}

@@ -47,10 +47,12 @@ def trajectory_sql(state):
     event.remove(engine, "before_cursor_execute", listener)
 
 
-def _chunk(*, content=None, name=None, arguments=None):
+def _chunk(*, content=None, name=None, arguments=None, finish=None):
+    """One streamed delta; ``finish`` is the provider's terminal marker, without
+    which stream_llm treats the reply as a transport interruption."""
     calls = [] if arguments is None else [SimpleNamespace(
         index=0, id="provider-call", function=SimpleNamespace(name=name, arguments=arguments))]
-    return SimpleNamespace(choices=[SimpleNamespace(index=0, finish_reason=None, delta=SimpleNamespace(
+    return SimpleNamespace(choices=[SimpleNamespace(index=0, finish_reason=finish, delta=SimpleNamespace(
         content=content, reasoning_content=None, tool_calls=calls))], usage=None)
 
 
@@ -69,8 +71,10 @@ def scripted_provider(loop_harness, monkeypatch):  # noqa: F811
         async def stream():
             if number == 1:
                 yield _chunk(name=kwargs["tools"][0]["function"]["name"], arguments='{"label": "work"}')
+                yield _chunk(finish="tool_calls")
             else:
                 yield _chunk(content="All done.")
+                yield _chunk(finish="stop")
         return stream()
     monkeypatch.setattr(litellm, "acompletion", completion)
     monkeypatch.setattr(llm, "_needs_responses_api", lambda _model: False)

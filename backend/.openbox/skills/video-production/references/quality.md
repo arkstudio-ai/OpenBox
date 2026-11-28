@@ -36,7 +36,7 @@ video_analyze(action="screen_text", source="<本段资产 ID 或工作区绝对�
   （subtitle/title/watermark/logo/scene/other）和出现的秒数；`credits=` 是这次
   视觉调用的费用，要在 card 3 里披露（“画面文字检查已消耗 N 积分”）。
 - 同一路径重拍后会重新检查（缓存键含文件 md5），不会拿上一个 take 的结论。
-- 工具被拒绝或不可用时，退到 `extract_frames.sh shot4.mp4 shot4_frames --frames 6`
+- 工具被拒绝或不可用时，退到 `"$S/extract_frames.sh" shot4.mp4 shot4_frames --frames 6`
   抽 6 帧，再逐张用 `view_image` 亲眼看；两条路都走不通时，card 3 必须写明
   “画面文字未检查”，该段标 🔴 待用户自查——永远不能把没看过的画面说成“纯净无字幕”。
 

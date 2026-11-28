@@ -1,0 +1,115 @@
+2026-11-28 21:59:47,460 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 21:59:47,461 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 21:59:59,814 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 6563.9, "first_progress_ms": 4074.1, "phase_ms": {"connect": 0.5, "proxy_connect": 0.3, "tls": 1744.6, "send": 0.5, "upstream_headers": 2095.6, "stream_read": 2476.2}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 22:00:02,248 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 2313.1, "first_progress_ms": 1890.6, "phase_ms": {"send": 0.2, "upstream_headers": 1882.7, "stream_read": 409.2}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+2026-11-28 22:00:09,918 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 7585.3, "first_progress_ms": 5566.4, "phase_ms": {"connect": 0.4, "proxy_connect": 0.2, "tls": 3730.6, "send": 0.6, "upstream_headers": 1813.5, "stream_read": 2020.1}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 22:00:14,839 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 4781.5, "first_progress_ms": 1540.0, "phase_ms": {"send": 0.2, "upstream_headers": 1520.3, "stream_read": 3239.8}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+{"task": "files_sales_summary", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36315}
+{"task": "files_sales_summary", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36089}
+{"task": "files_sales_summary", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 37766}
+{"task": "files_price_list_edit", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 52554}
+{"task": "files_price_list_edit", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 34319}
+{"task": "files_price_list_edit", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 43416}
+{"task": "files_meeting_todos", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36704}
+{"task": "files_meeting_todos", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 36227}
+{"task": "files_meeting_todos", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 54268}
+{"task": "files_members_export", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 38375}
+{"task": "files_members_export", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28609}
+{"task": "files_members_export", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 29029}
+{"task": "files_rename_photos", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 47825}
+{"task": "files_rename_photos", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 36008}
+{"task": "files_rename_photos", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 35369}
+{"task": "code_fix_pricing", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 9, "tokens": 82181}
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+{"task": "code_fix_pricing", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 8, "tokens": 72454}
+{"task": "code_fix_pricing", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 66332}
+{"task": "code_todo_done_command", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 8, "tokens": 78210}
+{"task": "code_todo_done_command", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 66300}
+{"task": "code_todo_done_command", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 66838}
+{"task": "code_parse_orders", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 46466}
+{"task": "code_parse_orders", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 46703}
+{"task": "code_parse_orders", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 55611}
+{"task": "code_fix_booking_slots", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 67664}
+{"task": "code_fix_booking_slots", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 55568}
+{"task": "code_fix_booking_slots", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 7, "tokens": 65932}
+{"task": "research_ecommerce_law", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 44340}
+{"task": "research_ecommerce_law", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 26150}
+{"task": "research_ecommerce_law", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 39375}
+{"task": "research_python_313", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 31563}
+{"task": "research_python_313", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 20677}
+{"task": "research_python_313", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 33866}
+{"task": "research_hangzhou_min_wage", "repeat": 1, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 51367}
+{"task": "research_hangzhou_min_wage", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 52857}
+{"task": "research_hangzhou_min_wage", "repeat": 3, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 51918}
+{"task": "research_douyin_food_qualification", "repeat": 1, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 9, "tokens": 235695}
+{"task": "research_douyin_food_qualification", "repeat": 2, "completed": null, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 130827}
+{"task": "research_douyin_food_qualification", "repeat": 3, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 9, "tokens": 235150}
+2026-11-28 22:17:34,957 [openbox.cron.service] INFO Created cron job cron_01M8H89FZBECXSCAEHN0TWWMAT (每日外卖差评提醒) for project 01M8H89BBE4R1EB9JDZ3F18GMG
+{"task": "cron_daily_bad_reviews", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18022}
+{"task": "cron_daily_bad_reviews", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17938}
+{"task": "cron_daily_bad_reviews", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18144}
+{"task": "cron_weekly_sales_report", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18137}
+{"task": "cron_weekly_sales_report", "repeat": 2, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18267}
+{"task": "cron_weekly_sales_report", "repeat": 3, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18285}
+{"task": "cron_workday_supplier_order", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17773}
+{"task": "cron_workday_supplier_order", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17831}
+{"task": "cron_workday_supplier_order", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 17845}
+2026-11-28 22:20:00,222 [openbox.sandbox.wuying] ERROR WUYING maps every authenticated user to one physical desktop; owner/workspace labels are routing metadata, not a tenant security boundary. Use this provider only for trusted development or place each tenant behind an independently isolated desktop/container.
+2026-11-28 22:20:00,222 [openbox.sandbox.wuying] INFO WUYING sandbox provider -> http://127.0.0.1:18002 (desktop ecd-4y9s9igraz7hc58ea)
+{"task": "merchant_menu_review", "repeat": 1, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 17, "tokens": 203500}
+{"task": "merchant_menu_review", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 15, "tokens": 207402}
+{"task": "merchant_menu_review", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 54482}
+{"task": "merchant_menu_light", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 47524}
+{"task": "merchant_menu_light", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 43739}
+{"task": "merchant_menu_light", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 46381}
+{"task": "merchant_video_light", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 70565}
+{"task": "merchant_video_light", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 55381}
+{"task": "merchant_video_light", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 6, "tokens": 85472}
+{"task": "merchant_poster_groupbuy", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 31349}
+{"task": "merchant_poster_groupbuy", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 5, "tokens": 53893}
+{"task": "merchant_poster_groupbuy", "repeat": 3, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 16, "tokens": 214954}
+{"task": "assistant_followup_budget", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 89552}
+{"task": "assistant_followup_budget", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 91150}
+{"task": "assistant_followup_budget", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 91277}
+{"task": "assistant_new_conversation", "repeat": 1, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 29611}
+{"task": "assistant_new_conversation", "repeat": 2, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 29922}
+{"task": "assistant_new_conversation", "repeat": 3, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 1, "tokens": 30011}
+{"task": "skill_mention_poster", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 44273}
+{"task": "skill_mention_poster", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 40322}
+{"task": "skill_mention_poster", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 40226}
+{"task": "skill_mention_scheduled_tasks", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 38590}
+{"task": "skill_mention_scheduled_tasks", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 28352}
+{"task": "skill_mention_scheduled_tasks", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 18476}
+model=openai/qwen3.8-flash exposure=portable tuning=- fake=False label=baseline-2
+task                                 done  steps calls/st  ask csrch skill+  bad  out_tok   tot_tok    secs
+-----------------------------------------------------------------------------------------------------------
+files_sales_summary                   3/3    4.0     0.75  0.0   0.0    0.0    0      776     36723    19.4
+files_price_list_edit                 3/3    5.0     0.87  0.0   0.0    0.0    0      535     43430    16.7
+files_meeting_todos                   3/3    4.7     0.93  0.0   0.0    0.0    0     1091     42400    19.6
+files_members_export                  3/3    3.3     0.70  0.0   0.0    0.0    0      560     32004    11.9
+files_rename_photos                   3/3    3.3     0.80  0.0   0.0    0.0    0      498     39734    15.0
+code_fix_pricing                      3/3    8.0     0.88  0.0   0.0    0.0    0     1266     73656    30.4
+code_todo_done_command                3/3    7.3     0.91  0.0   0.0    0.0    0     1003     70449    29.0
+code_parse_orders                     3/3    5.3     0.94  0.0   0.0    0.0    0     1380     49593    24.5
+code_fix_booking_slots                3/3    6.7     1.05  0.0   0.0    0.0    0     2311     63055    35.1
+research_ecommerce_law              human    2.7     1.12  0.0   0.0    0.0    0      694     36622    20.3
+research_python_313                 human    2.7     0.75  0.0   0.7    0.0    0     1060     28702    21.5
+research_hangzhou_min_wage          human    3.0     1.11  0.0   0.0    0.0    0      937     52047    25.7
+research_douyin_food_qualification    0/2    8.0     1.42  0.0   1.0    0.0    0     3567    200557    81.9
+cron_daily_bad_reviews                3/3    2.0     0.50  0.0   0.0    0.0    0      489     18035     8.9
+cron_weekly_sales_report              0/3    2.0     1.17  1.0   0.0    0.0    0      698     18230    12.9
+cron_workday_supplier_order           3/3    2.0     0.50  0.0   0.0    0.0    0      336     17816     8.6
+merchant_menu_review                  2/3   12.3     1.08  0.7   1.7    0.0    0     4365    155128   286.1
+merchant_menu_light                   2/3    4.3     0.92  0.7   1.0    0.0    1     1460     45881    90.2
+merchant_video_light                  3/3    5.0     1.00  2.0   1.0    0.0    0     1039     70473    47.3
+merchant_poster_groupbuy              1/3    8.3     1.04  0.3   0.7    0.0    0     2411    100065   240.4
+assistant_followup_budget             3/3    3.0     0.89  0.0   0.0    0.0    0      706     90660    43.8
+assistant_new_conversation            0/3    1.0     1.00  0.0   0.0    0.0    0      589     29848    17.7
+skill_mention_poster                  3/3    4.0     1.00  1.0   1.0    0.0    0      618     41607    23.9
+skill_mention_scheduled_tasks         3/3    3.0     0.78  0.3   0.0    0.0    0      968     28473    23.5
+-----------------------------------------------------------------------------------------------------------
+runs=72 completed=50/62 (81%) pending_human=10 steps+questions/run=4.88 calls/step=0.97 malformed=1 tokens/run=57716 limit_hits=4 errors=0 platform_errors=7
+results: /Volumes/fanxiang/workspace2/OpenBox/docs/kernel-refactor/eval-results/qwen-baseline-2.json

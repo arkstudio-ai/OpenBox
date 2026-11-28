@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.config import VideoModelConfig
+from core.config import VideoGenerationConfig, VideoModelConfig
 from tool.video_production import _model_capability_lines
 from sandbox import skill_runtime
 
@@ -172,9 +172,14 @@ def test_identity_reference_allows_new_camera_and_scene(camera, framing):
     ("MiniMax-H3-Max-Turbo", "runninghub", "flat", False, True),
 ])
 def test_menu_describes_this_adapter_instead_of_other_vendor_endpoints(model, channel, shape, video, frames):
-    entry = VideoModelConfig(id=model, channel=channel, supports_reference_video=True, supports_reference_audio=True, supports_first_last_frame=True)
-    entry = SimpleNamespace(**{**entry.model_dump(), "wire_shape": shape})
-    config = SimpleNamespace(video_generation=SimpleNamespace(model=model, models=[entry]))
+    fields = dict(id=model, channel=channel, supports_reference_video=True,
+                  supports_reference_audio=True, supports_first_last_frame=True)
+    if shape is not None:  # None: an entry that does not declare its wire shape
+        fields["wire_shape"] = shape
+    # The real config types, so a field the code starts reading (allowed_models)
+    # does not break a hand-built stand-in.
+    entry = VideoModelConfig(**fields)
+    config = SimpleNamespace(video_generation=VideoGenerationConfig(model=model, models=[entry]))
     line = _model_capability_lines(config)[-1].split("routing=")[0]
     assert ("reference video" in line) == video
     assert ("first/last frame" in line) == frames

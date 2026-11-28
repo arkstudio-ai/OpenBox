@@ -1,0 +1,28 @@
+2026-11-28 23:09:39,480 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 23:09:39,481 [openbox.config] INFO Loaded config from /Volumes/fanxiang/workspace2/OpenBox/backend/openbox.json
+2026-11-28 23:09:40,352 [openbox.skill] INFO Loaded 15 skills
+2026-11-28 23:09:51,905 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 7413.8, "first_progress_ms": 5965.6, "phase_ms": {"connect": 0.5, "proxy_connect": 0.3, "tls": 1755.1, "send": 0.4, "upstream_headers": 3999.9, "stream_read": 1447.0}, "last_phase": "stream_read", "proxy_tunnel": true, "request_started": true, "status": 200, "error": null}
+2026-11-28 23:10:00,055 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 8029.7, "first_progress_ms": 5821.6, "phase_ms": {"send": 0.2, "upstream_headers": 5817.8, "stream_read": 2204.1}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+2026-11-28 23:10:04,986 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 4849.0, "first_progress_ms": 3937.9, "phase_ms": {"send": 0.2, "upstream_headers": 3645.9, "stream_read": 1194.5}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+2026-11-28 23:10:20,336 [openbox.agent.gateway] INFO gateway timing {"model": "openai/qwen3.8-flash", "purpose": "chat", "outcome": "completed", "total_ms": 15267.3, "first_progress_ms": 3185.1, "phase_ms": {"send": 0.2, "upstream_headers": 3177.2, "stream_read": 12062.6}, "last_phase": "stream_read", "proxy_tunnel": false, "request_started": true, "status": 200, "error": null}
+{"task": "cron_daily_bad_reviews", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 42463}
+{"task": "cron_daily_bad_reviews", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 20967}
+2026-11-28 23:10:50,837 [openbox.cron.service] INFO Created cron job cron_01M8HBB0YK1RPJHW228JFEMVAT (每日外卖差评提醒) for project 01M8HBAS42TA950KTSBAQN49QX
+{"task": "cron_daily_bad_reviews", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 20125}
+{"task": "cron_weekly_sales_report", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 21695}
+2026-11-28 23:11:50,876 [openbox.sandbox.wuying] ERROR WUYING maps every authenticated user to one physical desktop; owner/workspace labels are routing metadata, not a tenant security boundary. Use this provider only for trusted development or place each tenant behind an independently isolated desktop/container.
+2026-11-28 23:11:50,876 [openbox.sandbox.wuying] INFO WUYING sandbox provider -> http://127.0.0.1:18002 (desktop ecd-4y9s9igraz7hc58ea)
+{"task": "cron_weekly_sales_report", "repeat": 2, "completed": false, "skipped": null, "limit_hit": "tokens", "error": null, "harness_error": null, "steps": 13, "tokens": 203601}
+{"task": "cron_weekly_sales_report", "repeat": 3, "completed": false, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 45447}
+{"task": "cron_workday_supplier_order", "repeat": 1, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 3, "tokens": 31497}
+{"task": "cron_workday_supplier_order", "repeat": 2, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 2, "tokens": 20590}
+{"task": "cron_workday_supplier_order", "repeat": 3, "completed": true, "skipped": null, "limit_hit": null, "error": null, "harness_error": null, "steps": 4, "tokens": 41535}
+model=openai/qwen3.8-flash exposure=portable tuning=accepted_time_outside_system_prompt,consistent_prompt_rules,prune_stale_skill_copies,relaxed_prompt,resident_skill_catalogue,skill_mention_rule,skill_reload_dedupe,tool_name_listing fake=False label=tuning-all-cron-skillfix
+task                                 done  steps calls/st  ask csrch skill+  bad  out_tok   tot_tok    secs
+-----------------------------------------------------------------------------------------------------------
+cron_daily_bad_reviews                3/3    2.7     0.88  0.7   0.3    0.0    0     1235     27852    26.3
+cron_weekly_sales_report              1/3    6.3     1.21  1.0   0.0    0.0    0     3796     90248    69.1
+cron_workday_supplier_order           3/3    3.0     0.89  0.3   0.0    0.0    0     1167     31207    26.9
+-----------------------------------------------------------------------------------------------------------
+runs=9 completed=7/9 (78%) pending_human=0 steps+questions/run=4.67 calls/step=1.06 malformed=0 tokens/run=49769 limit_hits=1 errors=0 platform_errors=1
+results: /Volumes/fanxiang/workspace2/OpenBox/docs/kernel-refactor/eval-results/rerun-tuning-all-cron-skillfix.json

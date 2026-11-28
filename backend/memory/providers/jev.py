@@ -162,7 +162,7 @@ async def evaluate_context_needs(state: dict, config, *, client=None, questions=
     client = client or shared_client(trust_env=config.provider_trust_env)
     try:
         async with asyncio.timeout(config.jev_timeout_seconds):
-            from agent.latency import span, provider_wait
+            from agent.timing import span, provider_wait
             with span("memory.jev"), provider_wait():
                 response = await client.post(config.jev_url, timeout=config.jev_timeout_seconds,
                     headers={"Authorization": "Bearer " + jev_key()},

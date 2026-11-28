@@ -1,0 +1,485 @@
+[
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/report.txt\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "[Error] Error: file not found: /workspace/report.txt"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/report.txt\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "[Error] Error: file not found: /workspace/report.txt"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_bash_1",
+       "type": "function",
+       "function": {
+        "name": "bash",
+        "arguments": "{\"command\": \"wc -l /workspace/*.txt\", \"description\": \"Count lines\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_bash_1",
+     "content": "[Error] command channel closed"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/report.txt\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "[Error] Error: file not found: /workspace/report.txt"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_bash_1",
+       "type": "function",
+       "function": {
+        "name": "bash",
+        "arguments": "{\"command\": \"wc -l /workspace/*.txt\", \"description\": \"Count lines\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_bash_1",
+     "content": "[Error] command channel closed"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_2",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/report.md\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_2",
+     "content": {
+      "$lines": [
+       "[Error] Parameter validation error: 1 validation error for ReadArgs",
+       "file_path",
+       "  Field required [type=missing, input_value={'path': '/workspace/report.md'}, input_type=dict]",
+       "    For further information visit h"
+      ]
+     }
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/report.txt\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "[Error] Error: file not found: /workspace/report.txt"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_bash_1",
+       "type": "function",
+       "function": {
+        "name": "bash",
+        "arguments": "{\"command\": \"wc -l /workspace/*.txt\", \"description\": \"Count lines\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_bash_1",
+     "content": "[Error] command channel closed"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_2",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/report.md\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_2",
+     "content": {
+      "$lines": [
+       "[Error] Parameter validation error: 1 validation error for ReadArgs",
+       "file_path",
+       "  Field required [type=missing, input_value={'path': '/workspace/report.md'}, input_type=dict]",
+       "    For further information visit h"
+      ]
+     }
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_ls_1",
+       "type": "function",
+       "function": {
+        "name": "list_files",
+        "arguments": "{\"path\": \"/workspace\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_ls_1",
+     "content": "[Error] Tool 'list_files' is not materialized for this step. Available: bash, capability_search, edit, glob, grep, question, read, skill, skill_search, task, write"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "读一下 report.txt，再统计一下行数。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/report.txt\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "[Error] Error: file not found: /workspace/report.txt"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_bash_1",
+       "type": "function",
+       "function": {
+        "name": "bash",
+        "arguments": "{\"command\": \"wc -l /workspace/*.txt\", \"description\": \"Count lines\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_bash_1",
+     "content": "[Error] command channel closed"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_2",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/report.md\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_2",
+     "content": {
+      "$lines": [
+       "[Error] Parameter validation error: 1 validation error for ReadArgs",
+       "file_path",
+       "  Field required [type=missing, input_value={'path': '/workspace/report.md'}, input_type=dict]",
+       "    For further information visit h"
+      ]
+     }
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_ls_1",
+       "type": "function",
+       "function": {
+        "name": "list_files",
+        "arguments": "{\"path\": \"/workspace\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_ls_1",
+     "content": "[Error] Tool 'list_files' is not materialized for this step. Available: bash, capability_search, edit, glob, grep, question, read, skill, skill_search, task, write"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_3",
+       "type": "function",
+       "function": {
+        "name": "Read",
+        "arguments": "{\"file_path\": \"/workspace/report.md\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_3",
+     "content": "<file>\n00001| # 周报\n</file>"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ }
+]

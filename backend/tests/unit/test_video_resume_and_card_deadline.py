@@ -67,6 +67,7 @@ async def test_card_deadline_comes_from_the_session_key_policy(monkeypatch):
     from db.models.user import User
     from db.models.workspace import Workspace, WorkspaceMember
     from tool import question_tool
+    from tool.tool import ToolContext
 
     uid, wid = f"u-{uuid4().hex[:8]}", f"w-{uuid4().hex[:8]}"
     now = datetime.now(timezone.utc)
@@ -94,12 +95,12 @@ async def test_card_deadline_comes_from_the_session_key_policy(monkeypatch):
     monkeypatch.setattr("question.question.ask", fake_ask)
     args = question_tool.QuestionArgs(questions=[question_tool.QuestionItem(
         question="讲稿可以吗？", options=[question_tool.QuestionOption(label="可以")], custom=False)])
-    ctx = SimpleNamespace(session_id="session_key", user_id=uid, message_id="m1", part_id="p1")
+    ctx = ToolContext(session_id="session_key", user_id=uid, message_id="m1", part_id="p1")
     await question_tool.execute(args, ctx)
     assert seen["expires_at"] is not None
     assert 590 <= (seen["expires_at"] - datetime.now(timezone.utc)).total_seconds() <= 600
     assert seen["questions"][0].custom is False
 
-    ctx = SimpleNamespace(session_id="session_web", user_id=uid, message_id="m1", part_id="p1")
+    ctx = ToolContext(session_id="session_web", user_id=uid, message_id="m1", part_id="p1")
     await question_tool.execute(args, ctx)
     assert seen["expires_at"] is None

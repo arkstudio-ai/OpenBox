@@ -14,10 +14,10 @@ from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
-from agent.latency import ProviderStream, provider_wait
+from agent.timing import ProviderStream, provider_wait
 from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
-from agent.trajectory import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
+from agent.recording import active_request, begin_model_call, bind_model_billing, capture_billing, chunk_blocks
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
 
@@ -30,6 +30,17 @@ OUTPUT_TOKEN_MAX = 32000  # Fallback for unknown models
 THINKING_OUTPUT_RESERVE = 8000
 OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 RESPONSES_API_VERSION = "2025-03-01-preview"
+#: Appended to a chat reply the provider stopped at the output limit, so the
+#: user and, on later turns, the model can tell the answer is incomplete.
+TRUNCATED_REPLY_NOTE = "\n\n[回复达到输出长度上限，在此处被截断。]"
+
+
+class OutputLimitReached(RuntimeError):
+    """The provider stopped because the response reached its output limit.
+
+    Raised (as an ``error`` event) where a cut response cannot be used as is,
+    so a caller such as compaction can ask again for something shorter.
+    """
 
 
 def request_timeout(*, read_seconds: float = 60):
@@ -189,8 +200,8 @@ def responses_event_error(data: dict) -> str | None:
     return f"{event_type}: {error}"
 
 
-def _get_max_output_tokens(model_id: str) -> int:
-    """Return the max_output_tokens for a model.
+def _builtin_max_output_tokens(model_id: str) -> int:
+    """Built-in per-family output allowance.
 
     GPT-5.4 / GPT-5.2: 128K output tokens, 1M+ context window
     GPT-5 / GPT-5-mini: 64K output tokens
@@ -202,6 +213,33 @@ def _get_max_output_tokens(model_id: str) -> int:
     if any(x in model_lower for x in ("gpt-5", "gpt-5-mini", "gpt-5-nano")):
         return 64_000
     return OUTPUT_TOKEN_MAX
+
+
+def _configured_max_tokens(model_id: str) -> int | None:
+    try:
+        from core.config import get_config
+        models = get_config().models or []
+    except Exception:
+        return None
+    for item in models:
+        if str(getattr(item, "id", "") or "") == model_id:
+            value = getattr(item, "max_tokens", None)
+            return value if isinstance(value, int) and value > 0 else None
+    return None
+
+
+def _get_max_output_tokens(model_id: str) -> int:
+    """Return the max_output_tokens for a model.
+
+    The catalogue's ``models[].max_tokens`` caps one response: it can lower
+    the built-in allowance but never raise it. Provider maximums above the
+    built-in values are not verified (a value over the provider's limit is a
+    400 on every request), and an entry that omits the field carries
+    ``ModelConfig``'s 200,000 default, which must not become a request value.
+    """
+    builtin = _builtin_max_output_tokens(model_id)
+    configured = _configured_max_tokens(model_id)
+    return min(builtin, configured) if configured else builtin
 
 
 def request_output_tokens(model_id: str, variant: str | None = None,
@@ -1162,8 +1200,6 @@ async def _stream_responses_api(
     This function calls the Responses API endpoint directly via httpx,
     parsing the SSE event stream into our standard event format.
     """
-    import httpx
-
     provider_kwargs = _get_provider_kwargs(model_id)
     api_key = provider_kwargs.get("api_key", "")
     api_base = provider_kwargs.get("api_base", "")
@@ -1320,15 +1356,20 @@ async def _stream_responses_api(
                 existing["finalized"] = True
             return tc_index, is_new, emitted_delta
 
-        capture = await RequestCapture.start(
+        capture = await begin_model_call(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
         await _assert_dispatch_allowed(trace_ctx)
         from agent.stream_deadline import limits_for
         progress_limits = limits_for(model_id, variant, purpose)
-        async with httpx.AsyncClient(timeout=request_timeout(
-                read_seconds=max(progress_limits.first_progress, progress_limits.idle))) as client:
-            async with ProviderStream(client.stream("POST", url, headers=headers, json=payload)) as resp:
+        # One pooled client per event loop (agent.gateway); the response, not
+        # the client, is closed when this request ends or is cancelled.
+        from contextlib import nullcontext
+        from agent.gateway import responses_client
+        timeout = request_timeout(read_seconds=max(progress_limits.first_progress, progress_limits.idle))
+        async with nullcontext(responses_client()) as client:
+            async with ProviderStream(client.stream("POST", url, headers=headers, json=payload,
+                                                    timeout=timeout)) as resp:
                 if resp.status_code != 200:
                     with provider_wait():
                         body = await resp.aread()
@@ -1420,7 +1461,7 @@ async def _stream_responses_api(
                                 raise NativeProtocolError("native Responses stream emitted malformed JSON") from exc
                             yield {"type": "malformed_sse", "message": data_str}
 
-                async with aclosing(capture.stream_chunks(decoded_events(), responses_chunk_blocks)) as chunks:
+                async with aclosing(capture.stream_chunks(decoded_events(), chunk_blocks("responses"))) as chunks:
                     async for data in chunks:
                         etype = data.get("type", "")
 
@@ -1453,7 +1494,10 @@ async def _stream_responses_api(
                         if terminal_error:
                             await capture.finish("failed", error=RuntimeError(terminal_error))
                             log.error(f"Responses API stream failed: {terminal_error[:500]}")
-                            yield {"type": "error", "error": Exception(terminal_error)}
+                            incomplete = ((data.get("response") or {}).get("incomplete_details") or {})
+                            error_type = (OutputLimitReached if etype == "response.incomplete"
+                                          and incomplete.get("reason") == "max_output_tokens" else Exception)
+                            yield {"type": "error", "error": error_type(terminal_error)}
                             return
 
                         if native_normalizer is not None:
@@ -1765,8 +1809,7 @@ async def stream_llm(
     limits = limits_for(model_id, variant, billing_kind, prompt_tokens)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
-    ctx._trajectory_active_request = None
+    bind_model_billing(ctx, meter)
     usage = None
     # GPT-5.x models: use Responses API for reasoning content
     if _needs_responses_api(model_id):
@@ -1792,7 +1835,7 @@ async def stream_llm(
     stream = bounded_stream(stream, limits)
     try:
         async for event in stream:
-            trace = getattr(ctx, "_trajectory_active_request", None)
+            trace = active_request(ctx)
             if trace is not None:
                 event = {**event, "trajectory_context": trace}
             if event["type"] == "usage":
@@ -1815,7 +1858,7 @@ async def stream_llm(
                 # Aborting the consumer must not abandon an already observed charge.
                 async def settle():
                     credits = await meter.finish(usage)
-                    await capture_billing(getattr(ctx, "_trajectory_active_request", None), meter, usage, credits, billing_kind)
+                    await capture_billing(active_request(ctx), meter, usage, credits, billing_kind)
                 settlement = asyncio.create_task(settle())
                 try:
                     await asyncio.shield(settlement)
@@ -1836,17 +1879,16 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     kwargs.setdefault("num_retries", 0)
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
-    ctx._trajectory_active_request = None
+    bind_model_billing(ctx, meter)
     usage = None
     capture = None
     try:
-        capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
+        capture = await begin_model_call(ctx, purpose=billing_kind, model_id=kwargs["model"],
                                              payload=kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(ctx)
         with provider_wait():
             response = await litellm.acompletion(**kwargs)
-        await capture.chunk(response, blocks=litellm_chunk_blocks(response))
+        await capture.chunk(response, blocks=chunk_blocks("litellm")(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
             await capture.capture_usage(usage)
@@ -2089,7 +2131,7 @@ async def _stream_litellm_direct(
         if tool_choice and tool_schemas:
             call_kwargs["tool_choice"] = tool_choice
 
-        capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
+        capture = await begin_model_call(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(trace_ctx)
         observation = Observation(model_id, purpose,
@@ -2105,9 +2147,10 @@ async def _stream_litellm_direct(
         tool_calls = []
         stream_usage: dict = {}  # Captured from the final chunk(s)
         provider_finish_reason = None
+        received_text = False
 
         async with aclosing(observation.chunks(response)) as observed, aclosing(
-                capture.stream_chunks(observed, litellm_chunk_blocks)) as chunks:
+                capture.stream_chunks(observed, chunk_blocks("litellm"))) as chunks:
             async for chunk in chunks:
                 # Capture usage from any chunk that carries it (typically the final one).
                 # With stream_options={"include_usage": True}, the provider sends a
@@ -2136,6 +2179,7 @@ async def _stream_litellm_direct(
 
                 # Text content
                 if delta.content:
+                    received_text = True
                     yield {"type": "text_delta", "text": delta.content}
 
                 # Tool calls (accumulate chunks + emit streaming events)
@@ -2187,10 +2231,16 @@ async def _stream_litellm_direct(
         if provider == "openai" and isinstance(response, CustomStreamWrapper):
             provider_finish_reason = response.received_finish_reason
         if purpose in {"compaction", "compaction_chunk"} and provider_finish_reason != "stop":
-            raise RuntimeError(
+            error_type = OutputLimitReached if provider_finish_reason in {"length", "max_tokens"} else RuntimeError
+            raise error_type(
                 f"Compaction response did not finish normally: {provider_finish_reason or 'missing finish'}"
             )
-        if provider_finish_reason not in {"stop", "tool_calls", "function_call"}:
+        # A chat reply cut at the output limit is kept and marked truncated.
+        # Tool arguments cut the same way are never dispatched, and other
+        # purposes parse their output, so those still fail.
+        truncated = (purpose == "chat" and provider_finish_reason in {"length", "max_tokens"}
+                     and received_text and not tool_calls)
+        if provider_finish_reason not in {"stop", "tool_calls", "function_call"} and not truncated:
             if not provider_finish_reason:
                 raise RuntimeError("模型回复传输中断，未收到完整结束标记。请重试；已收到的片段不作为最终答复。")
             raise RuntimeError(f"模型回复未完整结束（{provider_finish_reason}）。请重试；已收到的片段不作为最终答复。")
@@ -2221,6 +2271,10 @@ async def _stream_litellm_direct(
                     }
 
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
+        elif truncated:
+            log.warning("Reply for %s stopped at the output limit; kept as truncated", model_id)
+            yield {"type": "text_delta", "text": TRUNCATED_REPLY_NOTE}
+            yield {"type": "finish", "reason": "stop", "usage": stream_usage, "truncated": True}
         else:
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 

@@ -316,7 +316,8 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                         from trajectory.tool_output import output_stream
                         await output_stream(ctx, "bash").append(chunk.content, output=collected_output)
 
-        ctx._trajectory_full_tool_output = collected_output
+        from agent.recording import retain_full_output
+        retain_full_output(ctx, collected_output)
         output = collected_output
         output_truncated = len(output) > MAX_STREAM_OUTPUT
         if len(output) > MAX_STREAM_OUTPUT:
@@ -383,6 +384,11 @@ Execute a shell command in the current sandbox project directory and stream its
 output. Use this for terminal-only operations; use the dedicated file tools for
 reading, searching, editing, or writing files, and respond directly instead of
 using shell output for conversation.
+
+On a managed cloud desktop, use $TMPDIR for reproducible intermediates such as
+download copies, extracted frames, shot previews, and raw concatenations. Copy
+cached inputs to $TMPDIR before editing them. Keep project plans and drafts in
+the project, and write final exports under $OPENBOX_PENDING_ROOT before sharing.
 
 Quote paths containing spaces. The timeout defaults to 120 seconds and is
 capped at 600 seconds. Long output may be truncated; inspect the full artifact

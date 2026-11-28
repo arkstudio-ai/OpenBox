@@ -194,7 +194,7 @@ async def memory_search(scope: CallScope, arguments: dict) -> dict:
 
 async def memory_read_more(scope: CallScope, arguments: dict) -> dict:
     from memory.packet import ReadRequest, read_more
-    from tool.memory_tools import MemorySupplementArgs
+    from memory.tools import MemorySupplementArgs
     if scope.memory_turn is None or scope.memory_budget is None:
         return {"status": "unavailable", "reason": "turn_scope_not_ready"}
     args = MemorySupplementArgs.model_validate(arguments)
@@ -369,7 +369,7 @@ DIRECT: dict[str, DirectTool] = {
 }
 
 
-from tool.memory_tools import MemorySupplementArgs
+from memory.tools import MemorySupplementArgs
 
 DIRECT["memory_read_more"] = DirectTool(
     "按当前通话已允许的范围补读缺失资料。一次最多两项，共享本轮预算；保留完整名称、来源和版本。"

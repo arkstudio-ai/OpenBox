@@ -4,7 +4,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from core.log import create_logger
-from agent.latency import measured_span
+from agent.timing import measured_span
 from models.container import ContainerStatus
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.provider import build_sandbox_name
@@ -508,6 +508,35 @@ class SandboxManager:
             if len(self._clients) != 1:
                 return None
             return next(iter(self._clients.values()))
+
+    async def get_only_runtime(self) -> tuple[str, SandboxClient] | None:
+        """The one sandbox and the workspace whose desktop it is.
+
+        For the workspace sweep, which compares a desktop's directories with
+        that workspace's projects. Like get_only_client it borrows no user's
+        identity; the owner is the map key the sandbox was acquired under. It
+        returns None whenever that answer is uncertain: not exactly one live
+        sandbox, map entries that disagree about the owner, or a provider that
+        puts every workspace on one shared desktop (WUYING_ROUTING=shared).
+        """
+        from sandbox import provider
+
+        if (
+            getattr(provider, "owns_containers", True) is False
+            and getattr(provider, "routes_per_user", False) is not True
+        ):
+            return None
+        async with self._lock:
+            if len(self._clients) != 1:
+                return None
+            key, client = next(iter(self._clients.items()))
+            info = self._project_map.get(key)
+        if not key or info is None or info.user_id != key:
+            return None
+        scoped = getattr(client, "workspace_id", None)
+        if scoped is not None and scoped != key:
+            return None
+        return key, client
 
     async def get_client_any(
         self,

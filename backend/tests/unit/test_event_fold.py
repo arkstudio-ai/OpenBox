@@ -52,7 +52,12 @@ def history_reads():
 
     def count(conn, cursor, statement, parameters, context, executemany):
         sql = " ".join(statement.lower().split())
-        if "from agent_events" in sql and "agent_events.payload" in sql and "order by agent_events.sequence" in sql:
+        # The model-seed probe (ensure_model_seed_locked) reads at most two
+        # seed markers by kind; since ebe2278c it selects their payload in one
+        # statement. It is not a history read.
+        seed_probe = "agent_events.kind in" in sql and "limit" in sql
+        if ("from agent_events" in sql and "agent_events.payload" in sql
+                and "order by agent_events.sequence" in sql and not seed_probe):
             queries.append(sql)
 
     engine = database._engine.sync_engine

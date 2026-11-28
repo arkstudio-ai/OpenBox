@@ -169,8 +169,12 @@ def make_app(data_dir: Path):
         setup_auth(config, cache)
         fixture = json.loads(FIXTURE.read_text())
         users = await seed_business(credentials, fixture)
-        # The real lifespan's trajectory start: the emitter, metadata sync and the embedded worker.
-        await main._start_trajectory(application, "embedded")
+        # The real lifespan's plugins, and its trajectory start: the emitter,
+        # metadata sync and the embedded worker.
+        from agent.extensions import install
+        from trajectory.plugin import shutdown_trajectory, start_trajectory
+        previous_extensions = install(application.state.kernel_extensions)
+        await start_trajectory(application, "embedded")
         try:
             await emit_fixture(data_dir, fixture, users)
             # Use the actual routed application and auth, while refusing sandbox
@@ -185,9 +189,10 @@ def make_app(data_dir: Path):
             yield
         finally:
             try:
-                await main._shutdown_trajectory("embedded")
+                await shutdown_trajectory("embedded")
             finally:
                 await close_engine()
+                install(previous_extensions)
 
     app.router.lifespan_context = acceptance_lifespan
     return app

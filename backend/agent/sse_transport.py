@@ -38,7 +38,7 @@ class CompletedSSEStream(httpx.AsyncByteStream):
         try:
             task = asyncio.current_task()
             if self.done and not self.eof and not (task and task.cancelling()):
-                from agent.latency import provider_wait
+                from agent.timing import provider_wait
                 try:
                     with provider_wait():
                         async with asyncio.timeout(DRAIN_SECONDS):

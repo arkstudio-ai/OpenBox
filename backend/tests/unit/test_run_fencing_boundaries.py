@@ -72,7 +72,7 @@ def _llm_request(ctx, billing_kind: str = "chat"):
 
 
 async def _paid_submit(submitted: list) -> None:
-    from agent.trajectory import capture_service_dispatch
+    from trajectory.capture import capture_service_dispatch
     async with capture_service_dispatch(purpose="video_generation", provider="fixture", model="fixture",
                                         operation="submit", body={"prompt": "clip"}, profile="video_generation"):
         submitted.append(True)

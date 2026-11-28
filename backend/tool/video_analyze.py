@@ -304,12 +304,13 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     await assert_current("request")
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
                                    message_id=ctx.message_id, kind="video_analyze")
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
+    from trajectory.capture import set_call_state
+    set_call_state(ctx, "billing_event_id", getattr(meter, "event_id", None))
     usage = None
     credits = None
     capture = None
     try:
-        from agent.trajectory import RequestCapture, litellm_chunk_blocks
+        from trajectory.capture import RequestCapture, litellm_chunk_blocks
         from video.vision_contract import request_options
         contract = _vision_contract(purpose)
         content[0]["text"] += f"\n调用 {contract['name']} 提交结果；如果不能调用函数，只返回同一结构的 JSON。"
@@ -334,7 +335,7 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     finally:
         if meter:
             import asyncio
-            from agent.trajectory import capture_billing
+            from trajectory.capture import capture_billing
             async def settle():
                 charged = await meter.finish(usage)
                 await capture_billing(capture.context if capture is not None else None,
@@ -371,7 +372,7 @@ async def _retain_media(ctx: ToolContext, *, kind: str, seed: str, job, media_ur
     """
     import copy
 
-    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from trajectory.capture import register_owned_media_inputs, retain_derived_media_inputs, service_scope
     from trajectory import enabled
 
     media_ctx = copy.copy(ctx)
@@ -383,12 +384,14 @@ async def _retain_media(ctx: ToolContext, *, kind: str, seed: str, job, media_ur
         source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
     if source_id:
         retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
-        media_ctx._trajectory_media_urls = retained_media
+        from trajectory.capture import set_call_state
+        set_call_state(media_ctx, "media_urls", retained_media)
     else:
         asset_urls = await register_owned_media_inputs(ctx, media_urls)
         # Reuse the same retained map for the subsequent vision input.
         async with service_scope(ctx, job=job, asset_urls=asset_urls) as retained_ctx:
-            media_ctx._trajectory_media_urls = dict(retained_ctx._trajectory_media_urls)
+            from trajectory.capture import call_state, set_call_state
+            set_call_state(media_ctx, "media_urls", dict(call_state(retained_ctx, "media_urls")))
     return media_ctx, asset_urls, retained_media
 
 
@@ -502,7 +505,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
-        from agent.trajectory import service_scope
+        from trajectory.capture import service_scope
         media_urls = list(staged["frames"]) + ([staged["audio_url"]] if staged["audio_url"] else [])
         media_ctx, asset_urls, retained_media = await _retain_media(ctx, kind=kind, seed=seed, job=job, media_urls=media_urls)
 

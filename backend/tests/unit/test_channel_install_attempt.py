@@ -97,7 +97,9 @@ async def test_late_install_cannot_write_after_committed_revoke(
 
     async def delayed(desktop_id, script, timeout=300):
         result = await command(desktop_id, script, timeout=timeout)
-        kind = "runtime" if script.endswith(" --check") else "install"
+        # Other guest prerequisites (stream receipt, built-in skill) run between.
+        kind = ("runtime" if script.endswith(" --check") else
+                "install" if "OPENBOX_PUBKEY=" in script else "prerequisite")
         if kind == pause:
             waiting.set()
             await release.wait()

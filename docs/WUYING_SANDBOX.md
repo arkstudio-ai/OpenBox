@@ -383,7 +383,7 @@ procedure below instead of re-running bootstrap or the default deploy mode.
 |---|---|---|
 | Web 后端 | `browser_action`、减少请求重复准备、shell 空闲判断与输出接收并行、移除估价 | 发布后端；单独合并 Git 不会更新线上进程 |
 | 每台旧版桌面的 `/opt/action_server/action_server.py` | 按块接收输出、退出后排空输出、返回 `output_complete` | 下发流式输出补丁，重启 `openbox-action-server` |
-| 每台旧版桌面的 `/opt/openbox/skills/video-production/` | `prepare.py`、配套脚本、技能指引和参考文件，共 10 个固定文件 | 按第 4 步同步，并校验源文件 SHA-256 |
+| 每台旧版桌面的 `/opt/openbox/skills/video-production/` | `prepare.py`、配套脚本、技能指引和参考文件，共 12 个固定文件（2026-11-28 起；原为 10 个） | 按第 4 步同步，并校验源文件 SHA-256 |
 | 新建桌面的镜像/初始化资源、已有预热池 | 与上述组件保持一致 | 更新模板或供应流程；预热桌面验收后才可分配 |
 
 `browser_action` 只在 shell 退出码为 0 **且** `output_complete=true` 时继续读取截图。
@@ -442,7 +442,16 @@ backend/.venv/bin/python backend/scripts/wuying_patch_stream_output.py \
 失败时停止该台发布；布局不兼容时需先审查整套模块升级，不能自动改用 bootstrap。
 任何超时都先检查真实远端结果，不能根据“没有收到回复”直接重复执行或重启。
 
-#### 4. 同步视频技能的 10 个文件
+#### 4. 同步视频技能的 12 个文件
+
+2026-11-28 起 `SKILL.md` 拆成核心流程，步骤细节原文移到
+`references/workflow-plan.md`（第 0–3 步）和 `references/workflow-produce.md`
+（第 4–8 步、失效规则、常见问题），清单因此从 10 个增加到这两个，共 12 个。
+`SKILL.md` 由后端提供，参考文件由模型在桌面上读取。还没同步的旧桌面读不到这两个
+文件时，`SKILL.md` 要求模型改读该桌面上的旧版 `SKILL.md`，旧版仍含这些章节全文，
+所以先发后端、后同步桌面不会中断制作；同步完成前两边内容不一致。摘要不另存清单，
+由下面的脚本按固定源码提交现算并逐个校验。新建或预热桌面安装应用通道时，
+`sandbox/skill_runtime.py` 会推送整个目录，不依赖这份清单。
 
 下面的独立发布段通过现有 `Desktop.run` 使用云助手，固定文件集合，上传前备份原文件，
 校验所有新旧摘要后才覆盖代码；传输分片和备份均保留。它不调用会清理临时文件的
@@ -470,6 +479,7 @@ names = (
     "references/compose-timeline.md", "references/material-plan.md",
     "references/minimax-turbo-frames.md", "references/model-guide.md",
     "references/prompt-recipes.md", "references/quality.md",
+    "references/workflow-plan.md", "references/workflow-produce.md",
 )
 source = Path("backend/.openbox/skills/video-production")
 contents = {name: (source / name).read_bytes() for name in names}
@@ -591,7 +601,7 @@ PY
   `printf 'update-check-start\n'; sleep 2; printf 'update-check-done\n'`。
   两段输出齐全、退出码 0，原始 SSE exit 的 `output_complete=true`，工具结果中的
   `stream_output_complete=true`。只看退出码或 `/alive` 版本不能作为发布成功依据。
-- 校验第 4 步 10 个文件的安装后摘要与本次源码一致，`prepare.py` 的导入/语法检查通过。
+- 校验第 4 步 12 个文件的安装后摘要与本次源码一致，`prepare.py` 的导入/语法检查通过。
   用新建的独立 QA 草稿验证准备流程，不改用户已有草稿或已生成片段。
 - 新后端先在指定测试用户上验证浏览器普通请求：一个 `browser_action` 返回页面状态和
   截图，内部 bash/view_image 均完成；查看已有页面时使用空 script，不重复点击或刷新。

@@ -1158,7 +1158,7 @@ async def submit(route: Any, path: str, body: dict[str, Any], *,
                  purpose: str = "video_generation", before_post=None) -> dict[str, Any]:
     _require_submission_enabled(route)
     import httpx
-    from agent.trajectory import capture_service_dispatch, capture_http_response
+    from trajectory.capture import capture_service_dispatch, capture_http_response
 
     channel = getattr(route, "channel", "ark")
     if channel == "comfyui":
@@ -1241,7 +1241,7 @@ async def status(route: Any, task_id: str, *, operation: str = "video_status") -
             )
     response.raise_for_status()
     raw = response.json()
-    from agent.trajectory import observe_service_response
+    from trajectory.capture import observe_service_response
     await observe_service_response(raw, operation=operation)
     if channel == "runninghub":
         from tool.video_runninghub import has_error, error_message

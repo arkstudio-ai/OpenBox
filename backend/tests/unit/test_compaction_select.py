@@ -127,13 +127,69 @@ def test_split_picks_the_earliest_message_that_fits():
 
 # ── select ──
 
-def test_history_smaller_than_the_budget_is_summarised_whole():
+def test_history_smaller_than_the_budget_keeps_the_newest_request():
     # Everything would fit in the tail, but keeping it all means the summary
-    # covers nothing and the next turn overflows again — compaction would spin.
+    # covers nothing and compaction would spin. Summarising it all would fold
+    # the request being answered, so the older turns go instead.
     msgs = convo(5)
+    sel = select(msgs, usable_tokens=1_000_000)
+    assert sel.tail_start_id == "u4"
+    assert [m.id for m in sel.head] == [m.id for m in msgs[:8]]
+
+
+def test_single_turn_history_smaller_than_the_budget_is_summarised_whole():
+    # Nothing is older than the request; keeping it would summarise nothing.
+    msgs = convo(1, msgs_per_turn=3)
     sel = select(msgs, usable_tokens=1_000_000)
     assert sel.tail_start_id is None
     assert len(sel.head) == len(msgs)
+
+
+def pending_step(id):
+    """The assistant message a step opens before the model has said anything."""
+    return FakeMsg(id, "assistant", parts=[{"type": "step-start"}])
+
+
+def platform_note(id):
+    return FakeMsg(id, "user", parts=[{
+        "type": "text", "text": "Context was compacted. Continue working on the current task.",
+        "synthetic": True, "origin": "system_recovery",
+    }])
+
+
+def test_compaction_before_the_answer_keeps_the_new_request_when_all_fits():
+    # The replay case `compaction`: a short history whose request is already
+    # over the threshold compacts before the new question is answered.
+    msgs = convo(2) + [user("ask", "what is the code name?"), pending_step("step")]
+    sel = select(msgs, usable_tokens=1_000_000)
+    assert sel.tail_start_id == "ask"
+    assert [m.id for m in sel.head] == [m.id for m in msgs[:4]]
+
+
+def test_a_platform_note_does_not_displace_the_request_it_continues():
+    msgs = convo(2) + [user("ask", "what is the code name?"), pending_step("step"), platform_note("note")]
+    sel = select(msgs, usable_tokens=1_000_000)
+    assert sel.tail_start_id == "ask"
+
+
+def test_a_request_larger_than_the_budget_is_still_summarised():
+    # Kept verbatim it can leave the next request over the threshold, and the
+    # run would end in COMPACTION_FAILED instead of an answer (pinned end to end
+    # by test_context_budget's new-input case).
+    msgs = convo(3) + [user("ask", "x" * 200_000), pending_step("step")]
+    sel = select(msgs, usable_tokens=100_000)
+    assert sel.tail_start_id == "step"
+
+
+def test_a_long_turn_still_summarises_its_settled_steps_with_the_request():
+    # Compaction between the settled steps of one long turn is what lets a
+    # long task keep running; keeping the whole turn would leave nothing to fold.
+    msgs = convo(2) + [user("ask")] + [assistant(f"step{i}", "x" * 40_000) for i in range(4)]
+    sel = select(msgs, usable_tokens=100_000)
+    ids = [m.id for m in msgs]
+    assert sel.tail_start_id not in ("ask", None)
+    assert "ask" in [m.id for m in sel.head]
+    assert ids.index(sel.tail_start_id) > ids.index("ask") + 1
 
 
 def test_tail_starts_at_a_turn_boundary_when_whole_turns_fit():

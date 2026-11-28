@@ -1,0 +1,15 @@
+{
+ "description": "Reading a .env file asks for permission under the default rules; the user allows it once, the scripted read runs, then text.",
+ "turns": [
+  {"user": "看看 app/.env 里配置了哪些变量名。",
+   "replies": [
+    {"tool_calls": [{"id": "call_read_1", "name": "read", "arguments": {"file_path": "/workspace/app/.env"}}]},
+    {"text": "app/.env 里有 DEBUG 和 PORT 两个变量。"}
+   ],
+   "approvals": ["once"],
+   "tools": [
+    {"tool": "read", "args": {"file_path": "/workspace/app/.env"},
+     "result": {"title": ".env", "output": "<file>\n00001| DEBUG=1\n00002| PORT=8080\n</file>"}}
+   ]}
+ ]
+}

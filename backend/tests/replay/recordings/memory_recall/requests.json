@@ -1,0 +1,74 @@
+[
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "aed00456448b"
+     }
+    },
+    {
+     "role": "user",
+     "content": "我平时喜欢喝什么？"
+    }
+   ],
+   "tools": {
+    "$shared": "c2d965f46efd"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 2,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "aed00456448b"
+     }
+    },
+    {
+     "role": "user",
+     "content": "我平时喜欢喝什么？"
+    },
+    {
+     "role": "assistant",
+     "content": "我这里还没有你的饮品偏好记录，可以告诉我。"
+    },
+    {
+     "role": "user",
+     "content": "我喜欢喝乌龙茶。"
+    }
+   ],
+   "tools": {
+    "$shared": "c2d965f46efd"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ }
+]

@@ -405,7 +405,7 @@ async def _call_provider(
     generations endpoint with signed input URLs instead of ``/images/edits``.
     """
     from openai import AsyncOpenAI
-    from agent.trajectory import RequestCapture, context_for_tool, public_value
+    from trajectory.capture import RequestCapture, context_for_tool, public_value
     from question.runtime import assert_current
 
     client_kwargs = {
@@ -474,8 +474,9 @@ async def _call_provider(
         _mark_not_sent(exc)
         raise
     if ctx is not None:
-        ctx._trajectory_image_request_id = capture.context.request_id if capture.context else None
-        ctx._trajectory_image_capture = capture
+        from trajectory.capture import set_call_state
+        set_call_state(ctx, "image_request_id", capture.context.request_id if capture.context else None)
+        set_call_state(ctx, "image_capture", capture)
 
     client = None
     try:
@@ -568,7 +569,7 @@ async def _runninghub_generate(
     id; the task is never submitted twice.
     """
     from agent.driver import LeaseLostError
-    from agent.trajectory import service_scope
+    from trajectory.capture import service_scope
     from question.runtime import RunRevoked
     from tool import image_runninghub as runninghub
 
@@ -757,8 +758,9 @@ async def _store_output(
                 await db.flush()
                 asset = await db.get(FileAsset, asset_id)
             from trajectory.artifacts import capture_result_asset_in_tx
+            from trajectory.capture import call_state
             await capture_result_asset_in_tx(db, ctx, asset,
-                request_id=getattr(ctx, "_trajectory_image_request_id", None))
+                request_id=call_state(ctx, "image_request_id"))
             await db.commit()
     except Exception:
         if reserved_asset is None:
@@ -1468,8 +1470,9 @@ def _rejected_result(mode: str, failure: _ProviderFailure, *, operation_key: str
 async def _execute(args: ImageGenArgs, ctx: ToolContext, channel: str | None = None) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
-    ctx._trajectory_image_request_id = None
-    ctx._trajectory_image_capture = None
+    from trajectory.capture import set_call_state
+    set_call_state(ctx, "image_request_id", None)
+    set_call_state(ctx, "image_capture", None)
 
     try:
         from session.image_pref import selected
@@ -2249,13 +2252,14 @@ async def _execute(args: ImageGenArgs, ctx: ToolContext, channel: str | None = N
     except Exception:  # billing must never fail a stored image
         log.warning("image_gen settlement failed", exc_info=True)
 
-    capture = getattr(ctx, "_trajectory_image_capture", None)
+    from trajectory.capture import call_state
+    capture = call_state(ctx, "image_capture")
     if capture is not None and capture.context is not None:
         from types import SimpleNamespace
         from sqlalchemy import select
         from db.base import get_db_session
         from db.models.billing import UsageEvent
-        from agent.trajectory import capture_billing
+        from trajectory.capture import capture_billing
         async with get_db_session() as db:
             usage_row = await db.scalar(select(UsageEvent).where(
                 UsageEvent.idempotency_key == billing_key,

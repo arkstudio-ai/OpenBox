@@ -126,7 +126,8 @@ async def test_container_skill_allowed_tools_have_no_runtime_effect(host_skill):
     result = await execute(
         SkillArgs(skill="imagegen"), ctx(LiveSandbox(payload))
     )
-    assert result.metadata == {}
+    # Only the body digest (A5); nothing that could read as a grant.
+    assert set(result.metadata) == {"skill_sha256"}
     assert "Activated tools" not in result.output
 
 
@@ -199,7 +200,7 @@ async def test_a_host_skill_treats_declared_tools_as_documentation(host_skill):
         "---\nname: demo\ndescription: d\nallowed-tools:\n  - image_gen\n---\nUse it"
     )
     result = await execute(SkillArgs(skill="demo"), ctx())
-    assert result.metadata == {}
+    assert set(result.metadata) == {"skill_sha256"}
     assert "Activated tools" not in result.output
 
 

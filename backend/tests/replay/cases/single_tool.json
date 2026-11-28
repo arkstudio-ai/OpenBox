@@ -1,0 +1,14 @@
+{
+ "description": "One tool call (read, scripted result), then a text answer: two model requests.",
+ "turns": [
+  {"user": "看一下 notes.txt 里写了什么。",
+   "replies": [
+    {"tool_calls": [{"id": "call_read_1", "name": "read", "arguments": {"file_path": "/workspace/notes.txt"}}]},
+    {"text": "notes.txt 里有两条：周三 10 点开会，记得带幻灯片。"}
+   ],
+   "tools": [
+    {"tool": "read", "args": {"file_path": "/workspace/notes.txt"},
+     "result": {"title": "notes.txt", "output": "<file>\n00001| 周三 10 点开会\n00002| 记得带幻灯片\n</file>"}}
+   ]}
+ ]
+}

@@ -13,6 +13,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 SCOPES = ("backend/api", "backend/tool", "backend/core/config.py", "backend/models")
+# Files that moved out of SCOPES; their inventory is compared at the new path.
+MOVED = {"backend/tool/memory_tools.py": "backend/memory/tools.py"}
 
 
 def git(*args):
@@ -57,7 +59,7 @@ def main():
         if not filename.endswith(".py"):
             continue
         previous = inventory(git("show", f"{base}:{filename}"))
-        path = ROOT / filename
+        path = ROOT / MOVED.get(filename, filename)
         current = inventory(path.read_text()) if path.exists() else {key: set() for key in counts}
         for kind, items in previous.items():
             counts[kind] += len(items)

@@ -127,7 +127,7 @@ async def register(request):
         return request
     from agent.hooks import current_tool_context
     ctx, ticket = current_tool_context(), runtime.current_run.get()
-    part_id = (getattr(ctx, "_trajectory_requested_part", None) or getattr(ctx, "part_id", None)) if ctx else None
+    part_id = (getattr(ctx, "_requested_part_id", None) or getattr(ctx, "part_id", None)) if ctx else None
     if (ticket is None or ticket.session_id != request.session_id or ticket.user_id != request.user_id
             or ctx is None or not part_id):
         raise AssistantError(409, "PERMISSION_RUN_REQUIRED", "A current tool call must request permission")

@@ -40,7 +40,7 @@ async def asset_status(asset_id: str | None) -> str | None:
 
 async def dispatched(submits: list, body, **capture):
     """Stand in for a provider adapter: the real ones submit inside the dispatch capture."""
-    from agent.trajectory import capture_service_dispatch
+    from trajectory.capture import capture_service_dispatch
     async with capture_service_dispatch(body=body, **capture):
         submits.append(body)
 
@@ -117,7 +117,7 @@ async def test_refused_transcription_submit_does_not_stay_transcribing(monkeypat
         def presign_get(self, key, expires_sec):
             return f"https://oss.invalid/{key}"
 
-    async def transcribe(_target, audio_url):
+    async def transcribe(_target, audio_url, _language="zh"):  # language since 8141e7ea
         await dispatched(submits, {"model": _target.model, "input": {"file_urls": [audio_url]}},
                          purpose="audio_transcription", provider="dashscope", model=_target.model,
                          operation="POST /api/v1/services/audio/asr/transcription", profile="audio_transcription")

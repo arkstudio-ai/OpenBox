@@ -51,6 +51,13 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     from db.models.file_asset import FileAsset
     for model in (MemoryChangeClock, MemoryWriteReceipt, MemoryExperience, FileAsset):
         model.__table__.create(connection)
+    from db.models.media_template import (
+        MediaTemplate, MediaTemplateEdition, MediaTemplateImport, MediaTemplateReview,
+        MediaTemplateSubmission, MediaTemplateTrial,
+    )
+    for model in (MediaTemplate, MediaTemplateEdition, MediaTemplateTrial, MediaTemplateSubmission,
+                  MediaTemplateReview, MediaTemplateImport):
+        model.__table__.create(connection)
     from db.models.question import QuestionCheckpoint, SessionExecution
     from db.models.agent_driver import AgentDriverState
     from db.models.agent_event import AgentEvent

@@ -1,0 +1,550 @@
+[
+ {
+  "type": "function",
+  "function": {
+   "name": "bash",
+   "description": {
+    "$lines": [
+     "Execute a shell command in the current sandbox project directory and stream its",
+     "output. Use this for terminal-only operations; use the dedicated file tools for",
+     "reading, searching, editing, or writing files, and respond directly instead of",
+     "using shell output for conversation.",
+     "",
+     "On a managed cloud desktop, use $TMPDIR for reproducible intermediates such as",
+     "download copies, extracted frames, shot previews, and raw concatenations. Copy",
+     "cached inputs to $TMPDIR before editing them. Keep project plans and drafts in",
+     "the project, and write final exports under $OPENBOX_PENDING_ROOT before sharing.",
+     "",
+     "Quote paths containing spaces. The timeout defaults to 120 seconds and is",
+     "capped at 600 seconds. Long output may be truncated; inspect the full artifact",
+     "with the file tools. Run independent commands as separate parallel calls, and",
+     "join dependent commands with `&&` so failure stops the sequence.",
+     "",
+     "Sandbox safety: never stop, replace, or modify the action server, its port, or",
+     "PID 1; protected commands are blocked. Do not expose secrets in commands or",
+     "output.",
+     "",
+     "Git safety: commit or push only when the user explicitly requests it. Review",
+     "status and diffs first and include only intended files. Never change git config,",
+     "skip hooks, use interactive flags, or run destructive/force operations without",
+     "explicit authorization. Prefer a new commit; amend only when explicitly asked,",
+     "the commit is yours, and it has not been pushed. Never force-push a protected",
+     "branch."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "command": {
+      "description": "The command to execute",
+      "type": "string"
+     },
+     "timeout": {
+      "default": 120,
+      "description": "Optional timeout in seconds. Default 120s (2 minutes). Max 600s (10 minutes).",
+      "type": "integer"
+     },
+     "description": {
+      "default": "",
+      "description": "Description of what this command does",
+      "type": "string"
+     }
+    },
+    "required": [
+     "command"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "capability_search",
+   "description": "Find eligible OpenBox capabilities whose full schemas are not visible yet. Search once with a concise task phrase or exact names; returned typed tools appear next step.",
+   "parameters": {
+    "properties": {
+     "query": {
+      "default": "",
+      "description": "Short description of the capability needed. Use exact names when known.",
+      "maxLength": 500,
+      "type": "string"
+     },
+     "names": {
+      "description": "Optional exact canonical IDs or tool names to reveal together.",
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 5,
+      "type": "array"
+     }
+    },
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "edit",
+   "description": {
+    "$lines": [
+     "Performs exact string replacements in files.",
+     "",
+     "Usage:",
+     "- You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.",
+     "- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.",
+     "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.",
+     "- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.",
+     "- The edit will FAIL if `old_string` is not found in the file.",
+     "- The edit will FAIL if `old_string` is found multiple times in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance.",
+     "- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "file_path": {
+      "description": "Path to the file to edit",
+      "type": "string"
+     },
+     "old_string": {
+      "description": "The text to find and replace",
+      "type": "string"
+     },
+     "new_string": {
+      "description": "The replacement text",
+      "type": "string"
+     },
+     "replace_all": {
+      "default": false,
+      "description": "Replace all occurrences",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "file_path",
+     "old_string",
+     "new_string"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "glob",
+   "description": {
+    "$lines": [
+     "Fast file pattern matching tool that works with any codebase size.",
+     "",
+     "- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"",
+     "- Returns matching file paths sorted by modification time",
+     "- Use this tool when you need to find files by name patterns",
+     "- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead",
+     "- You can call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "pattern": {
+      "description": "Glob pattern to match files (e.g. '**/*.py')",
+      "type": "string"
+     },
+     "path": {
+      "default": "/workspace",
+      "description": "Directory to search in",
+      "type": "string"
+     }
+    },
+    "required": [
+     "pattern"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "grep",
+   "description": {
+    "$lines": [
+     "Fast content search tool that works with any codebase size.",
+     "",
+     "- Searches file contents using regular expressions",
+     "- Supports full regex syntax (e.g. \"log.*Error\", \"function\\s+\\w+\", etc.)",
+     "- Filter files by type with the type parameter (e.g. \"py\", \"js\")",
+     "- Returns file paths and line numbers with at least one match sorted by modification time",
+     "- Use this tool when you need to find files containing specific patterns",
+     "- If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly",
+     "- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead"
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "pattern": {
+      "description": "Regex pattern to search for",
+      "type": "string"
+     },
+     "path": {
+      "default": "/workspace",
+      "description": "File or directory to search in",
+      "type": "string"
+     },
+     "type": {
+      "type": "string",
+      "description": "File type filter (e.g. 'py', 'js')"
+     }
+    },
+    "required": [
+     "pattern"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "question",
+   "description": {
+    "$lines": [
+     "Use this tool when you need to ask the user questions during execution. This allows you to:",
+     "1. Gather user preferences or requirements",
+     "2. Clarify ambiguous instructions",
+     "3. Get decisions on implementation choices as you work",
+     "4. Offer choices to the user about what direction to take.",
+     "",
+     "Usage notes:",
+     "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options",
+     "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one",
+     "- Set `allow_attachments: true` on questions asking for pictures, video, audio or documents. The card then offers resource-library selection and local upload; attached assets arrive with the answer. A file-only answer is valid. Do not ask the user to paste file paths instead.",
+     "- Ask related independent questions together in one call (1-4 questions); do not put this tool inside batch",
+     "- Recommendations are suggestions, not user answers. Never label an option as already selected or treat a default as submitted",
+     "- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label",
+     "- When asking the user to approve or review a draft, script or plan, set purpose=\"review\" and put the complete current proposal in review_content. The card must show what is being reviewed; \"confirm this version\" is not a proposal. After a revision, show the newly revised content, never assume an older draft is the new version.",
+     "- For a revision, change only the requested parts of the exact previous proposal. Preserve all unaffected wording, timing, materials and constraints. The server checks revised cards before displaying them; correct any reported mismatch instead of asking the user to accept an unintended change.",
+     "- Use purpose=\"clarification\" only to collect missing information before a proposal can be written. Reviewing a script does not authorize generating media or spending; classify consequential approval separately with requires_confirmation."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "questions": {
+      "description": "1-4 questions to ask the user together in one card",
+      "items": {
+       "properties": {
+        "purpose": {
+         "default": "clarification",
+         "description": "clarification collects missing information; review asks the user to assess the proposal supplied in review_content",
+         "enum": [
+          "clarification",
+          "review"
+         ],
+         "type": "string"
+        },
+        "review_content": {
+         "maxLength": 24000,
+         "type": "string",
+         "description": "For purpose=review, the full current draft/script/plan shown in this card, including its conditions. Do not refer to an unseen or superseded version."
+        },
+        "requires_confirmation": {
+         "default": false,
+         "description": "True when answering authorizes a consequential action such as payment, publication, account access or deletion. An assistant answering on the user's behalf must then obtain confirmation of the exact answer. Classify the consequence, not keywords in the question.",
+         "type": "boolean"
+        },
+        "question": {
+         "type": "string"
+        },
+        "header": {
+         "default": "",
+         "type": "string"
+        },
+        "options": {
+         "default": [],
+         "items": {
+          "properties": {
+           "label": {
+            "type": "string"
+           },
+           "description": {
+            "default": "",
+            "type": "string"
+           }
+          },
+          "required": [
+           "label"
+          ],
+          "type": "object"
+         },
+         "type": "array"
+        },
+        "multiple": {
+         "default": false,
+         "type": "boolean"
+        },
+        "custom": {
+         "default": true,
+         "description": "Allow free-text answers; set false to require one of the offered options",
+         "type": "boolean"
+        },
+        "allow_attachments": {
+         "default": false,
+         "description": "Offer resource-library selection and local upload for this question",
+         "type": "boolean"
+        },
+        "step_id": {
+         "maxLength": 32,
+         "pattern": "^[a-z][a-z0-9_]*$",
+         "type": "string",
+         "description": "Light mode only: the id of the guided page step this card belongs to, from the step list in the system prompt; the interface lights that step up. Omit outside Light mode."
+        }
+       },
+       "required": [
+        "question"
+       ],
+       "type": "object"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "questions"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "read",
+   "description": {
+    "$lines": [
+     "Read a plain-text file from the sandbox filesystem. If the path does not exist, an error is returned.",
+     "",
+     "Usage:",
+     "- The file_path parameter should be an absolute path.",
+     "- By default, this tool returns up to 2000 lines from the start of the file.",
+     "- The offset parameter is the line number to start from (0-indexed).",
+     "- To read later sections, call this tool again with a larger offset.",
+     "- Use the Grep tool to find specific content in large files or files with long lines.",
+     "- If you are unsure of the correct file path, use the Glob tool to look up filenames by glob pattern.",
+     "- Contents are returned with each line prefixed by its line number.",
+     "- Any line longer than 2000 characters is truncated.",
+     "- Call this tool in parallel when you know there are multiple files you want to read.",
+     "- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.",
+     "- This tool does not read images, PDFs, office files, audio or video and never attaches files.",
+     "- For images use view_image (discover it first if needed). For other binary formats use an appropriate reader or extract text to a new file first."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "file_path": {
+      "description": "Absolute path to the file to read",
+      "type": "string"
+     },
+     "offset": {
+      "default": 0,
+      "description": "Line offset to start reading from",
+      "type": "integer"
+     },
+     "limit": {
+      "default": 2000,
+      "description": "Maximum number of lines to read",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "skill",
+   "description": "For a specialized task, search permitted workflows with skill_search before choosing a method or declaring a capability unavailable. Load the selected workflow by exact name (args optional) and follow its instructions. Reload for every new user request, including continued work or slash commands; reuse within that request. Skills do not grant additional permissions.",
+   "parameters": {
+    "properties": {
+     "skill": {
+      "description": "Name of the skill to load",
+      "type": "string"
+     },
+     "args": {
+      "default": "",
+      "description": "Optional arguments for the skill",
+      "type": "string"
+     }
+    },
+    "required": [
+     "skill"
+    ],
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "skill_search",
+   "description": "Discover permitted specialized workflows using a short task description or an exact name. Then use skill to load the selected instructions.",
+   "parameters": {
+    "properties": {
+     "query": {
+      "default": "",
+      "description": "Short words describing the needed skill.",
+      "maxLength": 500,
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 500,
+      "type": "string",
+      "description": "Optional exact skill name. Exact lookup does not fall back to fuzzy matching."
+     }
+    },
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "task",
+   "description": {
+    "$lines": [
+     "Create and control durable subagents. `spawn` (default) starts a fresh child conversation and context.",
+     "`fork` copies only the parent's last closed logical",
+     "turn prefix, excluding an open turn. Set lifecycle=`continuable` for later",
+     "`follow_up`; use `interrupt`, `report`, or `list` to control direct children.",
+     "",
+     "Use `explore` for discovery/research and `general` for multi-step work, or a",
+     "configured spawnable preset. The child shares the parent's project sandbox/worktree,",
+     "so concurrent edits can conflict.",
+     "",
+     "Give a self-contained prompt with objective, scope, paths, write permission,",
+     "constraints, checks, and expected result. Run only independent tasks concurrently;",
+     "run dependent or overlapping work sequentially. Model,",
+     "reasoning, persona, tools, and output_schema are accepted only when explicitly",
+     "supported and remain frozen across follow-ups. Interrupted provider/tool work",
+     "is outcome-unknown and is not replayed automatically."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "action": {
+      "default": "spawn",
+      "description": "Subagent operation",
+      "enum": [
+       "spawn",
+       "fork",
+       "follow_up",
+       "interrupt",
+       "report",
+       "list"
+      ],
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "description": "Short task label",
+      "maxLength": 255,
+      "type": "string"
+     },
+     "prompt": {
+      "default": "",
+      "description": "Self-contained child prompt",
+      "maxLength": 65536,
+      "type": "string"
+     },
+     "subagent_type": {
+      "default": "explore",
+      "description": "Child agent preset",
+      "type": "string"
+     },
+     "lifecycle": {
+      "default": "one_shot",
+      "description": "One-shot or continuable child",
+      "enum": [
+       "one_shot",
+       "continuable"
+      ],
+      "type": "string"
+     },
+     "task_id": {
+      "default": "",
+      "description": "Task id for control actions",
+      "maxLength": 64,
+      "type": "string"
+     },
+     "model": {
+      "maxLength": 128,
+      "type": "string",
+      "description": "Exact configured child model"
+     },
+     "reasoning": {
+      "maxLength": 32,
+      "type": "string",
+      "description": "Declared reasoning variant"
+     },
+     "persona": {
+      "maxLength": 8192,
+      "type": "string",
+      "description": "Persona overlay"
+     },
+     "tools": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "description": "Exact child tool allowlist"
+     },
+     "output_schema": {
+      "additionalProperties": true,
+      "type": "object",
+      "description": "JSON Schema for the result"
+     }
+    },
+    "type": "object"
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "write",
+   "description": {
+    "$lines": [
+     "Writes a file to the local filesystem.",
+     "",
+     "Usage:",
+     "- This tool will overwrite the existing file if there is one at the provided path.",
+     "- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
+     "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.",
+     "- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the user.",
+     "- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
+    ]
+   },
+   "parameters": {
+    "properties": {
+     "file_path": {
+      "description": "Absolute path to write the file",
+      "type": "string"
+     },
+     "content": {
+      "description": "Content to write",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path",
+     "content"
+    ],
+    "type": "object"
+   }
+  }
+ }
+]

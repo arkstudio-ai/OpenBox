@@ -45,12 +45,14 @@ class ToolContext:
     agent_id: str = ""
     # Bound by the loop for attribution, never accepted from tool arguments.
     model_id: str = ""
-    # Immutable, per-call trajectory identity; never mutate a parent's context.
-    trace_context: Any = None
-    _trajectory_execute_started: float | None = None
-    _trajectory_full_tool_output: str | None = None
-    # The running call's tool.output recorder (trajectory.tool_output.ToolOutputStream).
-    _trajectory_output_stream: Any = None
+    # Opaque per-plugin state (agent.extensions.plugin_state). The kernel never
+    # reads it; a write replaces the mapping, so a copy never changes its parent.
+    _plugin_state: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Monotonic time the current call's body was admitted; None until it is.
+    _body_started: float | None = None
+    # The tool part whose request this context last announced to observers;
+    # dedupes tool.requested and binds a permission request to its call.
+    _requested_part_id: str | None = None
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
@@ -124,6 +126,11 @@ class ToolContext:
     _native_max_persisted_reveals: int = 8
     # Directors explicitly mark constituent media that are only inputs to a later deliverable.
     transient_output: bool = False
+    # The projected Messages the provider received in this step (after the
+    # compaction replacement, memory read policy and assistant projection).
+    # Bound by the loop, read-only for tools: the Skill loader uses it to tell
+    # whether an unchanged body is still in context. None outside the loop.
+    _history_view: Any = field(default=None, repr=False)
 
     async def update_output(self, output: str) -> None:
         """Push incremental output update (for real-time tool display)."""
@@ -205,7 +212,19 @@ class ToolInfo:
     execute: Callable[..., Awaitable[ToolResult]]
     # Metadata
     sandbox_required: SandboxRequirement = True
-    never_prune: bool = False  # Whether output should never be pruned
+    # Whether output should never be pruned. Read by the pruner only while
+    # agent_tuning.prune_stale_skill_copies is on (agent/compaction.py).
+    never_prune: bool = False
+    # Input argument naming what a call loads (``skill`` for the Skill tool).
+    # A later completed call with the same value supersedes an earlier one:
+    # the pruner keeps the newest output and may clear older ones, even when
+    # ``never_prune`` is set. Same switch as above.
+    supersede_key: str | None = None
+    # Optional coroutine ``(ruleset, workspace_id) -> str | None`` giving the
+    # description to show while the tool is deferred in portable mode (the
+    # Skill tool's resident catalogue, A4/A7). The kernel calls it instead of
+    # importing the tool's package; None keeps ``description``.
+    deferred_description: Callable[[list | None, str | None], Awaitable[str | None]] | None = None
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
     # None preserves legacy Batch availability, but runs the tool serially.
@@ -239,6 +258,8 @@ def define_tool(
     execute: Callable[..., Awaitable[ToolResult]],
     sandbox_required: SandboxRequirement = True,
     never_prune: bool = False,
+    supersede_key: str | None = None,
+    deferred_description: Callable[[list | None, str | None], Awaitable[str | None]] | None = None,
     parallel_safe: bool | None = None,
     batch_serial_safe: bool = False,
     body_timeout: Callable[[dict, ToolContext], float] | None = None,
@@ -279,34 +300,30 @@ def define_tool(
                 metadata={"error": True, "error_code": "invalid_arguments"},
             )
 
-        from trajectory import current, record
-        from trajectory.tool_output import ToolOutputStream
-        trace = getattr(ctx, "trace_context", None) or current()
+        from agent import recording
+        trace = recording.context_of(ctx) or recording.current()
         if trace is not None:
-            await record("tool.started", {"tool": tool_id,
+            await recording.record("tool.started", {"tool": tool_id,
                 "effective_arguments": validated.model_dump(mode="json"),
                 "timing_source": "producer_monotonic"}, context=trace)
         # The hooks' output stream when they run this very call; a call made
         # without them records into its own.
-        stream = getattr(ctx, "_trajectory_output_stream", None)
-        if stream is None or stream.closed or stream.owner is not wrapped_execute or stream.context is not trace:
-            stream = ctx._trajectory_output_stream = ToolOutputStream(trace, tool=tool_id, owner=wrapped_execute)
+        stream = recording.tool_body(ctx, trace, tool=tool_id, owner=wrapped_execute)
         # Execute
         await ctx.assert_dispatch_allowed()
         from assistant.budget import admit_tool, run_tool_body
         await admit_tool(ctx, ctx.part_id)
-        ctx._trajectory_execute_started = time.monotonic()
-        ctx._trajectory_full_tool_output = None
+        ctx._body_started = time.monotonic()
+        recording.retain_full_output(ctx, None)
         from sandbox.resource_operation import run_tool_resource_scope
         result = await run_tool_resource_scope(ctx, tool_id, args,
             lambda: run_tool_body(ctx, execute, validated))
-        duration = time.monotonic() - ctx._trajectory_execute_started
+        duration = time.monotonic() - ctx._body_started
 
         # Preserve the execution result before the model-facing presentation
         # applies its length budget. A later tool.finished stores that view.
         if trace is not None:
-            retained = (ctx._trajectory_full_tool_output
-                if ctx._trajectory_full_tool_output is not None else result.output)
+            retained = recording.retained_output(ctx, result.output)
             # The call's last output: a degraded budget keeps it (NOTES decision 7).
             await stream.finish(retained, title=result.title, metadata=result.metadata,
                                 duration_ms=round(duration * 1000, 3))
@@ -320,7 +337,7 @@ def define_tool(
         )
 
     # The shared hooks defer the dispatch boundary until validation succeeds.
-    wrapped_execute._trajectory_validates = True
+    wrapped_execute._validates_arguments = True
     return ToolInfo(
         id=tool_id,
         description=description,
@@ -328,6 +345,8 @@ def define_tool(
         execute=wrapped_execute,
         sandbox_required=sandbox_required,
         never_prune=never_prune,
+        supersede_key=supersede_key,
+        deferred_description=deferred_description,
         parallel_safe=parallel_safe,
         batch_serial_safe=batch_serial_safe,
         body_timeout=body_timeout,

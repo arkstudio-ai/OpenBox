@@ -7,10 +7,14 @@ from pydantic import ValidationError
 from agent import compaction, llm
 from agent.context_budget import RequestPrefix, count_payload, measure_request, request_payload, stage_summary_threshold
 from core.config import CompactionConfig, ModelConfig, OpenBoxConfig
+from tests.support.proxy_tokenizer import production_tokenizer  # noqa: F401
 from tests.unit.test_durable_questions import state  # noqa: F401
 from tests.unit.test_full_history import _seed
 from tests.unit.test_long_history_context import long_chat, _send  # noqa: F401
 from tests.unit.test_run_fencing_api import loop_harness  # noqa: F401
+
+# These budgets are sized with the production tokenizer (tests/support/proxy_tokenizer.py).
+pytestmark = pytest.mark.usefixtures("production_tokenizer")
 
 
 def test_eighty_percent_threshold_and_output_headroom(monkeypatch):
@@ -41,7 +45,9 @@ async def test_cost_stage_summary_preserves_reported_source_and_keeps_work_runni
     _small_window(monkeypatch, prune=True)
     monkeypatch.setattr("agent.context_budget.stage_summary_threshold", lambda model: 9_000)
     monkeypatch.setattr(compaction, "STAGE_SUMMARY_TAIL_TOKENS", 128)
-    ids = await _seed("s1", "u1", turns=2, tool_output="Raw original source material " * 500)
+    # Two reads of about 4,400 tokens each put the request over the 9,000
+    # stage threshold and under the 16,000 compaction threshold.
+    ids = await _seed("s1", "u1", turns=2, tool_output="Raw original source material " * 1100)
     answer = await create_assistant_message("s1", ids[-2], agent="build", model_id="openai/gpt-4o", user_id="u1")
     citation = "Source: [Original lesson](https://example.test/original)\n02:51–02:56 shows the starting number."
     await save_part(TextPart(text=citation, session_id="s1", message_id=answer.id), is_new=True, user_id="u1")
@@ -72,9 +78,11 @@ async def test_cost_stage_summary_preserves_reported_source_and_keeps_work_runni
     monkeypatch.setattr(long_chat.processor, "stream_llm", provider)
     monkeypatch.setattr(long_chat.loop, "collect_exposure_signals", collect_signals)
     await _send(long_chat, "Continue using the original material.")
-    assert [kind for kind, _ in calls] == ["summary", "model"]
+    # A summary cut at the output limit is asked for once more, then dropped.
+    assert [kind for kind, _ in calls] == ["summary"] * (1 if complete else 2) + ["model"]
     assert "Keep an evidence ledger" in calls[0][1][-1]["content"]
-    continuation = "\n".join(str(message.get("content", "")) for message in calls[1][1])
+    assert all("Keep an evidence ledger" in data[-1]["content"] for kind, data in calls if kind == "summary")
+    continuation = "\n".join(str(message.get("content", "")) for message in calls[-1][1])
     assert citation in continuation
     assert (compaction.STAGE_EVIDENCE_HEADING in continuation) is complete
     assert observed_intents == ["Continue using the original material."] * 3

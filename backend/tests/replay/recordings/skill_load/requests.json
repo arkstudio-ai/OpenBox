@@ -1,0 +1,84 @@
+[
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "按团队周报的格式帮我写这周的周报：完成了登录页改版。"
+    }
+   ],
+   "tools": {
+    "$shared": "806c61a36a51"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "按团队周报的格式帮我写这周的周报：完成了登录页改版。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_skill_1",
+       "type": "function",
+       "function": {
+        "name": "skill",
+        "arguments": "{\"skill\": \"weekly-report\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_skill_1",
+     "content": "<skill_content name=\"weekly-report\">\n# 周报格式\n\n1. 本周进展：三条以内，每条一句话。\n2. 下周计划：按优先级排序。\n3. 风险：没有就写“无”。\n</skill_content>"
+    }
+   ],
+   "tools": {
+    "$shared": "48fda119ae74"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ }
+]

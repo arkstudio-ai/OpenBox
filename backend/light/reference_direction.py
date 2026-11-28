@@ -180,7 +180,7 @@ async def bind(ctx, plan, index, first, anchor, feedback="", *, reference_copy="
     import litellm
 
     from agent.llm import _get_provider_kwargs
-    from agent.trajectory import capture_service_dispatch, service_scope
+    from trajectory.capture import capture_service_dispatch, service_scope
     from core.oss import get_oss
     from db.base import get_db_session
     from db.models.file_asset import FileAsset

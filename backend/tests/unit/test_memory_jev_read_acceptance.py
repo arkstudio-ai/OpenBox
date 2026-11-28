@@ -216,7 +216,7 @@ async def test_assistant_document_supplement_is_bounded_and_transient(monkeypatc
     denied = await tool.execute(tool.parameters.model_validate({"reads": [{"kind": "history"}]}), ctx)
     assert "restricted" in denied.output
     ctx.user_id = "different-user"
-    from tool.memory_tools import execute_memory_read_more
+    from memory.tools import execute_memory_read_more
     denied = await execute_memory_read_more(tool.parameters.model_validate({"reads": [{"kind": "documents"}]}), ctx)
     assert "turn_read_scope_unavailable" in denied.output
 

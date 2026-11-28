@@ -9,6 +9,10 @@ So a tail of recent messages is kept as-is alongside the summary, sized to a
 token budget. Ported from opencode's SessionCompaction.select(), including its
 turn awareness — the split lands on a message boundary inside a turn, never
 between a user message and the assistant work answering it.
+
+Whenever everything from the newest request onward fits the budget, the
+request is in the tail, so the model reads the question itself after a
+compaction rather than the summarizer's account of it.
 """
 from __future__ import annotations
 
@@ -57,12 +61,25 @@ def _role(msg) -> str:
     return role if isinstance(role, str) else getattr(role, "value", "")
 
 
+def _field(part, name: str):
+    return part.get(name) if isinstance(part, dict) else getattr(part, name, None)
+
+
 def _has_compaction_part(msg) -> bool:
     for part in (getattr(msg, "parts", None) or []):
-        t = part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
-        if t == "compaction":
+        if _field(part, "type") == "compaction":
             return True
     return False
+
+
+def _is_request(msg) -> bool:
+    """A user message with content of its own, not only a synthetic platform note.
+
+    "Context was compacted. Continue working on the current task." opens a turn
+    like any user message, but the request it continues is the one before it.
+    """
+    return any(not (_field(part, "type") == "text" and _field(part, "synthetic"))
+               for part in (getattr(msg, "parts", None) or []))
 
 
 def turns(messages: list) -> list[Turn]:
@@ -161,6 +178,16 @@ def select(messages: list, usable_tokens: int, configured_budget: int | None = N
         elif keep is None:
             log.info(f"compaction tail: nothing fits (budget={budget}, turn={size})")
         break
+
+    if keep is not None and keep[0] == 0:
+        # Everything fits. Keeping it all would summarise nothing and the loop
+        # would compact again; summarising it all would fold the request being
+        # answered, and the next call would carry only the summary's account of
+        # it. Summarise what precedes the newest request instead. A platform
+        # note such as the compaction continuation is not that request.
+        request = next((turn for turn in reversed(all_turns) if _is_request(messages[turn.start])), None)
+        if request is not None and request.start > 0:
+            return Selection(head=messages[:request.start], tail_start_id=request.id)
 
     if keep is None or keep[0] == 0:
         # Splitting at 0 would keep everything and summarise nothing.

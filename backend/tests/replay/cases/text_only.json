@@ -1,0 +1,7 @@
+{
+ "description": "One turn, one model request, a text answer streamed in two pieces.",
+ "turns": [
+  {"user": "用一句话介绍一下你自己。",
+   "replies": [{"text": ["我是 OpenBox 的助手，", "可以帮你处理文件和创作任务。"]}]}
+ ]
+}

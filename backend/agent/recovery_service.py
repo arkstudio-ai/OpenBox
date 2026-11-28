@@ -28,7 +28,6 @@ class AgentRecoveryResult:
     applied_subagent_interrupts: int = 0
     resumed_inbox_sessions: int = 0
     settled_inbox_claims: int = 0
-    memory_jobs_recovered: int = 0
     assistant_results_recovered: int = 0
     assistant_controls_recovered: int = 0
     assistant_events_projected: int = 0
@@ -42,6 +41,7 @@ class AgentRecoveryResult:
     effects_failed_before_dispatch: int = 0
     effect_stale_skips: int = 0
     stale_skips: int = 0
+    plugin_recovered: int = 0
 
     @property
     def changed(self) -> bool:
@@ -55,7 +55,6 @@ class AgentRecoveryResult:
             self.applied_subagent_interrupts,
             self.resumed_inbox_sessions,
             self.settled_inbox_claims,
-            self.memory_jobs_recovered,
             self.assistant_results_recovered,
             self.assistant_controls_recovered,
             self.assistant_events_projected,
@@ -66,6 +65,7 @@ class AgentRecoveryResult:
             self.effects_deferred,
             self.effects_manual_review,
             self.effects_failed_before_dispatch,
+            self.plugin_recovered,
         ))
 
 
@@ -180,17 +180,6 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         log.exception("Assistant event projection deferred")
     resumed_inbox = await resume_claimable_inbox_sessions()
 
-    # Receipts survive schedule/commit gaps; replay them independently of
-    # whether any Driver lease expired in this pass. Model calls stay in the
-    # memory worker and never hold an Agent execution lease.
-    memory_jobs_recovered = 0
-    try:
-        from memory.jobs import recover_extraction_jobs
-
-        memory_jobs_recovered = await recover_extraction_jobs(limit=100)
-    except Exception as exc:
-        log.warning("Memory scheduling recovery deferred error_type=%s", type(exc).__name__)
-
     # External effects run last: their scanner is independently bounded and
     # query-only. It must not delay the higher-priority Driver/Inbox tail
     # repair order above, and it never replays a dispatch body.
@@ -207,6 +196,12 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
 
         effect_recovery = EffectRecoveryResult()
 
+    # Registered plugins recover last, in registration order, after the
+    # kernel's fixed order above (docs/kernel-refactor/plugin-interfaces.md);
+    # the memory plugin's replay of extraction receipts is one.
+    from agent.extensions import run_recovery_hooks
+    plugin_recovered = await run_recovery_hooks()
+
     return AgentRecoveryResult(
         expired_markers=len(records),
         completed_outboxes=completed_outboxes,
@@ -218,7 +213,6 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         applied_subagent_interrupts=applied_interrupts,
         resumed_inbox_sessions=len(resumed_inbox),
         settled_inbox_claims=settled_inbox,
-        memory_jobs_recovered=memory_jobs_recovered,
         assistant_results_recovered=assistant_results_recovered,
         assistant_controls_recovered=assistant_controls_recovered,
         assistant_events_projected=assistant_events_projected,
@@ -232,6 +226,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         effects_failed_before_dispatch=effect_recovery.failed_before_dispatch,
         effect_stale_skips=effect_recovery.stale_skips,
         stale_skips=sum(1 for result in all_repairs if result.skipped),
+        plugin_recovered=plugin_recovered,
     )
 
 

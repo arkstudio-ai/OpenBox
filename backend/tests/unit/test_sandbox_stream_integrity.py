@@ -65,7 +65,8 @@ async def test_bash_reports_partial_output_without_reexecuting_command(complete)
     assert result.metadata['exit_code'] == 0
     assert result.metadata['output_complete'] is complete
     assert ('output is incomplete' in result.output) is (complete is False)
-    assert ctx._trajectory_full_tool_output == '{\n'
+    from trajectory.capture import call_state
+    assert call_state(ctx, "full_output") == '{\n'
 
 
 async def test_bash_preview_truncation_is_distinct_from_complete_transport(monkeypatch):
@@ -83,4 +84,5 @@ async def test_bash_preview_truncation_is_distinct_from_complete_transport(monke
     assert result.metadata['stream_output_complete'] is True
     assert result.metadata['output_complete'] is False
     assert result.metadata['output_truncated'] is True
-    assert ctx._trajectory_full_tool_output == 'abcdef'
+    from trajectory.capture import call_state
+    assert call_state(ctx, "full_output") == 'abcdef'

@@ -219,12 +219,12 @@ async def _read(args: CreatorContextArgs, ctx: ToolContext) -> ToolResult:
         # Old skills may still ask for the broad creator profile. This is a
         # read, not a separate permission: use the same per-turn policy,
         # evidence budget and transient replay as the other memory tools.
-        from tool.memory_tools import execute_memory_read_more, MemorySupplementArgs, SupplementRequest
+        from memory.tools import execute_memory_read_more, MemorySupplementArgs, SupplementRequest
         turn = getattr(ctx, "memory_turn", None)
         return await execute_memory_read_more(MemorySupplementArgs(reads=[SupplementRequest(
             query=turn.query if turn else "")]), ctx, operation="creator_context")
     from memory.context import legacy_read
-    from tool.memory_tools import _transient_boundary
+    from memory.tools import _transient_boundary
 
     arguments = args.model_dump(include={"action", "type", "scope", "status", "limit", "volatile_limit"})
     result = await legacy_read(arguments, user_id=ctx.user_id or "default", workspace_id=ctx.workspace_id or None,

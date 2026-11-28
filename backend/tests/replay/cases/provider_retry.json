@@ -1,0 +1,10 @@
+{
+ "description": "The provider answers the first request with a 429 (Retry-After 5 ms); the loop retries the same step and the second attempt succeeds.",
+ "turns": [
+  {"user": "今天适合做什么运动？",
+   "replies": [
+    {"rate_limited": {"message": "429 Too Many Requests: rate limit reached for requests", "retry_after_ms": 5}},
+    {"text": "天气不错的话可以去慢跑或骑车。"}
+   ]}
+ ]
+}

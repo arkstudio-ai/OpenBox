@@ -603,7 +603,7 @@ async def test_search_only_reads_sql_and_old_tools_remain_normal_session_only(mo
     from memory.policy import MemoryAccessDenied
     from session.session import create_session
     from tests.unit.test_assistant_reads import TOOLS
-    from tool.memory_tools import MemorySearchArgs, execute_memory_search
+    from memory.tools import MemorySearchArgs, execute_memory_search
     identity, _, _, _ = await seed(monkeypatch)
     value = await note(identity)
     statements = []

@@ -1,8 +1,15 @@
-.PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy retire-legacy-worker k8s-apply k8s-apply-aks
+.PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy retire-legacy-worker k8s-apply k8s-apply-aks check-kernel
 
 BACKEND_ENTRYPOINT := uv run python scripts/backend_entrypoint.py
 FRONTEND_DIR := frontend-v2
 FRONTEND_PORT := 3000
+# Kernel guards (see backend/AGENTS.md). A git worktree without its own backend/.venv
+# can reuse an existing environment instead of letting uv create one:
+#   make check-kernel KERNEL_PYTEST="/path/to/OpenBox/backend/.venv/bin/python -m pytest"
+KERNEL_PYTEST ?= uv run --extra test pytest
+KERNEL_GUARD_TESTS := tests/unit/test_kernel_import_direction.py tests/unit/test_kernel_turn_sql_budget.py tests/replay
+# Offline and independent of backend/.env: litellm loads .env in its DEV mode.
+KERNEL_GUARD_ENV := TRAJECTORY_RECORDING_ENABLED=false LITELLM_MODE=PRODUCTION LITELLM_LOCAL_MODEL_COST_MAP=True
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -112,6 +119,9 @@ k8s-apply-aks: ## Retire the old worker, then apply the AKS manifest
 
 test: ## Run backend tests
 	cd backend && uv run pytest tests/ -v
+
+check-kernel: ## Run the kernel guards: import direction, per-turn SQL budget, loop replay
+	cd backend && $(KERNEL_GUARD_ENV) $(KERNEL_PYTEST) $(KERNEL_GUARD_TESTS) -q -p no:cacheprovider
 
 test-isolation: ## Run multi-user isolation tests
 	cd backend && uv run pytest tests/integration/test_isolation.py -v

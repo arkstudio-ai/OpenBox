@@ -1,0 +1,16 @@
+{
+ "version": "replay-fixture-1",
+ "verified_at": "2026-01-01",
+ "credits_per_cny": "1",
+ "usd_cny": "7",
+ "fx_date": "2026-01-01",
+ "fx_source": "tests/replay/rates.json",
+ "sources": {"replay": "tests/replay/rates.json: a fixed price list, so a price update does not change the recordings"},
+ "models": {
+  "qwen3.8-flash": {"vendor": "replay", "currency": "CNY", "input": "1", "output": "2",
+                    "cache_read": "0.1", "cache_write": "1.5"}
+ },
+ "aliases": {},
+ "unpriced": {},
+ "media": {}
+}

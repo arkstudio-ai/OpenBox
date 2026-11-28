@@ -100,6 +100,8 @@ async def test_channel_install_requires_runtime_before_credentials_or_services(m
     monkeypatch.setattr(channel, 'get_config', lambda: SimpleNamespace(wuying_channel='ssh'))
     prepare = AsyncMock(side_effect=runtime.BrowserRuntimeUnavailable('offline'))
     monkeypatch.setattr(channel, 'ensure_desktop_browser_runtime', prepare)
+    # The stream receipt prerequisite has its own tests (test_wuying_stream_runtime).
+    monkeypatch.setattr('sandbox.stream_runtime.ensure_desktop_stream_output', AsyncMock())
     command = AsyncMock()
     monkeypatch.setattr(channel, 'run_desktop_command', command)
     with pytest.raises(runtime.BrowserRuntimeUnavailable):

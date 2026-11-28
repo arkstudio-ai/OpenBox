@@ -137,9 +137,10 @@ async def capture_result_asset_in_tx(db, ctx, asset, *, request_id: str | None =
     """
     if not getattr(ctx, "session_id", None) or not enabled(ctx.user_id):
         return None
+    from trajectory.capture import call_state
     from trajectory.producers import activity_context, paused_in_tx, saved_context
     trace = await activity_context(db, ctx.user_id, ctx.session_id,
-                                   saved=saved_context(getattr(ctx, "trace_context", None)))
+                                   saved=saved_context(call_state(ctx, "context")))
     if trace is None or await paused_in_tx(db, trace):
         return None
     if request_id is not None:

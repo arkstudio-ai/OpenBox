@@ -20,8 +20,10 @@ PERMANENT_MEDIA_TOOLS = (
 )
 
 EXPECTED_ACTIONS = {
+    # prepare_template and await_ready since 7c8fa116.
     "video_generate": {
-        "models", "validate", "submit", "status", "wait", "cancel", "fetch", "attach",
+        "models", "prepare_template", "validate", "submit", "status", "await_ready",
+        "wait", "cancel", "fetch", "attach",
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {

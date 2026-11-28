@@ -322,7 +322,10 @@ async def repeated_result():
                 "session_id": accepted["execution_session_id"], "message_ids": [report.id]})
             assert not output.metadata.get("error"), output.output
             await consume_context(ctx)
-            output, _, _ = await call_tool(ctx, "tasks.submit", {**arguments(ctx, answer), "destination_confirmed": True})
+            # Each later turn explicitly asks for another task with the same
+            # title; since 78fc6fa2 that needs new_despite_similar.
+            output, _, _ = await call_tool(ctx, "tasks.submit", {**arguments(ctx, answer), "destination_confirmed": True,
+                                                                 "new_despite_similar": index > 0})
             assert not output.metadata.get("error"), output.output
             accepted = json.loads(output.output)
             await finish(ctx, lease, answer, f"Accepted derived text task {index}.")

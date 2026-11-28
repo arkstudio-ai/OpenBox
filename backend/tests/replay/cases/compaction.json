@@ -1,0 +1,12 @@
+{
+ "description": "The first turn reports a prompt near the context limit; the second turn compacts first (a summary request), then answers from the compacted history.",
+ "turns": [
+  {"user": "这是第一轮：记住项目代号叫青鸟。",
+   "replies": [{"text": "记下了，项目代号是青鸟。", "usage": {"prompt_tokens": 170000, "completion_tokens": 20}}]},
+  {"user": "项目代号是什么？",
+   "replies": [
+    {"text": "## 摘要\n用户告诉助手项目代号叫青鸟，助手已确认。"},
+    {"text": "项目代号是青鸟。"}
+   ]}
+ ]
+}

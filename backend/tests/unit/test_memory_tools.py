@@ -16,7 +16,7 @@ from memory import service
 from memory.policy import resolve_access_scope
 from memory.providers.common import MemoryProviderError
 from tests.unit.test_memory_pipeline import _seed, pipeline_database  # noqa: F401
-from tool import memory_tools as tools
+from memory import tools
 from tool.tool import ToolContext
 
 

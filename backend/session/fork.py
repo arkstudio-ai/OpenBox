@@ -484,8 +484,8 @@ async def fork_session(
             frozen=frozen,
             now=now,
         )
-        from trajectory import TraceContext, enabled, record
-        from trajectory.producers import baseline_candidate_in_tx, session_context
+        from agent.recording import baseline_candidate_in_tx, enabled, new_identity, record
+        from agent.recording import session_identity as session_context
 
         source_context = await session_context(db, user_id, source_session_id) if enabled(user_id) else None
         if source_context is not None:
@@ -497,7 +497,7 @@ async def fork_session(
                         "copied_messages": copied["message_id_map"], "history_mode": "baseline_only"}
             await record("history.forked", {**relation, "direction": "outgoing"},
                          context=source_context, db=db, event_id=f"fork:{new_session.id}:source")
-            destination_context = TraceContext(user_id, new_session.id, workspace_id=source.workspace_id)
+            destination_context = new_identity(user_id, new_session.id, workspace_id=source.workspace_id)
             await baseline_candidate_in_tx(db, user_id=user_id, session_id=new_session.id,
                                            context=destination_context)
             await record("history.forked", {**relation, "direction": "incoming"},

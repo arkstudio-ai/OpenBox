@@ -5,10 +5,16 @@ outlives sessions, and WUYING's delete_container does nothing. It runs
 unattended against a directory full of the user's work, so the rules about what
 it will *not* touch matter more than what it will.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import project.reclaim as reclaim
 from project.workspace import TRASH_ROOT, WORKSPACE_ROOT
+
+#: The workspace whose desktop FakeSandbox stands for. Which workspace's
+#: projects are compared is covered in test_project_reclaim_scope.py.
+WS = "ws_reclaim"
 
 
 class FakeSandbox:
@@ -23,6 +29,9 @@ class FakeSandbox:
         self.commands.append(command)
         if command.startswith(f"ls -1 {WORKSPACE_ROOT}"):
             return _Result("\n".join(self.present))
+        if command.startswith("stat -c %Y"):
+            # Every listed directory last changed before any deletion here.
+            return _Result("0")
         if command.startswith("find "):
             return _Result("\n".join(self.stale_trash))
         return _Result("")
@@ -40,13 +49,14 @@ def slugs(monkeypatch):
     """Control what the database claims is live vs expired."""
     state = {"live": set(), "expired": set()}
 
-    async def fake_live(user_id=None):
+    async def fake_protected(workspace_id):
         return state["live"]
 
-    async def fake_expired(user_id=None):
-        return state["expired"]
+    async def fake_expired(workspace_id):
+        deleted_at = datetime.now(timezone.utc) - timedelta(days=30)
+        return {slug: deleted_at for slug in state["expired"]}
 
-    monkeypatch.setattr(reclaim, "_live_slugs", fake_live)
+    monkeypatch.setattr(reclaim, "_protected_slugs", fake_protected)
     monkeypatch.setattr(reclaim, "_expired_slugs", fake_expired)
     return state
 
@@ -55,7 +65,7 @@ def slugs(monkeypatch):
 async def test_a_live_project_is_never_touched(slugs):
     slugs["live"] = {"my-app"}
     sandbox = FakeSandbox(present=["my-app"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["binned"] == []
     assert not any("mv " in c for c in sandbox.commands)
 
@@ -64,7 +74,7 @@ async def test_a_live_project_is_never_touched(slugs):
 async def test_a_long_deleted_project_is_binned(slugs):
     slugs["expired"] = {"gone"}
     sandbox = FakeSandbox(present=["gone"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["binned"] == ["gone"]
     assert any(f"mv {WORKSPACE_ROOT}/gone {TRASH_ROOT}/gone-" in c for c in sandbox.commands)
 
@@ -75,7 +85,7 @@ async def test_a_recently_deleted_project_keeps_its_grace_period(slugs):
     slugs["live"] = set()
     slugs["expired"] = set()
     sandbox = FakeSandbox(present=["just-deleted"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["binned"] == []
     assert result["unknown"] == ["just-deleted"]
 
@@ -85,7 +95,7 @@ async def test_an_unrecognised_directory_is_reported_not_deleted(slugs):
     # Something the database has never heard of is far likelier to be work
     # worth keeping than garbage worth deleting.
     sandbox = FakeSandbox(present=["mystery"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["unknown"] == ["mystery"]
     assert not any("rm -rf" in c for c in sandbox.commands)
 
@@ -93,7 +103,7 @@ async def test_an_unrecognised_directory_is_reported_not_deleted(slugs):
 @pytest.mark.asyncio
 async def test_openbox_internals_are_skipped(slugs):
     sandbox = FakeSandbox(present=[".openbox", ".hidden"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["binned"] == []
     assert result["unknown"] == []
 
@@ -101,7 +111,7 @@ async def test_openbox_internals_are_skipped(slugs):
 @pytest.mark.asyncio
 async def test_stale_trash_is_purged(slugs):
     sandbox = FakeSandbox(stale_trash=[f"{TRASH_ROOT}/old-20260101-000000"])
-    result = await reclaim.reclaim(sandbox)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS)
     assert result["purged"] == [f"{TRASH_ROOT}/old-20260101-000000"]
     assert any(c == f"rm -rf {TRASH_ROOT}/old-20260101-000000" for c in sandbox.commands)
 
@@ -111,7 +121,7 @@ async def test_a_purge_path_outside_the_trash_is_refused(slugs):
     # A bug producing an empty or wrong path here would otherwise expand into
     # `rm -rf /`, so the guard is checked explicitly.
     sandbox = FakeSandbox(stale_trash=["/workspace/my-app", "/", ""])
-    await reclaim.reclaim(sandbox)
+    await reclaim.reclaim(sandbox, workspace_id=WS)
     assert not any("rm -rf" in c for c in sandbox.commands)
 
 
@@ -119,7 +129,7 @@ async def test_a_purge_path_outside_the_trash_is_refused(slugs):
 async def test_dry_run_changes_nothing(slugs):
     slugs["expired"] = {"gone"}
     sandbox = FakeSandbox(present=["gone"], stale_trash=[f"{TRASH_ROOT}/x-1"])
-    result = await reclaim.reclaim(sandbox, dry_run=True)
+    result = await reclaim.reclaim(sandbox, workspace_id=WS, dry_run=True)
     assert result["binned"] == ["gone"]
     assert not any("mv " in c or "rm -rf" in c for c in sandbox.commands)
 

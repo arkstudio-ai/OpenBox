@@ -20,8 +20,9 @@ from typing import Any
 
 from core.identifier import ascending
 from core.log import create_logger
-from agent.latency import provider_chunks
+from agent.timing import provider_chunks
 
+# The historical logger name, kept for operators who filter on it.
 log = create_logger("agent.trajectory")
 
 #: Transport settings and credentials among a provider call's keyword arguments
@@ -145,6 +146,29 @@ def provider_output_snapshot(value: Any) -> Any:
 
 
 _warned: set[str] = set()
+
+#: A tool context's recording state: the call's identity and what the capture of
+#: its requests and output keeps between calls. It lives in the context's
+#: plugin-private slot (``agent.extensions.plugin_state``), not in a kernel field;
+#: ``set_call_state`` replaces a value on that context only, never on the context
+#: it was copied from.
+_CALL_STATE_KEYS = {
+    key: "trajectory." + key for key in (
+        "context", "output_stream", "full_output", "tool_metadata", "request_schemas", "active_request",
+        "billing_event_id", "attempt", "media_sources", "inline_media", "media_urls",
+        "image_request_id", "image_capture",
+    )
+}
+
+
+def call_state(ctx, key: str, default=None):
+    from agent.extensions import plugin_state
+    return plugin_state(ctx, _CALL_STATE_KEYS[key], default)
+
+
+def set_call_state(ctx, key: str, value) -> None:
+    from agent.extensions import set_plugin_state
+    set_plugin_state(ctx, _CALL_STATE_KEYS[key], value)
 
 
 def _not_recorded(reason: str, exc: BaseException | None = None) -> None:
@@ -295,10 +319,10 @@ async def _service_inputs(ctx, asset_urls, retained_media):
     media = dict(retained_media or {})
     if enabled(ctx.user_id):
         trace = await context_for_tool(local)
-        local.trace_context = trace
+        set_call_state(local, "context", trace)
         if trace is not None and asset_urls:
             media.update(await _asset_media(trace, asset_urls))
-    local._trajectory_media_urls = media
+    set_call_state(local, "media_urls", media)
     return local, media
 
 
@@ -309,7 +333,7 @@ async def service_scope(ctx, *, job=None, asset_urls: Mapping[str, str] | None =
     local, media = await _service_inputs(ctx, asset_urls, retained_media)
     token = _service_scope.set(_ServiceScope(local, getattr(job, "id", None), media))
     prior_ids = (getattr(job, "request_data", None) or {}).get("_trajectory_request_ids") or []
-    trace = getattr(local, "trace_context", None)
+    trace = call_state(local, "context")
     request_token = _service_request.set(trace.derive(request_id=prior_ids[-1]) if trace and prior_ids else None)
     try:
         yield local
@@ -384,7 +408,8 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
         trace = current()
         if ctx is None and trace is not None:
             ctx = ToolContext(user_id=trace.user_id, session_id=trace.source_session_id,
-                              workspace_id=trace.workspace_id or "", trace_context=trace)
+                              workspace_id=trace.workspace_id or "")
+            set_call_state(ctx, "context", trace)
         scope = _ServiceScope(copy.copy(ctx), None, {}) if ctx is not None else None
     visible = _service_body({key: item for key, item in body.items() if not _transport(key)},
                             scope.media if scope else {})
@@ -392,7 +417,7 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
     dispatch_ctx = copy.copy(scope.ctx) if scope else None
     if dispatch_ctx is not None:
         # Media is settled by the job ledger, not the parent chat UsageMeter.
-        dispatch_ctx._trajectory_billing_event_id = None
+        set_call_state(dispatch_ctx, "billing_event_id", None)
     capture = await RequestCapture.start(dispatch_ctx,
         purpose=purpose, model_id=f"{provider}/{model}", capture_level=capture_level,
         payload={"model": model, "input": {"operation": operation, "business_body": visible,
@@ -431,7 +456,7 @@ async def observe_service_response(body, *, operation: str):
     scope = _service_scope.get()
     if scope is None:
         return
-    trace = _service_request.get() or getattr(scope.ctx, "trace_context", None)
+    trace = _service_request.get() or call_state(scope.ctx, "context")
     if trace is None:
         return
     await record("job.progress", {"job_id": scope.job_id, "operation": operation,
@@ -466,7 +491,7 @@ def request_tool_schemas(definitions: Any) -> dict[str, dict]:
 
 
 def requested_tool_schema(ctx, name: str, tool_info=None) -> tuple[dict, str]:
-    schema = getattr(ctx, "_trajectory_request_schemas", {}).get(name)
+    schema = call_state(ctx, "request_schemas", {}).get(name)
     return (schema, "provider_request") if schema is not None else (tool_schema(tool_info, name), "executor_registry")
 
 
@@ -476,7 +501,7 @@ async def context_for_tool(ctx):
     A context bound to another owner or session is not recorded under this tool.
     """
     from trajectory import current
-    context = getattr(ctx, "trace_context", None) or current()
+    context = call_state(ctx, "context") or current()
     if context is None:
         return None
     if context.user_id != ctx.user_id or context.source_session_id != ctx.session_id:
@@ -528,10 +553,10 @@ class RequestCapture:
             request_id = capture.context.request_id
             try:
                 snapshot = request_snapshot(payload)
-                inline_media = getattr(ctx, "_trajectory_inline_media", None)
+                inline_media = call_state(ctx, "inline_media")
                 if inline_media:
                     snapshot = _compact_inline_media(snapshot, inline_media)
-                media = getattr(ctx, "_trajectory_media_urls", None)
+                media = call_state(ctx, "media_urls")
                 if media:
                     snapshot = _service_body(snapshot, media)
                     snapshot["media_inputs"] = {_media_id(item): item for item in media.values()}
@@ -539,13 +564,13 @@ class RequestCapture:
                     "purpose": purpose, "model": model_id,
                     "provider": model_id.split("/", 1)[0] if "/" in model_id else "unknown",
                     "capture_level": capture_level, "input": snapshot,
-                    "attempt": getattr(ctx, "_trajectory_attempt", 1),
+                    "attempt": call_state(ctx, "attempt", 1),
                     "previous_request_id": context.request_id if context.call_id is None else None,
                     "parent_request_id": context.request_id if context.call_id is not None else None,
                     "sdk_internal_attempts": "not_observed",
-                    "billing_usage_event_id": getattr(ctx, "_trajectory_billing_event_id", None),
+                    "billing_usage_event_id": call_state(ctx, "billing_event_id"),
                 }
-                sources = getattr(ctx, "_trajectory_media_sources", None)
+                sources = call_state(ctx, "media_sources")
                 if sources:
                     # Digests of inline media the loop resolved from owned assets;
                     # the worker binds those bytes to the assets instead of copying them.
@@ -553,7 +578,7 @@ class RequestCapture:
                 await record("request.prepared", prepared, context=capture.context,
                              event_id=f"request:{request_id}:prepared")
                 if context.call_id is None:
-                    ctx._trajectory_request_schemas = request_tool_schemas(snapshot.get("tools"))
+                    set_call_state(ctx, "request_schemas", request_tool_schemas(snapshot.get("tools")))
             except Exception as exc:
                 _not_recorded("request input could not be captured", exc)
             await record("request.started", {
@@ -563,8 +588,8 @@ class RequestCapture:
             # One ToolContext belongs to one request chain. Parallel executors
             # clone it, so this handoff does not modify a sibling's identity.
             if context.call_id is None:
-                ctx.trace_context = capture.context
-            ctx._trajectory_active_request = capture.context
+                set_call_state(ctx, "context", capture.context)
+            set_call_state(ctx, "active_request", capture.context)
         capture.started = time.monotonic()
         return capture
 

@@ -87,8 +87,8 @@ async def test_default_selection_forbidden_selection_and_read_only_invitation(mo
     listed = await session_api.list_sessions(
         current_user={"user_id": member["id"], "workspace_id": owner_workspace}
     )
-    assert [item["id"] for item in listed] == [session.id]
-    assert listed[0]["owner_username"] == owner["username"]
+    assert [item.id for item in listed] == [session.id]
+    assert listed[0].owner_username == owner["username"]
 
     with pytest.raises(HTTPException) as read_only:
         await session_api._require_session_owned(

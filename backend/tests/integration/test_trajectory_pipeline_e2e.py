@@ -68,10 +68,12 @@ class _Label(BaseModel):
     label: str
 
 
-def _chunk(*, content=None, name=None, arguments=None):
+def _chunk(*, content=None, name=None, arguments=None, finish=None):
+    """One streamed delta; ``finish`` is the provider's terminal marker, without
+    which stream_llm treats the reply as a transport interruption."""
     calls = [] if arguments is None else [SimpleNamespace(
         index=0, id="provider-call", function=SimpleNamespace(name=name, arguments=arguments))]
-    return SimpleNamespace(choices=[SimpleNamespace(index=0, finish_reason=None, delta=SimpleNamespace(
+    return SimpleNamespace(choices=[SimpleNamespace(index=0, finish_reason=finish, delta=SimpleNamespace(
         content=content, reasoning_content=None, tool_calls=calls))], usage=None)
 
 
@@ -91,9 +93,11 @@ def scripted_provider(loop_harness, monkeypatch):  # noqa: F811
         async def stream():
             if kwargs.get("tools") and not answered:
                 yield _chunk(name=kwargs["tools"][0]["function"]["name"], arguments='{"label": "inventory"}')
+                yield _chunk(finish="tool_calls")
             else:
                 for piece in ("The inventory ", "is complete: ", "7 crates counted."):
                     yield _chunk(content=piece)
+                yield _chunk(finish="stop")
         return stream()
     monkeypatch.setattr(litellm, "acompletion", completion)
     monkeypatch.setattr(llm, "_needs_responses_api", lambda _model: False)

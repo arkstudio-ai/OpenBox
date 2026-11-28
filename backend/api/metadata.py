@@ -109,8 +109,10 @@ def _compaction_policy(model_id: str, variants: list[str]) -> dict:
 def _chat_models(config, *, context_limit, supports_vision) -> list[dict]:
     """Frontend chat-model catalogue with route-owned reasoning controls."""
 
-    from agent.llm import reasoning_profile
+    from agent.llm import reasoning_profile, request_output_tokens
 
+    # max_tokens is the per-response cap actually sent (catalogue value
+    # clamped to the built-in allowance), not the raw catalogue field.
     declared = list(config.models or [])
     if not declared:
         profile = reasoning_profile(config.model)
@@ -118,7 +120,7 @@ def _chat_models(config, *, context_limit, supports_vision) -> list[dict]:
             "id": config.model,
             "name": config.model.split("/")[-1],
             "provider": config.model.split("/")[0] if "/" in config.model else "",
-            "max_tokens": 200000,
+            "max_tokens": request_output_tokens(config.model),
             "context_limit": context_limit(config.model),
             "vision": supports_vision(config.model),
             "variants": list(profile.variants),
@@ -132,7 +134,7 @@ def _chat_models(config, *, context_limit, supports_vision) -> list[dict]:
             "id": model.id,
             "name": model.name or model.id.split("/")[-1],
             "provider": model.provider or (model.id.split("/")[0] if "/" in model.id else ""),
-            "max_tokens": model.max_tokens,
+            "max_tokens": request_output_tokens(model.id),
             "context_limit": context_limit(model.id),
             "vision": supports_vision(model.id),
             "variants": list(profile.variants),

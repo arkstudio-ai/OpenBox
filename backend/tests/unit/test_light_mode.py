@@ -248,7 +248,10 @@ async def test_prompt_fragment_names_the_shop_from_the_first_video_form():
     user = await _user()
     guided = await create_session(model="m", agent="build", user_id=user["id"], workspace_id=user["default_workspace_id"])
     guided = await update_session(guided.id, user_id=user["id"], light_entry="video")
-    assert "店名" not in await light_mode_fragment(user["id"], guided)
+    # The output-language rule (7fbdc87f) mentions keeping shop names verbatim;
+    # what must be absent before the form is a named shop.
+    before = await light_mode_fragment(user["id"], guided)
+    assert "店名「" not in before and "主打「" not in before
     await PgPreferenceRepo().upsert(user["id"], extra={"first_video": {
         "status": "ready", "workspace_id": user["default_workspace_id"], "shop_name": "巷口面馆", "headline": "红烧牛肉面"}})
     fragment = await light_mode_fragment(user["id"], guided)

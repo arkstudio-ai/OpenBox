@@ -1,0 +1,112 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "我平时喜欢喝什么？",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#3>",
+    "text": "我这里还没有你的饮品偏好记录，可以告诉我。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#4>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#5>",
+    "text": "我喜欢喝乌龙茶。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#4>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#6>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#7>",
+    "text": "记住了，你喜欢乌龙茶。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#8>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

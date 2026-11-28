@@ -1588,6 +1588,7 @@ async def run_loop(
                 resolved_step_tools.tools,
                 inherited_authority,
             )
+            static_tools = eligible_tools
             from light.production_form import restrict_guided_tools, turn_action, turn_instruction
             guided_action = turn_action(session, last_user)
             eligible_tools = restrict_guided_tools(eligible_tools, session, guided_action)
@@ -1618,6 +1619,16 @@ async def run_loop(
             if isolated_memory:
                 eligible_tools = {name: tool for name, tool in eligible_tools.items()
                                   if name not in MEMORY_CAPABILITIES and tool.id not in MEMORY_CAPABILITIES}
+            # Prompt text (A2, A3) names tools from the session's static
+            # whitelist, never from this step's guided, repair or recovery
+            # narrowing above, so the system prompt stays stable across steps.
+            prompt_tools = restrict_guided_tools(static_tools, session, None)
+            if session.kind != "assistant":
+                prompt_tools = {name: tool for name, tool in prompt_tools.items()
+                                if tool.id not in ASSISTANT_TOOLS | COORDINATION_TOOLS}
+            if isolated_memory:
+                prompt_tools = {name: tool for name, tool in prompt_tools.items()
+                                if name not in MEMORY_CAPABILITIES and tool.id not in MEMORY_CAPABILITIES}
             sandbox_catalogue_availability = (
                 resolved_step_tools.catalogue_availability
             )
@@ -1969,6 +1980,7 @@ async def run_loop(
                 memory_packet=bool(memory_bundle and memory_bundle.get("_semantic_packet")),
                 device_locale=device_locale,
                 turn_started_at=getattr(exposure_user, "created_at", None) if tool_scope is not None else None,
+                prompt_tool_ids=frozenset(prompt_tools),
             )
             try:
                 from light.prompt import light_mode_fragment
@@ -3734,12 +3746,15 @@ async def _build_system_prompt(
     memory_packet: bool = False,
     device_locale: DeviceLocale | None = None,
     turn_started_at: str | None = None,
+    prompt_tool_ids: frozenset[str] | None = None,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
     Includes agent prompt, environment info, and instruction files.
     For the build agent (and plan agent which shares the same base prompt),
     uses model-specific prompt routing ported from opencode.
+    ``prompt_tool_ids`` is the agent's static eligible tool set; the
+    ``consistent_prompt_rules`` switch gates tool-specific text on it.
     """
     import sys
     locale = device_locale or DeviceLocale()
@@ -3790,7 +3805,7 @@ async def _build_system_prompt(
         parts.append(frozen_subagent.prompt)
     elif agent_def.name in ("build", "plan"):
         from agent.prompts.system import get_system_prompt
-        parts.append(get_system_prompt(model_id))
+        parts.append(get_system_prompt(model_id, workspace_id=workspace_id or None, tool_ids=prompt_tool_ids))
     elif agent_def.prompt:
         parts.append(agent_def.prompt)
     else:

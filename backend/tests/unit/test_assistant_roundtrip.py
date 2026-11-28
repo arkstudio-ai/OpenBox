@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
+from agent.tool_resolution import ResolvedStepTools
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import deliver_task_result, on_execution_result_committed
 from assistant.service import ensure_main_session
@@ -33,8 +34,8 @@ async def test_private_task_submission_execution_and_read_only_report_roundtrip(
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     monkeypatch.setattr(loop, "_resolve_history_tool_names", real_history)
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     sandbox_calls = []
     async def sandbox(*args, **kwargs):

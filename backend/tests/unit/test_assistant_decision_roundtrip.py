@@ -8,6 +8,7 @@ from sqlalchemy import select
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
+from agent.tool_resolution import ResolvedStepTools
 from assistant.decisions import RECORDED, decision_context
 from assistant.service import ensure_main_session
 from db.base import get_db_session
@@ -25,7 +26,7 @@ async def test_real_provider_reads_human_source_proposes_and_commits_a_correctio
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
     monkeypatch.setattr(loop, "_resolve_history_tool_names", real_history)
     async def tools(*args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, workspace = await accounts()
     main = await ensure_main_session(user_id=owner, workspace_id=workspace, model=config.model)

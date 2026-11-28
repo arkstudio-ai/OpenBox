@@ -8,13 +8,13 @@ not reopen the legacy memory paths for assistant-isolated sessions.
 from collections import Counter
 import json
 import re
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant.evidence import projection_digest
 from assistant.service import ensure_main_session
 from cron.validation import ensure_not_cron_session
@@ -42,8 +42,8 @@ from tests.unit.test_assistant_foundation import accounts, assistant_database  #
 from tool.assistant_tools import assistant_tools
 from tool.batch import batch_tool
 from tool.creator_context import creator_context_tool
-from tool.memory_tools import (current_task_state_tool, memory_forget_tool,
-                               memory_read_sources_tool, memory_search_tool)
+from tool.memory_tools import (current_task_state_tool, memory_forget_tool, memory_prepare_tool,
+                               memory_read_more_tool, memory_read_sources_tool, memory_search_tool)
 from tool.plan import plan_enter_tool
 from tool.task import task_tool
 
@@ -93,12 +93,12 @@ async def test_task_plan_child_and_managed_cron_keep_memory_isolation(
     # A controlled installed catalogue, with real tool handlers. Including an
     # alias proves that filtering checks canonical IDs, not only dictionary keys.
     ordinary_tools = {tool.id: tool for tool in (
-        task_tool, batch_tool, plan_enter_tool, creator_context_tool,
-        memory_read_sources_tool, current_task_state_tool, memory_forget_tool)}
+        task_tool, batch_tool, plan_enter_tool, creator_context_tool, memory_prepare_tool,
+        memory_read_sources_tool, memory_read_more_tool, current_task_state_tool, memory_forget_tool)}
     ordinary_tools["masked_memory_lookup"] = memory_search_tool
 
     async def installed_tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}
             if agent.name == "assistant" else dict(ordinary_tools),
             catalogue_availability="available")
 

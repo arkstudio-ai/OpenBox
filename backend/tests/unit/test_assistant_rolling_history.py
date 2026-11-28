@@ -7,6 +7,7 @@ answer is never at stake: the summary does not count against the turn's
 budget, and a failed summary leaves the turn's outcome and the next turn intact.
 """
 import asyncio
+from datetime import timedelta
 import json
 from types import SimpleNamespace
 
@@ -14,12 +15,15 @@ import pytest
 from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
+from agent.compaction import ROLLING_RETRY_MINUTES
 from agent.driver import reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant.service import ensure_main_session
 from core.config import get_config
 from db.base import get_db_session
 from db.models.agent_event import AgentEvent
 from db.models.agent_inbox import AgentInboxItem
+from db.models.message import Message
 from session.agent_event_log import load_canonical_model_surface, verify_agent_event_parity
 from tests.unit.test_agent_loop_terminal_steps import _loop_config, _patch_real_loop_runtime
 from tests.unit.test_assistant_foundation import accounts, assistant_database  # noqa: F401
@@ -36,7 +40,7 @@ def runtime(monkeypatch):
     _patch_real_loop_runtime(monkeypatch, config=config, process_step=processor.process_step)
 
     async def tools(*_args, **_kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     monkeypatch.setattr(loop, "ASSISTANT_ROLLING_MESSAGES", 6)
@@ -124,8 +128,19 @@ async def test_a_failed_summary_leaves_the_answer_and_the_next_turn_intact(runti
     for index in range(4):
         settled = await human_turn(main, owner, f"TURN_{index}")
         assert (settled.state, settled.outcome) == ("settled", "succeeded")
-    assert runtime.summaries and await count(main, "surface.replacement") == 0
+    attempts = len(runtime.summaries)
+    assert attempts and await count(main, "surface.replacement") == 0
     runtime.state.fail = False
+    # A failed attempt is not repeated for ROLLING_RETRY_MINUTES (f1bbe2ec):
+    # the next turn answers and leaves the history as it is.
+    settled = await human_turn(main, owner, "COOLDOWN 稍等")
+    assert (settled.state, settled.outcome) == ("settled", "succeeded")
+    assert len(runtime.summaries) == attempts and await count(main, "surface.replacement") == 0
+    # Once that window has passed, the next turn summarizes.
+    async with get_db_session() as db:
+        for row in (await db.scalars(select(Message).where(
+                Message.session_id == main.id, Message.agent == "compaction"))).all():
+            row.created_at = row.created_at - timedelta(minutes=ROLLING_RETRY_MINUTES + 1)
     await human_turn(main, owner, "AFTER_FAILURE 继续")
     latest = runtime.payloads[-1]
     assert "AFTER_FAILURE" in latest and "What did we do so far?" not in latest

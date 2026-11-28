@@ -79,6 +79,9 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "asset_id", "asset_ids", "requested_count", "received_count", "missing_count",
     "completed_count", "failed_count", "remaining_count",
     "max_batch_calls", "requested_calls",
+    # Skill body digest and the unchanged-reload marker: later steps decide
+    # from these whether a body is still in context (tool/skill_tool.py, A5/A6).
+    "skill_sha256", "skill_unchanged",
 })
 
 # A browser can disappear at any point in a long model response. The first

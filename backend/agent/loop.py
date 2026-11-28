@@ -1577,6 +1577,7 @@ async def run_loop(
                                   and inherited_authority is None and not remote_catalogue_requested
                                   and not live_reveals),
                     compact_skills=exposure_mode == "portable",
+                    workspace_id=session.workspace_id,
                 )
             latency_phase("context")
             from agent.subagent_authority import (
@@ -2215,6 +2216,8 @@ async def run_loop(
                     from assistant.projection import project_main_messages
                     projected_messages = await project_main_messages(
                         projected_messages, ctx=ctx, for_compaction=for_compaction)
+                if not for_compaction:
+                    ctx._history_view = tuple(projected_messages)
                 memory_tool_context_present = any(
                     isinstance((part.get("metadata") if isinstance(part, dict) else getattr(part, "metadata", None)) or {}, dict)
                     and "transient_memory_refs" in ((part.get("metadata") if isinstance(part, dict) else getattr(part, "metadata", None)) or {})

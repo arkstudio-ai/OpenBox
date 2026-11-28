@@ -153,7 +153,8 @@ async def test_every_skill_source_is_documentary_and_cannot_bypass_denial(
     assert "plan_exit" not in after
     assert BUILD_ONLY_TOOLS.difference(DENIED_DECLARED_TOOLS) <= after
     assert "skill" in after
-    assert result.metadata == {}
+    # Only the body digest (A5); nothing that could read as a grant.
+    assert set(result.metadata) == {"skill_sha256"}
     assert "Activated tools" not in result.output
 
     ignored_log = "\n".join(messages)

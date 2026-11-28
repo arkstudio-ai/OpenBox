@@ -13,7 +13,7 @@ resolveTools().
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from core.log import create_logger
@@ -190,6 +190,7 @@ async def attach_skill_listing(
     scope_key=None,
     skill_registry=None,
     compact: bool = False,
+    workspace_id: str | None = None,
 ) -> dict:
     """Advertise Skills and conditionally materialize their search companion.
 
@@ -219,6 +220,7 @@ async def attach_skill_listing(
             scope_key=scope_key,
             registry=skill_registry,
             compact=compact,
+            workspace_id=workspace_id,
         )
         tools["skill"] = skill
         if search is not None:
@@ -273,8 +275,13 @@ async def resolve_step_tools(
     return_catalogue_state: bool = False,
     defer_remote: bool = False,
     compact_skills: bool = False,
+    workspace_id: str | None = None,
 ) -> dict | ResolvedStepTools:
-    """The full set of tools a step may call, schema included."""
+    """The full set of tools a step may call, schema included.
+
+    ``workspace_id`` only selects agent_tuning switches; it is not part of the
+    Skill scope and never changes which tools or Skills are permitted.
+    """
     explicit_scope = (
         scope_key is not None
         or user_id is not None
@@ -333,10 +340,22 @@ async def resolve_step_tools(
                 agent_def, sandbox, config_rules, user_id=user_id,
                 project_id=project_id, workdir=workdir, scope_key=scope_key,
                 include_discovery=include_discovery, return_catalogue_state=True,
-                compact_skills=True,
+                compact_skills=True, workspace_id=workspace_id,
             )
         tools = strip_denied(tools, config_rules, agent_def)
-        resolved = ResolvedStepTools(deferred_tools(tools, load), "unavailable", deferred=True)
+        tools = deferred_tools(tools, load)
+        if "skill" in tools and "skill_search" in tools:
+            # A4/A7: host-local text only. The built-in catalogue comes from
+            # the backend checkout, so this step still reads no sandbox
+            # directory; the same text is used once the directory is resolved.
+            from tool.skill_tool import portable_skill_description
+
+            description = await portable_skill_description(
+                list(config_rules) + agent_ruleset(agent_def), workspace_id,
+            )
+            if description is not None:
+                tools["skill"] = replace(tools["skill"], description=description)
+        resolved = ResolvedStepTools(tools, "unavailable", deferred=True)
         return resolved if return_catalogue_state else resolved.tools
     ruleset = list(config_rules) + agent_ruleset(agent_def)
     # Installation/restoration remains main's explicit management operation.
@@ -373,6 +392,7 @@ async def resolve_step_tools(
             scope_key=scope_key if explicit_scope else None,
             skill_registry=skill_registry,
             compact=compact_skills,
+            workspace_id=workspace_id,
         )
     resolved = ResolvedStepTools(tools, catalogue_availability)
     return resolved if return_catalogue_state else resolved.tools

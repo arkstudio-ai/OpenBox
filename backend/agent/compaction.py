@@ -13,6 +13,8 @@ log = create_logger("compaction")
 COMPACTION_BUFFER = 20_000  # tokens
 PRUNE_MINIMUM = 20_000  # tokens
 PRUNE_PROTECT = 40_000  # tokens
+# Today's rule. With agent_tuning.prune_stale_skill_copies on, the pruner reads
+# each tool's own never_prune/supersede_key instead (_select_with_tool_policies).
 PRUNE_PROTECTED_TOOLS = ["skill"]
 
 COMPACTION_PROMPT = """Provide a detailed prompt for continuing our conversation above.
@@ -993,6 +995,223 @@ def _select_prunable_tool_outputs(
     return to_prune, pruned
 
 
+def _stale_skill_switch(workspace_id: str | None) -> bool:
+    """agent_tuning.prune_stale_skill_copies; off means today's pruning, unchanged."""
+    from core.config import agent_tuning_enabled
+
+    try:
+        return agent_tuning_enabled("prune_stale_skill_copies", workspace_id or None)
+    except KeyError:
+        raise
+    except Exception:
+        return False
+
+
+async def _stale_skill_switch_for_session(session_id: str, user_id: str | None) -> bool:
+    """The switch for this Session's workspace, reading the Session only when needed."""
+    try:
+        from core.config import get_config
+
+        tuning = get_config().agent_tuning
+    except Exception:
+        return False
+    if not tuning.prune_stale_skill_copies:
+        return False
+    workspace_id = None
+    if tuning.workspaces:
+        try:
+            from session.session import get_session
+
+            session = await get_session(session_id, user_id=user_id or "default")
+        except Exception as exc:
+            log.debug("Prune switch could not read the session (%s)", type(exc).__name__)
+            return False
+        workspace_id = getattr(session, "workspace_id", None)
+    return _stale_skill_switch(workspace_id)
+
+
+def _tool_prune_policy(tool_name: str) -> tuple[str | None, str | None]:
+    """``("latest", key)``, ``("never", None)`` or ``(None, None)`` from the definition.
+
+    Parts store only the tool name, so the definition comes from the tool
+    registry. Tools built per run or per sandbox (StructuredOutput,
+    mcp_find_tool) are not registered and keep today's prunable behaviour.
+    If the registry is not loaded in this process at all, a tool on the old
+    protected list keeps today's protection instead of becoming prunable.
+    """
+    from tool.registry import get_tool, list_tools
+
+    info = get_tool(tool_name)
+    if info is None:
+        if tool_name in PRUNE_PROTECTED_TOOLS and not list_tools():
+            return "never", None
+        return None, None
+    if info.supersede_key:
+        return "latest", info.supersede_key
+    if info.never_prune:
+        return "never", None
+    return None, None
+
+
+def _part_dict(part) -> dict:
+    value = part if isinstance(part, dict) else (
+        part.model_dump() if hasattr(part, "model_dump") else {}
+    )
+    return value if isinstance(value, dict) else {}
+
+
+def _completed_tool(value: dict) -> bool:
+    status = getattr(value.get("status"), "value", value.get("status"))
+    return value.get("type") == "tool" and status == "completed"
+
+
+def _is_compacted(value: dict) -> bool:
+    state = value.get("state", {})
+    if not isinstance(state, dict):
+        return False
+    time_info = state.get("time", {})
+    return isinstance(time_info, dict) and bool(time_info.get("compacted"))
+
+
+class _PrunePolicies:
+    """Per-scan cache of tool policies and the identity of superseding copies."""
+
+    def __init__(self) -> None:
+        self._policies: dict[str, tuple[str | None, str | None]] = {}
+
+    def of(self, tool_name: str) -> tuple[str | None, str | None]:
+        if tool_name not in self._policies:
+            self._policies[tool_name] = _tool_prune_policy(tool_name)
+        return self._policies[tool_name]
+
+    def copy_key(self, value: dict) -> tuple[str, str] | None:
+        """``(tool, key)`` when this completed part is a supersedable body copy.
+
+        An unchanged-reload reply (``skill_unchanged``) points at a body and is
+        not one, so it can never be what keeps the newest copy alive.
+        """
+        if not _completed_tool(value):
+            return None
+        tool_name = str(value.get("tool", "") or "")
+        kind, argument = self.of(tool_name)
+        if kind != "latest" or not argument:
+            return None
+        metadata = value.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("skill_unchanged"):
+            return None
+        arguments = value.get("input")
+        if not isinstance(arguments, dict):
+            state = value.get("state")
+            arguments = state.get("input") if isinstance(state, dict) else None
+        key = arguments.get(argument) if isinstance(arguments, dict) else None
+        if not isinstance(key, str) or not key:
+            return None
+        return tool_name, key
+
+
+def _select_with_tool_policies(
+    msgs: list,
+    *,
+    aggressive: bool,
+    protect_from_id: str | None,
+) -> tuple[list[tuple[str, str, dict]], int]:
+    """A6 and ``never_prune``: today's selection plus tool-declared policies.
+
+    Same walk, same last-two-turns rule, compaction tail, protected window and
+    threshold as ``_select_prunable_tool_outputs``. Two differences:
+
+    - ``supersede_key`` (the Skill tool): the newest completed copy per key,
+      wherever it sits (tail and recent turns included), is kept and not
+      counted. Every older copy with the same key is superseded. It is
+      selected outside the recent turns and the tail whatever the protected
+      window holds, because a newer copy of the same Skill is in context.
+    - ``never_prune`` (registry definitions only): never selected, not counted.
+    """
+    total = 0
+    pruned = 0
+    to_prune: list[tuple[str, str, dict]] = []
+    turns = 0
+    policies = _PrunePolicies()
+    newest: set[tuple[str, str]] = set()
+
+    def note_newest(values: list[dict]) -> set[int]:
+        kept: set[int] = set()
+        for index in range(len(values) - 1, -1, -1):
+            key = policies.copy_key(values[index])
+            if key is not None and key not in newest:
+                newest.add(key)
+                kept.add(index)
+        return kept
+
+    in_tail = protect_from_id is not None and any(
+        message.id == protect_from_id for message in msgs
+    )
+    for msg in reversed(msgs):
+        values = [_part_dict(part) for part in msg.parts or []]
+        if in_tail:
+            note_newest(values)
+            if msg.id == protect_from_id:
+                in_tail = False
+            continue
+        role = msg.role if isinstance(msg.role, str) else msg.role.value
+        if role == "user":
+            turns += 1
+        if turns < 2:
+            note_newest(values)
+            continue
+        if role == "assistant" and msg.summary and getattr(msg, "agent", None) == "compaction":
+            break
+        kept = note_newest(values)
+        for index, value in enumerate(values):
+            if not value or not _completed_tool(value):
+                continue
+            if policies.copy_key(value) is not None:
+                if index in kept or _is_compacted(value):
+                    continue
+                estimate = token_estimate(value.get("output", "") or "")
+                pruned += estimate
+                to_prune.append((value.get("message_id", "") or msg.id, value.get("id", ""), value))
+                continue
+            if policies.of(str(value.get("tool", "") or ""))[0] == "never":
+                continue
+            if _is_compacted(value):
+                break
+            estimate = token_estimate(value.get("output", "") or "")
+            total += estimate
+            protect_limit = 10_000 if aggressive else PRUNE_PROTECT
+            if total > protect_limit:
+                pruned += estimate
+                to_prune.append((value.get("message_id", "") or msg.id, value.get("id", ""), value))
+    return to_prune, pruned
+
+
+def _summary_input_placeholders(messages: list) -> None:
+    """A6: in the summary's input, a kept Skill body becomes a reload note.
+
+    Whole-range compaction replaces these messages with the summary, so the
+    body cannot survive it; the note makes the summary say which Skill was in
+    use and how to load it again. Detached view only, never persisted.
+    """
+    policies = _PrunePolicies()
+    for message in messages:
+        for value in message.parts or []:
+            if not isinstance(value, dict) or _is_compacted(value):
+                continue
+            key = policies.copy_key(value)
+            if key is None:
+                continue
+            tool_name, name = key[0], key[1][:120]
+            note = (
+                f"[The {name} skill was loaded here. Its instructions are not kept in this "
+                f"summary: note in the summary that the {name} skill was in use and must be "
+                f"loaded again with the {tool_name} tool before continuing its workflow.]"
+            )
+            value["output"] = note
+            state = value.get("state")
+            if isinstance(state, dict) and "output" in state:
+                state["output"] = note
+
+
 def _mark_tool_outputs_compacted(
     selected: list[tuple[str, str, dict]],
     *,
@@ -1011,8 +1230,16 @@ def prune_tool_outputs_view(
     *,
     aggressive: bool = True,
     protect_from_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> list:
-    """Return a detached, model-only pruned view without persistence/events."""
+    """Return a detached, model-only pruned view without persistence/events.
+
+    This view is the summary's input. With agent_tuning.prune_stale_skill_copies
+    on, superseded Skill copies are pruned and the kept ones become reload
+    notes (``_summary_input_placeholders``). ``workspace_id`` selects that
+    switch; without it the switch applies only when it is on for the whole
+    deployment.
+    """
     from copy import deepcopy
     import time as time_mod
 
@@ -1029,7 +1256,9 @@ def prune_tool_outputs_view(
         ]
     if not _prune_enabled():
         return detached
-    selected, pruned = _select_prunable_tool_outputs(
+    stale_skill_copies = _stale_skill_switch(workspace_id)
+    select = _select_with_tool_policies if stale_skill_copies else _select_prunable_tool_outputs
+    selected, pruned = select(
         detached,
         aggressive=aggressive,
         protect_from_id=protect_from_id,
@@ -1039,6 +1268,8 @@ def prune_tool_outputs_view(
             selected,
             compacted_at=time_mod.time() * 1000,
         )
+    if stale_skill_copies:
+        _summary_input_placeholders(detached)
     return detached
 
 
@@ -1078,7 +1309,12 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
     )
     msgs = list(surface.messages)
 
-    to_prune, pruned = _select_prunable_tool_outputs(
+    select = (
+        _select_with_tool_policies
+        if await _stale_skill_switch_for_session(session_id, user_id)
+        else _select_prunable_tool_outputs
+    )
+    to_prune, pruned = select(
         msgs,
         aggressive=aggressive,
         protect_from_id=protect_from_id,

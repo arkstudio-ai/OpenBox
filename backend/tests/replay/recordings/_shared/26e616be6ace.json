@@ -10,6 +10,11 @@
      "reading, searching, editing, or writing files, and respond directly instead of",
      "using shell output for conversation.",
      "",
+     "On a managed cloud desktop, use $TMPDIR for reproducible intermediates such as",
+     "download copies, extracted frames, shot previews, and raw concatenations. Copy",
+     "cached inputs to $TMPDIR before editing them. Keep project plans and drafts in",
+     "the project, and write final exports under $OPENBOX_PENDING_ROOT before sharing.",
+     "",
      "Quote paths containing spaces. The timeout defaults to 120 seconds and is",
      "capped at 600 seconds. Long output may be truncated; inspect the full artifact",
      "with the file tools. Run independent commands as separate parallel calls, and",
@@ -194,34 +199,6 @@
     "required": [
      "pattern"
     ],
-    "type": "object"
-   }
-  }
- },
- {
-  "type": "function",
-  "function": {
-   "name": "plan_enter",
-   "description": {
-    "$lines": [
-     "Use this tool to suggest switching to plan agent when the user's request would benefit from planning before implementation.",
-     "",
-     "If they explicitly mention wanting to create a plan ALWAYS call this tool first.",
-     "",
-     "This tool will ask the user if they want to switch to plan agent.",
-     "",
-     "Call this tool when:",
-     "- The user's request is complex and would benefit from planning first",
-     "- You want to research and design before making changes",
-     "- The task involves multiple files or significant architectural decisions",
-     "",
-     "Do NOT call this tool:",
-     "- For simple, straightforward tasks",
-     "- When the user explicitly wants immediate implementation"
-    ]
-   },
-   "parameters": {
-    "properties": {},
     "type": "object"
    }
   }
@@ -531,29 +508,6 @@
       "description": "JSON Schema for the result"
      }
     },
-    "type": "object"
-   }
-  }
- },
- {
-  "type": "function",
-  "function": {
-   "name": "todo_read",
-   "description": {
-    "$lines": [
-     "Use this tool to read the current to-do list for the session. Use this tool proactively and frequently to ensure you are aware of the status of the current task list.",
-     "",
-     "Use this tool especially in these situations:",
-     "- At the beginning of conversations to see what's pending",
-     "- Before starting new tasks to prioritize work",
-     "- When the user asks about previous tasks or plans",
-     "- Whenever you're uncertain about what to do next",
-     "- After completing tasks to update your understanding of remaining work",
-     "- After every few messages to ensure you're on track"
-    ]
-   },
-   "parameters": {
-    "properties": {},
     "type": "object"
    }
   }

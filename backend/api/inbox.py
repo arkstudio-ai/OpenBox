@@ -8,6 +8,8 @@ from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from db.base import get_db_session
 from db.models.notification import Topic
+from db.models.session import Session
+from light.production_title import ENTRIES as PRODUCTION_ENTRIES, production_title
 from notifications import inbox
 
 router = APIRouter(prefix="/api/inbox", tags=["inbox"], dependencies=[Depends(get_workspace)])
@@ -34,7 +36,20 @@ async def list_inbox(
         except ValueError:
             raise HTTPException(400, detail={"code": "INBOX_BAD_CURSOR"})
         counts = await inbox.unread_counts(db, current_user["user_id"], current_user.get("workspace_id"))
-    return {"items": [inbox.public_item(r, current_user.get("ui_language")) for r in rows], "nextCursor": next_cursor, "unread": counts}
+        items = [inbox.public_item(row, current_user.get("ui_language")) for row in rows]
+        task_items = [item for item in items if item["kind"] in {
+            "task_completed", "task_failed", "approval_required", "input_required",
+        } and (item["link"] or {}).get("kind") == "session"]
+        if task_items:
+            sessions = await db.scalars(select(Session).where(
+                Session.id.in_([item["link"]["sessionId"] for item in task_items]),
+                Session.light_entry.in_(PRODUCTION_ENTRIES),
+            ))
+            productions = {session.id: session for session in sessions}
+            for item in task_items:
+                if session := productions.get(item["link"]["sessionId"]):
+                    item["productionTitle"] = production_title(session)
+    return {"items": items, "nextCursor": next_cursor, "unread": counts}
 
 
 @router.get("/unread")

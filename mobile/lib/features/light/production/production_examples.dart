@@ -26,7 +26,7 @@ class ProductionExamples extends ConsumerWidget {
 
   final LightProduction task;
   final bool enabled;
-  final ValueChanged<String> onChoose;
+  final Future<bool> Function(String) onChoose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -137,7 +137,7 @@ class _ExampleCategories extends ConsumerWidget {
   final List<LightExamplePreview> rows;
   final LightProduction task;
   final bool enabled;
-  final ValueChanged<String> onChoose;
+  final Future<bool> Function(String) onChoose;
 
   String _categoryLabel(I18nState i18n, LightExamplePreview example) {
     final scene = example.scene;
@@ -225,7 +225,7 @@ class _ExampleCategoryCard extends ConsumerWidget {
   final List<LightExamplePreview> rows;
   final String? selectedId;
   final bool enabled;
-  final ValueChanged<String> onChoose;
+  final Future<bool> Function(String) onChoose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -251,6 +251,7 @@ class _ExampleCategoryCard extends ConsumerWidget {
                             title: title,
                             rows: rows,
                             selected: selectedId,
+                            onChoose: onChoose,
                           )
                         : Scaffold(
                             backgroundColor: context.tokens.bg,
@@ -266,7 +267,7 @@ class _ExampleCategoryCard extends ConsumerWidget {
                           ),
                   ),
                 );
-                if (id != null && context.mounted) onChoose(id);
+                if (id != null && context.mounted) await onChoose(id);
               },
         child: kind == ProductionKind.video
             ? _videoRow(t, selected)
@@ -358,10 +359,12 @@ class _VideoCategoryPage extends ConsumerStatefulWidget {
     required this.title,
     required this.rows,
     required this.selected,
+    required this.onChoose,
   });
   final String title;
   final List<LightExamplePreview> rows;
   final String? selected;
+  final Future<bool> Function(String) onChoose;
 
   @override
   ConsumerState<_VideoCategoryPage> createState() => _VideoCategoryPageState();
@@ -372,6 +375,19 @@ class _VideoCategoryPageState extends ConsumerState<_VideoCategoryPage> {
       widget.rows.any((row) => row.exampleId == widget.selected)
       ? widget.selected
       : null;
+  bool _saving = false;
+
+  Future<void> _confirm() async {
+    final selected = _selected;
+    if (selected == null || _saving) return;
+    setState(() => _saving = true);
+    final saved = await widget.onChoose(selected);
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (saved && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.pop(context);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -401,7 +417,9 @@ class _VideoCategoryPageState extends ConsumerState<_VideoCategoryPage> {
                 child: InkWell(
                   key: Key('production-example-${row.exampleId}'),
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => setState(() => _selected = row.exampleId),
+                  onTap: _saving
+                      ? null
+                      : () => setState(() => _selected = row.exampleId),
                   child: Padding(
                     padding: const EdgeInsets.all(10),
                     child: Row(
@@ -433,9 +451,7 @@ class _VideoCategoryPageState extends ConsumerState<_VideoCategoryPage> {
       ),
       bottomNavigationBar: VoiceFooter(
         label: i18n.t('light:production.examples.useVideoTemplate'),
-        onPressed: _selected == null
-            ? null
-            : () => Navigator.pop(context, _selected),
+        onPressed: _selected == null || _saving ? null : _confirm,
       ),
     );
   }

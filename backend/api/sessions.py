@@ -658,7 +658,12 @@ async def update_session(session_id: str, body: UpdateSessionBody, current_user:
             updates["variant"] = _checked_variant(target_model, current.variant)
         except HTTPException:
             updates["variant"] = None
-    session = await session_mod.update_session(session_id, user_id=user_id, **updates)
+    from light.production_title import ENTRIES as PRODUCTION_ENTRIES
+
+    session = await session_mod.update_session(
+        session_id, user_id=user_id,
+        manual_title="title" in updates and current.light_entry in PRODUCTION_ENTRIES, **updates,
+    )
     if not session:
         raise HTTPException(404, "Session not found")
     _announce_session_update(session, updates, user_id)

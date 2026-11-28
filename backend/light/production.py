@@ -8,6 +8,8 @@ from sqlalchemy import JSON, func, or_, select, type_coerce, update
 
 from agent.inbox import accept_inbox_item_locked, schedule_inbox_wake
 from assets.service import owned_ready_query
+from bus import bus
+from bus.events import SESSION_TITLE
 from db.base import get_db_session
 from db.models.agent_inbox import AgentInboxItem
 from db.models.file_asset import FileAsset
@@ -20,6 +22,7 @@ from db.models.video_job import VideoJob
 from light import production_form as forms, video_templates
 from light import commercial_plan, examples, h3_recipes, product_story_plan, production_music, remake_case, shortcut_plan, shot_editor, silk_road, video_language, video_tiers, wan_story
 from light.mode import LightError
+from light.production_title import production_title
 from session.agent_event_log import prepare_agent_event_write
 from tool.video_template import GALLERY_WISHES, GALLERY_WISHES_VERSION
 
@@ -429,7 +432,8 @@ def _output_candidates(row: Session, jobs: list, files: list, *, advanced_messag
     return list(dict.fromkeys(asset_id for _, asset_id in sorted(results, reverse=True)))
 
 
-async def _views(db, rows: list[Session], *, include_shots: bool = False, guided_only: bool = False) -> list[dict]:
+async def _views(db, rows: list[Session], *, include_shots: bool = False, guided_only: bool = False,
+                 delivered_only: bool = False) -> list[dict]:
     if not rows:
         return []
     from core.oss import OssNotConfigured, get_oss
@@ -471,7 +475,7 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False, guided
     assets = {a.id: a for a in (await db.scalars(owned_ready_query(rows[0].user_id, rows[0].workspace_id)
                                                 .where(FileAsset.id.in_(saved_assets)))).all()} if saved_assets else {}
     try:
-        oss = get_oss() if assets else None
+        oss = get_oss() if assets and not delivered_only else None
     except OssNotConfigured:
         oss = None
     media = {asset_id: _asset_view(asset, oss) for asset_id, asset in assets.items()}
@@ -486,6 +490,12 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False, guided
         constrained = include_shots and form["template"] in video_tiers.COMFYUI_INCOMPATIBLE_TEMPLATES
         offered = video_tiers.available_tiers(config, template=form["template"]) if constrained else tiers
         output = next((media[key] for key in output_ids[row.id] if key in media), None)
+        if delivered_only and output and not any(
+            part.data.get("asset_id") == output["id"]
+            and (part.data.get("relation") or {}).get("role") in {"final", "result"}
+            for part in files_by_session[row.id]
+        ):
+            output = None
         jobs = relevant_jobs[row.id]
         guide_jobs = [job for job in jobs if not shot_editor.is_edit_job(job)]
         editor = await shot_editor.project(
@@ -525,7 +535,7 @@ async def _views(db, rows: list[Session], *, include_shots: bool = False, guided
             **({"gallery_wishes_available": video_tiers.comfyui_fast_available(config)}
                if include_shots and row.light_entry == "video" else {}),
             **({"chat_tier": chat_tier.tier} if include_shots and chat_tier else {}),
-            "session_id": row.id, "entry_id": row.light_entry, "title": row.title, "legacy": not row.light_production,
+            "session_id": row.id, "entry_id": row.light_entry, "title": production_title(row), "legacy": not row.light_production,
             "updated_at": _utc(row.updated_at).isoformat(), "output": output,
             "materials": [media[key] for key in form["asset_ids"] if key in media],
             **reference_fields,
@@ -573,6 +583,7 @@ async def history(user_id: str, workspace_id: str, limit: int, offset: int, *, e
 async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.EditForm) -> dict:
     async with get_db_session() as db:
         row = await _lock(db, session_id, user_id, workspace_id)
+        previous_title = production_title(row)
         _check_revision(row.light_production, body.revision)
         view = (await _views(db, [row]))[0]
         if view["status"] in _BUSY or view["status"] == "completed" or row.light_production.get("proposal"):
@@ -628,9 +639,12 @@ async def edit(user_id: str, workspace_id: str, session_id: str, body: forms.Edi
             changes["remake_prepared_for"] = None
         await _validate_fields(db, row, changes)
         _apply(row, changes)
+        title = production_title(row)
         if reference_id and reference_id != previous_reference:
             await db.execute(update(LightExample).where(LightExample.id == reference_id)
                              .values(pick_count=LightExample.pick_count + 1))
+    if title != previous_title:
+        bus.publish(SESSION_TITLE, {"userId": user_id, "sessionId": session_id, "title": title})
     return await get(user_id, workspace_id, session_id)
 
 
@@ -1070,6 +1084,7 @@ def _select_remake_model(row: Session, form: dict) -> None:
 
 async def action(user_id: str, workspace_id: str, session_id: str, body: forms.FormAction, lang: str | None) -> dict:
     from agent.inbox import InboxAttachmentError
+    from notifications.events import cancel_event
 
     queued = False
     async with get_db_session() as db:
@@ -1083,6 +1098,9 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
             _check_revision(form, body.revision)
             view = (await _views(db, [row], include_shots=body.action == "edit"))[0]
             _validate_action(row, view, body.action)
+            current_run = form.get("run") or {}
+            if body.action in {"render", "edit", "apply", "dismiss"} and current_run.get("action") == "prepare":
+                await cancel_event(db, user_id, f"production:{row.id}:review:{current_run['id']}")
             if body.action == "render" and row.light_entry == "footage_edit":
                 from light.production_narration import check_confirmation
 
@@ -1095,6 +1113,7 @@ async def action(user_id: str, workspace_id: str, session_id: str, body: forms.F
                 proposal = form.get("proposal")
                 if not proposal:
                     raise LightError("LIGHT_PRODUCTION_STATE", "There is no pending proposal", 409)
+                await cancel_event(db, user_id, f"production:{row.id}:proposal:{form['revision']}")
                 row.light_production = {**form, "revision": form["revision"] + 1, "proposal": None}
                 if body.action == "apply":
                     await _validate_fields(db, row, proposal["changes"])

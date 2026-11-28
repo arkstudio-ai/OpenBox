@@ -33,8 +33,14 @@ async def execution_environment(store, request, env):
         return env
     task, generation, run = task_fence(request)
     admitted = await asyncio.to_thread(store.begin, task, generation, run)
-    return {**env, "TMPDIR": admitted["tmpdir"], "TMP": admitted["tmpdir"],
-            "TEMP": admitted["tmpdir"], "OPENBOX_CACHE_TASK": task,
+    tmpdir = admitted["tmpdir"]
+    npm_cache = f"{tmpdir}/npm-cache"
+    # Package managers default to the persistent home. Put their disposable
+    # downloads and npx installs under the existing released-task collector.
+    return {**env, "TMPDIR": tmpdir, "TMP": tmpdir, "TEMP": tmpdir,
+            "PIP_CACHE_DIR": f"{tmpdir}/pip-cache",
+            "npm_config_cache": npm_cache, "NPM_CONFIG_CACHE": npm_cache,
+            "OPENBOX_CACHE_TASK": task,
             "OPENBOX_PENDING_ROOT": admitted["pending_dir"], "OPENBOX_CACHE_RUN": run}
 
 

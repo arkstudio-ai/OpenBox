@@ -91,6 +91,11 @@ def test_short_descriptions_keep_non_schema_contracts():
     assert "action server" in bash and "PID 1" in bash
     assert "commit or push only" in bash and "git config" in bash
     assert "destructive/force operations" in bash
+    # The gw2 desktop-space hotfix of 2026-11-19: on a managed desktop $TMPDIR
+    # is the task's temp root, collected after the task is released.
+    assert "On a managed cloud desktop, use $TMPDIR for reproducible intermediates" in bash
+    assert "Copy\ncached inputs to $TMPDIR before editing them" in bash
+    assert "write final exports under $OPENBOX_PENDING_ROOT before sharing" in bash
 
     computer = computer_tool.description
     assert "shared, stateful" in computer and "screenshot" in computer

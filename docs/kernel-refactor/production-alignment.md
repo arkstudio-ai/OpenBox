@@ -6,7 +6,7 @@
 
 - **三个源文件里，线上的修复全部已在主干，没有需要补的代码。**【已核对，逐个改动块】
 - **线上底版里的测试改动原来都不在主干，现在补上了**，对当前代码全部通过。改动只有一处是为了适应代码的变化（见下文"测试"）。
-- 剩下的只能由有 gw2 权限的人做：比对 11 月 19 日热修的四个文件。命令在最后一节。
+- 剩下的只能由有 gw2 权限的人做：比对 11 月 19 日热修的四个文件。命令在最后一节。（11-28 晚已取回并合回，见文末"补记"。）
 
 两个线上底版提交挂在本地分支上：`prod-base/20261121-c1185d18`（`7fbdc87f` 上的 `41968899`、`7c959a86`、`c1185d18`）和 `prod-base/20261122-5e6afbd4`（`81105ced` 上的 `5e6afbd4`）。主干在 `8dffa516` 把这些源码改动记了回来。核对用的是分支 `kernel-refactor/round1`（`a9da02c8`），这三个文件在它和 `main@b18b3a47` 上相同。
 
@@ -143,3 +143,61 @@ git diff --no-index backend/tool/bash.py /path/to/align-0-6/bash.py
 ```
 
 `container/cache_api.py` 还会被下发到云桌面上运行；桌面上的版本不在这次比对里，按 `docs/WUYING_SANDBOX.md` 的发布流程另行盘点。
+
+## 补记（2026-11-28 晚）：四个热修文件取回并合回
+
+### gw2 上今天看到的【报告】
+
+由取回文件的一方今天在 gw2 上只读核对，本文作者没有登录服务器：
+
+- backend 跑的是 `20261128-bossip-feedback-d395d1d7`，从 main 全量构建，四个文件是 main 的版本（哈希等于上表）。按上一节的判断，**backend 上的热修已经被冲掉**。
+- trajectory-worker 跑的是 `20261125-chat-retry-5b822d02-worker`，四个文件**仍是热修版本**。
+- 热修文件本身留在 `/opt/openbox/releases/20261119-qwh-space-512c9d9b/patch/`。取回的四份与 trajectory-worker 里运行的逐字节相同，都以 `43bc4bce` 为底（整文件，不是补丁）。
+
+| 仓库路径 | 热修版本的 sha256 |
+|---|---|
+| `backend/sandbox/runtime_operation.py` | `cbab617923b4e9f7f0a16b3a5ad10a0d50306de8bd63ef371140bbcf7958b99c` |
+| `backend/tool/bash.py` | `946860cd2d5aea74447542487c61a6e4ba5006ccd6bbdbaaa6f583693336ba28` |
+| `backend/permission/permission.py` | `0ef59a641c8571eb7ad1fb3ea38b4ebb3f6edc30ddbe936406dbceb9d44804fd` |
+| `container/cache_api.py` | `d783affbc3722ad6038224ecad0cdf990ffae3a5b62589cbd6c68f8d4edb0696` |
+
+【推断】这三处后端修复都在 agent 循环里起作用，而 agent 循环跑在 backend 进程里，所以 11-28 全量构建之后线上实际上没有它们；trajectory-worker 里的热修版本不影响对话。
+
+### 合回了什么
+
+分支 `worktree-agent-a72e548c70e95bff0`：`kernel-refactor/round1` 先合入 `main@d395d1d7`，再每个热修一个提交。热修以 `43bc4bce` 为底，而这四个文件在 `43bc4bce` 和 main 上相同，round1 只在 `bash.py`、`permission.py` 里改过录制调用（`agent.recording`），所以热修的意图都能直接落到现在的代码上；没有整文件覆盖，录制调用保持 round1 的写法。
+
+| 文件 | 热修内容 | 合回方式 | 提交 |
+|---|---|---|---|
+| `backend/sandbox/runtime_operation.py` | Action Server 对 project_directory 阶段的 `/execute`、或对 `/cache/admit` 的 POST 回 507 且 `detail` 为 `DESKTOP_LOW_SPACE` 时，effect 以 `{"code": "DESKTOP_LOW_SPACE"}` 为回执结算为 failed，抛 `DesktopLowSpace`（中文提示"云电脑磁盘空间不足……"），不再留成不确定；同一次运行再走到这一步时直接读回这个结果，不重发。`_action_error_detail` 抽出来，和 release 的 409 判定共用 | 适配一处：读响应体时仍吞掉所有异常（热修只吞 `ValueError`）。这段在失败处理里运行，读体出别的错会盖掉原异常、跳过"未发送/结果未知"的记录 | `61012922` |
+| `backend/permission/permission.py` | 非助理请求带 `expires_at` = 创建时间 + 300 秒（`PERMISSION_REQUEST_TTL_SECONDS`）；等待到期抛 `PermissionUnavailableError`（`agent/hooks.py:870` 已把它变成"权限已失效"的拦截结果）；过期后回复抛 `KeyError("Permission request expired")`（API 回 404），不消耗请求；Always 持久化失败后恢复请求时，Redis TTL 用剩余时间，已过期就不恢复 | 适配一处：热修漏了第二处恢复（回复没送到任何 worker 时把 `perm_req` 写回），也改成剩余时间 | `890dac36` |
+| `backend/tool/bash.py` | 描述里加一段：托管云电脑上，可重现的中间文件放 `$TMPDIR`，缓存里的输入先复制到 `$TMPDIR` 再改，计划和草稿留在项目里，最终导出先写到 `$OPENBOX_PENDING_ROOT` 再分享 | 原样。没有放在 `agent_tuning` 开关后面（`backend/AGENTS.md` 对提示词改动的默认做法），因为这是恢复 11-19 的热修镜像在线上跑过的行为（之后到 11-28 之间每次 backend 发布是否都带着它，部署记录没写） | `e5d1dabc` |
+| `container/cache_api.py` | 托管任务的命令额外拿到 `PIP_CACHE_DIR=$TMPDIR/pip-cache`、`npm_config_cache`/`NPM_CONFIG_CACHE=$TMPDIR/npm-cache`，包管理器的下载和 npx 安装跟着任务的临时目录一起被回收 | 原样，与热修逐字节相同 | `6f34d75d` |
+
+依赖在现在的代码里都在【已核对】：
+
+- `effects.settle_effect(claim, state="failed", error=..., receipt=...)`（`backend/agent/effect_ledger.py:1205`），`EffectSnapshot.provider_receipt`（`:152`），`BoundOperation.dispatched`（`backend/sandbox/resource_operation.py:36`）。
+- Action Server 的 507：`/execute` 经 `cache_api.execution_environment`（`container/action_server.py:720`）、`/cache/admit` 直接，都调 `CacheStore.begin`，它在写任务行、建目录之前 `raise CacheError("DESKTOP_LOW_SPACE", 507)`（`container/cache_control.py:200`），由 `container/cache_api.py:48` 的处理器回成 507 `{"detail": "DESKTOP_LOW_SPACE"}`。与热修的判断一致。另外两处 507（`claim_asset`、`fetch_asset`，`:244`、`:273`）在 `/cache/asset-claim`、`/cache/asset-fetch` 上，之前已有缓存操作，热修有意让它们保持不确定。路径是精确比较的，带路径前缀的端点会退回不确定，方向是安全的。
+- `PermissionRequest.expires_at` 早已在模型里（`backend/permission/permission.py:39`），不是数据库列：非助理请求只在内存和 Redis 里；助理请求把它冻结在 `AgentEvent.payload` 的 JSON 里。没有 schema 或迁移改动。
+
+### 与助理的版本化权限回复（`8311994a`）
+
+不冲突，助理那条路径保持不变【已核对】：
+
+- `assistant.permission_requests.register` 在冻结请求时用自己的时间覆盖 `expires_at`（`backend/assistant/permission_requests.py:146`），事件里存的、`request_revision` 摘要里算的都是这个值；内核先填的值在这之前就被换掉，事件内容和以前一样。
+- 助理请求的等待仍是 `_wait_linked`：轮询 SQL 里的版本化决定，没有本地截止时间，过期由 `fresh()` 判定（`:88`）。只把 `_push_waiting` 挪进了 `try`，等待被取消时 `finally` 照样关闭请求。
+- 助理请求的回复先经 `maybe_reply` 返回回执；落到旧路径的助理请求在过期检查之前就被 410 `PERMISSION_GONE` 拒绝。新的过期检查只会碰到非助理请求。
+
+### 测试【已核对】
+
+本机，`/Volumes/fanxiang/workspace2/OpenBox/backend/.venv/bin/python -m pytest -c pyproject.toml --rootdir . … -p no:cacheprovider`，`PYTHONPATH` 指向本工作树的 `backend`。
+
+- 新增：`test_desktop_low_space_preparation.py`（14 条：两个端点的 507 结算为 failed、带中文提示、同一次运行不重发；别的 507 `detail`、别的状态码、非 POST、asset-claim/asset-fetch 上的同一代码、读不出的响应体都保持不确定），`test_permission_expiry.py`（8 条：本地和 Redis 等待都在到期时结束、新请求带 300 秒、过期后回复被拒且不消耗、两处恢复用剩余时间、持久化期间过期就不恢复、助理请求不受本地时钟影响），`test_action_server_cache_environment.py`（3 条），`test_tool_description_budgets.py` 加了对这段描述的断言。
+- 合回前后同一组：runtime operation（`test_assistant_catalogue_preparation`、`test_assistant_plan_preparation`、`test_assistant_runtime_resource`、`test_cache_release_definitive`、`test_assistant_resource_preparation`），bash（`test_assistant_sandbox_tool_scope`、`test_bash_idle_judgment`、`test_browser_action`、`test_browser_skill_guidance`、`test_sandbox_stream_integrity`、`test_tool_description_budgets`、`test_trajectory_producers_fail_open`、`test_trajectory_runtime`），权限（`test_permission_cross_worker`、`test_permission_monotonic`、`test_permission_patterns`、`test_assistant_permissions`、`test_assistant_request_receipt_acceptance`、`test_trajectory_producers_permission`、`test_interaction_reply_events`），Action Server（`test_wuying_action_server_deploy`、`test_action_server_resource_control`），`tests/replay`。合回前 332 条通过、1 条跳过，没有原有失败；合回后加上新增的 357 条通过、1 条跳过。
+- `make check-kernel`：22 条通过。
+- 回放录制重录了一次：含 bash 的 6 份共享工具列表只多了这一段，12 个 `requests.json` 只是改指新的哈希，持久化的事件没有变化（逐个解析比对过）。
+
+### 发布时要注意
+
+- backend 从这条分支（或它合回 main 之后）构建，前三处就回到线上。在那之前从 main 全量构建的 backend 都没有它们。
+- `container/cache_api.py` 只经桌面下发到云桌面：`backend/scripts/wuying_deploy_action_server.py` 把 `ACTION_SERVER_MODULES` 里的 7 个文件推到 `/opt/action_server/`（`cache_api.py` 在 `:279`）。桌面上现在是哪一版没有核对（没有桌面权限）。**这次合回部署到用来下发的检出之前，不要用 main 下发**：main 的 `cache_api.py` 会覆盖桌面上可能存在的热修版本，pip、npm 缓存又回到持久的家目录。下发前可以用 `--action-server-only --dry-run` 打印要推的哈希，确认 `cache_api.py` 是 `d783affb…`。

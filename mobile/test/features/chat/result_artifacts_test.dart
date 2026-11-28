@@ -2,12 +2,16 @@ import 'dart:convert';
 
 import 'package:bossip_mobile/features/chat/api/assets_api.dart';
 import 'package:bossip_mobile/features/chat/utils/content_view.dart';
+import 'package:bossip_mobile/features/chat/utils/turn_view.dart';
+import 'package:bossip_mobile/features/chat/widgets/assistant_turn.dart';
 import 'package:bossip_mobile/features/chat/widgets/result_artifacts.dart';
 import 'package:bossip_mobile/shared/appearance/tokens.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -55,6 +59,70 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({'bossip.language': 'en-US'});
     prefs = await SharedPreferences.getInstance();
+  });
+
+  testWidgets('a completed reply can copy a selected word', (tester) async {
+    String? copied;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    const answer = 'menu poster video';
+    final turn = buildChatRows([
+      ChatMessage.fromJson({
+        'id': 'reply',
+        'session_id': 'task',
+        'role': 'assistant',
+        'finish': 'stop',
+        'parts': [
+          {'type': 'text', 'id': 'answer', 'text': answer, 'channel': 'final'},
+        ],
+      }),
+    ]).whereType<AssistantTurnData>().single;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          i18nProvider.overrideWith(() => I18nController(bundle, prefs)),
+        ],
+        child: MaterialApp(
+          theme: ThemeData(
+            extensions: [
+              BossipTokens.resolve(BossipThemeName.default_, Brightness.light),
+            ],
+          ),
+          home: Scaffold(
+            body: AssistantTurn(
+              turn: turn,
+              sessionId: 'task',
+              streaming: false,
+              onActions: () {},
+              onReview: () {},
+              onRegenerate: (_) {},
+              onDismiss: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.text(answer, findRichText: true),
+    );
+    final word = paragraph
+        .getBoxesForSelection(
+          const TextSelection(baseOffset: 5, extentOffset: 11),
+        )
+        .single;
+    await tester.longPressAt(paragraph.localToGlobal(word.toRect().center));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy'));
+    expect(copied, 'poster');
+    expect(find.byKey(const Key('chat-reply-actions')), findsOneWidget);
   });
 
   test(

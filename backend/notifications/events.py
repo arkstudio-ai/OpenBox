@@ -9,6 +9,7 @@ from auth.mobile import lock_mutation, lock_notification, now, utc
 from db.models.push import PushDelivery, PushDevice, PushMessage
 from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
+from light.production_title import ENTRIES as PRODUCTION_ENTRIES, production_title
 from notifications.inbox import add_inbox, link_for, resolve_inbox
 from notifications.store import can_receive, enqueue_notification
 
@@ -65,6 +66,9 @@ async def task_finished(db, session, ticket, *, failed=False):
     from db.models.assistant import AssistantTask
     if await db.scalar(select(AssistantTask.id).where(AssistantTask.execution_session_id == session.id)):
         return
+    if not failed and getattr(session, "light_entry", None) in PRODUCTION_ENTRIES:
+        await production_finished(db, session, run_id=ticket.run_id)
+        return
     if not failed and await video_delivery_pending(db, session):
         # The video tool's inline wait budget lets the model end its run while
         # the film is still rendering upstream; video.job_recovery wakes the
@@ -76,8 +80,44 @@ async def task_finished(db, session, ticket, *, failed=False):
         return
     await emit(db, user_id=ticket.user_id, workspace_id=session.workspace_id,
         session_id=session.id, kind="task_failed" if failed else "task_completed",
-        event_key=f"task:{ticket.run_id}:terminal", name=session.title,
+        event_key=f"task:{ticket.run_id}:terminal", name=production_title(session),
         guard={"kind": "terminal", "generation": ticket.generation, "failed": failed})
+
+
+async def production_finished(db, session, *, run_id=None, delivered_asset_id=None):
+    """Notify against the current production and its delivered output."""
+    from db.models.agent_inbox import AgentInboxItem
+    from light.production import _views
+
+    if session.light_entry not in PRODUCTION_ENTRIES or session.is_deleted:
+        return
+    view, = await _views(db, [session], delivered_only=True)
+    form = session.light_production or {}
+    run = form.get("run") or {}
+    link = link_for("task_completed", workspace_id=session.workspace_id, session_id=session.id,
+                    production=bool(session.light_production))
+    if run_id and view.get("phase") == "proposal":
+        revision = form["revision"]
+        await emit(db, user_id=session.user_id, workspace_id=session.workspace_id,
+                   kind="approval_required", name=view["title"], session_id=session.id,
+                   event_key=f"production:{session.id}:proposal:{revision}",
+                   guard={"kind": "production_proposal", "revision": revision}, link=link)
+    elif run.get("action") == "prepare":
+        if run_id and view["page"] == "review" and view["status"] == "draft" and not view.get("phase"):
+            receipt = await db.get(AgentInboxItem, run["id"])
+            if receipt and receipt.run_id == run_id and receipt.state == "settled" and receipt.outcome == "succeeded":
+                await emit(db, user_id=session.user_id, workspace_id=session.workspace_id,
+                           kind="approval_required", name=view["title"], session_id=session.id,
+                           event_key=f"production:{session.id}:review:{receipt.id}",
+                           guard={"kind": "production_review", "id": receipt.id}, link=link)
+    elif view["status"] == "completed":
+        asset_id = view["output"]["id"]
+        if delivered_asset_id and delivered_asset_id != asset_id:
+            return
+        await emit(db, user_id=session.user_id, workspace_id=session.workspace_id,
+                   kind="task_completed", name=view["title"], session_id=session.id,
+                   event_key=f"production:{session.id}:output:{asset_id}",
+                   guard={"kind": "production_output", "id": asset_id}, link=link)
 
 
 async def question_waiting(db, session, question):
@@ -85,7 +125,7 @@ async def question_waiting(db, session, question):
         return
     kind = "input_required" if question.continuation.get("kind") == "question" else "approval_required"
     await emit(db, user_id=question.user_id, workspace_id=session.workspace_id, session_id=session.id,
-        kind=kind, event_key=f"question:{question.id}", name=session.title, action_id=question.id,
+        kind=kind, event_key=f"question:{question.id}", name=production_title(session), action_id=question.id,
         guard={"kind": "question", "id": question.id})
 
 
@@ -209,6 +249,18 @@ async def guard_valid(db, message):
         execution = await db.get(SessionExecution, session_id)
         return bool(row and execution and row.status == "pending" and row.generation == execution.generation
                     and (not row.expires_at or utc(row.expires_at) > now()))
+    if kind in {"production_review", "production_proposal"}:
+        session = await db.get(Session, session_id)
+        form = (session.light_production or {}) if session else {}
+        if kind == "production_proposal":
+            return bool(form.get("proposal") and form.get("revision") == guard["revision"])
+        return form.get("page") == "review" and (form.get("run") or {}).get("id") == guard["id"]
+    if kind == "production_output":
+        from db.models.file_asset import FileAsset
+
+        asset = await db.get(FileAsset, guard["id"])
+        return bool(asset and not asset.is_deleted and asset.status == "ready"
+                    and asset.user_id == message.user_id and asset.workspace_id == message.workspace_id)
     if kind in {"terminal", "permission"}:
         execution = await db.get(SessionExecution, session_id)
         if not execution or execution.generation != guard["generation"]:

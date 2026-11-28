@@ -73,17 +73,4 @@ Use `references/compose-timeline.md` and the tool schema. Validate the timeline,
 - `$S/state.py check` names affected shots; it advises, it never blocks and exits 0.
 - “先做一段样片” confirms only that sample. Remaining shots need their own later card 2.
 
-## What actually goes wrong
-
-- Presenter/hair changes: reuse original material and exact base; prefer video; a stable model seed may help when supported.
-- Words change: always STT; one-character substitutions can keep high similarity and invert meaning.
-- An extra “艾特” before the line: an `@` reached the model. The line belongs after `口播台词：` with no `@` anywhere; fix the prompt before a paid retry, since an unchanged one repeats it.
-- Background changes: anchor it and avoid decorative overload.
-- Text in the picture, wrong or unwanted: the model drew the line itself (2026-10-15, two of five Seedance shots, despite 无字幕 twice). Full negative wording up front lowers the odds; `video_analyze(action="screen_text")` on every take is what catches it; inspect the affected reference and correct it before a targeted reshoot. Use the verified wording for requested captions.
-- Captions overflow or joins drift: correct line breaks or real source intervals in the IMS timeline and validate the updated cut.
-- Identity material is rejected: use the product's own authorisation flow; never externalise or bypass it.
-- Selected tier ignores a reference: disclose and offer choices; never continue silently.
-- Project seems missing: read state/workspace; do not recreate paid work.
-- Final has no audio: catch it with `$S/state.py check` before delivery.
-- Parameter error: re-read models and validate; it does not imply the tool is broken.
-- Planned duration differs from measured output: preserve the requested duration and report the actual result honestly.
+The pitfalls ("What actually goes wrong") are in `SKILL.md`.

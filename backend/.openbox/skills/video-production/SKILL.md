@@ -54,15 +54,30 @@ Asset cache paths may disappear after a completed task; fetch the same asset_id 
 
 Steps in order; the workflow files say how.
 
-0. **Read the menu first and resume safely.** `video_generate(action="models")` before planning; on a continuing run `python3 "$S/state.py" show --slug <slug>` and `check`, and resume recorded paid work. Supplied pictures or frame preparation: `references/material-plan.md` for every model, plus `references/minimax-turbo-frames.md` for Turbo.
+0. **Read the menu first and resume safely.** `video_generate(action="models")` before planning; on a continuing run `python3 "$S/state.py" show --slug <slug>` and `check`, and resume recorded paid work. `$S/state.py check` names affected shots; it advises, it never blocks and exits 0. Supplied pictures or frame preparation: `references/material-plan.md` for every model, plus `references/minimax-turbo-frames.md` for Turbo.
 1. **Creator context.** `creator_context(action="get_user_context")`; empty is normal.
 2. **Card 1: the whole script**, fitted to length before the card with step 3's commands, complete with its length in the `question` text. After 「可以」 never rewrite it on your own.
 3. **Split at meaning and time against the selected model** with `$S/split_script.py` and `$S/plan_shots.py` (`--min-shot-seconds`, `--max-shot-seconds`). Never divide the requested total by the shot count. Always send an explicit duration; do not use `-1`. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Seedance takes 4–15s, Wan 3.0 takes 2–30s, MiniMax H3 takes 4–30s; re-read others.
 4. **Materials and prompts** (`references/prompt-recipes.md`); one JSON plan, `prepare.py` once. `saved=true` is not approval.
 5. **Validate, then card 2** with every line and complete prompt. Tool-call details do not count as display.
-6. **Submit each ready shot** with `shot=<N>` and a stable key, other ready shots in the same response; when blocked, `await_ready` once with all outstanding IDs.
+6. **Submit each ready shot** with `shot=<N>` and a stable key, other ready shots in the same response; when blocked, call `video_generate(action="await_ready", job_ids=[...])` once with all outstanding IDs. On `polling_paused=true` leave the job in background recovery and end the turn.
 7. **Card 3**: words, picture text, action, duration and frame rate of each take (`references/quality.md`). One shot has exactly one current take; `:v2` supersedes `:v1`.
-8. **Compose, check, deliver** (`references/compose-timeline.md`).
+8. **Compose, check, deliver** (`references/compose-timeline.md`). Use the accepted actual transcript for requested speech captions. Use `video_compose(action="await_ready", job_id=...)` once to receive its attached result.
+
+## What actually goes wrong
+
+- Presenter/hair changes: reuse original material and exact base; prefer video; a stable model seed may help when supported.
+- Words change: always STT; one-character substitutions can keep high similarity and invert meaning.
+- An extra “艾特” before the line: an `@` reached the model. The line belongs after `口播台词：` with no `@` anywhere; fix the prompt before a paid retry, since an unchanged one repeats it.
+- Background changes: anchor it and avoid decorative overload.
+- Text in the picture, wrong or unwanted: the model drew the line itself (2026-10-15, two of five Seedance shots, despite 无字幕 twice). Full negative wording up front lowers the odds; `video_analyze(action="screen_text")` on every take is what catches it; inspect the affected reference and correct it before a targeted reshoot. Use the verified wording for requested captions.
+- Captions overflow or joins drift: correct line breaks or real source intervals in the IMS timeline and validate the updated cut.
+- Identity material is rejected: use the product's own authorisation flow; never externalise or bypass it.
+- Selected tier ignores a reference: disclose and offer choices; never continue silently.
+- Project seems missing: read state/workspace; do not recreate paid work.
+- Final has no audio: catch it with `$S/state.py check` before delivery.
+- Parameter error: re-read models and validate; it does not imply the tool is broken.
+- Planned duration differs from measured output: preserve the requested duration and report the actual result honestly.
 
 ## Reference
 
@@ -73,6 +88,6 @@ Steps in order; the workflow files say how.
 - `references/quality.md` — pathology, STT, duration acceptance and composition checks
 - `references/compose-timeline.md` — the `video_compose` timeline format, card 4, verified effects and billing
 - `references/workflow-plan.md` — secretary conversation, preparation, menu and resume, card 1, timing (steps 0–3)
-- `references/workflow-produce.md` — prompts, card 2, submission, card 3, composition, invalidation, failures (steps 4–8)
+- `references/workflow-produce.md` — prompts, card 2, submission, card 3, composition, invalidation (steps 4–8)
 
 Publishing/posting is handled by the `douyin-desktop-publish` skill (load it with the `skill` tool when the person wants the video on Douyin — it publishes through the cloud desktop's logged-in 创作者中心 and only falls back to the QR package when that route is switched off); this skill produces and delivers the file.

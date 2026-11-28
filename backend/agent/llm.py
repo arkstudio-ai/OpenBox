@@ -189,8 +189,8 @@ def responses_event_error(data: dict) -> str | None:
     return f"{event_type}: {error}"
 
 
-def _get_max_output_tokens(model_id: str) -> int:
-    """Return the max_output_tokens for a model.
+def _builtin_max_output_tokens(model_id: str) -> int:
+    """Built-in per-family output allowance.
 
     GPT-5.4 / GPT-5.2: 128K output tokens, 1M+ context window
     GPT-5 / GPT-5-mini: 64K output tokens
@@ -202,6 +202,33 @@ def _get_max_output_tokens(model_id: str) -> int:
     if any(x in model_lower for x in ("gpt-5", "gpt-5-mini", "gpt-5-nano")):
         return 64_000
     return OUTPUT_TOKEN_MAX
+
+
+def _configured_max_tokens(model_id: str) -> int | None:
+    try:
+        from core.config import get_config
+        models = get_config().models or []
+    except Exception:
+        return None
+    for item in models:
+        if str(getattr(item, "id", "") or "") == model_id:
+            value = getattr(item, "max_tokens", None)
+            return value if isinstance(value, int) and value > 0 else None
+    return None
+
+
+def _get_max_output_tokens(model_id: str) -> int:
+    """Return the max_output_tokens for a model.
+
+    The catalogue's ``models[].max_tokens`` caps one response: it can lower
+    the built-in allowance but never raise it. Provider maximums above the
+    built-in values are not verified (a value over the provider's limit is a
+    400 on every request), and an entry that omits the field carries
+    ``ModelConfig``'s 200,000 default, which must not become a request value.
+    """
+    builtin = _builtin_max_output_tokens(model_id)
+    configured = _configured_max_tokens(model_id)
+    return min(builtin, configured) if configured else builtin
 
 
 def request_output_tokens(model_id: str, variant: str | None = None,

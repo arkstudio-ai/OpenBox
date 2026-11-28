@@ -1,0 +1,217 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "这是第一轮：记住项目代号叫青鸟。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#3>",
+    "text": "记下了，项目代号是青鸟。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#4>",
+    "step": 1,
+    "input_tokens": 170000,
+    "output_tokens": 20,
+    "cost": 0.17004,
+    "credits": "0.170040000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#5>",
+    "text": "项目代号是什么？",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#4>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "compact",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#6>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#9>",
+    "step": 1,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost": 0.0,
+    "credits": null,
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#5>",
+  "role": "user",
+  "agent": "compaction",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "compaction",
+    "id": "<part#8>",
+    "summary": null,
+    "auto": true,
+    "stage_summary": false,
+    "tail_start_id": null,
+    "source_event_start": 1,
+    "source_event_end": 25,
+    "source_event_digest": "<source_event_digest#1>",
+    "covered_message_ids": [
+     "<message#1>",
+     "<message#2>",
+     "<message#3>",
+     "<message#4>"
+    ],
+    "replacement_id": "compaction:<message#6>"
+   },
+   {
+    "type": "text",
+    "id": "<part#7>",
+    "text": "",
+    "channel": null,
+    "synthetic": true,
+    "ignored": false,
+    "origin": "system_recovery",
+    "origin_ref": {
+     "entrypoint": "compaction"
+    }
+   }
+  ]
+ },
+ {
+  "id": "<message#6>",
+  "role": "assistant",
+  "agent": "compaction",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#10>",
+    "text": "## 摘要\n用户告诉助手项目代号叫青鸟，助手已确认。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#7>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#11>",
+    "text": "Context was compacted. Continue working on the current task.",
+    "channel": null,
+    "synthetic": true,
+    "ignored": false,
+    "origin": "system_recovery",
+    "origin_ref": {
+     "entrypoint": "compaction_continuation"
+    }
+   }
+  ]
+ },
+ {
+  "id": "<message#8>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#12>",
+    "step": 3,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#13>",
+    "text": "项目代号是青鸟。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#14>",
+    "step": 3,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

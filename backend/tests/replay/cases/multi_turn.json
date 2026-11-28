@@ -1,0 +1,19 @@
+{
+ "description": "Three turns in one session (text, a tool step, text). The recording shows how much of each request repeats the previous one (prefix stability across turns).",
+ "report_prefix": true,
+ "turns": [
+  {"user": "我们来规划一次周末野餐。",
+   "replies": [{"text": "好的，先确定地点和人数吧。"}]},
+  {"user": "看看 picnic.txt 里我列的东西。",
+   "replies": [
+    {"tool_calls": [{"id": "call_read_1", "name": "read", "arguments": {"file_path": "/workspace/picnic.txt"}}]},
+    {"text": "清单里有野餐垫、三明治和水果。"}
+   ],
+   "tools": [
+    {"tool": "read", "args": {"file_path": "/workspace/picnic.txt"},
+     "result": {"title": "picnic.txt", "output": "<file>\n00001| 野餐垫\n00002| 三明治\n00003| 水果\n</file>"}}
+   ]},
+  {"user": "还缺什么？",
+   "replies": [{"text": "建议再带防晒霜和垃圾袋。"}]}
+ ]
+}

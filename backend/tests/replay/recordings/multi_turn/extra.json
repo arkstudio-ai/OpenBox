@@ -1,0 +1,25 @@
+{
+ "prefix": [
+  {
+   "request": 2,
+   "turn": 2,
+   "same_tools": true,
+   "messages_repeated": "2 of 2",
+   "messages_sent": 4
+  },
+  {
+   "request": 3,
+   "turn": 2,
+   "same_tools": true,
+   "messages_repeated": "4 of 4",
+   "messages_sent": 6
+  },
+  {
+   "request": 4,
+   "turn": 3,
+   "same_tools": true,
+   "messages_repeated": "6 of 6",
+   "messages_sent": 8
+  }
+ ]
+}

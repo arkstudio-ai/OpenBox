@@ -1,0 +1,84 @@
+[
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "看看 app/.env 里配置了哪些变量名。"
+    }
+   ],
+   "tools": {
+    "$shared": "841b3ffeaf47"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "看看 app/.env 里配置了哪些变量名。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_read_1",
+       "type": "function",
+       "function": {
+        "name": "read",
+        "arguments": "{\"file_path\": \"/workspace/app/.env\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_read_1",
+     "content": "<file>\n00001| DEBUG=1\n00002| PORT=8080\n</file>"
+    }
+   ],
+   "tools": {
+    "$shared": "841b3ffeaf47"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ }
+]

@@ -1,0 +1,27 @@
+{
+ "description": "Several tool steps in one turn: two calls in one reply (glob and grep), then read, then edit, then text. Four model requests.",
+ "turns": [
+  {"user": "把 todo.md 里的 TODO 都改成 DONE。",
+   "replies": [
+    {"reasoning": "先找到文件，再看内容。",
+     "tool_calls": [
+      {"id": "call_glob_1", "name": "glob", "arguments": {"pattern": "**/todo.md"}},
+      {"id": "call_grep_1", "name": "grep", "arguments": {"pattern": "TODO", "path": "/workspace"}}
+     ]},
+    {"tool_calls": [{"id": "call_read_1", "name": "read", "arguments": {"file_path": "/workspace/todo.md"}}]},
+    {"tool_calls": [{"id": "call_edit_1", "name": "edit", "arguments": {
+      "file_path": "/workspace/todo.md", "old_string": "TODO", "new_string": "DONE", "replace_all": true}}]},
+    {"text": "已把 todo.md 里的 2 处 TODO 改成 DONE。"}
+   ],
+   "tools": [
+    {"tool": "glob", "args": {"pattern": "**/todo.md"},
+     "result": {"title": "1 file", "output": "/workspace/todo.md"}},
+    {"tool": "grep", "args": {"pattern": "TODO", "path": "/workspace"},
+     "result": {"title": "2 matches", "output": "/workspace/todo.md:1:TODO 写周报\n/workspace/todo.md:2:TODO 订会议室"}},
+    {"tool": "read", "args": {"file_path": "/workspace/todo.md"},
+     "result": {"title": "todo.md", "output": "<file>\n00001| TODO 写周报\n00002| TODO 订会议室\n</file>"}},
+    {"tool": "edit", "args": {"file_path": "/workspace/todo.md", "old_string": "TODO", "new_string": "DONE", "replace_all": true},
+     "result": {"title": "todo.md", "output": "Edit applied successfully. 2 replacements.", "metadata": {"replacements": 2}}}
+   ]}
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "permissions": [
+  {
+   "tool": "read",
+   "patterns": [
+    "/workspace/app/.env"
+   ],
+   "input": {
+    "file_path": "/workspace/app/.env"
+   },
+   "reply": "once"
+  }
+ ]
+}

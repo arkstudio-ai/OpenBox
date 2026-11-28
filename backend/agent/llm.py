@@ -17,7 +17,7 @@ from agent.agent import AgentDef
 from agent.timing import ProviderStream, provider_wait
 from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
-from trajectory.capture import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
+from agent.recording import active_request, begin_model_call, bind_model_billing, capture_billing, chunk_blocks
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
 
@@ -1320,7 +1320,7 @@ async def _stream_responses_api(
                 existing["finalized"] = True
             return tc_index, is_new, emitted_delta
 
-        capture = await RequestCapture.start(
+        capture = await begin_model_call(
             trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
         )
         await _assert_dispatch_allowed(trace_ctx)
@@ -1420,7 +1420,7 @@ async def _stream_responses_api(
                                 raise NativeProtocolError("native Responses stream emitted malformed JSON") from exc
                             yield {"type": "malformed_sse", "message": data_str}
 
-                async with aclosing(capture.stream_chunks(decoded_events(), responses_chunk_blocks)) as chunks:
+                async with aclosing(capture.stream_chunks(decoded_events(), chunk_blocks("responses"))) as chunks:
                     async for data in chunks:
                         etype = data.get("type", "")
 
@@ -1765,8 +1765,7 @@ async def stream_llm(
     limits = limits_for(model_id, variant, billing_kind, prompt_tokens)
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
-    ctx._trajectory_active_request = None
+    bind_model_billing(ctx, meter)
     usage = None
     # GPT-5.x models: use Responses API for reasoning content
     if _needs_responses_api(model_id):
@@ -1792,7 +1791,7 @@ async def stream_llm(
     stream = bounded_stream(stream, limits)
     try:
         async for event in stream:
-            trace = getattr(ctx, "_trajectory_active_request", None)
+            trace = active_request(ctx)
             if trace is not None:
                 event = {**event, "trajectory_context": trace}
             if event["type"] == "usage":
@@ -1815,7 +1814,7 @@ async def stream_llm(
                 # Aborting the consumer must not abandon an already observed charge.
                 async def settle():
                     credits = await meter.finish(usage)
-                    await capture_billing(getattr(ctx, "_trajectory_active_request", None), meter, usage, credits, billing_kind)
+                    await capture_billing(active_request(ctx), meter, usage, credits, billing_kind)
                 settlement = asyncio.create_task(settle())
                 try:
                     await asyncio.shield(settlement)
@@ -1836,17 +1835,16 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     kwargs.setdefault("num_retries", 0)
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
-    ctx._trajectory_active_request = None
+    bind_model_billing(ctx, meter)
     usage = None
     capture = None
     try:
-        capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
+        capture = await begin_model_call(ctx, purpose=billing_kind, model_id=kwargs["model"],
                                              payload=kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(ctx)
         with provider_wait():
             response = await litellm.acompletion(**kwargs)
-        await capture.chunk(response, blocks=litellm_chunk_blocks(response))
+        await capture.chunk(response, blocks=chunk_blocks("litellm")(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
             await capture.capture_usage(usage)
@@ -2089,7 +2087,7 @@ async def _stream_litellm_direct(
         if tool_choice and tool_schemas:
             call_kwargs["tool_choice"] = tool_choice
 
-        capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
+        capture = await begin_model_call(trace_ctx, purpose=purpose, model_id=model_id,
                                              payload=call_kwargs, capture_level="adapter_input")
         await _assert_dispatch_allowed(trace_ctx)
         observation = Observation(model_id, purpose,
@@ -2107,7 +2105,7 @@ async def _stream_litellm_direct(
         provider_finish_reason = None
 
         async with aclosing(observation.chunks(response)) as observed, aclosing(
-                capture.stream_chunks(observed, litellm_chunk_blocks)) as chunks:
+                capture.stream_chunks(observed, chunk_blocks("litellm"))) as chunks:
             async for chunk in chunks:
                 # Capture usage from any chunk that carries it (typically the final one).
                 # With stream_options={"include_usage": True}, the provider sends a

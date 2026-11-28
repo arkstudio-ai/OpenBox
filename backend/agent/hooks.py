@@ -174,7 +174,8 @@ class ToolHooks:
         part_id: str = "", *, tool_info=None, provider_call_id: str | None = None,
         arguments_raw: str | None = None, requested_recorded: bool = False,
     ) -> ToolResult:
-        ctx._trajectory_tool_metadata = (tool_info, provider_call_id, arguments_raw)
+        from agent import recording
+        recording.note_tool_request(ctx, tool_info, provider_call_id, arguments_raw)
         if requested_recorded:
             ctx._trajectory_requested_part = part_id
         return await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id, stream=None)
@@ -188,10 +189,9 @@ class ToolHooks:
         provider_call_id = None
         arguments_raw = None
         requested_recorded = getattr(ctx, "_trajectory_requested_part", None) == part_id
-        from trajectory.capture import context_for_tool, public_value, requested_tool_schema
+        from agent import recording
+        from agent.recording import bind, context_for_tool, public_value, record, requested_tool_schema
         from question.runtime import current_run, is_revoked
-        from trajectory import bind, record
-        from trajectory.tool_output import ToolOutputStream
         from core.identifier import ascending
         context = await context_for_tool(ctx)
         if context is not None:
@@ -199,13 +199,12 @@ class ToolHooks:
                 call_id=part_id or ascending("call"), part_id=part_id or None,
                 message_id=ctx.message_id or context.message_id,
             )
-            ctx.trace_context = context
+            recording.attach(ctx, context)
         ctx._trajectory_execute_started = None
-        ctx._trajectory_full_tool_output = None
         # The call's tool.output recorder; a revoked run records no further output.
         ticket = current_run.get()
-        stream = ctx._trajectory_output_stream = ToolOutputStream(
-            context, tool=tool_id, owner=execute_fn,
+        stream = recording.begin_tool_body(
+            ctx, context, tool=tool_id, owner=execute_fn,
             stopped=(lambda: is_revoked(ticket.run_id)) if ticket is not None else None)
         started = time.monotonic()
         with bind(context), _bind_tool_context(ctx):
@@ -243,7 +242,7 @@ class ToolHooks:
                 duration = (time.monotonic() - ctx._trajectory_execute_started
                             if ctx._trajectory_execute_started is not None else None)
                 result.metadata["duration"] = duration
-                retained = ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output
+                retained = recording.retained_output(ctx, result.output)
                 await stream.finish(retained, title=result.title, metadata=public_value(result.metadata),
                                     duration_ms=duration * 1000 if duration is not None else None)
             await stream.close()
@@ -289,17 +288,17 @@ class ToolHooks:
         self, tool_id: str, execute_fn: Any, args: dict, ctx: ToolContext,
         *, part_id: str = "", isolate_context: bool = False,
     ) -> PreparedToolExecution:
-        from trajectory.capture import context_for_tool, public_value, requested_tool_schema
-        from trajectory import bind, record
+        from agent import recording
+        from agent.recording import bind, context_for_tool, public_value, record, requested_tool_schema
 
         context = await context_for_tool(ctx)
         if context is not None:
             context = context.derive(call_id=part_id or None, part_id=part_id or None,
                                      message_id=ctx.message_id or context.message_id)
-        ctx.trace_context = context
+        recording.attach(ctx, context)
         with bind(context), _bind_tool_context(ctx):
             if getattr(ctx, "_trajectory_requested_part", None) != part_id:
-                tool_info, provider_call_id, arguments_raw = getattr(ctx, "_trajectory_tool_metadata", (None, None, None))
+                tool_info, provider_call_id, arguments_raw = recording.pending_tool_request(ctx)
                 schema, schema_source = requested_tool_schema(ctx, tool_id, tool_info)
                 await record("tool.requested", {"tool": tool_id, "provider_call_id": provider_call_id,
                     "arguments_raw": arguments_raw, "requested_arguments": public_value(args),
@@ -440,7 +439,8 @@ class ToolHooks:
             if output == _last_output["text"]:
                 return
             _last_output["text"] = output
-            stream = getattr(run_ctx, "_trajectory_output_stream", None)
+            from agent.recording import running_tool_body
+            stream = running_tool_body(run_ctx)
             if stream is not None:
                 await stream.update(output)
             bus.publish(PART_UPDATED, _generation_payload(run_ctx, {
@@ -499,11 +499,10 @@ class ToolHooks:
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
             await assert_current("tool", progress=True)
-            from trajectory import record
-            from trajectory.capture import public_value
+            from agent.recording import context_of, public_value, record
             if not getattr(execute_fn, "_trajectory_validates", False):
                 await record("tool.started", {"tool": tool_id, "effective_arguments": public_value(args),
-                             "timing_source": "producer_monotonic"}, context=getattr(ctx, "trace_context", None))
+                             "timing_source": "producer_monotonic"}, context=context_of(ctx))
             start_time = time.monotonic()
             if not getattr(execute_fn, "_trajectory_validates", False):
                 ctx._trajectory_execute_started = start_time

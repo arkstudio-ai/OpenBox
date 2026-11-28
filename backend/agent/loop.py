@@ -984,7 +984,8 @@ async def run_loop(
         await lease.release(session_status=resting if resting != "idle" else None)
         await question_runtime.publish_status(session_id, user_id, resting)
         return None
-    from trajectory import bind as bind_trace, record as record_trace
+    from agent import recording
+    from agent.recording import bind as bind_trace, record as record_trace
     try:
         run_trace = await question_runtime.get_run_trace(ticket)
     except BaseException:
@@ -1723,8 +1724,6 @@ async def run_loop(
             ctx = ToolContext(
                 session_id=session_id,
                 run_id=run_id,
-                trace_context=(step_traces[step].derive(request_id=last_step_requests.get(step))
-                               if step in step_traces else None),
                 run_generation=lease.generation,
                 user_id=user_id,
                 timezone=device_locale.timezone,
@@ -1755,9 +1754,11 @@ async def run_loop(
                 ),
                 _subagent_authority_snapshot=effective_authority.to_json(),
             )
+            recording.attach(ctx, step_traces[step].derive(request_id=last_step_requests.get(step))
+                             if step in step_traces else None)
 
             step_attempts[step] = step_attempts.get(step, 0) + 1
-            ctx._trajectory_attempt = step_attempts[step]
+            recording.note_model_attempt(ctx, step_attempts[step])
 
             # Create hooks with config permission rules + agent permission rules
             hooks = ToolHooks(
@@ -2293,13 +2294,11 @@ async def run_loop(
                     from assistant.runtime import LAST_REQUESTS_PROMPT
                     result.append({"role": "user", "content": LAST_REQUESTS_PROMPT})
                 # Fetch image bytes only for the actual provider-shaped path.
-                from trajectory import enabled as recording_enabled
-                ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
-                ctx._trajectory_inline_media = {} if ctx._trajectory_media_sources is not None else None
+                media_sources, inline_media = recording.media_capture(ctx, recording.enabled(user_id))
                 ctx._resource_image_inputs = {} if isinstance(getattr(sandbox, "desktop_id", None), str) else None
                 ctx._image_input_uris = {}
                 result = await resolve_images(result, model_id,
-                    media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media,
+                    media_sources=media_sources, media_inputs=inline_media,
                     resource_images=ctx._resource_image_inputs, image_inputs=ctx._image_input_uris,
                     compact_generated=(guided_action == "render" and getattr(session, "light_entry", None) == "video"))
                 if assistant_view is not None and not for_compaction:
@@ -3000,7 +2999,7 @@ async def run_loop(
                 await record_trace("request.retry_scheduled", {
                     "attempt": attempt_number + 1, "max_attempts": max_attempts + 1,
                     "reason": retry_result.retry_reason, "wait_ms": delay * 1000,
-                }, context=getattr(ctx, "trace_context", None))
+                }, context=recording.context_of(ctx))
 
             retry_started_at = time.monotonic()
             result, llm_retry_count = await _run_provider_attempts(
@@ -3015,8 +3014,8 @@ async def run_loop(
                 result = StepResult(outcome=StepOutcome.ERROR, error=main_budget.error["message"])
             elif main_budget is not None:
                 main_budget.slowest_step_seconds = max(main_budget.slowest_step_seconds, result.duration or 0)
-            if getattr(ctx, "trace_context", None) is not None:
-                last_step_requests[step] = ctx.trace_context.request_id
+            if recording.context_of(ctx) is not None:
+                last_step_requests[step] = recording.context_of(ctx).request_id
             if run_trace is not None:
                 await record_trace("step.finished", {
                     "step": step, "status": "failed" if result.outcome in (StepOutcome.RETRY, StepOutcome.ERROR) else

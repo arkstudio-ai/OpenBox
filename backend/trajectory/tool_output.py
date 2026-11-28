@@ -269,8 +269,9 @@ class ToolOutputStream:
 
 def output_stream(ctx, tool: str | None = None) -> ToolOutputStream:
     """The output stream of the call running on ``ctx``; a call run without the hooks or ``define_tool`` gets one."""
-    stream = getattr(ctx, "_trajectory_output_stream", None)
+    from trajectory.capture import call_state, set_call_state
+    stream = call_state(ctx, "output_stream")
     if stream is None or stream.closed:
-        stream = ToolOutputStream(getattr(ctx, "trace_context", None) or trajectory.current(), tool=tool)
-        ctx._trajectory_output_stream = stream
+        stream = ToolOutputStream(call_state(ctx, "context") or trajectory.current(), tool=tool)
+        set_call_state(ctx, "output_stream", stream)
     return stream

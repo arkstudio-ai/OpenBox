@@ -502,8 +502,7 @@ async def process_compaction(
     prefix = prefix or RequestPrefix()
     output_limit = summary_output_tokens(model_id, prefix)
 
-    from trajectory import current as current_trace, record as record_trace
-    from trajectory.capture import public_value
+    from agent.recording import context_of, current as current_trace, public_value, record as record_trace
     import time
     compaction_id = ascending("compaction")
     compaction_started = time.monotonic()
@@ -864,7 +863,7 @@ async def process_compaction(
     await record_trace("compaction.finished", {"compaction_id": compaction_id,
         "status": "completed", "summary": summary_text, "applied": True,
         "summary_message_id": assistant.id, "tail_start_id": tail_start_id,
-        "request_id": getattr(getattr(ctx, "trace_context", None), "request_id", None),
+        "request_id": getattr(context_of(ctx), "request_id", None),
         "duration_ms": (time.monotonic() - compaction_started) * 1000,
         "timing_source": "producer_monotonic"}, context=compaction_trace)
 

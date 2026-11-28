@@ -539,7 +539,8 @@ async def process_step(
     `doom_loop_history` is read, never written — new parts come back on the
     result so the caller stays the only writer.
     """
-    from trajectory import bind as bind_trace, record as record_trace
+    from agent import recording
+    from agent.recording import bind as bind_trace, record as record_trace
     from question.runtime import RunRevoked, current_run, is_revoked
     run_ticket = current_run.get()
 
@@ -549,12 +550,12 @@ async def process_step(
 
     async def persist_part(*args, **kwargs):
         run_fence = kwargs.pop("run_fence", getattr(ctx, "run_fence", None))
-        with bind_trace(getattr(ctx, "trace_context", None)):
+        with bind_trace(recording.context_of(ctx)):
             return await save_part(*args, run_fence=run_fence, **kwargs)
 
     async def persist_message(*args, **kwargs):
         run_fence = kwargs.pop("run_fence", getattr(ctx, "run_fence", None))
-        with bind_trace(getattr(ctx, "trace_context", None)):
+        with bind_trace(recording.context_of(ctx)):
             return await update_message_info(*args, run_fence=run_fence, **kwargs)
 
     collected_text = ""
@@ -726,7 +727,7 @@ async def process_step(
 
         async for event in _iter_until_abort(provider_events(), abort):
             if event.get("trajectory_context") is not None:
-                ctx.trace_context = event["trajectory_context"]
+                recording.attach(ctx, event["trajectory_context"])
             # Once any provider event has crossed the stream boundary, this
             # response may already have visible text, persisted native state,
             # or a pending tool card. Replaying the whole request after a
@@ -1086,11 +1087,11 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                rejected_trace = getattr(ctx, "trace_context", None)
+                rejected_trace = recording.context_of(ctx)
                 if rejected_trace is not None:
                     rejected_trace = rejected_trace.derive(call_id=tool_part.id, part_id=tool_part.id,
                                                           message_id=assistant_info.id)
-                from trajectory.capture import public_value, requested_tool_schema
+                from agent.recording import public_value, requested_tool_schema
                 wire_name = tc_event.get("tool", "")
                 schema, schema_source = requested_tool_schema(ctx, wire_name,
                     execution_tools.get(wire_to_canonical.get(wire_name, wire_name)))
@@ -1218,9 +1219,9 @@ async def process_step(
                 )
                 state["tool_part"] = tool_part
                 state["is_new"] = is_new
-                from trajectory.capture import public_value, requested_tool_schema
+                from agent.recording import public_value, requested_tool_schema
                 tool_info = execution_tools.get(str(canonical_tool_id))
-                call_trace = getattr(ctx, "trace_context", None)
+                call_trace = recording.context_of(ctx)
                 if call_trace is not None:
                     call_trace = call_trace.derive(call_id=tool_part.id, part_id=tool_part.id,
                                                   message_id=assistant_info.id)
@@ -1231,7 +1232,7 @@ async def process_step(
                     "requested_arguments": public_value(tool_args), "schema": schema,
                     "schema_source": schema_source}, context=call_trace)
                 ctx._trajectory_requested_part = tool_part.id
-                ctx._trajectory_tool_metadata = (tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
+                recording.note_tool_request(ctx, tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
                 is_question = canonical_tool_id in {"question", "plan_enter", "plan_exit", "desktop_takeover"} or (
                     canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
                 )

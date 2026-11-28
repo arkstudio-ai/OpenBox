@@ -21,6 +21,7 @@ import main
 from core.config import OpenBoxConfig
 from trajectory import spool
 from trajectory.emitter import get_emitter, reset_emitter_for_tests
+from trajectory.plugin import worker_mode
 
 BACKEND = Path(__file__).resolve().parents[2]
 ADMIN_PREFIXES = ("/api/admin/trajectories", "/ws/admin/trajectories")
@@ -154,12 +155,12 @@ def events(monkeypatch) -> list[str]:
 
 def test_worker_mode_defaults_to_external_with_jwt_and_embedded_without(monkeypatch):
     monkeypatch.delenv("TRAJECTORY_WORKER_MODE", raising=False)
-    assert main._trajectory_worker_mode(OpenBoxConfig(jwt_secret="set")) == "external"
-    assert main._trajectory_worker_mode(OpenBoxConfig(jwt_secret="")) == "embedded"
+    assert worker_mode(OpenBoxConfig(jwt_secret="set")) == "external"
+    assert worker_mode(OpenBoxConfig(jwt_secret="")) == "embedded"
     for raw, expected in ((" Embedded ", "embedded"), ("OFF", "off"), ("external", "external"),
                           ("sidecar", "external"), ("", "external")):
         monkeypatch.setenv("TRAJECTORY_WORKER_MODE", raw)
-        assert main._trajectory_worker_mode(OpenBoxConfig(jwt_secret="set")) == expected
+        assert worker_mode(OpenBoxConfig(jwt_secret="set")) == expected
 
 
 @pytest.mark.parametrize("secret,mode,mounted", [

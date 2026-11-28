@@ -10,6 +10,9 @@ opencode uses 6 different system prompts depending on the model family:
 
 All prompts are adapted for OpenBox's Docker sandbox environment.
 """
+from __future__ import annotations
+
+from typing import Iterable
 
 
 # ---------------------------------------------------------------------------
@@ -839,32 +842,434 @@ Exception: If working within an existing website or design system, preserve the 
 
 
 # ---------------------------------------------------------------------------
+# Rollout variants: relaxed (A1) and consistent (A2) prompts
+# docs/KERNEL_DSH_COMPARISON_20261128.md sections 18, 20, 21 and 25.3.
+#
+# The PROMPT_* constants above are the switch-off baseline and must stay
+# byte-identical. Every variant is derived from them by named, exact text
+# edits. An edit whose text no longer matches raises at import time, so a
+# change to a constant above cannot silently leave a removed rule in place.
+# ---------------------------------------------------------------------------
+
+def _replace_once(text: str, old: str, new: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise ValueError(f"prompt edit needs exactly one match, found {count}: {old[:70]!r}")
+    return text.replace(old, new)
+
+
+def _apply_once(text: str, edits: tuple[tuple[str, str], ...]) -> str:
+    for old, new in edits:
+        text = _replace_once(text, old, new)
+    return text
+
+
+def _between(text: str, start: str, end: str) -> str:
+    """The exact text from ``start`` up to, not including, ``end``."""
+    for marker in (start, end):
+        if text.count(marker) != 1:
+            raise ValueError(f"prompt marker needs exactly one match: {marker[:70]!r}")
+    head = text.index(start)
+    return text[head:text.index(end, head)]
+
+
+def _pieces(text: str, markers: tuple[str, ...]) -> tuple[str, ...]:
+    """Split ``text`` in front of each marker; markers occur once, in order."""
+    cuts = []
+    for marker in markers:
+        if text.count(marker) != 1:
+            raise ValueError(f"prompt marker needs exactly one match: {marker[:70]!r}")
+        cuts.append(text.index(marker))
+    if cuts != sorted(cuts):
+        raise ValueError("prompt markers are out of order")
+    bounds = [0, *cuts, len(text)]
+    return tuple(text[a:b] for a, b in zip(bounds, bounds[1:]))
+
+
+# --- A1: relaxed prompt (switch ``relaxed_prompt``) -------------------------
+# Drops, from the QWEN and GEMINI variants only, the rules ported from
+# command-line coding tools that hold the model back: one tool per message
+# (QWEN), line-count limits and the brevity examples, "minimize output" /
+# "extreme conciseness", ask-before-acting, and GEMINI's wait-for-approval
+# steps. Safety rules (refusals, confirmations a tool or Skill requires,
+# destructive-command care, the captcha hand-off, the deletion boundary in
+# AGENTS.md) are untouched.
+
+#: Model-id substrings (lower case) that keep "Use exactly one tool per
+#: assistant message" when ``relaxed_prompt`` is on. Add one when that model
+#: is shown to emit malformed parallel tool calls (section 21, risks).
+ONE_TOOL_PER_MESSAGE_MODELS: tuple[str, ...] = ()
+
+_ONE_TOOL_RULE = (
+    "- Use exactly one tool per assistant message. After each tool call, wait for the result before "
+    "deciding your next action. This is critical for maintaining coherent multi-step workflows.\n"
+)
+
+_ASSUME_AND_PROCEED = (
+    "When a request is ambiguous, pick the most reasonable interpretation, state your assumption, "
+    "and proceed; ask only when you cannot continue without the user's input. Confirmations that "
+    "tools or skills require (paid generation, deletion, another person's account) still apply."
+)
+
+_QWEN_RELAXED_EDITS = (
+    (", and otherwise keep your response to 1-2 sentences.", "."),
+    ("IMPORTANT: Minimize output tokens. Be as concise as possible while still being clear and correct.\n", ""),
+    ("IMPORTANT: Keep responses short, fewer than 4 lines of text unless the user explicitly asks for "
+     "detail or the situation demands a longer explanation.\n", ""),
+    (_between(PROMPT_QWEN, "## Verbosity Examples\n", "# Proactiveness\n"), ""),
+    ("- Use the question tool to clarify vague or ambiguous requests before taking action. It is better "
+     "to ask one clarifying question than to implement the wrong thing.\n", f"- {_ASSUME_AND_PROCEED}\n"),
+    ("You MUST answer concisely with fewer than 4 lines of text (not including tool use or code "
+     "generation), unless user asks for detail.\n\n", ""),
+)
+
+_GEMINI_RELAXED_EDITS = (
+    ("- **Confirm Ambiguity/Expansion:** Do not take significant actions beyond the clear scope of the "
+     "request without confirming with the user. If a request is ambiguous or could be interpreted in "
+     "multiple ways, ask for clarification before proceeding.\n", f"- **Ambiguity:** {_ASSUME_AND_PROCEED}\n"),
+    ("Share an extremely concise yet clear plan with the user before implementing — just enough to "
+     "confirm you are on the right track.", "Share a brief, clear plan with the user, then implement it."),
+    ("Ask clarifying questions if the requirements are ambiguous.\n"
+     "2. **Propose Plan:** Present a concise implementation plan covering technology choices, project "
+     "structure, key components, and the order of implementation. Wait for user approval before proceeding.\n"
+     "3. **User Approval:** Wait for the user to confirm or adjust the plan before beginning implementation.\n"
+     "4. **Implementation:**",
+     "Where requirements are open, choose sensible defaults and say which you chose.\n"
+     "2. **Plan:** Decide the technology choices, project structure, key components, and the order of "
+     "implementation, and share the plan briefly.\n"
+     "3. **Implementation:**"),
+    ("\n5. **Verify:** Build the project", "\n4. **Verify:** Build the project"),
+    ("\n6. **Solicit Feedback:**", "\n5. **Solicit Feedback:**"),
+    ("- **Minimal Output:** Aim for fewer than 3 lines of text output per response whenever practical. "
+     "Let your tool usage and code changes do the talking.\n", ""),
+    ("then provides a concise 2-3 sentence explanation of its purpose and key logic",
+     "then explains its purpose and key logic"),
+    ("[Proposes a brief plan covering project structure, endpoints, and data model. After user approval, "
+     "scaffolds the project",
+     "[Outlines a brief plan covering project structure, endpoints, and data model, then scaffolds the project"),
+    ("[Asks the user for the error message or stack trace if not provided, then reads the entry point file",
+     "[Runs the app to reproduce the crash and reads the error, then reads the entry point file"),
+    ("proposes a workflow plan. After confirmation, creates .github/workflows/ci.yml",
+     "outlines a workflow plan, then creates .github/workflows/ci.yml"),
+    ("Balance extreme conciseness in your text output with the crucial need for clarity and correctness "
+     "in your code changes.", "Keep your text output clear and to the point, and your code changes correct."),
+    (" When in doubt, ask the user rather than making assumptions that could lead to wasted effort.", ""),
+)
+
+PROMPT_QWEN_RELAXED_ONE_TOOL = _apply_once(PROMPT_QWEN, _QWEN_RELAXED_EDITS)
+PROMPT_QWEN_RELAXED = _replace_once(PROMPT_QWEN_RELAXED_ONE_TOOL, _ONE_TOOL_RULE, "")
+PROMPT_GEMINI_RELAXED = _apply_once(PROMPT_GEMINI, _GEMINI_RELAXED_EDITS)
+
+
+# --- A2: rules consistent with the kernel (switch ``consistent_prompt_rules``)
+# Two changes. The kernel resolves relative paths against the session
+# workdir (ToolContext.resolve_file_path), so "absolute paths only" goes.
+# And every tool the prompt tells the model to use must be one it can see or
+# fetch: tool-specific text is gated on the agent's eligible tool set, the
+# per-tool fragments with required tools that section 4.9 of
+# docs/TOOL_SCHEMA_DEFERRED_LOADING_PLAN.md asked for.
+
+#: Tools every variant's prose is written around. They are in the
+#: whitelist of each agent that uses these prompts (build, plan), so their
+#: mentions are not gated one by one.
+PROMPT_BASELINE_TOOLS = frozenset({"bash", "read", "write", "edit", "glob", "grep"})
+
+_PATH_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "qwen": (
+        ("- Always use absolute file paths. Never use relative paths.\n",
+         "- File paths may be absolute or relative to the working directory.\n"),
+    ),
+    "gemini": (
+        ("- **Path Construction:** Before using any file system tool, construct the full absolute path to "
+         "the target file or directory. Never use relative paths. The working directory is the project root "
+         "inside the container.\n",
+         "- **Paths:** File paths may be absolute or relative to the working directory, which is the "
+         "project root.\n"),
+        ("- **File Paths:** Always use absolute paths for all file operations. Construct the full path "
+         "before making any tool call.\n", ""),
+    ),
+}
+
+_IB_PIECES = _pieces(_INTERNET_AND_BROWSER, (
+    "- `web_search` —",
+    "- `web_fetch` —",
+    '- `skill("dev-browser")` —',
+    "- Choose the simplest tool first:",
+    "\n## Browser work goes through dev-browser, not the screen\n",
+    "\n**No browser on the screen at all?**",
+    "\n## Which browser you are driving\n",
+    "\n## Captcha / risk control: hand off to the user\n",
+    "Do NOT drag sliders,",
+))
+_IB_FULL_TOOLS = frozenset({"web_search", "web_fetch", "skill", "computer", "desktop_takeover", "capability_search"})
+_IB_CHALLENGE_FIELD = " `waitForPageLoad()` also reports a `challenge` field when it spots one."
+
+
+def _captcha_action(tools: frozenset[str]) -> str:
+    """The hand-off paragraph. The rule survives without the hand-off tool."""
+    if {"computer", "desktop_takeover", "capability_search", "skill"} <= tools:
+        return _IB_PIECES[9]
+    pointer = " by coordinates with `computer`" if "computer" in tools else ""
+    opening = (f"Do NOT drag sliders, guess codes, click the challenge{pointer}, switch user agents, clear "
+               "cookies, or reload in a loop. Reload the page at most once to confirm the challenge is real, then ")
+    if "desktop_takeover" not in tools:
+        return opening + ("stop and ask the user to complete it themselves. Continue only after they say it "
+                          "is done, and say in your final answer that the user completed that step.")
+    reveal = " (reveal it with `capability_search` if it is not in your tool list)" if "capability_search" in tools else ""
+    page = "the same dev-browser page" if "skill" in tools else "the same page"
+    return opening + (f"call `desktop_takeover`{reveal}. It suspends the run and shows the user a card with a "
+                      "link that opens the cloud desktop with control switched on; when the page is in the "
+                      f"user's own browser the card tells them to finish it there. When the tool returns, "
+                      f"re-open {page} and re-check its state before continuing, and say in your final answer "
+                      "that the user completed that step.")
+
+
+def _internet_and_browser(tools: frozenset[str]) -> str:
+    if _IB_FULL_TOOLS <= tools:
+        return _INTERNET_AND_BROWSER
+    header, search, fetch, browser, choose, screen, no_browser, which, captcha, _action = _IB_PIECES
+    body = [piece for piece, needs in (
+        (search, {"web_search"}),
+        (fetch, {"web_fetch"}),
+        (browser, {"skill"}),
+        (choose, {"web_search", "web_fetch", "skill"}),
+        (screen, {"skill", "computer"}),
+        (no_browser, {"skill", "computer"}),
+        (which, {"skill"}),
+    ) if needs <= tools]
+    if "skill" not in tools:
+        captcha = _replace_once(captcha, _IB_CHALLENGE_FIELD, "")
+    return "".join([*([header] if body else []), *body, captcha, _captcha_action(tools)]).lstrip("\n")
+
+
+_TF_PIECES = _pieces(_TOOL_FIRST, (
+    "- Scheduled/periodic tasks →",
+    "- Web research →",
+    "- Browser interaction →",
+    "- Desktop GUI outside a browser →",
+    "- File operations →",
+    "Only write code when no built-in tool",
+))
+
+
+def _tool_first(tools: frozenset[str]) -> str:
+    header, scheduled, web, browser, desktop, files, closing = _TF_PIECES
+    kept = [piece for piece, needs in (
+        (scheduled, {"cron"}),
+        (web, {"web_search", "web_fetch"}),
+        (browser, {"skill", "computer"}),
+        (desktop, {"computer"}),
+    ) if needs <= tools]
+    return "".join([header, *kept, files, closing])
+
+
+_TRINITY_TOOL_LINE = (
+    "- CRITICAL: Before writing ANY code, check if a built-in tool can solve the task directly: `cron` for "
+    "scheduled tasks, `web_search`/`web_fetch` for web research, `skill(\"dev-browser\")` for browser "
+    "interaction. Only write code when no tool can do it.\n"
+)
+
+
+def _trinity_tool_line(tools: frozenset[str]) -> str:
+    uses = [text for text, needs in (
+        ("`cron` for scheduled tasks", {"cron"}),
+        ("`web_search`/`web_fetch` for web research", {"web_search", "web_fetch"}),
+        ('`skill("dev-browser")` for browser interaction', {"skill"}),
+    ) if needs <= tools]
+    if not uses:
+        return ""
+    return ("- CRITICAL: Before writing ANY code, check if a built-in tool can solve the task directly: "
+            + ", ".join(uses) + ". Only write code when no tool can do it.\n")
+
+
+_TASK_FILE_SEARCH = "- When doing file search, prefer to use the Task tool in order to reduce context usage.\n"
+_CRON_INSTEAD_OF_CRONTAB = " For scheduled/periodic tasks, use the `cron` tool instead of writing crontab code."
+
+#: Per-variant tool mentions outside the two shared blocks: (exact text, tools
+#: it names, replacement used when any of those tools is not eligible).
+_TOOL_GATES: dict[str, tuple[tuple[str, frozenset[str], object], ...]] = {
+    "qwen": (
+        (_TASK_FILE_SEARCH, frozenset({"task"}), ""),
+        (" For scheduled/periodic tasks, use the `cron` tool.", frozenset({"cron"}), ""),
+        ("- Use the question tool to clarify vague or ambiguous requests before taking action. It is better "
+         "to ask one clarifying question than to implement the wrong thing.\n", frozenset({"question"}), ""),
+    ),
+    "gemini": (
+        (_CRON_INSTEAD_OF_CRONTAB, frozenset({"cron"}), ""),
+        ("- **Task Tool:** When exploring the codebase broadly (not searching for a specific known item), "
+         "prefer the Task tool to reduce context usage.\n", frozenset({"task"}), ""),
+    ),
+    "anthropic": (
+        (_between(PROMPT_ANTHROPIC, "# Task Management\n", "# Doing tasks\n"), frozenset({"todo_write"}), ""),
+        ("- Use the todo_write tool to plan the task if required\n", frozenset({"todo_write"}), ""),
+        (_TASK_FILE_SEARCH, frozenset({"task"}), ""),
+        ("- You should proactively use the Task tool with specialized agents when the task at hand matches "
+         "the agent's description.\n", frozenset({"task"}), ""),
+        ("- When WebFetch returns a message about a redirect to a different host, you should immediately make "
+         "a new WebFetch request with the redirect URL provided in the response.\n", frozenset({"web_fetch"}), ""),
+        (" For example, if you need to launch multiple agents in parallel, send a single message with multiple "
+         "Task tool calls.", frozenset({"task"}), ""),
+        (" For scheduled/periodic tasks, use the built-in `cron` tool instead of writing crontab or systemd code.",
+         frozenset({"cron"}), ""),
+        (_between(PROMPT_ANTHROPIC, "- VERY IMPORTANT: When exploring the codebase",
+                  "\nIMPORTANT: Always use the todo_write tool"), frozenset({"task"}), ""),
+        ("IMPORTANT: Always use the todo_write tool to plan and track tasks throughout the conversation.\n\n",
+         frozenset({"todo_write"}), ""),
+    ),
+    "openai": (
+        ("Your training data has a knowledge cutoff. Always use `web_search` to verify third-party package APIs "
+         "and `web_fetch` to read documentation pages before implementing. Even for well-known libraries, verify "
+         "that the APIs still exist in the current version.\n\n", frozenset({"web_search", "web_fetch"}), ""),
+        (_between(PROMPT_OPENAI, "## Step 1: Fetch user-provided URLs\n", "## Step 2:"), frozenset({"web_fetch"}), ""),
+        (_between(PROMPT_OPENAI, "## Step 4: Research on the internet\n", "## Step 5:"),
+         frozenset({"web_search", "web_fetch"}), ""),
+        (" For complex multi-step tasks, use the `todo_write` tool to create a step-by-step plan and track progress.",
+         frozenset({"todo_write"}), ""),
+        ("- Use `web_search` to look up unfamiliar error messages.\n", frozenset({"web_search"}), ""),
+        (_CRON_INSTEAD_OF_CRONTAB, frozenset({"cron"}), ""),
+        ("- When exploring the codebase, prefer the Task tool to reduce context usage.\n", frozenset({"task"}), ""),
+    ),
+    "trinity": (
+        ("- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit "
+         "if it does not work well. Do not use apply_patch for changes that are auto-generated (i.e. generating "
+         "package.json or running a lint or format command like gofmt) or when scripting is more efficient (such "
+         "as search and replacing a string across a codebase).\n", frozenset({"apply_patch"}), ""),
+        (_TRINITY_TOOL_LINE, frozenset({"cron", "web_search", "web_fetch", "skill"}), _trinity_tool_line),
+        ("- When exploring the codebase, prefer the Task tool to reduce context usage. Use the Task tool with "
+         "specialized agents when the task at hand matches the agent's description.\n", frozenset({"task"}), ""),
+        ("- VERY IMPORTANT: When exploring the codebase to gather context or to answer a question that is not a "
+         "needle query for a specific file/class/function, it is CRITICAL that you use the Task tool instead of "
+         "running search commands directly.\n", frozenset({"task"}), ""),
+    ),
+    "codex": (
+        ("- Try to use apply_patch for single file edits, but it is fine to explore other options if it does not "
+         "work well. Do not use apply_patch for auto-generated changes or when scripting is more efficient.\n",
+         frozenset({"apply_patch"}), ""),
+        (" For complex multi-step tasks, use the `todo_write` tool to plan and track your progress. Mark items as "
+         "completed as you finish them — if you created a todo list, make sure all items are marked completed "
+         "before ending your turn.", frozenset({"todo_write"}), ""),
+        (_TASK_FILE_SEARCH, frozenset({"task"}), ""),
+        ("- You should proactively use the Task tool with specialized agents when the task matches the agent's "
+         "description.\n", frozenset({"task"}), ""),
+        (" For scheduled/periodic tasks, use the `cron` tool.", frozenset({"cron"}), ""),
+        (_between(PROMPT_CODEX, "- VERY IMPORTANT: When exploring the codebase", "\n# Internet Research & Browser Use"),
+         frozenset({"task"}), ""),
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
 # Routing function
 # ---------------------------------------------------------------------------
 
-def get_system_prompt(model_id: str) -> str:
-    """Select model-specific system prompt based on model ID.
+_FAMILY_PROMPTS = {
+    "codex": PROMPT_CODEX,
+    "openai": PROMPT_OPENAI,
+    "gemini": PROMPT_GEMINI,
+    "anthropic": PROMPT_ANTHROPIC,
+    "trinity": PROMPT_TRINITY,
+    "qwen": PROMPT_QWEN,
+}
+
+
+def _validate_variant_edits() -> None:
+    """Fail at import when a gated text no longer occurs in its variant."""
+    for family, edits in _PATH_EDITS.items():
+        for old, _new in edits:
+            if _FAMILY_PROMPTS[family].count(old) != 1:
+                raise ValueError(f"{family} path edit no longer matches: {old[:70]!r}")
+    relaxed = {"qwen": (PROMPT_QWEN_RELAXED, PROMPT_QWEN_RELAXED_ONE_TOOL), "gemini": (PROMPT_GEMINI_RELAXED,)}
+    for family, gates in _TOOL_GATES.items():
+        for old, _needs, _new in gates:
+            texts = (_FAMILY_PROMPTS[family], *relaxed.get(family, ()))
+            if not any(old in text for text in texts):
+                raise ValueError(f"{family} tool gate no longer matches: {old[:70]!r}")
+            if old in _INTERNET_AND_BROWSER or old in _TOOL_FIRST:
+                raise ValueError(f"{family} tool gate overlaps a shared block: {old[:70]!r}")
+
+
+_validate_variant_edits()
+
+
+def prompt_family(model_id: str) -> str:
+    """The prompt variant a model id routes to.
 
     Routing logic ported from opencode's system.ts:
-    - gpt-5 / codex  → PROMPT_CODEX
-    - gpt-* / o1 / o3 → PROMPT_OPENAI (beast)
-    - gemini-*        → PROMPT_GEMINI
-    - claude*         → PROMPT_ANTHROPIC
-    - trinity         → PROMPT_TRINITY
-    - default         → PROMPT_QWEN (without TodoWrite emphasis)
+    - gpt-5 / codex  → codex
+    - gpt-* / o1 / o3 → openai (beast)
+    - gemini-*        → gemini
+    - claude*         → anthropic
+    - trinity         → trinity
+    - default         → qwen (Qwen, DeepSeek, Kimi, GLM, MiniMax and unknown models)
     """
     model_lower = model_id.lower()
 
     if "gpt-5" in model_lower or "codex" in model_lower:
-        return PROMPT_CODEX
+        return "codex"
     if any(x in model_lower for x in ("gpt-", "o1", "o3")):
-        return PROMPT_OPENAI
+        return "openai"
     if "gemini" in model_lower:
-        return PROMPT_GEMINI
+        return "gemini"
     if "claude" in model_lower:
-        return PROMPT_ANTHROPIC
+        return "anthropic"
     if "trinity" in model_lower:
-        return PROMPT_TRINITY
+        return "trinity"
+    return "qwen"
 
-    # Fallback: Qwen-style (concise, one tool per message)
-    return PROMPT_QWEN
+
+def compose_system_prompt(
+    model_id: str,
+    *,
+    relaxed: bool = False,
+    consistent: bool = False,
+    tool_ids: frozenset[str] | None = None,
+) -> str:
+    """Base system prompt for ``model_id`` with the given rollout changes.
+
+    With both changes off this is the original PROMPT_* constant, unchanged.
+    ``tool_ids`` is the agent's eligible tool set (visible or fetchable). It
+    must come from the static whitelist after permission filtering, never
+    from one step's narrowing, so the text stays stable across steps. When it
+    is None the tool-specific text is left as it is.
+    """
+    family = prompt_family(model_id)
+    text = _FAMILY_PROMPTS[family]
+    if relaxed and family == "qwen":
+        keeps_one_tool = any(marker in model_id.lower() for marker in ONE_TOOL_PER_MESSAGE_MODELS)
+        text = PROMPT_QWEN_RELAXED_ONE_TOOL if keeps_one_tool else PROMPT_QWEN_RELAXED
+    elif relaxed and family == "gemini":
+        text = PROMPT_GEMINI_RELAXED
+    if not consistent:
+        return text
+    for old, new in _PATH_EDITS.get(family, ()):
+        text = text.replace(old, new)
+    if tool_ids is None:
+        return text
+    tools = frozenset(tool_ids)
+    text = text.replace(_INTERNET_AND_BROWSER, _internet_and_browser(tools))
+    text = text.replace(_TOOL_FIRST, _tool_first(tools))
+    for old, needs, new in _TOOL_GATES.get(family, ()):
+        if not needs <= tools:
+            text = text.replace(old, new(tools) if callable(new) else new)
+    return text
+
+
+def get_system_prompt(
+    model_id: str,
+    *,
+    workspace_id: str | None = None,
+    tool_ids: Iterable[str] | None = None,
+) -> str:
+    """Select the model-specific system prompt, honouring the rollout switches.
+
+    ``relaxed_prompt`` (A1) and ``consistent_prompt_rules`` (A2) are read for
+    ``workspace_id``; with both off the result is the original constant.
+    """
+    from core.config import agent_tuning_enabled
+
+    return compose_system_prompt(
+        model_id,
+        relaxed=agent_tuning_enabled("relaxed_prompt", workspace_id),
+        consistent=agent_tuning_enabled("consistent_prompt_rules", workspace_id),
+        tool_ids=None if tool_ids is None else frozenset(tool_ids),
+    )

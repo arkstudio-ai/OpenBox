@@ -117,8 +117,9 @@ def test_model_view_keeps_tool_and_project_references_but_never_tenant_identitie
     assert material["core_memories"] == [{"kind": "memory", "id": "mem-1", "revision": 2, "text": "我对花生过敏。",
         "project_id": "proj-secret",
         "category": "user_profile", "sources": [{"id": "src-1", "revision": 3, "origin": "chat", "date": "2026-03-01"}]}]
+    # Since ebe2278c a raw source says what kind of evidence it is.
     assert material["relevant_memories"] == [{"kind": "source", "id": "chunk-1", "revision": 1, "text": "周三休馆。",
-        "sources": [{"id": "chunk-1", "revision": 1, "origin": "uploaded_file", "file": "入场说明.pdf", "pages": [2]}]}]
+        "authority": "original_document", "sources": [{"id": "chunk-1", "revision": 1, "origin": "uploaded_file", "file": "入场说明.pdf", "pages": [2]}]}]
     for secret in ("user-secret", "ws-secret", "sess-secret", "msg-secret", "doc-secret", "h" * 64, "c" * 64):
         assert secret not in rendered
     assert orchestrator.render_memory_context({"items": [], "stable_background": {"items": []}}) == ""

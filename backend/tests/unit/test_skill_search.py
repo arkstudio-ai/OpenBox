@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 import skill.skill as skill_directory
 from agent.agent import AgentDef
@@ -181,10 +182,8 @@ async def test_skill_mcp_and_capability_search_share_one_step_budget(no_host_ski
     mcp = await create_mcp_tools(sandbox, [], agent_id="build")
     assert set(mcp) == {"mcp_find_tool", "mcp_call_tool"}
 
-    class EmptyParams:
-        @classmethod
-        def model_json_schema(cls):
-            return {"type": "object", "properties": {}}
+    class EmptyParams(BaseModel):
+        """A real parameter model: built-in schemas are cached by Pydantic config (ebe2278c)."""
 
     async def no_execute(_args, _ctx):
         return ToolResult(title="hidden")

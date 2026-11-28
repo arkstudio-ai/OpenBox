@@ -451,6 +451,10 @@ async def test_catalogue_refresh_at_a_real_step_boundary_keeps_the_screenshot_ac
         def __getitem__(self, _key):
             return frame
 
+        def get(self, _key, _default=None):
+            # dict.get never calls __getitem__; resolve_images reads with get() since 7c8fa116.
+            return frame
+
     config = _loop_config()
     config.compaction.auto = False
     config.permission = {"*": "allow"}

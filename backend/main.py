@@ -79,6 +79,16 @@ async def _cleanup_infrastructure(config):
         log.warning(f"Error closing cache: {e}")
 
 
+def _build_kernel_extensions(config):
+    """The kernel's plugins for this process (docs/kernel-refactor/plugin-interfaces.md).
+
+    Built once per app and installed by the lifespan; the kernel reaches it
+    through ``agent.extensions.extensions()``.
+    """
+    from agent.extensions import KernelExtensions
+    return KernelExtensions()
+
+
 def _trajectory_worker_mode(config) -> str:
     """TRAJECTORY_WORKER_MODE: external (default with JWT_SECRET), embedded (default without) or off.
 
@@ -171,6 +181,9 @@ async def _stop_background_services(**services) -> None:
 async def lifespan(app: FastAPI):
     from core.config import get_config
     config = get_config()
+    from agent.extensions import install as install_kernel_extensions
+    kernel_extensions = getattr(app.state, "kernel_extensions", None) or _build_kernel_extensions(config)
+    previous_kernel_extensions = install_kernel_extensions(kernel_extensions)
 
     # LiteLLM's first import is expensive and may fetch its price map. Do it
     # before accepting requests, off the event loop, using the same local-map
@@ -397,7 +410,10 @@ async def lifespan(app: FastAPI):
         try:
             await _shutdown_trajectory(trajectory_mode)
         finally:
-            await _cleanup_infrastructure(config)
+            try:
+                await _cleanup_infrastructure(config)
+            finally:
+                install_kernel_extensions(previous_kernel_extensions)
 
 
 def create_app() -> FastAPI:
@@ -410,6 +426,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    application.state.kernel_extensions = _build_kernel_extensions(config)
 
     from sandbox.entitlement import SandboxSubscriptionRequired
     from fastapi.responses import JSONResponse

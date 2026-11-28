@@ -45,6 +45,9 @@ class ToolContext:
     agent_id: str = ""
     # Bound by the loop for attribution, never accepted from tool arguments.
     model_id: str = ""
+    # Opaque per-plugin state (agent.extensions.plugin_state). The kernel never
+    # reads it; a write replaces the mapping, so a copy never changes its parent.
+    _plugin_state: dict[str, Any] = field(default_factory=dict, repr=False)
     # Immutable, per-call trajectory identity; never mutate a parent's context.
     trace_context: Any = None
     _trajectory_execute_started: float | None = None

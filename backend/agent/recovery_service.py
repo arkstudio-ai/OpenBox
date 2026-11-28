@@ -42,6 +42,7 @@ class AgentRecoveryResult:
     effects_failed_before_dispatch: int = 0
     effect_stale_skips: int = 0
     stale_skips: int = 0
+    plugin_recovered: int = 0
 
     @property
     def changed(self) -> bool:
@@ -66,6 +67,7 @@ class AgentRecoveryResult:
             self.effects_deferred,
             self.effects_manual_review,
             self.effects_failed_before_dispatch,
+            self.plugin_recovered,
         ))
 
 
@@ -207,6 +209,11 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
 
         effect_recovery = EffectRecoveryResult()
 
+    # Registered plugins recover last, in registration order, after the
+    # kernel's fixed order above (docs/kernel-refactor/plugin-interfaces.md).
+    from agent.extensions import run_recovery_hooks
+    plugin_recovered = await run_recovery_hooks()
+
     return AgentRecoveryResult(
         expired_markers=len(records),
         completed_outboxes=completed_outboxes,
@@ -232,6 +239,7 @@ async def recover_agent_work_once() -> AgentRecoveryResult:
         effects_failed_before_dispatch=effect_recovery.failed_before_dispatch,
         effect_stale_skips=effect_recovery.stale_skips,
         stale_skips=sum(1 for result in all_repairs if result.skipped),
+        plugin_recovered=plugin_recovered,
     )
 
 

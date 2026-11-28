@@ -252,6 +252,7 @@ def apply_exposure_budget(
     *,
     budgets: ExposureBudgets | None = None,
     reserved_chars: int = 0,
+    resident_prompt_chars: int = 0,
 ) -> ExposureBudgetResult:
     """Return a whole-item budgeted plan without mutating either input.
 
@@ -266,7 +267,10 @@ def apply_exposure_budget(
     soft target. Already-used research tools fill only the hard-budget space
     left after all higher priorities. Anything removed is added to discovery with a
     machine-readable reason.  ``reserved_chars`` is request-local definitions
-    (structured output) that share the same boundary.
+    (structured output) that share the same boundary.  ``resident_prompt_chars``
+    is prompt text the resident budget also covers (the A3 tool-name listing,
+    agent/prompt_visibility.py): it is added to ``resident_chars`` and its
+    warnings and never trims a definition.
     """
 
     if config is not None and budgets is not None:
@@ -413,7 +417,7 @@ def apply_exposure_budget(
         catalog.entries[tool_id].schema_chars
         for tool_id in budgeted_plan.direct_ids
         if _priority(original_reasons.get(tool_id, "")) == "resident"
-    )
+    ) + max(0, resident_prompt_chars)
     final_pack_totals: dict[str, int] = {}
     for tool_id in budgeted_plan.direct_ids:
         pack = _pack_name(original_reasons.get(tool_id, ""), catalog.entries[tool_id])

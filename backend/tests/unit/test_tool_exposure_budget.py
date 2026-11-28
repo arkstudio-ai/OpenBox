@@ -325,6 +325,25 @@ def test_reserved_request_local_definitions_share_the_hard_limit():
     assert result.deferred_reasons["video_generate"] == "product_pinned_hard_limit:video"
 
 
+def test_resident_prompt_text_is_measured_with_residents_and_trims_nothing():
+    catalog = _catalog({"core": 8, "editor": 8, "video_generate": 8})
+    plan = _plan(catalog, tuple(catalog.entries),
+                 {"core": "resident", "editor": "model_editor", "video_generate": "intent:video"})
+
+    without = apply_exposure_budget(catalog, plan, budgets=_budgets())
+    assert without == apply_exposure_budget(catalog, plan, budgets=_budgets(), resident_prompt_chars=0)
+    assert without.resident_chars == 16 and without.warnings == ()
+
+    soft = apply_exposure_budget(catalog, plan, budgets=_budgets(), resident_prompt_chars=4)
+    assert soft.resident_chars == 20 and soft.warnings == ("resident_soft:20>18",)
+    hard = apply_exposure_budget(catalog, plan, budgets=_budgets(), resident_prompt_chars=9)
+    assert hard.resident_chars == 25 and hard.warnings == ("resident_hard:25>24",)
+    # Prompt text never moves a definition: the plan and visible size are unchanged.
+    for result in (soft, hard):
+        assert result.plan == without.plan
+        assert result.visible_chars == without.visible_chars == 24
+
+
 def test_explicit_pack_is_capped_as_whole_items_not_sliced_bytes():
     catalog = _catalog({"alpha": 7, "beta": 7})
     plan = _plan(

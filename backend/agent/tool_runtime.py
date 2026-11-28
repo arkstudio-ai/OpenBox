@@ -131,12 +131,15 @@ def assemble_tool_runtime(
     editor_id: str | None = None,
     synthetic_tools: Mapping[str, ToolInfo] | None = None,
     exposure_config=None,
+    resident_prompt_chars: int = 0,
 ) -> ToolRuntime:
     """Build a step runtime without database, provider, Skill or sandbox I/O.
 
     Reveal restoration may replan the same step's already materialized
     catalogue. Reuse that snapshot rather than rebuilding every schema; a new
     step must still resolve its eligible mapping and authorization afresh.
+    ``resident_prompt_chars`` (the rendered A3 listing) is measured with the
+    resident definitions; it never changes which definitions are sent.
     """
     catalogue = (eligible_tools if isinstance(eligible_tools, EligibleCatalog)
                  else build_eligible_catalog(eligible_tools))
@@ -205,6 +208,7 @@ def assemble_tool_runtime(
         # Request-local definitions are always direct and count against the
         # same serialized boundary the payload gate enforces.
         reserved_chars=_synthetic_chars(synthetic),
+        resident_prompt_chars=resident_prompt_chars,
     )
     if mode == "shadow":
         # Candidate metrics/decisions are available, but shadow must preserve

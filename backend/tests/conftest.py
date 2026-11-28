@@ -28,8 +28,9 @@ _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TR
 def _production_kernel_extensions():
     """The plugins main.py registers; a test that wants none uses ``agent.extensions.use``."""
     from agent.extensions import KernelExtensions
+    from memory.plugin import MemoryPlugin
     from trajectory.plugin import TrajectoryPlugin
-    return KernelExtensions().add(TrajectoryPlugin())
+    return KernelExtensions().add(TrajectoryPlugin()).add(MemoryPlugin())
 
 
 @pytest.fixture(autouse=True)

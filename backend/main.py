@@ -86,8 +86,9 @@ def _build_kernel_extensions(config):
     through ``agent.extensions.extensions()``.
     """
     from agent.extensions import KernelExtensions
+    from memory.plugin import MemoryPlugin
     from trajectory.plugin import TrajectoryPlugin
-    return KernelExtensions().add(TrajectoryPlugin())
+    return KernelExtensions().add(TrajectoryPlugin()).add(MemoryPlugin())
 
 
 async def _stop_background_services(**services) -> None:

@@ -339,7 +339,7 @@ def _discard_after_rollback(session, previous_transaction) -> None:
 
 async def get_run_trace(ticket: RunTicket):
     """Load the accepted task identity; never infer it from the latest message."""
-    from trajectory import TraceContext, enabled
+    from agent.recording import enabled, parse_identity
     if not enabled(ticket.user_id):
         return None
     async with get_db_session() as db:
@@ -347,15 +347,14 @@ async def get_run_trace(ticket: RunTicket):
         if (execution is None or execution.user_id != ticket.user_id
                 or not execution.trace_context):
             return None
-        context = TraceContext.parse(execution.trace_context)
+        context = parse_identity(execution.trace_context)
         if context is None or context.run_id != ticket.run_id or context.generation != ticket.generation:
             return None
         return context
 
 
 async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
-    from trajectory import current, record
-    from trajectory.producers import activity_context, markers
+    from agent.recording import activity_identity as activity_context, current, markers, record
     inherited = current()
     saved = execution.trace_context
     if inherited and inherited.user_id == ticket.user_id and (
@@ -400,12 +399,12 @@ def _remember_run_start(run_id: str) -> None:
 
 async def _record_run_terminal(db, execution, ticket, *, status: str, reason: str | None = None,
                                event_type: str = "run.finished"):
-    from trajectory import TraceContext, enabled, record
+    from agent.recording import enabled, parse_identity, record
     # The first terminal path takes the start time, whether or not it records a fact.
     started = _trace_run_started.pop(ticket.run_id, None)
     if not enabled(ticket.user_id) or not execution.trace_context:
         return
-    context = TraceContext.parse(execution.trace_context)
+    context = parse_identity(execution.trace_context)
     if context is None or context.run_id != ticket.run_id:
         return
     # One terminal fact per run, whichever of finish, invalidation and recovery
@@ -673,8 +672,8 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
         await _record_run_terminal(db, execution, ticket, status=trace_status,
                                    reason="interrupted" if interrupted else "aborted" if aborted else None)
         if completed and not interrupted and not aborted and status == "idle" and execution.trace_context:
-            from trajectory import TraceContext, record
-            context = TraceContext.parse(execution.trace_context)
+            from agent.recording import parse_identity, record
+            context = parse_identity(execution.trace_context)
             # A regenerated reply or an accepted plan completes the same turn again.
             if (context is not None and context.session_id == ticket.session_id and session.kind != "cron"
                     and _claim_once(db, _finished_turns, str(context.turn_id))):
@@ -763,8 +762,8 @@ async def cancel_session(session_id: str, user_id: str, *, expected_run_id: str 
             from assistant.report_stop import stop_report_locked
             await stop_report_locked(db, session, expected_run_id=expected_run_id)
         if execution.run_id and execution.trace_context:
-            from trajectory import TraceContext, record
-            context = TraceContext.parse(execution.trace_context)
+            from agent.recording import parse_identity, record
+            context = parse_identity(execution.trace_context)
             if context is not None:
                 await record("run.cancel_requested", {"reason": "user_cancel"}, db=db, context=context)
         rows = await invalidate_locked(db, execution, "cancelled")

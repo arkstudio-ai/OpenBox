@@ -1,0 +1,110 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "帮我做一个产品介绍短视频，先问我时长。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#3>",
+    "tool": "question",
+    "status": "completed",
+    "input": {
+     "questions": "[{\"question\": \"视频时长要多久？\", \"header\": \"时长\", \"options\": [{\"label\": \"15 秒\"}, {\"label\": \"30 秒\"}]}]"
+    },
+    "output": "User answers: 视频时长要多久？: 30 秒",
+    "error": null,
+    "title": "Answered 1 questions",
+    "call_id": "call_question_1",
+    "duration": null,
+    "metadata": {
+     "questions": [
+      "视频时长要多久？"
+     ],
+     "answers": [
+      [
+       "30 秒"
+      ]
+     ],
+     "question_id": "<ulid#1>",
+     "question_status": "answered"
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#4>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#5>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#6>",
+    "text": "好的，按 30 秒来准备脚本。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#7>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

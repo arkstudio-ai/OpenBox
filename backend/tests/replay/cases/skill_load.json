@@ -1,0 +1,13 @@
+{
+ "description": "A synthetic host Skill is listed on the skill tool; the model loads it with the real skill tool and follows it.",
+ "skills": {
+  "weekly-report": "---\nname: weekly-report\ndescription: 按固定格式写团队周报（本周进展、下周计划、风险）。\n---\n# 周报格式\n\n1. 本周进展：三条以内，每条一句话。\n2. 下周计划：按优先级排序。\n3. 风险：没有就写“无”。\n"
+ },
+ "turns": [
+  {"user": "按团队周报的格式帮我写这周的周报：完成了登录页改版。",
+   "replies": [
+    {"tool_calls": [{"id": "call_skill_1", "name": "skill", "arguments": {"skill": "weekly-report"}}]},
+    {"text": "本周进展：完成登录页改版。\n下周计划：上线并观察数据。\n风险：无。"}
+   ]}
+ ]
+}

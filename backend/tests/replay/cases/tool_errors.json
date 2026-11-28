@@ -1,0 +1,22 @@
+{
+ "description": "Tool failures, one per step: an error result, a body that raises, arguments that fail validation, an unknown tool name, and a misspelt name the adapter repairs. Then text.",
+ "turns": [
+  {"user": "读一下 report.txt，再统计一下行数。",
+   "replies": [
+    {"tool_calls": [{"id": "call_read_1", "name": "read", "arguments": {"file_path": "/workspace/report.txt"}}]},
+    {"tool_calls": [{"id": "call_bash_1", "name": "bash", "arguments": {"command": "wc -l /workspace/*.txt", "description": "Count lines"}}]},
+    {"tool_calls": [{"id": "call_read_2", "name": "read", "arguments": {"path": "/workspace/report.md"}}]},
+    {"tool_calls": [{"id": "call_ls_1", "name": "list_files", "arguments": {"path": "/workspace"}}]},
+    {"tool_calls": [{"id": "call_read_3", "name": "Read", "arguments": {"file_path": "/workspace/report.md"}}]},
+    {"text": "report.txt 不存在；report.md 只有一行标题。"}
+   ],
+   "tools": [
+    {"tool": "read", "args": {"file_path": "/workspace/report.txt"},
+     "result": {"title": "File not found", "output": "Error: file not found: /workspace/report.txt", "metadata": {"error": true}}},
+    {"tool": "bash", "args": {"command": "wc -l /workspace/*.txt", "description": "Count lines"},
+     "raise": "command channel closed"},
+    {"tool": "read", "args": {"file_path": "/workspace/report.md"},
+     "result": {"title": "report.md", "output": "<file>\n00001| # 周报\n</file>"}}
+   ]}
+ ]
+}

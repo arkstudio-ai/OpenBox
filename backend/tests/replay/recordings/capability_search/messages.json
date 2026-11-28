@@ -1,0 +1,203 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "帮我列一个搬家的待办清单。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#3>",
+    "tool": "capability_search",
+    "status": "completed",
+    "input": {
+     "names": [
+      "todo_write"
+     ]
+    },
+    "output": {
+     "$lines": [
+      "id: todo_write",
+      "name: todo_write",
+      "when: Track progress for a non-trivial, multi-step task. Skip this tool for a single straightforward action or a purely conversational request. Full-replacement contract: every call must supply the complete",
+      "parameters: todos",
+      "status: typed schema will be available on the next step"
+     ]
+    },
+    "error": null,
+    "title": "Found 1 capabilities",
+    "call_id": "call_search_1",
+    "duration": null,
+    "metadata": {
+     "count": 1,
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#4>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#5>",
+    "step": 2,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#6>",
+    "tool": "todo_write",
+    "status": "completed",
+    "input": {
+     "todos": [
+      {
+       "content": "联系搬家公司",
+       "priority": "high",
+       "status": "pending"
+      },
+      {
+       "content": "打包书籍",
+       "priority": "medium",
+       "status": "pending"
+      }
+     ]
+    },
+    "output": {
+     "$lines": [
+      "[pending] 联系搬家公司",
+      "[pending] 打包书籍",
+      "",
+      "Nothing is in_progress. Before you start the next task, call todo_write again marking \"联系搬家公司\" as in_progress. Do that first, then do the work."
+     ]
+    },
+    "error": null,
+    "title": "2 todos",
+    "call_id": "call_todo_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "todo",
+    "id": "<part#7>",
+    "items": [
+     {
+      "id": "<todo#1>",
+      "subject": "联系搬家公司",
+      "description": null,
+      "status": "pending",
+      "active_form": null,
+      "priority": "high",
+      "source": "model",
+      "started_at": null
+     },
+     {
+      "id": "<todo#2>",
+      "subject": "打包书籍",
+      "description": null,
+      "status": "pending",
+      "active_form": null,
+      "priority": "medium",
+      "source": "model",
+      "started_at": null
+     }
+    ],
+    "source": "model"
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#8>",
+    "step": 2,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#4>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#9>",
+    "step": 3,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#10>",
+    "text": "待办清单已建好：联系搬家公司、打包书籍。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#11>",
+    "step": 3,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

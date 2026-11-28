@@ -1,0 +1,220 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "把 todo.md 里的 TODO 都改成 DONE。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "reasoning",
+    "id": "<part#3>",
+    "text": "先找到文件，再看内容。"
+   },
+   {
+    "type": "tool",
+    "id": "<part#4>",
+    "tool": "glob",
+    "status": "completed",
+    "input": {
+     "pattern": "**/todo.md"
+    },
+    "output": "/workspace/todo.md",
+    "error": null,
+    "title": "1 file",
+    "call_id": "call_glob_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#5>",
+    "tool": "grep",
+    "status": "completed",
+    "input": {
+     "path": "/workspace",
+     "pattern": "TODO"
+    },
+    "output": "/workspace/todo.md:1:TODO 写周报\n/workspace/todo.md:2:TODO 订会议室",
+    "error": null,
+    "title": "2 matches",
+    "call_id": "call_grep_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#6>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#7>",
+    "step": 2,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#8>",
+    "tool": "read",
+    "status": "completed",
+    "input": {
+     "file_path": "/workspace/todo.md"
+    },
+    "output": "<file>\n00001| TODO 写周报\n00002| TODO 订会议室\n</file>",
+    "error": null,
+    "title": "todo.md",
+    "call_id": "call_read_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#9>",
+    "step": 2,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#4>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#10>",
+    "step": 3,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#11>",
+    "tool": "edit",
+    "status": "completed",
+    "input": {
+     "file_path": "/workspace/todo.md",
+     "new_string": "DONE",
+     "old_string": "TODO",
+     "replace_all": true
+    },
+    "output": "Edit applied successfully. 2 replacements.",
+    "error": null,
+    "title": "todo.md",
+    "call_id": "call_edit_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#12>",
+    "step": 3,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#5>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#13>",
+    "step": 4,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#14>",
+    "text": "已把 todo.md 里的 2 处 TODO 改成 DONE。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#15>",
+    "step": 4,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

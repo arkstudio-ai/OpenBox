@@ -1,0 +1,185 @@
+[
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "帮我列一个搬家的待办清单。"
+    }
+   ],
+   "tools": {
+    "$shared": "841b3ffeaf47"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "帮我列一个搬家的待办清单。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_search_1",
+       "type": "function",
+       "function": {
+        "name": "capability_search",
+        "arguments": "{\"names\": [\"todo_write\"]}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_search_1",
+     "content": {
+      "$lines": [
+       "id: todo_write",
+       "name: todo_write",
+       "when: Track progress for a non-trivial, multi-step task. Skip this tool for a single straightforward action or a purely conversational request. Full-replacement contract: every call must supply the complete",
+       "parameters: todos",
+       "status: typed schema will be available on the next step"
+      ]
+     }
+    }
+   ],
+   "tools": {
+    "$shared": "9fc1ad38162a"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ },
+ {
+  "turn": 1,
+  "body": {
+   "model": "openai/qwen3.8-flash",
+   "messages": [
+    {
+     "role": "system",
+     "content": {
+      "$shared": "5ba32e6ec927"
+     }
+    },
+    {
+     "role": "user",
+     "content": "帮我列一个搬家的待办清单。"
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_search_1",
+       "type": "function",
+       "function": {
+        "name": "capability_search",
+        "arguments": "{\"names\": [\"todo_write\"]}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_search_1",
+     "content": {
+      "$lines": [
+       "id: todo_write",
+       "name: todo_write",
+       "when: Track progress for a non-trivial, multi-step task. Skip this tool for a single straightforward action or a purely conversational request. Full-replacement contract: every call must supply the complete",
+       "parameters: todos",
+       "status: typed schema will be available on the next step"
+      ]
+     }
+    },
+    {
+     "role": "assistant",
+     "tool_calls": [
+      {
+       "id": "call_todo_1",
+       "type": "function",
+       "function": {
+        "name": "todo_write",
+        "arguments": "{\"todos\": [{\"content\": \"联系搬家公司\", \"priority\": \"high\", \"status\": \"pending\"}, {\"content\": \"打包书籍\", \"priority\": \"medium\", \"status\": \"pending\"}]}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_todo_1",
+     "content": {
+      "$lines": [
+       "[pending] 联系搬家公司",
+       "[pending] 打包书籍",
+       "",
+       "Nothing is in_progress. Before you start the next task, call todo_write again marking \"联系搬家公司\" as in_progress. Do that first, then do the work."
+      ]
+     }
+    },
+    {
+     "role": "user",
+     "content": {
+      "$lines": [
+       "<system-reminder>",
+       "Your todo list has tasks waiting and none in progress. Call todo_write now marking \"联系搬家公司\" as in_progress, then do that task, then mark it completed before starting the next one.",
+       "</system-reminder>"
+      ]
+     }
+    }
+   ],
+   "tools": {
+    "$shared": "2afe649ef9af"
+   },
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_tokens": 32000,
+   "timeout": "Timeout(connect=10.0, read=90, write=30.0, pool=10.0)",
+   "num_retries": 0,
+   "extra_body": {
+    "reasoning_effort": "xhigh"
+   },
+   "prompt_cache_key": "fa9ef00997e94bade4b0a094bcaacd6cc3a66338b0a7d8633cb6ba071273c256"
+  }
+ }
+]

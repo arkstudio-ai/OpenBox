@@ -1,0 +1,12 @@
+{
+ "description": "The real question tool suspends the run (its questions argument arrives double-encoded and is repaired); the card is answered and the continuation worker resumes the loop with the answer.",
+ "turns": [
+  {"user": "帮我做一个产品介绍短视频，先问我时长。",
+   "replies": [
+    {"tool_calls": [{"id": "call_question_1", "name": "question", "arguments": {
+      "questions": "[{\"question\": \"视频时长要多久？\", \"header\": \"时长\", \"options\": [{\"label\": \"15 秒\"}, {\"label\": \"30 秒\"}]}]"}}]},
+    {"text": "好的，按 30 秒来准备脚本。"}
+   ],
+   "answers": [[["30 秒"]]]}
+ ]
+}

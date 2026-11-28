@@ -1,0 +1,14 @@
+{
+ "description": "Portable exposure: todo_write is deferred. The model finds it with the real capability_search, calls it on the next step (real body, test database), then answers.",
+ "turns": [
+  {"user": "帮我列一个搬家的待办清单。",
+   "replies": [
+    {"tool_calls": [{"id": "call_search_1", "name": "capability_search", "arguments": {"names": ["todo_write"]}}]},
+    {"tool_calls": [{"id": "call_todo_1", "name": "todo_write", "arguments": {"todos": [
+      {"content": "联系搬家公司", "status": "pending", "priority": "high"},
+      {"content": "打包书籍", "status": "pending", "priority": "medium"}
+    ]}}]},
+    {"text": "待办清单已建好：联系搬家公司、打包书籍。"}
+   ]}
+ ]
+}

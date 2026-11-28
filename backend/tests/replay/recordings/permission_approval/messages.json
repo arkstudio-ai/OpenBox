@@ -1,0 +1,102 @@
+[
+ {
+  "id": "<message#1>",
+  "role": "user",
+  "agent": "build",
+  "finish": null,
+  "error": null,
+  "parts": [
+   {
+    "type": "text",
+    "id": "<part#1>",
+    "text": "看看 app/.env 里配置了哪些变量名。",
+    "channel": null,
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   }
+  ]
+ },
+ {
+  "id": "<message#2>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "tool_calls",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#2>",
+    "step": 1,
+    "snapshot": null
+   },
+   {
+    "type": "tool",
+    "id": "<part#3>",
+    "tool": "read",
+    "status": "completed",
+    "input": {
+     "file_path": "/workspace/app/.env"
+    },
+    "output": "<file>\n00001| DEBUG=1\n00002| PORT=8080\n</file>",
+    "error": null,
+    "title": ".env",
+    "call_id": "call_read_1",
+    "duration": null,
+    "metadata": {
+     "duration": "<n>",
+     "truncated": false
+    },
+    "state": null
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#4>",
+    "step": 1,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ },
+ {
+  "id": "<message#3>",
+  "role": "assistant",
+  "agent": "build",
+  "finish": "stop",
+  "error": null,
+  "parts": [
+   {
+    "type": "step-start",
+    "id": "<part#5>",
+    "step": 2,
+    "snapshot": null
+   },
+   {
+    "type": "text",
+    "id": "<part#6>",
+    "text": "app/.env 里有 DEBUG 和 PORT 两个变量。",
+    "channel": "final",
+    "synthetic": false,
+    "ignored": false,
+    "origin": "unknown",
+    "origin_ref": {}
+   },
+   {
+    "type": "step-finish",
+    "id": "<part#7>",
+    "step": 2,
+    "input_tokens": 1200,
+    "output_tokens": 40,
+    "cost": 0.00128,
+    "credits": "0.001280000000",
+    "duration": "<n>",
+    "snapshot": null
+   }
+  ]
+ }
+]

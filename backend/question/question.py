@@ -148,8 +148,7 @@ def _event(row: QuestionCheckpoint) -> dict:
 
 async def checkpoint_context(db, row: QuestionCheckpoint, execution: SessionExecution, *, adopt=True):
     """Carry the original call/task through saved answers and worker changes."""
-    from trajectory import enabled, record
-    from trajectory.producers import activity_context
+    from agent.recording import activity_identity as activity_context, enabled, record
     if not enabled(row.user_id):
         return None
     stored = row.continuation.get("trace_context")
@@ -180,7 +179,7 @@ async def record_checkpoint(db, row: QuestionCheckpoint, execution: SessionExecu
                             event_type: str, data: dict | None = None):
     from assistant.requests import emit_question_change
     await emit_question_change(db, row, event_type)
-    from trajectory import record
+    from agent.recording import record
     context = await checkpoint_context(db, row, execution, adopt=event_type != "question.asked")
     if context is not None:
         await record(event_type, {
@@ -326,7 +325,7 @@ async def ask(
                                      for q in questions]}}
                 await surface.part_updated(db, session, part)
                 if trace:
-                    from trajectory import record
+                    from agent.recording import record
                     await record("part.committed", {"part": part.data}, db=db, context=trace)
             if not runtime.is_live(execution):
                 session.status = "waiting_input"

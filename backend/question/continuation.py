@@ -354,7 +354,7 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
                 if message and message.user_id == user_id:
                     message.finish = "tool_calls"
                     await surface.message_updated(db, session, message)
-                from trajectory import record
+                from agent.recording import record
                 if context:
                     await record("part.committed", {"part": part.data}, db=db, context=context)
                     await record("tool.finished", {
@@ -363,7 +363,7 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
                         "question_id": row.id, "reason": "user_answer_applied",
                     }, db=db, context=context, event_id=f"question_tool_finish:{row.id}")
             if context:
-                from trajectory import record
+                from agent.recording import record
                 await record("input.injected", {
                     "source_kind": "question", "question_id": row.id,
                     "answers": row.answers, "decision": row.status,

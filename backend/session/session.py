@@ -608,10 +608,9 @@ async def delete_session(
             row.updated_at = now
             # Written whether or not recording is on: the worker tombstones and
             # purges the trajectory once the deletion has committed.
-            from trajectory import emit_control
-            from trajectory.types import iso
+            from agent.recording import emit_control, timestamp
             emit_control({"type": "session.deleted", "session_id": session_id, "user_id": user_id,
-                          "deleted_at": iso(now)}, db=db)
+                          "deleted_at": timestamp(now)}, db=db)
     runtime.publish_invalidated(invalidated_questions)
     from session.status import trigger_abort
     trigger_abort(session_id)
@@ -841,8 +840,8 @@ async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
     recording on or off, before this is reached. An identity that belongs to
     another owner or session is not recorded rather than refused.
     """
-    from trajectory import TraceContext, current, enabled
-    from trajectory.producers import identity, session_context
+    from agent.recording import current, enabled, parse_identity, saved_identity as identity
+    from agent.recording import session_identity as session_context
     if not enabled(user_id):
         return None
     inherited = current()
@@ -857,9 +856,8 @@ async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
     # both mean there is no saved identity. Recording markers are not identity.
     saved = identity(execution.trace_context if execution is not None else None)
     if saved:
-        try:
-            inherited = TraceContext.from_dict(saved)
-        except (TypeError, ValueError):
+        inherited = parse_identity(saved)
+        if inherited is None:
             return None
         if inherited.user_id != user_id or inherited.source_session_id != session_id:
             return None
@@ -876,17 +874,17 @@ async def record_projection_in_tx(db, session_id: str, user_id: str, event_type:
     first recorded activity, a pause while recording is off, a resume after it.
     A write without the lock records nothing while the markers report a pause.
     """
-    from trajectory import record
+    from agent.recording import record
     context = await trajectory_context_in_tx(db, session_id, user_id, **ids)
     if locked:
         from db.models.question import SessionExecution
-        from trajectory.producers import mark_recording_in_tx
+        from agent.recording import mark_recording_in_tx
         await mark_recording_in_tx(db, await db.get(SessionExecution, session_id), user_id=user_id,
                                    session_id=session_id, context=context)
     if context is None:
         return None
     if not locked:
-        from trajectory.producers import paused_in_tx
+        from agent.recording import paused_in_tx
         if await paused_in_tx(db, context):
             return None
     part = data.get("part") or {}
@@ -896,7 +894,7 @@ async def record_projection_in_tx(db, session_id: str, user_id: str, event_type:
             MessageORM.session_id == session_id, MessageORM.user_id == user_id))
         data = {**data, "role": role}
     if event_type == "part.committed" and part.get("type") == "file" and part.get("asset_id"):
-        from trajectory.artifacts import capture_asset_ids_in_tx
+        from agent.recording import capture_asset_ids_in_tx
         data = {**data, "artifacts": await capture_asset_ids_in_tx(db, context, [part["asset_id"]],
                                                                    role="attachment")}
     await record(event_type, data, context=context, db=db)
@@ -935,7 +933,7 @@ async def baseline_snapshot(db, context, session_row) -> dict:
     asset_ids = [part.data["asset_id"] for part in parts
                  if isinstance(part.data, dict) and part.data.get("type") == "file" and part.data.get("asset_id")]
     if asset_ids:
-        from trajectory.artifacts import capture_asset_ids_in_tx
+        from agent.recording import capture_asset_ids_in_tx
         baseline["artifacts"] = await capture_asset_ids_in_tx(db, context, asset_ids, role="baseline_input")
     return baseline
 
@@ -1338,7 +1336,7 @@ async def _insert_user_message_locked(
         raise ValueError("assistant is reserved for the fixed private entry")
     await ensure_surface_seed_locked(db, owner)
     from question import runtime
-    from trajectory.producers import identity, mark_recording_in_tx, markers
+    from agent.recording import mark_recording_in_tx, markers, saved_identity as identity
     execution = await runtime.execution_locked(db, session_id, user_id)
     saved = identity(execution.trace_context)
     trace = await trajectory_context_in_tx(db, session_id, user_id)
@@ -1410,7 +1408,7 @@ async def _insert_user_message_locked(
             db, owner, extra_row, msg_row, operation="created", run_fence=run_fence,
         )
     if trace is not None:
-        from trajectory import record
+        from agent.recording import record
         trace = trace.derive(generation=execution.generation)
         if new_turn or not saved or saved.get("turn_id") == trace.turn_id:
             execution.trace_context = {**markers(execution.trace_context), **trace.to_dict()}

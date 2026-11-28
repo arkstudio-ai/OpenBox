@@ -65,15 +65,11 @@ REPLY_TTL_SECONDS = 24 * 60 * 60
 def _trace_permission(request: PermissionRequest, event_type: str, data: dict | None = None,
                       *, saved: dict | None = None) -> dict | None:
     """Enqueue a permission fact under the call that asked; no transaction, never raises."""
-    from trajectory import TraceContext, current, emit, enabled
-    from trajectory.producers import identity
+    from agent.recording import current, emit, enabled, parse_identity, saved_identity as identity
     if not enabled(request.user_id):
         return None
     base = identity(saved)
-    try:
-        context = TraceContext.from_dict(base) if base else current()
-    except (TypeError, ValueError):
-        return None
+    context = parse_identity(base) if base else current()
     if (context is None or context.user_id != request.user_id
             or (context.source_session_id or context.session_id) != request.session_id):
         return None
@@ -88,7 +84,7 @@ def _trace_permission(request: PermissionRequest, event_type: str, data: dict | 
 
 def _trace_rule(session_id: str, user_id: str, permission: str, pattern: str,
                 input_data: dict, action: str):
-    from trajectory import enabled
+    from agent.recording import enabled
     if not enabled(user_id):
         return
     request = PermissionRequest(id=generate_id(), user_id=user_id, session_id=session_id,

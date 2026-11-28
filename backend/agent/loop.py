@@ -2028,10 +2028,13 @@ async def run_loop(
                     + " Answer ordinary conversation normally. Do not claim to have executed sandbox tools."
                     + " Cloud tools that need no desktop (video_generate, video_compose, image_gen, question)"
                     " still work: use them when the task only needs them.")
+            from agent.prompt_visibility import tool_name_listing
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
                 strategy=runtime.provider_plan.strategy,
                 deferred_count=len(runtime.provider_plan.deferred_ids),
+                listing=tool_name_listing(prompt_tools, agent_name=agent_name, model_id=model_id,
+                                          workspace_id=session.workspace_id),
             ))
             if output_schema:
                 system.append(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

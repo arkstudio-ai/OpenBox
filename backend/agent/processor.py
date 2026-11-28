@@ -1285,6 +1285,15 @@ async def process_step(
                             f"Tool '{tool_name}' is not materialized for this step. "
                             f"Available: {', '.join(visible_wire_names)}"
                         )
+                        # A3: one generic pointer to capability_search. It reads
+                        # the same for hidden, denied and unknown names, and
+                        # nothing is fetched for the model.
+                        from core.config import agent_tuning_enabled
+                        if "capability_search" in visible_wire_names and agent_tuning_enabled(
+                            "tool_name_listing", getattr(ctx, "workspace_id", None)
+                        ):
+                            from agent.prompt_visibility import UNMATERIALIZED_TOOL_HINT
+                            tool_part.error += " " + UNMATERIALIZED_TOOL_HINT
                     return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
 
                 # Validation and doom-loop guards are ordered preparation, not

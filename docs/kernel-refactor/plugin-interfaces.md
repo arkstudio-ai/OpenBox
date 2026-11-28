@@ -40,7 +40,7 @@ class RecordingIdentity(Protocol):     # 同一个观察者的身份部分（轨
     async def mark_recording_in_tx(self, db, execution, *, user_id, session_id, context) -> None: ...
     async def paused_in_tx(self, db, context) -> bool: ...
     async def baseline_candidate_in_tx(self, db, context, session_row) -> ...: ...
-    async def capture_asset_ids_in_tx(self, db, context, asset_ids, *, role) -> list: ...
+    async def capture_asset_ids_in_tx(self, db, context, asset_ids, *, role) -> dict: ...
     def context_of(self, ctx): ...; def attach(self, ctx, context) -> None: ...
     async def context_for_tool(self, ctx): ...
     def public_value(self, value): ...; def tool_schema(self, tool_info, name) -> dict: ...
@@ -109,3 +109,32 @@ class ToolPack(Protocol):              # 本轮只定义
 | 恢复周期 | `recover_agent_work_once` 跑完内核自己的固定顺序（过期 Driver、中断和子任务 outbox、历史修复、预约任务、Inbox、记忆补排、external effects，`docs/AGENT_KERNEL_ARCHITECTURE.md:97-98`）之后，按注册顺序逐个调用 | 每个钩子单独 `try`，出错记日志，不影响内核的恢复和后面的钩子 | 内核在前，插件在后，按注册顺序。记忆现在排在 effects 之前，这一轮不搬 |
 | 提示词段落 | （下一步）每次组装系统提示词时，在内核段落之后按 `order` | 出错跳过该段并记日志 | `order` 升序，同序按注册顺序 |
 | 工具包 | （下一步）每步解析工具时，在内置工具之后合并 | 出错不合并该包并记日志 | 注册顺序；重名报错 |
+
+## 附：生命周期事件改由 `agent_events` 派生的可行性（只读核对）
+
+这一轮没有派生，轨迹事件仍在原调用点经端口发出。下面回答“哪些类别改由回合观察者从已提交的 `agent_events` 派生后，事件 id、时间戳和顺序还能保持”。
+
+**做法上的三个硬约束**（读代码得出）：
+
+- **id**：没有显式 `event_id` 的事实，id 是发射时现取的 `evt_<uuid4>`（`trajectory/types.py:167` 的 `prepare_fast`），`occurred_at` 缺省也是那一刻的时间；`agent_events.id` 是另一次 `ascending("aevt")`。派生出来的只能是新 id。显式 id 的那一类（`run_start:{run}`、`turn_finish:{turn}`、`fork:{session}:source`、`question_*:{row}`、`agent_result:{activation}`、`request:{id}:…`）用的是事件日志里大多没有的业务 id。
+- **时间戳**：`occurred_at` 是调用点的时间；`agent_events.created_at` 是事务里追加那一刻的时间，两者不是同一个值。各种 `duration_ms` 用的是调用点前后的单调时钟，事件日志里没有。
+- **顺序**：worker 按到达分配 seq。不带 `db` 的事实（`tool.requested` 在解析出调用时、`request.delta` 在流里、`tool.output` 在工具体里）比对应的业务提交早；按游标在提交之后派生，就会排到它们后面。
+
+**逐类结论**
+
+| 类别 | 事件日志里有没有对应 | 能否保持 id / 时间戳 / 顺序 |
+|---|---|---|
+| `message.committed`、`part.committed`、`plan.changed` | 有：`message.*`、`part.created/updated`，同一事务追加 | 顺序和投递档（提交之后）能保持；id 和时间戳不能（见上）。若接受“id 改为由 `agent_events.id` 推导、时间戳取 `created_at`”，这是最先能搬的一组，顺带去掉为补角色读 `messages.role` 的查询 |
+| `turn.started`、`turn.finished` | 有 | `turn.finished` 的 id 可以重算，时间戳不能；`turn.started` 两者都不能；它和 `input.accepted` 的相对顺序要靠同一事务里的追加顺序，`input.accepted` 本身没有对应 |
+| `step.started/finished`、`tool.requested/started/finished` | 部分有（`step.*`、`tool.called/result`），但载荷缺 schema、`arguments_raw`、`provider_call_id`、单调时钟耗时、状态映射 | 不能：id 是现取的；`tool.requested` 在提交前发出，派生后顺序会变；载荷要给事件补字段才够 |
+| `request.*`、`tool.output`、`skill.loaded`、`compaction.*` | `model.requested` 只是请求凭证，没有逐字请求、流和用量 | 不能，留在调用包装（本轮已经在） |
+| `run.*`、`permission.*`、`question.*`、`input.injected`（提问）、`agent.message/finished`、`history.reverted/forked`、`job.progress`、`artifact.recorded`、`session.settings_changed` | 没有：它们在 `session_executions`、提问检查点、权限、子任务、作业等各自的表里 | 不能；要派生就得新增事件行，违反“业务路径不增加写入” |
+| `baseline.captured`、`recording.state`、`session.deleted`、`gap` 等控制记录 | 没有 | 不能，也不该：它们是录制标记本身，录制关闭时也要写（SPEC §3.4、§5.6） |
+
+**结论**：按“id、时间戳、顺序都不变”的标准，没有一类能改由事件日志派生；能保持顺序和投递档的只有会话投影那一组（消息、part、计划、回合起止）。所以这一轮全部保留在原调用点、经端口发出，这本身保证了 id、时间戳和顺序不变。下一步如果要搬会话投影那一组，需要轨迹的维护者先同意 id 和时间戳的来源改变（worker 按 `event_id` 去重、先到者保留，新 id 不会和旧 id 冲突；管理端只回放事件，不依赖 id 的格式，这一点要再核对前端的 TypeScript 投影器）。按游标“至少一次”的那一档和游标表这一轮不做。
+
+## 现状（2026-11-28，分支 `worktree-agent-ab0bb46cfe359e338`）
+
+- 内核对 `trajectory` 的 import：62 条（15 个文件）→ 0。`db/base.py` 不再 import `agent.latency`（它对 `agent.schema` 的 import 是原有的，不在本轮范围）。
+- 轨迹的录制、调用包装、计时三个端口都由 `TrajectoryPlugin` 注册；`main.py` 只构造注册表，启动、关闭和管理路由挂载由插件的钩子在原位置执行。
+- 离线基准（真实 `run_loop` 和 `llm.stream_llm`，litellm 在 `acompletion` 处替身，第 2–4 轮每轮 SQL 条数）：纯文本轮，录制关 250 → 250，录制开 255 → 251，不注册插件 250；带一次工具调用的轮，录制关 414 → 414，录制开 424 → 415，不注册插件 414。开着录制时剩下多出的 1 条是 §5.6 录制标记读 `session_executions`。两种场景录到的事件在规整 id、时间戳、耗时之后逐字节相同（含键顺序）。

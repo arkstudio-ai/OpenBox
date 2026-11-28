@@ -1,9 +1,11 @@
 """Offline checks of the agent behaviour evaluation (tests/manual/agent_behavior_eval.py).
 
 The judges, the metric extraction, the hard limits, the 25.5 decision rules
-and the local sandbox are exercised directly; one end-to-end run drives the
-real agent loop with the scripted fake model. No provider is called.
+and the local sandbox are exercised directly; end-to-end runs drive the real
+agent loop with the scripted fake model, including deliberately wrong scripts
+that real tools carry out and the judges must reject. No provider is called.
 """
+import dataclasses
 import json
 import os
 import shutil
@@ -143,8 +145,17 @@ def test_coding_judges_run_the_tests_and_protect_them(tmp_path, task_id):
     ("cron_daily_bad_reviews", {"kind": "cron", "expr": "0 9 * * 1-5", "tz": "Asia/Shanghai"}, "看外卖差评", False),
     ("cron_daily_bad_reviews", {"kind": "every", "every_ms": 86_400_000}, "看外卖差评", False),
     ("cron_daily_bad_reviews", {"kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Shanghai"}, "提醒一下", False),
-    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * 1", "tz": "Asia/Shanghai"}, "销售周报", True),
-    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * 0", "tz": "Asia/Shanghai"}, "销售周报", False),
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * 1", "tz": "Asia/Shanghai"},
+     "读取 /workspace/laojie/销售/每日流水.csv，写上周销售周报", True),
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 2 * * MON", "tz": "UTC"}, "按 销售/每日流水.csv 出周报", True),
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * 0", "tz": "Asia/Shanghai"},
+     "读取 销售/每日流水.csv，写销售周报", False),
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * *", "tz": "Asia/Shanghai"},
+     "读取 销售/每日流水.csv，写销售周报", False),
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 9 * * 1", "tz": "Asia/Shanghai"},
+     "读取 销售/每日流水.csv，写销售周报", False),
+    # Right time, but the run would not know where the figures are.
+    ("cron_weekly_sales_report", {"kind": "cron", "expr": "0 10 * * 1", "tz": "Asia/Shanghai"}, "销售周报", False),
     ("cron_workday_supplier_order", {"kind": "cron", "expr": "0 15 * * MON-FRI", "tz": "Asia/Shanghai"}, "给供应商下单", True),
     ("cron_workday_supplier_order", {"kind": "cron", "expr": "0 15 * * *", "tz": "Asia/Shanghai"}, "给供应商下单", False),
     ("cron_workday_supplier_order", {"kind": "cron", "expr": "30 15 * * 1-5", "tz": "Asia/Shanghai"}, "给供应商下单", False),
@@ -158,6 +169,34 @@ async def test_cron_judges_check_the_fire_times(tmp_path, monkeypatch, task_id, 
     monkeypatch.setattr(tasks, "_cron_jobs", jobs)
     verdict = await BY_ID[task_id].judge(make_view(make_env(tmp_path)))
     assert verdict.passed is passed, verdict.detail
+
+
+async def test_weekly_report_may_name_a_script_that_reads_the_data(tmp_path, monkeypatch):
+    """A task that runs a report script the agent wrote knows its data through that script."""
+    job = SimpleNamespace(enabled=True, name="销售周报", task_prompt="运行 python3 scripts/weekly_report.py，把输出的周报发出来",
+                          schedule={"kind": "cron", "expr": "0 10 * * 1", "tz": "Asia/Shanghai"})
+
+    async def jobs(_user_id):
+        return [job]
+    monkeypatch.setattr(tasks, "_cron_jobs", jobs)
+    judge = BY_ID["cron_weekly_sales_report"].judge
+    env = make_env(tmp_path, BY_ID["cron_weekly_sales_report"])
+    assert "每日流水" in (await judge(make_view(env))).detail  # no such script yet
+    env.write("scripts/weekly_report.py", "rows = open('销售/每日流水.csv').read()\n")
+    verdict = await judge(make_view(env))
+    assert verdict.passed is True, verdict.detail
+    env.write("scripts/weekly_report.py", "rows = open('销售/别的表.csv').read()\n")
+    assert (await judge(make_view(env))).passed is False
+
+
+def test_weekly_report_has_the_data_its_prompt_names(tmp_path):
+    task = BY_ID["cron_weekly_sales_report"]
+    assert tasks.DAILY_TAKINGS_FILE in task.prompt
+    rows = tasks._read_csv(make_env(tmp_path, task).project_dir / tasks.DAILY_TAKINGS_FILE)
+    assert rows[0] == ["日期", "门店", "单数", "销售额"] and len(rows) == 1 + 14 * 3
+    days = sorted({row[0] for row in rows[1:]})
+    assert (days[0], days[-1]) == ("2026-11-09", "2026-11-22")  # two whole Monday-to-Sunday weeks
+    assert all(int(row[2]) > 0 and tasks._number(row[3]) > 0 for row in rows[1:])
 
 
 async def test_cron_judge_needs_a_job(tmp_path, monkeypatch):
@@ -212,23 +251,81 @@ def test_first_step_skill_judge(tmp_path):
 async def test_assistant_judges(tmp_path, monkeypatch):
     env = make_env(tmp_path)
     env.extra["north_star"] = "p-north"
-    env.state.update({"linked": {"task_id": "t-1", "task_revision": 1}, "before": [2, 2, 1]})
-    after = {"value": [2, 2, 1]}
+    env.state.update({"linked": {"task_id": "t-1", "task_revision": 1}, "before": [2, 2, 1],
+                      "north_star_sessions": 1})
+    after = {"value": [2, 2, 1], "north_star": 1}
 
     async def counts(_owner):
         return after["value"]
+
+    async def sessions_in(_owner, project_id):
+        assert project_id == "p-north"
+        return after["north_star"]
     monkeypatch.setattr(tasks, "_assistant_counts", counts)
+    monkeypatch.setattr(tasks, "_sessions_in", sessions_in)
     followup = {"tool": "tasks.followup", "input": {"task_id": "t-1"}, "output": json.dumps({"state": "accepted"})}
     assert (await BY_ID["assistant_followup_budget"].judge(make_view(env, parts=[followup]))).passed is True
     other = {**followup, "input": {"task_id": "t-2"}}
     assert (await BY_ID["assistant_followup_budget"].judge(make_view(env, parts=[other]))).passed is False
-    submit = {"tool": "tasks.submit", "input": {"project_id": "p-north"}, "output": json.dumps({"state": "accepted"})}
+    submit = {"tool": "tasks.submit", "input": {"project_id": "p-north", "destination_confirmed": True},
+              "output": json.dumps({"state": "accepted"})}
     judge = BY_ID["assistant_new_conversation"].judge
     assert (await judge(make_view(env, parts=[submit]))).passed is False  # no new conversation yet
-    after["value"] = [2, 3, 2]
-    assert (await judge(make_view(env, parts=[submit]))).passed is True
+    after.update(value=[2, 3, 2], north_star=2)
+    verdict = await judge(make_view(env, parts=[submit]))
+    assert verdict.passed is True and "new conversations in North Star 1" in verdict.detail
     after["value"] = [3, 3, 2]  # a new project as well: not what was asked
     assert (await judge(make_view(env, parts=[submit]))).passed is False
+    after.update(value=[2, 3, 2], north_star=1)  # the new conversation landed outside North Star
+    assert (await judge(make_view(env, parts=[submit]))).passed is False
+    after["north_star"] = 2
+    elsewhere = {**submit, "input": {"project_id": "p-default", "destination_confirmed": True}}
+    assert (await judge(make_view(env, parts=[elsewhere]))).passed is False
+    linked = {"tool": "tasks.followup", "input": {"task_id": "t-1"}, "output": json.dumps({"state": "accepted"})}
+    assert (await judge(make_view(env, parts=[linked]))).passed is False  # continued the old one instead
+
+
+async def test_assistant_new_conversation_stopped_at_a_card_fails(tmp_path, monkeypatch):
+    """A submit that raised its own card created nothing, and says which card it was."""
+    env = make_env(tmp_path)
+    env.extra["north_star"] = "p-north"
+    env.state.update({"before": [2, 2, 1], "north_star_sessions": 1})
+
+    async def counts(_owner):
+        return [2, 2, 1]
+
+    async def sessions_in(_owner, _project_id):
+        return 1
+    monkeypatch.setattr(tasks, "_assistant_counts", counts)
+    monkeypatch.setattr(tasks, "_sessions_in", sessions_in)
+    waiting = {"tool": "tasks.submit", "status": "waiting_input", "output": "",
+               "input": {"project_id": "p-north", "destination_confirmed": True}}
+    for header in ("任务 AI 模型", "安排这件事"):
+        model_card = {"id": "q1", "status": "pending", "answers": None, "continuation": {},
+                      "questions": [{"header": header, "question": "？", "options": [{"label": "取消"}]}]}
+        verdict = await BY_ID["assistant_new_conversation"].judge(
+            make_view(env, parts=[waiting], cards=[model_card], finish="waiting_input"))
+        assert verdict.passed is False
+        assert "('tasks.submit', 'waiting_input')" in verdict.detail and header in verdict.detail
+
+
+def test_evaluation_config_offers_the_evaluated_model(monkeypatch):
+    """The assistant arranges new work with the default task AI only if the catalogue offers it."""
+    import core.config
+    from api.metadata import _chat_models
+    from core.config import ModelConfig, OpenBoxConfig
+    deployed = OpenBoxConfig(model="openai/deployed", models=[ModelConfig(id="openai/deployed"),
+                                                              ModelConfig(id="openai/other")])
+    monkeypatch.setattr(core.config, "_config", deployed)
+    config = ev.evaluation_config(ev.EvalOptions(model="openai/evaluated"))
+    assert config.model == "openai/evaluated"
+    assert [entry.id for entry in config.models] == ["openai/evaluated", "openai/deployed", "openai/other"]
+    offered = _chat_models(config, context_limit=lambda _model: 1, supports_vision=lambda _model: False)
+    assert config.model in {row["id"] for row in offered}
+    assert [entry.id for entry in deployed.models] == ["openai/deployed", "openai/other"]  # a copy
+    listed = ev.evaluation_config(ev.EvalOptions(model="openai/other"))
+    assert [entry.id for entry in listed.models] == ["openai/deployed", "openai/other"]
+    assert ev.evaluation_config(ev.EvalOptions(fake_model=True)).models == []
 
 
 # -- metrics ------------------------------------------------------------------------
@@ -444,3 +541,56 @@ async def test_fake_model_drives_the_real_loop_end_to_end(tmp_path, monkeypatch)
         assert record["metrics"]["total_tokens"] > 0 and record["wall_seconds"] > 0
     assert data["aggregate"]["completed"] == 2
     assert core.config._config is config_before and Path.cwd() == cwd_before
+
+
+def _submit(**extra):
+    """A tasks.submit step for the North Star request, varied by ``extra``."""
+    def step(kwargs, env):
+        args = {"title": "夏季新品上市方案", "instructions": "写一份夏季新品上市方案。",
+                "source_message_ids": [tasks._original_human(kwargs)], **extra}
+        if args.get("project_id") == "north_star":
+            args["project_id"] = env.extra["north_star"]
+        return [ev.call("tasks.submit", **args)]
+    return tasks.dynamic(step)
+
+
+WEEKLY = "0 10 * * 1"
+SCRIPTED_RUNS = [
+    # (task, script, judged complete): the real tools carry each script out.
+    ("assistant_new_conversation", None, True),
+    ("assistant_new_conversation", [_submit(project_id="north_star", let_user_choose=True), ev.say("选一下")], False),
+    ("assistant_new_conversation", [_submit(placement={"question": "新建项目？", "project_name": "夏季新品"}),
+                                    ev.say("新建了项目")], False),
+    ("assistant_new_conversation", [tasks.dynamic(tasks._fake_followup), ev.say("接着原来的对话做")], False),
+    ("cron_weekly_sales_report", None, True),
+    ("cron_weekly_sales_report", [[ev.call("cron", action="add", name="销售周报", schedule="0 10 * * *",
+                                           task="读取 销售/每日流水.csv，写上周销售周报。")], ev.say("好了")], False),
+    ("cron_weekly_sales_report", [[ev.call("cron", action="add", name="销售周报", schedule=WEEKLY,
+                                           task="整理上周的销售情况，写成周报。")], ev.say("好了")], False),
+    ("cron_weekly_sales_report", [[ev.call("question", questions=[{
+        "header": "数据来源", "question": "上周的销售数据从哪里来？",
+        "options": [{"label": "上传表格"}, {"label": "从后台拉"}]}])], ev.say("（不应到达）")], False),
+]
+
+
+async def test_scripted_runs_through_the_real_tools_are_judged(monkeypatch):
+    """The fixed tasks pass their own script and reject wrong placement, a wrong day or a missing data source."""
+    from agent import llm
+
+    async def no_provider(*_args, **_kwargs):
+        raise AssertionError("the evaluation must not call a provider in --fake-model mode")
+        yield  # pragma: no cover
+    monkeypatch.setattr(llm, "stream_llm", no_provider)
+    monkeypatch.setattr(llm, "_stream_litellm_direct", no_provider)
+    selected = [dataclasses.replace(BY_ID[task_id], id=f"{task_id}-{index}",
+                                    fake_script=script if script is not None else BY_ID[task_id].fake_script)
+                for index, (task_id, script, _expected) in enumerate(SCRIPTED_RUNS)]
+    data = await ev.run_suite(selected, ev.EvalOptions(fake_model=True, repeats=1))
+    for (task_id, _script, expected), record in zip(SCRIPTED_RUNS, data["runs"]):
+        assert record["completed"] is expected, (record["task"], record["judge_detail"], record["tool_trace"])
+        assert not record["error"] and not record.get("harness_error"), record
+    placement_card = data["runs"][1]
+    assert placement_card["finish"] == "waiting_input" and placement_card["cards"][0]["headers"] == ["安排这件事"]
+    assert "pending cards ['安排这件事']" in placement_card["judge_detail"]
+    assert "[2, 2, 1] -> [3, 3, 2]" in data["runs"][2]["judge_detail"]  # a new project nobody asked for
+    assert "每日流水" in data["runs"][6]["judge_detail"]

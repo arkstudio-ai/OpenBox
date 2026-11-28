@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from agent import loop, processor
 from agent.driver import reserve_run
 from agent.inbox import accept_inbox_item
+from agent.tool_resolution import ResolvedStepTools
 from assistant.continuation import COORDINATION_TOOLS, recover_continuations
 from assistant.reporting import ASSISTANT_TOOLS, REPORT_TOOLS
 from assistant.results import on_execution_result_committed
@@ -32,8 +33,8 @@ async def test_retained_human_authority_coordinates_two_original_task_runs(monke
     monkeypatch.setattr(loop, "_resolve_history_tool_names", real_history)
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     async def sandbox(*args, **kwargs):
         return SimpleNamespace()

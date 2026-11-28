@@ -3,12 +3,12 @@ import asyncio
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import json
-from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant import budget
 from assistant.commands import accept_task_command
 from assistant.delivery import recover_assistant_results
@@ -42,7 +42,7 @@ async def test_busy_mixed_queue_keeps_fair_read_only_report_retries(monkeypatch,
         return None
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools}
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools}
             if agent.name == "assistant" else {}, catalogue_availability="available")
 
     monkeypatch.setattr(loop, "_ensure_title", no_background_provider)

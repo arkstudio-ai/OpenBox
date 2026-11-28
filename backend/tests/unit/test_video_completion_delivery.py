@@ -150,12 +150,28 @@ async def test_completion_scan_only_retries_undelivered_video(excluded):
             if excluded == "attached": row.attached_message_id = "already-attached"
             elif excluded == "old": row.completed_at -= timedelta(days=8)
             elif excluded == "recent": row.completed_at += timedelta(minutes=1)
-            elif excluded == "failed": row.status = "failed"
+            elif excluded == "failed":  # a failure whose delivery was acknowledged (ready.acknowledge_failure)
+                row.status, row.result_data = "failed", {"completion_delivery_pending": False}
             elif excluded == "stt": row.kind = "stt"
             elif excluded == "no_asset": row.output_asset_id = None
             else: row.result_data = {}
         await job_recovery.resume_unattached_completions()
         assert await queued(job_id) == []
+    finally:
+        await active.release(session_status="idle")
+
+
+async def test_completion_scan_reports_an_undelivered_failure():
+    """Since 7c8fa116 a failed shot still pending delivery wakes its conversation to handle it."""
+    _, _, active, _ = await running()
+    job_id = await completed_job(active)
+    try:
+        async with get_db_session() as db:
+            (await db.get(VideoJob, job_id)).status = "failed"
+        await job_recovery.resume_unattached_completions()
+        rows = await queued(job_id)
+        assert len(rows) == 1 and rows[0].state == "accepted"
+        assert job_recovery.SEGMENT_FAILED_PROMPT.format(job_id=job_id) in rows[0].prompt
     finally:
         await active.release(session_status="idle")
 

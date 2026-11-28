@@ -14,6 +14,9 @@ async def test_a_subagent_spawn_records_its_lifecycle_under_the_parent_trajector
     from core.config import get_config, ProviderConfig
     config = get_config().model_copy(deep=True)
     config.provider["openai"] = ProviderConfig(api_key="test-key", base_url="https://provider.invalid/v1")
+    # The child inherits the default model; without this it is the shipped
+    # anthropic default, which this test configures no provider for.
+    config.model = "openai/delegation-test"
     monkeypatch.setattr("core.config.get_config", lambda: config)
     from agent import driver
     from agent.subagent_authority import compose_subagent_authority

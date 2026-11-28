@@ -82,7 +82,7 @@ async def test_read_audiences_cover_lists_counts_details_history_and_write_exist
     private = await sessions.create_session(user_id=owner, workspace_id=workspace,
                                            visibility="private", title="Private task")
     actor = {"user_id": other, "workspace_id": workspace}
-    assert [row["id"] for row in await routes.list_sessions(current_user=actor)] == [public.id]
+    assert [row.id for row in await routes.list_sessions(current_user=actor)] == [public.id]
     assert (await session_counts(workspace, user_id=other))[public.project_id] == 1
     assert (await session_counts(workspace, user_id=owner))[public.project_id] == 2
     for target in (main.id, private.id):

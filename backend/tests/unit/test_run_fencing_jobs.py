@@ -117,7 +117,7 @@ async def test_refused_transcription_submit_does_not_stay_transcribing(monkeypat
         def presign_get(self, key, expires_sec):
             return f"https://oss.invalid/{key}"
 
-    async def transcribe(_target, audio_url):
+    async def transcribe(_target, audio_url, _language="zh"):  # language since 8141e7ea
         await dispatched(submits, {"model": _target.model, "input": {"file_urls": [audio_url]}},
                          purpose="audio_transcription", provider="dashscope", model=_target.model,
                          operation="POST /api/v1/services/audio/asr/transcription", profile="audio_transcription")

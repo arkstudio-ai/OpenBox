@@ -3,7 +3,6 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import json
-from types import SimpleNamespace
 
 from fastapi import FastAPI
 import httpx
@@ -13,6 +12,7 @@ from sqlalchemy import func, select, text
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
 from agent.recovery_service import AgentRecoveryService
+from agent.tool_resolution import ResolvedStepTools
 from api import assistant as api, sessions as session_api
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
@@ -54,8 +54,8 @@ async def test_http_report_stop_and_manual_retry_survive_recovery(monkeypatch, r
     monkeypatch.setattr("agent.suggestions.generate_suggestions", no_background_provider)
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     # HTTP acknowledgements are deliberately not followed by an in-process

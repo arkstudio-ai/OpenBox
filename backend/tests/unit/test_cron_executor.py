@@ -139,6 +139,11 @@ def stubbed_pipeline(monkeypatch):
         return True
 
     import cron.runlog as runlog_mod
+    from types import SimpleNamespace
+    # execute_cron_job first asks the provider whether runs route per desktop
+    # (e5a5f182). The lazy default provider is Docker, which would connect to a
+    # local daemon; a shared-container provider needs no route check.
+    monkeypatch.setattr("sandbox.provider", SimpleNamespace(routes_per_user=False))
     monkeypatch.setattr(executor, "_get_session_summary", fake_summary)
     monkeypatch.setattr(executor, "_create_temp_session", fake_temp)
     monkeypatch.setattr(executor, "_inject_prompt", fake_inject_prompt)

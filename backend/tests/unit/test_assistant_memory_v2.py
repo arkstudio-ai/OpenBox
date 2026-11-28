@@ -52,12 +52,46 @@ class NoEmbedding:
         raise MemoryProviderError("provider_not_configured")
 
 
+class SupportingModel:
+    """The grounding model, without a provider: every claim it is shown is a supported, lasting assertion.
+
+    memory.remember / memory.update verify each write with an independent
+    model call (memory/commands.verify_claim). The real adapter would reach
+    whichever provider the checkout configures. The verifier's own request
+    building and response validation still run.
+    """
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def generate_data(self, *, model, data, sources, system, schema=None, schema_name="", images=()):
+        items = data["items"]
+        if schema_name == "account_setting_scope":
+            verdicts = [{"index": index, "subject": "account_user", "scope": "standing", "matches": True,
+                         "source_indexes": [0]} for index in range(len(items))]
+        else:
+            memory = data.get("purpose") in {"memory", "memory_revision"}
+            verdicts = [{"index": index, "supported": True, **({"intent": "enduring_assertion"} if memory else {})}
+                        for index in range(len(items))]
+        return {"verdicts": verdicts}, {"input_tokens": 0, "output_tokens": 0}
+
+
+async def no_provider(*_args, **_kwargs):
+    raise MemoryProviderError("provider_not_configured")
+
+
 @pytest.fixture(autouse=True)
 def quiet_runtime(monkeypatch):
     monkeypatch.setattr(get_config().memory, "retrieval_v2", True)
+    # Context routing by model stays off whatever a local openbox.json enables;
+    # a test that needs a routing answer stubs it.
+    monkeypatch.setattr(get_config().memory, "route_jev", False)
+    monkeypatch.setattr(get_config().memory, "semantic_recall", False)
     monkeypatch.setattr(get_config(), "jwt_secret", "assistant-memory-v2-test-only")
     monkeypatch.setattr("agent.inbox.schedule_inbox_wake", lambda *_: None)
     monkeypatch.setattr(retrieval, "BailianEmbedding", NoEmbedding)
+    monkeypatch.setattr("memory.grounding.ConfiguredWikiModel", SupportingModel)
+    # Any other memory model call fails as if unconfigured instead of reaching a provider.
+    monkeypatch.setattr("memory.wiki.provider.ConfiguredWikiModel.generate_data", no_provider)
     MAIN_MESSAGES.clear()
 
 
@@ -150,8 +184,11 @@ async def test_ordinary_preference_is_a_confirmed_personal_memory_recalled_from_
                                       remember("用户希望回答都用表格 TABLEPREF", "以后回答我都用表格 TABLEPREF"))
         assert saved["state"] == "remembered" and saved["scope"] == "personal" and saved["project_id"] is None
         row = await memory(saved["memory_id"])
+        # Since ebe2278c an assistant write is verified against the user's own
+        # words by a separate model (SYSTEM_VERIFIED); USER_CONFIRMED is the
+        # user's own confirmation on a card or in Settings.
         assert (row.status, row.confirmation_status, row.owner, row.project_id) == (
-            "ACTIVE", "CONFIRMED", "USER_CONFIRMED", None)
+            "ACTIVE", "CONFIRMED", "SYSTEM_VERIFIED", None)
         assert row.value["summary"] == "用户希望回答都用表格 TABLEPREF"
         for scope in ({}, {"project_id": project_a}, {"project_id": project_b}, {"include_all_projects": True}):
             assert saved["memory_id"] in await recalled(ctx, "TABLEPREF 表格", **scope), scope
@@ -195,7 +232,9 @@ async def test_fact_key_keeps_one_fact_per_key():
         assert first["state"] == again["state"] == "remembered" and again["memory_id"] == first["memory_id"]
         changed, part = await tool_call(ctx, "memory.remember", {**args, "summary": "用户偏好用列表回复",
                                                                   "quote": "不对，改成列表"})
-        assert part.status == ToolStatus.ERROR and changed["error"] == "ASSISTANT_MEMORY_CONFLICT"
+        # Since ebe2278c the receipt reports the existing fact instead of failing the call.
+        assert part.status == ToolStatus.COMPLETED and (changed["state"], changed["reason"], changed["memory_id"]) == (
+            "conflict", "fact_already_exists", first["memory_id"])
     finally:
         await lease.release(session_status="idle")
     rows = await memories_of(owner)
@@ -243,7 +282,8 @@ async def test_soft_sensitive_fact_waits_for_the_users_card(label, status):
         assert request.continuation["kind"] == "memory_proposal" and summary in request.questions[0]["question"]
         assert [option["label"] for option in request.questions[0]["options"]] == ["记住", "不用记"]
         proposal = await memory(request.continuation["memory_id"])
-        assert proposal.status == "CANDIDATE" and proposal.type == "PENDING_NOTE"
+        # A verified proposal awaiting the card (ebe2278c write_proposal); only the card admits it.
+        assert proposal.status == "CANDIDATE" and proposal.type == "USER_NOTE"
         assert proposal.id not in await recalled(ctx, "HEALTHNOTE 服药", include_all_projects=True)
     finally:
         await lease.release(session_status="idle")
@@ -315,7 +355,8 @@ async def test_a_declined_fact_is_not_proposed_again_and_that_is_not_an_error():
     ctx, lease, _ = await main_turn(owner, workspace, main, "记住我在还房贷 LOANNOTE。")
     try:
         again, part = await tool_call(ctx, "memory.remember", remember(summary, "记住我在还房贷 LOANNOTE"))
-        assert part.status == ToolStatus.COMPLETED and again["state"] == "declined_before", again
+        assert part.status == ToolStatus.COMPLETED and (again["state"], again["reason"]) == (
+            "rejected", "forgotten_or_declined"), again
         async with get_db_session() as db:
             pending = await db.scalar(select(QuestionCheckpoint.id).where(QuestionCheckpoint.session_id == main.id,
                 QuestionCheckpoint.status == "pending"))
@@ -359,11 +400,15 @@ async def test_update_and_forget_need_the_users_words_and_forgetting_is_not_retr
         denied, part = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "summary": "用户希望用列表",
                                                               "quote": "这句话不是用户说的"})
         assert part.status == ToolStatus.ERROR and denied["error"] == "ASSISTANT_MEMORY_SOURCE"
-        updated, _ = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "expected_revision": 1,
+        # The receipt's revision: since ebe2278c a remembered fact is a
+        # candidate (revision 1) admitted after verification (revision 2).
+        remembered = saved["revision"]
+        updated, _ = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "expected_revision": remembered,
             "summary": "用户希望回答都用列表 FORMATPREF", "quote": "不对，以后用列表 FORMATPREF"})
-        assert updated == {"state": "updated", "memory_id": memory_id,
-                           "summary": "用户希望回答都用列表 FORMATPREF", "revision": 2}
-        stale, part = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "expected_revision": 1,
+        assert {key: updated.get(key) for key in ("state", "memory_id", "summary", "revision")} == {
+            "state": "updated", "memory_id": memory_id,
+            "summary": "用户希望回答都用列表 FORMATPREF", "revision": remembered + 1}
+        stale, part = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "expected_revision": remembered,
             "summary": "用户希望回答都用段落 FORMATPREF", "quote": "不对，以后用列表 FORMATPREF"})
         assert part.status == ToolStatus.ERROR and stale["error"] == "ASSISTANT_MEMORY_CONFLICT"
         denied, part = await tool_call(ctx, "memory.forget", {"memory_id": memory_id, "quote": "请忘掉所有事"})
@@ -398,10 +443,17 @@ async def test_update_and_forget_need_the_users_words_and_forgetting_is_not_retr
 
 async def test_update_of_a_forgotten_or_unknown_memory_is_unavailable():
     owner, _, workspace, main = await assistant()
-    ctx, lease, _ = await main_turn(owner, workspace, main, "记住我喜欢表格；然后忘掉它，再把那条记忆改成列表。")
+    ctx, lease, _ = await main_turn(owner, workspace, main, "记住我喜欢表格；然后忘掉它。")
     try:
         saved, _ = await tool_call(ctx, "memory.remember", remember("用户喜欢表格", "记住我喜欢表格"))
         await tool_call(ctx, "memory.forget", {"memory_id": saved["memory_id"], "quote": "然后忘掉它"})
+        await finish_turn(ctx, lease, "已经忘掉了。")
+    finally:
+        await lease.release(session_status="idle")
+    # A later message: the forgotten fact's own message is no longer usable
+    # evidence for any memory write (memory/commands.human_sources).
+    ctx, lease, _ = await main_turn(owner, workspace, main, "再把那条记忆改成列表。")
+    try:
         for memory_id in (saved["memory_id"], "mem_unknown"):
             value, part = await tool_call(ctx, "memory.update", {"memory_id": memory_id, "summary": "用户喜欢列表",
                                                                  "quote": "再把那条记忆改成列表"})
@@ -651,6 +703,13 @@ async def test_memories_sent_with_a_turn_count_as_used_for_recall_order(monkeypa
 
 
 async def test_assistant_turn_memory_context_also_covers_owned_projects(monkeypatch):
+    async def recall_needed(*args, **kwargs):
+        return {"attempt_id": "project-route", "called": False, "reason_code": "test", "duration_ms": 0,
+                "memory": {"needed": True, "choice": "retrieve", "reason_code": "test"},
+                "task": {"needed": False, "choice": "skip", "reason_code": "test"}, "usage": {}}
+    # Since ebe2278c project facts are retrieved when routing asks for memory,
+    # never as unconditional personal core; answer as the router would here.
+    monkeypatch.setattr("memory.orchestrator.route_context_needs", recall_needed)
     [payload] = await assistant_turn_with_memory(monkeypatch, "贪吃蛇项目用什么技术栈？")
     assert "PROJECTCANARY" in payload["messages"]
 

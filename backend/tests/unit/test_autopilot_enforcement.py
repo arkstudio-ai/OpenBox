@@ -92,10 +92,36 @@ def test_executor_flags_aborted_runs():
     assert was_aborted([]) is False
 
 
-def test_cron_tool_defaults_to_shanghai():
+async def test_cron_tool_defaults_to_shanghai(monkeypatch):
+    """Since 7fbdc87f an omitted zone is the person's local time, resolved when
+    the job is created: the turn's zone, then the saved one, then Shanghai."""
+    from core.device_locale import DeviceLocale
+    from cron.service import cron_service
+    from tool import cron_tool
     from tool.cron_tool import CronToolArgs
+    from tool.tool import ToolContext
 
-    assert CronToolArgs(action="add", name="n", schedule="0 9 * * *", task="t").timezone == "Asia/Shanghai"
+    args = CronToolArgs(action="add", name="n", schedule="0 9 * * *", task="t")
+    assert args.timezone is None
+    created = []
+
+    async def allowed(_session_id):
+        return None
+
+    async def nothing_saved(_user_id, captured=None):
+        return captured or DeviceLocale()
+
+    async def add(_user_id, create, **_kwargs):
+        created.append(create)
+        return {"id": "job", "next_run_at": None}
+
+    monkeypatch.setattr("cron.validation.ensure_not_cron_session", allowed)
+    monkeypatch.setattr("core.device_locale.for_user", nothing_saved)
+    monkeypatch.setattr(cron_service, "add", add)
+    await cron_tool.execute(args, ToolContext(session_id="s", user_id="u", project_id="p"))
+    await cron_tool.execute(args, ToolContext(session_id="s", user_id="u", project_id="p",
+                                              timezone="Asia/Ho_Chi_Minh"))
+    assert [create.schedule.tz for create in created] == ["Asia/Shanghai", "Asia/Ho_Chi_Minh"]
 
 
 async def test_desktop_publish_strips_duplicate_topics_from_intro(monkeypatch):

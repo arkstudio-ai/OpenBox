@@ -115,7 +115,11 @@ def test_only_the_sensitive_candidate_is_dropped():
 
 
 class VerifyingClient:
-    """A provider that sees the masked request and supports every claim in it."""
+    """A provider that sees the masked request and supports every claim in it.
+
+    Account-setting changes are checked by their own call since ebe2278c
+    (memory/setting_grounding.py); those verdicts carry subject and scope.
+    """
 
     def __init__(self):
         self.sent = []
@@ -125,8 +129,12 @@ class VerifyingClient:
         self.sent.append(content)
         items = jsonlib.loads(content)["items"]
         memory = jsonlib.loads(content).get("purpose") == "memory"
-        verdicts = [{"index": index, "supported": True,
-            **({"intent": "enduring_assertion"} if memory else {})} for index in range(len(items))]
+        if items and all("proposed_change" in item for item in items):
+            verdicts = [{"index": index, "subject": "account_user", "scope": "standing", "matches": True,
+                         "source_indexes": [0]} for index in range(len(items))]
+        else:
+            verdicts = [{"index": index, "supported": True,
+                **({"intent": "enduring_assertion"} if memory else {})} for index in range(len(items))]
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
             "content": jsonlib.dumps({"verdicts": verdicts})}}], "usage": {}})
 

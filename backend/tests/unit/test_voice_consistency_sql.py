@@ -35,9 +35,11 @@ async def test_real_question_continuation_is_observed_twice_but_spoken_once(arri
                                       client="web", model="test/audio", voice="test-voice")
     ctx, lease, human = await main_turn(owner, workspace, main, "帮我写一份新品发布计划",
         origin_ref={"entrypoint": "assistant_voice", "voice_call_id": call_id}, model="test/model")
+    # This race is about a real destination card. Since 4e0803b8 the server
+    # arranges the destination itself unless the user is to choose.
     asked, _ = await tool_call(ctx, "tasks.submit", {"project_id": main.project_id, "title": "新品发布计划",
         "instructions": "写一份新品发布计划", "source_message_ids": [human],
-        "model": "test/model", "model_confirmed": True})
+        "model": "test/model", "model_confirmed": True, "let_user_choose": True})
     await pause(ctx, lease)
     question = await card(asked["suspended"])
     watcher = ReportWatcher(user_id=owner, main_session_id=main.id, workspace_id=workspace, call_id=call_id)

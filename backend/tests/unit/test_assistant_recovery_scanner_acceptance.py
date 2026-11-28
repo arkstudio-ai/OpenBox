@@ -3,7 +3,6 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import json
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -11,6 +10,7 @@ from sqlalchemy import func, select
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
 from agent.recovery_service import AgentRecoveryService
+from agent.tool_resolution import ResolvedStepTools
 from assistant.commands import accept_task_command
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
@@ -43,8 +43,8 @@ async def test_new_recovery_service_delivers_and_drives_report_after_lost_wake(m
     monkeypatch.setattr("agent.suggestions.generate_suggestions", no_background_provider)
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, workspace = await accounts()

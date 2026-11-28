@@ -118,7 +118,9 @@ async def write_proposal(*, user_id, workspace_id, session_id, message_ids, oper
         if memory_id:
             row = await db.scalar(select(UserMemory).where(UserMemory.id == memory_id, *target.predicates(UserMemory)))
             if row is None or not service._live(row):
-                raise MemoryAccessDenied("Memory is unavailable")
+                # Not found, as the service reports a missing memory; access
+                # denial (a ValueError) is for evidence the caller may not use.
+                raise LookupError("Memory is unavailable")
             expected_revision = row.revision if expected_revision is None else expected_revision
             previous = service._summary(row.value)
             project_id = row.project_id

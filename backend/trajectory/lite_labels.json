@@ -74,6 +74,45 @@
       ],
       "result": "answers"
     },
+    "light_gallery": {
+      "label": "按画廊模板拍摄成片",
+      "args": [
+        "shots"
+      ]
+    },
+    "light_production_form": {
+      "label": "修改制作表单",
+      "args": [
+        "action",
+        "summary:40"
+      ]
+    },
+    "light_remake": {
+      "label": "套用复刻模板",
+      "args": [
+        "product"
+      ]
+    },
+    "light_wan_story": {
+      "label": "制作剧情复刻",
+      "args": [
+        "action"
+      ]
+    },
+    "media_template": {
+      "label": "保存为模板",
+      "args": [
+        "entry_id",
+        "title"
+      ]
+    },
+    "music_search": {
+      "label": "搜索配乐",
+      "args": [
+        "moods",
+        "query"
+      ]
+    },
     "share_file": {
       "label": "把文件发给用户",
       "args": [

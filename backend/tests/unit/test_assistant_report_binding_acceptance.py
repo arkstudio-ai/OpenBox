@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
 from agent.driver import reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant.commands import accept_task_command, command_digest
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
@@ -42,8 +43,8 @@ async def setup(monkeypatch):
         return None
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     monkeypatch.setattr(loop, "_ensure_title", no_external)
     monkeypatch.setattr("agent.suggestions.generate_suggestions", no_external)

@@ -7,12 +7,12 @@ enforcement for the attempted calls, not arbitrary model prompt resistance.
 """
 from datetime import datetime, timedelta, timezone
 import json
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
 from agent import loop, processor
+from agent.tool_resolution import ResolvedStepTools
 from assistant.commands import command_digest
 from assistant.reporting import REPORT_TOOLS
 from assistant.results import deliver_task_result
@@ -103,8 +103,8 @@ async def test_untrusted_result_provider_bypasses_are_denied_and_execution_is_un
 
     async def installed_tools(agent, *args, **kwargs):
         installed_catalogues.append({name: tool.id for name, tool in catalogue.items()})
-        return SimpleNamespace(tools=dict(catalogue) if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools=dict(catalogue) if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     async def no_external_publication(*args, **kwargs):
         # Safety backstop at the publication service entry. A call is a test

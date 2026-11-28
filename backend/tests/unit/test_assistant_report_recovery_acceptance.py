@@ -1,13 +1,13 @@
 """Real report retries keep the original execution and fence delayed workers."""
 import json
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
 from agent import inbox, loop, processor
 from agent.driver import LeaseLostError, request_abort, reserve_run
+from agent.tool_resolution import ResolvedStepTools
 from assistant.commands import accept_task_command, command_digest
 from assistant.delivery import reconcile_report, recover_assistant_results
 from assistant.policy import AssistantError
@@ -66,8 +66,8 @@ async def test_report_recovery_and_delayed_worker_preserve_one_execution(monkeyp
     monkeypatch.setattr("agent.suggestions.generate_suggestions", no_background_provider)
 
     async def tools(agent, *args, **kwargs):
-        return SimpleNamespace(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
-                               catalogue_availability="available")
+        return ResolvedStepTools(tools={tool.id: tool for tool in assistant_tools} if agent.name == "assistant" else {},
+                                 catalogue_availability="available")
 
     monkeypatch.setattr(loop, "resolve_step_tools", tools)
     owner, _, workspace = await accounts()

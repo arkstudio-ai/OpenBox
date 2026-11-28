@@ -183,7 +183,11 @@ def test_a_brief_that_wants_someone_speaking_is_not_a_light_clip(brief, word):
 def test_the_assistant_is_told_what_the_light_clip_cannot_do():
     from light.prompt import ASSISTANT_LIGHT_RULES
     from tool.assistant_tools import SubmitArgs
-    assert "不要选 light_video" in "".join(ASSISTANT_LIGHT_RULES)
+    # Wording since 2c9dcb34: a dispatched light_video is one close-up with the
+    # shop name; spoken and multi-shot pieces go to the other work types.
+    rules = "".join(ASSISTANT_LIGHT_RULES)
+    assert "直接派活时，light_video 只做一段画面特写加店名" in rules
+    assert "口播用 spoken_video" in rules and "多个镜头的其他视频用 other_video" in rules
     assert "never light_video" in SubmitArgs.model_fields["work_type"].description
 
 

@@ -323,8 +323,11 @@ async def test_legacy_recovery_retention_and_warmup_leave_private_runs_alone(mon
         # database. They use a fake already-running container, never real IO.
         assert owner != scope["workspace_id"], "Private schedule must not pre-warm a desktop"
         return SimpleNamespace(status=ContainerStatus.RUNNING)
-    monkeypatch.setattr("sandbox.provider.resolve_user_container", no_desktop)
-    monkeypatch.setattr("sandbox.provider.ensure_user_container", no_desktop)
+    # Replace the provider itself: patching attributes of sandbox.provider's
+    # lazy proxy first builds the configured provider (Docker by default).
+    from types import SimpleNamespace
+    monkeypatch.setattr("sandbox.provider", SimpleNamespace(
+        resolve_user_container=no_desktop, ensure_user_container=no_desktop))
     await check_warmup()
     assert not await _claim_job(created["job_id"])
     assert created["job_id"] not in [job["id"] for job in await _collect_runnable_jobs(TimerState())]

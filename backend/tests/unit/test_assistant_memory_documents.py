@@ -79,6 +79,10 @@ async def test_uploaded_hybrid_candidates_preserve_personal_owned_scope_and_ordi
     assert foreign.id not in json.dumps(every) and "FOREIGN_FILE_CANARY" not in json.dumps(every)
     assert every["search"]["bounded"] and not every["search"]["exhaustive"]
     assert all(item["category"] == "DOCUMENT" and item["sources"][0]["origin"] == "uploaded_file" for item in every["items"])
+    # Ordinary recall (the default loader) deliberately overlaps the query
+    # embedding with its keyword SQL since ebe2278c; only the assistant's
+    # stricter reads above keep the network wait outside SQL.
+    external_io.before = None
     ordinary = await retrieval.search_memory(user_id=identity["user_id"], workspace_id=identity["workspace_id"],
         query="pottery", config=config.memory)
     legacy = next(item for item in ordinary["items"] if item["id"] == personal.source_ids[0])

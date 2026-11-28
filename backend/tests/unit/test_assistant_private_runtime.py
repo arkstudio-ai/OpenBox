@@ -318,7 +318,10 @@ async def test_delegated_real_loop_runs_with_the_shared_sandbox(world, monkeypat
         answer = await loop.run_loop(lease.session_id, user_id=w.owner, lease=lease)
     finally:
         await lease.release(session_status="idle")
-    assert len(calls) == 1 and w.resolutions and "/execute" in [path for path, _ in w.sent]
+    # The shared workspace desktop is resolved for the run. Since be75d22d an
+    # externally managed desktop gets no health probe or mkdir while the
+    # conversation is prepared; tool dispatch prepares its directory.
+    assert len(calls) == 1 and w.resolutions and "/execute" not in [path for path, _ in w.sent]
     async with get_db_session() as db:
         item = await db.get(AgentInboxItem, w.task["inbox_id"])
         result = await db.scalar(select(TaskResult).where(TaskResult.task_id == w.task["task_id"]))

@@ -243,9 +243,12 @@ async def test_deadline_keeps_partial_reasoning_and_does_not_retry(monkeypatch):
 
 
 async def test_empty_stream_still_returns_a_result(monkeypatch):
+    """Nothing at all came back: not an answer, so the loop retries (c272faea)."""
     result = await run(monkeypatch, events=[])
-    assert result.outcome is StepOutcome.CONTINUE
+    assert result.outcome is StepOutcome.RETRY
     assert result.finish_reason == "unknown"
+    assert result.retry_reason == "Empty model response"
+    assert result.error == "The model returned an empty response"
 
 
 # ── failure classification ──

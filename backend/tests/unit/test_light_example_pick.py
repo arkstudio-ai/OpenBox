@@ -144,11 +144,14 @@ def test_taxonomy_names_the_scenes_of_the_three_entries():
     assert tax.scene_ids("poster") == ["new_item", "holiday", "opening", "groupbuy"]
     assert tax.scene_ids("footage_edit") == ["visit", "new_item", "promo", "daily"]
     assert tax.scene_ids("menu") == ["menu_mono", "menu_red", "menu_chalk", "menu_dark"]
-    assert tax.scene_ids("video") == ["dish", "shop", "visit"] and tax.scene_ids("nothing") == []
+    # "story" (剧情广告) is the template library's category since b39556a2.
+    assert tax.scene_ids("video") == ["story", "dish", "shop", "visit"] and tax.scene_ids("nothing") == []
     assert [tax.media(e) for e in ("video", "footage_edit", "menu", "poster", "nothing")] == [
         "video", "video", "image", "image", None]
-    # A video's scene is its gallery tab, so the tab picked before the chat is the scene.
-    assert [s.id for s in light_entries().entry("video").subtypes] == tax.scene_ids("video")
+    # A clip's scene is its gallery tab, so the tab picked before the chat is the scene.
+    # A 剧情广告 is a template production, not a clip tab.
+    assert [s.id for s in light_entries().entry("video").subtypes] == [
+        scene for scene in tax.scene_ids("video") if scene != "story"]
     assert tax.scene_label("poster", "groupbuy") == "团购" and tax.scene_label("poster", "zzz") == "zzz"
     # A menu's scene is its gallery style, so the pick made before the chat needs no second question.
     menu = light_entries().entry("menu")
@@ -365,9 +368,13 @@ def test_entries_skills_and_the_registry_carry_the_example_step():
     assert "example_pick" in entry_fragment("poster") and "example_pick" in entry_fragment("video")
     assert "example_pick" not in entry_fragment("shopkeeper")
     skills = Path(__file__).resolve().parents[2] / ".openbox" / "skills"
+    # A 剧情广告 ("story") is a template production (light.media_templates), not
+    # the light-video clip, so that skill names only the clip scenes.
+    clip_scenes = [scene for scene in taxonomy().scene_ids("video") if scene != "story"]
+    assert clip_scenes == ["dish", "shop", "visit"]
     for name, scenes in (("poster-maker", taxonomy().scene_ids("poster")), ("menu-maker", taxonomy().scene_ids("menu")),
                          ("footage-edit", taxonomy().scene_ids("footage_edit")),
-                         ("light-video", taxonomy().scene_ids("video"))):
+                         ("light-video", clip_scenes)):
         text = (skills / name / "SKILL.md").read_text(encoding="utf-8")
         assert "  - example_pick\n" in text.split("---")[1] and "| `example` |" in text
         assert all(f"`{scene}`" in text for scene in scenes), name
@@ -447,7 +454,7 @@ async def test_console_takes_a_scene_filters_by_it_and_counts_the_cells():
         "new_item": 0, "holiday": 0, "opening": 1, "groupbuy": 2}  # active only
     assert poster["unclassified"] == 1 and poster["total"] == 4
     assert [cell["scene"] for cell in next(row for row in coverage["entries"] if row["entry_id"] == "video")["scenes"]] == [
-        "dish", "shop", "visit"]
+        "story", "dish", "shop", "visit"]
 
 
 # --- the look of a picked example (light/example_look.py) --------------------------------------

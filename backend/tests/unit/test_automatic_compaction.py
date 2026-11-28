@@ -12,10 +12,14 @@ from db.models.message import Message
 from models.message import TokenUsage
 from session.agent_event_log import load_canonical_model_surface
 from session.session import get_messages
+from tests.support.proxy_tokenizer import production_tokenizer  # noqa: F401
 from tests.unit.test_durable_questions import state  # noqa: F401
 from tests.unit.test_full_history import _seed
 from tests.unit.test_long_history_context import long_chat, _send  # noqa: F401
 from tests.unit.test_run_fencing_api import loop_harness  # noqa: F401
+
+# These budgets are sized with the production tokenizer (tests/support/proxy_tokenizer.py).
+pytestmark = pytest.mark.usefixtures("production_tokenizer")
 
 
 @pytest.mark.parametrize("trigger", ["automatic", "provider-overflow", "manual"])

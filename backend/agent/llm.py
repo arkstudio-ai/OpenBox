@@ -35,6 +35,14 @@ RESPONSES_API_VERSION = "2025-03-01-preview"
 TRUNCATED_REPLY_NOTE = "\n\n[回复达到输出长度上限，在此处被截断。]"
 
 
+class OutputLimitReached(RuntimeError):
+    """The provider stopped because the response reached its output limit.
+
+    Raised (as an ``error`` event) where a cut response cannot be used as is,
+    so a caller such as compaction can ask again for something shorter.
+    """
+
+
 def request_timeout(*, read_seconds: float = 60):
     """Bound stalled transport phases; streaming progress may continue normally.
 
@@ -1483,7 +1491,10 @@ async def _stream_responses_api(
                         if terminal_error:
                             await capture.finish("failed", error=RuntimeError(terminal_error))
                             log.error(f"Responses API stream failed: {terminal_error[:500]}")
-                            yield {"type": "error", "error": Exception(terminal_error)}
+                            incomplete = ((data.get("response") or {}).get("incomplete_details") or {})
+                            error_type = (OutputLimitReached if etype == "response.incomplete"
+                                          and incomplete.get("reason") == "max_output_tokens" else Exception)
+                            yield {"type": "error", "error": error_type(terminal_error)}
                             return
 
                         if native_normalizer is not None:
@@ -2219,7 +2230,8 @@ async def _stream_litellm_direct(
         if provider == "openai" and isinstance(response, CustomStreamWrapper):
             provider_finish_reason = response.received_finish_reason
         if purpose in {"compaction", "compaction_chunk"} and provider_finish_reason != "stop":
-            raise RuntimeError(
+            error_type = OutputLimitReached if provider_finish_reason in {"length", "max_tokens"} else RuntimeError
+            raise error_type(
                 f"Compaction response did not finish normally: {provider_finish_reason or 'missing finish'}"
             )
         # A chat reply cut at the output limit is kept and marked truncated.

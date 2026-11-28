@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from core import config as runtime_config
 from db.base import get_db_session
 from db.models.memory import UserMemory
+from db.models.memory_pipeline import MemoryExtractionJob
 from db.models.memory_v2 import MemorySource, MemorySourceLink
 from db.models.memory_wiki import MemoryWikiCandidate, MemoryWikiJob, MemoryWikiPage
 from db.models.wiki_platform import WikiMaintenancePolicy, WikiOrganizationRun
@@ -249,8 +250,15 @@ async def test_conversation_admission_is_automatic_only_for_verified_statements(
     assert await worker.run_once() == "SUCCEEDED"
     async with get_db_session() as db:
         row = await db.scalar(select(UserMemory).where(UserMemory.user_id == data[0]))
-        assert row.status == ("ACTIVE" if supported else "CANDIDATE")
-        assert row.owner == ("SYSTEM_VERIFIED" if supported else "SYSTEM_INFERRED")
+        job = await db.scalar(select(MemoryExtractionJob).where(MemoryExtractionJob.user_id == data[0]))
+        if not supported:
+            # Since ebe2278c an independently rejected claim is not kept as a
+            # pending note a later worker might promote; the job keeps its evidence.
+            assert row is None
+            assert job.state == "SUCCEEDED" and job.result_memory_ids == []
+            return
+        assert job.result_memory_ids == [row.id]
+        assert row.status == "ACTIVE" and row.owner == "SYSTEM_VERIFIED"
         assert row.confirmation_actor_id is None
         sources = (await db.scalars(select(MemorySource).join(MemorySourceLink, MemorySourceLink.source_id == MemorySource.id)
             .where(MemorySourceLink.memory_id == row.id, MemorySourceLink.revision == row.revision))).all()

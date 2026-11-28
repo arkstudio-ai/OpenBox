@@ -346,7 +346,7 @@ def decode(value, current_request=""):
 
 async def evaluate(state, config, *, client=None, max_attempts=2):
     from agent.llm import _model_family
-    from agent.latency import span, provider_wait
+    from agent.timing import span, provider_wait
     from agent.gateway import Observation
     from memory.providers.structured_output import response_format
     model = config.read_router_model

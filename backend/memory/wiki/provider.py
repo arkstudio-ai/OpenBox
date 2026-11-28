@@ -86,7 +86,7 @@ class ConfiguredWikiModel:
         started = time.monotonic()
         client = self.client or shared_client(trust_env=memory.provider_trust_env)
         try:
-            from agent.latency import provider_wait
+            from agent.timing import provider_wait
             with provider_wait():
                 result = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"},
                                            timeout=memory.compilation_timeout_seconds)

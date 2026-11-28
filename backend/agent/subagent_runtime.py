@@ -407,8 +407,7 @@ async def accept_spawn(
             trigger_now = cloned["next_created_at"]
         descriptor_id = ascending("subagent")
         activation_id = ascending("activation")
-        from trajectory import bind, record
-        from trajectory.producers import activity_context
+        from agent.recording import activity_identity as activity_context, bind, record
         parent_trace = await activity_context(db, user_id, parent_session_id,
             call_id=parent_part_id, part_id=parent_part_id, message_id=parent_message_id)
         child_trace = parent_trace.derive(source_session_id=child_row.id, agent_id=descriptor_id,
@@ -1396,8 +1395,7 @@ async def _complete_locked(
             descriptor.settled_at = now
         descriptor.updated_at = now
     from db.models.question import SessionExecution
-    from trajectory import record
-    from trajectory.producers import activity_context
+    from agent.recording import activity_identity as activity_context, record
     execution = await db.get(SessionExecution, activation.child_session_id)
     context = await activity_context(db, activation.user_id, activation.child_session_id,
         saved=execution.trace_context if execution is not None else None)

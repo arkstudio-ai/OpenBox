@@ -23,8 +23,8 @@ async def _begin_restore(session_id: str, user_id: str, *, operation: str,
     report (SPEC §5.6). The restore itself never waits on, or fails with, recording.
     """
     from db.base import _engine, get_db_session
-    from trajectory import enabled, record
-    from trajectory.producers import baseline_candidate_in_tx, session_context
+    from agent.recording import baseline_candidate_in_tx, enabled, record
+    from agent.recording import session_identity as session_context
     if _engine is None:
         return None, None
     recording = enabled(user_id)
@@ -46,7 +46,7 @@ async def _begin_restore(session_id: str, user_id: str, *, operation: str,
 async def _finish_restore(context, data, success: bool, started: float):
     if context is None:
         return
-    from trajectory import record
+    from agent.recording import record
     await record("history.reverted", {**data, "status": "completed" if success else "failed",
                  "duration_ms": (time.monotonic() - started) * 1000,
                  "timing_source": "producer_monotonic"}, context=context,

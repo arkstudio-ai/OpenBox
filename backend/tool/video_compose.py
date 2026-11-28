@@ -477,7 +477,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext, *, inherited
         await vp._mark_asset(asset.id, status="failed")
         return ToolResult(title="Composition refused", output=_public(exc), metadata={"job_id": job.id, "budget_stop": True})
     try:
-        from agent.trajectory import service_scope, register_owned_media_inputs
+        from trajectory.capture import service_scope, register_owned_media_inputs
         asset_urls = await register_owned_media_inputs(ctx, [shot.asset for shot in timeline.shots])
         async with service_scope(ctx, job=job, asset_urls=asset_urls):
             provider_job_id = await ims_client.submit_media_producing_job(
@@ -564,7 +564,7 @@ async def poll_compose_job(job):
 
     if not job.provider_task_id:
         return job
-    from agent.trajectory import service_scope
+    from trajectory.capture import service_scope
     from video.job_recovery import _recovery_context
     async with service_scope(_recovery_context(job), job=job):
         state = await ims_client.get_media_producing_job(job.provider_task_id)

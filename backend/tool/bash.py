@@ -316,7 +316,8 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                         from trajectory.tool_output import output_stream
                         await output_stream(ctx, "bash").append(chunk.content, output=collected_output)
 
-        ctx._trajectory_full_tool_output = collected_output
+        from agent.recording import retain_full_output
+        retain_full_output(ctx, collected_output)
         output = collected_output
         output_truncated = len(output) > MAX_STREAM_OUTPUT
         if len(output) > MAX_STREAM_OUTPUT:

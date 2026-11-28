@@ -288,7 +288,7 @@ async def search_memory(*, query: str, user_id: str, workspace_id: str | None = 
     io_deadline = started + io_budget_seconds if io_budget_seconds is not None else None
 
     async def bounded_io(operation, *, network=False):
-        from agent.latency import provider_wait, network_wait
+        from agent.timing import provider_wait, network_wait
         remaining = None if io_deadline is None else io_deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             # Do not dispatch (or construct a gather of) requests after their

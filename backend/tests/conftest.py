@@ -25,6 +25,21 @@ if not os.environ.get("TRAJECTORY_SPOOL_DIR"):
 _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
 
 
+def _production_kernel_extensions():
+    """The plugins main.py registers; a test that wants none uses ``agent.extensions.use``."""
+    from agent.extensions import KernelExtensions
+    from trajectory.plugin import TrajectoryPlugin
+    return KernelExtensions().add(TrajectoryPlugin())
+
+
+@pytest.fixture(autouse=True)
+def kernel_extensions():
+    """Every test starts with the production plugin set installed and leaves it installed."""
+    from agent.extensions import use
+    with use(_production_kernel_extensions()) as registry:
+        yield registry
+
+
 @pytest.fixture(autouse=True)
 def trajectory_env_from_shell():
     """Tests see only the shell's TRAJECTORY_* values; a test that records sets its own.

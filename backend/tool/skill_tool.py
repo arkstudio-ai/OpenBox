@@ -543,8 +543,8 @@ async def _execute_selected_skill(
 
 
 async def _record_skill_loaded(name, content, output_parts, files, host_only, ctx):
-    from trajectory import current, record
-    trace = ctx.trace_context or current()
+    from agent.recording import context_of, current, record
+    trace = context_of(ctx) or current()
     if trace:
         await record("skill.loaded", {"name": name, "content": content,
             "effective_content": "\n".join(output_parts),

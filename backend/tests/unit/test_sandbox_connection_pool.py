@@ -217,7 +217,7 @@ async def test_manager_rotation_closes_old_pool_before_using_new_credentials(mon
 
 
 async def test_network_timing_excludes_authorization_and_body_consumer(action_server, monkeypatch):
-    from agent import latency
+    from trajectory import latency
     from tests.unit.test_agent_latency import Clock
     clock = Clock()
     timing = latency.RunTiming(clock)

@@ -3,7 +3,7 @@ import json
 
 from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 
-from agent.trajectory import RequestCapture, litellm_chunk_blocks, responses_chunk_blocks
+from trajectory.capture import RequestCapture, litellm_chunk_blocks, responses_chunk_blocks
 from tests.unit.trajectory_producer_support import recording_spool  # noqa: F401
 from tool.tool import ToolContext
 from trajectory import TraceContext
@@ -44,8 +44,9 @@ def test_a_responses_event_is_recorded_as_it_arrived_without_a_copy():
 
 
 async def test_a_chunk_is_encoded_when_recorded_so_later_changes_do_not_reach_the_trace(recording_spool):
-    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
-                      trace_context=TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"))
+    from trajectory.capture import set_call_state
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1")
+    set_call_state(ctx, "context", TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"))
     capture = await RequestCapture.start(ctx, purpose="chat", model_id="provider/model",
                                          payload={"model": "provider/model"}, capture_level="provider_wire")
     event = {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "Hi", "sequence_number": 3,

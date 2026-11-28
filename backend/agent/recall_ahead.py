@@ -103,7 +103,7 @@ def start(lease, batch) -> None:
     if key in _early:
         return
     entry = _Early(started=time.monotonic())
-    from agent.latency import create_dependency_task
+    from agent.timing import create_dependency_task
     entry.task = create_dependency_task(_recall_claimed(entry, lease, message_ids[-1]),
                                         name=f"recall-ahead:{lease.session_id}")
     # Unused or failed, it must not leave an unread exception behind.

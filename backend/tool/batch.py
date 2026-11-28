@@ -88,9 +88,9 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     async def run_one(inv: Invocation) -> str:
         import copy
         from agent.hooks import ToolHooks
-        from agent.trajectory import context_for_tool, public_value, tool_schema
+        from agent import recording
+        from agent.recording import bind, context_for_tool, public_value, record, tool_schema
         from core.identifier import ascending
-        from trajectory import bind, record
         child = copy.copy(ctx)
         child._capability_revealed_ids = set(ctx._capability_revealed_ids)
         child.part_id = ascending("call")
@@ -100,7 +100,7 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
         trace = await context_for_tool(ctx)
         if trace is not None:
             trace = trace.derive(parent_call_id=trace.call_id, call_id=child.part_id, part_id=None)
-        child.trace_context = trace
+        recording.attach(child, trace)
         tool = get_tool(inv.tool)
         with bind(trace):
             await record("tool.requested", {

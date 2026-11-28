@@ -200,7 +200,7 @@ async def ask(ctx, name, schema, guide, data, images, *, attempts=2, max_tokens=
               reasoning_effort=None):
     import litellm
     from agent.llm import _get_provider_kwargs
-    from agent.trajectory import capture_service_dispatch, service_scope
+    from trajectory.capture import capture_service_dispatch, service_scope
 
     urls = await owned_images(ctx, images)
     by_asset = {asset: url for url, asset in urls.items()}

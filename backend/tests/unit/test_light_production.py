@@ -646,7 +646,7 @@ async def test_wan_editor_reads_the_vision_tools_selected_frames(monkeypatch, vi
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock
     import litellm
-    from agent import trajectory
+    from trajectory import capture as trajectory
     from light import wan_edit
     from core import config
     monkeypatch.setattr(config, "get_config", lambda: SimpleNamespace(video_analysis=SimpleNamespace(model=vision_model)))

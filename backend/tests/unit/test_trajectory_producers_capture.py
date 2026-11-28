@@ -52,8 +52,10 @@ def _chunk(text: str):
 
 
 def _tool_ctx(**trace) -> ToolContext:
-    return ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
-                       trace_context=TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step", **trace))
+    from trajectory.capture import set_call_state
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1")
+    set_call_state(ctx, "context", TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step", **trace))
+    return ctx
 
 
 def _no_trajectory_sql(statements) -> bool:
@@ -69,9 +71,10 @@ async def _file_asset(asset_id: str, *, status: str = "ready", size: int = 12, k
 
 async def test_request_capture_opens_no_transaction_and_records_each_chunk_verbatim(recording_spool,
                                                                                   business_statements):
-    from agent.trajectory import RequestCapture, litellm_chunk_blocks
+    from trajectory.capture import RequestCapture, litellm_chunk_blocks
     ctx = _tool_ctx()
-    ctx._trajectory_media_sources = {"a" * 64: "asset_frame"}
+    from trajectory.capture import call_state, set_call_state
+    set_call_state(ctx, "media_sources", {"a" * 64: "asset_frame"})
     capture = await RequestCapture.start(ctx, purpose="chat", model_id="provider/model", capture_level="adapter_input",
                                          payload={"model": "provider/model", "api_key": "never-recorded",
                                                   "messages": [{"role": "user", "content": "hello"}]})
@@ -101,24 +104,25 @@ async def test_request_capture_opens_no_transaction_and_records_each_chunk_verba
     assert not [item for item in deltas if "raw_content_mode" in item]
     assert "REDACTED" not in json.dumps(events)
     assert {item["request_id"] for item in events} == {capture.context.request_id}
-    assert ctx.trace_context == capture.context
+    assert call_state(ctx, "context") == capture.context
 
 
 async def test_large_owned_images_are_recorded_without_copying_provider_bytes(recording_spool, business_statements,
                                                                              monkeypatch):
     from agent import loop
-    from agent.trajectory import RequestCapture
+    from trajectory.capture import RequestCapture
     raw = b"image-fixture" * (1024 * 1024)
     encoded = base64.b64encode(raw).decode()
     uri = "data:image/png;base64," + encoded
     monkeypatch.setattr(loop, "_IMAGE_CACHE", {"asset_frame": uri})
     ctx = _tool_ctx()
-    ctx._trajectory_media_sources = {}
-    ctx._trajectory_inline_media = {}
+    from trajectory.capture import call_state, set_call_state
+    set_call_state(ctx, "media_sources", {})
+    set_call_state(ctx, "inline_media", {})
     messages = await loop.resolve_images([
         {"role": "user", "content": "inspect", "_images": [
             {"asset_id": "asset_frame", "key": "assets/u1/asset_frame/frame.png", "mime": "image/png"}]}],
-        media_sources=ctx._trajectory_media_sources, media_inputs=ctx._trajectory_inline_media)
+        media_sources=call_state(ctx, "media_sources"), media_inputs=call_state(ctx, "inline_media"))
     assert messages[0]["_images"] == [uri]
     # The same image in URI, Anthropic base64 and adapter forms totals 48 MiB,
     # exceeding the 32 MiB event limit that used to drop the entire request.
@@ -144,14 +148,14 @@ async def test_large_owned_images_are_recorded_without_copying_provider_bytes(re
 
 
 def test_media_compaction_keeps_unbound_inputs_verbatim():
-    from agent.trajectory import _compact_inline_media
+    from trajectory.capture import _compact_inline_media
     unknown = {"messages": [{"content": "data:image/png;base64,bm90LW93bmVk"}], "text": "unchanged"}
     assert _compact_inline_media(unknown, {"data:image/png;base64,other": {"asset_id": "a"}}) == unknown
 
 
 async def test_stream_delivery_never_waits_for_the_recorder(recording_spool, monkeypatch):
     import trajectory
-    from agent.trajectory import RequestCapture
+    from trajectory.capture import RequestCapture
     never = asyncio.get_running_loop().create_future()
     monkeypatch.setattr(trajectory, "record_stream", lambda context, event: never)
     capture = await RequestCapture.start(_tool_ctx(), purpose="chat", model_id="provider/model",
@@ -174,7 +178,7 @@ async def _collect(stream):
 
 async def test_owned_media_are_asset_references_without_downloads_or_hidden_assets(state, recording_spool,
                                                                                   monkeypatch):
-    from agent.trajectory import (capture_service_dispatch, register_owned_media_inputs,
+    from trajectory.capture import (capture_service_dispatch, register_owned_media_inputs,
                                   retain_derived_media_inputs, service_scope)
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
     await _file_asset("asset_video", key="assets/u1/asset_video/clip.mp4")
@@ -429,10 +433,11 @@ async def test_generated_images_are_recorded_as_references_to_their_assets(state
     prompt = await create_user_message("s1", "Draw a cat", user_id="u1")
     assistant = await create_assistant_message("s1", prompt.id, user_id="u1")
     ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", project_id="p1", message_id=assistant.id,
-                      part_id="call-image", trace_context=TraceContext("u1", "s1", turn_id="turn",
-                                                                       call_id="call-image",
-                                                                       message_id=assistant.id))
-    ctx._trajectory_image_request_id = "request-image"
+                      part_id="call-image")
+    from trajectory.capture import set_call_state
+    set_call_state(ctx, "context", TraceContext("u1", "s1", turn_id="turn", call_id="call-image",
+                                                message_id=assistant.id))
+    set_call_state(ctx, "image_request_id", "request-image")
 
     stored = await image_gen._store_output(ctx, SimpleNamespace(), b"\x89PNG\r\n\x1a\n0000", "png", None, "a cat",
                                            "generate", 1, 1)

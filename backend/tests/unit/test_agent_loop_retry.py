@@ -24,7 +24,7 @@ from session.agent_event_log import (
 
 @pytest.mark.parametrize("cancellable", [False, True])
 async def test_retry_wait_is_visible_without_hiding_it_as_network_time(cancellable):
-    from agent import latency
+    from trajectory import latency
     now = [0.0]
     timing = latency.RunTiming(lambda: now[0])
     token = latency.current.set(timing)

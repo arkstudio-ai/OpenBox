@@ -43,8 +43,10 @@ def failing_emitter(request, tmp_path, monkeypatch):
 
 
 def _ctx(**fields) -> ToolContext:
-    return ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
-                       trace_context=TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"), **fields)
+    from trajectory.capture import set_call_state
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1", **fields)
+    set_call_state(ctx, "context", TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"))
+    return ctx
 
 
 class _Value(BaseModel):
@@ -103,7 +105,7 @@ async def test_job_updates_commit(state, failing_emitter):
 async def test_billing_and_metered_requests_settle(state, failing_emitter, monkeypatch):
     import litellm
     from agent.llm import metered_completion
-    from agent.trajectory import capture_billing
+    from trajectory.capture import capture_billing
     await capture_billing(TraceContext("u1", "s1", request_id="req-1"), SimpleNamespace(event_id="usage-1"),
                           {"input": 1}, "0.01", "chat")
     monkeypatch.setattr("billing.service.UsageMeter.start", AsyncMock(return_value=None))
@@ -116,7 +118,7 @@ async def test_billing_and_metered_requests_settle(state, failing_emitter, monke
 
 async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_emitter, monkeypatch):
     import httpx
-    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from trajectory.capture import register_owned_media_inputs, retain_derived_media_inputs, service_scope
     from db.models.file_asset import FileAsset
     from tool import video_production
     monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
@@ -181,7 +183,8 @@ async def test_bash_streams_its_output_without_falling_back(state, failing_emitt
             raise AssertionError("re-executed without streaming")
     ctx = _ctx(sandbox=Sandbox())
     # The call identity the hooks bind before a tool runs.
-    ctx.trace_context = ctx.trace_context.derive(call_id="call-bash")
+    from trajectory.capture import call_state, set_call_state
+    set_call_state(ctx, "context", call_state(ctx, "context").derive(call_id="call-bash"))
     result = await bash.execute(bash.BashArgs(command="printf data"), ctx)
     assert result.metadata["exit_code"] == 0 and not Sandbox.executed
 

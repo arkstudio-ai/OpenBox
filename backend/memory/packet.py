@@ -180,7 +180,7 @@ async def prepare_context(turn: TurnContext, config=None, *, evaluator=None, res
     from memory.read_routing import route
     from memory.retrieval import read_task_state, search_memory
     from memory.observability import create_debug_run, finish_debug_run
-    from agent.latency import span
+    from agent.timing import span
     config = config or get_config().memory
     started = time.monotonic()
     async with get_db_session() as db:

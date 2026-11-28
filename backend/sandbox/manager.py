@@ -4,7 +4,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from core.log import create_logger
-from agent.latency import measured_span
+from agent.timing import measured_span
 from models.container import ContainerStatus
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.provider import build_sandbox_name

@@ -3,7 +3,7 @@
 Waiting for headers includes gateway queuing and model work; it is not a
 measurement of model compute alone. Never log request bodies, headers or URLs.
 The body span is elapsed stream lifetime (including consumer pauses); exact
-external wait versus application time still comes from agent.latency.
+external wait versus application time still comes from agent.timing.
 """
 import asyncio
 import inspect

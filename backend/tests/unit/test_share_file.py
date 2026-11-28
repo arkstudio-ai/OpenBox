@@ -24,8 +24,9 @@ def delivery(monkeypatch):
     ctx = ToolContext(
         session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
         sandbox=SimpleNamespace(execute=probe),
-        trace_context=TraceContext("u1", "s1", workspace_id="w1", run_id="run1"),
     )
+    from trajectory.capture import set_call_state
+    set_call_state(ctx, "context", TraceContext("u1", "s1", workspace_id="w1", run_id="run1"))
     return SimpleNamespace(ctx=ctx, probe=probe, upload=upload, oss=oss)
 
 

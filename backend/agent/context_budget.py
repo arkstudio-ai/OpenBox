@@ -95,7 +95,7 @@ def measure_request(model_id: str, messages: list[dict], prefix: RequestPrefix,
                     *, max_output_tokens: int | None = None,
                     observed_tokens: int = 0) -> ContextBudget:
     from agent.compaction import get_model_context_limit
-    from agent.latency import span
+    from agent.timing import span
     from agent.llm import request_output_tokens
 
     with span("request.measure_context"):

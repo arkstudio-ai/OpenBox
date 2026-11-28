@@ -88,7 +88,7 @@ def init_engine(
             echo=False,
         )
 
-    from agent.latency import attach_sql_timing
+    from core.timing import attach_sql_timing
     attach_sql_timing(_engine)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     log.info(
@@ -1062,7 +1062,7 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
     session = _session_factory()
     try:
         yield session
-        from agent.latency import span
+        from core.timing import span
         with span("db.commit"):
             await session.commit()
     except Exception:

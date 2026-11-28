@@ -15,7 +15,8 @@ DIFF_MAX_BYTES = 4 * 1024 * 1024
 
 def captures_files(ctx) -> bool:
     """Gate for the extra sandbox reads a recorded file version needs."""
-    return bool((getattr(ctx, "trace_context", None) or current()) and enabled(ctx.user_id))
+    from trajectory.capture import call_state
+    return bool((call_state(ctx, "context") or current()) and enabled(ctx.user_id))
 
 
 def _version(text: str | None, encoded: bytes | None, *, absent: bool = False) -> dict:
@@ -52,7 +53,8 @@ async def record_file_change(ctx, path: str, *, operation: str,
     """Enqueue the change as the executor saw it; the worker externalizes large text."""
     if not captures_files(ctx):
         return
-    context = getattr(ctx, "trace_context", None) or current()
+    from trajectory.capture import call_state
+    context = call_state(ctx, "context") or current()
     if _large(before) or _large(after):
         change = await asyncio.to_thread(_change, path, operation, before, after)
     else:

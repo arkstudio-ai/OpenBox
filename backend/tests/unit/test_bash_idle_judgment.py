@@ -85,7 +85,8 @@ async def test_new_output_streams_and_exit_completes_while_judge_is_pending(monk
 
     assert sandbox.calls == 1 and sandbox.closed.is_set()
     sandbox.kill_command.assert_not_called()
-    assert ctx._trajectory_full_tool_output == "new stderr\n"
+    from trajectory.capture import call_state
+    assert call_state(ctx, "full_output") == "new stderr\n"
     assert result.metadata["exit_code"] == 0
     assert result.metadata["output_complete"] is False
     assert result.metadata["output_incomplete_reason"] == "pipe_drain_deadline"

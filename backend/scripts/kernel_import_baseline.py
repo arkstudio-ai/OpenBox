@@ -6,7 +6,8 @@
 --write refuses to record new or larger entries: the baseline only goes down.
 --allow-increase records them anyway; give the reason in the change description.
 The layer table and the counting rules live in tests/unit/test_kernel_import_direction.py.
-Only source is parsed; no application code is imported.
+Only source is parsed and only the standard library is used, so a bare python3
+works as well as `uv run python` (for example in a worktree without backend/.venv).
 """
 import argparse
 from collections import Counter

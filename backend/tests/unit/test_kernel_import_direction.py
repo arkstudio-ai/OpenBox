@@ -20,6 +20,8 @@ importing an upper layer. Only source is parsed; nothing is imported or started.
 Regenerate the baseline (after removing upward imports) with
     cd backend && uv run python scripts/kernel_import_baseline.py --write
 """
+from __future__ import annotations  # the script also runs on a bare python3, without the project environment
+
 import ast
 from collections import Counter, defaultdict
 from dataclasses import dataclass

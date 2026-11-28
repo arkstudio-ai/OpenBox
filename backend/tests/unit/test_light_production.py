@@ -150,7 +150,7 @@ async def test_production_uses_only_the_selected_active_example(monkeypatch):
         video = (await client.post("/api/light/productions", json={"entry_id": "video"})).json()
         video_path = f"/api/light/productions/{video['session_id']}"
         built_in = (await client.patch(video_path, json={
-            "revision": video["revision"], "template": "soda_story",
+            "revision": video["revision"], "template": "silk_road",
         })).json()
         library = (await client.patch(video_path, json={
             "revision": built_in["revision"], "reference_example_id": other_id,

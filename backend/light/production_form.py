@@ -80,7 +80,7 @@ TEMPLATES = {
 }
 
 
-RETIRED_VIDEO_TEMPLATES = {wan_story.TEMPLATE, "wok"}
+RETIRED_VIDEO_TEMPLATES = {wan_story.TEMPLATE, wan_story.SODA_TEMPLATE, "wok"}
 VIDEO_TIER_TEMPLATES = {"", silk_road.TEMPLATE, wan_story.SODA_TEMPLATE}
 _H3_SKILL = Path(__file__).resolve().parents[1] / ".openbox/skills/comfyui-h3/SKILL.md"
 

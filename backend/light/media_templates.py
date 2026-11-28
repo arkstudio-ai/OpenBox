@@ -25,12 +25,12 @@ from db.models.video_template import VideoTemplateEdition
 from db.models.workspace import Workspace
 from light import examples, taxonomy, video_templates
 from light.mode import LightError
-from light.production_form import EntryId
+from light.production_form import EntryId, RETIRED_VIDEO_TEMPLATES
 
 PREFIX = "mt_"
 BUILTIN_PREFIX = "mtb_"
-# These are the existing production template IDs, with their catalogue labels.
-BUILTIN_VIDEO = {
+# Saved productions still resolve the titles of retired built-ins.
+_BUILTIN_VIDEO = {
     "gallery_wishes": ("画廊里的三个愿望", None),
     "product_story": ("品牌剧情广告", "headphone-ad"),
     "shortcut_story": ("先一步做到", "shortcut-story"),
@@ -38,6 +38,7 @@ BUILTIN_VIDEO = {
     "soda_story": ("苏打水广告", "soda-story"),
     "twist": ("这单谁买", "crawfish-remake"),
 }
+BUILTIN_VIDEO = {key: card for key, card in _BUILTIN_VIDEO.items() if key not in RETIRED_VIDEO_TEMPLATES}
 _MEDIA_FIELDS = (
     "shop", "brief", "script", "product_name", "poster_title", "dishes", "reference_copy", "notes",
     "keep_original", "promotion_brief", "output_language", "perfect_film", "video_tier", "music_style",
@@ -219,9 +220,9 @@ def item(edition, family, *, private=False):
 
 def builtin_card(template_id):
     from light.production_form import TEMPLATES
-    if template_id not in BUILTIN_VIDEO or template_id not in TEMPLATES["video"]:
+    if template_id not in _BUILTIN_VIDEO or template_id not in TEMPLATES["video"]:
         raise missing()
-    title, file = BUILTIN_VIDEO[template_id]
+    title, file = _BUILTIN_VIDEO[template_id]
     key = BUILTIN_PREFIX + template_id
     return {"id": key, "example_id": key, "entry_id": "video", "title": title, "scene": "story",
             "scene_label": taxonomy.taxonomy().scene_label("video", "story"), "status": "listed", "source": "builtin",

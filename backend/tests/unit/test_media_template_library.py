@@ -166,6 +166,41 @@ async def deliver(scenario, session, asset_id, mime, *, guided):
                             created_at=stamp, updated_at=stamp, completed_at=stamp))
 
 
+async def test_retired_soda_template_is_hidden_but_saved_production_can_continue(scenario):
+    client = scenario.client
+    retired_id = "mtb_soda_story"
+    other_id = "mtb_product_story"
+    for url, headers in (
+        ("/api/media-templates?entry_id=video&scene=story", None),
+        ("/api/media-templates/admin?entry_id=video&scene=story", {"X-Test-User": scenario.admin}),
+    ):
+        response = await client.get(url, headers=headers)
+        assert response.status_code == 200
+        ids = {card["id"] for card in response.json()["items"]}
+        assert retired_id not in ids and other_id in ids
+    for kind in ("cover", "video"):
+        assert (await client.get(f"/api/media-templates/sample/soda_story/{kind}")).status_code == 404
+
+    form = (await client.post("/api/light/productions", json={"entry_id": "video"})).json()
+    url = f"/api/light/productions/{form['session_id']}"
+    choice = {"revision": form["revision"], "reference_example_id": retired_id}
+    rejected = await client.patch(url, json=choice)
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "LIGHT_PRODUCTION_TEMPLATE_RETIRED"
+    assert (await client.patch(url, json={"revision": form["revision"], "template": "soda_story"})).status_code == 409
+
+    async with get_db_session() as db:
+        session = await db.get(Session, form["session_id"])
+        session.light_example_id = retired_id
+        session.light_production = {**session.light_production, "template": "soda_story"}
+    saved = await client.get(url)
+    assert saved.status_code == 200
+    assert saved.json()["reference_example_title"] == "苏打水广告"
+    edited = await client.patch(url, json={**choice, "shop": "Continue the saved draft"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["reference_example_id"] == retired_id
+
+
 @pytest.mark.parametrize(("entry", "scene", "mime"), (
     ("video", "story", "video/mp4"), ("footage_edit", "daily", "video/mp4"),
     ("menu", "menu_red", "image/png"), ("poster", "opening", "image/png"),

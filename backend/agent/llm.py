@@ -30,6 +30,9 @@ OUTPUT_TOKEN_MAX = 32000  # Fallback for unknown models
 THINKING_OUTPUT_RESERVE = 8000
 OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 RESPONSES_API_VERSION = "2025-03-01-preview"
+#: Appended to a chat reply the provider stopped at the output limit, so the
+#: user and, on later turns, the model can tell the answer is incomplete.
+TRUNCATED_REPLY_NOTE = "\n\n[回复达到输出长度上限，在此处被截断。]"
 
 
 def request_timeout(*, read_seconds: float = 60):
@@ -2132,6 +2135,7 @@ async def _stream_litellm_direct(
         tool_calls = []
         stream_usage: dict = {}  # Captured from the final chunk(s)
         provider_finish_reason = None
+        received_text = False
 
         async with aclosing(observation.chunks(response)) as observed, aclosing(
                 capture.stream_chunks(observed, litellm_chunk_blocks)) as chunks:
@@ -2163,6 +2167,7 @@ async def _stream_litellm_direct(
 
                 # Text content
                 if delta.content:
+                    received_text = True
                     yield {"type": "text_delta", "text": delta.content}
 
                 # Tool calls (accumulate chunks + emit streaming events)
@@ -2217,7 +2222,12 @@ async def _stream_litellm_direct(
             raise RuntimeError(
                 f"Compaction response did not finish normally: {provider_finish_reason or 'missing finish'}"
             )
-        if provider_finish_reason not in {"stop", "tool_calls", "function_call"}:
+        # A chat reply cut at the output limit is kept and marked truncated.
+        # Tool arguments cut the same way are never dispatched, and other
+        # purposes parse their output, so those still fail.
+        truncated = (purpose == "chat" and provider_finish_reason in {"length", "max_tokens"}
+                     and received_text and not tool_calls)
+        if provider_finish_reason not in {"stop", "tool_calls", "function_call"} and not truncated:
             if not provider_finish_reason:
                 raise RuntimeError("模型回复传输中断，未收到完整结束标记。请重试；已收到的片段不作为最终答复。")
             raise RuntimeError(f"模型回复未完整结束（{provider_finish_reason}）。请重试；已收到的片段不作为最终答复。")
@@ -2248,6 +2258,10 @@ async def _stream_litellm_direct(
                     }
 
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
+        elif truncated:
+            log.warning("Reply for %s stopped at the output limit; kept as truncated", model_id)
+            yield {"type": "text_delta", "text": TRUNCATED_REPLY_NOTE}
+            yield {"type": "finish", "reason": "stop", "usage": stream_usage, "truncated": True}
         else:
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 

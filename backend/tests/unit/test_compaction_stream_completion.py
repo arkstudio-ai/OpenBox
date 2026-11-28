@@ -35,6 +35,10 @@ async def test_litellm_summary_requires_a_normal_terminal_chunk(monkeypatch, pur
     )]
     assert any(event["type"] == "text_delta" for event in events)
     assert any(event["type"] == "usage" for event in events)
+    if reason == "length" and purpose == "chat":
+        # A chat reply cut at the output limit is kept and marked; a summary is not.
+        assert events[-1]["type"] == "finish" and events[-1]["truncated"] is True
+        return
     assert events[-1]["type"] == ("finish" if reason == "stop" else "error")
     if reason != "stop":
         assert not any(event["type"] == "finish" for event in events)

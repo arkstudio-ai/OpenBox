@@ -1,6 +1,7 @@
 """Skill tool: load and inject skill content."""
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 from dataclasses import replace
@@ -61,6 +62,39 @@ COMPACT_SKILL_DESCRIPTION = (
     "slash commands; reuse within that request. Skills do not grant additional permissions."
 )
 
+#: A4 (agent_tuning.resident_skill_catalogue): the compact wording when the
+#: built-in catalogue rides along, so the model picks a listed workflow
+#: without searching first.
+CATALOGUE_SKILL_DESCRIPTION = (
+    "For a specialized task, choose from the built-in workflows listed below, or search other "
+    "permitted workflows with skill_search, before choosing a method or declaring a capability "
+    "unavailable. Load the selected workflow by exact name (args optional) and follow its "
+    "instructions. Reload for every new user request, including continued work or slash "
+    "commands; reuse within that request. Skills do not grant additional permissions."
+)
+
+#: A7 stage one (agent_tuning.skill_mention_rule). The composer inserts
+#: ``@skill:<name>`` as plain text; nothing on the backend parses it yet.
+SKILL_MENTION_RULE = (
+    "When the user's message contains @skill:<name>, load that skill with this tool "
+    "first, before any other action."
+)
+
+#: A4: one line per built-in Skill. The full frontmatter hint (up to 500
+#: characters) stays in skill_search results; the resident line only has to
+#: let the model recognise the workflow.
+RESIDENT_DESCRIPTION_CHARS = 160
+_RESIDENT_NOTICE = (
+    "  <notice>Only built-in workflows are listed. Workflows installed on the cloud "
+    "desktop are found with skill_search.</notice>"
+)
+
+
+def _tuning(name: str, workspace_id: str | None) -> bool:
+    from core.config import agent_tuning_enabled
+
+    return agent_tuning_enabled(name, workspace_id or None)
+
 
 # Never worth naming: the model cannot act on them and they crowd out the files
 # that matter. A single skill with a node_modules tree contributed 890 entries,
@@ -118,6 +152,94 @@ def _host_bundle_note(name: str, path: str) -> list[str]:
             "your workspace. The files below ship with it but are",
             "NOT readable from here — follow the instructions above",
             "without trying to open them."]
+
+
+def _skill_digest(block: str) -> str:
+    """SHA-256 of the effective ``<skill_content>`` block the model receives.
+
+    Covers the body after ``$ARGUMENTS`` substitution plus the base directory
+    and file listing. Per-call state appended after the block (browser
+    readiness) is not part of it.
+    """
+    return hashlib.sha256(block.encode("utf-8")).hexdigest()
+
+
+def _part_value(part) -> dict:
+    if isinstance(part, dict):
+        return part
+    if hasattr(part, "model_dump"):
+        try:
+            value = part.model_dump()
+        except Exception:
+            return {}
+        return value if isinstance(value, dict) else {}
+    return {}
+
+
+def _visible_copy_digest(ctx: ToolContext, name: str) -> str | None:
+    """Digest of the newest ``name`` body the model can still read this step.
+
+    The view is the exact projected history of this provider step, so a copy
+    removed by a compaction replacement or the memory read policy is absent,
+    and a pruned copy carries the compacted marker. Unchanged replies are
+    skipped: they point at a body, they are not one. A result without a digest
+    (older sessions) counts as changed.
+    """
+    view = getattr(ctx, "_history_view", None)
+    if not view:
+        return None
+    for message in reversed(list(view)):
+        for part in reversed(list(getattr(message, "parts", None) or [])):
+            value = _part_value(part)
+            if value.get("type") != "tool" or value.get("tool") != "skill":
+                continue
+            status = getattr(value.get("status"), "value", value.get("status"))
+            if status != "completed":
+                continue
+            state = value.get("state") if isinstance(value.get("state"), dict) else {}
+            arguments = value.get("input")
+            if not isinstance(arguments, dict):
+                arguments = state.get("input") if isinstance(state.get("input"), dict) else {}
+            if arguments.get("skill") != name:
+                continue
+            metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+            if metadata.get("skill_unchanged"):
+                continue
+            time_info = state.get("time") if isinstance(state.get("time"), dict) else {}
+            if time_info.get("compacted"):
+                return None
+            digest = metadata.get("skill_sha256")
+            return digest if isinstance(digest, str) and digest else None
+    return None
+
+
+def _skill_block_or_unchanged(
+    name: str,
+    output_parts: list[str],
+    ctx: ToolContext,
+) -> tuple[list[str], dict]:
+    """A5: keep the body, or replace it with a short pointer when unchanged.
+
+    The digest is always reported. Only with agent_tuning.skill_reload_dedupe
+    on, and only when the newest visible copy has the same digest, does the
+    reply drop the body. The title keeps its "Loaded skill" prefix, which the
+    Light skill gate reads.
+    """
+    digest = _skill_digest("\n".join(output_parts))
+    metadata: dict = {"skill_sha256": digest}
+    if (_tuning("skill_reload_dedupe", getattr(ctx, "workspace_id", None))
+            and _visible_copy_digest(ctx, name) == digest):
+        metadata["skill_unchanged"] = True
+        escaped = html.escape(name, quote=True)
+        output_parts = [
+            f'<skill_unchanged name="{escaped}" sha256="{digest[:12]}">',
+            f"The {escaped} skill is unchanged since it was last loaded in this conversation. "
+            "Follow the instructions in that earlier skill result. If that result is no longer "
+            "in the conversation (for example after a summary), load the skill again to "
+            "receive the full text.",
+            "</skill_unchanged>",
+        ]
+    return output_parts, metadata
 
 
 async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
@@ -274,6 +396,7 @@ async def _execute_skill(
             output_parts.append(f"  ... and {len(files) - 50} more files")
         output_parts.append("</skill_files>")
     output_parts.append("</skill_content>")
+    output_parts, digest_metadata = _skill_block_or_unchanged(args.skill, output_parts, ctx)
 
     if args.skill == "dev-browser":
         output_parts.append("")
@@ -283,9 +406,16 @@ async def _execute_skill(
 
     await _record_skill_loaded(args.skill, content, output_parts, files, host_only, ctx)
     return ToolResult(
-        title=f"Loaded skill: {args.skill}",
+        title=_loaded_title(args.skill, digest_metadata),
         output="\n".join(output_parts),
+        metadata=digest_metadata,
     )
+
+
+def _loaded_title(name: str, digest_metadata: dict) -> str:
+    if digest_metadata.get("skill_unchanged"):
+        return f"Loaded skill: {name} (unchanged)"
+    return f"Loaded skill: {name}"
 
 
 async def _execute_selected_skill(
@@ -394,18 +524,20 @@ async def _execute_selected_skill(
             output_parts.append(f"  ... and {len(files) - 50} more files")
         output_parts.append("</skill_files>")
     output_parts.append("</skill_content>")
+    output_parts, digest_metadata = _skill_block_or_unchanged(args.skill, output_parts, ctx)
     if args.skill == "dev-browser":
         output_parts.extend(["", await _browser_readiness(ctx)])
         if guidance := _browser_workflow_guidance(ctx):
             output_parts.append(guidance)
     await _record_skill_loaded(args.skill, content, output_parts, files, host_only, ctx)
     return ToolResult(
-        title=f"Loaded skill: {args.skill}",
+        title=_loaded_title(args.skill, digest_metadata),
         output="\n".join(output_parts),
         metadata={
             "provider": skill.provider_id,
             "provider_revision": skill.provider_revision,
             "catalog_revision": snapshot.revision,
+            **digest_metadata,
         },
     )
 
@@ -414,7 +546,6 @@ async def _record_skill_loaded(name, content, output_parts, files, host_only, ct
     from trajectory import current, record
     trace = ctx.trace_context or current()
     if trace:
-        import hashlib
         await record("skill.loaded", {"name": name, "content": content,
             "effective_content": "\n".join(output_parts),
             "sha256": hashlib.sha256(content.encode()).hexdigest(),
@@ -441,6 +572,7 @@ def _skill_tool_for_snapshot(
         execute=selected,
         sandbox_required=False,
         never_prune=True,
+        supersede_key="skill",
     )
 
 
@@ -544,7 +676,10 @@ skill_tool = define_tool(
     parameters=SkillArgs,
     execute=execute,
     sandbox_required=False,
+    # The newest copy of each Skill body is never pruned; an older copy of the
+    # same Skill is superseded and may be (agent/compaction.py, A6).
     never_prune=True,
+    supersede_key="skill",
 )
 
 
@@ -737,6 +872,108 @@ def _render_bounded_listing(
     if len(rendered) > hard_chars:
         raise ValueError("skill listing hard cap is too small for the search notice")
     return rendered
+
+
+def _render_resident_catalogue(
+    skills: list[dict],
+    *,
+    hard_chars: int,
+    budget: int = LISTING_BUDGET_TOKENS,
+) -> str:
+    """A4: one escaped line per built-in Skill, inside the listing budget.
+
+    Same budget as the listing it replaces in portable mode: descriptions
+    stop at ``budget`` tokens (names only after that) and the rendered block
+    never exceeds ``hard_chars``. Sorted by name so the text is stable across
+    steps and stays inside the provider's prefix cache.
+    """
+    from core.token import token_estimate
+
+    def text(value) -> str:
+        # Element text, not an attribute: quotes need no escaping.
+        return html.escape(_XML_CONTROL.sub("", str(value or "")), quote=False)
+
+    head = "<available_skills>"
+    closing = "</available_skills>"
+    lines = [head]
+    spent = 0
+    names_only = False
+    for name, description in _listing_entries(skills):
+        hint = _clip(description, RESIDENT_DESCRIPTION_CHARS)
+        full = f"  - {text(name)}: {text(hint)}" if hint else f"  - {text(name)}"
+        cost = token_estimate(full)
+        if names_only or spent + cost > budget:
+            names_only = True
+            line = f"  - {text(name)}"
+        else:
+            line = full
+        if len("\n".join([*lines, line, _RESIDENT_NOTICE, closing])) > hard_chars:
+            break
+        lines.append(line)
+        if not names_only:
+            spent += cost
+    rendered = "\n".join([*lines, _RESIDENT_NOTICE, closing])
+    if len(rendered) > hard_chars:
+        return ""
+    return rendered
+
+
+async def resident_skill_catalogue(ruleset: list | None) -> str:
+    """A4: the permission-filtered catalogue of host built-in Skills.
+
+    Reads only the backend's own checkout (``skill.skill``'s cached host
+    scan, the ``host-builtin`` roots). Skills installed in the sandbox stay
+    out: their text is untrusted and listing them would mean a tunnel read
+    on every step. Returns "" when nothing is permitted or the scan fails, so
+    the caller keeps today's compact wording.
+    """
+    try:
+        from skill.skill import list_skills
+
+        host = [
+            {"name": skill.name, "description": skill.description}
+            for skill in await list_skills()
+            if skill.source == "project"
+        ]
+    except Exception as exc:
+        log.debug("Built-in Skill catalogue unavailable error_type=%s", type(exc).__name__)
+        return ""
+    permitted = _permitted(host, ruleset or [])
+    if not permitted:
+        return ""
+    return _render_resident_catalogue(permitted, hard_chars=_listing_hard_chars())
+
+
+def compact_skill_description(*, catalogue: str = "", mention_rule: bool = False) -> str:
+    """Portable-mode loader description; today's text when both switches are off."""
+    text = CATALOGUE_SKILL_DESCRIPTION if catalogue else COMPACT_SKILL_DESCRIPTION
+    if mention_rule:
+        text = f"{text} {SKILL_MENTION_RULE}"
+    if catalogue:
+        text = f"{text}\n\n{catalogue}"
+    return text
+
+
+async def portable_skill_description(ruleset: list | None, workspace_id: str | None) -> str | None:
+    """The compact description for this workspace, or None when A4 and A7 are off.
+
+    Shared by the deferred (no directory IO) and the resolved portable path,
+    so the loader's description is byte-identical before and after the model
+    first opens the directory.
+    """
+    with_catalogue = _tuning("resident_skill_catalogue", workspace_id)
+    mention_rule = _tuning("skill_mention_rule", workspace_id)
+    if not with_catalogue and not mention_rule:
+        return None
+    catalogue = await resident_skill_catalogue(ruleset) if with_catalogue else ""
+    return compact_skill_description(catalogue=catalogue, mention_rule=mention_rule)
+
+
+def full_skill_description(*, mention_rule: bool = False) -> str:
+    """The non-portable loader description (the listing follows it)."""
+    if mention_rule:
+        return f"{_BASE_DESCRIPTION}\n- {SKILL_MENTION_RULE}"
+    return _BASE_DESCRIPTION
 
 
 def _skill_search_index(skills: list[dict]) -> tuple[tuple[str, str], ...]:
@@ -1010,8 +1247,13 @@ async def build_skill_tools_with_listing(
     scope_key=None,
     registry=None,
     compact: bool = False,
+    workspace_id: str | None = None,
 ) -> tuple[ToolInfo, ToolInfo | None]:
-    """Build the Skill loader and its conditional, same-step search companion."""
+    """Build the Skill loader and its conditional, same-step search companion.
+
+    ``workspace_id`` only selects agent_tuning switches (A4, A7); it never
+    widens the permission-filtered directory.
+    """
     snapshot = None
     active_registry = registry
     if scope_key is not None:
@@ -1049,9 +1291,18 @@ async def build_skill_tools_with_listing(
     if compact and enable_search:
         # Search and load share the exact permission-filtered snapshot. A
         # full directory is unnecessary in every subsequent model request.
-        return replace(loader, description=COMPACT_SKILL_DESCRIPTION), _skill_search_for(skills)
+        # The optional A4 catalogue lists host built-ins only, never this
+        # snapshot's sandbox rows, so it matches the deferred steps exactly.
+        description = (
+            await portable_skill_description(ruleset, workspace_id)
+            or COMPACT_SKILL_DESCRIPTION
+        )
+        return replace(loader, description=description), _skill_search_for(skills)
 
+    mention_rule = _tuning("skill_mention_rule", workspace_id)
     if not skills:
+        if mention_rule:
+            return replace(loader, description=full_skill_description(mention_rule=True)), None
         return loader, None
 
     complete_listing = render_listing(skills)
@@ -1070,7 +1321,9 @@ async def build_skill_tools_with_listing(
                 "skill_search companion"
             )
 
-    enriched_description = "\n".join([_BASE_DESCRIPTION, "", wire_listing])
+    enriched_description = "\n".join([
+        full_skill_description(mention_rule=mention_rule), "", wire_listing,
+    ])
     return replace(loader, description=enriched_description), search
 
 

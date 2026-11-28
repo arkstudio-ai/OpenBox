@@ -124,6 +124,11 @@ class ToolContext:
     _native_max_persisted_reveals: int = 8
     # Directors explicitly mark constituent media that are only inputs to a later deliverable.
     transient_output: bool = False
+    # The projected Messages the provider received in this step (after the
+    # compaction replacement, memory read policy and assistant projection).
+    # Bound by the loop, read-only for tools: the Skill loader uses it to tell
+    # whether an unchanged body is still in context. None outside the loop.
+    _history_view: Any = field(default=None, repr=False)
 
     async def update_output(self, output: str) -> None:
         """Push incremental output update (for real-time tool display)."""
@@ -205,7 +210,14 @@ class ToolInfo:
     execute: Callable[..., Awaitable[ToolResult]]
     # Metadata
     sandbox_required: SandboxRequirement = True
-    never_prune: bool = False  # Whether output should never be pruned
+    # Whether output should never be pruned. Read by the pruner only while
+    # agent_tuning.prune_stale_skill_copies is on (agent/compaction.py).
+    never_prune: bool = False
+    # Input argument naming what a call loads (``skill`` for the Skill tool).
+    # A later completed call with the same value supersedes an earlier one:
+    # the pruner keeps the newest output and may clear older ones, even when
+    # ``never_prune`` is set. Same switch as above.
+    supersede_key: str | None = None
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
     # None preserves legacy Batch availability, but runs the tool serially.
@@ -239,6 +251,7 @@ def define_tool(
     execute: Callable[..., Awaitable[ToolResult]],
     sandbox_required: SandboxRequirement = True,
     never_prune: bool = False,
+    supersede_key: str | None = None,
     parallel_safe: bool | None = None,
     batch_serial_safe: bool = False,
     body_timeout: Callable[[dict, ToolContext], float] | None = None,
@@ -328,6 +341,7 @@ def define_tool(
         execute=wrapped_execute,
         sandbox_required=sandbox_required,
         never_prune=never_prune,
+        supersede_key=supersede_key,
         parallel_safe=parallel_safe,
         batch_serial_safe=batch_serial_safe,
         body_timeout=body_timeout,

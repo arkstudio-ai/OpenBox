@@ -4,10 +4,24 @@ import atexit
 import os
 import shutil
 import tempfile
+from types import SimpleNamespace
 
-import pytest
-from db.base import Base, init_engine, close_engine, get_db_session
-from tests.offline_wuying import pytest_runtest_protocol  # noqa: F401
+# Hermetic configuration, before anything below imports core.config, litellm or main.
+# A test sees only the config it sets up: no developer's private backend/openbox.json
+# (the working directory's project file), ~/.config/openbox/openbox.json, OPENBOX_CONFIG
+# or inline OPENBOX_CONFIG_CONTENT, and no backend/.env, which main.py loads on import
+# and litellm in its DEV mode (find_dotenv from site-packages up to the checkout).
+# Subprocesses a test starts inherit all of it. A test that needs file-based config
+# uses the ``config_files`` fixture (or sets OPENBOX_CONFIG itself).
+for _name in ("OPENBOX_CONFIG", "OPENAGENT_CONFIG", "OPENBOX_CONFIG_CONTENT", "OPENAGENT_CONFIG_CONTENT"):
+    os.environ.pop(_name, None)
+os.environ["OPENBOX_CONFIG_DISCOVERY"] = "off"
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+os.environ["LITELLM_MODE"] = "PRODUCTION"
+
+import pytest  # noqa: E402
+from db.base import Base, init_engine, close_engine, get_db_session  # noqa: E402
+from tests.offline_wuying import pytest_runtest_protocol  # noqa: E402,F401
 
 # The spool is the default recording sink. Unless the shell picked a spool
 # directory, whatever tests emit lands in a throwaway one, never under
@@ -17,11 +31,10 @@ if not os.environ.get("TRAJECTORY_SPOOL_DIR"):
     os.environ["TRAJECTORY_SPOOL_DIR"] = _TEST_SPOOL_DIR
     atexit.register(shutil.rmtree, _TEST_SPOOL_DIR, ignore_errors=True)
 
-# Recording switches from the shell that started pytest. Importing litellm (in
-# its default DEV mode) or main.py loads backend/.env for the rest of the run,
-# and TRAJECTORY_RECORDING_ENABLED=true there would turn recording on for tests
-# written against the default; they then fail with ownership errors depending
-# on which module happened to be imported first.
+# Recording switches from the shell that started pytest. Before .env loading was
+# switched off above, importing litellm or main.py loaded backend/.env for the rest
+# of the run, and TRAJECTORY_RECORDING_ENABLED=true there turned recording on for
+# tests written against the default; a test that sets one must not leak it either.
 _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
 
 
@@ -110,6 +123,28 @@ async def db_session():
     """Get a test database session."""
     async with get_db_session() as session:
         yield session
+
+
+@pytest.fixture
+def config_files(tmp_path, monkeypatch):
+    """Opt in to file-based config, found in this test's own directories, never the developer's.
+
+    Discovery of the global and project files is on again: ``global_file`` is
+    ``$XDG_CONFIG_HOME/openbox/openbox.json`` and the working directory is ``project_dir``,
+    whose ``openbox.json`` is the project file. The test writes whichever it needs (and may
+    set OPENBOX_CONFIG or OPENBOX_CONFIG_CONTENT too); the cached config is dropped, so the
+    next ``get_config()`` reads them, and restored afterwards.
+    """
+    import core.config
+    home, project = tmp_path / "xdg-config", tmp_path / "project"
+    (home / "openbox").mkdir(parents=True)
+    project.mkdir()
+    monkeypatch.delenv("OPENBOX_CONFIG_DISCOVERY", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(core.config, "_config", None)
+    return SimpleNamespace(global_file=home / "openbox" / "openbox.json", project_dir=project,
+                           project_file=project / "openbox.json")
 
 
 @pytest.fixture

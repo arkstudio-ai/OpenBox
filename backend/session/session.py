@@ -866,13 +866,15 @@ async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
 
 
 async def record_projection_in_tx(db, session_id: str, user_id: str, event_type: str, data: dict,
-                                   *, locked: bool = True, **ids):
+                                   *, locked: bool = True, message_role: str | None = None, **ids):
     """Keep the compatibility mutation and its immutable fact in one commit.
 
     The fact is enqueued only when the write commits. A ``locked`` write holds
     the session row lock and also keeps the recording markers (SPEC §5.6): the
     first recorded activity, a pause while recording is off, a resume after it.
     A write without the lock records nothing while the markers report a pause.
+    ``message_role`` is the role of the part's message when the caller already
+    holds that row in this transaction; otherwise it is read.
     """
     from agent.recording import record
     context = await trajectory_context_in_tx(db, session_id, user_id, **ids)
@@ -889,7 +891,7 @@ async def record_projection_in_tx(db, session_id: str, user_id: str, event_type:
             return None
     part = data.get("part") or {}
     if event_type == "part.committed" and not data.get("role"):
-        role = await db.scalar(select(MessageORM.role).where(
+        role = message_role if message_role is not None else await db.scalar(select(MessageORM.role).where(
             MessageORM.id == (ids.get("message_id") or part.get("message_id")),
             MessageORM.session_id == session_id, MessageORM.user_id == user_id))
         data = {**data, "role": role}
@@ -1546,7 +1548,8 @@ async def create_assistant_message(
             await append_part_event_locked(db, session_row, part_row, msg_row,
                 operation="created", run_fence=run_fence)
             await record_projection_in_tx(db, session_id, user_id, "part.committed",
-                {"part": part_dict, "operation": "created"}, message_id=msg_id, part_id=step_start.id)
+                {"part": part_dict, "operation": "created"}, message_role=msg_row.role,
+                message_id=msg_id, part_id=step_start.id)
 
     # Publish MESSAGE_CREATED so frontend creates the message entry
     # before subsequent part.created / text_delta events arrive
@@ -1797,7 +1800,7 @@ async def save_part(
             )
         await record_projection_in_tx(db, session_id, user_id, "part.committed",
             {"part": part_dict, "operation": "created" if is_new else "updated"},
-            message_id=msg_id, part_id=part.id)
+            message_role=message_row.role, message_id=msg_id, part_id=part.id)
 
     _publish_part(part, is_new=is_new, user_id=user_id, run_fence=run_fence)
 

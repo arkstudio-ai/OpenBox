@@ -36,7 +36,7 @@ If either workflow file is missing, this desktop has the previous bundle: read `
 4. Use supplied material for its confirmed purpose. Distinguish using the whole picture as a frame, directly referencing its person/product/style, and editing/generating new frames from it. Direct reference does not require intermediate image generation. Call `image_gen` within the authorized production scope, including for artwork in a requested promotional shot. Keep confirmed invariants across prompts. Purpose-made, accepted images can be first/last frames. Use the original source for recurring character references.
 5. **素材外传红线：禁图床 / 网盘；禁 ngrok / serveo / `ssh -R` 隧道；禁对外监听。** If an upload or asset channel returns 401/403, stop and explain; do not route around it.
 6. Deliver the final video from the playable card returned by `video_compose`. Confirm playback before reporting delivery and explain failures in the user's language.
-7. Render the final approved edit on Aliyun IMS through `video_compose` for cuts, transitions, mixing and requested speech captions. Prepare the artwork for any designed product promotion (such as a mid-roll advert, animated poster, price reveal or brand end card) with `image_gen` before generating the video. Include its copy in the artwork itself.
+7. Render the final approved edit on Aliyun IMS through `video_compose` for cuts, transitions, mixing and requested speech captions. HyperFrames is retired; never reintroduce it, and never render in the sandbox with Chrome. Prepare the artwork for any designed product promotion (such as a mid-roll advert, animated poster, price reveal or brand end card) with `image_gen` before generating the video. Include its copy in the artwork itself.
 
 ## Light mode
 
@@ -60,7 +60,7 @@ Steps in order; the workflow files say how.
 3. **Split at meaning and time against the selected model** with `$S/split_script.py` and `$S/plan_shots.py` (`--min-shot-seconds`, `--max-shot-seconds`). Never divide the requested total by the shot count. Always send an explicit duration; do not use `-1`. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Seedance takes 4–15s, Wan 3.0 takes 2–30s, MiniMax H3 takes 4–30s; re-read others.
 4. **Materials and prompts** (`references/prompt-recipes.md`); one JSON plan, `prepare.py` once. `saved=true` is not approval.
 5. **Validate, then card 2** with every line and complete prompt. Tool-call details do not count as display.
-6. **Submit each ready shot** with `shot=<N>` and a stable key, other ready shots in the same response; when blocked, call `video_generate(action="await_ready", job_ids=[...])` once with all outstanding IDs. On `polling_paused=true` leave the job in background recovery and end the turn.
+6. **Submit each ready shot** with `shot=<N>` and a stable key, other ready shots in the same response. Split first, then generate: never run the whole script as one take to see how it looks. When blocked, call `video_generate(action="await_ready", job_ids=[...])` once with all outstanding IDs. On `polling_paused=true` leave the job in background recovery and end the turn.
 7. **Card 3**: words, picture text, action, duration and frame rate of each take (`references/quality.md`). One shot has exactly one current take; `:v2` supersedes `:v1`.
 8. **Compose, check, deliver** (`references/compose-timeline.md`). Use the accepted actual transcript for requested speech captions. Use `video_compose(action="await_ready", job_id=...)` once to receive its attached result.
 

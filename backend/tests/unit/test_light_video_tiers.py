@@ -66,9 +66,10 @@ def test_both_templates_respect_the_chosen_tier(monkeypatch, tier_config, tier, 
             generate_audio=request.generate_audio, input_mimes=["image/jpeg"] * len(roles),
             declared=video_providers.declared_model(model, tier_config), roles=roles, prompt=request.prompt,
         )
-    if tier == "high":
+    if tier in {"fast", "high"}:
         width, height = silk_road.frame_size(model)
         assert 0.4 <= width / height <= 2.5
+    if tier == "high":
         route = video_providers.resolve_route(model, tier_config)
         payload = video_production._bossip_video_payload(route, {
             "resolution": resolution, "ratio": "adaptive", "duration": silk.duration,
@@ -79,6 +80,21 @@ def test_both_templates_respect_the_chosen_tier(monkeypatch, tier_config, tier, 
         })
         assert payload["model"] == model
         assert [item["role"] for item in payload["metadata"]["content"]] == ["first_frame", "last_frame"]
+
+
+def test_turbo_reuses_corrected_silk_road_frames():
+    from io import BytesIO
+    from PIL import Image
+    from light.shot_editor import _matching_frame
+
+    old = BytesIO()
+    Image.new("RGB", silk_road.FRAME_SIZE, "white").save(old, format="JPEG")
+    target = silk_road.frame_size(video_tiers.TURBO)
+    corrected = _matching_frame(old.getvalue(), target)
+    with Image.open(BytesIO(corrected)) as frame:
+        assert frame.size == target
+        assert frame.width / frame.height <= 2.5
+    assert _matching_frame(corrected, target, reuse_matching=True) is corrected
 
 
 def test_an_unavailable_model_cannot_be_substituted(tier_config):

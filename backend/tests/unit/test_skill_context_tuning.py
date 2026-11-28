@@ -128,12 +128,15 @@ async def test_workspace_list_narrows_the_catalogue(tuning, project, monkeypatch
 
 
 async def test_resolved_portable_step_lists_the_same_built_ins_and_no_sandbox_rows(tuning, project, monkeypatch):
-    tuning(resident_skill_catalogue=True, skill_mention_rule=True)
-    deferred = (await _deferred()).tools["skill"].description
-
     class Sandbox:
         async def list_skills(self):
             return [{"name": "sandbox-only", "description": "Untrusted <text>"}]
+
+    off, _ = await st.build_skill_tools_with_listing(Sandbox(), [], enable_search=True, compact=True)
+    assert off.description == st.COMPACT_SKILL_DESCRIPTION
+
+    tuning(resident_skill_catalogue=True, skill_mention_rule=True)
+    deferred = (await _deferred()).tools["skill"].description
 
     loader, search = await st.build_skill_tools_with_listing(
         Sandbox(), [], enable_search=True, compact=True,

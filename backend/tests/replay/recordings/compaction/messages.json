@@ -112,15 +112,13 @@
     "summary": null,
     "auto": true,
     "stage_summary": false,
-    "tail_start_id": null,
+    "tail_start_id": "<message#3>",
     "source_event_start": 1,
     "source_event_end": 25,
     "source_event_digest": "<source_event_digest#1>",
     "covered_message_ids": [
      "<message#1>",
-     "<message#2>",
-     "<message#3>",
-     "<message#4>"
+     "<message#2>"
     ],
     "replacement_id": "compaction:<message#6>"
    },

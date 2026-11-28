@@ -177,7 +177,7 @@ class ToolHooks:
         from agent import recording
         recording.note_tool_request(ctx, tool_info, provider_call_id, arguments_raw)
         if requested_recorded:
-            ctx._trajectory_requested_part = part_id
+            ctx._requested_part_id = part_id
         return await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id, stream=None)
 
     async def dispatch_execute(self, prepared: PreparedToolExecution) -> ToolDispatchOutcome:
@@ -188,7 +188,7 @@ class ToolHooks:
         tool_info = None
         provider_call_id = None
         arguments_raw = None
-        requested_recorded = getattr(ctx, "_trajectory_requested_part", None) == part_id
+        requested_recorded = getattr(ctx, "_requested_part_id", None) == part_id
         from agent import recording
         from agent.recording import bind, context_for_tool, public_value, record, requested_tool_schema
         from question.runtime import current_run, is_revoked
@@ -200,7 +200,7 @@ class ToolHooks:
                 message_id=ctx.message_id or context.message_id,
             )
             recording.attach(ctx, context)
-        ctx._trajectory_execute_started = None
+        ctx._body_started = None
         # The call's tool.output recorder; a revoked run records no further output.
         ticket = current_run.get()
         stream = recording.begin_tool_body(
@@ -231,24 +231,24 @@ class ToolHooks:
                     "tool": tool_id, "status": status,
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                     "total_duration_ms": (time.monotonic() - started) * 1000,
-                    "duration_ms": (time.monotonic() - ctx._trajectory_execute_started) * 1000 if ctx._trajectory_execute_started is not None else None,
+                    "duration_ms": (time.monotonic() - ctx._body_started) * 1000 if ctx._body_started is not None else None,
                     "result_availability": "pending" if status == "waiting" else (
                         "not_started" if isinstance(exc, (TaskSchedulingHeld, AssistantBudgetExceeded))
-                        and ctx._trajectory_execute_started is None else "unknown"),
+                        and ctx._body_started is None else "unknown"),
                     "timing_source": "producer_monotonic",
                 }, context=context)
                 raise
-            if not getattr(execute_fn, "_trajectory_validates", False) and not stream.finished:
-                duration = (time.monotonic() - ctx._trajectory_execute_started
-                            if ctx._trajectory_execute_started is not None else None)
+            if not getattr(execute_fn, "_validates_arguments", False) and not stream.finished:
+                duration = (time.monotonic() - ctx._body_started
+                            if ctx._body_started is not None else None)
                 result.metadata["duration"] = duration
                 retained = recording.retained_output(ctx, result.output)
                 await stream.finish(retained, title=result.title, metadata=public_value(result.metadata),
                                     duration_ms=duration * 1000 if duration is not None else None)
             await stream.close()
             execution_duration = result.metadata.get("duration")
-            if execution_duration is None and ctx._trajectory_execute_started is not None:
-                execution_duration = time.monotonic() - ctx._trajectory_execute_started
+            if execution_duration is None and ctx._body_started is not None:
+                execution_duration = time.monotonic() - ctx._body_started
             status = "denied" if result.metadata.get("blocked") or result.metadata.get("rejected") else (
                 "failed" if result.metadata.get("error") else "completed")
             await record("tool.finished", {
@@ -297,13 +297,13 @@ class ToolHooks:
                                      message_id=ctx.message_id or context.message_id)
         recording.attach(ctx, context)
         with bind(context), _bind_tool_context(ctx):
-            if getattr(ctx, "_trajectory_requested_part", None) != part_id:
+            if getattr(ctx, "_requested_part_id", None) != part_id:
                 tool_info, provider_call_id, arguments_raw = recording.pending_tool_request(ctx)
                 schema, schema_source = requested_tool_schema(ctx, tool_id, tool_info)
                 await record("tool.requested", {"tool": tool_id, "provider_call_id": provider_call_id,
                     "arguments_raw": arguments_raw, "requested_arguments": public_value(args),
                     "schema": schema, "schema_source": schema_source}, context=context)
-                ctx._trajectory_requested_part = part_id
+                ctx._requested_part_id = part_id
             prepared = await self._prepare_execute_impl(tool_id, execute_fn, args, ctx,
                 part_id=part_id, isolate_context=isolate_context)
             if prepared.blocked_result is not None:
@@ -500,12 +500,12 @@ class ToolHooks:
         try:
             await assert_current("tool", progress=True)
             from agent.recording import context_of, public_value, record
-            if not getattr(execute_fn, "_trajectory_validates", False):
+            if not getattr(execute_fn, "_validates_arguments", False):
                 await record("tool.started", {"tool": tool_id, "effective_arguments": public_value(args),
                              "timing_source": "producer_monotonic"}, context=context_of(ctx))
             start_time = time.monotonic()
-            if not getattr(execute_fn, "_trajectory_validates", False):
-                ctx._trajectory_execute_started = start_time
+            if not getattr(execute_fn, "_validates_arguments", False):
+                ctx._body_started = start_time
             request_context = getattr(ctx.sandbox, "request_context", None)
             from sandbox.resource_operation import run_tool_resource_scope
 

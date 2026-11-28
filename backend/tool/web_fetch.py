@@ -93,7 +93,8 @@ async def execute(args: WebFetchArgs, ctx: ToolContext) -> ToolResult:
                 content = _html_to_text(content)
 
         # Truncate to reasonable size
-        ctx._trajectory_full_tool_output = content
+        from agent.recording import retain_full_output
+        retain_full_output(ctx, content)
         if len(content) > 50000:
             content = content[:50000] + "\n\n... (content truncated at 50KB)"
 

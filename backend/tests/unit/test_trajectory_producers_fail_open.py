@@ -43,8 +43,10 @@ def failing_emitter(request, tmp_path, monkeypatch):
 
 
 def _ctx(**fields) -> ToolContext:
-    return ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
-                       trace_context=TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"), **fields)
+    from trajectory.capture import set_call_state
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1", **fields)
+    set_call_state(ctx, "context", TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"))
+    return ctx
 
 
 class _Value(BaseModel):
@@ -181,7 +183,8 @@ async def test_bash_streams_its_output_without_falling_back(state, failing_emitt
             raise AssertionError("re-executed without streaming")
     ctx = _ctx(sandbox=Sandbox())
     # The call identity the hooks bind before a tool runs.
-    ctx.trace_context = ctx.trace_context.derive(call_id="call-bash")
+    from trajectory.capture import call_state, set_call_state
+    set_call_state(ctx, "context", call_state(ctx, "context").derive(call_id="call-bash"))
     result = await bash.execute(bash.BashArgs(command="printf data"), ctx)
     assert result.metadata["exit_code"] == 0 and not Sandbox.executed
 

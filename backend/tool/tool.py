@@ -48,12 +48,11 @@ class ToolContext:
     # Opaque per-plugin state (agent.extensions.plugin_state). The kernel never
     # reads it; a write replaces the mapping, so a copy never changes its parent.
     _plugin_state: dict[str, Any] = field(default_factory=dict, repr=False)
-    # Immutable, per-call trajectory identity; never mutate a parent's context.
-    trace_context: Any = None
-    _trajectory_execute_started: float | None = None
-    _trajectory_full_tool_output: str | None = None
-    # The running call's tool.output recorder (trajectory.tool_output.ToolOutputStream).
-    _trajectory_output_stream: Any = None
+    # Monotonic time the current call's body was admitted; None until it is.
+    _body_started: float | None = None
+    # The tool part whose request this context last announced to observers;
+    # dedupes tool.requested and binds a permission request to its call.
+    _requested_part_id: str | None = None
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
@@ -295,12 +294,12 @@ def define_tool(
         await ctx.assert_dispatch_allowed()
         from assistant.budget import admit_tool, run_tool_body
         await admit_tool(ctx, ctx.part_id)
-        ctx._trajectory_execute_started = time.monotonic()
+        ctx._body_started = time.monotonic()
         recording.retain_full_output(ctx, None)
         from sandbox.resource_operation import run_tool_resource_scope
         result = await run_tool_resource_scope(ctx, tool_id, args,
             lambda: run_tool_body(ctx, execute, validated))
-        duration = time.monotonic() - ctx._trajectory_execute_started
+        duration = time.monotonic() - ctx._body_started
 
         # Preserve the execution result before the model-facing presentation
         # applies its length budget. A later tool.finished stores that view.
@@ -319,7 +318,7 @@ def define_tool(
         )
 
     # The shared hooks defer the dispatch boundary until validation succeeds.
-    wrapped_execute._trajectory_validates = True
+    wrapped_execute._validates_arguments = True
     return ToolInfo(
         id=tool_id,
         description=description,

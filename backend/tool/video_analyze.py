@@ -304,7 +304,8 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     await assert_current("request")
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
                                    message_id=ctx.message_id, kind="video_analyze")
-    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
+    from trajectory.capture import set_call_state
+    set_call_state(ctx, "billing_event_id", getattr(meter, "event_id", None))
     usage = None
     credits = None
     capture = None
@@ -383,12 +384,14 @@ async def _retain_media(ctx: ToolContext, *, kind: str, seed: str, job, media_ur
         source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
     if source_id:
         retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
-        media_ctx._trajectory_media_urls = retained_media
+        from trajectory.capture import set_call_state
+        set_call_state(media_ctx, "media_urls", retained_media)
     else:
         asset_urls = await register_owned_media_inputs(ctx, media_urls)
         # Reuse the same retained map for the subsequent vision input.
         async with service_scope(ctx, job=job, asset_urls=asset_urls) as retained_ctx:
-            media_ctx._trajectory_media_urls = dict(retained_ctx._trajectory_media_urls)
+            from trajectory.capture import call_state, set_call_state
+            set_call_state(media_ctx, "media_urls", dict(call_state(retained_ctx, "media_urls")))
     return media_ctx, asset_urls, retained_media
 
 

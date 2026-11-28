@@ -1231,7 +1231,7 @@ async def process_step(
                     "provider_call_id": tc_event.get("call_id"), "arguments_raw": tc_event.get("arguments_raw"),
                     "requested_arguments": public_value(tool_args), "schema": schema,
                     "schema_source": schema_source}, context=call_trace)
-                ctx._trajectory_requested_part = tool_part.id
+                ctx._requested_part_id = tool_part.id
                 recording.note_tool_request(ctx, tool_info, tc_event.get("call_id"), tc_event.get("arguments_raw"))
                 is_question = canonical_tool_id in {"question", "plan_enter", "plan_exit", "desktop_takeover"} or (
                     canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
@@ -1390,10 +1390,10 @@ async def process_step(
                             return waiting_outcome(tool_part, suspended)
                         except TaskSchedulingHeld:
                             return held_outcome(tool_part, started=getattr(
-                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
+                                hook_prepared.run_ctx, "_body_started", None) is not None)
                         except AssistantBudgetExceeded as exc:
                             return held_outcome(tool_part, error=exc, started=getattr(
-                                hook_prepared.run_ctx, "_trajectory_execute_started", None) is not None)
+                                hook_prepared.run_ctx, "_body_started", None) is not None)
                         return _ToolCallOutcome(
                             tool_part,
                             hook_prepared=hook_prepared,

@@ -989,7 +989,8 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
             # If truncated, save full output ONLY to container (not host).
             import json as _json
             raw_output = _json.dumps(result, ensure_ascii=False, default=str)
-            ctx._trajectory_full_tool_output = raw_output
+            from agent.recording import retain_full_output
+            retain_full_output(ctx, raw_output)
             from tool.truncation import MAX_BYTES, MAX_LINES
             raw_bytes = len(raw_output.encode("utf-8"))
             raw_lines = raw_output.count("\n") + 1
@@ -1392,7 +1393,8 @@ def _create_meta_tools(
             )
             import json as _json
             raw_output = _json.dumps(result, ensure_ascii=False, default=str)
-            ctx._trajectory_full_tool_output = raw_output
+            from agent.recording import retain_full_output
+            retain_full_output(ctx, raw_output)
 
             # Truncate large MCP results to prevent context explosion.
             # Save full output ONLY to container (not host) so LLM can read it.
@@ -1599,12 +1601,12 @@ def create_mcp_resource_tool() -> ToolInfo:
             ).model_dump()
             result = await ctx.sandbox.read_mcp_resource(params["server"], params["uri"])
             contents = result.get("contents", []) if isinstance(result, dict) else []
-            from trajectory import enabled
+            from agent.recording import enabled, retain_full_output
             if enabled(getattr(ctx, "user_id", None)) and isinstance(contents, list):
-                ctx._trajectory_full_tool_output = json.dumps([
+                retain_full_output(ctx, json.dumps([
                     {key: value for key, value in item.items() if key in {"text", "blob", "mimeType", "uri"}}
                     for item in contents if isinstance(item, dict) and ("text" in item or "blob" in item)
-                ], ensure_ascii=False, default=str)
+                ], ensure_ascii=False, default=str))
             output, truncated = _bounded_resource_contents(contents)
             return ToolResult(
                 title=f"Resource: {_bounded_meta_text(params['uri'], MCP_RESOURCE_TITLE_CHARS)}",

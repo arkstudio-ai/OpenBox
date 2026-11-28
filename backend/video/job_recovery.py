@@ -640,8 +640,11 @@ def _recovery_context(job):
     from trajectory.jobs import CONTEXT_KEY
     saved = (job.request_data or {}).get(CONTEXT_KEY)
     trace = TraceContext.from_dict(saved) if saved else None
-    return ToolContext(session_id=job.session_id or "", user_id=job.user_id,
-                       workspace_id=trace.workspace_id or "" if trace else "", trace_context=trace)
+    from trajectory.capture import set_call_state
+    ctx = ToolContext(session_id=job.session_id or "", user_id=job.user_id,
+                      workspace_id=trace.workspace_id or "" if trace else "")
+    set_call_state(ctx, "context", trace)
+    return ctx
 
 
 def _age_seconds(dt: datetime | None) -> float:

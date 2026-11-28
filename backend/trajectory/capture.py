@@ -148,29 +148,27 @@ def provider_output_snapshot(value: Any) -> Any:
 _warned: set[str] = set()
 
 #: A tool context's recording state: the call's identity and what the capture of
-#: its requests and output keeps between calls. ``set_call_state`` replaces a value
-#: on that context only, never on the context it was copied from.
-_CALL_ATTRIBUTES = {
-    "context": "trace_context",
-    "output_stream": "_trajectory_output_stream",
-    "full_output": "_trajectory_full_tool_output",
-    "tool_metadata": "_trajectory_tool_metadata",
-    "request_schemas": "_trajectory_request_schemas",
-    "active_request": "_trajectory_active_request",
-    "billing_event_id": "_trajectory_billing_event_id",
-    "attempt": "_trajectory_attempt",
-    "media_sources": "_trajectory_media_sources",
-    "inline_media": "_trajectory_inline_media",
-    "media_urls": "_trajectory_media_urls",
+#: its requests and output keeps between calls. It lives in the context's
+#: plugin-private slot (``agent.extensions.plugin_state``), not in a kernel field;
+#: ``set_call_state`` replaces a value on that context only, never on the context
+#: it was copied from.
+_CALL_STATE_KEYS = {
+    key: "trajectory." + key for key in (
+        "context", "output_stream", "full_output", "tool_metadata", "request_schemas", "active_request",
+        "billing_event_id", "attempt", "media_sources", "inline_media", "media_urls",
+        "image_request_id", "image_capture",
+    )
 }
 
 
 def call_state(ctx, key: str, default=None):
-    return getattr(ctx, _CALL_ATTRIBUTES[key], default)
+    from agent.extensions import plugin_state
+    return plugin_state(ctx, _CALL_STATE_KEYS[key], default)
 
 
 def set_call_state(ctx, key: str, value) -> None:
-    setattr(ctx, _CALL_ATTRIBUTES[key], value)
+    from agent.extensions import set_plugin_state
+    set_plugin_state(ctx, _CALL_STATE_KEYS[key], value)
 
 
 def _not_recorded(reason: str, exc: BaseException | None = None) -> None:

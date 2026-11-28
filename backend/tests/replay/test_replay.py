@@ -1,9 +1,16 @@
-"""Replay every recorded session through the real agent loop and compare.
+"""Replay every recorded session through the real agent loop and compare. Part of `make check-kernel`.
 
-See tests/replay/harness.py for the seams and the normalisation. To re-record
-after an intended change (and review the diff of tests/replay/recordings):
+See tests/replay/harness.py for the case format, the seams and the
+normalisation. To re-record after an intended change, then review it:
 
     cd backend && OPENBOX_REPLAY_UPDATE=1 uv run --extra test pytest tests/replay -q
+    git add -N tests/replay/recordings && git diff -M tests/replay/recordings
+
+Long texts (system prompt, tool list) live in recordings/_shared under a
+content hash, so a prompt edit shows up as a rename with a line diff (-M).
+To see what an agent_tuning switch would change, record with
+OPENBOX_REPLAY_TUNING=<switch>[,<switch>] and discard the result afterwards:
+the committed recordings are the switches-off baseline.
 """
 import pytest
 

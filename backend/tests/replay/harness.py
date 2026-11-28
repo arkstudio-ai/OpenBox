@@ -15,11 +15,14 @@ prompt, tool or loop change shows up as a reviewable diff of those files.
 Case format: ``turns`` is a list of ``{"user": text, "replies": [...],
 "tools": [...], "answers": [...], "approvals": [...]}``. A reply is
 ``{"reasoning", "text" (a string or streamed pieces), "tool_calls": [{"id",
-"name", "arguments" (an object, or a raw string)}], "finish", "usage"}``; replies
+"name", "arguments" (an object, or a raw string)}], "finish", "usage"}``, or
+``{"rate_limited": {"message", "retry_after_ms"}}`` for a provider 429; replies
 are served in request order, including compaction requests. A tool entry is
 ``{"tool", "args", "result": {"title", "output", "metadata"}}`` or
-``{"tool", "args", "raise": message}``, served in call order to scripted tools,
-which check name and arguments. ``answers`` reply to question cards,
+``{"tool", "args", "raise": message}``; a scripted tool takes the first unused
+entry with its name and arguments (calls from one reply run concurrently, and
+their bodies may start in either order; the loop still persists them in call
+order) and a call with no entry fails the case. ``answers`` reply to question cards,
 ``approvals`` to permission requests. Optional: ``config`` (``permission``,
 ``tool_exposure``, ``memory``), ``skills`` (name -> SKILL.md text),
 ``report_prefix``.
@@ -175,7 +178,21 @@ class ScriptedModel:
                                    "but the case has no reply left for it")
             # End the run at once instead of letting the loop retry.
             return _Stream(reply_chunks({"text": "(script exhausted)"}))
-        return _Stream(reply_chunks(self.replies.pop(0)))
+        reply = self.replies.pop(0)
+        if reply.get("rate_limited"):
+            raise rate_limit_error(reply["rate_limited"])
+        return _Stream(reply_chunks(reply))
+
+
+def rate_limit_error(spec: dict):
+    """The provider's 429, with the Retry-After the loop honours verbatim (so no jittered backoff)."""
+    import httpx
+    import litellm
+
+    response = httpx.Response(429, headers={"retry-after-ms": str(spec.get("retry_after_ms", 1))},
+                              request=httpx.Request("POST", "https://provider.invalid/v1/chat/completions"))
+    return litellm.RateLimitError(spec.get("message", "rate limited"), llm_provider="openai",
+                                  model=MODEL.split("/", 1)[1], response=response)
 
 
 def _describe(kwargs: dict) -> str:
@@ -199,15 +216,17 @@ class ScriptedTools:
             from tool.tool import ToolResult
             actual_args = args.model_dump(mode="json", exclude_unset=True) if hasattr(args, "model_dump") else args
             call = f"{tool_id}({json.dumps(actual_args, ensure_ascii=False)})"
-            if not self.results:
-                self.mismatches.append(f"turn {self.turn}: unexpected call {call}; no tool result left")
-                raise ScriptMismatch("no scripted result")
-            expected = self.results.pop(0)
-            if expected["tool"] != tool_id or ("args" in expected and expected["args"] != actual_args):
-                self.mismatches.append(
-                    f"turn {self.turn}: tool call {call} does not match the script's {expected['tool']}"
-                    f"({json.dumps(expected.get('args'), ensure_ascii=False)})")
-                raise ScriptMismatch("tool call does not match the script")
+            # The first unused entry for this tool and these arguments: calls from
+            # one reply run concurrently, so their bodies start in either order.
+            expected = next((entry for entry in self.results if entry["tool"] == tool_id
+                             and entry.get("args", actual_args) == actual_args), None)
+            if expected is None:
+                left = ", ".join(f"{e['tool']}({json.dumps(e.get('args'), ensure_ascii=False)})"
+                                 for e in self.results) or "none"
+                self.mismatches.append(f"turn {self.turn}: tool call {call} is not in the script "
+                                       f"(unused entries: {left})")
+                raise ScriptMismatch("tool call not in the script")
+            self.results.remove(expected)
             if expected.get("raise"):
                 raise RuntimeError(expected["raise"])
             result = expected.get("result") or {}
@@ -288,6 +307,10 @@ def install_environment(monkeypatch, case: dict, workdir: Path, model: ScriptedM
         path.write_text(text, encoding="utf-8")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(workdir / "config"))
     monkeypatch.chdir(workdir)
+    # The host Skill cache must neither leak another test's scan in nor this case's out.
+    monkeypatch.setattr("skill.skill._skills", {})
+    monkeypatch.setattr("skill.skill._loaded", False)
+    monkeypatch.setattr("skill.skill._fingerprint", ())
     monkeypatch.delenv("TRAJECTORY_RECORD_USER_IDS", raising=False)
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     # Step costs are persisted; price them from a fixed list, not the product's.

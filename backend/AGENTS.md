@@ -41,11 +41,16 @@ and itself. The full layer table is in
   inside functions and `TYPE_CHECKING` imports count too.
 - Put new product logic in its own package. Let that package call into the
   kernel, or pass the value in from the caller; do not teach the kernel about it.
-- When you change a kernel file, run `make check-kernel` (import direction and
-  per-turn SQL budget, under a minute) and include its result in the change
-  description.
+- When you change a kernel file, run `make check-kernel` (import direction,
+  per-turn SQL budget and the loop replay in `tests/replay`, under a minute) and
+  include its result in the change description.
 - When you remove an upward import, regenerate the baseline in the same change:
   `cd backend && uv run python scripts/kernel_import_baseline.py --write`. The
   baseline only goes down; `--allow-increase` needs a stated reason.
 - When a change lowers the SQL counts, lower `BUDGET` in
   `tests/unit/test_kernel_turn_sql_budget.py` too. Raise it only with a reason.
+- A replay failure means the model is sent something else, or different events
+  are persisted. Fix it, or, if the change is intended, re-record in the same
+  change (`cd backend && OPENBOX_REPLAY_UPDATE=1 uv run --extra test pytest
+  tests/replay -q`) and say in the description why the recordings changed.
+  Recordings are made with every `agent_tuning` switch off.
